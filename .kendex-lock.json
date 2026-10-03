@@ -1,14 +1,14 @@
 {
   "version": 11,
   "entries": {
-    "agent:engineer:claude": {
-      "name": "engineer",
+    "agent:frontend:claude": {
+      "name": "frontend",
       "kind": "agent",
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "6a476b950e26406b81632263112dd5c94fdd71340209154520304b2a7aa1d981",
-      "renderedHash": "272d0dea055a31ce834f40fdafc888ea84dcaf05a4b239e5e9f137d97ce8d80f",
+      "sourceHash": "4294cc64c9da6c958b6519db3a57cb303d061239d10929c5bd3239a085bf0675",
+      "renderedHash": "b995ffb4b9291a6743d54a5895584966b8fd4ab3c32f9084f8c033bb6b1cddcc",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -18,20 +18,27 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "frontend",
+        "paths": [
+          ".claude/agents/frontend.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
         }
       ]
     },
-    "agent:engineer:codex": {
-      "name": "engineer",
+    "agent:frontend:codex": {
+      "name": "frontend",
       "kind": "agent",
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f0922b73e76ed6f0f809f0eba8091513b06f76d6cad8e4b51f066e027e97e03c",
-      "renderedHash": "383f508f0820db127129c791106038b6c755972026ddface5c37925f6418b506",
+      "sourceHash": "923cafec76ee877f215749c325a3f8fbbe117512b1316fef29d311c276e79e81",
+      "renderedHash": "81b4beb1f5704612a667dd921f3d4905bc3f6c913b0199e953ce4e4fd3ae7bce",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -41,20 +48,27 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "frontend",
+        "paths": [
+          ".codex/agents/frontend.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
         }
       ]
     },
-    "agent:engineer:copilot": {
-      "name": "engineer",
+    "agent:frontend:copilot": {
+      "name": "frontend",
       "kind": "agent",
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "985bb9ddd91113abdf910c6f6ad560b1b125ab8b326a893f00ccecc818622aa4",
-      "renderedHash": "d69a32d906b1a44e441cc82ca157d9d00df3463cb846fe136dddcd1da0927fe0",
+      "sourceHash": "5b92e6d939fcfe295b42e4363a00ceafce99601be12bf4d00212548efdcc0371",
+      "renderedHash": "40ae2901fe3e638e63026d1a6e6068bf1994c08a05f50c316f6659e804bee365",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -64,20 +78,27 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "frontend",
+        "paths": [
+          ".github/agents/frontend.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
         }
       ]
     },
-    "agent:engineer:pi": {
-      "name": "engineer",
+    "agent:frontend:pi": {
+      "name": "frontend",
       "kind": "agent",
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "45a7a950260d0eb4cd996188356b271491dcdf176762f0b84099231c7f42e717",
-      "renderedHash": "b3ef0a798f4fa80f55e99d723b59ac09e3335d776bdd5fecc322fece2d96409a",
+      "sourceHash": "dae62ac0341759cf0405879161459a6fbc476de9f6ad43a81796132c1f728da9",
+      "renderedHash": "0c6044a8ef715266f4d15e2c46c9c7e38556abb1c668a3a61a0b489adaf24bda",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -87,106 +108,13 @@
         "linear",
         "preflight"
       ],
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "agent:generalist:claude": {
-      "name": "generalist",
-      "kind": "agent",
-      "harness": "claude",
-      "source": ".",
-      "sourceRepo": ".",
-      "sourceHash": "d16d6992c58fc6769b346079379544409697a9ecf45857f94fc12f73f2629965",
-      "renderedHash": "dc63b4bf483db93769c60a3a9228be2f460092900ee2210ed5571664fe525557",
-      "enabled": true,
-      "upstreamSkills": [
-        "code-quality",
-        "decider",
-        "dep-radar",
-        "dev",
-        "github",
-        "linear",
-        "preflight",
-        "review-gate"
-      ],
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "agent:generalist:codex": {
-      "name": "generalist",
-      "kind": "agent",
-      "harness": "codex",
-      "source": ".",
-      "sourceRepo": ".",
-      "sourceHash": "5c484fcd123b8569a2762d6faa78e6b1152be35f0059df6ba7eb185a37a46bc3",
-      "renderedHash": "47f78f58726b69e1b1a57765fefa046a38b0a63838e842cac469ff201e75e3ad",
-      "enabled": true,
-      "upstreamSkills": [
-        "code-quality",
-        "decider",
-        "dep-radar",
-        "dev",
-        "github",
-        "linear",
-        "preflight",
-        "review-gate"
-      ],
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "agent:generalist:copilot": {
-      "name": "generalist",
-      "kind": "agent",
-      "harness": "copilot",
-      "source": ".",
-      "sourceRepo": ".",
-      "sourceHash": "94974ba8f6a82defab245c4b75a0566a5da72c7abf2bc1120c7208c2a2bf0979",
-      "renderedHash": "d9fc80ff4a0e7768e7fa6a4280bcffd1f7c66cd15f884f1141f0bb987ff4c29c",
-      "enabled": true,
-      "upstreamSkills": [
-        "code-quality",
-        "decider",
-        "dep-radar",
-        "dev",
-        "github",
-        "linear",
-        "preflight",
-        "review-gate"
-      ],
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "agent:generalist:pi": {
-      "name": "generalist",
-      "kind": "agent",
-      "harness": "pi",
-      "source": ".",
-      "sourceRepo": ".",
-      "sourceHash": "b57ede21fccb960d92c6c521e760a6706bfdf19b8134d640740a5383dada9648",
-      "renderedHash": "9ac1037ae07c58cf12189d897ad79cbc59457d684de47b2e18fde1d3d127d744",
-      "enabled": true,
-      "upstreamSkills": [
-        "code-quality",
-        "decider",
-        "dep-radar",
-        "dev",
-        "github",
-        "linear",
-        "preflight",
-        "review-gate"
-      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "frontend",
+        "paths": [
+          ".pi/agents/frontend.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -199,8 +127,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "34cfeeff7dfc4807213e2b923a15cb11f355264de299589dee57ab70568e2d4d",
-      "renderedHash": "6f5287f15232e5a669d18b8bc0dc593832c8c233dc4314d08b8583b547b028a5",
+      "sourceHash": "1844a8a81d59200f495d151b63ee217e4908355af705ed302cfceac269f7c529",
+      "renderedHash": "6ca629291df71d862a0e40b9261560c45e0b3fa5b1eadfb4ff08ff8667981586",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -211,6 +139,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "iced",
+        "paths": [
+          ".claude/agents/iced.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -223,8 +158,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c5aecc164584a0a440f50ec72663e375de17e62cbdf796ae554a9a39f8bbdb70",
-      "renderedHash": "18d5faa4a8fde36417bda4157019cd519545cae51af1555ca420509748060c38",
+      "sourceHash": "1e28c81bc714c0a7bada2f68c4323d62a59a411c0c6b4d68408a0d07933b0ad9",
+      "renderedHash": "31aaef97f284629dd9bc047186afc42a00606b70e7f380b645494d8ae72f142c",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -235,6 +170,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "iced",
+        "paths": [
+          ".codex/agents/iced.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -247,8 +189,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4fff49636a56d31fd4fcd08c311d48064d35ec0560480b338465f191dcb954b3",
-      "renderedHash": "46e71a24220f88e8af8604db36afe31a51a2447fca82e2c359edcf3dbec17f63",
+      "sourceHash": "f45f071e6b7f189f0508ee2d95c67ae67f35d4b138ad6994ef9f8a1d7a34c13b",
+      "renderedHash": "de422e3c66a34096d67259fd21ee52f117cedcc5c997631550f5b785fb7237ef",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -259,6 +201,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "iced",
+        "paths": [
+          ".github/agents/iced.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -271,8 +220,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0ea6e27642b6a578de9034d8850f026e1f299c5220b168165fa95e2b07a67bf5",
-      "renderedHash": "60f4311db2d999347affef5c420a3d701e6967232d1abed6f6c09fa81e491d9a",
+      "sourceHash": "0350ad2bf86acf18bf6d761be66b28b7ec303581bc004af4e40cd0fc393263d0",
+      "renderedHash": "8fe0bbab174d802fc60a51a084acf0a0fca9facef2306234e3ccd9cd916eddbb",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -283,6 +232,141 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "iced",
+        "paths": [
+          ".pi/agents/iced.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:maintainer:claude": {
+      "name": "maintainer",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "0adf07da3d00f3283592262c9ae0e67687d28fe4f0543630ddcdd461b2a95d59",
+      "renderedHash": "3e13898852df0ce79470f89c150e8a5cd5781ba848f07c3026cb8c7b56a37697",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "maintainer",
+        "paths": [
+          ".claude/agents/maintainer.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:maintainer:codex": {
+      "name": "maintainer",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d86ea658b800b50417975e59092e07aab40ba972d0db6b0abfc7da2871fba48f",
+      "renderedHash": "43c390b7b12943c1c681a9ad72309db1a190aadbe73dc8fee9f51a118a9f59c7",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "maintainer",
+        "paths": [
+          ".codex/agents/maintainer.toml"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:maintainer:copilot": {
+      "name": "maintainer",
+      "kind": "agent",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4635ebd5bdfacdcfc92ed372e7867d5aed98fe558b5cf35b139f701c29044c6e",
+      "renderedHash": "d00bbe138b93055e0da670e89c7593939f08687fc60db00a79a49c211274e22c",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "maintainer",
+        "paths": [
+          ".github/agents/maintainer.agent.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:maintainer:pi": {
+      "name": "maintainer",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "cb9855eb15721e16b97dcd23bb972c6c067468bda2cee1979fd39d0f4c135cef",
+      "renderedHash": "b505598aa0e8365092f969bfd6d155024e542b50755326be32910ffdaf0e8350",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "maintainer",
+        "paths": [
+          ".pi/agents/maintainer.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -295,13 +379,20 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "79521bcd4e958ab10f5175aa6e984b334b2e574d314c0c0959db05a01d92ee51",
-      "renderedHash": "153d80e000655f3e8de2d59e228f852583ac803c8a52ca9a952cb6d7120418c1",
+      "sourceHash": "89d1ce4edeec0683606890822c126af3f7a7c71b0cfe580c7570027058c97007",
+      "renderedHash": "144981eb62162aac035b753e3c8c5b6967b5cd0e2e3d63a8767bbb2b3fcb7b3f",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "planner",
+        "paths": [
+          ".claude/agents/planner.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -314,13 +405,20 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b874b9b67fd2d36fe5c01019156ebcc6c4b5e5f8f668ae537437f51d829d51a6",
-      "renderedHash": "d159f88a270b59be257edb325cb28dcea628939804f0ce1c822b4d385fac4dbf",
+      "sourceHash": "9976fc22a590fed58709dd0ea67d6c826bc7a42b4629c2f6c6c62f6604b977de",
+      "renderedHash": "c5127bb45f4bf85e9fa62246964b621ecd053f9966cee900986da8b5d4549cea",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "planner",
+        "paths": [
+          ".codex/agents/planner.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -333,13 +431,20 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c2d9910a8709c624790984b8543a6b58fb7b63495840942eded8fe11fc8116c0",
-      "renderedHash": "016f9861e2ae4a8cc2c5d8909bdaf2c8c7846604635a2a34244b9d53b7262c84",
+      "sourceHash": "2dbe1175580d53dd402a2d29d7bc84d12bab3278a85a68c3bb49cb8fce4cc127",
+      "renderedHash": "da85b1374c75f771a7f16c658ce82dff20a3eed10382e9acede632c7e9439c94",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "planner",
+        "paths": [
+          ".github/agents/planner.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -352,13 +457,20 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "794f893eb3ef4339eb9fbb826a0fff067dc12ef3242b860915b17b81f30e5d4c",
-      "renderedHash": "707830f5887d935757e372c3e2d4a9aa19c7287ea912115446fc21b0886ee22f",
+      "sourceHash": "5a97070d68c0b148656b859598e3a5c7e5b3581fddc9ec5f7df09743a8094585",
+      "renderedHash": "a40b5a194efdc5fd072a614bee4c544bc9ae0b682115de64a3d509a71184103e",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "planner",
+        "paths": [
+          ".pi/agents/planner.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -380,6 +492,13 @@
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "researcher",
+        "paths": [
+          ".claude/agents/researcher.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -401,6 +520,13 @@
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "researcher",
+        "paths": [
+          ".codex/agents/researcher.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -422,6 +548,13 @@
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "researcher",
+        "paths": [
+          ".github/agents/researcher.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -443,6 +576,13 @@
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "researcher",
+        "paths": [
+          ".pi/agents/researcher.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -455,12 +595,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d3577a122e65f10a9549d6dfa9b00b57e58703de8f0974adb063c9d6b5fa5694",
-      "renderedHash": "fe337110f48b3fae21f841c114cc024d171b0c0fcc61ea49af660b5bbfca5344",
+      "sourceHash": "04d2a91af45205e92f84908c364a5047bd827b1a59fc0f8e4128b596fac7d7ff",
+      "renderedHash": "988866dee337396d1a0c3d8c9d89f3456c973292a94f06e3cd758c8771aac4cd",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-arch",
+        "paths": [
+          ".claude/agents/reviewer-arch.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -473,12 +620,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d5be4b3535f27515f4e27039e945a4beaec8a9dbd6f3808f5824ef27312821b6",
-      "renderedHash": "47f2064470ef5fd3b31a98ce7b88b52ad8b709056f71b8be75b5f829199dc294",
+      "sourceHash": "6ec14c89b252520ea6c461bf6bdd7bffae5cc3b432c08d05ed264f0353ad3dc7",
+      "renderedHash": "ed2d3d2747dd1c565e7fdc9218827c30865abcb7966773d5e75c7b74fa9add24",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-arch",
+        "paths": [
+          ".codex/agents/reviewer-arch.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -491,12 +645,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8488b5cefc5e65364e5f83273ef292eb9ecebf07b6f8194802cf3fabed9bc01e",
-      "renderedHash": "fcb21d7f824e4af132104eab097a907712bf8fcd4efa1a3a490752d6d659ebce",
+      "sourceHash": "d3dbb4ae30f7741e4e9644069bf8173fbdb896ac678857a220c19587083fe0a5",
+      "renderedHash": "35c1d7da516d5b12789f8773256dc8f5d28ff89d1b82d352c9a0ba5b73dcc7e0",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-arch",
+        "paths": [
+          ".github/agents/reviewer-arch.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -509,12 +670,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b69598ea60112b3c66717ec548d8a5600b6d2a3645788c784d55d5c82dfcece3",
-      "renderedHash": "e47622dc62cf698dd25a5f2ab53dbdb3797d14b0defacbdb4337d6bbd39707f4",
+      "sourceHash": "f81e011a5dfbd99f445e59b7feaff90a9f91f8f1ebe48ad2fa221d8db402d7bd",
+      "renderedHash": "1a02309f058bd2c8532996a06d305820c6d4fbe07699bbdbf5431135d633af07",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-arch",
+        "paths": [
+          ".pi/agents/reviewer-arch.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -527,12 +695,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "e27b77de7960179a36e2240ba7acb0f7fb493f7914b8298a195b922c68b540d2",
-      "renderedHash": "53ad20018669c0fdaaf7c6585b8a62e8522ddfd96e7a9431597209eba571147a",
+      "sourceHash": "ef989f9eed07e4ef1ec59091ae216391cde7b1a56bc331739ce84acce2af6a65",
+      "renderedHash": "831e9ff4d4d79e549f22e8873cb8c9809c4e83eb44b1d5520016026c87dd2046",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-correctness",
+        "paths": [
+          ".claude/agents/reviewer-correctness.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -545,12 +720,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "a189a73c9779c899fc30f2562a26606045980b75123f03cb7e1f412f11172a45",
-      "renderedHash": "82fea404fee19b0a353ff05951d6ffc373ecb1e07c3d0a005f29e81c6047191b",
+      "sourceHash": "3665f3194f857c291d28d614e9be5823eaa16dda1afad7cf581a869955c2c151",
+      "renderedHash": "c54199f1b2c91ed2203c1764cfddf1cc51bb7d970982fa67e58775a1e410149d",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-correctness",
+        "paths": [
+          ".codex/agents/reviewer-correctness.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -563,12 +745,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "52d55fa02a1153767798dc874b684a954ff41ac07200e23cb911e6fef138d654",
-      "renderedHash": "3aa6ad2c3f3e7f76a4bc90d897d479400834e1252b04eebed7dc124d8ace2dc0",
+      "sourceHash": "ad82e84e924da39577154099ec1c7d2f9d37b83d38ad8311c9dad5b207892e0d",
+      "renderedHash": "f509541c47401e872c8b9eba9f03a120553b02450914e37f223d1226c863a273",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-correctness",
+        "paths": [
+          ".github/agents/reviewer-correctness.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -581,12 +770,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8b44caf79d9b867b1a2f04218c37ca062a9dbc60062e7273c72ad022493bcdf4",
-      "renderedHash": "042d0f0a2a3be0c723dfa96551a04545e6984df20a56c86909585ccb993084ad",
+      "sourceHash": "359f9e38b8d50dd9705f799ca84ae2afe598fe0d571280dc7513c2f4f7b8ca6d",
+      "renderedHash": "6a7c362390ddf8b5bfa723458a5c4c48fcf159babefff09d51bf4f4393dbcac3",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-correctness",
+        "paths": [
+          ".pi/agents/reviewer-correctness.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -599,12 +795,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f855a41251f477214db3e2295802a150beaa9278a5fd50da277270eb9aab9a58",
-      "renderedHash": "b0d383266f17e53adedba97f3e386a9b202fdfa5543ff37d382bcde1ce145473",
+      "sourceHash": "f1df780388f5bcbb56edb96c5a8ea5ae76a851bf8fd00ee87e99589405c38e47",
+      "renderedHash": "16dcd57776d412eb5ff8dab1774517379c62ad112d00586c68c019f18937e7b0",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-doc",
+        "paths": [
+          ".claude/agents/reviewer-doc.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -617,12 +820,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "515bb02784ab78aba0af2f9ef9d70179af1bd633509257ee1ab6a837f4031350",
-      "renderedHash": "4f6aa177ed6ce6ef24f0840222a83de99d5d8ceb0627612787da714a9d377d29",
+      "sourceHash": "23c0f8c554ca18b17803316de4bfef00306e46561086582dd64ae21839b17b88",
+      "renderedHash": "ef35d9bd6e0a54c66c9bda9b992683bfc5c75d7d5680af3a944660724a4ae5ef",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-doc",
+        "paths": [
+          ".codex/agents/reviewer-doc.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -635,12 +845,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "268691a10996b907bfb5fc62041b3d9a98c134ea1562ac196d94dba08856d1a3",
-      "renderedHash": "46373e36d356811119deb05331bb030cccbe7478aedea5a7b887e3ddf2eba269",
+      "sourceHash": "e76b098579b1104304fcaf76b2068fbf05a61f614f9944efbefe899319245001",
+      "renderedHash": "ad8137e0f36a46b1dd777d6b29bf411edf61d0a6a5550d48ddcbcf224e1ab2db",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-doc",
+        "paths": [
+          ".github/agents/reviewer-doc.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -653,12 +870,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "ef6db9ced515816d223137745f3b8067a556519c1fe5f959ecc65e770f436260",
-      "renderedHash": "b95d0e0cfcf99af552934b76d3cacc038317ca241ba7a64b67d6a450e3631541",
+      "sourceHash": "6a83dc3ec05a2b14c8793975c0e619889aa35f4b64e5e19be6282cc76a1a7f7a",
+      "renderedHash": "5dbb24ea902a87568a223d74ea421edf7b64062402eb4f0b96c0af511463b8d0",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-doc",
+        "paths": [
+          ".pi/agents/reviewer-doc.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -671,12 +895,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5fec367bb7d74d9e471c95c7dbe87c5aa1d59472dbf0d0d832dd296f5fe14342",
-      "renderedHash": "e5c8251d5c8c7bda44b1d6181e2ebbd586bfd0c168e7f90b944987f3268b31e9",
+      "sourceHash": "8e36dcd84c92735a8d68f693cd2d7de9c27fe3a1092052e2c97290f9c84217c7",
+      "renderedHash": "47d0a614358c5398b7a551b513694f08a46f4ba769c1065f9f22bba5f5a84dc3",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-error",
+        "paths": [
+          ".claude/agents/reviewer-error.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -689,12 +920,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "02b60dc448c56ec68a29b51785e0db04afc0c6ede16d3a9c13da8f3eb4de3fd8",
-      "renderedHash": "1b39840547d799c2b215f198a4a413c015b4e2535c76e9c998afe3cf2a6428d7",
+      "sourceHash": "fc89ac138a6f39e32b303187cb1feb2583cb35af033f758f6b010d3aba595f86",
+      "renderedHash": "2c9371d9fe0db3595e65401f50b747cb6924e2c4f3519bef7a7a9a5f75df2e66",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-error",
+        "paths": [
+          ".codex/agents/reviewer-error.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -707,12 +945,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "12b9a1a8cc13f1c9cadafeff20d834d2239166a9bd0910206cdad1d8bcc4edbd",
-      "renderedHash": "129ce2e71836f895b2f825c3ea647ec6d528d1be9bd47f506871fd49d54bc312",
+      "sourceHash": "e1d45d9f70bd36440bac1ed23525ddc56882085f2c1c009241f81199fd7b5800",
+      "renderedHash": "4fd68072a18c65f690518743036c358d12c7437a9641fd00bdce82a97474d5a9",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-error",
+        "paths": [
+          ".github/agents/reviewer-error.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -725,12 +970,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "578598665742d77240bfda2cdbb8e2b699375eee544ab7ddadde6c13c9805db4",
-      "renderedHash": "bdeaa753fa57bef716b69378c4ac7b49c0b69e9d06370a9ccf2ce0802a7e1e7b",
+      "sourceHash": "2769c33a895070d9649e30d93e65bbae0c6a9660d3b15b6259622c3e32405cc6",
+      "renderedHash": "60d917a3e7ea1b65cc7b0a5d8c6b669c62b5e892b0733fcc6b07ae6ab93740df",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-error",
+        "paths": [
+          ".pi/agents/reviewer-error.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -743,12 +995,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "e50eb9e059a8b5d1e1b12b8fc38e810ff1c298d82a4145e7d560c0479420e5c2",
-      "renderedHash": "dccd25cbab5375679e208f156172e1bf581c80ba35755c6c948958165a54b0fe",
+      "sourceHash": "9da2e73c5f45fab67ca5871027c57c71938d1aa14dbab1fbf886f7fc899fa6bc",
+      "renderedHash": "e1b2bac5a12a66c4383d80010a978b99ff6e3d3d484c6088eed357e1d2940f7f",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-perf",
+        "paths": [
+          ".claude/agents/reviewer-perf.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -761,12 +1020,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "600652fed0f23d0a7213dbd55e29ee65537e846f673e0bdaae6e8577c93d99e2",
-      "renderedHash": "31f803a19dd2f905d640b054d5ccf33d3d6074737acd0ca08d5d01147824cb05",
+      "sourceHash": "1a0d39d0b724538a0dee7404f8cfe3dc520fb898f78b5d5c45ec78aefe6d5025",
+      "renderedHash": "b79b2d83be9b114b157d5eedf25eb4bb4b0ea396dc14aa96f416ed81cbdaa10e",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-perf",
+        "paths": [
+          ".codex/agents/reviewer-perf.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -779,12 +1045,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "6cec9924605756dee07fbc959eb61641c4725a82570ef4a63dc97dc1a78a98e1",
-      "renderedHash": "a95769a3e1b5eb8d94545dda3510ea6f3319399e703f4b71112d0ad9ddeb83cc",
+      "sourceHash": "1ea089e5bd8d49161cc570f4d1100507a85fb123ae7f68c7e00003b924d495ee",
+      "renderedHash": "36d0e8b2d04d335e711dd4151e40d601931471ac7fcf4e3d5a1ae7250099a2e5",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-perf",
+        "paths": [
+          ".github/agents/reviewer-perf.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -797,12 +1070,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "bb4ad5c86ea163bea1547491c5e568c11572fa1a2616d670193e6da169c9f1ee",
-      "renderedHash": "3efbe30fdf7e95db7f32d3da4a9b03229bc703df676bd180e4b179e3ab4ea4cf",
+      "sourceHash": "f7176bcef72f62668992c0bbffb784d23b0e29c98a9c40ee6bdd8bc95208d386",
+      "renderedHash": "e3e2765c0b03045c0edea8e0cf83a9fcf675519c220fe8982a0321979be4ae23",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-perf",
+        "paths": [
+          ".pi/agents/reviewer-perf.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -815,12 +1095,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5a48c6e9502e0be407e92b800e266dbb67497641b6f2a551e5c910d2bbe48cec",
-      "renderedHash": "db877d42b8f8c548790fc871504a4f8b243b3349c50cecd8a17e2e1b343b4be8",
+      "sourceHash": "6096e55ed2da09ae93cd5360bf54e2cae7bc890c710b8318acf5216916910c62",
+      "renderedHash": "bd859473c007eb645f0ee475040d18e3a28101cc2e2c57543aca4b3661f568a8",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-quality",
+        "paths": [
+          ".claude/agents/reviewer-quality.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -833,12 +1120,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "a758f6cd5cfa7a08cb9e6a836c4679d39ee335c34b091109838cbf98c82ecb75",
-      "renderedHash": "25c72c3145149599434fd5b6fc0c2b741223bff63b690dbd96c561629ec3463b",
+      "sourceHash": "16027b6e1293d60cfc45a5304313f4aa80c014de356b851e49207d3b792a2bdd",
+      "renderedHash": "3cd38f93e47430e0472217135f4d3fb72ccacb945d20e8c4dd44da0c9f8c944a",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-quality",
+        "paths": [
+          ".codex/agents/reviewer-quality.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -851,12 +1145,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f04b630679a88ef4064ddc0336afe4f39bdce2df6d289c6c1e81bc32db5e7324",
-      "renderedHash": "077efc68a76aa2694ac63795538fb623821ec0bf2d73e8eb22c84844d19d0d02",
+      "sourceHash": "6cf6c94cead602e4cf8842b0476f8f37608de44b43c4ff81a974f21498d89475",
+      "renderedHash": "0fdb3809acd1946df8112465ccb2ce8d5288789c47d45faf1ec19f267a95d176",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-quality",
+        "paths": [
+          ".github/agents/reviewer-quality.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -869,12 +1170,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d51c7db4b884879b1737145afc253818b51446dc0337f68ee0a745c45119505f",
-      "renderedHash": "8bd914d60e55c3d87e8a01bd770c34a2a8711d7ffafbe6b429cf1a728ae51c92",
+      "sourceHash": "583dcbc5f47aa6b16149b6543c66cdd9614f019d21484bbb1c22c5c3a584d979",
+      "renderedHash": "f406c1220e3268b6dcc2058ec58d98003ee1bb1550e644132cdfb477b9226177",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-quality",
+        "paths": [
+          ".pi/agents/reviewer-quality.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -887,12 +1195,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5a08eb02603d2180bc38b9248172d9e8bf619ac5ec413ff2dd2f959e0465be81",
-      "renderedHash": "640dc9d3cc4d2637ab1c2eb0bf8800bb89e9a7e51b9a552fd41b6305fd06eeee",
+      "sourceHash": "598f9c2dc1c87e0a6adcd34643e44b77cd9949cc6f310e97c1a81db7425b26ef",
+      "renderedHash": "d16b90a6e14f30691ece96a5ad0e56a98b9f3c6b737c7cb4d1653ec3f1526e9c",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-safety",
+        "paths": [
+          ".claude/agents/reviewer-safety.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -905,12 +1220,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8b556cc1f8bd862677ff5773dc659ce32b16c52015cc21dc3740a742fee84dcb",
-      "renderedHash": "5660e6fb636cee4575a5b143e18f5ec77caeee227439cf5fca6307c8d720e2c4",
+      "sourceHash": "268cf76b175eb3a4c79cc1cd062f26f2a93e3227b278614cc8aec5c4f6ea6161",
+      "renderedHash": "086989f28d32076e1ec6194daf0c0268508f25f627962e9870185eafedfbcd3d",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-safety",
+        "paths": [
+          ".codex/agents/reviewer-safety.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -923,12 +1245,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "3fd3cdcfea7f3325bdc28d7e7eb9b590f6e4a847fcfd597d78008bd249ff09f5",
-      "renderedHash": "27d4268c6aaa7227129ac0c40c96bb6dc863594966ddb16a0cc9bd08fc3c3c20",
+      "sourceHash": "fddda2bb7cce1eb9f46ac41f6f0f222dbc117f84c84cb5c9a0c9636452ad3fc0",
+      "renderedHash": "2e1a20107042c0d5b124e93518f5241e03d0fc10b6a92f7695ef80eb47942df5",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-safety",
+        "paths": [
+          ".github/agents/reviewer-safety.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -941,12 +1270,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c6f38bf8ae8edbd72894d11fb714b460655972d9f150414d02782319ac3339bd",
-      "renderedHash": "71e699a48b13240292f31405cfc09ff6639a436602d483cbd0ef328c7b6aca9a",
+      "sourceHash": "b04a0b6f0986fd95acd91f6b048c980ee4bbbefbb6220a9854e2410a02461c12",
+      "renderedHash": "f1b35fa035c5c0df767fcfd0ba8441388cf0e14862b544e71cb506ef9d6c2459",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-safety",
+        "paths": [
+          ".pi/agents/reviewer-safety.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -959,12 +1295,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "161bac6efc8c9048b115e2735d2ad2f970b1bb48dbc77763cd7caf0922548ce3",
-      "renderedHash": "048c37b1fa8c7a3d582379fa70ab8403df106a12573b676a61fca29418aa4ca1",
+      "sourceHash": "d79ef284349c7ed8f6451d3e47476be370994c5ce679b63248cbe7bcce27ff59",
+      "renderedHash": "bfef19aacc7a1f5f05d6b890022850ec86d5e1192b4ea888b9a284abe31a3e91",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-security",
+        "paths": [
+          ".claude/agents/reviewer-security.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -977,12 +1320,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1d1ef3e6c07bbdd2be6a473eadc2d1e7192f2aa322f3055e48e0caf818f00d8b",
-      "renderedHash": "b41e60cdc0656774061f9aa2d7090b5484414786f5aeb67f9428f914c17640a7",
+      "sourceHash": "5bcf46b57857552f327808098b860b9bacc30fa5d4792aa7ce159963579bcb2b",
+      "renderedHash": "bef4a9de2f64cef4c22129ca25914396d61d14cdaaa808a69c7e4ee3f5f5f87e",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-security",
+        "paths": [
+          ".codex/agents/reviewer-security.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -995,12 +1345,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "48116ff8ebd1ba7cb17c111a50fd3320f878f5274f648871e6a2640464a54ac3",
-      "renderedHash": "8d13b73a1ed4c22c26200525db255cf4668d081ff06e944916952faac4db61f9",
+      "sourceHash": "12ae706b8d5ae4b8c9b6fa378ca6829530e1c706cb416ac7c8eca2812dfb0b44",
+      "renderedHash": "ae76d0cc7d0841f1f865eb4c38e25c37df60fcf370b339905badb7dd8c4e7821",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-security",
+        "paths": [
+          ".github/agents/reviewer-security.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1013,12 +1370,19 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "3711bb9b4ca67f3cb054aa5c2916d3f5d11fe30c940b6035848a00f0db95217c",
-      "renderedHash": "be92922a19d60c1413ccac33cb880220b069cd257efba329887dc62e67e4d2c8",
+      "sourceHash": "88bd6ae62e30085d9e1d8182f1c4835ece8b61eafb4825becf5374f472714445",
+      "renderedHash": "08830f84f14e16fafbb7862dfb3df4787de1df417ae398f8a7065e1485183118",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-security",
+        "paths": [
+          ".pi/agents/reviewer-security.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1031,12 +1395,19 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4e71194462251744c6920051e1a6101821957ae447cee89493587d8d2ae2a4e4",
-      "renderedHash": "7895a60e0d8992ba6d2333b88182cfbd46afaf87daf7ff7add5682219f639d80",
+      "sourceHash": "5026a090efe2d9ff0af85378858895a57790dcb34e2b03ad61c02b7e6f810b9d",
+      "renderedHash": "214b3a659751c4ad2e25f865f854712321fe6147a2d5ac91bf579a29c9b86416",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-test",
+        "paths": [
+          ".claude/agents/reviewer-test.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1049,12 +1420,19 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0372f93d9e5e5b5a18f45062a0fe59c38cedd7728be54c83217c2a1f8613e7f9",
-      "renderedHash": "78a710328f9535d786a24e1b079efb9f59a4820f234ae02834af755370a677db",
+      "sourceHash": "707df882106a13ff71b12c70abdbaa816bb484b622450df8a3096559e8bb9598",
+      "renderedHash": "02ca29c6cddeece355dc2c8addae7feb78add542df306f3d4cb3eb3948755937",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-test",
+        "paths": [
+          ".codex/agents/reviewer-test.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1067,12 +1445,19 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "efea63b7c16671864c58740c6bffa1ca3d4677c35677c99803b19954eb1bef78",
-      "renderedHash": "88b8d347de0aad9944178be05c6d13b1867cfbc337615a93db4e262dab13f0dc",
+      "sourceHash": "749f54a54464f8fc7a50058311bc32964ac30ef665f55cec2a914d00800d0160",
+      "renderedHash": "307a359755974fad3787eedb72a7897eb8210b0c202886c68ce6e48f3d39f3e8",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-test",
+        "paths": [
+          ".github/agents/reviewer-test.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1085,12 +1470,139 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "daac54eb25432f003177a5a7cbe776a2d1d7cca7645aa6e0a671d5cdf555e128",
-      "renderedHash": "702152f2df279e3a96d3d5cb2b0940de578c9c267581bb9af5ac411b2920a00c",
+      "sourceHash": "bac827a916a22c7393c8539245267e589c0309e7cc0b78fe6527892dc61652b6",
+      "renderedHash": "6449176c5e7722d77a7b72ea53f2b8999c42c1a20affb55187b849f918fccaf0",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "reviewer-test",
+        "paths": [
+          ".pi/agents/reviewer-test.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:runtime:claude": {
+      "name": "runtime",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "28bcdc450426017104e5a6963ecb3ab8d2f4331046adf2c0038341a20f7fecbc",
+      "renderedHash": "b519a3cbe1a616e1fe89ea84bbca3de48520b51388988a2f1071767604169503",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "runtime",
+        "paths": [
+          ".claude/agents/runtime.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:runtime:codex": {
+      "name": "runtime",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a9c7a0bdbdf3741d45d855c9deb8a65036293020844d98541fda02b3fdc47a47",
+      "renderedHash": "0443a94a8a6affd625db442146528f8002ff596f2d993f93b99537c0b48893db",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "runtime",
+        "paths": [
+          ".codex/agents/runtime.toml"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:runtime:copilot": {
+      "name": "runtime",
+      "kind": "agent",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "434bb68f63a85343151e3b4002d12e0d5a15879f58cf400125b1ae3a1f15e4f8",
+      "renderedHash": "4b1fa4a2c1eff4076573685fd43e53fe5e5fd8a070af5cc24bf5e2dbdf0b0ebd",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "runtime",
+        "paths": [
+          ".github/agents/runtime.agent.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:runtime:pi": {
+      "name": "runtime",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d37e8b79ec6373fda161e5f4a6b3799b4967076b838b6cc97f107c4a8c65fd10",
+      "renderedHash": "cc1c15287061ee6e31cf5c9f5d3844152ee6af605c254aa593a163e8ffa2fc54",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "runtime",
+        "paths": [
+          ".pi/agents/runtime.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1103,8 +1615,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d2307ac74f598ca575a3b9375de4d31f79766cbf2ee1c61f7679433dbb7f6ade",
-      "renderedHash": "89d31f375aff21a64dbeb665367fdbd57812d6ecc2ac5aa886dd9e4382014654",
+      "sourceHash": "2693bd2d1dd7f036a9271c2bb4bdae063e1431e5585cf6fcd6b0d0509c65c8d2",
+      "renderedHash": "c8bec0399c646b6d26094c1d24b717477ccc9bf9f0c6cccdf4f1dc5590614344",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -1114,6 +1626,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "rust",
+        "paths": [
+          ".claude/agents/rust.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1126,8 +1645,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "77591fbd8540ee054660ec7df7a710540330437dd16998f1ead039f86f696a1d",
-      "renderedHash": "350c9681bbc125e9f9f73d8ef7e36de519e6fcd733635bb02867930fd3a45058",
+      "sourceHash": "a1570d1d41220598ce88b06319f513b86aa9e9e3c0ef716c0dd869671236f488",
+      "renderedHash": "6253d08c0faaa1f5ddd6c0abbbdca0c6b34934247a5b7229d4abdddcd9238afe",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -1137,6 +1656,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "rust",
+        "paths": [
+          ".codex/agents/rust.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1149,8 +1675,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "aeee77370b70bf6b5a196b11164bd4104908bca0dae2c24e99f3098b67d9641b",
-      "renderedHash": "8aa9deeb6aa98fe3d8b70f5682360f7f84094ef711e388e26ad8762c5637b8ee",
+      "sourceHash": "ed3525cc5c624800498ca22c3d5f8dff27be7fcb74c75e4088e0707c1b14d869",
+      "renderedHash": "ac8cc46243b10fefb6f0e4ff781680da7633d54efa525f2310560a5f09f63cda",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -1160,6 +1686,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "rust",
+        "paths": [
+          ".github/agents/rust.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1172,8 +1705,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "104e6d51d7f093e0e15494868597a6b6067cafb9c428ecee0efcf60505ad253d",
-      "renderedHash": "4607a2e962e14c9d41e87f09545ad306e4fa4750474901cb0c7c4cf3279dcfc3",
+      "sourceHash": "2b5f09dc6d1244aa002cb9758a65c8c9e9eb81481f4bdd2e439c76f3f637210d",
+      "renderedHash": "b66da9f273cf896602be0897293182bd8846bf5df5f965b6c93958bfbcf9f180",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -1183,6 +1716,13 @@
         "linear",
         "preflight"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "rust",
+        "paths": [
+          ".pi/agents/rust.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1195,13 +1735,20 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "037c0df0ddf84e1eab3be7bd2c11a412a6f8acfa0ef076fc26baa83d5de23464",
-      "renderedHash": "cd606de24eb2aec5afcdff0a298c705575b6491117392994840ba421b0eb48af",
+      "sourceHash": "0dcd6efcdb0a970409147aac4df3144aa867d2327fd0c9ccc40f49acca0ec380",
+      "renderedHash": "4f8f73850356ac635986c11cc34801f1d31e78e028efd3938f5a50d7868f530c",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "scout",
+        "paths": [
+          ".claude/agents/scout.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1214,13 +1761,20 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0cca96b9a6810f5fa6c920d895c0fa066d9ceb26b9722733865831b458c53837",
-      "renderedHash": "69948c8e475d7120f3cd42033e00789b8044e5f5c00d4168bdfab18a04f037e2",
+      "sourceHash": "c81b1ad326ded256f0c1cfb5174d6ba11dd00275dc7f4047ec4822e79d81fa7b",
+      "renderedHash": "56f5cb4ce168a76d1f9403626744d92b37173b64c8e37482b47d8fccc10ba665",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "scout",
+        "paths": [
+          ".codex/agents/scout.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1233,13 +1787,20 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d1af999d1fd95289aac53f17d4b14cd6abbcdb6638e1a509498f76c5b2cd0c42",
-      "renderedHash": "9cf86f435cec4619364788f860d9e081bf10b493537be2d891affd53ce90930d",
+      "sourceHash": "d55eace6844efc80c8b4d9b5fadff323633a33be70ea7e826b1fdc6a11a2e415",
+      "renderedHash": "8e54b2d323c432c0c549fc78f4345530ce3fc723b7312aefea44b8d872f5f896",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "scout",
+        "paths": [
+          ".github/agents/scout.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1252,13 +1813,140 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "750bb8c8baab5dfaf7909af7e65d30ecc0f26d3f05be39ef90f6982eb4ea47b8",
-      "renderedHash": "a40be2d7ec5ee5d266c41c503ea7ad4a15ce9720965c38f9737f9b1c3710e5d8",
+      "sourceHash": "40cc36746105b221a5039a6632bf6d9cbd2a65d497934056c8d5b02e8059c0e1",
+      "renderedHash": "1f6c85b2578b40d1c01c67dff6f31b633aa271d55c5d38229fe4cdecf5956d9c",
       "enabled": true,
       "upstreamSkills": [
         "github",
         "linear"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "scout",
+        "paths": [
+          ".pi/agents/scout.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:swift:claude": {
+      "name": "swift",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "13ac3882e90930e05c741e8981dab27ba52b095dec4c518312fc624995d02cde",
+      "renderedHash": "3f94212285b44933822b41907a516c928c0b8e9f15d4285d6b5bd187776a63d2",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "swift",
+        "paths": [
+          ".claude/agents/swift.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:swift:codex": {
+      "name": "swift",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "b5e58b96768f30379319bdb672e6d25fb103795f3bb776d75300d00e92b34fde",
+      "renderedHash": "67033659b2dfd00846809f95ca253a7511487090c5a7bae72260a240998099d7",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "swift",
+        "paths": [
+          ".codex/agents/swift.toml"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:swift:copilot": {
+      "name": "swift",
+      "kind": "agent",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "70cac7977b0f9a50a035f21fc8450c72bcce0db4a2357fdcb3d54cd1ac6ac2d8",
+      "renderedHash": "2ac0c28927f7b434ffcce45f7c9c61229b914504aba579dc499f7c28124e3890",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "swift",
+        "paths": [
+          ".github/agents/swift.agent.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:swift:pi": {
+      "name": "swift",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "3ae020f2fa87db04da6f41b58c7d0a1c1aa38f0a7ae3e4c080f1b04946647abe",
+      "renderedHash": "401a39e5d4c6ddd458d862cbc4d5f626ec2ecf4ca42f9dbea462230015562458",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "emitted": {
+        "kind": "agent",
+        "name": "swift",
+        "paths": [
+          ".pi/agents/swift.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1281,6 +1969,13 @@
         "linear",
         "project-management"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "tpm",
+        "paths": [
+          ".claude/agents/tpm.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1303,6 +1998,13 @@
         "linear",
         "project-management"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "tpm",
+        "paths": [
+          ".codex/agents/tpm.toml"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1325,6 +2027,13 @@
         "linear",
         "project-management"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "tpm",
+        "paths": [
+          ".github/agents/tpm.agent.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1347,6 +2056,13 @@
         "linear",
         "project-management"
       ],
+      "emitted": {
+        "kind": "agent",
+        "name": "tpm",
+        "paths": [
+          ".pi/agents/tpm.md"
+        ]
+      },
       "reasons": [
         {
           "reason": "requested"
@@ -1362,6 +2078,13 @@
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-argv-kill",
+        "paths": [
+          ".claude/hooks/block-argv-kill.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-argv-kill.sh\"",
@@ -1386,6 +2109,13 @@
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-argv-kill",
+        "paths": [
+          ".codex/hooks/block-argv-kill.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1410,6 +2140,13 @@
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-argv-kill",
+        "paths": [
+          ".pi/kendex/hooks/block-argv-kill.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1434,6 +2171,13 @@
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-bare-cd",
+        "paths": [
+          ".claude/hooks/block-bare-cd.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh\"",
@@ -1461,6 +2205,13 @@
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-bare-cd",
+        "paths": [
+          ".codex/hooks/block-bare-cd.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1488,6 +2239,13 @@
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-bare-cd",
+        "paths": [
+          ".pi/kendex/hooks/block-bare-cd.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1515,6 +2273,13 @@
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-repo-copy",
+        "paths": [
+          ".claude/hooks/block-repo-copy.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-repo-copy.sh\"",
@@ -1542,6 +2307,13 @@
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-repo-copy",
+        "paths": [
+          ".codex/hooks/block-repo-copy.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1569,6 +2341,13 @@
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-repo-copy",
+        "paths": [
+          ".pi/kendex/hooks/block-repo-copy.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1593,9 +2372,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
-      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "sourceHash": "e8a4ebe9100e74375265dd2142c7cb1e806cecc8be30c9643e98eebf5fbd967f",
+      "renderedHash": "a6234a4e45364206cd44c3f36fbfc4878c7552089575eccc8048b78bb8ff3128",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-unsafe-rm",
+        "paths": [
+          ".claude/hooks/block-unsafe-rm.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-unsafe-rm.sh\"",
@@ -1620,9 +2406,16 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
-      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "sourceHash": "e8a4ebe9100e74375265dd2142c7cb1e806cecc8be30c9643e98eebf5fbd967f",
+      "renderedHash": "a6234a4e45364206cd44c3f36fbfc4878c7552089575eccc8048b78bb8ff3128",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-unsafe-rm",
+        "paths": [
+          ".codex/hooks/block-unsafe-rm.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-unsafe-rm.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1647,9 +2440,16 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
-      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "sourceHash": "e8a4ebe9100e74375265dd2142c7cb1e806cecc8be30c9643e98eebf5fbd967f",
+      "renderedHash": "a6234a4e45364206cd44c3f36fbfc4878c7552089575eccc8048b78bb8ff3128",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-unsafe-rm",
+        "paths": [
+          ".pi/kendex/hooks/block-unsafe-rm.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/block-unsafe-rm.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1677,6 +2477,13 @@
       "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
       "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-worktree-refresh",
+        "paths": [
+          ".claude/hooks/block-worktree-refresh.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-worktree-refresh.sh\"",
@@ -1701,6 +2508,13 @@
       "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
       "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-worktree-refresh",
+        "paths": [
+          ".codex/hooks/block-worktree-refresh.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1725,6 +2539,13 @@
       "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
       "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-worktree-refresh",
+        "paths": [
+          ".pi/kendex/hooks/block-worktree-refresh.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1749,6 +2570,13 @@
       "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
       "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "command-safety",
+        "paths": [
+          ".claude/hooks/command-safety.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-safety.sh\"",
@@ -1773,6 +2601,13 @@
       "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
       "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "command-safety",
+        "paths": [
+          ".codex/hooks/command-safety.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1797,6 +2632,13 @@
       "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
       "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "command-safety",
+        "paths": [
+          ".pi/kendex/hooks/command-safety.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1818,9 +2660,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b8633107db777071866ed0bf66dcea58443a7e00011f5b885241b4ffb3a15c6e",
-      "renderedHash": "1ec597a07c6463076538f7604a3b973a2b2c68f598b6c8abdb2a5587fd4df4ba",
+      "sourceHash": "aff0b32e5272e43dcab87679f725b80ea750f54def2f905a9a9b2a9d222ca5c1",
+      "renderedHash": "624bc2d5bfef79f8f88db7973ecf6932172f570ab049a38ff6cf968ff96b81f4",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "doc-drift-check",
+        "paths": [
+          ".claude/hooks/doc-drift-check.sh"
+        ]
+      },
       "registration": {
         "event": "Stop",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
@@ -1842,9 +2691,16 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b8633107db777071866ed0bf66dcea58443a7e00011f5b885241b4ffb3a15c6e",
-      "renderedHash": "1ec597a07c6463076538f7604a3b973a2b2c68f598b6c8abdb2a5587fd4df4ba",
+      "sourceHash": "aff0b32e5272e43dcab87679f725b80ea750f54def2f905a9a9b2a9d222ca5c1",
+      "renderedHash": "624bc2d5bfef79f8f88db7973ecf6932172f570ab049a38ff6cf968ff96b81f4",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "doc-drift-check",
+        "paths": [
+          ".codex/hooks/doc-drift-check.sh"
+        ]
+      },
       "registration": {
         "event": "Stop",
         "command": "p='.codex/hooks/doc-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1866,9 +2722,16 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b8633107db777071866ed0bf66dcea58443a7e00011f5b885241b4ffb3a15c6e",
-      "renderedHash": "1ec597a07c6463076538f7604a3b973a2b2c68f598b6c8abdb2a5587fd4df4ba",
+      "sourceHash": "aff0b32e5272e43dcab87679f725b80ea750f54def2f905a9a9b2a9d222ca5c1",
+      "renderedHash": "624bc2d5bfef79f8f88db7973ecf6932172f570ab049a38ff6cf968ff96b81f4",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "doc-drift-check",
+        "paths": [
+          ".pi/kendex/hooks/doc-drift-check.sh"
+        ]
+      },
       "registration": {
         "event": "turn_end",
         "command": "p='.pi/kendex/hooks/doc-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1890,9 +2753,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "ab7ed433f062185e77c05334f8a8c4804bd590fd250c49221547e63a3e33fbb8",
-      "renderedHash": "ac93664eaf6123cf7bbbf66ec27825cf684127c4d1cc1bd703660733a320c2a4",
+      "sourceHash": "e62eb53e0a47c583719b1d75e2a8e88b6f2fa397acf0f8527c9d2780cd3834cb",
+      "renderedHash": "6e882b1ef02521ce6a3dcf68baf70aed3c4ec210be7718a74bf619287a2b2d4f",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-check",
+        "paths": [
+          ".claude/hooks/lane-mail-check.sh"
+        ]
+      },
       "registration": {
         "event": "Stop",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
@@ -1928,9 +2798,16 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "ab7ed433f062185e77c05334f8a8c4804bd590fd250c49221547e63a3e33fbb8",
-      "renderedHash": "ac93664eaf6123cf7bbbf66ec27825cf684127c4d1cc1bd703660733a320c2a4",
+      "sourceHash": "e62eb53e0a47c583719b1d75e2a8e88b6f2fa397acf0f8527c9d2780cd3834cb",
+      "renderedHash": "6e882b1ef02521ce6a3dcf68baf70aed3c4ec210be7718a74bf619287a2b2d4f",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-check",
+        "paths": [
+          ".codex/hooks/lane-mail-check.sh"
+        ]
+      },
       "registration": {
         "event": "Stop",
         "command": "p='.codex/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -1966,9 +2843,16 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "ab7ed433f062185e77c05334f8a8c4804bd590fd250c49221547e63a3e33fbb8",
-      "renderedHash": "ac93664eaf6123cf7bbbf66ec27825cf684127c4d1cc1bd703660733a320c2a4",
+      "sourceHash": "e62eb53e0a47c583719b1d75e2a8e88b6f2fa397acf0f8527c9d2780cd3834cb",
+      "renderedHash": "6e882b1ef02521ce6a3dcf68baf70aed3c4ec210be7718a74bf619287a2b2d4f",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-check",
+        "paths": [
+          ".pi/kendex/hooks/lane-mail-check.sh"
+        ]
+      },
       "registration": {
         "event": "turn_end",
         "command": "p='.pi/kendex/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2007,6 +2891,13 @@
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-deliver",
+        "paths": [
+          ".claude/hooks/lane-mail-deliver.sh"
+        ]
+      },
       "registration": {
         "event": "PostToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-deliver.sh\"",
@@ -2036,6 +2927,13 @@
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-deliver",
+        "paths": [
+          ".codex/hooks/lane-mail-deliver.sh"
+        ]
+      },
       "registration": {
         "event": "PostToolUse",
         "command": "p='.codex/hooks/lane-mail-deliver.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2065,6 +2963,13 @@
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-deliver",
+        "paths": [
+          ".pi/kendex/hooks/lane-mail-deliver.sh"
+        ]
+      },
       "registration": {
         "event": "tool_result",
         "command": "p='.pi/kendex/hooks/lane-mail-deliver.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2094,6 +2999,13 @@
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-halt",
+        "paths": [
+          ".claude/hooks/lane-mail-halt.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-halt.sh\"",
@@ -2123,6 +3035,13 @@
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-halt",
+        "paths": [
+          ".codex/hooks/lane-mail-halt.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/lane-mail-halt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2152,6 +3071,13 @@
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-halt",
+        "paths": [
+          ".pi/kendex/hooks/lane-mail-halt.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/lane-mail-halt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2181,6 +3107,13 @@
       "sourceHash": "f3b07bcfedb2e8e765982b44b7d4154581fd98f355ae19aecd35ba49910c2395",
       "renderedHash": "587eb4ad09dd0bd0af7b106b9000fe71dc1460ab13414cc2163b0e49afb625a2",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "pre-commit-check",
+        "paths": [
+          ".claude/hooks/pre-commit-check.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.sh\"",
@@ -2208,6 +3141,13 @@
       "sourceHash": "f3b07bcfedb2e8e765982b44b7d4154581fd98f355ae19aecd35ba49910c2395",
       "renderedHash": "587eb4ad09dd0bd0af7b106b9000fe71dc1460ab13414cc2163b0e49afb625a2",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "pre-commit-check",
+        "paths": [
+          ".codex/hooks/pre-commit-check.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "p='.codex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2235,6 +3175,13 @@
       "sourceHash": "f3b07bcfedb2e8e765982b44b7d4154581fd98f355ae19aecd35ba49910c2395",
       "renderedHash": "587eb4ad09dd0bd0af7b106b9000fe71dc1460ab13414cc2163b0e49afb625a2",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "pre-commit-check",
+        "paths": [
+          ".pi/kendex/hooks/pre-commit-check.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2259,9 +3206,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "617c1e6b4a1f35a66bc585fec814671a3951ab3bfc54cf443bf336f47977eb7f",
-      "renderedHash": "7f97063521ac888a6f5091e0d9e759da8ccd45ea69dcc3c8aeeb338099b3d8d2",
+      "sourceHash": "3435741fbc8d0a78229347c483ad7c79cd2c5044cf1c830a1243b80f61f1d583",
+      "renderedHash": "fe03cb9033e5c51421d20cba12e9d658f7fafa20c25383861487cf4b69df294c",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "reviewer-read-only",
+        "paths": [
+          ".claude/hooks/reviewer-read-only.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
@@ -2279,9 +3233,16 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "617c1e6b4a1f35a66bc585fec814671a3951ab3bfc54cf443bf336f47977eb7f",
-      "renderedHash": "7f97063521ac888a6f5091e0d9e759da8ccd45ea69dcc3c8aeeb338099b3d8d2",
+      "sourceHash": "3435741fbc8d0a78229347c483ad7c79cd2c5044cf1c830a1243b80f61f1d583",
+      "renderedHash": "fe03cb9033e5c51421d20cba12e9d658f7fafa20c25383861487cf4b69df294c",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "reviewer-read-only",
+        "paths": [
+          ".pi/kendex/hooks/reviewer-read-only.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/reviewer-read-only.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2299,9 +3260,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "984a0cd1284daab7b7e551218ef382ebb5a864e50eecf614a609e3e748ee3b45",
-      "renderedHash": "94cdfc0171d09db5ca51c90ae606e46d095b5a91f107be0f3702a504286659b0",
+      "sourceHash": "45b61fb450a6c1aa622b0af5216b257cfed7294261a40f885014ddd5034d4d69",
+      "renderedHash": "52115db1d849e82e0492acf2f0326a86e6490b78c7ca6f21d7aae29d7dd4bbe1",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "reviewer-stop-check",
+        "paths": [
+          ".claude/hooks/reviewer-stop-check.sh"
+        ]
+      },
       "registration": {
         "event": "SubagentStop",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-stop-check.sh\"",
@@ -2319,9 +3287,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d02e8e8c9eb6e5197d603f0d1139abc0cca7f928c6c7cb5d4952f6b21c1b11fd",
-      "renderedHash": "9c0b7c784f7a2813a68df59921dbe3022ba94d660a2a7c6c9a49c732d5522fd5",
+      "sourceHash": "412e6662a883addacb2d4db881fd1b4207935629f88d265f302e100247d3326d",
+      "renderedHash": "e1e29ca10cc2f0c24e53e56b35c914f73f95ce9aeaa28991588fba8803af5ee2",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-drift-check",
+        "paths": [
+          ".claude/hooks/session-drift-check.sh"
+        ]
+      },
       "registration": {
         "event": "SessionStart",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-drift-check.sh\"",
@@ -2346,9 +3321,16 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d02e8e8c9eb6e5197d603f0d1139abc0cca7f928c6c7cb5d4952f6b21c1b11fd",
-      "renderedHash": "9c0b7c784f7a2813a68df59921dbe3022ba94d660a2a7c6c9a49c732d5522fd5",
+      "sourceHash": "412e6662a883addacb2d4db881fd1b4207935629f88d265f302e100247d3326d",
+      "renderedHash": "e1e29ca10cc2f0c24e53e56b35c914f73f95ce9aeaa28991588fba8803af5ee2",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-drift-check",
+        "paths": [
+          ".codex/hooks/session-drift-check.sh"
+        ]
+      },
       "registration": {
         "event": "SessionStart",
         "command": "p='.codex/hooks/session-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
@@ -2373,9 +3355,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "cdf52c2a3aebda19157454646a60e5e6a8dee5f5a2d44784abdf71f1489d7ad7",
-      "renderedHash": "50b04d5b575fb667880715f68c3bf3fb7033ed9b69cbaebf621489aea2f0483d",
-      "enabled": false,
+      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
+      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-check",
+        "paths": [
+          ".claude/hooks/skill-load-check.sh"
+        ]
+      },
       "registration": {
         "event": "PreToolUse",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-check.sh\"",
@@ -2384,6 +3373,87 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-record",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "hook:skill-load-check:codex": {
+      "name": "skill-load-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
+      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-check",
+        "paths": [
+          ".codex/hooks/skill-load-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/skill-load-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-record",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "hook:skill-load-check:copilot": {
+      "name": "skill-load-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
+      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-check",
+        "paths": [
+          ".github/hooks/skill-load-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/skill-load-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "edit|str_replace_editor|apply_patch|NotebookEdit|create|bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-record",
+            "harness": "copilot"
+          }
         }
       ]
     },
@@ -2393,13 +3463,146 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "cdf52c2a3aebda19157454646a60e5e6a8dee5f5a2d44784abdf71f1489d7ad7",
-      "renderedHash": "50b04d5b575fb667880715f68c3bf3fb7033ed9b69cbaebf621489aea2f0483d",
-      "enabled": false,
+      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
+      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-check",
+        "paths": [
+          ".pi/kendex/hooks/skill-load-check.sh"
+        ]
+      },
       "registration": {
         "event": "tool_call",
         "command": "p='.pi/kendex/hooks/skill-load-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
         "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-record",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "hook:skill-load-record:claude": {
+      "name": "skill-load-record",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "93218bebb2fff7b15ce400f5fdebe823baa5b4e7aea20c11fdb41ae74d0bd117",
+      "renderedHash": "882fefe85111db37d236263c8b7843b39af28b23408a09821ad74c523f0ea02f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-record",
+        "paths": [
+          ".claude/hooks/skill-load-record.sh"
+        ]
+      },
+      "registration": {
+        "event": "PostToolUse",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-record.sh\"",
+        "matcher": "Skill|skill"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:skill-load-record:codex": {
+      "name": "skill-load-record",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "93218bebb2fff7b15ce400f5fdebe823baa5b4e7aea20c11fdb41ae74d0bd117",
+      "renderedHash": "882fefe85111db37d236263c8b7843b39af28b23408a09821ad74c523f0ea02f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-record",
+        "paths": [
+          ".codex/hooks/skill-load-record.sh"
+        ]
+      },
+      "registration": {
+        "event": "PostToolUse",
+        "command": "p='.codex/hooks/skill-load-record.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Skill|skill"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:skill-load-record:copilot": {
+      "name": "skill-load-record",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "93218bebb2fff7b15ce400f5fdebe823baa5b4e7aea20c11fdb41ae74d0bd117",
+      "renderedHash": "882fefe85111db37d236263c8b7843b39af28b23408a09821ad74c523f0ea02f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-record",
+        "paths": [
+          ".github/hooks/skill-load-record.sh"
+        ]
+      },
+      "registration": {
+        "event": "postToolUse",
+        "command": "p='.github/hooks/skill-load-record.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "skill"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-check",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
+    "hook:skill-load-record:pi": {
+      "name": "skill-load-record",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "93218bebb2fff7b15ce400f5fdebe823baa5b4e7aea20c11fdb41ae74d0bd117",
+      "renderedHash": "882fefe85111db37d236263c8b7843b39af28b23408a09821ad74c523f0ea02f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "skill-load-record",
+        "paths": [
+          ".pi/kendex/hooks/skill-load-record.sh"
+        ]
+      },
+      "registration": {
+        "event": "tool_result",
+        "command": "p='.pi/kendex/hooks/skill-load-record.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Skill|skill"
       },
       "reasons": [
         {
@@ -2413,9 +3616,16 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9fe26705e9d5a42abe064817b0f4713927281ffcde5c115ec303f8b9b8d0abf3",
-      "renderedHash": "3bead17ba332421a554358f1d660d427dfb65d495876f33357b3df5203f1e69f",
+      "sourceHash": "156c974e5cb693800869786d768d7d4bc0cc476222cae2393cae986e58ab5ac2",
+      "renderedHash": "2413cc0389694cec5a21dec760dd4da2590e826f047879cba11a4632f7dc49e0",
       "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "task-completed-check",
+        "paths": [
+          ".claude/hooks/task-completed-check.sh"
+        ]
+      },
       "registration": {
         "event": "TaskCompleted",
         "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/task-completed-check.sh\"",
@@ -2518,8 +3728,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "02bb4d81ad279b0e2a970bf510bce3f792e48dbdad75d2f17822e7e9b3d13824",
-      "renderedHash": "a4062e75f5b48a63464a49e2df59a77a55f5d38b08f3470290eccb049e9cf911",
+      "sourceHash": "073d917c5300a5ccec0c3b0eed890a3226910fb82e133f683c3f57d77f5c05ba",
+      "renderedHash": "80e850f14de23a048e4992fb5e15f18e9c31b22c248c3a4115428405c3074621",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2541,8 +3751,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "02bb4d81ad279b0e2a970bf510bce3f792e48dbdad75d2f17822e7e9b3d13824",
-      "renderedHash": "a4062e75f5b48a63464a49e2df59a77a55f5d38b08f3470290eccb049e9cf911",
+      "sourceHash": "073d917c5300a5ccec0c3b0eed890a3226910fb82e133f683c3f57d77f5c05ba",
+      "renderedHash": "80e850f14de23a048e4992fb5e15f18e9c31b22c248c3a4115428405c3074621",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2563,8 +3773,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "02bb4d81ad279b0e2a970bf510bce3f792e48dbdad75d2f17822e7e9b3d13824",
-      "renderedHash": "a4062e75f5b48a63464a49e2df59a77a55f5d38b08f3470290eccb049e9cf911",
+      "sourceHash": "073d917c5300a5ccec0c3b0eed890a3226910fb82e133f683c3f57d77f5c05ba",
+      "renderedHash": "80e850f14de23a048e4992fb5e15f18e9c31b22c248c3a4115428405c3074621",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2585,8 +3795,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "02bb4d81ad279b0e2a970bf510bce3f792e48dbdad75d2f17822e7e9b3d13824",
-      "renderedHash": "a4062e75f5b48a63464a49e2df59a77a55f5d38b08f3470290eccb049e9cf911",
+      "sourceHash": "073d917c5300a5ccec0c3b0eed890a3226910fb82e133f683c3f57d77f5c05ba",
+      "renderedHash": "80e850f14de23a048e4992fb5e15f18e9c31b22c248c3a4115428405c3074621",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2607,8 +3817,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c68e65e89dc3d6fdbd13fc374c02a05138ff6bed3d5a5779c31b931bf1b83655",
-      "renderedHash": "397deaf421634bc0fa7c0482f5515f92bbf225f83d6e4218739eba1d2b16d6c4",
+      "sourceHash": "1d48c302a6514cf84d2510ac60ba1e1a725449bd15143379e1cc91f55c03e89d",
+      "renderedHash": "92a73ed0069ca951abdab1adf8390db976bf2a77c451c8e7e6ff34ca4674383f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2657,8 +3867,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c68e65e89dc3d6fdbd13fc374c02a05138ff6bed3d5a5779c31b931bf1b83655",
-      "renderedHash": "397deaf421634bc0fa7c0482f5515f92bbf225f83d6e4218739eba1d2b16d6c4",
+      "sourceHash": "1d48c302a6514cf84d2510ac60ba1e1a725449bd15143379e1cc91f55c03e89d",
+      "renderedHash": "92a73ed0069ca951abdab1adf8390db976bf2a77c451c8e7e6ff34ca4674383f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2706,8 +3916,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c68e65e89dc3d6fdbd13fc374c02a05138ff6bed3d5a5779c31b931bf1b83655",
-      "renderedHash": "397deaf421634bc0fa7c0482f5515f92bbf225f83d6e4218739eba1d2b16d6c4",
+      "sourceHash": "1d48c302a6514cf84d2510ac60ba1e1a725449bd15143379e1cc91f55c03e89d",
+      "renderedHash": "92a73ed0069ca951abdab1adf8390db976bf2a77c451c8e7e6ff34ca4674383f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2755,8 +3965,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c68e65e89dc3d6fdbd13fc374c02a05138ff6bed3d5a5779c31b931bf1b83655",
-      "renderedHash": "397deaf421634bc0fa7c0482f5515f92bbf225f83d6e4218739eba1d2b16d6c4",
+      "sourceHash": "1d48c302a6514cf84d2510ac60ba1e1a725449bd15143379e1cc91f55c03e89d",
+      "renderedHash": "92a73ed0069ca951abdab1adf8390db976bf2a77c451c8e7e6ff34ca4674383f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2804,8 +4014,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0cbea482e75eaa739b5d8714ba5e90db0f8da312742595e9886a420a40de77cd",
-      "renderedHash": "c374bca11299d11afe05f959eb77479baca3fa6f9ccef210b100f44710aeecbe",
+      "sourceHash": "d2cfdfe894997ce63add9d778c601e70c1404eb4bc87313b09462eabc0f59abf",
+      "renderedHash": "a201c2ac16481493e393ef287a7e1b960962c5cd61c89ff0ffbdc548d78b5482",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2825,6 +4035,24 @@
             "source": ".",
             "kind": "skill",
             "name": "doc-limits",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-check",
             "harness": "claude"
           }
         },
@@ -2850,8 +4078,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0cbea482e75eaa739b5d8714ba5e90db0f8da312742595e9886a420a40de77cd",
-      "renderedHash": "c374bca11299d11afe05f959eb77479baca3fa6f9ccef210b100f44710aeecbe",
+      "sourceHash": "d2cfdfe894997ce63add9d778c601e70c1404eb4bc87313b09462eabc0f59abf",
+      "renderedHash": "a201c2ac16481493e393ef287a7e1b960962c5cd61c89ff0ffbdc548d78b5482",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2870,6 +4098,24 @@
             "source": ".",
             "kind": "skill",
             "name": "doc-limits",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-check",
             "harness": "codex"
           }
         },
@@ -2895,8 +4141,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0cbea482e75eaa739b5d8714ba5e90db0f8da312742595e9886a420a40de77cd",
-      "renderedHash": "c374bca11299d11afe05f959eb77479baca3fa6f9ccef210b100f44710aeecbe",
+      "sourceHash": "d2cfdfe894997ce63add9d778c601e70c1404eb4bc87313b09462eabc0f59abf",
+      "renderedHash": "a201c2ac16481493e393ef287a7e1b960962c5cd61c89ff0ffbdc548d78b5482",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2917,6 +4163,24 @@
             "name": "doc-limits",
             "harness": "copilot"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-check",
+            "harness": "copilot"
+          }
         }
       ]
     },
@@ -2926,8 +4190,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0cbea482e75eaa739b5d8714ba5e90db0f8da312742595e9886a420a40de77cd",
-      "renderedHash": "c374bca11299d11afe05f959eb77479baca3fa6f9ccef210b100f44710aeecbe",
+      "sourceHash": "d2cfdfe894997ce63add9d778c601e70c1404eb4bc87313b09462eabc0f59abf",
+      "renderedHash": "a201c2ac16481493e393ef287a7e1b960962c5cd61c89ff0ffbdc548d78b5482",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -2946,6 +4210,24 @@
             "source": ".",
             "kind": "skill",
             "name": "doc-limits",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "skill-load-check",
             "harness": "pi"
           }
         },
@@ -3346,8 +4628,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8923b6a5c19e4538e7402312dbca8e894ab2fe20fa5945a64b22d33687363ad2",
-      "renderedHash": "cf08da7c53c34da594d04139e1e1c24ea7c4c63474c9bcbf4660eced601cc10d",
+      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
+      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3378,8 +4660,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8923b6a5c19e4538e7402312dbca8e894ab2fe20fa5945a64b22d33687363ad2",
-      "renderedHash": "cf08da7c53c34da594d04139e1e1c24ea7c4c63474c9bcbf4660eced601cc10d",
+      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
+      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3409,8 +4691,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8923b6a5c19e4538e7402312dbca8e894ab2fe20fa5945a64b22d33687363ad2",
-      "renderedHash": "cf08da7c53c34da594d04139e1e1c24ea7c4c63474c9bcbf4660eced601cc10d",
+      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
+      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3440,8 +4722,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8923b6a5c19e4538e7402312dbca8e894ab2fe20fa5945a64b22d33687363ad2",
-      "renderedHash": "cf08da7c53c34da594d04139e1e1c24ea7c4c63474c9bcbf4660eced601cc10d",
+      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
+      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3471,8 +4753,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1260ffcdb2a815834ea35b884621954cf5950335fe9ce59918a3a9612f2534e6",
-      "renderedHash": "2b87d7ecc16deb652462fd90c37d1ac00eaf77e96f89a668efe141957634b7a5",
+      "sourceHash": "cfb9abc403231b64c763299c9dfd10e5aa4e149ea3237771150655f804218411",
+      "renderedHash": "6799701afc25b1a64bbf8eb33254d01d48ef11cee2ba7bb8582048d4ef85329c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3501,8 +4783,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1260ffcdb2a815834ea35b884621954cf5950335fe9ce59918a3a9612f2534e6",
-      "renderedHash": "2b87d7ecc16deb652462fd90c37d1ac00eaf77e96f89a668efe141957634b7a5",
+      "sourceHash": "cfb9abc403231b64c763299c9dfd10e5aa4e149ea3237771150655f804218411",
+      "renderedHash": "6799701afc25b1a64bbf8eb33254d01d48ef11cee2ba7bb8582048d4ef85329c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3530,8 +4812,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1260ffcdb2a815834ea35b884621954cf5950335fe9ce59918a3a9612f2534e6",
-      "renderedHash": "2b87d7ecc16deb652462fd90c37d1ac00eaf77e96f89a668efe141957634b7a5",
+      "sourceHash": "cfb9abc403231b64c763299c9dfd10e5aa4e149ea3237771150655f804218411",
+      "renderedHash": "6799701afc25b1a64bbf8eb33254d01d48ef11cee2ba7bb8582048d4ef85329c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3552,8 +4834,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1260ffcdb2a815834ea35b884621954cf5950335fe9ce59918a3a9612f2534e6",
-      "renderedHash": "2b87d7ecc16deb652462fd90c37d1ac00eaf77e96f89a668efe141957634b7a5",
+      "sourceHash": "cfb9abc403231b64c763299c9dfd10e5aa4e149ea3237771150655f804218411",
+      "renderedHash": "6799701afc25b1a64bbf8eb33254d01d48ef11cee2ba7bb8582048d4ef85329c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3581,8 +4863,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b39a168ddcd81424be1f0d1e5afe553bfce48969693f473c54fb170fcce3d6fe",
-      "renderedHash": "eaced1dd7102f7f6a0329c4b0768408fce8c60db4596cab2a9148de509320ae0",
+      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
+      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3631,8 +4913,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b39a168ddcd81424be1f0d1e5afe553bfce48969693f473c54fb170fcce3d6fe",
-      "renderedHash": "eaced1dd7102f7f6a0329c4b0768408fce8c60db4596cab2a9148de509320ae0",
+      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
+      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3680,8 +4962,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b39a168ddcd81424be1f0d1e5afe553bfce48969693f473c54fb170fcce3d6fe",
-      "renderedHash": "eaced1dd7102f7f6a0329c4b0768408fce8c60db4596cab2a9148de509320ae0",
+      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
+      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3729,8 +5011,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b39a168ddcd81424be1f0d1e5afe553bfce48969693f473c54fb170fcce3d6fe",
-      "renderedHash": "eaced1dd7102f7f6a0329c4b0768408fce8c60db4596cab2a9148de509320ae0",
+      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
+      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3778,8 +5060,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7b8eca0431128bed93803133a65534d923a5d1930e8a005636d95dfd780ba763",
-      "renderedHash": "6c0b320e03f97911d1a75a85525c1381e2aebb273169929b7cdc941a62541518",
+      "sourceHash": "77a6a92f153eb7f5872cadcb57b50d5b5a5d50b9cd0b945038848ec195351181",
+      "renderedHash": "f130ac4921883bb0a93fa650668a16417a8eaa4df04916ab81b801443bbc7058",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3855,8 +5137,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7b8eca0431128bed93803133a65534d923a5d1930e8a005636d95dfd780ba763",
-      "renderedHash": "6c0b320e03f97911d1a75a85525c1381e2aebb273169929b7cdc941a62541518",
+      "sourceHash": "77a6a92f153eb7f5872cadcb57b50d5b5a5d50b9cd0b945038848ec195351181",
+      "renderedHash": "f130ac4921883bb0a93fa650668a16417a8eaa4df04916ab81b801443bbc7058",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3931,8 +5213,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7b8eca0431128bed93803133a65534d923a5d1930e8a005636d95dfd780ba763",
-      "renderedHash": "6c0b320e03f97911d1a75a85525c1381e2aebb273169929b7cdc941a62541518",
+      "sourceHash": "77a6a92f153eb7f5872cadcb57b50d5b5a5d50b9cd0b945038848ec195351181",
+      "renderedHash": "f130ac4921883bb0a93fa650668a16417a8eaa4df04916ab81b801443bbc7058",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4007,8 +5289,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7b8eca0431128bed93803133a65534d923a5d1930e8a005636d95dfd780ba763",
-      "renderedHash": "6c0b320e03f97911d1a75a85525c1381e2aebb273169929b7cdc941a62541518",
+      "sourceHash": "77a6a92f153eb7f5872cadcb57b50d5b5a5d50b9cd0b945038848ec195351181",
+      "renderedHash": "f130ac4921883bb0a93fa650668a16417a8eaa4df04916ab81b801443bbc7058",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4083,8 +5365,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d97378de7ee8739d3c9348fcfb840a305a0be51004bc993b6952d769b0ebf3c7",
-      "renderedHash": "bc7e18e734fd2daa127e5a4d5b11d6b7ac442415eac116cc75220213955b3e32",
+      "sourceHash": "91ae396eebb5451d3a337ce7b36bd1a8fad46c203e04f3e41b6a885a8cabe55a",
+      "renderedHash": "c7bf6c579fee58033969a2aea622b82c7fad001e91a93aaedfeb69f8fca8560b",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4112,8 +5394,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d97378de7ee8739d3c9348fcfb840a305a0be51004bc993b6952d769b0ebf3c7",
-      "renderedHash": "bc7e18e734fd2daa127e5a4d5b11d6b7ac442415eac116cc75220213955b3e32",
+      "sourceHash": "91ae396eebb5451d3a337ce7b36bd1a8fad46c203e04f3e41b6a885a8cabe55a",
+      "renderedHash": "c7bf6c579fee58033969a2aea622b82c7fad001e91a93aaedfeb69f8fca8560b",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4140,8 +5422,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d97378de7ee8739d3c9348fcfb840a305a0be51004bc993b6952d769b0ebf3c7",
-      "renderedHash": "bc7e18e734fd2daa127e5a4d5b11d6b7ac442415eac116cc75220213955b3e32",
+      "sourceHash": "91ae396eebb5451d3a337ce7b36bd1a8fad46c203e04f3e41b6a885a8cabe55a",
+      "renderedHash": "c7bf6c579fee58033969a2aea622b82c7fad001e91a93aaedfeb69f8fca8560b",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4168,8 +5450,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d97378de7ee8739d3c9348fcfb840a305a0be51004bc993b6952d769b0ebf3c7",
-      "renderedHash": "bc7e18e734fd2daa127e5a4d5b11d6b7ac442415eac116cc75220213955b3e32",
+      "sourceHash": "91ae396eebb5451d3a337ce7b36bd1a8fad46c203e04f3e41b6a885a8cabe55a",
+      "renderedHash": "c7bf6c579fee58033969a2aea622b82c7fad001e91a93aaedfeb69f8fca8560b",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4363,8 +5645,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f59abf5217001a1d3fc1a28a00df9cb4bcbc617316631a31c62e65e917237d0",
-      "renderedHash": "f0654d70f29e901c4cf338731efffa443db8280d32a9617f61bf2505cf396a95",
+      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
+      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4395,8 +5677,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f59abf5217001a1d3fc1a28a00df9cb4bcbc617316631a31c62e65e917237d0",
-      "renderedHash": "f0654d70f29e901c4cf338731efffa443db8280d32a9617f61bf2505cf396a95",
+      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
+      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4426,8 +5708,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f59abf5217001a1d3fc1a28a00df9cb4bcbc617316631a31c62e65e917237d0",
-      "renderedHash": "f0654d70f29e901c4cf338731efffa443db8280d32a9617f61bf2505cf396a95",
+      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
+      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4457,8 +5739,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f59abf5217001a1d3fc1a28a00df9cb4bcbc617316631a31c62e65e917237d0",
-      "renderedHash": "f0654d70f29e901c4cf338731efffa443db8280d32a9617f61bf2505cf396a95",
+      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
+      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4488,8 +5770,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "30e3ba7b4a590db1256824c0b79d848fd4353981c5e143a70597ee76ddd9a88e",
-      "renderedHash": "9bb52ad73c0296249770a54f96754d403fa01a592a74af1e074b4015045a5b73",
+      "sourceHash": "e282b5dde8d60de948e5cdca145f9ed7085daacddc9164f42a7b369515b98e8f",
+      "renderedHash": "92c287c129dcf1e913c786a1b3d1ce7eea8c68f244f030341c56c861679db258",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4547,6 +5829,15 @@
             "name": "slack",
             "harness": "claude"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -4556,8 +5847,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "30e3ba7b4a590db1256824c0b79d848fd4353981c5e143a70597ee76ddd9a88e",
-      "renderedHash": "9bb52ad73c0296249770a54f96754d403fa01a592a74af1e074b4015045a5b73",
+      "sourceHash": "e282b5dde8d60de948e5cdca145f9ed7085daacddc9164f42a7b369515b98e8f",
+      "renderedHash": "92c287c129dcf1e913c786a1b3d1ce7eea8c68f244f030341c56c861679db258",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4614,6 +5905,15 @@
             "name": "slack",
             "harness": "codex"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "codex"
+          }
         }
       ]
     },
@@ -4623,8 +5923,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "30e3ba7b4a590db1256824c0b79d848fd4353981c5e143a70597ee76ddd9a88e",
-      "renderedHash": "9bb52ad73c0296249770a54f96754d403fa01a592a74af1e074b4015045a5b73",
+      "sourceHash": "e282b5dde8d60de948e5cdca145f9ed7085daacddc9164f42a7b369515b98e8f",
+      "renderedHash": "92c287c129dcf1e913c786a1b3d1ce7eea8c68f244f030341c56c861679db258",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4690,8 +5990,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "30e3ba7b4a590db1256824c0b79d848fd4353981c5e143a70597ee76ddd9a88e",
-      "renderedHash": "9bb52ad73c0296249770a54f96754d403fa01a592a74af1e074b4015045a5b73",
+      "sourceHash": "e282b5dde8d60de948e5cdca145f9ed7085daacddc9164f42a7b369515b98e8f",
+      "renderedHash": "92c287c129dcf1e913c786a1b3d1ce7eea8c68f244f030341c56c861679db258",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4746,6 +6046,15 @@
             "source": ".",
             "kind": "skill",
             "name": "slack",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
             "harness": "pi"
           }
         }
@@ -5034,8 +6343,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c3fd3a00a34c561f23a326483c7a57df6baba505ef05f1f15bafb3b5a3b0dae8",
-      "renderedHash": "3178d1f79c3b9390a1dce3acc9f983c789a1bd50fc3b0175dd3631d204af3238",
+      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
+      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5066,8 +6375,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c3fd3a00a34c561f23a326483c7a57df6baba505ef05f1f15bafb3b5a3b0dae8",
-      "renderedHash": "3178d1f79c3b9390a1dce3acc9f983c789a1bd50fc3b0175dd3631d204af3238",
+      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
+      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5097,8 +6406,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c3fd3a00a34c561f23a326483c7a57df6baba505ef05f1f15bafb3b5a3b0dae8",
-      "renderedHash": "3178d1f79c3b9390a1dce3acc9f983c789a1bd50fc3b0175dd3631d204af3238",
+      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
+      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5128,8 +6437,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c3fd3a00a34c561f23a326483c7a57df6baba505ef05f1f15bafb3b5a3b0dae8",
-      "renderedHash": "3178d1f79c3b9390a1dce3acc9f983c789a1bd50fc3b0175dd3631d204af3238",
+      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
+      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5159,8 +6468,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "34604efa68faf9e828f65b598ec8df86113defd1ecebbd1e9db876a6b3da816a",
-      "renderedHash": "c130872ffbb87fce7fa6b85e5aa80bda4578d7ed44dbdcf527e18a0573ddad4a",
+      "sourceHash": "da8bb5e58f204716b7e2a3316027f0fab7351d803cfd10f912edd84570d8dc71",
+      "renderedHash": "db8311be38191fd90f72345275f1af423c9306d881caad244aa325436db15814",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5173,6 +6482,15 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -5182,8 +6500,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "34604efa68faf9e828f65b598ec8df86113defd1ecebbd1e9db876a6b3da816a",
-      "renderedHash": "c130872ffbb87fce7fa6b85e5aa80bda4578d7ed44dbdcf527e18a0573ddad4a",
+      "sourceHash": "da8bb5e58f204716b7e2a3316027f0fab7351d803cfd10f912edd84570d8dc71",
+      "renderedHash": "db8311be38191fd90f72345275f1af423c9306d881caad244aa325436db15814",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5195,6 +6513,15 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
         }
       ]
     },
@@ -5204,8 +6531,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "34604efa68faf9e828f65b598ec8df86113defd1ecebbd1e9db876a6b3da816a",
-      "renderedHash": "c130872ffbb87fce7fa6b85e5aa80bda4578d7ed44dbdcf527e18a0573ddad4a",
+      "sourceHash": "da8bb5e58f204716b7e2a3316027f0fab7351d803cfd10f912edd84570d8dc71",
+      "renderedHash": "db8311be38191fd90f72345275f1af423c9306d881caad244aa325436db15814",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5217,6 +6544,15 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "copilot"
+          }
         }
       ]
     },
@@ -5226,8 +6562,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "34604efa68faf9e828f65b598ec8df86113defd1ecebbd1e9db876a6b3da816a",
-      "renderedHash": "c130872ffbb87fce7fa6b85e5aa80bda4578d7ed44dbdcf527e18a0573ddad4a",
+      "sourceHash": "da8bb5e58f204716b7e2a3316027f0fab7351d803cfd10f912edd84570d8dc71",
+      "renderedHash": "db8311be38191fd90f72345275f1af423c9306d881caad244aa325436db15814",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5239,6 +6575,15 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
         }
       ]
     },
@@ -5248,8 +6593,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "952a3e40d4ec5eb4b9367d62b03fa869da30b3fdbd3671078d3069296e4828a7",
-      "renderedHash": "e254e7ccb93a3e6cdc8652b859031509a1c43947b4faec750189bcc794c023d4",
+      "sourceHash": "7d5053e53c683a943ced1d727e23a7aa5ad7476d05506520ea154f53261e7efc",
+      "renderedHash": "2391c7b00c130251a983fdc84f9d9ea03d3260cc15de525e12004ba8d3edd1a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5280,8 +6625,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "952a3e40d4ec5eb4b9367d62b03fa869da30b3fdbd3671078d3069296e4828a7",
-      "renderedHash": "e254e7ccb93a3e6cdc8652b859031509a1c43947b4faec750189bcc794c023d4",
+      "sourceHash": "7d5053e53c683a943ced1d727e23a7aa5ad7476d05506520ea154f53261e7efc",
+      "renderedHash": "2391c7b00c130251a983fdc84f9d9ea03d3260cc15de525e12004ba8d3edd1a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5311,8 +6656,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "952a3e40d4ec5eb4b9367d62b03fa869da30b3fdbd3671078d3069296e4828a7",
-      "renderedHash": "e254e7ccb93a3e6cdc8652b859031509a1c43947b4faec750189bcc794c023d4",
+      "sourceHash": "7d5053e53c683a943ced1d727e23a7aa5ad7476d05506520ea154f53261e7efc",
+      "renderedHash": "2391c7b00c130251a983fdc84f9d9ea03d3260cc15de525e12004ba8d3edd1a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5342,8 +6687,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "952a3e40d4ec5eb4b9367d62b03fa869da30b3fdbd3671078d3069296e4828a7",
-      "renderedHash": "e254e7ccb93a3e6cdc8652b859031509a1c43947b4faec750189bcc794c023d4",
+      "sourceHash": "7d5053e53c683a943ced1d727e23a7aa5ad7476d05506520ea154f53261e7efc",
+      "renderedHash": "2391c7b00c130251a983fdc84f9d9ea03d3260cc15de525e12004ba8d3edd1a8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5373,8 +6718,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "796467caf0a761ae8bede709001463634100f431aeacb693463ea80b5af0184b",
-      "renderedHash": "f08ba0f70187c9817aa2b12692cd6690ea086a6ccb9bd46bc7ab8acfd85c1e62",
+      "sourceHash": "5c923680f822220f409f191853354c105f77e2245183b198a08ffa55de103ceb",
+      "renderedHash": "820bb1c1c28d23540014d8ed45cb1f590d9303a514b631e3c4d3ca5d8c17d23d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5396,8 +6741,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "796467caf0a761ae8bede709001463634100f431aeacb693463ea80b5af0184b",
-      "renderedHash": "f08ba0f70187c9817aa2b12692cd6690ea086a6ccb9bd46bc7ab8acfd85c1e62",
+      "sourceHash": "5c923680f822220f409f191853354c105f77e2245183b198a08ffa55de103ceb",
+      "renderedHash": "820bb1c1c28d23540014d8ed45cb1f590d9303a514b631e3c4d3ca5d8c17d23d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5418,8 +6763,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "796467caf0a761ae8bede709001463634100f431aeacb693463ea80b5af0184b",
-      "renderedHash": "f08ba0f70187c9817aa2b12692cd6690ea086a6ccb9bd46bc7ab8acfd85c1e62",
+      "sourceHash": "5c923680f822220f409f191853354c105f77e2245183b198a08ffa55de103ceb",
+      "renderedHash": "820bb1c1c28d23540014d8ed45cb1f590d9303a514b631e3c4d3ca5d8c17d23d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5440,8 +6785,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "796467caf0a761ae8bede709001463634100f431aeacb693463ea80b5af0184b",
-      "renderedHash": "f08ba0f70187c9817aa2b12692cd6690ea086a6ccb9bd46bc7ab8acfd85c1e62",
+      "sourceHash": "5c923680f822220f409f191853354c105f77e2245183b198a08ffa55de103ceb",
+      "renderedHash": "820bb1c1c28d23540014d8ed45cb1f590d9303a514b631e3c4d3ca5d8c17d23d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5462,8 +6807,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "51f441c8467d2c978f754ec28ef555e9ede2339c34496c3a867334f4f363fdbe",
-      "renderedHash": "6ce2b4c0c34666d85b26b3bac06dec44d535f1a15a6e472d380fde3511207bef",
+      "sourceHash": "ef89d5af3cd70891636c05037049048f07347dc1c5b5ca98477180e0fb850a14",
+      "renderedHash": "a56678b04e85e53b80b9fd94962c041f8eee08d0fd2660e6ea4b381f26070292",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5485,8 +6830,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "51f441c8467d2c978f754ec28ef555e9ede2339c34496c3a867334f4f363fdbe",
-      "renderedHash": "6ce2b4c0c34666d85b26b3bac06dec44d535f1a15a6e472d380fde3511207bef",
+      "sourceHash": "ef89d5af3cd70891636c05037049048f07347dc1c5b5ca98477180e0fb850a14",
+      "renderedHash": "a56678b04e85e53b80b9fd94962c041f8eee08d0fd2660e6ea4b381f26070292",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5507,8 +6852,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "51f441c8467d2c978f754ec28ef555e9ede2339c34496c3a867334f4f363fdbe",
-      "renderedHash": "6ce2b4c0c34666d85b26b3bac06dec44d535f1a15a6e472d380fde3511207bef",
+      "sourceHash": "ef89d5af3cd70891636c05037049048f07347dc1c5b5ca98477180e0fb850a14",
+      "renderedHash": "a56678b04e85e53b80b9fd94962c041f8eee08d0fd2660e6ea4b381f26070292",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5529,8 +6874,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "51f441c8467d2c978f754ec28ef555e9ede2339c34496c3a867334f4f363fdbe",
-      "renderedHash": "6ce2b4c0c34666d85b26b3bac06dec44d535f1a15a6e472d380fde3511207bef",
+      "sourceHash": "ef89d5af3cd70891636c05037049048f07347dc1c5b5ca98477180e0fb850a14",
+      "renderedHash": "a56678b04e85e53b80b9fd94962c041f8eee08d0fd2660e6ea4b381f26070292",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5669,12 +7014,101 @@
           }
         }
       ]
+    },
+    "skill:xcode-run:claude": {
+      "name": "xcode-run",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a5d7ff1befad496fa415c690d0641c3404d970ec4f3e2a3299fa38a11e514578",
+      "renderedHash": "43c4b31cefdc4da17b5bb9bb5b5a4d343d30c6a3ebcb32b3eefc29cdaab1e841",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "xcode-run",
+        "paths": [
+          ".agents/skills/xcode-run",
+          ".claude/skills/xcode-run"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:xcode-run:codex": {
+      "name": "xcode-run",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a5d7ff1befad496fa415c690d0641c3404d970ec4f3e2a3299fa38a11e514578",
+      "renderedHash": "43c4b31cefdc4da17b5bb9bb5b5a4d343d30c6a3ebcb32b3eefc29cdaab1e841",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "xcode-run",
+        "paths": [
+          ".agents/skills/xcode-run"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:xcode-run:copilot": {
+      "name": "xcode-run",
+      "kind": "skill",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a5d7ff1befad496fa415c690d0641c3404d970ec4f3e2a3299fa38a11e514578",
+      "renderedHash": "43c4b31cefdc4da17b5bb9bb5b5a4d343d30c6a3ebcb32b3eefc29cdaab1e841",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "xcode-run",
+        "paths": [
+          ".agents/skills/xcode-run"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:xcode-run:pi": {
+      "name": "xcode-run",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a5d7ff1befad496fa415c690d0641c3404d970ec4f3e2a3299fa38a11e514578",
+      "renderedHash": "43c4b31cefdc4da17b5bb9bb5b5a4d343d30c6a3ebcb32b3eefc29cdaab1e841",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "xcode-run",
+        "paths": [
+          ".agents/skills/xcode-run"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
     }
   },
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "de471e88345f57384dc13750424daa704fac004c"
+      "commit": "1a3147d9b69f7cbbee1d891570693d4ac0d326bf"
     }
   }
 }
