@@ -53,6 +53,7 @@ export interface ResourceControlSpawnPlan {
 export interface ResourceControlProbes {
 	platform?: NodeJS.Platform;
 	commandExists?: (command: string) => boolean;
+	commandLookup?: CommandLookup;
 	userSystemdAvailable?: () => boolean;
 	userManager?: UserManagerReachability;
 }
@@ -94,7 +95,7 @@ export interface UserManagerReachabilityDeps {
 	runSync?: (file: string, args: string[]) => ProbeResult;
 }
 
-function reachability(result: ProbeResult): boolean | null {
+function settledSuccess(result: ProbeResult): boolean | null {
 	return result.kind === "unsettled" ? null : result.kind === "exited" && result.status === 0;
 }
 
@@ -105,13 +106,13 @@ export function createUserManagerReachability(deps: UserManagerReachabilityDeps 
 	let inFlight: Promise<boolean> | null = null;
 	return {
 		sync() {
-			answer ??= reachability(runSync("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS));
+			answer ??= settledSuccess(runSync("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS));
 			return answer;
 		},
 		check() {
 			if (answer !== null) return Promise.resolve(answer);
 			inFlight ??= run("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS).then((result) => {
-				answer ??= reachability(result);
+				answer ??= settledSuccess(result);
 				inFlight = null;
 				return answer === true;
 			});
@@ -149,18 +150,41 @@ export function readResourceControlSettings(cwd?: string): ResourceControlSettin
 	};
 }
 
-function commandExists(command: string, platform: NodeJS.Platform): boolean {
-	try {
-		if (platform === "win32") {
-			const result = spawnSync("where", [command], { stdio: "ignore", timeout: 1_000 });
-			return result.status === 0;
-		}
-		const result = spawnSync("sh", ["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", command], { stdio: "ignore", timeout: 1_000 });
-		return result.status === 0;
-	} catch {
-		return false;
-	}
+/** Whether a helper command is on PATH, memoized per platform and command. */
+export interface CommandLookup {
+	exists(command: string, platform: NodeJS.Platform): boolean;
 }
+
+export interface CommandLookupDeps {
+	runSync?: (file: string, args: string[]) => ProbeResult;
+}
+
+export function createCommandLookup(deps: CommandLookupDeps = {}): CommandLookup {
+	const runSync = deps.runSync ?? runProbeSync;
+	const settled = new Map<string, boolean>();
+	return {
+		exists(command, platform) {
+			const key = `${platform}:${command}`;
+			const known = settled.get(key);
+			if (known !== undefined) return known;
+			const answer = settledSuccess(platform === "win32"
+				? runSync("where", [command])
+				: runSync("sh", ["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", command]));
+			// A timed-out or killed lookup reads as absent for this spawn only;
+			// the next spawn asks again.
+			if (answer === null) return false;
+			settled.set(key, answer);
+			return answer;
+		},
+	};
+}
+
+/**
+ * The helper lookups this extension load reads. Whether a helper is on PATH
+ * does not change while Pi runs; Pi re-imports the extension on /reload,
+ * which starts a fresh memo.
+ */
+const commandLookup = createCommandLookup();
 
 function systemdProbeCacheKey(settings: ResourceControlSettings): string {
 	return [settings.cpuWeight, settings.ioWeight, settings.nice, settings.ioniceClass, settings.ioniceLevel].join(":");
@@ -221,7 +245,8 @@ function platformFor(probes?: ResourceControlProbes): NodeJS.Platform {
 }
 
 function commandProbeFor(probes: ResourceControlProbes | undefined, platform: NodeJS.Platform): (command: string) => boolean {
-	return probes?.commandExists ?? ((command: string) => commandExists(command, platform));
+	const lookup = probes?.commandLookup ?? commandLookup;
+	return probes?.commandExists ?? ((command: string) => lookup.exists(command, platform));
 }
 
 function systemdProbeFor(probes: ResourceControlProbes | undefined, commandProbe: (command: string) => boolean, platform: NodeJS.Platform, settings: ResourceControlSettings): () => boolean {
@@ -232,9 +257,16 @@ function originApplies(settings: ResourceControlSettings, origin: ResourceContro
 	return origin === "auto-background" ? settings.applyToAutoBackground : settings.applyToBgTask;
 }
 
-function canUseNiceIonice(commandProbe: (command: string) => boolean, platform: NodeJS.Platform): boolean {
-	if (platform === "win32") return false;
-	return commandProbe("nice") || commandProbe("ionice");
+interface NiceIoniceHelpers {
+	nice: boolean;
+	ionice: boolean;
+}
+
+/** The helpers a nice-ionice plan wraps the shell in; null when it has none. */
+function niceIoniceHelpers(commandProbe: (command: string) => boolean, platform: NodeJS.Platform): NiceIoniceHelpers | null {
+	if (platform === "win32") return null;
+	const helpers = { nice: commandProbe("nice"), ionice: commandProbe("ionice") };
+	return helpers.nice || helpers.ionice ? helpers : null;
 }
 
 function ioniceClassNumber(value: ResourceControlIoniceClass): string {
@@ -252,11 +284,16 @@ function basePlan(input: ResourceControlSpawnInput): ResourceControlSpawnPlan {
 	return { file: input.shell, args: [...input.shellArgs, input.command], warnings: [] };
 }
 
+type ModeResolution =
+	| { mode: "none"; warning?: string }
+	| { mode: "systemd-run"; warning?: string }
+	| { mode: "nice-ionice"; helpers: NiceIoniceHelpers; warning?: string };
+
 function resolveMode(
 	settings: ResourceControlSettings,
 	origin: ResourceControlOrigin,
 	probes: ResourceControlProbes | undefined,
-): { mode: ResourceControlAppliedMode | "none"; warning?: string } {
+): ModeResolution {
 	if (!settings.enabled || settings.mode === "off" || !originApplies(settings, origin)) return { mode: "none" };
 
 	const platform = platformFor(probes);
@@ -272,13 +309,15 @@ function resolveMode(
 	}
 
 	if (settings.mode === "nice-ionice") {
-		return canUseNiceIonice(hasCommand, platform)
-			? { mode: "nice-ionice" }
+		const helpers = niceIoniceHelpers(hasCommand, platform);
+		return helpers
+			? { mode: "nice-ionice", helpers }
 			: { mode: "none", warning: "resourceControlMode=nice-ionice requested, but nice/ionice helpers were not detected; spawning without resource controls." };
 	}
 
 	if (hasSystemd()) return { mode: "systemd-run" };
-	if (canUseNiceIonice(hasCommand, platform)) return { mode: "nice-ionice", warning: "resourceControlMode=auto could not use user systemd-run; using nice/ionice fallback." };
+	const helpers = niceIoniceHelpers(hasCommand, platform);
+	if (helpers) return { mode: "nice-ionice", helpers, warning: "resourceControlMode=auto could not use user systemd-run; using nice/ionice fallback." };
 	return { mode: "none", warning: "resource controls are enabled, but no supported helper was detected; spawning without resource controls." };
 }
 
@@ -314,20 +353,16 @@ function systemdPlan(input: ResourceControlSpawnInput, settings: ResourceControl
 function niceIonicePlan(
 	input: ResourceControlSpawnInput,
 	settings: ResourceControlSettings,
-	probes: ResourceControlProbes | undefined,
+	helpers: NiceIoniceHelpers,
 	warning?: string,
 ): ResourceControlSpawnPlan {
-	const platform = platformFor(probes);
-	const hasCommand = commandProbeFor(probes, platform);
-	const useNice = hasCommand("nice");
-	const useIonice = hasCommand("ionice");
 	let file = input.shell;
 	let args = [...input.shellArgs, input.command];
-	if (useIonice) {
+	if (helpers.ionice) {
 		file = "ionice";
 		args = ["-c", ioniceClassNumber(settings.ioniceClass), ...(settings.ioniceClass === "idle" ? [] : ["-n", String(settings.ioniceLevel)]), input.shell, ...input.shellArgs, input.command];
 	}
-	if (useNice) {
+	if (helpers.nice) {
 		args = ["-n", String(settings.nice), file, ...args];
 		file = "nice";
 	}
@@ -347,13 +382,21 @@ export function planResourceControlledSpawn(input: ResourceControlSpawnInput): R
 	const settings = input.settings ?? readResourceControlSettings(input.cwd);
 	const origin = input.origin ?? "bg_task";
 	const resolution = resolveMode(settings, origin, input.probes);
-	if (resolution.mode === "none") {
-		const plan = basePlan(input);
-		if (resolution.warning) plan.warnings.push(resolution.warning);
-		return plan;
+	switch (resolution.mode) {
+		case "none": {
+			const plan = basePlan(input);
+			if (resolution.warning) plan.warnings.push(resolution.warning);
+			return plan;
+		}
+		case "systemd-run":
+			return systemdPlan(input, settings, resolution.warning);
+		case "nice-ionice":
+			return niceIonicePlan(input, settings, resolution.helpers, resolution.warning);
+		default: {
+			const unreachable: never = resolution;
+			throw new Error(`resource control resolved an unknown mode: ${JSON.stringify(unreachable)}`);
+		}
 	}
-	if (resolution.mode === "systemd-run") return systemdPlan(input, settings, resolution.warning);
-	return niceIonicePlan(input, settings, input.probes, resolution.warning);
 }
 
 function defaultStopRunner(command: string, args: string[]): { status: number | null; error?: Error; stderr?: string | Buffer | null } {

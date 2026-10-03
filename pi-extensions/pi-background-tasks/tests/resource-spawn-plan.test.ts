@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { planResourceControlledSpawn, type ResourceControlSpawnInput, type ResourceControlSpawnPlan } from "../extensions/resource-control.js";
+import type { ProbeResult } from "../extensions/probes.js";
+import { createCommandLookup, planResourceControlledSpawn, type ResourceControlSpawnInput, type ResourceControlSpawnPlan } from "../extensions/resource-control.js";
 import { command, probes, settings, spawnInput } from "./fixtures/resource-control.js";
 
 test("resource spawn plans retain complete argv, metadata and warnings", () => {
@@ -103,6 +104,52 @@ test("resource spawn plans retain complete argv, metadata and warnings", () => {
 			},
 			systemdProbes: row.systemdProbes,
 			metadataWarningMatches: row.metadataWarningMatches ?? true,
+		});
+	}
+});
+
+test("helper lookups run once per settled command across spawns", () => {
+	const spawns = 3;
+	const niceIonice = { file: "nice", args: ["-n", "10", "ionice", "-c", "2", "-n", "7", "/bin/bash", "-lc", command] };
+	const rows = [
+		{
+			name: "nice ionice mode looks up each helper once",
+			mode: "nice-ionice", present: ["nice", "ionice"], unsettled: "",
+			lookups: ["nice", "ionice"],
+			plan: { ...niceIonice, warnings: [] },
+		},
+		{
+			name: "auto mode settles a missing systemd-run once and falls back",
+			mode: "auto", present: ["nice", "ionice"], unsettled: "",
+			lookups: ["systemd-run", "nice", "ionice"],
+			plan: { ...niceIonice, warnings: [expect.stringMatching(/^resourceControlMode=auto(?:\s|$)/)] },
+		},
+		{
+			name: "a killed lookup is asked again on the next spawn",
+			mode: "nice-ionice", present: ["nice", "ionice"], unsettled: "ionice",
+			lookups: ["nice", "ionice", "ionice", "ionice"],
+			plan: { file: "nice", args: ["-n", "10", "/bin/bash", "-lc", command], warnings: [] },
+		},
+	] as const;
+	expect.assertions(rows.length + 1);
+	expect(rows.length, "helper lookup rows must not be empty").toBeGreaterThan(0);
+	for (const row of rows) {
+		const lookups: { file: string; args: string[] }[] = [];
+		const commandLookup = createCommandLookup({
+			runSync: (file, args): ProbeResult => {
+				lookups.push({ file, args });
+				const name = args.at(-1)!;
+				if (name === row.unsettled) return { kind: "unsettled", cause: "signalled", signal: "SIGKILL" };
+				return { kind: "exited", status: (row.present as readonly string[]).includes(name) ? 0 : 1, stdout: "" };
+			},
+		});
+		const plans = Array.from({ length: spawns }, (_, index) => {
+			const plan = planResourceControlledSpawn(spawnInput({ taskId: `bg-${index}`, settings: settings({ mode: row.mode }), probes: { platform: "linux", commandLookup } }));
+			return { file: plan.file, args: plan.args, warnings: plan.warnings };
+		});
+		expect({ lookups, plans }, row.name).toStrictEqual({
+			lookups: row.lookups.map((name) => ({ file: "sh", args: ["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", name] })),
+			plans: Array(spawns).fill(row.plan),
 		});
 	}
 });
