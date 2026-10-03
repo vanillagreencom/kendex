@@ -41,6 +41,8 @@ Workflow Actions (composite operations for dev):
   block          Block issue: add label + relation + comment
   unblock        Unblock issue: remove label + comment
   complete       Complete issue: post optional summary comment, then set "Done"
+                 (--done-when-met ticks the met "## Done when" boxes in that
+                 same update)
   validate-completion  Pre-merge check: state + summary comment
                  (--include-children-of <ID> for bundles; --container when the
                  target is a container parent closing after its children)
@@ -180,6 +182,16 @@ Activate Options:
 Complete Options:
   --summary <text>       Post a completion summary comment, then set "Done"
   --summary-file <path>  Read the summary from a file (preferred for markdown)
+  --done-when-met <all|N[,N...]>
+                         Tick the "## Done when" checklist boxes the caller
+                         verified as met, in the same issueUpdate that sets
+                         "Done". Boxes are numbered from 1 in the order the
+                         section lists them, checked ones included; "all"
+                         ticks every box. A box not named stays unchecked. A
+                         number past the section's last box refuses before
+                         any write. The section runs from its "## Done when"
+                         line to the next "## " heading. The result's
+                         "done_when_checked" counts the boxes this call ticked.
   The comment is posted BEFORE the state transition; if posting fails the issue
   state is unchanged. Text lacking a "Completion Summary"/"Bundle Complete"
   marker is prefixed with a "## Completion Summary" heading so
@@ -251,6 +263,8 @@ Examples:
   issues.sh unblock PROJ-42                      # Resume after blocker resolved
   issues.sh complete PROJ-42                     # Mark done
   issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
+  issues.sh complete PROJ-42 --done-when-met all  # Done, every Done-when box ticked
+  issues.sh complete PROJ-42 --done-when-met 1,3  # Done, boxes 1 and 3 ticked
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Single-PR bundle validation
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
 
@@ -2984,19 +2998,65 @@ unblock_issue() {
     echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"unblocked\"}"
 }
 
+# Tick the `## Done when` checklist boxes MET names in DESCRIPTION.
+# Usage: done_when_tick DESCRIPTION MET
+# MET is the JSON string "all" or a JSON array of box numbers. Boxes are
+# numbered from 1 in section order, checked ones included, so a number names
+# the box a reader counted. Prints {description, ticked, missing}: missing
+# lists the numbers past the section's last box.
+done_when_tick() {
+    jq -cn --arg desc "$1" --argjson met "$2" '
+        reduce ($desc | split("\n"))[] as $line ({out: [], section: false, boxes: 0, ticked: 0};
+            (if ($line | test("^## Done when\\s*$")) then .section = true
+             elif ($line | startswith("## ")) then .section = false
+             else . end)
+            | if .section and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
+                .boxes += 1
+                | if ($line | test("^\\s*[-*] \\[ \\]")) and ($met == "all" or (.boxes as $n | $met | any(.[]; . == $n)))
+                  then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
+                  else .out += [$line] end
+              else .out += [$line] end)
+        | . as $r
+        | {description: ($r.out | join("\n")), ticked: $r.ticked,
+           missing: (if $met == "all" then [] else [$met[] | select(. > $r.boxes)] | unique end)}'
+}
+
 # Complete an issue: set state to "Done"
-# Usage: complete_issue CC-XXX [--summary <text> | --summary-file <path>]
+# Usage: complete_issue CC-XXX [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>]
 # The summary comment is posted BEFORE the state transition so a failed post
 # never yields a Done issue without a completion summary. Unknown or trailing
-# arguments are rejected before any mutation.
+# arguments, and a Done-when box number the description does not hold, are
+# rejected before any mutation; orch's merge-pr completion step numbers the
+# boxes it passes from the description it read. Ticked boxes ride the
+# issueUpdate that sets Done, from a description read just before the comment
+# post: an edit landing between that read and the update is overwritten.
 complete_issue() {
     local issue_id="$1"
     shift
 
+    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>]"
     local summary=""
     local summary_file=""
+    local done_when_met=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --done-when-met)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                done_when_met="$2"
+                shift 2
+            else
+                echo '{"error": "--done-when-met requires all or a box number list"}' >&2
+                return 1
+            fi
+            ;;
+        --done-when-met=*)
+            done_when_met="${1#*=}"
+            if [ -z "$done_when_met" ]; then
+                echo '{"error": "--done-when-met requires all or a box number list"}' >&2
+                return 1
+            fi
+            shift
+            ;;
         --summary)
             if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
                 summary="$2"
@@ -3032,11 +3092,11 @@ complete_issue() {
             shift
             ;;
         -*)
-            echo "{\"error\": \"Unknown option: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            jq -cn --arg arg "$1" --arg usage "$usage" '{error: ("Unknown option: " + $arg + ". Usage: " + $usage)}' >&2
             return 1
             ;;
         *)
-            echo "{\"error\": \"Unexpected argument: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            jq -cn --arg arg "$1" --arg usage "$usage" '{error: ("Unexpected argument: " + $arg + ". Usage: " + $usage)}' >&2
             return 1
             ;;
         esac
@@ -3055,6 +3115,38 @@ complete_issue() {
         if [ -z "$summary" ]; then
             echo "{\"error\": \"--summary-file is empty: $summary_file\"}" >&2
             return 1
+        fi
+    fi
+
+    local update_args=(--state "Done")
+    local done_when_checked=""
+    if [ -n "$done_when_met" ]; then
+        local met_json
+        if [ "$done_when_met" = "all" ]; then
+            met_json='"all"'
+        elif [[ "$done_when_met" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then
+            met_json=$(jq -cn --arg list "$done_when_met" '$list | split(",") | map(tonumber)') || return 1
+        else
+            jq -cn --arg value "$done_when_met" \
+                '{error: ("--done-when-met takes all or comma-separated box numbers from 1, got: " + $value)}' >&2
+            return 1
+        fi
+        local issue_result description tick missing_count
+        issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+        # The sentinel keeps a trailing newline the substitution would strip.
+        description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
+        tick=$(done_when_tick "${description%.}" "$met_json") || return 1
+        missing_count=$(jq '.missing | length' <<<"$tick") || return 1
+        if [ "$missing_count" -ne 0 ]; then
+            jq -c --arg id "$issue_id" \
+                '{error: ("Done-when box not found in " + $id + ": " + (.missing | map(tostring) | join(",")) + ". Issue state unchanged.")}' <<<"$tick" >&2
+            return 1
+        fi
+        done_when_checked=$(jq '.ticked' <<<"$tick") || return 1
+        if [ "$done_when_checked" -gt 0 ]; then
+            local ticked_description
+            ticked_description=$(jq -r '.description + "."' <<<"$tick") || return 1
+            update_args+=(--description "${ticked_description%.}")
         fi
     fi
 
@@ -3081,7 +3173,7 @@ complete_issue() {
     local update_result
     local update_rc=0
     set +e
-    update_result=$(update_issue "$issue_id" --state "Done")
+    update_result=$(update_issue "$issue_id" "${update_args[@]}")
     update_rc=$?
     set -e
 
@@ -3098,14 +3190,12 @@ complete_issue() {
         return 1
     fi
 
-    # Return result
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
-    if [ -n "$summary" ]; then
-        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\", \"summary_posted\": true}"
-    else
-        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\"}"
-    fi
+    jq -cn --arg identifier "$identifier" --arg summary "$summary" --arg checked "$done_when_checked" \
+        '{success: true, identifier: $identifier, action: "completed"}
+         + (if $summary != "" then {summary_posted: true} else {} end)
+         + (if $checked != "" then {done_when_checked: ($checked | tonumber)} else {} end)'
 }
 
 # Validate issue completion: check state is "In Progress" and has Completion Summary comment
