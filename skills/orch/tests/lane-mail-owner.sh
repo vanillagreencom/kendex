@@ -737,8 +737,9 @@ for flag in --thread-ts --parent; do
 done
 lm send --item overseer --directive --file "$(text reply 'Broken.')" --thread-ts 1.1 --parent "$(text broken '{')"
 assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$TMP_ROOT/broken.txt" "a truncated parent file never lands a directive"
-lm send --item overseer --file "$(text reply 'Wrong target.')" --thread-ts 1.1 --parent "$POINTER"
-assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--thread-ts" "thread pointers are for overseer owner directives only"
+owner_ask 'Which?' a,b a
+lm send --item overseer --re "$ASK" --file "$(text reply 'a')" --thread-ts 1.1 --parent "$POINTER"
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--thread-ts" "thread pointers are for overseer owner directives only, never an answer"
 INVALID_POINTER="$(text invalid-parent '{"ts":"1.1","author":"other","excerpt":"A release."}')"
 lm send --item overseer --directive --file "$(text reply 'Wrong author.')" --thread-ts 1.1 --parent "$INVALID_POINTER"
 assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$INVALID_POINTER" "a parent outside Slack's owner or bot kinds is refused"
@@ -790,6 +791,15 @@ new_repo control_pointer_pair
 mutant pointer-pair '[ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '\''--thread-ts,--parent'\''' '[ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || :'
 lm send --item overseer --directive --file "$(text reply 'Incomplete.')" --thread-ts 1.1
 assert_eq "$ERR" "lane-mail: file-unreadable=" "control: omitting the pair guard loses its incomplete-pointer refusal"
+LANE_MAIL_BIN="$LANE_MAIL"
+
+# A well-formed answer, so the guard is the only refusal it can reach.
+new_repo control_pointer_target
+owner_ask 'Which?' a,b a
+mutant pointer-target '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given"' '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || :'
+lm send --item overseer --re "$ASK" --file "$(text reply 'a')" --thread-ts 1.1 --parent "$POINTER"
+assert_eq "$RC=$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | .thread_ts')" "0=1.1" \
+  "control: omitting the target guard lands a pointer on an answer"
 LANE_MAIL_BIN="$LANE_MAIL"
 
 new_repo control_pointer_shape

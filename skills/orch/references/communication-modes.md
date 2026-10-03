@@ -153,7 +153,11 @@ For the master and every overseer, a conversation stays in the medium where it t
 5. Every written owner message starts with what changed for the owner. Follow it with four labels and short bullets: **Landed**, **Running**, **Blocked**, **Waiting on you**. Each work item carries one link to its owning tracker issue URL: a Linear issue URL for a Linear item, or the GitHub issue URL for an `issue-N` item. Never use a pull request or commit link. The tracker issue links to its pull request. Say the outcome for the owner or the fleet, not the issue title. Group small changes into one bullet. End with **Waiting on you**, with `Nothing` when empty. Keep the whole message within about 15 lines; put detail in the report file. Send one post per report, never a thread of fragments. Send one notice per fact: a reply owed to two owner notes uses one `--ref` and names the other note in its text. The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary. The Routing table controls what also appears in the chat.
 6. **Waiting on you** there names each ask `lane-mail pending --item overseer --to owner` shows by its question, so the owner finds its thread in the channel, and what stands at its deadline, as a time in the owner's time zone. It is never empty while an ask is open.
 7. An ask sent during the owner's night gets no reply before morning. Its recommended option is the safe choice, and its deadline (`--wait`) falls after the owner's morning unless the ask can stand on that option.
-8. Attach a screenshot or an image when it shows the point better than words: `slack post --file`, with `--thread TS` to place it under a message.
+8. State a cost as its figure and its source, never as "a cost": "$0.106 per compute-hour, about $19 a month, Neon pricing page". Estimate added CI time against the 50,000 private-repository minutes a month the plan includes.
+9. Create nothing half-finished. Give each app, bot, account, channel or key its avatar, its name under the naming convention and its description when it is created.
+10. Report account headroom for every harness the fleet runs (Claude, Codex, Copilot), side by side.
+11. Own a mistake in one line, with its repair.
+12. Attach a screenshot or an image when it shows the point better than words: `slack post --file`, with `--thread TS` to place it under a message.
 
 Markup for a text posted alone, standard Markdown:
 
