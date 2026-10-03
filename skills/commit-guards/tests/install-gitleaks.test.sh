@@ -6,14 +6,14 @@
 # disposable copy of the script whose pins name that archive's digest.
 set -euo pipefail
 
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/harness.bash
+. "$TEST_DIR/lib/harness.bash"
+
 SCRIPTS="$(cd "$TEST_DIR/../scripts" && pwd)"
-TMP_ROOT="$(mktemp -d)" || { echo "install-gitleaks: scratch=mktemp-failed" >&2; exit 1; }
+TMP_ROOT="$TMP"
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "install-gitleaks: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "install-gitleaks: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 PASS=0
 FAIL=0
