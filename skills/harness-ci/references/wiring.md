@@ -42,7 +42,7 @@ For workflows whose lanes are separate jobs.
 jobs:
   changes:
     name: Classify the diff
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     outputs:
       harness_only: ${{ steps.classify.outputs.harness_only }}
     steps:
@@ -61,7 +61,7 @@ jobs:
   test:
     needs: changes
     if: ${{ !cancelled() && !(needs.changes.result == 'success' && needs.changes.outputs.harness_only == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
       # the repository's existing lane, unchanged
 ```
@@ -96,7 +96,7 @@ For workflows that already run one job and gate the expensive tail of it.
 jobs:
   ci-ok:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,7 +133,7 @@ Two rules, both about a check that never appears.
     name: CI                      # the ruleset's required context
     needs: [changes, test, build]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,7 +163,7 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
 ```yaml
   changes:
     name: Classify the diff
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -336,6 +336,7 @@ The order of this change and the ruleset change, and the check that confirms bot
 - **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds. Replace the placeholder `test` job with the repository's lanes, one job each: declare each in `.github/ci-lanes.conf`, marked `:event-uniform` where it does the same work on every event, publish its `lane_<name>` output from the `changes` job, and give it the same `needs:`, and the condition and aggregate arguments [§ Per-lane verdicts](#per-lane-verdicts) sets out. Name each lane in CI's `needs:`. A lane that reads a file in the docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action). Copied as it stands, the placeholder fails, and `CI` fails with it.
 - **Each event runs the lanes its own diff calls for, less the ones a passing run of the same tree already ran.** The template runs on `pull_request` and `merge_group`, the classifier judges each event's own diff, and every gated lane reads the same answers on both, per [§ Per-lane verdicts](#per-lane-verdicts). A merge group whose tree its pull request's run tested stands down what that run covered, per [§ Proof reuse](#proof-reuse), so the template passes `covers-all-lanes: true` for a workflow with no declaration, and each lane the adopter declares carries `:event-uniform` where it does the same work on every event: a lane that gates a job or step on the event goes unmarked. The declaration is read from the `classifier` checkout, the default branch. No line of the template reads the change class. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for.
 - **The render prerequisites are Shape 4's.** The template pins a kendex main build and reads its installer at the same sha. Move both together, to a build whose `kendex verify --json` prints a version 1 document. Neither network step fails the job, and neither does the step ahead of them that reads `harness-only` out of the default branch, which the adoption pull request and its merge group do not have yet. Without any of the three the `render` class is out of reach, and every other class is judged as usual.
+- **Every job runs on `vars.CI_RUNNER_2V`, falling back to `ubuntu-latest`.** The organization variable names the shared runner; a repository without it runs on GitHub's hosted runner.
 - **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and a verdict stood it down, per [§ Per-lane verdicts](#per-lane-verdicts).
 
 [`tests/ci-template.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/tests/ci-template.test.sh) runs the template's `lanes` step, evaluates its job outputs and conditions per event and action answer, and hands its waiver and aggregate arguments to the real `aggregate-needs`.

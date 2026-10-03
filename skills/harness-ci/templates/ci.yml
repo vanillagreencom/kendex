@@ -30,7 +30,7 @@ jobs:
   # THE ONE READ OF THE CHANGE CLASS. No other job classifies anything.
   changes:
     name: Classify the diff
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     # The render proof re-renders every installed item, so its cost grows
     # with the install rather than with the diff.
     timeout-minutes: 20
@@ -162,7 +162,7 @@ jobs:
     # result term keeps the empty outputs of a dead classifier from reading
     # as a skip.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -177,7 +177,7 @@ jobs:
     name: CI
     needs: [changes, test]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
