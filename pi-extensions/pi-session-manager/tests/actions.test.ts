@@ -97,6 +97,8 @@ for (const row of ownerRows) {
 		const root = sessionFixture();
 		const bin = join(root, "bin");
 		mkdirSync(bin);
+		writeFileSync(join(bin, "trash"), '#!/bin/sh\n/bin/rm -f "$@"\n');
+		chmodSync(join(bin, "trash"), 0o755);
 		const agentDir = join(root, "pi-agent");
 		const laneB = join(root, "lane-b");
 		const sessions = { owned: join(root, "owned.jsonl"), other: join(root, "other.jsonl") };
@@ -120,7 +122,8 @@ for (const row of ownerRows) {
 				await child.exited;
 			}
 
-			// No `trash` on PATH: a delete that is not refused unlinks.
+			// A `trash` that removes the file: a delete that is not refused
+			// succeeds there, so only the check before `trash` can refuse.
 			process.env.PATH = bin;
 			process.env.PI_CODING_AGENT_DIR = agentDir;
 			clearPackageConfigCache();
@@ -134,7 +137,7 @@ for (const row of ownerRows) {
 					error: expect.stringContaining(laneB),
 				});
 			} else {
-				expect(result).toEqual({ ok: true, method: "unlink" });
+				expect(result).toEqual({ ok: true, method: "trash" });
 			}
 			expect(existsSync(target)).toBe(row.refused);
 			expect(existsSync(extensionState)).toBe(row.refused);
