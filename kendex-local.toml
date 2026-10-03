@@ -23,6 +23,10 @@ Enforce a rule on the platform where it can hold it (GitHub settings and ruleset
 ### Compatibility
 
 From 1.0, kendex keeps a retired consumer-visible form reading, with one warning that names the new form, until the next major release. This overrides § Cleanup's no-shim line here; the rule is `changelog.d/README.md` § Release standard.
+
+### Validation budget
+
+The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_CMD` run.
 '''
 orch = '''
 ### Owner messages

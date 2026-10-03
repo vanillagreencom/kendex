@@ -35,6 +35,10 @@ Enforce a rule on the platform where it can hold it (GitHub settings and ruleset
 
 From 1.0, kendex keeps a retired consumer-visible form reading, with one warning that names the new form, until the next major release. This overrides § Cleanup's no-shim line here; the rule is `changelog.d/README.md` § Release standard.
 
+### Validation budget
+
+The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_CMD` run.
+
 <!-- kendex:project-instructions:end -->
 
 # Code Quality
@@ -75,7 +79,7 @@ Integrate through the system's own interface. Before building on another system 
 
 ## Prove Your Guards
 
-A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A script's mutant control edits a copy of the script, never the tracked file. A control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
+A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Each control is permanent, as § Tests states. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A script's mutant control edits a copy of the script, never the tracked file. A control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
 
 - **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
 - **A floor alone is not a control.** An inventory or coverage check derives the members it visits from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open. A behavior or contract test keeps its expected values independent of the implementation: never derive an expected API set, parser result or accepted input from the code that produces it.
@@ -88,13 +92,14 @@ A new or modified production gate or guard ships with one must-fail control per 
 
 ## Tests
 
-- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards.
+- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards. A control is permanent: it stays in its surface's test file and runs whenever that test runs, never only at authoring.
 - Where no production edit can redden a surface's test, the test states that, why, and what it holds, in place of its control. A test of the mechanism that implements a guarantee moves with the mechanism: assert the guarantee.
 - A test pins values a program parses: keys, codes, enums, exit status, flags, and a text protocol a named consumer reads, stated in the producer's header. A test that pins prose or the test harness's own configuration is deleted.
 - A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
 - A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
 - A change selects its checks, locally and in CI, from each suite's direct and indirect inputs: its sources, the dependencies it consumes, fixtures, generated-code inputs, configuration and build settings. Select through the suite's existing entry point and the dependency metadata the build already holds; a suite both run goes through the same entry point in both. Missing or unreadable selection evidence runs every check in the requested area. Selection needs no custom selector, cache, runner or workflow, and no dependency table outside the tests' own files.
 - Where the build holds no dependency graph, a change to the suite's entry point, the tree's assertion library or its shared fixtures runs the whole suite. Beyond those files, a test is selected by its path, named for its surface under the placement rule below, and by any note in its own file: it runs when it, its surface or a file its note names changes, if every repository file it or its surface uses is named one of those ways. A test where that does not plainly hold runs on every change, with no separate list; no test must carry a note, and no check judges the notes. The repository's full and release runs run every test.
+- Read a suite's wall time from what its entry point already prints; this rule adds no output. A repository may state a per-change validation budget, in minutes, in its Project Instructions. A suite that takes a change's validation over that budget is split by input under the selection bullets above, never skipped and never moved behind a flag.
 - Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file.
 - A test reads time through an injectable clock; a real wait names its reason beside it.
 - A collection-driven check states its coverage floor and proves its discovery completed. It rejects an empty result when the floor requires members, and a failed or incomplete discovery never reports a valid empty set. An empty application input the contract permits passes, and a test covers it.
