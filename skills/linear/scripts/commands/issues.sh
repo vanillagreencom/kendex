@@ -910,7 +910,7 @@ get_issue() {
                 project { id name }
                 projectMilestone { id name }
                 cycle { id name number }
-                team { name }
+                team { id name }
                 labels { nodes { name } }
                 priority
                 estimate
@@ -1786,8 +1786,11 @@ update_issue() {
     # Get issue to find its team for state and label lookup - use raw format
     local issue_result
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
-    local team_name
+    local team_name team_id
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
+    # The issue names its own team by id: a state resolves under that id, never
+    # through a name lookup that a team key can make ambiguous.
+    team_id=$(echo "$issue_result" | jq -r '.issue.team.id // empty')
     # The scope a milestone name resolves in when --project is absent: the
     # issue is already in a project, and asking for --project to name the one
     # it is in would move it to satisfy a lookup.
@@ -1926,8 +1929,12 @@ update_issue() {
 
     # Handle state (fail fast with available states on miss)
     if [ -n "$state" ]; then
+        if [ -z "$team_id" ]; then
+            jq -cn --arg issue "$issue_id" '{error: ("Issue team id missing: " + $issue)}' >&2
+            return 1
+        fi
         local state_id
-        state_id=$(resolve_state_id "$state" "$team_name")
+        state_id=$(resolve_state_id "$state" "$team_id")
         if [ -z "$state_id" ]; then
             return 1
         fi

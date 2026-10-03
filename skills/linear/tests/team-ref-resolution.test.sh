@@ -45,6 +45,12 @@ case "$query" in
 *"cycleCreate("*) printf '%s' '{"data":{"cycleCreate":{"success":true,"cycle":{"id":"c1","number":1,"name":null,"startsAt":"","endsAt":"","team":{"name":"kendex"}}}}}' ;;
 *"issueLabelCreate("*) printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"l1","name":"n","color":"","isGroup":false,"parent":null}}}}' ;;
 *"issueCreate("*) jq -cj '{data: {issueCreate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json" ;;
+*"issueUpdate("*) jq -cj '{data: {issueUpdate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json" ;;
+*"issue(id:"*)
+  jq -cj --argjson team '{"id":"3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73","name":"ENG"}' \
+    '{data: {issue: (.issue + {team: $team})}}' "$FIXTURE_DIR/label-team-issue.json"
+  ;;
+*"workflowStates(filter:"*) printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}' ;;
 *"team(id:"*) printf '%s' '{"data":{"team":{"id":"5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15","name":"kendex","key":"KEN"}}}' ;;
 *) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
@@ -88,6 +94,20 @@ issues create|issues create --team REF --title Ref|.variables.input.teamId
 labels create|labels create --team REF --name ref-label|.variables.input.teamId
 teams get|teams get REF|.variables.id
 ROWS
+
+# The issue's team is named ENG, which is another team's key: its state
+# resolves under the id the issue read carries, with no team lookup at all.
+ENX_TEAM_ID=3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73
+run_status rc run_team_ref update-state issues update KEN-2413 --state "In Progress"
+assert_eq "issues update --state: succeeds for a team named ENG" "$rc" 0
+assert "issues update --state: sends no team lookup" \
+  jq -s -e 'length > 0 and all(.query | contains("teams(filter:") | not)' "$TMP_ROOT/update-state.jsonl"
+assert "issues update --state: resolves the state under the issue's own team id" \
+  jq -s -e --arg team "$ENX_TEAM_ID" \
+    'map(select(.query | contains("workflowStates(filter:"))) | length == 1 and .[0].variables.teamId == $team' \
+    "$TMP_ROOT/update-state.jsonl"
+assert "issues update --state: sends the resolved state id" \
+  jq -s -e 'last | .variables.input.stateId == "state-in-progress"' "$TMP_ROOT/update-state.jsonl"
 
 run_status rc run_team_ref ambiguous teams get ENG
 assert_file_contains "ambiguous: ENG refuses naming both teams" "$TMP_ROOT/ambiguous.err" \

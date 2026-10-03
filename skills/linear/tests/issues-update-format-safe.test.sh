@@ -32,13 +32,11 @@ config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
 
-issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
 
 case "$query" in
 *"issueUpdate(id:"*)
   printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200" ;;
-*"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200' ;;
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-todo","name":"Todo"}]}}}___HTTP_CODE___200' ;;
 *"issue(id:"*)

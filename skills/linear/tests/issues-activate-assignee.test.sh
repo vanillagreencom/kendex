@@ -67,9 +67,6 @@ case "$query" in
   *) printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200' ;;
   esac
   ;;
-*"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
-  ;;
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}___HTTP_CODE___200'
   ;;
@@ -79,7 +76,7 @@ case "$query" in
     exit 0
   fi
   jq -cj --argjson assignee "${FAKE_ASSIGNEE:-null}" '.data.issue.assignee = $assignee' <<'JSON'
-{"data":{"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:old"},{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","branchName":"cc-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"parent":null,"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}
+{"data":{"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"nodes":[{"name":"agent:old"},{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","branchName":"cc-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"parent":null,"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}
 JSON
   printf '%s' '___HTTP_CODE___200'
   ;;
@@ -179,3 +176,5 @@ lookup-failed|users|0|users lookup unavailable
 issue-read-failed|issue|0|issue read unavailable
 update-failed|update|1|-
 ROWS
+assert_eq "issue-read-failed: nothing is requested after the failed issue read" \
+  "$(jq -s 'length' "$TMP_ROOT/issue-read-failed.jsonl")" 1

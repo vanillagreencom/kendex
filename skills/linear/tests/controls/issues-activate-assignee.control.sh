@@ -40,9 +40,9 @@ control_replace scripts/commands/issues.sh 1 \
     '        user=$(find_user_by_email "$user_email") || return 1' \
     '        user=$(find_user_by_email "$user_email") || user=""'
 
-# Let a failed issue read through as an empty answer. Activation then reports
-# the assignee kept and lands the state change with nothing read.
-control_expect "issue-read-failed: activation fails"
+# Let a failed issue read through as an empty answer. Activation then goes on
+# with nothing read and reads the issue a second time on its way to the update.
+control_expect "issue-read-failed: nothing is requested after the failed issue read"
 control_replace scripts/commands/issues.sh 1 \
     '    result=$(graphql_query "$query" "$variables") || return 1' \
     '    result=$(graphql_query "$query" "$variables") || :'
