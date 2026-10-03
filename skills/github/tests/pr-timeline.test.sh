@@ -225,14 +225,23 @@ a final head with an approval and no gate status@.data.repository.pullRequest |=
 ROWS
 
 echo "=== the first gate pass is the first approval on any head, else each head's status history ==="
+# The Bot review on b1, dismissed when the force push came, as a ruleset
+# dismissing stale approvals on push leaves it: the review reads DISMISSED
+# and its dismissal event names the state it held before.
+dismissed() { # PREVIOUS_STATE
+  printf '.data.repository.pullRequest |= (.reviews.nodes[1].state = "DISMISSED" | .timelineItems.nodes += [{__typename: "ReviewDismissedEvent", previousReviewState: "%s", review: {submittedAt: .reviews.nodes[1].submittedAt}}])' "$1"
+}
+DISMISSED_APPROVAL=$(dismissed APPROVED)
+DISMISSED_CHANGES=$(dismissed CHANGES_REQUESTED)
 # Each row asserts first_gate_met and how many status histories were read.
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
   run "$edit" >/dev/null
   assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" "$want" "$label"
-done <<'ROWS'
-an approval on a force-pushed-over head is the first pass, and no status history is read@.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
-approvals on two heads: the first@.data.repository.pullRequest.reviews.nodes[1,2].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
+done <<ROWS
+an approval dismissed on a force-pushed-over head is the first pass, and no status history is read@$DISMISSED_APPROVAL@"2026-09-20T09:40:00Z" 0
+approvals on two heads, the older one dismissed: the first@$DISMISSED_APPROVAL | .data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
+a dismissed review that requested changes is no pass@$DISMISSED_CHANGES@"2026-09-20T10:05:00Z" 2
 an approval on the final head stands ahead of an older head's earlier status pass@.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"@"2026-09-20T10:30:00Z" 0
 no approval reads every head's status history@.@"2026-09-20T10:05:00Z" 2
 ROWS
@@ -570,10 +579,23 @@ assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T09:40:00
   "control: without the head binding an older head's approval is the final head's gate"
 
 # The first gate pass read from the status history alone.
-mutate 'first_gate_met: ($approvals | map(.submittedAt) | min),' 'first_gate_met: null,'
-run '.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"' >/dev/null
+mutate 'first_gate_met: ($approvals | map(.submittedAt) + $dismissed_approvals | min),' 'first_gate_met: null,'
+run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
 assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:05:00Z"' \
-  "control: without the approvals an older head's approval is not the first gate pass"
+  "control: without the approvals the final head's approval is not the first gate pass"
+
+# The first gate pass read from current approvals alone: the approval the
+# ruleset dismissed on the pushed-over head is lost.
+mutate '| map(.submittedAt) + $dismissed_approvals | min),' '| map(.submittedAt) | min),'
+run "$DISMISSED_APPROVAL" >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:05:00Z"' \
+  "control: without the dismissal events a dismissed approval is not the first gate pass"
+
+# Every dismissed review read as an approval: one that requested changes passes.
+mutate 'select(.previousReviewState == "APPROVED")' 'select(true)'
+run "$DISMISSED_CHANGES" >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T09:40:00Z"' \
+  "control: without the previous-state test a dismissed change request is the first gate pass"
 
 # The status history read beside an approval: its earlier pass replaces it.
 mutate 'if [ -z "$approved" ]; then' 'if :; then'

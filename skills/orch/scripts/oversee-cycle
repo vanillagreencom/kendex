@@ -103,9 +103,9 @@
 #             The cycle line and fleet log retain all three fields; rollup counts
 #             estimate_miss and path_miss.
 #   refixed   a push landed after the first gate pass (pr-timeline's
-#             first_gate_met: the first approval on any head, else the first
-#             review-gate status pass); null where no gate pass or no push
-#             was read
+#             first_gate_met: the first approval on any head, one a later
+#             push dismissed included, else the first review-gate status
+#             pass); null where no gate pass or no push was read
 #   pr_rounds the count of review rounds in the record's `pr_rounds` list,
 #             which is pr-timeline's `rounds`: each review round and fix round
 #             GitHub saw, with its start, end and seconds. review, fix, bot

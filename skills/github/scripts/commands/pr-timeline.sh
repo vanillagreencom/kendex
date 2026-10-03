@@ -36,7 +36,10 @@ Output, one JSON object on stdout:
                         answers its threads in reviews of its own, which are
                         no bot's review of the PR,
     "first_gate_met":   the first approval submitted on any head the PR
-                        carried; where none was submitted, the first success
+                        carried, one dismissed since included: a ruleset
+                        that dismisses stale approvals on push turns every
+                        approval on a pushed-over head into a dismissed
+                        review; where none was submitted, the first success
                         the gate context posted on any head the PR carried,
                         force-pushed-over heads included, read from each
                         head's whole status history, since a later status on
@@ -142,13 +145,14 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
       reviews(first: 100) { totalCount nodes { state submittedAt author { __typename login } commit { oid ...pushed } } }
-      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT]) {
+      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
           __typename
           ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid ...pushed } }
           ... on AutoMergeEnabledEvent { createdAt }
           ... on AddedToMergeQueueEvent { createdAt }
+          ... on ReviewDismissedEvent { previousReviewState review { submittedAt } }
         }
       }
     }
@@ -273,6 +277,10 @@ def rounds($reviews; $pushed):
   | ([$p.commits.nodes[].commit, ($pushes[] | .beforeCommit // empty), ($p.reviews.nodes[] | .commit // empty)]
      | map({key: .oid, value: pushed(.)}) | from_entries) as $pushed
   | [$p.reviews.nodes[] | select(.state == "APPROVED" and .submittedAt != null)] as $approvals
+  # A dismissed review reports DISMISSED, its approval kept only on the
+  # dismissal event.
+  | [$p.timelineItems.nodes[] | select(.__typename == "ReviewDismissedEvent")
+     | select(.previousReviewState == "APPROVED") | .review.submittedAt // empty] as $dismissed_approvals
   | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null
       and .author.login != $p.author.login)] as $bot
   | {
@@ -280,7 +288,7 @@ def rounds($reviews; $pushed):
       created: $p.createdAt,
       last_push: ([($pushed[$head.oid] // $head.committedDate), ($pushes[] | .createdAt)] | map(select(. != null)) | max),
       first_bot_review: ($bot | map(.submittedAt) | min),
-      first_gate_met: ($approvals | map(.submittedAt) | min),
+      first_gate_met: ($approvals | map(.submittedAt) + $dismissed_approvals | min),
       gate_met: (([$approvals[] | select(.commit.oid == $head.oid) | .submittedAt] | min)
                  // ([gate($head)] | first // null)),
       ci_green: null,
