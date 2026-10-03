@@ -297,6 +297,10 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one walk: three toggles at two scopes, each read back from settings, instructions, record, audit and scan"
+)]
 fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
     use kendex_core::{apply, engine, lock, manifest, pi_ext, scan, settings};
     use serde_json::json;
@@ -308,11 +312,12 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
     fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     fs::write(
         source.join("package.json"),
-        r#"{"name":"pi-widgets","pi":{"extensions":["index.js"]}}"#,
+        r#"{"name":"pi-widgets","pi":{"extensions":["index.js"],"appendSystem":"system.md"}}"#,
     )
     .unwrap();
     let payload = b"export default function widgets(pi) {}\n";
     fs::write(source.join("index.js"), payload).unwrap();
+    fs::write(source.join("system.md"), "Use the widget tool.\n").unwrap();
     for scope in [Scope::Global, scope(&w)] {
         let path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -365,6 +370,9 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
                 expected["packages"][1]["extensions"] = json!([]);
             }
             assert_eq!(observed, expected);
+            // A switch carries the package's instructions with it.
+            let append = fs::read_to_string(pi_ext::append_system_path(&root)).unwrap();
+            assert_eq!(append.contains("Use the widget tool."), enabled);
             assert_eq!(fs::read(dest.join("index.js")).unwrap(), payload);
             let record = lock::load(&lock::lock_path(&w.env, &scope)).unwrap();
             let declared = engine::ops::manifest_for_reading(&w.env, &scope).unwrap();

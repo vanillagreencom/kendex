@@ -205,7 +205,45 @@ fn a_disabled_declaration_installs_with_no_extensions_and_records_the_native_swi
     .unwrap();
     assert!(!record.enabled);
     assert!(f.scope.join("bin/pi-widgets").is_symlink());
-    assert!(append_system_path(&f.scope).is_file());
+}
+
+/// A package that is off gets no `APPEND_SYSTEM.md` block, and a reinstall
+/// strips the one an earlier install wrote: one row per off-switch, the
+/// declaration's and the package's own `enabled` setting, beside the rows
+/// that leave it on. Another package's block stays whatever the row.
+#[test]
+fn a_package_that_is_off_writes_no_append_system_block() {
+    for (declared, setting, block) in [
+        (true, None, true),
+        (true, Some(true), true),
+        (true, Some(false), false),
+        (false, None, false),
+    ] {
+        let f = scope();
+        let source = fixture(&f.root, "pi-widgets", "Widget guidance.\n");
+        let other = fixture(&f.root, "pi-other", "Other guidance.\n");
+        install(&f.env, &f.scope, &other, true).unwrap();
+        install(&f.env, &f.scope, &source, true).unwrap();
+        if let Some(enabled) = setting {
+            let mut settings = settings_json(&f.scope);
+            settings["kendex"] = serde_json::json!({"extensionManager": {"config": {
+                "pi-widgets": {"enabled": enabled}
+            }}});
+            write(&settings_path(&f.scope), &settings.to_string());
+        }
+
+        install(&f.env, &f.scope, &source, declared).unwrap();
+
+        let append = std::fs::read_to_string(append_system_path(&f.scope)).unwrap();
+        let row = format!("declared={declared} setting={setting:?}");
+        assert_eq!(
+            append.contains("<!-- kendex:append-system pi-widgets begin -->"),
+            block,
+            "{row}"
+        );
+        assert_eq!(append.contains("Widget guidance."), block, "{row}");
+        assert!(append.contains("Other guidance."), "{row}");
+    }
 }
 
 #[test]

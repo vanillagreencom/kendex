@@ -174,6 +174,21 @@ pub fn package_enabled(path: &Path, name: &str) -> Result<Option<bool>> {
         .then(|| matching.any(extensions_enabled)))
 }
 
+/// Whether the package's own `enabled` setting,
+/// `kendex.extensionManager.config["<name>"].enabled`, leaves it on. Only a
+/// boolean `false` turns it off: each package reads any other value, or
+/// none, as its default, which is on.
+pub(super) fn config_enabled(path: &Path, name: &str) -> Result<bool> {
+    let (settings, _) = read(path)?;
+    let setting = settings
+        .get("kendex")
+        .and_then(|kendex| kendex.get("extensionManager"))
+        .and_then(|manager| manager.get("config"))
+        .and_then(|config| config.get(name))
+        .and_then(|package| package.get("enabled"));
+    Ok(setting != Some(&Value::Bool(false)))
+}
+
 /// Render one settings write for all package switches in a scope. The caller
 /// binds the returned bytes to a journaled write with an observed precondition.
 pub(super) fn toggled_packages<'a>(

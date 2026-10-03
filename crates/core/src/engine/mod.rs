@@ -238,13 +238,13 @@ pub fn plan_scope(
 
     // Orphan retention copies old entries; carrier comparison must finalize
     // the retained Pi records after that pass, including native enablement.
-    drift.extend(crate::pi_ext::record_matching_manifest(
+    drift.extend(plan_pi_switches(
         env,
         scope,
         &manifest,
         &mut new_lock,
-        crate::pi_ext::RecordBasis::Recorded,
-        Some(&mut ops),
+        &mut ops,
+        &mut config_edits,
     )?);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     plan_config_edits(config_edits, &mut new_lock, &mut ops)?;
@@ -291,6 +291,35 @@ pub fn plan_scope(
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
+}
+
+/// Finalize the kept Pi records and plan the native switches a declaration
+/// changed; each switch's `APPEND_SYSTEM.md` edit joins that file's other
+/// config edits.
+fn plan_pi_switches(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    new_lock: &mut Lock,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+) -> Result<Vec<DriftRow>> {
+    let mut edits = Vec::new();
+    let drift = crate::pi_ext::record_matching_manifest(
+        env,
+        scope,
+        manifest,
+        new_lock,
+        crate::pi_ext::RecordBasis::Recorded,
+        Some(crate::pi_ext::SwitchPlan {
+            ops,
+            edits: &mut edits,
+        }),
+    )?;
+    for (path, label, edit) in edits {
+        config_edits.push(path, label, edit);
+    }
+    Ok(drift)
 }
 
 /// Everything a plan takes away, after every write is planned: stale

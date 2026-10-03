@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::configedit::{remove_marker_block, upsert_marker_block};
+use crate::configedit::{ConfigEdit, remove_marker_block, upsert_marker_block};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::make_symlink;
@@ -18,8 +18,9 @@ pub mod carrier;
 mod record;
 pub(crate) use record::ensure_toggle_ready;
 pub use record::{
-    DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry, paired_roots,
-    record_matching_manifest, record_matching_name, resolve_declared, scope_root, session_roots,
+    DeclaredPackage, SwitchPlan, check_origin, clear_install_completion, matching_lock_entry,
+    paired_roots, record_matching_manifest, record_matching_name, resolve_declared, scope_root,
+    session_roots,
 };
 mod files;
 mod renames;
@@ -206,7 +207,8 @@ pub struct InstallOutcome {
 /// Replace a package and register it without changing Pi's package order.
 /// A disabled declaration loads no extensions, but refuses to erase a saved
 /// nonempty selection. An enabled declaration keeps any existing native filter,
-/// including a disable the user already set.
+/// including a disable the user already set. The package's `APPEND_SYSTEM.md`
+/// block follows [`append_system_block`].
 pub fn install(
     env: &Env,
     scope_root: &Path,
@@ -222,7 +224,7 @@ pub fn install(
     npm_install(&package.name, &dest)?;
     let (bins, unbuilt_bins) = link_bins(scope_root, &package, &dest)?;
     settings::upsert_package(&settings_path(scope_root), &package.name, enabled)?;
-    write_append_system(scope_root, &package, &dest)?;
+    write_append_system(scope_root, &package, &dest, enabled)?;
     Ok(InstallOutcome {
         name: package.name,
         version: package.version,
@@ -400,20 +402,63 @@ fn unlink_bins(dir: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Mirror the package's `appendSystem` file into the scope's
-/// `APPEND_SYSTEM.md` block. A package that ships no such file gets no block.
-fn write_append_system(scope_root: &Path, package: &PiPackage, dest: &Path) -> Result<()> {
-    let path = append_system_path(scope_root);
-    let content = match &package.append_system {
-        Some(relative) => read_if_exists(&inside(dest, relative, &package.name)?)?,
-        None => None,
-    };
-    let block = content.as_deref().map(str::trim).unwrap_or_default();
-    if block.is_empty() {
-        return strip_append_system(&path, &package.name);
+/// The text a package adds to the scope's `APPEND_SYSTEM.md`, or `None`
+/// where it adds none: it ships no `appendSystem` file or an empty one, its
+/// declaration is disabled, or its own `enabled` setting in the scope's
+/// settings is off. A package that is off registers no tools, and its
+/// instructions would tell the model to call tools it does not have.
+fn append_system_block(
+    scope_root: &Path,
+    package: &PiPackage,
+    dest: &Path,
+    enabled: bool,
+) -> Result<Option<String>> {
+    if !enabled || !settings::config_enabled(&settings_path(scope_root), &package.name)? {
+        return Ok(None);
     }
+    let Some(relative) = &package.append_system else {
+        return Ok(None);
+    };
+    let content = read_if_exists(&inside(dest, relative, &package.name)?)?;
+    Ok(content
+        .map(|text| text.trim().to_owned())
+        .filter(|block| !block.is_empty()))
+}
+
+/// The edit that brings an installed package's `APPEND_SYSTEM.md` block in
+/// line with a declaration switched to `enabled`, for a plan that changes
+/// the switch without reinstalling the package.
+pub(crate) fn append_system_edit(
+    scope_root: &Path,
+    name: &str,
+    enabled: bool,
+) -> Result<(PathBuf, ConfigEdit)> {
+    let dest = package_path(scope_root, name)?;
+    let package = read(&dest)?;
+    let edit = match append_system_block(scope_root, &package, &dest, enabled)? {
+        Some(block) => ConfigEdit::UpsertMarkerBlock {
+            name: package.name,
+            block,
+        },
+        None => ConfigEdit::RemoveMarkerBlock { name: package.name },
+    };
+    Ok((append_system_path(scope_root), edit))
+}
+
+/// Mirror the package's [`append_system_block`] into the scope's
+/// `APPEND_SYSTEM.md`, or strip the package's block where it has none.
+fn write_append_system(
+    scope_root: &Path,
+    package: &PiPackage,
+    dest: &Path,
+    enabled: bool,
+) -> Result<()> {
+    let path = append_system_path(scope_root);
+    let Some(block) = append_system_block(scope_root, package, dest, enabled)? else {
+        return strip_append_system(&path, &package.name);
+    };
     let current = read_if_exists(&path)?.unwrap_or_default();
-    let next = upsert_marker_block(&current, &package.name, block);
+    let next = upsert_marker_block(&current, &package.name, &block);
     if next == current {
         return Ok(());
     }

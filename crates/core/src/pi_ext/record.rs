@@ -116,17 +116,27 @@ pub fn matching_lock_entry(
     }))
 }
 
+/// Where a planning pass collects what switching a declaration changes: the
+/// native switches' settings write, and each switched package's
+/// `APPEND_SYSTEM.md` edit with its label, which the plan composes with the
+/// file's other edits into one mutation.
+pub struct SwitchPlan<'a> {
+    pub ops: &'a mut Vec<crate::apply::PlannedOp>,
+    pub edits: &'a mut Vec<(PathBuf, String, crate::configedit::ConfigEdit)>,
+}
+
 /// Compare each declared carrier package and preserve durable provenance.
 /// Missing or unreadable bytes produce drift rather than an omitted row.
-/// With `ops`, plan native switches and record their intended state. Without
-/// `ops`, retain the observed switch for read-only recovery and installation.
+/// With `plan`, plan native switches and record their intended state.
+/// Without it, retain the observed switch for read-only recovery and
+/// installation.
 pub fn record_matching_manifest(
     env: &Env,
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
     basis: RecordBasis,
-    ops: Option<&mut Vec<crate::apply::PlannedOp>>,
+    plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     record_matching(
         env,
@@ -135,7 +145,7 @@ pub fn record_matching_manifest(
         lock,
         manifest.pi_extensions.iter(),
         basis,
-        ops,
+        plan,
     )
 }
 
@@ -165,7 +175,7 @@ fn record_matching<'a>(
     lock: &mut crate::lock::Lock,
     declarations: impl Iterator<Item = (&'a String, &'a crate::manifest::ItemDecl)>,
     basis: RecordBasis,
-    ops: Option<&mut Vec<crate::apply::PlannedOp>>,
+    mut plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     use crate::engine::{DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
@@ -180,9 +190,11 @@ fn record_matching<'a>(
         let detail = match result {
             Ok(Some(mut entry)) => {
                 let differs = entry.enabled != decl.enabled;
-                if differs && ops.is_some() {
+                if differs && let Some(plan) = plan.as_mut() {
                     switches.push((name.as_str(), decl.enabled));
                     entry.enabled = decl.enabled;
+                    let (path, edit) = super::append_system_edit(&root, name, decl.enabled)?;
+                    plan.edits.push((path, format!("switch {name}"), edit));
                 }
                 lock.entries.insert(key, entry);
                 if !differs {
@@ -208,13 +220,13 @@ fn record_matching<'a>(
             also_in_the_way: Vec::new(),
         });
     }
-    if let Some(ops) = ops
+    if let Some(plan) = plan
         && !switches.is_empty()
     {
         let path = super::settings_path(&root);
         let pre = crate::apply::Pre::observed(&path)?;
         let text = super::settings::toggled_packages(&path, switches.into_iter())?;
-        ops.push(crate::apply::PlannedOp {
+        plan.ops.push(crate::apply::PlannedOp {
             description: "Set Pi package extension filters".into(),
             op: crate::apply::Op::WriteFile {
                 path,
