@@ -1,0 +1,1 @@
+- On Codex, the reviewer-stop-check and session-end-row hooks now install and run; session-end-row times out after 3 seconds, the longest Codex runs a session-end hook.
