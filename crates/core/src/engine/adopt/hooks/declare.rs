@@ -19,7 +19,8 @@ use super::Found;
 /// carrying something a declaration cannot say. A hook adopted into a shape
 /// that drops half of what it did would run differently after the next
 /// apply, with nothing said — so it is refused, naming what it carries.
-pub(super) fn declaration(name: &str, found: &[Found]) -> Result<CustomHook> {
+/// `pinned` is whether the declaration lists the tools it was found on.
+pub(super) fn declaration(name: &str, found: &[Found], pinned: bool) -> Result<CustomHook> {
     let unusable = |problem: String| CoreError::AdoptNameUnusable {
         name: crate::names::shown(name),
         problem,
@@ -66,7 +67,7 @@ pub(super) fn declaration(name: &str, found: &[Found]) -> Result<CustomHook> {
         command: first.registration.command.clone(),
         description: Some(format!("adopted from {}", first.harness.display_name())),
         timeout: said[0].1.timeout,
-        harnesses: Some(found.iter().map(|f| f.harness.name().to_owned()).collect()),
+        harnesses: pinned.then(|| found.iter().map(|f| f.harness.name().to_owned()).collect()),
         enabled: true,
         agents: HookAgents::One("all".to_owned()),
     })

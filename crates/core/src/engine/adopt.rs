@@ -296,10 +296,7 @@ fn declare(
     already_declared: bool,
     source: &str,
 ) {
-    let defaults_match = crate::engine::desired::names_the_default(
-        &wanted,
-        &crate::engine::desired::harnesses_for(None, manifest, kind, scope),
-    );
+    let defaults = crate::engine::desired::harnesses_for(None, manifest, kind, scope);
     let decl = manifest
         .declared_mut(kind)
         .entry(name.to_owned())
@@ -313,12 +310,16 @@ fn declare(
     match &mut decl.harnesses {
         // A list already there is extended, never replaced: the tools it
         // names still have the item, and pinning it to the ones being kept
-        // now would leave the rest with files nothing manages.
+        // now would leave the rest with files nothing manages. Extended to
+        // exactly the default set, it is left off as a first write's is.
         Some(listed) => {
             for harness in wanted {
                 if !listed.contains(&harness) {
                     listed.push(harness);
                 }
+            }
+            if crate::engine::desired::names_the_default(listed, &defaults) {
+                decl.harnesses = None;
             }
         }
         // A declaration that was already here and left the tools to the
@@ -326,7 +327,11 @@ fn declare(
         // would narrow it — a tool that had nothing at its place this pass
         // would stop getting the item at all, which is not what keeping
         // files was asked to do.
-        None if !defaults_match && !already_declared => decl.harnesses = Some(wanted),
+        None if !crate::engine::desired::names_the_default(&wanted, &defaults)
+            && !already_declared =>
+        {
+            decl.harnesses = Some(wanted)
+        }
         None => {}
     }
 }

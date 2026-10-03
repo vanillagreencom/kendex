@@ -120,6 +120,76 @@ fn adopting_a_hook_rewrites_only_its_own_registration() {
     assert!(world.at(".agents/hooks/guard.sh").is_file());
 }
 
+/// An adopted hook's `[[custom-hooks]]` entry lists the tools it was found
+/// on only where `[install]` would not give it exactly those: a list equal
+/// to the default changes nothing today and keeps the hook off any tool
+/// `[install]` gains later. Antigravity takes a hook only through a list
+/// that names it, so there the list stays. Each row: the `[install]` tools,
+/// the registry the hook sits in and what it holds, the `--harness` values,
+/// and the list the entry carries.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_adopted_hook_lists_its_tools_only_where_install_would_not() {
+    const CLAUDE: (&str, &str, &str) = (
+        ".claude/settings.json",
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh"}]}]}}"#,
+        "PreToolUse:Bash:guard",
+    );
+    const ANTIGRAVITY: (&str, &str, &str) = (
+        ".agents/hooks.json",
+        r#"{"guard": {"PreToolUse": [{"matcher": "run_command", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh"}]}]}}"#,
+        "PreToolUse:run_command:guard",
+    );
+    type Row = (
+        &'static [&'static str],
+        (&'static str, &'static str, &'static str),
+        &'static [&'static str],
+        Option<&'static [&'static str]>,
+    );
+    let rows: [Row; 4] = [
+        (&["claude"], CLAUDE, &[], None),
+        (&["claude"], CLAUDE, &["--harness", "claude"], None),
+        (
+            &["claude", "copilot"],
+            CLAUDE,
+            &["--harness", "claude"],
+            Some(&["claude"]),
+        ),
+        (
+            &["antigravity"],
+            ANTIGRAVITY,
+            &["--harness", "antigravity"],
+            Some(&["antigravity"]),
+        ),
+    ];
+    for (installed, (registry, registered, name), flags, listed) in rows {
+        let world = World::new(&[]);
+        world.declare_no_items(installed);
+        super::write(&world.at(registry), registered);
+        super::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+
+        let mut args = vec!["adopt", "hook", name];
+        args.extend(flags);
+        world.run(&args);
+
+        let manifest: toml::Table = world.manifest().parse().unwrap();
+        let entries = manifest["custom-hooks"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "{installed:?} {flags:?}: {manifest}");
+        let harnesses = entries[0].get("harnesses").map(|list| {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool.as_str().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            harnesses.as_deref(),
+            listed,
+            "{installed:?} {flags:?}: {manifest}"
+        );
+    }
+}
+
 /// Which part of a hook's command line adoption moves, one row per
 /// command. A command running something from outside the project is left
 /// exactly as it was: moving it would drag a file the project does not own

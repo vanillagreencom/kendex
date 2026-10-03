@@ -41,6 +41,9 @@ pub(super) fn desired_custom_hooks(
         });
         let targets =
             super::desired::harnesses_for(listed.as_deref(), manifest, ItemKind::Hook, scope);
+        if listed.is_some() {
+            pins_left_out(env, scope, manifest, &spec, state);
+        }
         for harness in &targets {
             let harness = *harness;
             if !spec.applies_to(harness) {
@@ -123,6 +126,38 @@ pub(super) fn desired_custom_hooks(
                 emitted: artifact.emitted(ItemKind::Hook, &spec.name),
                 reasons: BTreeSet::from([Reason::Requested]),
                 artifact,
+            });
+        }
+    }
+}
+
+/// Records each tool the entry's `harnesses` list alone keeps it off: one
+/// the scope installs on, where the entry with no list is registered. The
+/// rule a `[hooks.<n>]` pin is judged by (`desired_kinds::pin_records`),
+/// whatever the switch says; an entry has no header of its own, so its
+/// list never names a tool the hook excludes.
+fn pins_left_out(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    spec: &HookSpec,
+    state: &mut DesiredState,
+) {
+    let unpinned = HookSpec {
+        harnesses: None,
+        ..spec.clone()
+    };
+    for harness in super::desired::harnesses_for(None, manifest, ItemKind::Hook, scope) {
+        if !spec.applies_to(harness)
+            && matches!(
+                delivery(env, scope, harness, &unpinned),
+                Delivery::Registered
+            )
+        {
+            state.pinned_hooks.push(super::PinnedHook {
+                name: spec.name.clone(),
+                harness,
+                pin: super::Pin::LeavesOut,
             });
         }
     }

@@ -349,6 +349,12 @@ pub struct DesiredState {
     /// invariant 4's conflict where the record is another catalog's
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
+    /// Hooks whose pin keeps them off a tool where, with the pin dropped,
+    /// a hook they require would not run beside them: the walk's answer
+    /// for the tools a pin leaves out (`deps::wanted_by`), which plans
+    /// nothing and is read only by the pin records, so a pin is never said
+    /// to keep a hook off a tool it could not run on anyway.
+    pub withheld_past_pin: BTreeSet<(ItemKind, String, HarnessId)>,
     /// The paths each enabled agent this pass places on at least one
     /// harness declares as tracked output, by agent name;
     /// `EngineReport::tracked_outputs`.

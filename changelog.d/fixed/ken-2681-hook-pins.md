@@ -1,0 +1,1 @@
+- Hook pins follow one rule: adoption writes no `harnesses` list equal to the default, and `kendex verify` also judges `[[custom-hooks]]` lists, switched-off hooks and required companions.

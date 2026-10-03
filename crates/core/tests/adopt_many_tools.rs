@@ -6,6 +6,8 @@
 
 use std::fs;
 
+use crate::test_util::rooted;
+
 use kendex_core::engine::adopt::adopt;
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
@@ -132,45 +134,57 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
 /// The declaration already names a tool, and the files being kept are
 /// another tool's. The list is extended: pinning it to the tool being
 /// answered now would leave the one already on it with files nothing
-/// manages.
+/// manages. Extended to exactly the tools `[install]` gives the item, the
+/// list is left off, as a first write's is, so the item follows a tool
+/// added to `[install]` later. Each row: the `[install]` tools, and
+/// whether the extended list stays.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_harness_list_already_there_is_extended_not_replaced() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    fs::create_dir_all(&project).unwrap();
-    fs::write(
-        project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n",
-    )
-    .unwrap();
-    fs::create_dir_all(project.join(".opencode/skills/handmade")).unwrap();
-    fs::write(
-        project.join(".opencode/skills/handmade/SKILL.md"),
-        "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
-    )
-    .unwrap();
+    for (installed, listed) in [
+        ("[\"claude\", \"opencode\", \"codex\"]", true),
+        ("[\"claude\", \"opencode\"]", false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let env = Env::fake(&root, FakeOs::Linux);
+        let project = root.join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!("schema = 6\n\n[install]\nharnesses = {installed}\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode/skills/handmade")).unwrap();
+        fs::write(
+            project.join(".opencode/skills/handmade/SKILL.md"),
+            "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
+        )
+        .unwrap();
 
-    let plan = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "handmade",
-        &[HarnessId::Opencode],
-    )
-    .unwrap();
-    kendex_core::apply::execute(&env, &plan).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "handmade",
+            &[HarnessId::Opencode],
+        )
+        .unwrap();
+        kendex_core::apply::execute(&env, &plan).unwrap();
 
-    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-    let declared = manifest.split("[skills.handmade]").nth(1).unwrap_or("");
-    assert!(
-        declared.contains("\"claude\"") && declared.contains("\"opencode\""),
-        "the tool already on the list was dropped:\n{manifest}"
-    );
+        let manifest = kendex_core::manifest::load_for_mutation(&project.join("kendex.toml"))
+            .unwrap()
+            .unwrap();
+        let declared = manifest.skills.get("handmade").unwrap();
+        assert_eq!(
+            declared.harnesses.as_deref(),
+            listed.then_some(&[HarnessId::Claude, HarnessId::Opencode][..]),
+            "{installed}"
+        );
+    }
 }
 
 /// The tools hold different files under one name, and there is one

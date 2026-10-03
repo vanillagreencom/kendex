@@ -15,7 +15,7 @@ use crate::source_read::SealedSource;
 
 use super::ItemWarning;
 use super::desired::{DesiredState, Withholding};
-use super::desired_kinds::{NotWritten, manifest_refusal, not_written};
+use super::desired_kinds::{NotWritten, if_switched_on, manifest_refusal, not_written};
 use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
 /// One item's declared dependencies. Names are as the author wrote them.
@@ -245,6 +245,12 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
                 .into_iter()
                 .map(|(harness, because)| ((kind, name.clone(), harness), because)),
         );
+        state.withheld_past_pin.extend(
+            found
+                .withheld_past_pin
+                .into_iter()
+                .map(|harness| (kind, name.clone(), harness)),
+        );
     }
 }
 
@@ -259,9 +265,22 @@ struct Wanted {
     /// Whether the parent is switched on: only a hook that would run is
     /// withheld, since one that is off arms nothing beside a missing judge.
     armed: bool,
+    /// The tools its pin leaves out that it would be withheld from with
+    /// the pin dropped (`DesiredState::withheld_past_pin`).
+    withheld_past_pin: BTreeSet<HarnessId>,
 }
 
 impl Wanted {
+    fn new(armed: bool) -> Wanted {
+        Wanted {
+            deps: Vec::new(),
+            findings: Vec::new(),
+            withheld: BTreeMap::new(),
+            armed,
+            withheld_past_pin: BTreeSet::new(),
+        }
+    }
+
     /// Withhold the parent from `tools` for this reason, which keeps the
     /// reason that outranks where one is already held ([`Withholding`]).
     fn withhold(&mut self, tools: impl IntoIterator<Item = HarnessId>, because: Withholding) {
@@ -596,17 +615,19 @@ fn wanted_by(
         config,
         offered,
     } = catalogs.get(&own.0, own.1.as_deref(), state)?;
-    let mut wanted = Wanted {
-        deps: Vec::new(),
-        findings: Vec::new(),
-        withheld: BTreeMap::new(),
-        armed: parent_decl.enabled,
-    };
+    let mut wanted = Wanted::new(parent_decl.enabled);
     let Some(dir) = find_item(sealed, config, kind, parent) else {
         return Some(wanted);
     };
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
         return Some(wanted);
+    };
+    let header = hook_header(sealed, kind, &dir);
+    let past_pin = match &header {
+        Ok(Some(own)) => {
+            left_out_by_pin(env, scope, manifest, state, (kind, parent), own, harnesses)
+        }
+        Ok(None) | Err(_) => Vec::new(),
     };
     // A companion is needed where the parent runs, and nowhere else: a
     // tool the plan writes no parent on is a tool the companion is not
@@ -615,7 +636,7 @@ fn wanted_by(
     // where the parent runs. Off and wanted-at-two-revisions are the
     // exceptions the planner makes too: both still write the parent's
     // position, parked or held, and its companions follow it there.
-    let harnesses: Vec<HarnessId> = match hook_header(sealed, kind, &dir) {
+    let harnesses: Vec<HarnessId> = match &header {
         Ok(Some(own)) => harnesses
             .iter()
             .copied()
@@ -627,7 +648,7 @@ fn wanted_by(
                     state,
                     kind,
                     parent,
-                    Ok(Some(&own)),
+                    Ok(Some(own)),
                     *harness,
                 );
                 !matches!(
@@ -643,42 +664,21 @@ fn wanted_by(
             .collect(),
         Ok(None) | Err(_) => harnesses.to_vec(),
     };
-    let found = &mut wanted.findings;
-    let chosen = chosen_extras(kind, parent, manifest, &declared, found);
-    // Each name taken to the companion it names, and that companion to
-    // the catalog the plan writes it from. A name that resolves to nothing
-    // derives nothing, which withholds an armed hook where it is required.
-    let mut companions: Vec<(ItemKind, String, CatalogKey)> = Vec::new();
-    let mut unresolved = Vec::new();
-    for (_, dep_kind) in DEPENDENT_KINDS
-        .iter()
-        .filter(|(parent_kind, _)| *parent_kind == kind)
-    {
-        let on = dependency_harnesses(*dep_kind, &harnesses, declared.requires_on.as_deref());
-        if on.is_empty() {
-            continue;
-        }
-        let (required, optional) = if *dep_kind == kind {
-            (declared.required.as_slice(), declared.optional.as_slice())
-        } else {
-            (declared.required_skills.as_slice(), [].as_slice())
-        };
-        for name in required
-            .iter()
-            .chain(optional.iter().filter(|o| chosen.contains(o)))
-        {
-            let Some(dep) = resolve(
-                kind, *dep_kind, name, parent, sealed, config, offered, &own.0, found,
-            ) else {
-                unresolved.extend(on.iter().copied());
-                continue;
-            };
-            let planned = expansion
-                .decl_of(*dep_kind, &dep)
-                .unwrap_or_else(|| derived_decl(parent_decl));
-            companions.push((*dep_kind, dep, (planned.source, planned.rev)));
-        }
-    }
+    let chosen = chosen_extras(kind, parent, manifest, &declared, &mut wanted.findings);
+    let resolving = Resolving {
+        kind,
+        parent,
+        parent_decl,
+        declared: &declared,
+        chosen: &chosen,
+        catalog: (sealed, config, offered),
+        source: &own.0,
+        expansion,
+    };
+    let (companions, unresolved) = resolving.companions(&harnesses, &mut wanted.findings);
+    // Nothing is planned on a tool the pin leaves out, so what resolving
+    // finds there is no finding on the plan.
+    let unpinned = resolving.companions(&past_pin, &mut Vec::new());
     if kind == ItemKind::Hook && wanted.armed {
         wanted.withhold(unresolved, Withholding::Requires);
     }
@@ -693,7 +693,138 @@ fn wanted_by(
         state,
         &mut wanted,
     );
+    // Asked as an armed hook whatever its switch, since the pin is judged
+    // the same either way. One level deep: a companion's own companions
+    // on those tools are not walked, as nothing is planned there.
+    if kind == ItemKind::Hook && !past_pin.is_empty() {
+        let (companions, unresolved) = unpinned;
+        let mut unpinned = Wanted::new(true);
+        unpinned.withhold(unresolved, Withholding::Requires);
+        derive(
+            kind,
+            parent,
+            &past_pin,
+            declared.requires_on.as_deref(),
+            companions,
+            manifest,
+            catalogs,
+            state,
+            &mut unpinned,
+        );
+        wanted.withheld_past_pin = unpinned.withheld.into_keys().collect();
+    }
     Some(wanted)
+}
+
+/// The tools a hook's pin alone keeps it off, of those the expansion aims
+/// it at and those the scope installs on, the hook taken as switched on:
+/// each of them the pin records ask whether it could run on were the pin
+/// dropped.
+fn left_out_by_pin(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &DesiredState,
+    (kind, parent): (ItemKind, &str),
+    own: &HookSpec,
+    harnesses: &[HarnessId],
+) -> Vec<HarnessId> {
+    let defaults = super::desired::harnesses_for(None, manifest, kind, scope);
+    let mut asked: Vec<HarnessId> = harnesses.to_vec();
+    asked.extend(
+        defaults
+            .into_iter()
+            .filter(|tool| !harnesses.contains(tool)),
+    );
+    asked
+        .into_iter()
+        .filter(|harness| {
+            if_switched_on(
+                env,
+                scope,
+                manifest,
+                state,
+                kind,
+                parent,
+                Ok(Some(own)),
+                *harness,
+            ) == Some(NotWritten::OtherTools)
+        })
+        .collect()
+}
+
+/// What resolving one parent's dependency names reads: the parent, what
+/// it declares and chose, and its own catalog, where its author wrote the
+/// names.
+struct Resolving<'a> {
+    kind: ItemKind,
+    parent: &'a str,
+    parent_decl: &'a ItemDecl,
+    declared: &'a Dependencies,
+    chosen: &'a [String],
+    catalog: (&'a SealedSource, &'a SourceConfig, &'a OfferedSkills),
+    source: &'a str,
+    expansion: &'a Expansion,
+}
+
+impl Resolving<'_> {
+    /// Each name taken to the companion it names on `harnesses`, and that
+    /// companion to the catalog the plan writes it from; and the tools a
+    /// name that resolves to nothing is missing on, which withholds an
+    /// armed hook there. What will not resolve is a finding in `found`.
+    #[allow(clippy::type_complexity)]
+    fn companions(
+        &self,
+        harnesses: &[HarnessId],
+        found: &mut Vec<ItemWarning>,
+    ) -> (Vec<(ItemKind, String, CatalogKey)>, Vec<HarnessId>) {
+        let (sealed, config, offered) = self.catalog;
+        let mut companions = Vec::new();
+        let mut unresolved = Vec::new();
+        for (_, dep_kind) in DEPENDENT_KINDS
+            .iter()
+            .filter(|(parent_kind, _)| *parent_kind == self.kind)
+        {
+            let on =
+                dependency_harnesses(*dep_kind, harnesses, self.declared.requires_on.as_deref());
+            if on.is_empty() {
+                continue;
+            }
+            let (required, optional) = if *dep_kind == self.kind {
+                (
+                    self.declared.required.as_slice(),
+                    self.declared.optional.as_slice(),
+                )
+            } else {
+                (self.declared.required_skills.as_slice(), [].as_slice())
+            };
+            for name in required
+                .iter()
+                .chain(optional.iter().filter(|o| self.chosen.contains(o)))
+            {
+                let Some(dep) = resolve(
+                    self.kind,
+                    *dep_kind,
+                    name,
+                    self.parent,
+                    sealed,
+                    config,
+                    offered,
+                    self.source,
+                    found,
+                ) else {
+                    unresolved.extend(on.iter().copied());
+                    continue;
+                };
+                let planned = self
+                    .expansion
+                    .decl_of(*dep_kind, &dep)
+                    .unwrap_or_else(|| derived_decl(self.parent_decl));
+                companions.push((*dep_kind, dep, (planned.source, planned.rev)));
+            }
+        }
+        (companions, unresolved)
+    }
 }
 
 /// Hook companions use the requirement's harnesses; skill edges use all of them.
