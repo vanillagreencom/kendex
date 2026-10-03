@@ -33,6 +33,12 @@
 # fixture app is unsigned: the lane-without-secrets row warns and passes,
 # the lane-that-signs row (APPLE_SIGNING_IDENTITY set) refuses, and a
 # signed app is the release lane's alone to prove.
+#
+# The attach table is `label|refusals|rc|first|checked|cause` and runs on
+# every host, with hdiutil and codesign stubbed on PATH: the stub refuses
+# the first `refusals` attaches, saying `stub refusal` on stderr, then
+# mounts a disk image whose app carries the sidecar. `cause` is `yes` when
+# the annotation line carries the stub's words, `no` when it does not.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -229,6 +235,54 @@ EOF
 else
   echo "skipped: the macOS rows need hdiutil and codesign, which this host has none of"
 fi
+
+# stub_tools — hdiutil as check_dmg calls it, and a codesign the unsigned
+# lane never runs, under STUB
+STUB="$TMP/stub"
+stub_tools() {
+  rm -rf -- "${STUB:?}"
+  mkdir -p "$STUB/bin"
+  mac_app "$STUB/image/kendex.app" command
+  cat >"$STUB/bin/hdiutil" <<STUBEOF
+#!/bin/sh
+case "\$1" in
+  attach)
+    left=\$(cat "$STUB/refusals")
+    if [ "\$left" -gt 0 ]; then
+      echo \$((left - 1)) >"$STUB/refusals"
+      echo "hdiutil: attach failed - stub refusal" >&2
+      exit 1
+    fi
+    while [ "\$#" -gt 0 ]; do
+      [ "\$1" != -mountpoint ] || mount=\$2
+      shift
+    done
+    cp -R "$STUB/image/." "\$mount"
+    ;;
+  detach) ;;
+  *) echo "hdiutil stub: no verb \$1" >&2; exit 2 ;;
+esac
+STUBEOF
+  printf '#!/bin/sh\necho "codesign stub: not called on an unsigned lane" >&2\nexit 2\n' >"$STUB/bin/codesign"
+  chmod +x "$STUB/bin/hdiutil" "$STUB/bin/codesign"
+}
+
+echo "=== the disk image attach, hdiutil stubbed ==="
+DMG="bundle/dmg/kendex_${VERSION}_aarch64.dmg"
+while IFS='|' read -r label refusals rc first checked cause; do
+  [[ "$label" != "" && "$label" != \#* ]] || continue
+  build_macos command command none
+  stub_tools
+  printf '%s\n' "$refusals" >"$STUB/refusals"
+  : >"$OUT/$DMG"
+  got="$(PATH="$STUB/bin:$PATH" run "$MACOS")"
+  got_cause=no
+  [[ "$(sed -n 2p "$TMP/err")" != *"stub refusal"* ]] || got_cause=yes
+  assert_eq "$got cause=$got_cause" "rc=$rc first=$first checked=$checked cause=$cause" "$label"
+done <<EOF
+a disk image refused once and mounted on the next attempt is checked|1|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no
+a disk image refused on every attempt names hdiutil's refusal|3|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes
+EOF
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

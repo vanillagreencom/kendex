@@ -60,7 +60,11 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
     ambiguous)
       printf '%s holds more than one file matching %s (%s and %s); this lane cannot say which one it built.\n' "$3" "$2" "$4" "$5" ;;
     extract)
-      printf '%s could not be taken apart, so what it installs is unknown.\n' "$2" ;;
+      if [ -n "${3:-}" ]; then
+        printf '%s could not be taken apart (%s), so what it installs is unknown.\n' "$2" "$3"
+      else
+        printf '%s could not be taken apart, so what it installs is unknown.\n' "$2"
+      fi ;;
     absent)
       printf '%s installs no kendex command at %s; the download would install the app alone.\n' "$2" "$3" ;;
     unrunnable)
@@ -198,12 +202,27 @@ check_app_archive() {
   answers "$archive" "$dir/kendex.app/Contents/MacOS/kendex"
 }
 
+# hdiutil on the GitHub macOS runner now and then refuses to attach an
+# image it mounts on another try, the suite's fixture images included. A
+# bad image is refused on every attempt, so the retry costs it a few
+# seconds, and the refusal carries hdiutil's own words from the last one.
+attach() { # DMG MOUNT — mounted read-only at MOUNT, or the extract refusal
+  local dmg=$1 mount=$2 attempt
+  for attempt in 1 2 3; do
+    hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>"$TMP/attach" &&
+      return 0
+    # A pause, so a refusal that lasts while the runner holds the image
+    # has time to clear before the next attempt.
+    [ "$attempt" -eq 3 ] || sleep 2
+  done
+  die extract "$dmg" "$(tr '\n' ' ' <"$TMP/attach")"
+}
+
 check_dmg() {
   local dmg mount
   dmg=$(only_match "$out/bundle/dmg" "*.dmg")
   mount=$(opened dmg-mount)
-  hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>&1 ||
-    die extract "$dmg"
+  attach "$dmg" "$mount"
   # The EXIT trap detaches it, so a refusal inside answers cannot leave
   # the image mounted; a detach that fails here leaves it recorded, and
   # the trap tries again.
