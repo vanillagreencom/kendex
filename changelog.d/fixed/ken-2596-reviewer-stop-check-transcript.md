@@ -1,1 +1,1 @@
-- The `reviewer-stop-check` hook now reads the reviewer's own transcript on Claude Code, not the parent session's, so a reviewer that leaves files behind or writes no artifact is stopped.
+- The `reviewer-stop-check` hook now reads the reviewer's own transcript on Claude Code, not the parent session's, so the worktree it checks is the one that reviewer was given.

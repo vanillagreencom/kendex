@@ -117,8 +117,8 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # the parent session's, whose delegation names an artifact path of its own and
 # can name another worktree; Codex sends the key null for a thread with no
 # rollout, which reads as empty and is refused below. A payload without the key
-# (Copilot, opencode, Cursor) names the subagent's in `transcript_path`. The
-# field read is a column, so the refusal names it.
+# names the subagent's in `transcript_path`. The field read is a column, so the
+# refusal names it.
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
   (if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end) as $field |

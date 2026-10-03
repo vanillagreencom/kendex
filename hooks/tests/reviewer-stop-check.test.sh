@@ -350,8 +350,8 @@ assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git'
 
 echo "reviewer-stop-check: the payload names the subagent's transcript"
 # Claude Code and Codex send the subagent's transcript as
-# agent_transcript_path beside the parent session's transcript_path; Copilot,
-# opencode and Cursor send the subagent's as transcript_path alone. In every row
+# agent_transcript_path beside the parent session's transcript_path; a payload
+# without that key names the subagent's as transcript_path alone. In every row
 # the parent's transcript names a clean worktree, so the transcript the hook
 # read is the one its first line follows from.
 FIELD_DIRTY="$(new_repo field-dirty)"

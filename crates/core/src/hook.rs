@@ -210,7 +210,7 @@ pub fn known_event(name: &str) -> bool {
 }
 
 /// Codex's event mapping: identity for the events Codex fires, `None` for
-/// events it never fires, which fall back to advisory prose in agent files.
+/// events it never fires.
 pub fn codex_event(event: &str) -> Option<&str> {
     match event {
         "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse"
