@@ -1510,7 +1510,7 @@ antigravity_rows() {
 #                             (lane-mail-check's caller rule, doc-drift-check)
 #   errorOccurred             at least once, each under the session's own id
 #                             with errorContext model_call and a string
-#                             error.message (stop-failure-row)
+#                             error.message (stop-failure-row's gap)
 COPILOT_EVENTS='sessionStart sessionEnd subagentStart subagentStop agentStop errorOccurred'
 events_questions() { # — the rows, in the order events_rows answers them
   local e out=""
@@ -2037,9 +2037,9 @@ pkg_session_verdict() {
   fi
 }
 # The events the session of tool calls raises none of on Copilot: it runs no
-# subagent and no failing model call. The copilot event rows record what
-# Copilot sends at each, and the hook's own suite holds it to that payload.
-PKG_UNRAISED='SubagentStop StopFailure'
+# subagent. The copilot event rows record what Copilot sends there, and the
+# hook's own suite holds it to that payload.
+PKG_UNRAISED='SubagentStop'
 pkg_hook_row() { # HOOK — after the session
   local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1" denial
   event=$(sed -n 's/^# event: //p' "$SELF/hooks/$hook.sh")

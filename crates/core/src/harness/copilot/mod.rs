@@ -28,13 +28,6 @@ pub(crate) const ALLOWED_MODELS: ProjectPath =
 /// writes, so that is what kendex registers. An event with no counterpart
 /// stays unmapped rather than hung on a near-miss — a safety hook on the
 /// wrong event is worse than one the user is told did not install.
-///
-/// `StopFailure` is the one owner-ruled exception: `errorOccurred` fires on
-/// a failed model call, which is what StopFailure means, and also on every
-/// other error context ([`ERROR_CONTEXTS_BEYOND_STOP_FAILURE`]). A
-/// StopFailure hook records a failure and guards nothing, so it installs,
-/// and the plan warns about every one except a catalog script whose
-/// `harnesses:` line names Copilot (`engine::copilot::hook`).
 pub(crate) fn event(fleet: &str) -> Option<&'static str> {
     match fleet {
         "PreToolUse" => Some("preToolUse"),
@@ -47,15 +40,9 @@ pub(crate) fn event(fleet: &str) -> Option<&'static str> {
         "Notification" => Some("notification"),
         "Stop" => Some("agentStop"),
         "SubagentStop" => Some("subagentStop"),
-        "StopFailure" => Some("errorOccurred"),
         _ => None,
     }
 }
-
-/// The `errorContext` values `errorOccurred` carries besides `model_call`,
-/// the failed model call StopFailure stands for (Copilot hooks reference).
-pub(crate) const ERROR_CONTEXTS_BEYOND_STOP_FAILURE: [&str; 3] =
-    ["tool_execution", "system", "user_input"];
 
 /// The fleet event a name read out of Copilot's own registry answers to —
 /// the inverse of [`event`], for reading a registration back. Copilot also
@@ -327,15 +314,8 @@ mod tests {
         assert_eq!(event("PreToolUse"), Some("preToolUse"));
         assert_eq!(event("Stop"), Some("agentStop"));
         assert_eq!(event("TaskCompleted"), None);
-    }
-
-    /// A registration Copilot already holds under `errorOccurred`, in
-    /// either spelling, reads back as the StopFailure it was written for.
-    #[test]
-    fn stop_failure_is_registered_on_error_occurred_and_read_back() {
-        assert_eq!(event("StopFailure"), Some("errorOccurred"));
-        for native in ["errorOccurred", "ErrorOccurred"] {
-            assert_eq!(fleet_event(native), Some("StopFailure"), "{native}");
-        }
+        // errorOccurred fires once per retried model call, not once per
+        // failed turn (Copilot CLI 1.0.91), so it is no StopFailure.
+        assert_eq!(event("StopFailure"), None);
     }
 }

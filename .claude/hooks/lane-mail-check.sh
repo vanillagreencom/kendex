@@ -789,10 +789,7 @@ record_lead() { # [prune]
 # - userPromptSubmitted: the lead's, and never recorded: that a subagent's
 #   prompt fires no such hook is unmeasured.
 # - a row: sessionStart and sessionEnd are the lead's, Copilot firing neither
-#   for a subagent. errorOccurred follows the preToolUse rule, the lead's
-#   where its session is a recorded lead and otherwise unknown: it carries no
-#   agent and no transcript, and whose session a subagent's failed model call
-#   names is unmeasured.
+#   for a subagent.
 # - caller: the agentStop rule, being the turn end doc-drift-check asks about.
 if [ "$CALLER" = lead ]; then
   case "$HARNESS:$ARM" in
@@ -810,9 +807,6 @@ if [ "$CALLER" = lead ]; then
       ;;
     copilot:deliver | copilot:halt | copilot:compact | copilot:usage)
       { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown
-      ;;
-    copilot:row)
-      [ "$ROW_ARG" != StopFailure ] || { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown
       ;;
     *) ;;
   esac
@@ -2959,13 +2953,9 @@ lane_row() {
 }
 
 # A row is a session's with no lane of its own: a lane's events are its own
-# mailbox's to carry, and no reader of the overseer's rows reads them. A
-# Copilot row the caller rule does not name the lead's is a subagent's, or a
-# failure of a session no lead record names, and writes nothing.
+# mailbox's to carry, and no reader of the overseer's rows reads them.
 if [ "$ARM" = row ]; then
-  if [ -z "$ITEM" ] && { [ "$HARNESS" != copilot ] || [ "$CALLER" = lead ]; }; then
-    session_row
-  fi
+  [ -n "$ITEM" ] || session_row
   exit 0
 fi
 if [ "$ARM" = compact ]; then

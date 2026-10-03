@@ -225,9 +225,7 @@ session_rows_top_level() { # PANE_PID
 # names the event a payload that spells no hook_event_name is taken for: the
 # turn-end run knows it ran at a Stop whatever its payload carries, and a row
 # hook names its own event for Copilot's camelCase payloads, which spell none
-# and name the session `sessionId` and the transcript `transcriptPath`. An
-# errorOccurred carries its error as an object, whose `message` is the row's
-# `message`.
+# and name the session `sessionId` and the transcript `transcriptPath`.
 #
 # Nothing is written, with exit 0, where that directory is not there, since no
 # fleet made it and no reader will look, for a session that is not its pane's
@@ -269,9 +267,7 @@ session_rows_write() { # DIR HARNESS [EVENT]
     + ({session_id: (.session_id // .sessionId), transcript_path: (.transcript_path // .transcriptPath),
         cwd, source, model, reason, error, error_details}
        | with_entries(select(.value | type == "string" and . != "")))
-    + ((if (.error | type) == "object" then .error.message else null end) as $error_message
-       | if (.last_assistant_message | type) == "string" then {message: .last_assistant_message}
-         elif ($error_message | type) == "string" then {message: $error_message} else {} end)
+    + (if (.last_assistant_message | type) == "string" then {message: .last_assistant_message} else {} end)
     + (if $account == "" then {} else {account: $account} end)' <<<"$payload")" || return 1
   printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
 }
