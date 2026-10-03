@@ -20,6 +20,7 @@ change came from an outside contributor.
 - `lane-mail ask --to owner --draft` asks the owner to approve a Slack message or email sent as them, and records the recipient, medium, exact text and its SHA-256 hash.
 - Add a Linear page module that completes requested connection chains and handles large replies without passing response data as command arguments.
 - Release checks refuse, from 1.0, a patch version bump whose release holds an Added or Breaking entry and a minor bump whose release holds a Breaking entry, naming the first such entry.
+- orch: `overseer-approve` approves a pull request head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, and refuses when the live head has moved.
 
 ### Changed
 
@@ -53,6 +54,10 @@ change came from an outside contributor.
 - Lane selection shares measured account usage across sampled claims, keeps busy accounts with room available, and refuses model windows whose live lanes will spend their room.
 - A Slack owner ask that carries a draft now shows the draft's recipient and medium, and its full text exactly as typed with no link or Markdown rendered in it.
 - `kendex verify --base` no longer reports a hook, MCP server or plugin registry as hand-edited after one of its hooks, servers or plugins is retired.
+- A running Slack relay loads new code by itself after `kendex apply` or `kendex refresh` updates the slack skill, and reads its settings again; `listen --status` shows the running code as `code=`.
+- `lane-mail` refuses an owner notice whose text matches one sent to the owner in the past 24 hours, whatever its attachment, naming the earlier notice as `owner-notice-repeated=overseer id=`.
+- pi-agents-tmux: background children and headless pane agents default to a 2-hour deadline, up from 30 minutes, so a dev round outlives its validation run; lower `bgTaskTimeoutMs` to shorten it.
+- `oversee-cycle` counts a ci_green miss toward `repeat-miss` only when the final head's checks caused it, so work rounds pushed after a pull request opened no longer raise a ci_green repeat miss.
 
 ### Security
 
