@@ -4,7 +4,8 @@
 //! tool, which leaves the run clean under `--strict`, whether the hook is
 //! switched on or off. A pin that decides nothing the hook would not decide
 //! itself prints none, and so does one leaving out a tool where a companion
-//! the hook requires could not run beside it. The engine's record of what
+//! the hook requires could not run beside it, or where a name it requires
+//! resolves to nothing. The engine's record of what
 //! the pin does on each tool, which picks the remedy verify prints, is
 //! checked beside the rows, and each notice row's `state` is read as the
 //! JSON spells it.
@@ -33,10 +34,21 @@
 //!   a pinned third: asking only the hook's own companions with its pin
 //!   dropped, and not the walk (`deps::withheld_past_pin`), puts a notice
 //!   on the hook;
+//! - the bundled companion row: the walk asking past the pin only the
+//!   tools the scope installs on, and not the expansion's aims
+//!   (`deps::wanted_by`), puts a notice on the hook for Codex;
+//! - the missing-name rows: the walk withholding no hook on a tool where a
+//!   name it requires resolves to nothing (`deps::wanted_by`) puts a
+//!   notice on the hook;
+//! - the switched-off missing-name row: the walk with the pin dropped
+//!   keeping the hook's switch (`deps::withheld_past_pin`) puts a notice
+//!   on the hook;
 //! - the custom-hook rows: dropping the `pins_left_out` call in
-//!   `desired_custom_hooks` empties the Claude-only entry's notices, and
+//!   `desired_custom_hooks` empties the Claude-only entry's notices;
 //!   `unlisted_tools` counting only a registered delivery empties the
-//!   scoped entry's;
+//!   scoped entry's, counting only a registered or agent-file one empties
+//!   the OpenCode entry's, and counting a tool where the entry is not
+//!   installable puts a notice on the Antigravity entry;
 //! - every row with a notice: renaming `State::Notice`, or its wire
 //!   spelling, empties the notices read off the JSON.
 #![cfg(unix)]
@@ -58,6 +70,9 @@ const HOOK: &str = "guard";
 const COMPANION: &str = "judge";
 /// A hook [`COMPANION`] requires where a case says so.
 const INNER: &str = "inner";
+/// A name the hook requires where a case says so, which the catalog holds
+/// nothing under.
+const MISSING: &str = "absent";
 /// A catalog set carrying [`HOOK`], installed on both `[install]` tools and
 /// on Codex, which `[install]` leaves out.
 const BUNDLE: &str = "starter";
@@ -82,6 +97,9 @@ struct Case {
     /// undeclared [`COMPANION`] then requires and the hook requires
     /// [`COMPANION`], or `None` for neither.
     inner: Option<&'static str>,
+    /// Whether the hook also requires [`MISSING`], and holds its
+    /// requirements on Copilot alone.
+    missing: bool,
     /// The tools apply records the hook for.
     recorded: &'static [HarnessId],
     /// What the engine records each hook's pin doing, tool by tool; verify
@@ -96,6 +114,7 @@ const PLAIN: Case = Case {
     switched_off: false,
     companion: None,
     inner: None,
+    missing: false,
     recorded: &[],
     pinned: &[],
 };
@@ -174,6 +193,34 @@ const CASES: &[Case] = &[
         pinned: &[(INNER, HarnessId::Copilot, Pin::LeavesOut)],
         ..PLAIN
     },
+    // The set carries the hook onto Codex as well, where its companion's
+    // pin keeps the companion off too: the hook's pin decides nothing on
+    // either tool.
+    Case {
+        pin: Some("[\"claude\"]"),
+        bundled: true,
+        companion: Some("[\"claude\"]"),
+        recorded: &[HarnessId::Claude],
+        pinned: &[(COMPANION, HarnessId::Copilot, Pin::LeavesOut)],
+        ..PLAIN
+    },
+    // A name the hook requires on Copilot that the catalog does not hold
+    // withholds the hook there, pin or no pin.
+    Case {
+        pin: Some("[\"claude\"]"),
+        missing: true,
+        recorded: &[HarnessId::Claude],
+        ..PLAIN
+    },
+    // Switched off, the hook is judged as if it were on: the name would
+    // still withhold it from Copilot with the pin dropped.
+    Case {
+        pin: Some("[\"claude\"]"),
+        switched_off: true,
+        missing: true,
+        recorded: &[HarnessId::Claude],
+        ..PLAIN
+    },
     // A companion that runs everywhere stands in the way of nothing.
     Case {
         pin: Some("[\"claude\"]"),
@@ -201,8 +248,14 @@ fn check(case: &Case) {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::create_dir_all(project.join(".github")).unwrap();
     let at = format!(
-        "header {:?} pin {:?} bundled {} off {} companion {:?} inner {:?}",
-        case.header, case.pin, case.bundled, case.switched_off, case.companion, case.inner
+        "header {:?} pin {:?} bundled {} off {} companion {:?} inner {:?} missing {}",
+        case.header,
+        case.pin,
+        case.bundled,
+        case.switched_off,
+        case.companion,
+        case.inner,
+        case.missing
     );
     let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
     assert!(applied.status.success(), "{at}: {}", said(&applied));
@@ -267,9 +320,20 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
         &catalog.join("kendex.toml"),
         &format!("is_source_catalog = true\n{catalog_sets}"),
     );
-    let requires = match (case.companion, case.inner) {
-        (Some(_), _) | (_, Some(_)) => format!("# requires: [{COMPANION}]\n"),
-        (None, None) => String::new(),
+    let required: Vec<&str> = [
+        (case.companion.is_some() || case.inner.is_some(), COMPANION),
+        (case.missing, MISSING),
+    ]
+    .into_iter()
+    .filter_map(|(wanted, name)| wanted.then_some(name))
+    .collect();
+    let requires = match required.is_empty() {
+        true => String::new(),
+        false => format!("# requires: [{}]\n", required.join(", ")),
+    };
+    let requires_on = match case.missing {
+        true => "# requires-on: [copilot]\n",
+        false => "",
     };
     let requires_inner = match case.inner {
         Some(_) => format!("# requires: [{INNER}]\n"),
@@ -278,7 +342,7 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
     write(
         &catalog.join(format!("hooks/{HOOK}.sh")),
         &format!(
-            "#!/usr/bin/env bash\n# ---\n# name: {HOOK}\n# event: PreToolUse\n# matcher: Bash\n# description: guards\n{}{requires}# ---\nexit 0\n",
+            "#!/usr/bin/env bash\n# ---\n# name: {HOOK}\n# event: PreToolUse\n# matcher: Bash\n# description: guards\n{}{requires}{requires_on}# ---\nexit 0\n",
             case.header
         ),
     );
@@ -319,49 +383,103 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
     );
 }
 
-/// What one `[[custom-hooks]]` entry's list does: the list, whether the
-/// entry is switched off, the agents it runs for, and the tools verify
-/// names in a notice row. An entry for one agent goes into that agent's
-/// file on Claude Code, which its list leaves out as it does a registry.
-const CUSTOM: &[(Option<&str>, bool, &str, &[HarnessId])] = &[
-    (Some("[\"claude\"]"), false, "all", &[HarnessId::Copilot]),
-    (Some("[\"claude\"]"), true, "all", &[HarnessId::Copilot]),
-    (None, false, "all", &[]),
-    (Some("[\"claude\", \"copilot\"]"), false, "all", &[]),
-    (
-        Some("[\"copilot\"]"),
-        false,
-        "reviewer",
-        &[HarnessId::Claude],
-    ),
+/// What one `[[custom-hooks]]` entry's list does where `[install]` names
+/// some tools: the tools verify names in a notice row.
+struct Custom {
+    /// The entry's `harnesses` value, or `None` for no list.
+    list: Option<&'static str>,
+    /// Whether the entry says `enabled = false`.
+    switched_off: bool,
+    /// The agents the entry runs for.
+    agents: &'static str,
+    /// The `[install] harnesses` value.
+    install: &'static str,
+    /// The tools verify names in a notice row.
+    named: &'static [HarnessId],
+}
+
+const UNLISTED: Custom = Custom {
+    list: None,
+    switched_off: false,
+    agents: "all",
+    install: "[\"claude\", \"copilot\"]",
+    named: &[],
+};
+
+const CUSTOM: &[Custom] = &[
+    Custom {
+        list: Some("[\"claude\"]"),
+        named: &[HarnessId::Copilot],
+        ..UNLISTED
+    },
+    Custom {
+        list: Some("[\"claude\"]"),
+        switched_off: true,
+        named: &[HarnessId::Copilot],
+        ..UNLISTED
+    },
+    UNLISTED,
+    Custom {
+        list: Some("[\"claude\", \"copilot\"]"),
+        ..UNLISTED
+    },
+    // An entry for one agent goes into that agent's file on Claude Code,
+    // which its list leaves out as it does a registry.
+    Custom {
+        list: Some("[\"copilot\"]"),
+        agents: "reviewer",
+        named: &[HarnessId::Claude],
+        ..UNLISTED
+    },
+    // OpenCode writes the entry as prose, which its list leaves out as it
+    // does a registry.
+    Custom {
+        list: Some("[\"claude\"]"),
+        install: "[\"claude\", \"opencode\"]",
+        named: &[HarnessId::Opencode],
+        ..UNLISTED
+    },
+    // Antigravity takes no entry without a list naming it, so a list
+    // leaving it out decides nothing there.
+    Custom {
+        list: Some("[\"claude\"]"),
+        install: "[\"claude\", \"antigravity\"]",
+        ..UNLISTED
+    },
 ];
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_custom_hook_list_is_judged_as_a_hook_pin_is() {
-    for &(list, switched_off, agents, named) in CUSTOM {
+    for custom in CUSTOM {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = home.join("consumer");
-        let list = list
+        let list = custom
+            .list
             .map(|list| format!("harnesses = {list}\n"))
             .unwrap_or_default();
-        let switch = match switched_off {
+        let switch = match custom.switched_off {
             true => "enabled = false\n",
             false => "",
         };
+        let (install, agents) = (custom.install, custom.agents);
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 6\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n\n[[custom-hooks]]\nname = \"{HOOK}\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"{agents}\"\n{list}{switch}"
+                "schema = 6\n[install]\nharnesses = {install}\nmethod = \"copy\"\n\n[[custom-hooks]]\nname = \"{HOOK}\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"{agents}\"\n{list}{switch}"
             ),
         );
         fs::create_dir_all(project.join(".claude")).unwrap();
         fs::create_dir_all(project.join(".github")).unwrap();
-        let at = format!("list {list:?} off {switched_off} agents {agents}");
+        let at = format!(
+            "list {list:?} off {} agents {agents} install {install}",
+            custom.switched_off
+        );
         let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
         assert!(applied.status.success(), "{at}: {}", said(&applied));
-        let pinned: Vec<(&str, HarnessId, Pin)> = named
+        let pinned: Vec<(&str, HarnessId, Pin)> = custom
+            .named
             .iter()
             .map(|&harness| (HOOK, harness, Pin::LeavesOut))
             .collect();
