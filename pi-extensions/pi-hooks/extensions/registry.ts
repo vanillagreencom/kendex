@@ -87,9 +87,11 @@ export interface RegistryRead {
 /**
  * Whether a registration's matcher covers this event. `subject` is the word
  * the matcher is written against: the tool being called on `tool_call` and
- * `tool_result`, the session's source on `session_start`, and `undefined` on
- * `turn_end`, whose Claude Code events (`Stop`, `TaskCompleted`) take no
- * matcher at all — there, every registration covers, because the alternative
+ * `tool_result`, the session's source on `session_start`, its end reason on
+ * `session_shutdown`, and `undefined` on `turn_end`, whose Claude Code events
+ * (`Stop`, `TaskCompleted`) take no matcher at all, and on
+ * `agent_before_settle`, whose `StopFailure` matcher reads an error kind Pi
+ * never names — there, every registration covers, because the alternative
  * is a matcher nobody wrote deciding a hook does not run.
  *
  * Absent, empty and `*` cover everything, as they do for the Claude Code

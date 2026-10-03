@@ -13,7 +13,7 @@ import { agentLine, boundForAgent, deliver, type HookResult, type ListenerRun, p
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_END_LISTENER, SESSION_START_LISTENER, STOP_FAILURE_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
-import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
+import { claudeSessionEndReason, claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -50,11 +50,11 @@ export function toolCallVerdict(result: HookResult, ctx: ExtensionContext): Verd
 /**
  * The line a host too old for the `Stop` listener gets, or `undefined` on a
  * host that has it. Pi fires `agent_before_settle` from 0.87.0, and below that
- * every `Stop` and `TaskCompleted` registration is skipped with no error. The
- * Pi peer range names the floor, but neither kendex nor Pi checks peers when it
- * installs an extension, so this says it instead. It serves Pi 0.74.0, the
- * first `@earendil-works` release, to 0.86.x. Remove it once no Pi below
- * 0.87.0 can load this package. A version that does not parse as
+ * every `Stop`, `TaskCompleted` and `StopFailure` registration is skipped with
+ * no error. The Pi peer range names the floor, but neither kendex nor Pi checks
+ * peers when it installs an extension, so this says it instead. It serves Pi
+ * 0.74.0, the first `@earendil-works` release, to 0.86.x. Remove it once no Pi
+ * below 0.87.0 can load this package. A version that does not parse as
  * `major.minor` is not called old.
  *
  * The host's `VERSION` is read here, at a fresh start, and not when this
@@ -71,7 +71,7 @@ async function unsupportedHostLine(): Promise<string | undefined> {
 	}
 	const [major, minor] = version.split(".").map(Number);
 	if (major === 0 && minor !== undefined && minor < 87) {
-		return `hook-host-unsupported=pi ${version}\nStop and TaskCompleted hooks do not run on this Pi. Upgrade Pi to 0.87.0 or later.`;
+		return `hook-host-unsupported=pi ${version}\nStop, TaskCompleted and StopFailure hooks do not run on this Pi. Upgrade Pi to 0.87.0 or later.`;
 	}
 	return undefined;
 }
@@ -114,12 +114,27 @@ export default function piHooks(pi: ExtensionAPI): void {
 	};
 
 	/**
+	 * The person's channel on `StopFailure` and `SessionEnd`, whose hooks speak
+	 * to the person alone: a notification where a UI will show it, else stderr.
+	 * A print-mode session has no UI, and Pi's interactive quit stops the TUI
+	 * before it emits `session_shutdown` with reason `quit`; `uiGone` is the
+	 * listener's word for the second, which `hasUI` does not say.
+	 */
+	const tellPerson = (ctx: ExtensionContext, uiGone: boolean) => (content: string) => {
+		if (uiGone || !ctx.hasUI) process.stderr.write(`${content}\n`);
+		else ctx.ui.notify(content, "warning");
+	};
+
+	/**
 	 * Everything an event's hooks said outside a tool refusal's reason.
-	 * `toAgent` is the listener's own way of putting words in front of the
-	 * model — a patched tool result, an entry the settle boundary appends, a
-	 * session's opening context — and it is called at most once, with every
-	 * hook's text and an unreadable registry's line joined and bounded by
-	 * `boundForAgent`. Stderr beside a clean exit goes to the person instead.
+	 * `toListener` is the listener's own channel for what its hooks say: the
+	 * model's on `tool_call`, `tool_result`, `turn_end` and `session_start` —
+	 * a patched tool result, an entry the settle boundary appends, a session's
+	 * opening context — and the person's on `StopFailure` and `SessionEnd`,
+	 * whose hooks Claude Code reads nothing from. It is called at most once,
+	 * with every hook's text and an unreadable registry's line joined and
+	 * bounded by `boundForAgent`. Stderr beside a clean exit goes to
+	 * `toPerson` instead.
 	 *
 	 * Each delivery goes through `deliver`, so one channel that is gone — the
 	 * session replaced under a `session_start` report that is still in flight —
@@ -129,17 +144,18 @@ export default function piHooks(pi: ExtensionAPI): void {
 		listener: string,
 		run: ListenerRun,
 		ctx: ExtensionContext,
-		toAgent: (content: string) => void,
+		toListener: (content: string) => void,
+		toPerson: (content: string) => void = notify(ctx, "info"),
 	): Promise<void> => {
-		const forAgent: string[] = [];
-		if (run.unreadable !== undefined) forAgent.push(unreadableLine(listener, run.unreadable));
+		const forListener: string[] = [];
+		if (run.unreadable !== undefined) forListener.push(unreadableLine(listener, run.unreadable));
 		for (const result of run.results) {
 			const said = agentLine(result, ctx);
-			if (said !== undefined) forAgent.push(said);
+			if (said !== undefined) forListener.push(said);
 			const forPerson = personLine(result);
-			if (forPerson !== undefined) deliver(notify(ctx, "info"), forPerson);
+			if (forPerson !== undefined) deliver(toPerson, forPerson);
 		}
-		if (forAgent.length > 0) deliver(toAgent, await boundForAgent(forAgent.join("\n")));
+		if (forListener.length > 0) deliver(toListener, await boundForAgent(forListener.join("\n")));
 	};
 
 	// Pi port of hooks/session-drift-check.sh. Fresh starts only: a resumed
@@ -333,26 +349,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// here, which judge the lead session, are not consulted for it.
 		if (piSubagentName() !== undefined) return undefined;
 
-		// `StopFailure` ends a turn an API error ended, which Pi says of a run
-		// as `outcome: "error"`, and only there. Pi names no error kind, so
-		// every registration covers it. Claude Code reads nothing a
-		// `StopFailure` hook says, so its word goes to the person, never into
-		// the session as a continuation the error would refuse again. It judges
-		// the lead alone, as `Stop` does: the payload carries no `agent_id`,
-		// the field such a hook tells a subagent's failure by.
-		if (event.outcome === "error") {
-			const failed = await runListener(
-				STOP_FAILURE_LISTENER,
-				undefined,
-				() => JSON.stringify({ hook_event_name: "StopFailure", ...claudeSessionFields(ctx) }),
-				ctx,
-				cfg,
-				project,
-				projectTrusted(ctx),
-			);
-			await report(STOP_FAILURE_LISTENER, failed, ctx, notify(ctx, "warning"));
-		}
-
 		const stopHookActive = continued;
 		continued = false;
 
@@ -386,6 +382,34 @@ export default function piHooks(pi: ExtensionAPI): void {
 			projectTrusted(ctx),
 		);
 		await report(TURN_END_LISTENER, run, ctx, say);
+
+		// `StopFailure` ends a turn an API error ended, which Pi says of a run
+		// as `outcome: "error"`, and only there. Pi names no error kind, so
+		// every registration covers it. Claude Code fires it in place of
+		// `Stop`; here `Stop` above still runs on an errored run, because the
+		// Pi lane's walled verdict reads that `Stop` row (the `row` arm of
+		// `hooks/lane-mail-check.sh` reads the transcript's `stopReason`). A
+		// `Stop` row written after a `StopFailure` row lifts it, so these run
+		// last in the settle, whatever the `Stop` dispatch returns. Claude Code
+		// reads nothing a `StopFailure` hook says, so its word goes to the
+		// person, never into the session as a continuation the error would
+		// refuse again. It judges the lead alone, as `Stop` does: the payload
+		// carries no `agent_id`, the field such a hook tells a subagent's
+		// failure by.
+		if (event.outcome === "error") {
+			const failed = await runListener(
+				STOP_FAILURE_LISTENER,
+				undefined,
+				() => JSON.stringify({ hook_event_name: "StopFailure", ...claudeSessionFields(ctx) }),
+				ctx,
+				cfg,
+				project,
+				projectTrusted(ctx),
+			);
+			const person = tellPerson(ctx, false);
+			await report(STOP_FAILURE_LISTENER, failed, ctx, person, person);
+		}
+
 		if (said === undefined) return undefined;
 		// Chained after what earlier handlers proposed, and `continue` is
 		// returned only as `true`: a `false` here would cancel another
@@ -404,18 +428,17 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 	// `SessionEnd` is Pi's `session_shutdown`, which Pi awaits before it
 	// replaces or disposes the session, so every registration runs while the
-	// session still stands. Its reason is said in the words of the
-	// `SessionStart` that follows it, so `clear` and `resume` tell a hook
-	// another session follows, and `quit` keeps its own word. Claude Code
-	// reads nothing a `SessionEnd` hook says, and no turn is left for the
-	// agent, so what the hooks say goes to the person.
+	// session still stands. Its reason is said in Claude Code's `SessionEnd`
+	// words (`vocab.ts::claudeSessionEndReason`). Claude Code reads nothing a
+	// `SessionEnd` hook says, and no turn is left for the agent, so what the
+	// hooks say goes to the person, on stderr at a `quit`, whose UI is gone.
 	pi.on("session_shutdown", async (event, ctx: ExtensionContext) => {
 		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
 		recordProjectTrust(ctx, project);
 		const cfg = readConfig(ctx.cwd, project);
 		if (!getBool(cfg, "enabled")) return;
 
-		const reason = claudeSessionSource(event.reason);
+		const reason = claudeSessionEndReason(event.reason);
 		const run = await runListener(
 			SESSION_END_LISTENER,
 			reason,
@@ -425,7 +448,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 			project,
 			projectTrusted(ctx),
 		);
-		await report(SESSION_END_LISTENER, run, ctx, notify(ctx, "warning"));
+		const person = tellPerson(ctx, event.reason === "quit");
+		await report(SESSION_END_LISTENER, run, ctx, person, person);
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {

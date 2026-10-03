@@ -254,6 +254,8 @@ pub fn installable(harness: HarnessId) -> bool {
 ///
 /// The carrier dispatches every key here, and a key on one side alone is a
 /// hook kendex labels enforced with nothing to run it (KEN-941, KEN-1189).
+/// `agent_before_settle` and `session_shutdown` need pi-hooks 0.18.0 or
+/// later, and nothing here checks the carrier's version.
 /// Only `tool_call` gates, and `turn_end` is read on `agent_before_settle`,
 /// which fires per response rather than per turn; `agent_before_settle` is
 /// the key for the same boundary's errored runs alone, which the carrier

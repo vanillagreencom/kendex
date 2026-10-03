@@ -87,12 +87,6 @@ export function claudeToolInput(claudeName: string, input: unknown, cwd: string)
  *
  * Nothing maps onto `compact`: `pi_listener` gives `PostCompact` no listener,
  * so a hook declared for it never reaches Pi at all.
- *
- * Pi's `session_shutdown` carries the same reasons, `quit` in place of
- * `startup`, and its `SessionEnd` payload says them through this table too:
- * the session that follows a `new`, `fork`, `resume` or `reload` starts as
- * `clear` or `resume`, the two words Claude Code's `SessionEnd` ends a
- * session with when another follows.
  */
 const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 	["startup", "startup"],
@@ -102,11 +96,35 @@ const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 	["reload", "resume"],
 ]);
 
-/** The session's start or end reason as a `SessionStart` or `SessionEnd` hook spells it. A reason Pi
+/** The session's start reason as a `SessionStart` hook spells it. A reason Pi
  * adds and this table has not learned keeps its own word: a matcher naming it
  * still matches, and one naming nothing matches nothing. */
 export function claudeSessionSource(reason: string): string {
 	return CLAUDE_SESSION_SOURCES.get(reason.trim().toLowerCase()) ?? reason.trim();
+}
+
+/**
+ * Pi's `session_shutdown` reasons said the way Claude Code's `SessionEnd`
+ * payload says them, for the matcher and the `reason` a hook body reads.
+ * Claude Code sends `clear|resume|logout|prompt_input_exit|other`.
+ *
+ * `new` and `fork` end a session for another inside the same process, Claude
+ * Code's `clear`; `resume` and `reload` end it for a resumed one, its
+ * `resume`; and `quit` is the person leaving Pi, its `prompt_input_exit`.
+ * Pi has no `logout` ending.
+ */
+const CLAUDE_SESSION_END_REASONS = new Map<string, string>([
+	["new", "clear"],
+	["fork", "clear"],
+	["resume", "resume"],
+	["reload", "resume"],
+	["quit", "prompt_input_exit"],
+]);
+
+/** The session's end reason as a `SessionEnd` hook spells it. A reason Pi adds
+ * and this table has not learned keeps its own word, as a start reason does. */
+export function claudeSessionEndReason(reason: string): string {
+	return CLAUDE_SESSION_END_REASONS.get(reason.trim().toLowerCase()) ?? reason.trim();
 }
 
 /** Public session-start vocabulary for extension consumers. */
