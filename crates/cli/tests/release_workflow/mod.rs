@@ -134,14 +134,16 @@ fn job_declaring<'a>(workflow: &'a str, marker: &str) -> &'a str {
     found.remove(0)
 }
 
-/// The concurrency group a job declares, if any. A job declaring none never
-/// waits behind another run of this workflow, and so is never cancelled while
-/// it waits.
-fn concurrency_group<'a>(job_lines: &[&'a str]) -> Option<&'a str> {
+/// One property of the job-level concurrency block in GitHub's workflow.
+/// Step bodies can contain the same text without configuring concurrency.
+fn concurrency_value<'a>(job_lines: &[&'a str], key: &str) -> Option<&'a str> {
+    let property = format!("{key}: ");
     job_lines
         .iter()
-        .skip_while(|l| l.trim() != "concurrency:")
-        .find_map(|l| l.trim().strip_prefix("group: "))
+        .skip_while(|line| **line != "    concurrency:")
+        .skip(1)
+        .take_while(|line| line.trim().is_empty() || line.starts_with("      "))
+        .find_map(|line| line.strip_prefix("      ")?.strip_prefix(&property))
 }
 
 /// The body of a step's `run: |` block, dedented so bash can run it.
