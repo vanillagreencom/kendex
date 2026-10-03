@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.18.0
+
+- A `SessionEnd` hook runs when a Pi session ends, on Pi's `session_shutdown`, with Pi's reason said in Claude Code's words: `quit`, or `clear` and `resume` where another session follows. A `StopFailure` hook runs when a run ends on an error, on `agent_before_settle` with `outcome: "error"`; a run that completed or was aborted runs none. What either says is shown to the person as a notification, never added to the session. kendex installs these hooks on Pi once a kendex release maps the two events.
+
 ### 0.17.3
 
 - In a lane launched with orch's `open-terminal --lane-refresh`, the native drift check says the lane is a refresh lane, where `kendex refresh` and `kendex apply` run only with `--lane-refresh`, in place of saying they never run there, and sends the drift report whole. Other lanes get the same notice as before.

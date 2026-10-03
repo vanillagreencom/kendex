@@ -19,6 +19,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Run installed PreToolUse hooks before Pi tool calls and give their additionalContext to the agent in interactive and headless sessions.
 - Stop a tool call when a hook refuses it or cannot complete.
 - Run installed PostToolUse, Stop, TaskCompleted and SessionStart hooks and give the agent what they say.
+- Run installed StopFailure hooks when a run ends on an error, and SessionEnd hooks when a session ends, and show you what they say.
 - Run configured custom hooks.
 - Report clippy errors after Rust edits.
 - Report installation drift through the native check's `kendex-drift` message in lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
@@ -40,12 +41,14 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 | `PostToolUse` | `tool_result` | Appended to the tool result the agent reads. |
 | `Stop`, `TaskCompleted` | `turn_end`, read once per response on `agent_before_settle` | Added to the session, and Pi runs one more model request inside the same run so the agent answers it. At the end of that request the hooks run again with `stop_hook_active: true`, and what they say then is recorded without another request, so a response runs them at most twice. |
 | `SessionStart` | `session_start` | Added to the session's opening context. |
+| `StopFailure` | `agent_before_settle`, read only when Pi says the run ended on an error | Shown to you as a notification. The agent does not read it. |
+| `SessionEnd` | `session_shutdown`, which Pi waits for before the session ends | Shown to you as a notification. The agent does not read it. |
 
-- Every hook whose matcher fits runs on those three events.
+- Every hook whose matcher fits runs on those events.
 - A hook that exits `2` hands the agent what it wrote to its error output, and one that exits `0` hands over what it wrote to its normal output.
 - Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
-- A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
-- `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
+- A `PostToolUse` matcher is matched against the tool's name, a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`, and a `SessionEnd` matcher against why it ended: `quit`, `resume` or `clear`.
+- `Stop`, `TaskCompleted` and `StopFailure` hooks take no matcher, so they always run. Pi does not name the kind of error a run ended on.
 - What the hooks on one event say to the agent is kept to Pi's own limit for a tool's output, 2000 lines or 50 KB, whichever comes first, and the end is kept. Past that limit, the whole text goes to a file in the system temporary directory that only its owner can read, and a `hook-output-truncated=<file>` line leads what the agent reads. A file that cannot be written is named as `hook-output-unsaved=<cause>` instead.
 - `Stop` and `TaskCompleted` hooks need Pi 0.87.0 or later. On an older Pi they do not run, and each fresh session starts with a `hook-host-unsupported=pi <version>` message that says so, and a session with a UI also gets it as a notification.
 

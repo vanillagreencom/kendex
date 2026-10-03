@@ -22,6 +22,10 @@ export const TOOL_RESULT_LISTENER = "tool_result";
 export const TURN_END_LISTENER = "turn_end";
 /** `SessionStart`. */
 export const SESSION_START_LISTENER = "session_start";
+/** `StopFailure`, read on the settle of a run Pi says ended in error. */
+export const STOP_FAILURE_LISTENER = "agent_before_settle";
+/** `SessionEnd`. */
+export const SESSION_END_LISTENER = "session_shutdown";
 
 /** One hook the rendered registry asks the carrier to run. */
 export interface RegisteredHook {

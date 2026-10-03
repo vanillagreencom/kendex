@@ -80,7 +80,14 @@ fn scope(world: &World) -> Scope {
 
 /// Every listener kendex renders a registration under, so the case below can
 /// assert the whole set rather than the one key it drives.
-const DISPATCHED: [&str; 4] = ["tool_call", "tool_result", "turn_end", "session_start"];
+const DISPATCHED: [&str; 6] = [
+    "tool_call",
+    "tool_result",
+    "turn_end",
+    "agent_before_settle",
+    "session_start",
+    "session_shutdown",
+];
 
 #[test]
 fn events_map_onto_the_listeners_pi_actually_fires() {
@@ -89,7 +96,9 @@ fn events_map_onto_the_listeners_pi_actually_fires() {
         ("PostToolUse", Some("tool_result")),
         ("Stop", Some("turn_end")),
         ("TaskCompleted", Some("turn_end")),
+        ("StopFailure", Some("agent_before_settle")),
         ("SessionStart", Some("session_start")),
+        ("SessionEnd", Some("session_shutdown")),
         ("PostCompact", None),
         ("UserPromptSubmit", None),
     ] {
@@ -758,15 +767,15 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     );
 }
 
-/// End to end, KEN-1189: the three listeners `pi_listener` maps events onto
+/// End to end, KEN-1189: the listeners `pi_listener` maps events onto
 /// besides `tool_call`. kendex rendered a registration under each and labelled
 /// it enforced while the carrier read one key, so a `PostToolUse`, `Stop`,
 /// `TaskCompleted` or `SessionStart` hook ran nothing — KEN-941's defect, one
 /// event narrower.
 ///
 /// `[[custom-hooks]]` entries again, because a custom hook has no file of its
-/// own and exists nowhere but the registry. The render is asserted for all
-/// four listeners; the carrier is driven over `tool_result`, whose handler
+/// own and exists nowhere but the registry. The render is asserted for every
+/// listener; the carrier is driven over `tool_result`, whose handler
 /// returns its answer rather than delivering it out of band, and whose patched
 /// tool result is what the model reads.
 #[test]
@@ -782,6 +791,8 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
             "[[custom-hooks]]\nname = \"e2e-post\"\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-1189-post >&2; exit 2\"\nagents = \"all\"\n\n",
             "[[custom-hooks]]\nname = \"e2e-stop\"\nevent = \"Stop\"\ncommand = \"echo ken-1189-stop >&2; exit 2\"\nagents = \"all\"\n\n",
             "[[custom-hooks]]\nname = \"e2e-session\"\nevent = \"SessionStart\"\ncommand = \"echo ken-1189-session; exit 0\"\nagents = \"all\"\n\n",
+            "[[custom-hooks]]\nname = \"e2e-failure\"\nevent = \"StopFailure\"\ncommand = \"exit 0\"\nagents = \"all\"\n\n",
+            "[[custom-hooks]]\nname = \"e2e-end\"\nevent = \"SessionEnd\"\ncommand = \"exit 0\"\nagents = \"all\"\n\n",
             "[[custom-hooks]]\nname = \"e2e-pre\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"exit 0\"\nagents = \"all\"\n",
         ),
     )

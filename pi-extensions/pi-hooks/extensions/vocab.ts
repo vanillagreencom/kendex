@@ -87,6 +87,12 @@ export function claudeToolInput(claudeName: string, input: unknown, cwd: string)
  *
  * Nothing maps onto `compact`: `pi_listener` gives `PostCompact` no listener,
  * so a hook declared for it never reaches Pi at all.
+ *
+ * Pi's `session_shutdown` carries the same reasons, `quit` in place of
+ * `startup`, and its `SessionEnd` payload says them through this table too:
+ * the session that follows a `new`, `fork`, `resume` or `reload` starts as
+ * `clear` or `resume`, the two words Claude Code's `SessionEnd` ends a
+ * session with when another follows.
  */
 const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 	["startup", "startup"],
@@ -96,7 +102,7 @@ const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 	["reload", "resume"],
 ]);
 
-/** The session's start reason as a `SessionStart` hook spells it. A reason Pi
+/** The session's start or end reason as a `SessionStart` or `SessionEnd` hook spells it. A reason Pi
  * adds and this table has not learned keeps its own word: a matcher naming it
  * still matches, and one naming nothing matches nothing. */
 export function claudeSessionSource(reason: string): string {

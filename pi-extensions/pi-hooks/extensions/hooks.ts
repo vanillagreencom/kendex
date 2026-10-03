@@ -12,7 +12,7 @@ import { installSettingsCacheRefresh, projectTrusted } from "./package-config.js
 import { agentLine, boundForAgent, deliver, type HookResult, type ListenerRun, personLine, runListener, unreadableLine } from "./dispatch.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
-import { SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
+import { SESSION_END_LISTENER, SESSION_START_LISTENER, STOP_FAILURE_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
 import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
@@ -333,6 +333,26 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// here, which judge the lead session, are not consulted for it.
 		if (piSubagentName() !== undefined) return undefined;
 
+		// `StopFailure` ends a turn an API error ended, which Pi says of a run
+		// as `outcome: "error"`, and only there. Pi names no error kind, so
+		// every registration covers it. Claude Code reads nothing a
+		// `StopFailure` hook says, so its word goes to the person, never into
+		// the session as a continuation the error would refuse again. It judges
+		// the lead alone, as `Stop` does: the payload carries no `agent_id`,
+		// the field such a hook tells a subagent's failure by.
+		if (event.outcome === "error") {
+			const failed = await runListener(
+				STOP_FAILURE_LISTENER,
+				undefined,
+				() => JSON.stringify({ hook_event_name: "StopFailure", ...claudeSessionFields(ctx) }),
+				ctx,
+				cfg,
+				project,
+				projectTrusted(ctx),
+			);
+			await report(STOP_FAILURE_LISTENER, failed, ctx, notify(ctx, "warning"));
+		}
+
 		const stopHookActive = continued;
 		continued = false;
 
@@ -380,6 +400,32 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 	pi.on("agent_settled", () => {
 		continued = false;
+	});
+
+	// `SessionEnd` is Pi's `session_shutdown`, which Pi awaits before it
+	// replaces or disposes the session, so every registration runs while the
+	// session still stands. Its reason is said in the words of the
+	// `SessionStart` that follows it, so `clear` and `resume` tell a hook
+	// another session follows, and `quit` keeps its own word. Claude Code
+	// reads nothing a `SessionEnd` hook says, and no turn is left for the
+	// agent, so what the hooks say goes to the person.
+	pi.on("session_shutdown", async (event, ctx: ExtensionContext) => {
+		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
+		recordProjectTrust(ctx, project);
+		const cfg = readConfig(ctx.cwd, project);
+		if (!getBool(cfg, "enabled")) return;
+
+		const reason = claudeSessionSource(event.reason);
+		const run = await runListener(
+			SESSION_END_LISTENER,
+			reason,
+			() => JSON.stringify({ hook_event_name: "SessionEnd", reason, ...claudeSessionFields(ctx) }),
+			ctx,
+			cfg,
+			project,
+			projectTrusted(ctx),
+		);
+		await report(SESSION_END_LISTENER, run, ctx, notify(ctx, "warning"));
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {

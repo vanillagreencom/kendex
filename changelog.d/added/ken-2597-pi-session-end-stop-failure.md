@@ -1,0 +1,1 @@
+- Pi hooks: `SessionEnd` runs on session shutdown and `StopFailure` on a run that ends in error, through the pi-hooks carrier (0.18.0 or later).
