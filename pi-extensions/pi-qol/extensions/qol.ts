@@ -226,12 +226,12 @@ export default function qol(pi: ExtensionAPI): void {
 		thinkingTimerStore.enabled = !!ctx?.hasUI && settingBoolean("thinkingTimer.enabled", true, ctx?.cwd);
 	};
 
-	// Pi's Loader starts no animation timer for a single-frame indicator.
-	// Keep static mode available for terminals where frequent redraws flash,
-	// whether the indicator is embedded in QOL or in Pi's standalone row.
+	// Pi's Loader starts no animation timer for a single-frame indicator, so
+	// static mode, the default, draws no frames of its own whether the
+	// indicator is embedded in QOL or in Pi's standalone row.
 	const applyWorkingIndicatorMode = (ctx: ExtensionContext): void => {
 		if (!ctx.hasUI) return;
-		const mode = settingString("workingIndicator.mode", "animated", ctx.cwd);
+		const mode = settingString("workingIndicator.mode", "static", ctx.cwd);
 		if (mode === "static") {
 			ctx.ui.setWorkingVisible(true);
 			ctx.ui.setWorkingIndicator({ frames: [ctx.ui.theme.fg("accent", "●")] });

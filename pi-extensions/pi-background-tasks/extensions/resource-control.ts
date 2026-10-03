@@ -136,8 +136,8 @@ function clampInt(value: number, min: number, max: number, fallback: number): nu
 
 export function readResourceControlSettings(cwd?: string): ResourceControlSettings {
 	return {
-		enabled: settingBoolean("resourceControlEnabled", false, cwd),
-		mode: settingEnum("resourceControlMode", RESOURCE_CONTROL_MODES, "auto", cwd),
+		enabled: settingBoolean("resourceControlEnabled", true, cwd),
+		mode: settingEnum("resourceControlMode", RESOURCE_CONTROL_MODES, "nice-ionice", cwd),
 		applyToBgTask: settingBoolean("resourceControlApplyToBgTask", true, cwd),
 		applyToAutoBackground: settingBoolean("resourceControlApplyToAutoBackground", true, cwd),
 		cpuWeight: clampInt(settingNumber("resourceControlCpuWeight", DEFAULT_CPU_WEIGHT, cwd), 1, 10_000, DEFAULT_CPU_WEIGHT),

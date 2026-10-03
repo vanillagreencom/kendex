@@ -180,15 +180,16 @@ for (const row of installationRows) {
 
 for (const compact of [true, false]) {
 	for (const enabled of [true, false]) {
-		for (const mode of ["animated", "static"]) {
-			test(`working indicator routing: compact=${compact}, statusline=${enabled}, mode=${mode}`, () => {
+		// An unset mode reads the shipped default, static.
+		for (const mode of ["animated", "static", undefined]) {
+			test(`working indicator routing: compact=${compact}, statusline=${enabled}, mode=${mode ?? "unset"}`, () => {
 				const { fake, ctx } = world({ "compactPrompt": compact, "statusline.enabled": enabled, "workingIndicator.mode": mode });
 				install(fake, ctx);
 				const tui = { requestRender: mock(() => {}) };
 				const editor = ctx.ui.setEditorComponent.mock.calls.at(-1)?.[0]?.(tui, makeTheme(), {});
 				expect(editor.embedWorkingStatus).toBe(enabled);
 				expect(ctx.ui.setWorkingVisible.mock.calls.at(-1)).toEqual([true]);
-				expect(ctx.ui.setWorkingIndicator.mock.calls.at(-1)).toEqual([mode === "static" ? { frames: ["●"] } : undefined]);
+				expect(ctx.ui.setWorkingIndicator.mock.calls.at(-1)).toEqual([mode === "animated" ? undefined : { frames: ["●"] }]);
 				const widgetFactory = ctx.ui.setWidget.mock.calls.find((call) => call[0] === "statusline")?.[1];
 				const widget = widgetFactory?.(tui, makeTheme());
 				const render = () => widget?.render(120).join("\n") ?? "";

@@ -35,7 +35,7 @@ The settings editor writes project values to `.pi/settings.json`. The default us
 
 Open `/extensions:settings`; settings appear under the **Questions** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-- `enabled`: package toggle.
+- `enabled`: package toggle. It stays on because an interactive session needs the questionnaire; only a session with no person to answer, such as an unattended agent run, turns it off.
 - `renderMode`, `popupWidth`, `popupMaxHeight`, `optionRows`, `defaultHeader`, `glyphStyle`: where and how the questionnaire renders.
 - `dialogTimeoutMinutes`: how long a native select or input dialog waits for an answer before the question is cancelled; 30 by default, 0 for no limit, at most 35791. Pi's own dialogs close at the limit; an RPC client receives it as the request's `timeout`. The custom questionnaire has no timeout.
 - `bridgeRepliesEnabled`: whether `pi-session-bridge` may answer or reject a pending question.

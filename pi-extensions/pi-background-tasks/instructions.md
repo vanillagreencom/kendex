@@ -6,7 +6,7 @@ Use `bg_task action: "spawn"` for long-running processes that should outlive the
 
 `bg_status` actions: `list`, `log` (by pid/id), `stop` (SIGTERM to process group). `bg_task` adds `clear` to drop finished entries.
 
-Resource controls are available as an opt-in extension setting for heavy I/O workloads. Default is off. When enabled, background tasks can run through a probed Linux user `systemd-run` transient service or a `nice`/`ionice` fallback while preserving log capture, wakeups, timeouts, and `/bg:stop` semantics.
+Resource controls are on by default: background tasks run under `nice`/`ionice` at lower CPU and IO priority, with log capture, wakeups, timeouts, and `/bg:stop` semantics unchanged. The setting can turn them off or pick a probed Linux user `systemd-run` transient service instead.
 
 Spawn parameters worth knowing:
 
@@ -21,7 +21,7 @@ Rules:
 - Never spawn a task and then wait on its output in foreground — that defeats the point.
 - Stop tasks you started for a turn-scoped purpose before finishing the turn.
 - Prefer `notifyMode: "transition"` over hand-rolled `prev=...; if changed; echo ...` poller guards when you only need wakes for state changes.
-- Output wakes are transcript-budget-safe by default: each wake carries one inline tail capped at `outputAlertMaxChars` (default 2 KB), and a per-task wake budget (default 20 wakes / 20 KB cumulative) suppresses further wakes once exhausted. When the budget trips you'll receive a single "wake budget exhausted; inspect log" notice with the log file path — fetch the full log with `bg_task action: "log"` instead of expecting more inline updates.
+- Output wakes are transcript-budget-safe by default: each wake carries one inline tail capped at `outputAlertMaxChars` (default 2 KB), and a per-task wake budget (default 10 wakes / 20 KB cumulative) suppresses further wakes once exhausted. When the budget trips you'll receive a single "wake budget exhausted; inspect log" notice with the log file path — fetch the full log with `bg_task action: "log"` instead of expecting more inline updates.
 
 Durability:
 

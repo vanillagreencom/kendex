@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.4.0
+
+- `workingIndicator.mode` defaults to `static`, a dot with no animation timer, instead of `animated`; set `animated` to restore Pi's spinner. In a scripted 100-second streaming session, `static` drew 58% fewer frames and used a third less CPU.
+- `sessionAutoRename.maxTokens` defaults to 128 instead of 96. The cap includes the naming model's reasoning tokens, and at 96 a reasoning model often spent all of them before writing a title, so the session kept its fallback name.
+
 ### 2.3.4
 
 - The package test suite now runs a copy of the extension code against the installed Pi packages, with no stand-in modules. It fails when a Pi package is missing or loads from outside this package, when the Pi packages differ in version, or when their version is below the declared minimum Pi version. Run the suite after installing all Pi packages at one version at or above that minimum. With `PI_QOL_PEER_VERSION` set, the suite requires every Pi package at that version.

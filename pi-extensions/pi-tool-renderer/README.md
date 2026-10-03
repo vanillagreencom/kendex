@@ -51,10 +51,10 @@ Open `/extensions:settings`; settings appear under the **Tool Renderer** tab. Pr
 - `registerBatchTool`, `batchMaxCalls`, `batchCallTimeoutMs`: the `tool_batch` tool and its limits.
 - `readOutputMode`, `searchOutputMode`, `bashOutputMode`, `mcpOutputMode`, and the `*PreviewLines` and `bashLiveOutputDelayMs`, `bashLiveTailLines`, `bashCollapsedLines`, `commandPreviewChars` budgets: how much of each result shows collapsed and expanded.
 - `showReadImages`: images in `read` results; needs Pi's own `terminal.showImages` off.
-- `renderMutationTools`, `splitDiffs`, `diffPreviewLines`, `diffExpandedLines`, `mutationCallPreview`, `mutationCallPreviewLines`, `shikiDiffs`, `wordDiffHighlights`, `diffBackgrounds`, `showDiffHunkMeta`: the edit and write diff view.
+- `renderMutationTools`, `splitDiffs`, `diffPreviewLines`, `diffExpandedLines`, `mutationCallPreview`, `mutationCallPreviewLines`, `shikiDiffs`, `wordDiffHighlights`, `diffBackgrounds`, `showDiffHunkMeta`: the edit and write diff view. `renderMutationTools` stays off because its replacement `edit` and `write` tools drop Pi's prompt text for those tools: on Pi 1.0.1 the system prompt shrinks from 3321 to 2620 bytes and loses the edit and write guidelines.
 - `renderBashDiffs`, `renderGitDiffCommandDiffs`, `applyPatchRenderer`, `applyPatchPreview`, `applyPatchPreviewLines`, `genericToolRenderers`: diffs and views for tools other than edit and write.
 - `compactUserMessages`, `userMessageTrailingBlankLine`, `compactCompactionMessages`, `compactSkillMessages`, `alignAssistantMessages`, `styledCodeBlocks`: message rendering.
 - `toolChrome`, `rightMarginGuard`, `pendingStatusAnimation`, `workingIndicator`, `maxLineWidth`: borders and the hard cap on one rendered line.
-- `stackToolCalls`, `stackChildDisplay`, `hideStackChildRows`: the stacking of consecutive native tool calls.
+- `stackToolCalls`, `stackChildDisplay`, `hideStackChildRows`: the stacking of consecutive native tool calls. `stackChildDisplay` stays `rows` because it has no effect while `stackToolCalls` is off, which is its default.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

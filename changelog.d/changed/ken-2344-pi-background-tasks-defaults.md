@@ -1,0 +1,1 @@
+- pi-background-tasks 2.2.0: tasks run at lower priority by default, and output wakes settle for 2 s with at most 10 per task.

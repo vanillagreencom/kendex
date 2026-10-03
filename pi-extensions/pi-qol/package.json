@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-qol",
-  "version": "2.3.4",
+  "version": "2.4.0",
   "description": "Pi quality-of-life extension: compact statusline/π prompt, reliable multiline input, styled pasted-image chips, session naming/search/context import, scheduled prompts, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
   "license": "MIT",
   "keywords": [
@@ -310,9 +310,9 @@
         {
           "key": "sessionAutoRename.maxTokens",
           "label": "Auto-rename output tokens",
-          "description": "Maximum output tokens requested from the naming model.",
+          "description": "Maximum output tokens requested from the naming model, reasoning tokens included.",
           "type": "number",
-          "default": 96,
+          "default": 128,
           "category": "Session Auto-Rename",
           "apply": "live"
         },
@@ -966,13 +966,13 @@
         {
           "key": "workingIndicator.mode",
           "label": "Working indicator mode",
-          "description": "Control Pi's built-in streaming spinner. The default animated spinner ticks every 80ms; in terminals where rendered content overflows the viewport (chat scrolled past the top, /tree open, etc.) each tick can trigger a pi-tui full-screen redraw and visible flash. Use 'static' for a single non-animating dot that keeps the working indicator visible without the 80ms timer. It appears before the project name when the QOL statusline is enabled, or in Pi's working row otherwise.",
+          "description": "Control Pi's built-in streaming spinner. The default 'static' shows a single non-animating dot that keeps the working indicator visible without a timer. 'animated' restores Pi's spinner, which ticks every 80ms; in terminals where rendered content overflows the viewport (chat scrolled past the top, /tree open, etc.) each tick can trigger a pi-tui full-screen redraw and visible flash. It appears before the project name when the QOL statusline is enabled, or in Pi's working row otherwise.",
           "type": "enum",
           "enumValues": [
             "animated",
             "static"
           ],
-          "default": "animated",
+          "default": "static",
           "category": "Thinking",
           "apply": "reload",
           "requiresReload": true

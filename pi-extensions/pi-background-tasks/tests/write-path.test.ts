@@ -3,8 +3,9 @@ import { PROBE_CONCURRENCY } from "../extensions/probes.js";
 import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 import { fixturePid } from "./fixtures/spawn-native.js";
 
-// Windows the extension coalesces per-chunk work into.
-const OUTPUT_SETTLE_MS = 1_500;
+// Windows the extension coalesces per-chunk work into. The fixture leaves
+// outputSettleMs unset, so the settle window is the shipped default.
+const OUTPUT_SETTLE_MS = 2_000;
 const LOG_FLUSH_MS = 250;
 const UI_REFRESH_MS = 200;
 const PERSIST_MS = 1_000;

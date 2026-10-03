@@ -10,8 +10,11 @@ import { waitForSpawnEffects } from "./spawn-child-runner.js";
 import type { BackgroundTaskSnapshot } from "../../extensions/types.js";
 
 interface ExitReadsInput { mode: "exit-reads"; action: "delivered" | "clear" | "shutdown" | "replacement"; producer: "replay" | "live" | "orphan" | "mixed" }
-type Input = ExitReadsInput | { mode: "restored-exit" } | { mode: "spawn" | "stop" | "matcher"; platform?: string; resource?: boolean; caller?: "tool" | "shutdown" | "slash"; command?: string; stopFails?: boolean; killFails?: boolean; signalGone?: boolean };
+type Input = ExitReadsInput | { mode: "restored-exit" } | { mode: "spawn" | "stop" | "matcher" | "wake-defaults"; platform?: string; resource?: boolean; caller?: "tool" | "shutdown" | "slash"; command?: string; stopFails?: boolean; killFails?: boolean; signalGone?: boolean };
 const input: Input = JSON.parse(await Bun.stdin.text());
+// The fixture's settings leave outputSettleMs and outputWakeBudgetMaxWakes
+// unset, so output wakes run on the shipped defaults.
+const OUTPUT_SETTLE_DEFAULT_MS = 2_000;
 const effects = { ...input, deferLogOpens: input.mode === "exit-reads", identityGone: false };
 const native = await interceptNativeEffects(effects);
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -219,8 +222,9 @@ try {
 	// Only the platform-sensitive spawn call runs under this row's platform.
 	if (input.platform) Object.defineProperty(process, "platform", { ...originalPlatform, value: input.platform });
 	const matcherMode = input.mode === "matcher";
+	const wakeMode = input.mode === "wake-defaults";
 	const spawned = await execute({ action: "spawn", command: input.command ?? "fixture command", notifyOnExit: matcherMode,
-		notifyOnOutput: matcherMode, notifyPattern: matcherMode ? `/${"a".repeat(1000)}(a+)+$/` : undefined });
+		notifyOnOutput: matcherMode || wakeMode, notifyPattern: matcherMode ? `/${"a".repeat(1000)}(a+)+$/` : undefined });
 	spawnedSnapshot = spawned.details.task;
 	Object.defineProperty(process, "platform", originalPlatform);
 	if (native.children.length !== 1 || native.spawns.length !== 1) throw new Error(`spawn_fixture.spawn_count=${native.spawns.length},children=${native.children.length}`);
@@ -233,11 +237,12 @@ try {
 	let after: unknown;
 	let escalated: unknown;
 	let matcherEvidence: unknown;
+	let wakeEvidence: unknown;
 	if (matcherMode) {
 		let callbackCompletions = 0;
 		const react = async (text: string) => {
 			child.stdout.write(text);
-			try { await native.fireTimeout(1500); }
+			try { await native.fireTimeout(OUTPUT_SETTLE_DEFAULT_MS); }
 			catch (error) { throw new Error("spawn_fixture.output_callback=rejected", { cause: error }); }
 			callbackCompletions += 1;
 			await execute({ action: "list" });
@@ -269,6 +274,16 @@ try {
 		assert.equal((await state()).exitNotified, true);
 		matcherEvidence = { callbackCompletions, notices: emitted.filter(([message]) => message.details.eventType === "output-matcher-timeout").length,
 			outputWakes: emitted.filter(([message]) => message.details.eventType === "output").length, exitWakes: emitted.filter(([message]) => message.details.eventType === "exit").length };
+	}
+	if (wakeMode) {
+		// Each burst settles before the next, so each can wake the agent once.
+		for (let index = 0; index < 12; index += 1) {
+			child.stdout.write(`burst ${index}\n`);
+			await native.fireTimeout(OUTPUT_SETTLE_DEFAULT_MS);
+		}
+		const emitted = messages as [{ details: { eventType: string } }][];
+		wakeEvidence = { outputWakes: emitted.filter(([message]) => message.details.eventType === "output").length,
+			budgetNotices: emitted.filter(([message]) => message.details.eventType === "output-budget-exhausted").length };
 	}
 	if (input.mode === "stop") {
 		if (input.caller === "shutdown") {
@@ -307,7 +322,7 @@ try {
 		spawn: { file: spawn.file, args: spawn.args, detached: spawn.options.detached, stdio: spawn.options.stdio, cwdIsPrivate: spawn.options.cwd === process.cwd(), piRootIsPrivate: (spawn.options.env as NodeJS.ProcessEnv).PI_CODING_AGENT_DIR === process.env.PI_CODING_AGENT_DIR, resultAction: spawned.details.action, resultId: spawned.details.task!.id, resultPid: spawned.details.task!.pid },
 		before, outcome, stopResult, after, escalated, final, log, stoppedTimers, stopCalls, signals, childSignals,
 		timerEvents: native.timerEvents, remainingTimers: native.activeTimers(), unexpected: native.unexpected, notifications, messages,
-		fixtureNow, fixturePid, matcherEvidence,
+		fixtureNow, fixturePid, matcherEvidence, wakeEvidence,
 	}));
 	}
 } finally {

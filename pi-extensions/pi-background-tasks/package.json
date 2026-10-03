@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-background-tasks",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "description": "Pi extension for explicit non-blocking background shell tasks, log tails, and completion wakeups.",
   "license": "MIT",
   "keywords": [
@@ -114,7 +114,7 @@
           "label": "Output settle delay",
           "description": "Debounce delay before output wakeups are sent.",
           "type": "number",
-          "default": 1500,
+          "default": 2000,
           "category": "Wakeups",
           "apply": "live"
         },
@@ -130,16 +130,16 @@
         {
           "key": "resourceControlEnabled",
           "label": "Resource controls",
-          "description": "Opt in to lower-priority execution for background tasks. Disabled by default; when off, spawn and stop behavior is unchanged.",
+          "description": "Run background tasks at lower CPU and IO priority so Pi stays responsive while they work. On by default; when off, spawn and stop behavior is unchanged.",
           "type": "boolean",
-          "default": false,
+          "default": true,
           "category": "Execution",
           "apply": "live"
         },
         {
           "key": "resourceControlMode",
           "label": "Resource control mode",
-          "description": "auto prefers a probed systemd-run --user transient service on Linux, then nice/ionice when available. off disables controls even if the master toggle is on.",
+          "description": "nice-ionice, the default, runs the task under nice and ionice in Pi's environment. auto prefers a probed systemd-run --user transient service on Linux, which runs the task with the user manager's environment instead of Pi's, then nice/ionice when available. off disables controls even if the master toggle is on.",
           "type": "enum",
           "enumValues": [
             "auto",
@@ -147,7 +147,7 @@
             "nice-ionice",
             "off"
           ],
-          "default": "auto",
+          "default": "nice-ionice",
           "category": "Execution",
           "apply": "live"
         },
@@ -260,7 +260,7 @@
           "label": "Output wake budget (count)",
           "description": "Maximum output wakes per task before further output wakes are suppressed and a single 'wake budget exhausted; inspect log' notice is emitted. Exit wakes are unaffected. Set 0 to disable the count cap.",
           "type": "number",
-          "default": 20,
+          "default": 10,
           "category": "Output",
           "apply": "live"
         },

@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 2.2.0
+
+- Resource controls are on by default in `nice-ionice` mode: background tasks run under `nice` and `ionice` at lower priority, which cut Pi's 99th-percentile event-loop delay during a build from about 11 ms to 9 ms. Set `resourceControlEnabled` to `false` to turn them off. On Windows, which has neither helper, a session warns once and spawns tasks unchanged.
+- `outputSettleMs` defaults to 2000 instead of 1500, so output with short pauses wakes the agent fewer times.
+- `outputWakeBudgetMaxWakes` defaults to 10 instead of 20: after 10 output wakes a task sends one notice that points to its log. Exit wakes are unaffected.
+
 ### 2.1.2
 
 - The dashboard reads only a bounded log tail without blocking Pi, preserves configured character limits for Unicode output, reuses unchanged tails for each task, and reuses command layouts between frames. A notification regex that exceeds its execution deadline is disabled and reported once to the agent, including in headless sessions. Exit notifications mark omitted log output. Notifications, the dashboard and log tools share a limit of four disk reads at once.

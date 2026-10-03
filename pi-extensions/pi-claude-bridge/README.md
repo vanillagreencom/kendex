@@ -46,7 +46,7 @@ Open `/extensions:settings`; settings appear under the **Pi Claude** tab, and `/
 
 - `enabled`: register the `pi-claude/*` models; reload required.
 - `appendSystemPrompt`: the context file and skills block described above.
-- `includeAppendSystemPromptMd`, `includeProjectAgentsHook`, `includeTaskPanelHook`, `includeCavemanHook`: forward `APPEND_SYSTEM.md` and the prompt blocks of `pi-agents-tmux`, `pi-task-panel` and `pi-caveman`.
+- `includeAppendSystemPromptMd`, `includeProjectAgentsHook`, `includeTaskPanelHook`, `includeCavemanHook`: forward `APPEND_SYSTEM.md` and the prompt blocks of `pi-agents-tmux`, `pi-task-panel` and `pi-caveman`. Each is off by default because it adds Pi prompt text to every Claude Code request, so each block is sent only after the user turns it on.
 - `strictMcpConfig`, `fastMode`, `pathToClaudeCodeExecutable`: how the Claude Code subprocess is launched.
 - `forceEffort`, `modelEffortOverrides`: pin a Claude effort for every request or per model. Override keys are bare ids (`claude-opus-4-8`), `pi-claude/<id>` or `*`; values are `low`, `medium`, `high`, `xhigh` or `max`; a per-model entry beats the global force.
 

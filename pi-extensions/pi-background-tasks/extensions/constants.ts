@@ -18,7 +18,7 @@ export const ICONS = {
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 0;
-export const DEFAULT_OUTPUT_SETTLE_MS = 1_500;
+export const DEFAULT_OUTPUT_SETTLE_MS = 2_000;
 export const DEFAULT_FORCE_KILL_GRACE_MS = 5_000;
 export const DEFAULT_OUTPUT_BUFFER_MAX_CHARS = 1_000_000;
 // Finished tasks kept in the task list. Past it the oldest finished task whose
@@ -43,7 +43,7 @@ export const DEFAULT_WIDGET_FINISHED_RETENTION_MS = 15_000;
 // single concise "wake budget exhausted; inspect log" notice is emitted. Exit
 // wakes are unaffected. Set either value to 0 to disable that arm of the
 // guard.
-export const DEFAULT_OUTPUT_WAKE_BUDGET_MAX_WAKES = 20;
+export const DEFAULT_OUTPUT_WAKE_BUDGET_MAX_WAKES = 10;
 export const DEFAULT_OUTPUT_WAKE_BUDGET_MAX_BYTES = 20_000;
 
 export const DASHBOARD_WIDTH = 96;

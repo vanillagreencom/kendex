@@ -7,14 +7,14 @@ import { clearPackageConfigCache } from "../extensions/package-config.js";
 
 test("resource settings parse configured fields and clamp numeric values", () => {
 	const defaults: ResourceControlSettings = {
-		enabled: false, mode: "auto", applyToBgTask: true, applyToAutoBackground: true,
+		enabled: true, mode: "nice-ionice", applyToBgTask: true, applyToAutoBackground: true,
 		cpuWeight: 100, ioWeight: 100, nice: 10, ioniceClass: "best-effort",
 		ioniceLevel: 7, warnOnFallback: true,
 	};
 	const rows: { name: string; config?: Record<string, unknown>; expected: Partial<ResourceControlSettings> }[] = [
 		{ name: "absent configuration uses complete defaults", expected: {} },
-		{ name: "enabled setting is read", config: { resourceControlEnabled: true }, expected: { enabled: true } },
-		{ name: "mode setting is read", config: { resourceControlMode: "nice-ionice" }, expected: { mode: "nice-ionice" } },
+		{ name: "enabled setting is read", config: { resourceControlEnabled: false }, expected: { enabled: false } },
+		{ name: "mode setting is read", config: { resourceControlMode: "auto" }, expected: { mode: "auto" } },
 		{ name: "explicit task opt out is read", config: { resourceControlApplyToBgTask: false }, expected: { applyToBgTask: false } },
 		{ name: "auto background opt out is read", config: { resourceControlApplyToAutoBackground: false }, expected: { applyToAutoBackground: false } },
 		{ name: "CPU weight clamps at upper bound", config: { resourceControlCpuWeight: 50_000 }, expected: { cpuWeight: 10_000 } },
