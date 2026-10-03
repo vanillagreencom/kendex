@@ -22,6 +22,7 @@ import {
   installFailedIn,
   installsWhereItLives,
   justThisLabel,
+  NO_HARNESSES_PICKED,
   openPlaceLabel,
   refusalLine,
   unreadLine,
@@ -135,6 +136,15 @@ const button = (label: string): HTMLButtonElement => {
 const box = (label: string): HTMLElement => {
   const found = document.querySelector(`[aria-label="${label}"]`);
   if (!(found instanceof HTMLElement)) throw new Error(`no ${label} box`);
+  return found;
+};
+
+/** The tool picker's trigger, which carries the picker's label. */
+const pickerTrigger = (): HTMLButtonElement => {
+  const found = [...document.querySelectorAll("button")].find((one) =>
+    one.textContent?.includes("Install for"),
+  );
+  if (!found) throw new Error("no tool picker rendered");
   return found;
 };
 
@@ -436,10 +446,7 @@ describe("the guided install", () => {
   // success over a plan that wrote nothing.
   it("holds the action back on a tool picker emptied by hand", async () => {
     await open();
-    const trigger = [...document.querySelectorAll("button")].find((one) =>
-      one.textContent?.includes("Install for"),
-    );
-    if (!trigger) throw new Error("no tool picker rendered");
+    const trigger = pickerTrigger();
     act(() => trigger.focus());
     await userEvent.keyboard("{Enter}");
     await settle();
@@ -484,9 +491,28 @@ describe("the guided install", () => {
     });
     await open();
 
-    expect(document.body.textContent).toContain("Install for");
+    // The label reads the same list the gate does: a tool on this machine
+    // is not checked when the scope's defaults leave it out.
+    expect(pickerTrigger().textContent).toBe(
+      `Install for${NO_HARNESSES_PICKED}`,
+    );
     expect(button(INSTALL_ACTION).disabled).toBe(true);
     expect(install).not.toHaveBeenCalled();
+  });
+
+  // A project whose kendex.toml does not parse cannot say which tools take
+  // an install. The button is held, and the reason the install itself
+  // would raise is drawn beside the picker rather than left unsaid.
+  it("says why a place offers no tool when its read is refused", async () => {
+    const refusal = "kendex.toml: expected `=` at line 3";
+    vi.mocked(commands.installTargets).mockResolvedValue({
+      status: "error",
+      error: refusal,
+    });
+    await open();
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(refusal);
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
   });
 
   // A selection can span marketplaces, and the Packages tab lists a

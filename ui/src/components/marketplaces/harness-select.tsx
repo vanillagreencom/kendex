@@ -54,6 +54,14 @@ export function chosenTools(
   return choice.harnesses ?? defaults;
 }
 
+/** The command's last answer: the rows a destination offers, or the
+ * reason it could not say. A destination whose `kendex.toml` does not
+ * parse refuses here with the same words the install would raise, so the
+ * reason is drawn beside the picker rather than as a dead button. */
+type Offer =
+  | { status: "offered"; targets: InstallTarget[] }
+  | { status: "refused"; error: string };
+
 /** The tools on this machine among the picker's rows. */
 function detectedOf(targets: InstallTarget[]): HarnessId[] {
   return targets.filter((t) => t.detected).map((t) => t.harness);
@@ -109,7 +117,10 @@ export function HarnessSelect({
    * so what the install gate has to read beside the choice. */
   onDefaults: (defaults: HarnessId[]) => void;
 }) {
-  const [targets, setTargets] = useState<InstallTarget[]>([]);
+  const [offer, setOffer] = useState<Offer>({
+    status: "offered",
+    targets: [],
+  });
   // The read's dependency is the kinds as one value, because the array
   // itself is fresh on every render. Splitting that key back is where the
   // emptiness has to survive: `"".split(",")` is one blank kind, which
@@ -144,9 +155,16 @@ export function HarnessSelect({
     // last answer, and the last answer was about another destination.
     latest.current.onDefaults([]);
     void commands.installTargets(scope, asked).then((r) => {
-      if (!live || r.status !== "ok") return;
-      setTargets(r.data);
-      latest.current.onDefaults(defaultsOf(r.data));
+      if (!live) return;
+      // A refusal offers no row, and the pick is narrowed to that like to
+      // any other answer: kept in `wanted`, it comes back with the rows.
+      const offered = r.status === "ok" ? r.data : [];
+      setOffer(
+        r.status === "ok"
+          ? { status: "offered", targets: offered }
+          : { status: "refused", error: r.error },
+      );
+      latest.current.onDefaults(defaultsOf(offered));
       // The one place a pick is answered against what is offered, so the
       // install gate and the trigger's label read one list. A pick made
       // against a wider set of kinds can name a tool this answer no longer
@@ -156,7 +174,7 @@ export function HarnessSelect({
       const choice = latest.current.value;
       const picked = wanted.current;
       if (picked === null || choice.harnesses === null) return;
-      const offers = new Set(r.data.map((t) => t.harness));
+      const offers = new Set(offered.map((t) => t.harness));
       const kept = picked.filter((one) => offers.has(one));
       if (kept.join(",") !== choice.harnesses.join(","))
         latest.current.onChange({ ...choice, harnesses: kept });
@@ -172,6 +190,7 @@ export function HarnessSelect({
   // lists come from the answer in hand — the defaults are a column of it,
   // and a picked list was narrowed to it above — so a tool this
   // destination cannot install to has no row here and is in neither.
+  const targets = offer.status === "offered" ? offer.targets : [];
   const detected = detectedOf(targets);
   const chosen = chosenTools(value, defaultsOf(targets));
   // Every pick goes through here: it is the reader's answer, kept as such,
@@ -197,82 +216,89 @@ export function HarnessSelect({
           : harnessCountLabel(chosen.length);
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <span className="text-muted-foreground">Install for</span>
-            {label}
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="end" className="w-72 p-3">
-        <p className="pb-2 text-xs text-muted-foreground">
-          {SHARED_AGENTS_LEAD} <code>.agents</code> {SHARED_AGENTS_TAIL}
-        </p>
-        <div className="flex flex-col gap-2">
-          {targets.map((target) => (
-            <Label
-              key={target.harness}
-              className="flex items-center gap-2 font-normal"
-            >
-              <Checkbox
-                checked={chosen.includes(target.harness)}
-                onCheckedChange={() => toggle(target.harness)}
-              />
-              {harnessName(target.harness)}
-              {target.detected ? (
-                <span className="text-xs text-muted-foreground">
-                  {ON_THIS_COMPUTER}
-                </span>
-              ) : null}
-            </Label>
-          ))}
-        </div>
-        <div className="mt-3 flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => pick(targets.map((t) => t.harness))}
-          >
-            {ALL_HARNESSES_LABEL}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => pick(detected)}>
-            {ONLY_ON_THIS_COMPUTER_LABEL}
-          </Button>
-        </div>
-        <div className="mt-3 border-t pt-3">
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button variant="outline" size="sm" className="gap-1.5">
+              <span className="text-muted-foreground">Install for</span>
+              {label}
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" className="w-72 p-3">
           <p className="pb-2 text-xs text-muted-foreground">
-            {DELIVERY_HEADING}
+            {SHARED_AGENTS_LEAD} <code>.agents</code> {SHARED_AGENTS_TAIL}
           </p>
           <div className="flex flex-col gap-2">
-            <Label className="flex items-center gap-2 font-normal">
-              <Checkbox
-                checked={(value.method ?? "symlink") === "symlink"}
-                onCheckedChange={() =>
-                  onChange({ ...value, method: "symlink" })
-                }
-              />
-              {SYMLINK_OPTION}
-            </Label>
-            <Label className="flex items-center gap-2 font-normal">
-              <Checkbox
-                checked={value.method === "copy"}
-                onCheckedChange={() => onChange({ ...value, method: "copy" })}
-              />
-              {COPY_OPTION}
-            </Label>
+            {targets.map((target) => (
+              <Label
+                key={target.harness}
+                className="flex items-center gap-2 font-normal"
+              >
+                <Checkbox
+                  checked={chosen.includes(target.harness)}
+                  onCheckedChange={() => toggle(target.harness)}
+                />
+                {harnessName(target.harness)}
+                {target.detected ? (
+                  <span className="text-xs text-muted-foreground">
+                    {ON_THIS_COMPUTER}
+                  </span>
+                ) : null}
+              </Label>
+            ))}
           </div>
-        </div>
-        {dependencies &&
-        dependencies.required.length + dependencies.optional.length > 0 ? (
-          <DependencyChoice
-            dependencies={dependencies}
-            chosen={value.optional}
-            onChange={(optional) => onChange({ ...value, optional })}
-          />
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <div className="mt-3 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => pick(targets.map((t) => t.harness))}
+            >
+              {ALL_HARNESSES_LABEL}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => pick(detected)}>
+              {ONLY_ON_THIS_COMPUTER_LABEL}
+            </Button>
+          </div>
+          <div className="mt-3 border-t pt-3">
+            <p className="pb-2 text-xs text-muted-foreground">
+              {DELIVERY_HEADING}
+            </p>
+            <div className="flex flex-col gap-2">
+              <Label className="flex items-center gap-2 font-normal">
+                <Checkbox
+                  checked={(value.method ?? "symlink") === "symlink"}
+                  onCheckedChange={() =>
+                    onChange({ ...value, method: "symlink" })
+                  }
+                />
+                {SYMLINK_OPTION}
+              </Label>
+              <Label className="flex items-center gap-2 font-normal">
+                <Checkbox
+                  checked={value.method === "copy"}
+                  onCheckedChange={() => onChange({ ...value, method: "copy" })}
+                />
+                {COPY_OPTION}
+              </Label>
+            </div>
+          </div>
+          {dependencies &&
+          dependencies.required.length + dependencies.optional.length > 0 ? (
+            <DependencyChoice
+              dependencies={dependencies}
+              chosen={value.optional}
+              onChange={(optional) => onChange({ ...value, optional })}
+            />
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {offer.status === "refused" ? (
+        <p className="text-[13px] text-critical" role="alert">
+          {offer.error}
+        </p>
+      ) : null}
+    </>
   );
 }
