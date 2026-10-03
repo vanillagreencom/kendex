@@ -77,6 +77,8 @@ if [ "$git_channel" -eq 1 ]; then
 elif [ "$version" = latest ]; then
   version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+else
+  version="v${version#v}"
 fi
 [ -n "$version" ] || { message release-unavailable latest "The latest release could not be resolved." >&2; exit 1; }
 plain="${version#v}"

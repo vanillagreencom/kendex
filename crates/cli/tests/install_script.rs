@@ -155,6 +155,30 @@ fn run_install_in_args(
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn pinned_versions_with_and_without_v_request_the_same_download() {
+    for version in ["1.7.0", "v1.7.0"] {
+        let home = tempfile::tempdir().unwrap();
+        let root = rooted(&home);
+        let (output, urls) = run_install_in_args(
+            "Linux",
+            "x86_64",
+            None,
+            &root,
+            &[],
+            SUDO_STUB,
+            &["--cli-only", "--version", version],
+        );
+        assert!(output.status.success(), "{version}: {output:?}");
+        assert_eq!(
+            urls,
+            "https://github.com/vanillagreencom/kendex/releases/download/v1.7.0/kendex-x86_64-unknown-linux-gnu\n"
+        );
+        assert!(root.join(".local/bin/kendex").is_file());
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn each_release_host_downloads_its_own_binary() {
     for (os, arch, target) in [
         ("Linux", "x86_64", "x86_64-unknown-linux-gnu"),
