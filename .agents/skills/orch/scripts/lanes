@@ -40,6 +40,10 @@
 #         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
 #         drops a lane on.
+#         A weekly wall oversee-watch recorded from a lane's harness banner
+#         (lib/account-wall.sh) holds that account's `weekly_pct` at 100 until
+#         the reset the banner stated, whatever the usage endpoint reads; a
+#         record that cannot be read reads the lane `error`.
 #         Which STATUS word a failed Codex renewal reads, and its remedy, is
 #         stated once, under "Why a Codex token is renewed by the Codex CLI"
 #         below. The STATUS words are `ok`; `rate_limited`, an endpoint that
@@ -2169,6 +2173,7 @@ emit_lane() {
 	# whole listing one jq pass whether or not a provider was configured.
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
 	[[ -n "$prior" ]] || prior='{}'
+	buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
@@ -3259,6 +3264,8 @@ LANE_CLAIMS_RC=0
 
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/account-wall.sh
+source "$SCRIPT_DIR/lib/account-wall.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-model.sh

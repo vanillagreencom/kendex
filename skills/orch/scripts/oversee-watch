@@ -189,6 +189,8 @@ source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/usage-reset.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/account-wall.sh
+source "$SCRIPT_DIR/lib/account-wall.sh"
 # shellcheck source=lib/lane-model.sh
 source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/pr-watch-pass.sh
@@ -3364,6 +3366,7 @@ check_lanes() {
     banner="$(lane_limit_banner "$below")" || banner_rc=$?
     [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
     [[ -n "$banner" ]] || die limit-banner-missing "" "lane=$lane"
+    account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" || true
     echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1

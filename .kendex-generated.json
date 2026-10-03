@@ -599,6 +599,7 @@
   ".agents/skills/orch/scripts/lane-mail",
   ".agents/skills/orch/scripts/lane-marker",
   ".agents/skills/orch/scripts/lanes",
+  ".agents/skills/orch/scripts/lib/account-wall.sh",
   ".agents/skills/orch/scripts/lib/adapters/claude.sh",
   ".agents/skills/orch/scripts/lib/adapters/codex.sh",
   ".agents/skills/orch/scripts/lib/adapters/copilot.sh",

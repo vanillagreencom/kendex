@@ -181,6 +181,8 @@ run() {
 #   first         the first stdout line, or `none`
 #   out~<text>    whether stdout carries <text>
 #   claims        how many claim files the state directory holds
+#   wall          every account wall the state directory holds, as
+#                 `<config dir>@<reset epoch>`, or `none`
 watch() {
   local got="" token name value needle
   set -f
@@ -192,6 +194,7 @@ watch() {
       first) value="$(head -n 1 <<<"$OUT")"; value="${value:-none}"; value="${value// /+}" ;;
       out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
       claims) value="$(find "$STATE_DIR/claims" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d '[:space:]')" ;;
+      wall) value="$(find "$STATE_DIR/walls" -name '*.json' -exec cat {} + 2>/dev/null | jq -r '"\(.config_dir)@\(.resets_at)"' | paste -sd, - || true)"; value="${value:-none}" ;;
       *) echo "watch: unknown field $name" >&2; exit 1 ;;
     esac
     got="$got $name=$value"
@@ -305,6 +308,37 @@ run
 expect="rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" "a re-run over the same wall reports nothing" "$ERR"
 assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
+
+echo "=== a weekly wall the banner states is kept for its account ==="
+# A usage reading can show room on an account whose harness has walled it, so
+# the watch records the weekly wall it raises usage-limit for, under the
+# claimed account and until the reset the banner states (lib/account-wall.sh),
+# and `lanes` judges the account on it (tests/lanes.sh). A session wall, and a
+# weekly reset already behind the pass, record nothing. Each row has its own
+# control below: the watch's call disabled, the weekly test dropped, and the
+# reset test dropped.
+WEEKLY_0950="You've hit your weekly limit \\xc2\\xb7 resets 9:50am (America/Los_Angeles)"
+WALL_ROW_WEEKLY="a weekly banner on a claimed lane records its account's wall until the stated reset|new|banner:$WEEKLY_0950|claim_live|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+/home/me/.eclaude+resets=2026-09-02T16:50:00Z wall=/home/me/.eclaude@1788367800"
+WALL_ROW_SESSION="a session banner records no wall|new|banner:You've hit your session limit \\xc2\\xb7 resets 9:50am (America/Los_Angeles)|claim_live|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+/home/me/.eclaude+resets=2026-09-02T16:50:00Z wall=none"
+WALL_ROW_PASSED="a weekly reset already behind the pass records no wall|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Aug 30, 4pm|claim_live|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit-passed+gh-2+/home/me/.eclaude+resets=2026-08-30T16:00:00Z wall=none"
+usage_table "$WALL_ROW_WEEKLY" "$WALL_ROW_SESSION" "$WALL_ROW_PASSED"
+
+# wall_control NAME FILE OLD NEW ROW WALL: ROW, its label marked as a control
+# and its wall expectation WALL, run against a copy of the scripts whose FILE,
+# relative to scripts/, has OLD replaced by NEW once.
+wall_control() {
+  local scripts row="control: ${5%%wall=*}wall=$6"
+  scripts="$(mutant_scripts "$1/orch" "$2")" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
+  mutate_file "$scripts/$2" "$3" "$4"
+  WATCH_BIN="$scripts/oversee-watch" usage_table "$row"
+}
+wall_control wall-unwritten oversee-watch '    account_wall_record "$PROJECT_ROOT"' '    : account_wall_record "$PROJECT_ROOT"' \
+  "$WALL_ROW_WEEKLY" none
+wall_control wall-any-banner lib/account-wall.sh ' && "$5" == *"weekly limit"*' '' \
+  "$WALL_ROW_SESSION" /home/me/.eclaude@1788367800
+wall_control wall-any-reset lib/account-wall.sh ' && "$3" -gt "$4"' '' \
+  "$WALL_ROW_PASSED" /home/me/.eclaude@1788105600
 
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
