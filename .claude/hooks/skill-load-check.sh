@@ -673,8 +673,10 @@ esac
 # Codex 0.160.0 functions.exec records a JavaScript custom_tool_call instead.
 # Its Script completed header can follow a failed shell read. The adjacent
 # CommandExecution event must prove shell success before the matching output.
-# Only a literal exec_command followed by text of its output can be judged;
-# other JavaScript could hide another command or a failed read.
+# Only one literal exec_command whose output text() prints can be judged, in
+# the three spellings Codex writes: `const r = await ...; text(r.output)`,
+# `text(await ...)` and `text((await ...).output)`. Other JavaScript could
+# hide another command or a failed read.
 # The whole command must be a read, not a compound shell command whose final
 # exit status could hide a failed read. These are the shell reads agents use
 # for SKILL.md; no shell text is executed by this hook.
@@ -685,7 +687,7 @@ if [ "$CALL" = codex ]; then
       | "\"(?:[^\"\\\\]|\\\\.)*\"|[0-9]+" as $literal
       | ($identifier + "\\s*:\\s*(?:" + $literal + ")") as $field
       | .input | strings
-      | capture("^\\s*(?:const\\s+(?<variable>" + $identifier + ")\\s*=\\s*|(?<direct>text\\(\\s*))await\\s+tools[.]exec_command\\(\\s*\\{\\s*(?<fields>" + $field + "(?:\\s*,\\s*" + $field + ")*)\\s*\\}\\s*\\)(?(<direct>)\\s*\\)|\\s*;\\s*text\\(\\s*\\k<variable>[.]output\\s*\\))\\s*;?\\s*$")?
+      | capture("^\\s*(?:const\\s+(?<variable>" + $identifier + ")\\s*=\\s*|(?<member>text\\(\\s*\\(\\s*)|(?<direct>text\\(\\s*))await\\s+tools[.]exec_command\\(\\s*\\{\\s*(?<fields>" + $field + "(?:\\s*,\\s*" + $field + ")*)\\s*\\}\\s*\\)(?(<member>)\\s*\\)\\s*[.]output\\s*\\)|(?(<direct>)\\s*\\)|\\s*;\\s*text\\(\\s*\\k<variable>[.]output\\s*\\)))\\s*;?\\s*$")?
       | .fields
       | [match("(?<key>" + $identifier + ")\\s*:\\s*(?<value>" + $literal + ")"; "g")
         | .captures | map({key:.name, value:.string}) | from_entries

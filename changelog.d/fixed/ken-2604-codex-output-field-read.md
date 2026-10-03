@@ -1,0 +1,1 @@
+- skill-load-check counts a Codex `functions.exec` skill read written as `text((await tools.exec_command(...)).output)`, so the next `linear.sh` call is no longer refused.

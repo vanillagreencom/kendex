@@ -5,7 +5,9 @@
 # functions.exec instead persists custom_tool_call and custom_tool_call_output.
 # The fixtures preserve the standalone TLK-33 read and a credentialed failed
 # read from gpt-6.1-sol. Script completed appears even when cat exits 1, so
-# only the adjacent CommandExecution event proves shell success. The fixture
+# only the adjacent CommandExecution event proves shell success. The
+# output-field capture is a sandbox run whose hooks added context around the
+# read and whose agent printed text((await ...).output). The fixture
 # projections omit account metadata and repeated command output, not status.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
@@ -188,7 +190,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
   local fixture="$1" scenario="$2" want="$3" label="$4" command skill
   cp -- "$HOOK" "$JUDGE"
   jq -c --arg scenario "$scenario" '
-    if $scenario == "failed-status" and .type == "event_msg" then
+    if $scenario == "failed-status" and .payload.item.type? == "CommandExecution" then
       .payload.item.status = "failed" | .payload.item.exit_code = 1
     elif $scenario == "missing-event" then select(.type != "event_msg")
     elif $scenario == "extra-event" and .type == "event_msg" then ., .
@@ -199,8 +201,8 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
     elif $scenario == "compound-js" and .payload.type == "custom_tool_call" then
       .payload.input += "await tools.exec_command({cmd:\"true\"});"
     elif $scenario == "compound-shell" and .payload.type == "custom_tool_call" then
-      .payload.input = "const r=await tools.exec_command({cmd:\"cat .agents/skills/linear/SKILL.md; true\"});text(r.output);"
-    elif $scenario == "compound-shell" and .type == "event_msg" then
+      .payload.input |= sub("linear/SKILL[.]md\""; "linear/SKILL.md; true\"")
+    elif $scenario == "compound-shell" and .payload.item.type? == "CommandExecution" then
       .payload.item.command[-1] = "cat .agents/skills/linear/SKILL.md; true"
     elif $scenario == "failed-wrapper" and .payload.type == "custom_tool_call_output" then
       .payload.output[0].text = "Script failed\nOutput:\n"
@@ -239,13 +241,18 @@ failed-status|skill-load-check-codex-0.160.0|failed-status|rc=2 first=skill-load
 missing-event|skill-load-check-codex-0.160.0|missing-event|rc=2 first=skill-load-check: unloaded=linear|functions.exec without shell completion
 extra-event|skill-load-check-codex-0.160.0|extra-event|rc=2 first=skill-load-check: unloaded=linear|functions.exec ambiguous shell completion
 wrong-command|skill-load-check-codex-0.160.0|wrong-command|rc=2 first=skill-load-check: unloaded=linear|functions.exec another command completion
+field-success|skill-load-check-codex-0.160.0-output-field|original|rc=0 first=-|functions.exec output field read
+field-failed|skill-load-check-codex-0.160.0-output-field|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field failed read
+field-compound-js|skill-load-check-codex-0.160.0-output-field|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field compound JavaScript
+field-compound-shell|skill-load-check-codex-0.160.0-output-field|compound-shell|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field compound shell
 ROWS
 }
 exec_success_row() { exec_rows success; }
 exec_captured_row() { exec_rows captured-success; }
-exec_failed_row() { exec_rows failed; }
-exec_compound_row() { exec_rows compound-js; }
-exec_shell_row() { exec_rows compound-shell; }
+exec_field_row() { exec_rows field-success; }
+exec_failed_row() { exec_rows failed; exec_rows field-failed; }
+exec_compound_row() { exec_rows compound-js; exec_rows field-compound-js; }
+exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
 exec_output_row() { exec_rows failed-wrapper; }
 exec_id_row() { exec_rows other-id; }
 exec_rows
@@ -254,12 +261,17 @@ skill_load_control exec-direct-text "$HOOK" '      | .input | strings' \
   '      | select(startswith("const"))' HOOK exec_captured_row 'functions.exec captured direct text read'
 skill_load_control exec-recognition "$HOOK" '    def exec_cmd:' \
   '      empty |' HOOK exec_success_row 'functions.exec successful skill read'
+skill_load_control exec-output-field "$HOOK" '      | .input | strings' \
+  '      | select(startswith("text((") | not)' HOOK exec_field_row 'functions.exec output field read'
 skill_load_control exec-completion "$HOOK" '| select(.type == "CommandExecution")' \
-  '        | .status = "completed" | .exit_code = 0' HOOK exec_failed_row 'functions.exec authentic failed read'
+  '        | .status = "completed" | .exit_code = 0' HOOK exec_failed_row 'functions.exec authentic failed read' \
+  'functions.exec output field failed read'
 skill_load_control exec-standalone-js "$HOOK" '      | .input | strings' \
-  '      | (split(";")[0:2] | join(";") + ";")' HOOK exec_compound_row 'functions.exec compound JavaScript'
+  '      | split("\n")[0]' HOOK exec_compound_row 'functions.exec compound JavaScript' \
+  'functions.exec output field compound JavaScript'
 skill_load_control exec-standalone-shell "$HOOK" '| ($skill | gsub("[.]"; "\\.")) as $escaped' \
-  '    | ($cmd | split(";")[0]) as $cmd' HOOK exec_shell_row 'functions.exec compound shell'
+  '    | ($cmd | split(";")[0]) as $cmd' HOOK exec_shell_row 'functions.exec compound shell' \
+  'functions.exec output field compound shell'
 skill_load_control exec-output "$HOOK" '| .text | strings' \
   '          | "Script completed\nOutput:\n"' HOOK exec_output_row 'functions.exec failed wrapper'
 skill_load_control exec-call-id "$HOOK" '    | (.call_id | strings | select(. != "")) as $id' \
