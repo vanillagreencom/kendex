@@ -31,3 +31,17 @@ control_expect "--done-when-met '0' refuses before any request"
 control_replace scripts/commands/issues.sh 1 \
     '        elif [[ "$done_when_met" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then' \
     '        elif true; then'
+
+# Open the section at the first line: a box above `## Done when` ticks and
+# takes the numbers the caller counted from the section.
+control_expect "a box above the Done-when section stays unchecked"
+control_replace scripts/commands/issues.sh 1 \
+    '        reduce ($desc | split("\n"))[] as $line ({out: [], section: false, boxes: 0, ticked: 0};' \
+    '        reduce ($desc | split("\n"))[] as $line ({out: [], section: true, boxes: 0, ticked: 0};'
+
+# Drop the met boxes from the retry: the rerun sets Done with the verified
+# boxes unchecked.
+control_expect "the retry after a failed Done update keeps --done-when-met"
+control_replace scripts/commands/issues.sh 1 \
+    '                retry+=" --done-when-met $done_when_met"' \
+    '                :'

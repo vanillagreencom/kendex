@@ -10,13 +10,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
 
 # The issue read answers with the description in DESCRIPTION_FILE; the update
-# answers with the description it was sent, or that one when it was sent none.
+# answers with the description it was sent, or that one when it was sent none,
+# and fails when UPDATE_FAILS is set.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 config="$(cat)"
@@ -37,6 +39,10 @@ case "$query" in
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
+  if [ -n "${UPDATE_FAILS:-}" ]; then
+    printf '%s' '{"errors":[{"message":"update refused"}]}___HTTP_CODE___200'
+    exit 0
+  fi
   jq -cj --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:{name:"Done",type:"completed"},assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Claude"},labels:{nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{nodes:[]},inverseRelations:{nodes:[]}}}}}' <<<"$payload"
   printf '___HTTP_CODE___200'
   ;;
@@ -66,6 +72,8 @@ boxes="$TMP_ROOT/boxes.md"
 printf '%s\n' \
   'Problem text.' \
   '' \
+  '- [ ] above the section' \
+  '' \
   '## Done when' \
   '' \
   '- [ ] first' \
@@ -84,16 +92,28 @@ assert_jq "complete --done-when-met all counts the boxes it ticked" "$out" \
 update="$(updates "$log")"
 assert_eq "complete --done-when-met all sends one issueUpdate" "$(wc -l <<<"$update" | tr -d ' ')" "1"
 assert_jq "the Done update carries the ticked description" "$update" \
-  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n## Done when\n\n- [x] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
+  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n- [ ] above the section\n\n## Done when\n\n- [x] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
 assert_jq "a box outside the Done-when section stays unchecked" "$update" \
   '.variables.input.description | endswith("## Notes\n\n- [ ] outside the section\n")'
+assert_jq "a box above the Done-when section stays unchecked" "$update" \
+  '.variables.input.description | startswith("Problem text.\n\n- [ ] above the section\n\n## Done when\n")'
 
 # --- a list: only the named box ticks; an unnamed box stays unchecked
 log="$TMP_ROOT/list.jsonl"
 out="$(run_complete "$boxes" "$log" CC-720 --done-when-met 3 2>"$TMP_ROOT/list.err")"
 assert_jq "complete --done-when-met 3 ticks one box" "$out" '.done_when_checked == 1'
 assert_jq "an unnamed box stays unchecked" "$(updates "$log")" \
-  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n## Done when\n\n- [ ] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
+  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n- [ ] above the section\n\n## Done when\n\n- [ ] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
+
+# --- a failed Done update after the summary post: the retry it names keeps
+# the met boxes and drops only the summary options
+log="$TMP_ROOT/failed.jsonl"
+rc=0
+UPDATE_FAILS=1 run_complete "$boxes" "$log" CC-720 --summary "Shipped it" --done-when-met 3 \
+  >"$TMP_ROOT/failed.out" 2>"$TMP_ROOT/failed.err" || rc=$?
+assert_ne "a failed Done update fails the completion" "$rc" 0
+assert_file_contains "the retry after a failed Done update keeps --done-when-met" "$TMP_ROOT/failed.err" \
+  "Rerun 'issues.sh complete CC-720 --done-when-met 3' without summary flags"
 
 # --- a number past the section's last box refuses before the summary post
 log="$TMP_ROOT/missing.jsonl"

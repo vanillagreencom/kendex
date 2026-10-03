@@ -3182,7 +3182,14 @@ complete_issue() {
 
     if [ "$update_rc" -ne 0 ] || [ "$update_success" != "true" ]; then
         if [ -n "$summary" ]; then
-            echo "{\"error\": \"State transition to Done failed after the summary comment was posted. Rerun 'issues.sh complete $issue_id' without summary flags to avoid a duplicate comment.\"}" >&2
+            # The retry drops only the summary options: the comment is posted,
+            # and the Done-when boxes still ride the update that sets Done.
+            local retry="'issues.sh complete $issue_id"
+            if [ -n "$done_when_met" ]; then
+                retry+=" --done-when-met $done_when_met"
+            fi
+            jq -cn --arg retry "$retry'" \
+                '{error: ("State transition to Done failed after the summary comment was posted. Rerun " + $retry + " without summary flags to avoid a duplicate comment.")}' >&2
         fi
         if [ -n "$update_result" ]; then
             echo "$update_result"
