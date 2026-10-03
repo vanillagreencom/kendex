@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "researchMode": "lite",
+    "type": "deep-lite",
+    "provider": "exa",
+    "queryCount": 3,
+    "additionalQueries": [
+      "Linear webhooks Issue Comment data change events delivery retries signature",
+      "Linear API pagination filter updatedAt gt incremental sync"
+    ],
+    "additionalQueriesApplied": "provider-additional-queries",
+    "synthesis": false,
+    "exaStatus": "failed: HTTP 401 INVALID_API_KEY, requestId 56b389004ef89b43c06ef9b00ec59d00",
+    "fallback": "no web search; the three official pages below were read directly on 2026-10-03"
+  },
+  "raw": {
+    "query": "Linear GraphQL API rate limiting leaky bucket, X-RateLimit headers, complexity, webhooks, updatedAt incremental reads, pagination",
+    "exa_error": {
+      "status": 401,
+      "tag": "INVALID_API_KEY"
+    },
+    "results": [
+      {
+        "url": "https://linear.app/developers/rate-limiting",
+        "title": "Rate limiting",
+        "fetchedAt": "2026-10-03",
+        "text": "API key: up to 2,500 requests per hour; up to 3,000,000 points per hour. OAuth app: 5,000 requests and 2,000,000 points hourly per user or app user. Unauthenticated: 600 requests and 100,000 points per hour by IP. Maximum complexity of a single query: 10,000 points. Leaky bucket; tokens are refilled with a constant rate of LIMIT_AMOUNT / LIMIT_PERIOD. Headers X-RateLimit-Requests-Limit/Remaining/Reset (UTC epoch milliseconds), X-Complexity, X-RateLimit-Complexity-Limit/Remaining/Reset, endpoint-specific X-RateLimit-Endpoint-*. Each property is 0.1 point, each object is 1 point and any connection multiplies its children points based on the given pagination argument, or the default 50. Rate-limited answer: HTTP 400 with RATELIMITED error code. Avoid polling; use webhooks; filter; sort by the updated timestamp when fetching all data."
+      },
+      {
+        "url": "https://linear.app/developers/webhooks",
+        "title": "Webhooks",
+        "fetchedAt": "2026-10-03",
+        "text": "Events: Issues, Issue attachments, Issue comments, Issue labels, Comment reactions, Projects, Project updates, Documents, Initiatives, Initiative Updates, Cycles, Customers, Customer Requests, Users. Only workspace admins, or OAuth applications with the admin scope, can create or read webhooks. Endpoint: publicly accessible HTTPS, non-localhost; respond HTTP 200. A failed delivery (unavailable, over 5000 ms, non-200) is retried at most 3 times, after 1 minute, 1 hour and 6 hours; an unresponsive webhook might be disabled and must be re-enabled manually. Linear-Signature: hex HMAC-SHA256 of the raw body with the signing secret."
+      },
+      {
+        "url": "https://linear.app/developers/pagination",
+        "title": "Pagination",
+        "fetchedAt": "2026-10-03",
+        "text": "The first 50 results are returned by default. first/after and last/before arguments; pageInfo hasNextPage and endCursor. Default order createdAt; can order by updatedAt to retrieve recently modified resources. No maximum page size stated."
+      }
+    ]
+  }
+}
