@@ -2,10 +2,10 @@
 
 The overseer applies these rules to the three Copilot head notices [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends as a `lane-notice`, and to a head a pr-watch `awaiting-stale` line names, both events in [oversee-events.md § Event kinds](oversee-events.md#event-kinds). Each notice's first line is its kind, then `PR #[N] head [SHA]`. Every approval below is `overseer-approve [N] [SHA] --body-file [PATH] --repo [OWNER/REPO]`, with the SHA the notice or the `awaiting-stale` line names, as printed, and `[OWNER/REPO]` the repository the `pr-watch` line leads with, or for a notice the owning lane's repository: it re-reads the pull request's head, approves only when that head starts with the SHA, and binds the review to the full head it read. On its `head-moved` refusal the overseer writes no `use1` row, since the new head takes its own route; `overseer-approve --help` holds its token file and every refusal.
 
-Before any approval below, run the one reader of review bodies at that head, from a checkout of `[OWNER/REPO]`:
+Before any approval below, run the one reader of review bodies at that head from `[REVIEW_BASE_CHECKOUT]`, bound per [gates.md § Gate-mode routing](gates.md#gate-mode-routing):
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C [REPO_CHECKOUT] check-review-replies [N]
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C [REVIEW_BASE_CHECKOUT] check-review-replies [N]
 ```
 
 Approve only on exit `0` whose `head=` starts with the SHA. Any other result approves nothing, writes no `use1` row and wakes the lane with the lines it printed, or on exit `2` its first stderr line: a `suppressed-entry` is a finding Copilot wrote only in a review body, which no thread carries.

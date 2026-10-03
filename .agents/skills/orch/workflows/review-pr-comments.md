@@ -388,7 +388,7 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's and the body check below, run now, prints no `suppressed-entry`. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** no thread this triage answered is Copilot's and the body check below, run now, exits `0`; any other exit runs this step. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
@@ -442,7 +442,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. Answer exit `1` as [submit-pr.md](submit-pr.md) § 6.1 directs, each `suppressed-entry` in the `Dispositions at [HEAD_SHA]` comment, then run the check again. Under the notice's thread lines, one line per body finding gives its review id, its `path:line` and the answering comment's URL. No notice goes out before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
+A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. Answer exit `1` as [submit-pr.md](submit-pr.md) § 6.1 directs, each `suppressed-entry` in the `Dispositions at [HEAD_SHA]` comment, then run the check again. Under the notice's thread lines, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
 
 **Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
 
