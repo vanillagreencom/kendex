@@ -348,6 +348,21 @@ fn marker_blocks_upsert_and_strip_cleanly() {
     }
 }
 
+/// A block that already stands keeps its place: refreshing it rewrites only
+/// its own lines, and keeping it unchanged returns every byte, so a style
+/// block after it stays where it was.
+#[test]
+fn an_existing_marker_block_is_replaced_where_it_stands() {
+    let style = "<!-- kendex:append-system output-style-STE begin -->\nStyle.\n<!-- kendex:append-system output-style-STE end -->\n";
+    let package = "<!-- kendex:append-system pi-hooks begin -->\nold body\n<!-- kendex:append-system pi-hooks end -->\n";
+    let file = format!("# Notes\n\n{package}\n{style}");
+    assert_eq!(upsert_marker_block(&file, "pi-hooks", "old body"), file);
+    assert_eq!(
+        upsert_marker_block(&file, "pi-hooks", "new body"),
+        file.replace("old body", "new body")
+    );
+}
+
 /// A document quoting the markers inside a code fence keeps every byte of
 /// the quote and its surroundings: only the real block — a marker alone on
 /// its line, outside any fence — is replaced or removed.

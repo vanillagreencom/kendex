@@ -77,17 +77,22 @@ pub fn style_blocks(current: &str) -> Vec<String> {
         .collect()
 }
 
-/// The block and the blank line before it take the file's own terminator,
-/// so a file that already holds this block comes back byte-identical.
+/// An existing block is replaced where it stands, so a file that already
+/// holds this block comes back byte-identical wherever the block sits and
+/// the blocks after it keep their place. A new block goes at the end after
+/// a blank line; both take the file's own terminator.
 pub fn upsert_marker_block(current: &str, name: &str, block: &str) -> String {
-    let stripped = remove_marker_block(current, name);
     let (begin, end) = marker_bounds(name);
     let nl = crate::fs::line_terminator(current);
-    let base = stripped.trim_end();
+    let owned = format!("{begin}{nl}{block}{nl}{end}{nl}");
+    if let Some((start, stop)) = marker_block_span(current, &begin, &end) {
+        return format!("{}{owned}{}", &current[..start], &current[stop..]);
+    }
+    let base = current.trim_end();
     if base.is_empty() {
-        format!("{begin}{nl}{block}{nl}{end}{nl}")
+        owned
     } else {
-        format!("{base}{nl}{nl}{begin}{nl}{block}{nl}{end}{nl}")
+        format!("{base}{nl}{nl}{owned}")
     }
 }
 

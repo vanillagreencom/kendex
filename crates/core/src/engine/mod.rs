@@ -294,7 +294,7 @@ pub fn plan_scope(
 }
 
 /// Finalize the kept Pi records and plan the native switches a declaration
-/// changed; each switch's `APPEND_SYSTEM.md` edit joins that file's other
+/// changed; each package's `APPEND_SYSTEM.md` edit joins that file's other
 /// config edits.
 fn plan_pi_switches(
     env: &Env,
