@@ -249,7 +249,7 @@ Default commands:
           Bash uses Claude's built-in read-only checks; dontAsk denies writes.
           User/project settings and their hooks are excluded.
           The answer is the JSON result's result field. A result with no
-          text, or flagged is_error, on the first call or the format retry
+          text, or flagged is_error, on a target's first call or format retry
           and on any exit, is a CLI failure whose cause is the result's own
           fields (subtype, is_error, num_turns, stop_reason, terminal_reason,
           api_error_status, each errors[] entry, and the result text when
@@ -2745,7 +2745,9 @@ REFUSAL_PATTERNS=(
   "You've hit your (usage )?limit|You have hit your limit"
 )
 # Use the same fall-through for primary calls and the existing format retry.
-# A new target receives the original request, never another model's retry.
+# A new target receives the original request, never another model's retry,
+# and its answer is a first response: the primary call's and a fall-through
+# target's alike pass gate_first_response before either becomes the response.
 collect_response() {
   local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json
   while :; do
@@ -2795,51 +2797,45 @@ collect_response() {
       trap 'rm -f -- "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" "$REVIEW_DIFF_FILE" || true' EXIT
     fi
   done
+  [[ $invocation_prompt != "$PROMPT_TMP" ]] || gate_first_response
+}
+# A first response that holds no answer ends the run: a timeout, a non-zero
+# exit, a result envelope that ended without a review, or an empty stdout.
+gate_first_response() {
+  if [[ $EXIT_CODE -eq 124 ]]; then
+    $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
+    echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
+    exit 1
+  elif [[ $EXIT_CODE -ne 0 ]]; then
+    # Classify first, report once: a signal death is a kill, not a refusal, and
+    # takes its own exit code so the caller can tell its reviewer was taken away.
+    CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
+    [[ "$attempt_cause" != quota ]] || CLI_FAILURE="reported a quota/rate-limit refusal"
+    if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
+      CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
+    fi
+    $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
+    echo "{\"error\": \"$TARGET_CLI $CLI_FAILURE\", \"target\": \"$TARGET_CLI\"}" >&2
+    [[ ! -s "$STDERR_TMP" ]] || { echo "--- stderr ---"; head -20 "$STDERR_TMP"; } >&2
+    exit 1
+  fi
+  echo "→ Response received (${#RESULT} bytes)" >&2
+  # A result envelope that ran and ended without review text names its own end;
+  # the auth advice below is for a stdout that carried nothing at all.
+  if [[ $attempt_cause == result-* ]]; then
+    CLI_FAILURE=$(result_envelope_reason)
+    $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT"
+    jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
+    printf -- '--- cause (claude result) ---\n%s\n' "$RESULT_ENVELOPE_CAUSE" >&2
+    exit 1
+  elif [[ ${#RESULT} -eq 0 ]]; then
+    $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
+    echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
+    [[ ! -s "$STDERR_TMP" ]] || { echo "--- stderr ---"; head -20 "$STDERR_TMP"; } >&2
+    exit 1
+  fi
 }
 collect_response "$PROMPT_TMP"
-
-if [[ $EXIT_CODE -eq 124 ]]; then
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
-  echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
-  exit 1
-elif [[ $EXIT_CODE -ne 0 ]]; then
-  # Classify first, report once: a signal death is a kill, not a refusal, and
-  # takes its own exit code so the caller can tell its reviewer was taken away.
-  CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
-  [[ "$attempt_cause" != quota ]] || CLI_FAILURE="reported a quota/rate-limit refusal"
-  if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
-    CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
-  fi
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
-  echo "{\"error\": \"$TARGET_CLI $CLI_FAILURE\", \"target\": \"$TARGET_CLI\"}" >&2
-  if [[ -s "$STDERR_TMP" ]]; then
-    echo "--- stderr ---" >&2
-    head -20 "$STDERR_TMP" >&2
-  fi
-  exit 1
-fi
-
-echo "→ Response received (${#RESULT} bytes)" >&2
-
-# A result envelope that ran and ended without review text names its own end;
-# the auth advice below is for a stdout that carried nothing at all.
-if [[ $attempt_cause == result-* ]]; then
-  CLI_FAILURE=$(result_envelope_reason)
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT"
-  jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
-  printf -- '--- cause (claude result) ---\n%s\n' "$RESULT_ENVELOPE_CAUSE" >&2
-  exit 1
-fi
-
-if [[ ${#RESULT} -eq 0 ]]; then
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
-  echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
-  if [[ -s "$STDERR_TMP" ]]; then
-    echo "--- stderr ---" >&2
-    head -20 "$STDERR_TMP" >&2
-  fi
-  exit 1
-fi
 
 # --- Retry + raw-preservation helpers (review/audit) --------------------------
 
@@ -3050,7 +3046,7 @@ if $REVIEW_LIKE; then
       FIRST_RESULT="$RESULT"
       RECOVERY_TARGET="$TARGET_CLI"
       collect_response "$RETRY_PROMPT_TMP"
-      if [[ "$TARGET_CLI" != "$RECOVERY_TARGET" && $EXIT_CODE -eq 0 ]]; then
+      if [[ "$TARGET_CLI" != "$RECOVERY_TARGET" ]]; then
         RAW_PRESERVED_PATH=""
         continue
       fi

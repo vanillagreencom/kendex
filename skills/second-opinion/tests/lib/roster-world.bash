@@ -91,6 +91,11 @@ response() {
     junk) printf 'this is not json at all\n' ;;
     # a verdict with no finding arrays: parseable, structurally incomplete
     partial) printf '{"agent":"external-%s","verdict":"pass","summary":"cut"}\n' "$2" ;;
+    # a Claude result envelope flagged is_error whose result is a clean review
+    flagged-envelope)
+      local review
+      review=$(response clean "$2") || return 1
+      jq -cn --arg r "$review" '{type: "result", subtype: "success", is_error: true, num_turns: 3, result: $r}' ;;
     down|empty) return 0 ;;
     *) echo "UNKNOWN-RESPONSE: $1" >&2; exit 2 ;;
   esac

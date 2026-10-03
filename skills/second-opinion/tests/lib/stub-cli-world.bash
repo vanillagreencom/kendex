@@ -501,7 +501,7 @@ content_class() {
     "$PROSE_PREVIOUSLY") printf 'prose:previously' ;;
     ANSWER) printf 'answer' ;;
     "{"*)
-      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" elif .cause_source == "claude result" then (.cause | gsub("\n"; ";")) else "other" end) + ")"
+      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" elif .cause_source == "claude result" then (.cause | gsub("\n"; ";")) else "other" end) + (if .cause_source == "claude result" then "|" + (.attempts | map(.cause) | join(",")) else "" end) + ")"
              elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) + (if .qa_metadata.review_performed? == false then ":" + ((.qa_metadata.reason // "-") | tostring) else "" end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
       ;;
     "") printf 'empty' ;;

@@ -19,7 +19,7 @@ Requires jq, perl and a logged-in external CLI, claude or codex, or another CLI 
 
 ## How it works
 
-You select a review, audit, challenge or question. The script identifies the current session model and chooses an eligible external CLI. That CLI reads the requested context and returns its analysis. Reviews and audits are saved in the shared finding format; other modes return text. A review or audit whose CLI fails or is killed keeps a failure record with the reason and, when one exists, the cause; a timeout has no cause. When the CLI prints a Claude result envelope, the cause is the envelope's own fields: the result subtype, the turn count, the stop reason and any error the result reports.
+You select a review, audit, challenge or question. The script identifies the current session model and chooses an eligible external CLI. That CLI reads the requested context and returns its analysis. Reviews and audits are saved in the shared finding format; other modes return text. A review or audit whose CLI fails or is killed keeps a failure record; [SKILL.md § Error Handling](SKILL.md#error-handling) says what it holds.
 
 ## Settings
 
