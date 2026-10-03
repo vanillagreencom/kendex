@@ -10,20 +10,19 @@ kendex_github_is_resolved_token() {
     return 0
   fi
   # Any other value, such as a sandbox placeholder a proxy swaps for the real
-  # token at egress, counts only when it authenticates. The result is kept for
-  # the value, so a later check or status on the same value in this shell asks
-  # gh nothing. The prefix lasts for the call, and gh prefers GH_TOKEN.
-  if [[ "${_KENDEX_GITHUB_PROBED_TOKEN:-}" != "$token" ]]; then
-    _KENDEX_GITHUB_PROBED_OK=0
-    if GH_TOKEN="$token" kendex_github_token_auth_status; then
-      _KENDEX_GITHUB_PROBED_OK=1
-    fi
-    _KENDEX_GITHUB_PROBED_TOKEN="$token"
+  # token at egress, counts only when it authenticates. The validation records
+  # an accepted value, so a later probe of it asks gh nothing; a refused one is
+  # kept for this shell alone, so a second name holding it asks nothing either.
+  # The prefix lasts for the call, and gh prefers GH_TOKEN.
+  [[ "${_KENDEX_GITHUB_REFUSED_TOKEN:-}" != "$token" ]] || return 1
+  if GH_TOKEN="$token" kendex_github_token_auth_status; then
+    return 0
   fi
-  [[ "$_KENDEX_GITHUB_PROBED_OK" == 1 ]]
+  _KENDEX_GITHUB_REFUSED_TOKEN="$token"
+  return 1
 }
-# Never inherited: a probe result counts only for a probe this shell ran.
-unset _KENDEX_GITHUB_PROBED_TOKEN _KENDEX_GITHUB_PROBED_OK
+# Never inherited: a refusal counts only for a probe this shell ran.
+unset _KENDEX_GITHUB_REFUSED_TOKEN
 
 _GH_AUTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bounded.sh
@@ -35,24 +34,28 @@ kendex_github_has_env_token() {
 }
 
 # The one validation of the env token, behind both status checks. gh runs in
-# this shell, so the bounded runner's signal forwarding reaches it. A value
-# this shell's probe already accepted is not asked again. A GitHub App
-# installation token has no user, so `gh api user` answers it 403 naming the
-# integration. That answer alone is asked again of the installation's own
+# this shell, so the bounded runner's signal forwarding reaches it. A GitHub
+# App installation token has no user, so `gh api user` answers it 403 naming
+# the integration. That answer alone is asked again of the installation's own
 # endpoint; every other failure, a timeout included, keeps its status.
+#
+# An accepted value is exported as KENDEX_GITHUB_VALIDATED_TOKEN, so a later
+# check of that same value, in this shell or in the command script the
+# github.sh router execs, asks gh nothing. Any other value, a refused one
+# included, is asked again.
 _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
   local auth_timeout="$1" stdout_file="$2" stderr_file="$3" status=0 detail=""
-  if [[ "${_KENDEX_GITHUB_PROBED_OK:-0}" == 1 && "${GH_TOKEN:-${GITHUB_TOKEN:-}}" == "${_KENDEX_GITHUB_PROBED_TOKEN:-}" ]]; then
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ -n "$token" && "$token" == "${KENDEX_GITHUB_VALIDATED_TOKEN:-}" ]]; then
     return 0
   fi
   kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api user --jq '.login' || status=$?
-  [[ "$status" -ne 0 ]] || return 0
-  detail="$(<"$stderr_file")" || return "$status"
-  if _kendex_github_is_integration_refusal "$detail"; then
-    kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count'
-    return
+  if [[ "$status" -ne 0 ]]; then
+    detail="$(<"$stderr_file")" || return "$status"
+    _kendex_github_is_integration_refusal "$detail" || return "$status"
+    kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || return
   fi
-  return "$status"
+  export KENDEX_GITHUB_VALIDATED_TOKEN="$token"
 }
 
 # gh's answer to an installation token on an endpoint only a user reaches.
@@ -213,33 +216,37 @@ kendex_github_sanitize_gh_env() {
   return 0
 }
 
-# Print the name of the variable MODE's ladder selects: the first holding a
-# resolved token, else the first holding a 1Password reference.
-kendex_github_select_auth_token_source() {
-  local mode="${1:-default}"
-  local -a order
-  local var_name token
+# Set OUT_VAR to the name of the variable MODE's ladder selects: the first
+# holding a resolved token, else the first holding a 1Password reference. It
+# assigns rather than prints, so its probe runs in the caller's shell and the
+# validation that probe records outlives the call. OUT_VAR stays as it was
+# when nothing is selected, and never takes a name starting `_select_`.
+kendex_github_select_auth_token_source() { # MODE OUT_VAR
+  local _select_mode="${1:-default}"
+  local _select_out="${2:?kendex_github_select_auth_token_source: output var required}"
+  local -a _select_order
+  local _select_var _select_token
 
-  case "$mode" in
-    bot) order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
-    bot-only) order=(GH_BOT_TOKEN) ;;
-    router) order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
-    user) order=(GH_TOKEN GITHUB_TOKEN) ;;
-    *) order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
+  case "$_select_mode" in
+    bot) _select_order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
+    bot-only) _select_order=(GH_BOT_TOKEN) ;;
+    router) _select_order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
+    user) _select_order=(GH_TOKEN GITHUB_TOKEN) ;;
+    *) _select_order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
   esac
 
-  for var_name in "${order[@]}"; do
-    token="${!var_name:-}"
-    if kendex_github_is_resolved_token "$token"; then
-      printf '%s' "$var_name"
+  for _select_var in "${_select_order[@]}"; do
+    _select_token="${!_select_var:-}"
+    if kendex_github_is_resolved_token "$_select_token"; then
+      printf -v "$_select_out" '%s' "$_select_var"
       return 0
     fi
   done
 
-  for var_name in "${order[@]}"; do
-    token="${!var_name:-}"
-    if [[ "$token" == op://* ]]; then
-      printf '%s' "$var_name"
+  for _select_var in "${_select_order[@]}"; do
+    _select_token="${!_select_var:-}"
+    if [[ "$_select_token" == op://* ]]; then
+      printf -v "$_select_out" '%s' "$_select_var"
       return 0
     fi
   done
@@ -248,8 +255,8 @@ kendex_github_select_auth_token_source() {
 }
 
 kendex_github_select_auth_token() {
-  local var_name
-  var_name="$(kendex_github_select_auth_token_source "${1:-default}")" || return 1
+  local var_name=""
+  kendex_github_select_auth_token_source "${1:-default}" var_name || return 1
   printf '%s' "${!var_name}"
 }
 
@@ -257,7 +264,7 @@ kendex_github_apply_selected_auth_token() {
   local token="" selected_var="" resolved=""
 
   unset KENDEX_GITHUB_SELECTED_TOKEN_SOURCE
-  selected_var="$(kendex_github_select_auth_token_source "${1:-default}")" || return 1
+  kendex_github_select_auth_token_source "${1:-default}" selected_var || return 1
   token="${!selected_var}"
 
   if [[ "$token" == op://* ]]; then

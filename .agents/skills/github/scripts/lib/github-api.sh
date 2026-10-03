@@ -303,7 +303,7 @@ is_resolved_github_token() {
 load_bot_token() {
     local token="" token_source="" caller_source="" token_home="the environment"
 
-    token_source=$(kendex_github_select_auth_token_source bot) || token_source=""
+    kendex_github_select_auth_token_source bot token_source || token_source=""
     if [[ -z "$token_source" || "${!token_source}" == op://* ]]; then
         # Load public settings, then .env.local, only when the process env
         # did not already carry a resolved GitHub token; an unresolved
@@ -319,7 +319,7 @@ load_bot_token() {
         # The load restores every variable the caller set, so a changed
         # selection is one the project files supplied.
         caller_source="$token_source"
-        token_source=$(kendex_github_select_auth_token_source bot) || token_source=""
+        kendex_github_select_auth_token_source bot token_source || token_source=""
         [ "$token_source" = "$caller_source" ] || token_home=".env.local"
     fi
 

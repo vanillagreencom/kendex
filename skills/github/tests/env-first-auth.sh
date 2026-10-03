@@ -5,8 +5,9 @@
 set -euo pipefail
 
 # The invoking shell's real auth env must not reach the cases below — every
-# token each case sees is injected by the case itself.
-unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
+# token each case sees is injected by the case itself, and so is any record
+# of a validation that accepted one.
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN KENDEX_GITHUB_VALIDATED_TOKEN
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -76,14 +77,15 @@ fi
 _token_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "$tok" ]]; then
-    [[ "$tok" == "ghs_ROUTERBOT123" || "$tok" == "gho_DIRECT456" || "$tok" == "ghs_APPTOKEN" || "$tok" == "dtn_PLACEHOLDER" ]]
+    [[ "$tok" == "ghs_ROUTERBOT123" || "$tok" == "gho_DIRECT456" || "$tok" == "ghs_APPTOKEN" || "$tok" == "dtn_PLACEHOLDER" || "$tok" == "dtn_APPPLACEHOLDER" ]]
     return
   fi
   [[ "${STUB_KEYRING_OK:-0}" == "1" ]]
 }
 
 # What gh prints when a GitHub App installation token asks for something only
-# a user or a granted permission reaches.
+# a user or a granted permission reaches. A dtn_APP value is a sandbox
+# placeholder the proxy swaps for an installation token.
 _integration_403() {
   echo '{"message":"Resource not accessible by integration","status":"403"}'
   echo "gh: Resource not accessible by integration (HTTP 403)" >&2
@@ -100,7 +102,7 @@ case "${1:-}" in
     ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
-      [[ "${GH_TOKEN:-}" != ghs_APP* ]] || _integration_403
+      [[ "${GH_TOKEN:-}" != ghs_APP* && "${GH_TOKEN:-}" != dtn_APP* ]] || _integration_403
       _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
       exit 0
@@ -239,6 +241,7 @@ run_entry() {
     label-remove) cmd=("$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label) ;;
     router:pr-edit-body) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md") ;;
     router:pr-view) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json "number,state") ;;
+    pr-view) cmd=("$REPO_ROOT/skills/github/scripts/commands/pr-view.sh" --json "number,state") ;;
     router:bot-token) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token --format=text) ;;
     router:bot-token-json) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token) ;;
     router:*) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" "${entry#router:}" 42 test-label) ;;
@@ -321,6 +324,48 @@ an installation token refused as an integration on both endpoints is an auth err
 a value with no known prefix that authenticates is selected|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|default|0|dtn_PLACEHOLDER|0
 "
 rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/repo/kendex.settings.toml"
+
+# --- what one read asks GitHub ------------------------------------------------
+# The router validates the token it selects once, and the command script it
+# execs reuses that result, so a read costs one validation and its own
+# request. A row is `label|world|entry|rc|out|requests`, the first five as in
+# the table above and requests the gh calls in order: `user` and
+# `installation` the two validation endpoints, `keyring` the keyring probe,
+# `pr-view` the read itself.
+requests() {
+  local out="" line kind
+  while IFS= read -r line; do
+    case "$line" in
+      "api user --jq .login") kind=user ;;
+      "api installation/repositories --jq .total_count") kind=installation ;;
+      "auth status") kind=keyring ;;
+      "pr view "*) kind=pr-view ;;
+      *) kind="other:$line" ;;
+    esac
+    out="$out,$kind"
+  done <"$TMP_ROOT/requests.calls"
+  [[ -n "$out" ]] && printf '%s' "${out#,}" || printf -- '-'
+}
+echo "=== what one read asks GitHub ==="
+while IFS='|' read -r label world entry rc out want; do
+  [[ -n "$label" ]] || continue
+  for field in "$world" "$entry" "$rc" "$out" "$want"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$label" >&2; exit 1; }
+  done
+  # shellcheck disable=SC2086
+  build_world $world
+  W_ENV+=("STUB_GH_CALLS=$TMP_ROOT/requests.calls")
+  : >"$TMP_ROOT/requests.calls"
+  got="$(run_entry "$entry")"
+  assert_eq "${got% op=*} requests=$(requests)" "rc=$rc out=$out requests=$want" "$label"
+done <<<"\
+an installation placeholder through the router is validated once, then read|file:no-token env:GH_TOKEN=dtn_APPPLACEHOLDER|router:pr-view|0|pr=42|user,installation,pr-view
+an installation token through the router is too|file:no-token env:GH_TOKEN=ghs_APPTOKEN|router:pr-view|0|pr=42|user,installation,pr-view
+a placeholder the user endpoint accepts costs that one request|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|router:pr-view|0|pr=42|user,pr-view
+an invalid placeholder is asked again by the command and fails closed|file:no-token env:GH_TOKEN=dtn_BADPLACEHOLDER|router:pr-view|3|status=auth_error|user,user,keyring,user
+a command run directly validates the value itself|file:no-token env:GH_TOKEN=dtn_APPPLACEHOLDER|pr-view|0|pr=42|user,installation,pr-view
+a recorded validation of another value does not stand for this one|file:no-token env:GH_TOKEN=dtn_APPPLACEHOLDER env:KENDEX_GITHUB_VALIDATED_TOKEN=dtn_OTHERVALUE|pr-view|0|pr=42|user,installation,pr-view
+"
 
 # The op-retry project-env load stays best-effort (|| true) for token
 # ABSENCE, but its stderr is open: a refused settings load must surface the

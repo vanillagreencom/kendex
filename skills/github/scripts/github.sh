@@ -124,6 +124,9 @@ Auth preflight:
   When GH_TOKEN or GITHUB_TOKEN is selected, gh api user is authoritative.
   gh auth status is authoritative only when no environment token is selected.
   A failed non-bot environment token is removed only when keyring auth passes.
+  An accepted token is exported as KENDEX_GITHUB_VALIDATED_TOKEN, so the
+  subcommand does not ask GitHub again about that same value; any other value
+  is validated again.
 
 Errors and retries:
   Most commands write {"error": "message"} JSON to stderr and exit 1.

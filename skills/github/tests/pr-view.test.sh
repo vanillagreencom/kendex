@@ -150,7 +150,7 @@ run() {
   (
     cd "$TMP_ROOT/repo"
     PATH="$TMP_ROOT/bin:$PATH" STUB_GH_CALLS="$TMP_ROOT/gh.calls" STUB_OP_CALLS="$TMP_ROOT/op.calls" \
-      env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN ${W_ENV[@]+"${W_ENV[@]}"} \
+      env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN ${W_ENV[@]+"${W_ENV[@]}"} \
       "$GITHUB_SH" -C "$TMP_ROOT/repo" pr-view "${argv[@]}" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr"
   ) || rc=$?
   printf 'rc=%s out=%s op=%s calls=%s' "$rc" "$(out_text)" "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "$(calls)"
@@ -213,7 +213,7 @@ gh pr view refusing the credential exits 3 with the auth status|pr:auth|json|3|s
 the auth preflight outliving its bound exits 124|auth-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|auth
 a leading-zero auth bound is read|env:KENDEX_GITHUB_AUTH_TIMEOUT=08|json|0|pr=42|0|auth,$VIEW
 a selected token's user probe outliving the bound exits 124 too|env:GH_TOKEN=ghs_VALIDBOT123 api-user-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|user,user
-a selected token ignores a failing keyring status|env:GH_TOKEN=ghs_VALIDBOT123 status:fail|json|0|pr=42|0|user,user,$VIEW
+a selected token ignores a failing keyring status|env:GH_TOKEN=ghs_VALIDBOT123 status:fail|json|0|pr=42|0|user,$VIEW
 gh pr view outliving its bound exits 124|pr:hang env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=0.2|json|124|status=gh_timeout|0|auth,$VIEW
 a leading-zero gh bound is read|env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=09|json|0|pr=42|0|auth,$VIEW
 an unreadable auth bound is refused by name before any call, exit 2|env:KENDEX_GITHUB_AUTH_TIMEOUT=2.55|json|2|status=bad_timeout names=KENDEX_GITHUB_AUTH_TIMEOUT detail=2.55|0|-
@@ -221,7 +221,7 @@ an unreadable op bound too|env:KENDEX_GITHUB_OP_TIMEOUT=2.55|json|2|status=bad_t
 an unreadable pr-view bound too|env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=2.55|json|2|status=bad_timeout names=KENDEX_GITHUB_PR_VIEW_TIMEOUT detail=2.55|0|-
 an inherited op reference in GH_TOKEN is tried once, then the keyring answers|env:GH_TOKEN=op://vault/github/user|json|0|pr=42|1|auth,$VIEW
 the same in GITHUB_TOKEN|env:GITHUB_TOKEN=op://vault/github/user|json|0|pr=42|1|auth,$VIEW
-a leading-zero op bound is read|file:bot-op token-only op:ok env:KENDEX_GITHUB_OP_TIMEOUT=08|json|0|pr=42|1|user,user,$VIEW
+a leading-zero op bound is read|file:bot-op token-only op:ok env:KENDEX_GITHUB_OP_TIMEOUT=08|json|0|pr=42|1|user,$VIEW
 a reference op cannot resolve, with no keyring behind it, exits 3|file:bot-op auth:fail op:fail|json|3|status=token_resolution_failed detail=1Password item not available|1|auth
 op outliving its bound exits 3 with the timeout status and the auth preflight's detail|file:bot-op auth:fail op:slow env:KENDEX_GITHUB_OP_TIMEOUT=0.2|json|3|status=token_resolution_timeout detail=gh auth failed|1|auth
 the plain answer|-|json|0|pr=42|0|auth,$VIEW
