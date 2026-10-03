@@ -116,7 +116,8 @@ refresh_disable_matches() { # EXIT REASON
     [ "$deferred_count" -eq 1 ] || return 1
     grep -qxF "refresh-state=deferred reason=$2" <<<"$OUT" || return 1
   else
-    [ "$2" = active ] && grep -qxF 'refresh-error=disable value=1' <<<"$OUT" || return 1
+    case "$2" in queued | merged | closed) return 1 ;; esac
+    grep -qxF 'refresh-error=disable value=1' <<<"$OUT" || return 1
     if grep -q '^refresh-state=deferred ' <<<"$OUT"; then return 1; fi
   fi
   awk '

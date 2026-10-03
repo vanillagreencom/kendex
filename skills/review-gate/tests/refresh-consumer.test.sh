@@ -646,19 +646,23 @@ reset_default
 git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 # A non-render run disables auto-merge on the open rolling pull request.
-# GitHub refuses that once the pull request is queued or merged; the run then
-# defers on the post-refusal state, and any other refusal still fails.
+# GitHub refuses that once the pull request is queued, merged or closed. The
+# run then defers on those post-refusal states; armed, branch-gone and active
+# still exit 1.
 cp "$runner" "$TMP/disable-runner"
 DISABLE_MODE=refused
 CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*'
 for row in \
-  'queued|OPEN|true|present|0|queued' \
-  'merged|MERGED|false|gone|0|merged' \
-  'active|OPEN|false|present|1|active'; do
-  IFS='|' read -r name pr_state queued branch expected reason <<<"$row"
-  jq -cn --arg state "$pr_state" --argjson queued "$queued" --arg branch "$branch" \
-    '{data:{repository:{ref:(if $branch == "gone" then null else {target:{oid:"abc"}} end),pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:null}}}}' >"$TMP/state/push-state.json"
-  # Each defer outcome has a planted behavior defect on a disposable copy.
+  'queued|OPEN|true|false|present|0|queued' \
+  'merged|MERGED|false|false|gone|0|merged' \
+  'closed|CLOSED|false|false|present|0|closed' \
+  'armed|OPEN|false|true|present|1|armed' \
+  'active|OPEN|false|false|present|1|active'; do
+  IFS='|' read -r name pr_state queued armed branch expected reason <<<"$row"
+  jq -cn --arg state "$pr_state" --argjson queued "$queued" --argjson armed "$armed" --arg branch "$branch" \
+    '{data:{repository:{ref:(if $branch == "gone" then null else {target:{oid:"abc"}} end),pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-02T01:09:07Z"} else null end)}}}}' >"$TMP/state/push-state.json"
+  # The queued row and the active row each carry a planted behavior defect on
+  # a disposable copy.
   controls=""
   case "$name" in
     queued) controls=bare ;;

@@ -282,7 +282,8 @@ else
     disable_status=0
     gh pr merge "$pr" --repo "$GH_REPO" --disable-auto || disable_status=$?
     if [ "$disable_status" -ne 0 ]; then
-      # GitHub refuses the disable once the pull request is queued or merged.
+      # GitHub refuses the disable once the pull request is queued, merged or
+      # closed.
       # The read follows the refusal, because the pull request can enter the
       # queue between any earlier read and this call.
       refresh_lifecycle
