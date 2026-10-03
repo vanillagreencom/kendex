@@ -227,8 +227,8 @@ expected() {
 # line, quoted as a shell would. expect is a spec for `expected`.
 ROWS='
 issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
-issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam"),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47"),UpdateIssue()
-issues update uses the issue team instead of the configured team|Configured|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam"),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47"),UpdateIssue()
+issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
+issues update uses the issue team instead of the configured team|Configured|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
 comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
