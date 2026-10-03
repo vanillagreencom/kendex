@@ -400,6 +400,21 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR POOL CLOUD_FLOOR
     lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo)'
 }
 
+# Judge one record by the pick tiers, using the reading or the launch projection.
+lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR
+  local now
+  lane_tier_inputs "[$1]" || return 1
+  now="$(date +%s)" || return 1
+  jq -c --arg model "$2" --argjson floor "$3" --argjson burn "$4" \
+    --argjson max "$5" --argjson projected "$6" --argjson credit_floor "$7" \
+    --arg pool "$TIER_POOL" --argjson cloud_floor "$CLOUD_CREDIT_FLOOR" \
+    --argjson retire "$TIER_RETIRE" --argjson now "$now" "$LANE_MODEL_JQ"'
+    with_lane_binding($model; $floor) | with_lane_projection($burn)
+    | with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
+      | with_lane_tier($pool; $cloud_floor; $retire; $now)
+  ' <<<"$1"
+}
+
 # Consult DIR for an unreachable host or a measured Claude row missing MODEL.
 # Host credential refusals stay authoritative. A local Claude result for a named
 # MODEL that carries model buckets, none of them MODEL's, is judged on the

@@ -2935,11 +2935,7 @@ cmd_pick_lane() {
 	# lane's own claim is among the ones charged, so a projection would send
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
-	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" --argjson burn "$burn" \
-		--argjson max "$max_pct" --argjson projected "$projected_verdict" --argjson credit_floor "$credit_floor" "$LANE_MODEL_JQ"'
-		with_lane_binding($model; $floor) | with_lane_projection($burn)
-		| with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
-	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
+	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	record="$(jq -c "$LANE_MODEL_JQ"' del(.verdict) | lane_public' <<<"$record")" || return 1
 	case "$verdict" in

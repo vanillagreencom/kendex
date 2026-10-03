@@ -1,0 +1,1 @@
+- Named Claude cloud account choices use available cloud credit when plan usage is spent, including launch projections.

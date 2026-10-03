@@ -217,6 +217,9 @@ CPICK='pick --harness claude --json'
 echo "=== tier 0 spends the expiring Claude cloud credit first ==="
 table \
   "on claude-cloud a credit outranks plan room, whatever its spent week reads|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude credits.remaining_dollars=241" \
+  "a named cloud credit has room despite its spent week|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=0 credits.remaining_dollars=241" \
+  "a named cloud credit has room under the launch projection|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --projected --json|rc=0 credits.remaining_dollars=241" \
+  "a named credit on a local host keeps its walled plan verdict|$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=3" \
   "on a local kind the same pair is judged on plan windows alone|$(dirs aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
   "between two credits the earlier expiry is spent first|$CLOUD;$(dirs cclaude dclaude);$(repos cclaude dclaude)|$CPICK|rc=0 config_dir=$H/.cclaude" \
   "an ORCH_LANE_RETIRE date before the credit reset is the account's expiry|$CLOUD;$(dirs cclaude dclaude);$(repos cclaude dclaude);ORCH_LANE_RETIRE=dclaude=2099-01-01|$CPICK|rc=0 config_dir=$H/.dclaude"
@@ -224,6 +227,9 @@ table \
 echo "=== the floor, the lock, the expiry and an unread credit ==="
 table \
   "a credit at the floor takes its walled plan verdict|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled=1" \
+  "a named credit at the floor stays walled|$CLOUD;$(dirs fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|pick --lane $H/.fclaude --harness claude --json|rc=3" \
+  "a named locked credit stays walled|$CLOUD;$(dirs lclaude)|pick --lane $H/.lclaude --harness claude --json|rc=3" \
+  "a named expired credit stays walled|$CLOUD;$(dirs eclaude)|pick --lane $H/.eclaude --harness claude --json|rc=3" \
   "a credit above the floor is tier 0|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=4|$CPICK|rc=0 config_dir=$H/.fclaude" \
   "a locked credit takes its walled plan verdict|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=3 walled=1" \
   "a credit past its expiry takes its walled plan verdict, named as no unread one|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=3 walled=1 line.cloud-credit-unread=none" \
@@ -331,6 +337,9 @@ cloud_control() {
 }
 cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
   "control: without the tier key plan room outranks the credit|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude"
+# shellcheck disable=SC2016  # Keep the tier call as a jq comment in the mutant.
+cloud_control mutant-named-cloud-tier lib/lane-model.sh '      | with_lane_tier($pool; $cloud_floor; $retire; $now)' '      # | with_lane_tier($pool; $cloud_floor; $retire; $now)' \
+  "control: without the named tier call its cloud credit stays walled|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=3 credits.remaining_dollars=241"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 cloud_control mutant-cloud-floor lib/lane-model.sh 'and $c.remaining_dollars > $cloud_floor and' 'and' \
   "control: without the floor comparison a credit at the floor is picked|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=0 config_dir=$H/.fclaude"
