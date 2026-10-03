@@ -10,6 +10,7 @@
         "id": "ec145e59-9257-4f6e-b36e-c58f4e090f93",
         "name": "secrets",
         "team": {
+          "id": "3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73",
           "name": "fleet"
         }
       },
@@ -17,6 +18,7 @@
         "id": "e79890c4-77ea-414a-9c92-b41ca6de4501",
         "name": "harness",
         "team": {
+          "id": "3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73",
           "name": "fleet"
         }
       },
@@ -24,6 +26,7 @@
         "id": "df791230-7c5c-43b4-89b1-989564d021a4",
         "name": "skills",
         "team": {
+          "id": "b81d4c95-2e6f-4a3b-8d17-c9e0a5f3b264",
           "name": "vsys"
         }
       },
@@ -31,6 +34,7 @@
         "id": "dbbbb9af-c331-480e-bdbc-f948ff7d32c0",
         "name": "harness",
         "team": {
+          "id": "b81d4c95-2e6f-4a3b-8d17-c9e0a5f3b264",
           "name": "vsys"
         }
       },
@@ -38,6 +42,7 @@
         "id": "19771d95-12c6-47fe-8f09-a820ec98b927",
         "name": "harness",
         "team": {
+          "id": "5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15",
           "name": "kendex"
         }
       },
@@ -45,6 +50,7 @@
         "id": "ffe14296-09dd-4fa7-a53e-3da3515a3e0f",
         "name": "skills",
         "team": {
+          "id": "5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15",
           "name": "kendex"
         }
       },

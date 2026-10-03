@@ -1311,6 +1311,12 @@ create_issue() {
         assignee_id=$(resolve_assignee_id "$assignee") || return 1
     fi
 
+    # Shared resolver: it passes a team UUID straight through and tells an API
+    # failure apart from a genuine miss. Its id scopes every label lookup
+    # below, so an unknown team refuses here, before any of them or an upload.
+    local team_id
+    team_id=$(resolve_team_id "$team") || return 1
+
     # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         # Resolve declared agent labels BEFORE uploading: under a declared
@@ -1323,7 +1329,7 @@ create_issue() {
             for pre_label_name in "${pre_label_names[@]}"; do
                 case "$pre_label_name" in
                 agent:*)
-                    if ! resolve_label_id "$pre_label_name" "$team" >/dev/null; then
+                    if ! resolve_label_id "$pre_label_name" team-id "$team_id" >/dev/null; then
                         jq -cn --arg label "$pre_label_name" \
                             '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
                         return 1
@@ -1342,10 +1348,6 @@ create_issue() {
     escaped_title=$(printf '%s' "$title" | jq -Rs '.')
     local input_parts=("\"title\": $escaped_title")
 
-    # Shared resolver: it passes a team UUID straight through and tells an API
-    # failure apart from a genuine miss, neither of which an inline copy did.
-    local team_id
-    team_id=$(resolve_team_id "$team") || return 1
     input_parts+=("\"teamId\": \"$team_id\"")
 
     if [ -n "$description" ]; then
@@ -1372,7 +1374,7 @@ create_issue() {
         local label_ids=()
         for label_name in "${label_names[@]}"; do
             local label_id label_rc=0
-            label_id=$(resolve_label_id "$label_name" "$team") || label_rc=$?
+            label_id=$(resolve_label_id "$label_name" team-id "$team_id") || label_rc=$?
             case "$label_rc" in
             0)
                 label_ids+=("\"$label_id\"")
@@ -1834,7 +1836,7 @@ update_issue() {
             local label_id label_rc=0
             # --labels replaces the whole set, so neither a miss nor a failed
             # lookup may drop a name and send a partial replacement.
-            label_id=$(resolve_label_id "$label_name" "$team_name") || label_rc=$?
+            label_id=$(resolve_label_id "$label_name" team-name "$team_name") || label_rc=$?
             if [ "$label_rc" = 1 ]; then
                 jq -cn --arg team "$team_name" --arg label "$label_name" \
                     '{error: ("Label not found for team " + ($team | tojson) + ": " + ($label | tojson))}' >&2

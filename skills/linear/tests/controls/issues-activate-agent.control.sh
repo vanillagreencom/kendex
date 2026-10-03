@@ -7,9 +7,9 @@ control_replace scripts/commands/issues.sh 1 \
     '        :'
 
 control_expect "activation uses live issue-team and workspace label IDs"
-control_replace scripts/commands/issues.sh 1 \
-    '            label_id=$(resolve_label_id "$label_name" "$team_name") || label_rc=$?' \
-    '            label_id=$(resolve_label_id "$label_name") || label_rc=$?'
+control_replace scripts/lib/common.sh 1 \
+    '        query='"'"'query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'"'" \
+    '        query='"'"'query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id } } }'"'"
 
 control_expect "recorded activation refuses an unresolved agent"
 control_replace scripts/commands/issues.sh 1 \

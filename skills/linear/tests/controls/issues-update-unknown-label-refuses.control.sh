@@ -7,11 +7,11 @@ control_replace scripts/commands/issues.sh 1 \
     '            [ "$label_rc" = 0 ] || :'
 
 control_expect "update uses live issue-team and workspace label IDs"
-control_replace scripts/commands/issues.sh 1 \
-    '            label_id=$(resolve_label_id "$label_name" "$team_name") || label_rc=$?' \
-    '            label_id=$(resolve_label_id "$label_name") || label_rc=$?'
+control_replace scripts/lib/common.sh 1 \
+    '        query='"'"'query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'"'" \
+    '        query='"'"'query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id } } }'"'"
 
-control_expect "team-missing: no mutation or upload is sent"
+control_expect "team-missing: refusal names its cause"
 control_replace scripts/commands/issues.sh 1 \
     '        if [ -z "$team_name" ]; then' \
     '        if [ -z "$team_name" ] && false; then'

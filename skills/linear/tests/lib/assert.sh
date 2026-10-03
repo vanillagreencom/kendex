@@ -321,13 +321,16 @@ case "$query" in
     printf '%s' '{"errors":[{"message":"label service unavailable"}]}___HTTP_CODE___200'
     exit 0
   fi
-  scoped=false workspace=false
-  [[ "$query" != *'team: {name: {eq: $teamName}}'* ]] || scoped=true
+  scope=none workspace=false
+  [[ "$query" != *'team: {name: {eq: $teamName}}'* ]] || scope=name
+  [[ "$query" != *'team: {id: {eq: $teamId}}'* ]] || scope=id
   [[ "$query" != *'team: {null: true}'* ]] || workspace=true
-  jq -cj --argjson payload "$payload" --argjson scoped "$scoped" --argjson workspace "$workspace" '
+  jq -cj --argjson payload "$payload" --arg scope "$scope" --argjson workspace "$workspace" '
     {data: {issueLabels: {nodes: [.issueLabels.nodes[]
       | select(.name == $payload.variables.name)
-      | select(($scoped | not) or .team.name == $payload.variables.teamName
+      | select($scope == "none"
+        or ($scope == "name" and .team.name == $payload.variables.teamName)
+        or ($scope == "id" and .team.id == $payload.variables.teamId)
         or ($workspace and .team == null))
       | {id}]}}}' "$FIXTURE_DIR/issue-team-labels.json"
   ;;
@@ -340,7 +343,10 @@ case "$query" in
     '{data: (if $fail == "team" then del(.issue.team) else . end)}' "$FIXTURE_DIR/label-team-issue.json"
   ;;
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}'
+  jq -cj --argjson payload "$payload" '
+    {data: {teams: {nodes: ([.issueLabels.nodes[].team
+      | select(. != null and .name == $payload.variables.name)] | unique | map({id}))}}}' \
+    "$FIXTURE_DIR/issue-team-labels.json"
   ;;
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}'
@@ -362,14 +368,23 @@ SH
 
 # Each request has its own payload log and failure input. The configured team
 # differs from the recorded issue's team, and the cache holds fleet-only IDs.
+# Leading NAME=VALUE arguments after FAIL are added to the child environment
+# after the defaults, so one replaces a default of the same name.
+# Usage: run_label_team_request PROJECT NAME FAIL [NAME=VALUE...] ISSUES-ARGS...
 run_label_team_request() {
 	local project="$1" name="$2" fail="$3"
 	shift 3
+	local extra_env=()
+	while [[ $# -gt 0 && "$1" =~ ^[[:alpha:]_][[:alnum:]_]*= ]]; do
+		extra_env+=("$1")
+		shift
+	done
 	: >"$TMP_ROOT/$name.jsonl"
 	(cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$project/bin:$PATH" \
 		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
 		LINEAR_CACHE_ROOT="$project" FIXTURE_FAIL="$fail" \
 		FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
+		${extra_env[@]+"${extra_env[@]}"} \
 		"$BASH" "$project/.agents/skills/linear/scripts/linear.sh" issues "$@") \
 		>"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
 }
