@@ -55,9 +55,10 @@ control_replace scripts/lib/common.sh 1 \
     '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
     '    if [[ "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then'
 
-# Take the catalog's source layout for a project install: the project's
-# parent holds no render, and nothing is enforced.
-control_expect "label-source-layout: refused"
+# Take the catalog's source layout for a project install: the walk's bound
+# moves to the repository's parent, whose render's taxonomy refuses the label.
+control_expect "label-above-source-layout: accepted"
+control_expect "label-above-source-layout: the label is written"
 control_replace scripts/lib/common.sh 1 \
     '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
     '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/[^./][^/]*/skills$ ]]; then'
@@ -70,19 +71,38 @@ control_replace scripts/lib/common.sh 1 \
     '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
     '    if false; then'
 
-# Start a global install's walk at the git top level: inside a nested
-# project it reads the top level's taxonomy.
+# Start the walk at its bound: inside a nested project, a global install or
+# the top level's project install reads the top level's taxonomy.
 control_expect "label-nested-global: refused"
+control_expect "label-nested-top-install: refused"
+control_expect "label-nested-top-install: the refusal is keyed"
+control_expect "label-nested-top-install: no label is written"
 control_replace scripts/lib/common.sh 1 \
-    '    [[ "$dir/" == "$PROJECT_ROOT/"* ]] || dir="$PROJECT_ROOT"' \
-    '    dir="$PROJECT_ROOT"'
+    '    if [[ "$dir/" == "$bound/"* ]]; then' \
+    '    if [[ "$dir/" == "$bound/"* ]] && dir="$bound"; then'
+
+# Walk from a working directory outside the project holding the install: run
+# from the git top level, a nested project's install reads the top level's
+# taxonomy.
+control_expect "label-nested-from-top: the refusal is keyed"
+control_replace scripts/lib/common.sh 1 \
+    '    if [[ "$dir/" == "$bound/"* ]]; then' \
+    '    if [[ "$dir/" == "$bound/"* ]] || true; then'
+
+# Walk past the bound up to the filesystem root: a repository with no render
+# reads the taxonomy of a directory above it.
+control_expect "label-above-global: accepted"
+control_expect "label-above-global: the label is written"
+control_replace scripts/lib/common.sh 1 \
+    '            [[ "$dir" != "$bound" ]] || break' \
+    '            [[ -n "$dir" ]] || break'
 
 # Stop a global install's walk at the working directory: run from below a
 # project's root it reads no render and enforces nothing.
 control_expect "label-nested-global: no label is written"
 control_replace scripts/lib/common.sh 1 \
-    '            if [[ -e "$render" || -L "$render" ]]; then' \
-    '            if true; then'
+    '                if [[ -e "$render" || -L "$render" ]]; then' \
+    '                if true; then'
 
 # Read the source beside a linear run from the catalog's source layout as a
 # render: its missing taxonomy section differs from the project's render.

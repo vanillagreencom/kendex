@@ -3,9 +3,10 @@
 # driven against recorded Linear replies; that section is the one list of the
 # commands that refuse. The rows also pin which project-management renders the
 # CLI reads: every project skills directory a delivery writes in one project,
-# the one holding a project install or else the nearest one above the working
-# directory, never the one beside a global install or another project's, and
-# two renders that differ as unreadable.
+# the nearest one above the working directory up to the project holding a
+# project install or else the git top level, never one past that bound, the
+# one beside a global install or another project's, and two renders that
+# differ as unreadable.
 
 set -euo pipefail
 
@@ -222,11 +223,13 @@ mkdir -p "$GLOBAL/project-management"
 cp -R "$SKILL_DIR" "$GLOBAL/linear"
 printf '%s\n' '# Project Management' >"$GLOBAL/project-management/SKILL.md"
 
+# The 20-second cap turns a taxonomy walk that never reaches its bound into
+# the row's failure rather than a hung suite.
 run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
   local name="$1" fail="$2" project="$3" install="$4"
   shift 4
   : >"$TMP_ROOT/$name.jsonl"
-  (cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$LABELS_PROJECT/bin:$PATH" \
+  (cd -- "$project" && timeout 20 env -i HOME="$TMP_ROOT" PATH="$LABELS_PROJECT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=kendex LINEAR_CACHE_ROOT="$project" \
     LINEAR_AGENT_LABELS=agent:runtime FIXTURE_FAIL="$fail" CURL_LOG="$TMP_ROOT/$name.jsonl" \
     LABELS_DATA="$LABELS_DATA" "$BASH" "$install/scripts/linear.sh" labels "$@") \
@@ -236,8 +239,11 @@ run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
 # Where kendex delivered project-management: with method = "copy", only under
 # .claude/skills; in kendex projects below a git top level whose own render
 # declares `legacy` and not `bug`, one delivering linear to .agents/skills and
-# project-management only to .claude/skills; and twice, in .agents/skills and
-# .claude/skills, once agreeing and once not.
+# project-management only to .claude/skills; in a project below a git top
+# level that installs linear and declares no taxonomy; and twice, in
+# .agents/skills and .claude/skills, once agreeing and once not. A repository
+# with no render sits in a directory whose render declares `legacy` and not
+# `bug`, and runs linear from its source layout.
 COPY="$TMP_ROOT/copy"
 make_project "$COPY" declared .claude/skills
 NESTED="$TMP_ROOT/nested"
@@ -252,6 +258,15 @@ printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy
 git -C "$NESTED" init -q -b main
 git -C "$NESTED" config gc.auto 0
 git -C "$NESTED" config maintenance.auto false
+TOP="$TMP_ROOT/top"
+make_project "$TOP/sub" declared
+rm -rf -- "${TOP:?}/sub/.git" "${TOP:?}/sub/.agents/skills/linear"
+mkdir -p "$TOP/sub/src"
+make_project "$TOP" no-heading
+ABOVE="$TMP_ROOT/above"
+make_project "$ABOVE/repo" none skills
+mkdir -p "$ABOVE/.agents/skills"
+cp -R -- "$NESTED/.agents/skills/project-management" "$ABOVE/.agents/skills/"
 for twin in agree differ; do
   make_project "$TMP_ROOT/$twin" declared
   mkdir -p "$TMP_ROOT/$twin/.claude/skills"
@@ -287,6 +302,9 @@ label-nested-project|refused|linear-labels: undeclared labels=legacy taxonomy=$N
 label-nested-declared|accepted||$NESTED/sub||create --name bug
 label-nested-from-top|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED|$NESTED/sub/.agents/skills/linear|create --name legacy
 label-nested-global|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED/sub/src|$GLOBAL/linear|create --name legacy
+label-nested-top-install|refused|linear-labels: undeclared labels=legacy taxonomy=$TOP/sub/.agents/skills/project-management/SKILL.md|$TOP/sub/src|$TOP/.agents/skills/linear|create --name legacy
+label-above-global|accepted||$ABOVE/repo|$GLOBAL/linear|create --name bug
+label-above-source-layout|accepted||$ABOVE/repo|$ABOVE/repo/skills/linear|create --name bug
 label-nested-copy|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/copy/.claude/skills/project-management/SKILL.md|$NESTED/copy||create --name legacy
 label-renders-agree|accepted||$TMP_ROOT/agree||create --name bug
 label-renders-differ|refused|linear-labels: taxonomy-unreadable taxonomy=$TMP_ROOT/differ/.agents/skills/project-management/SKILL.md differs=$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md|$TMP_ROOT/differ||create --name bug

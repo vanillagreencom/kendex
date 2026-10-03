@@ -866,40 +866,44 @@ resolve_label_id() {
 # LINEAR_TAXONOMY_FILE is the render a message names: the first found, or the
 # shared one when none is.
 
-# Print the project whose renders hold the taxonomy. A linear install in a
-# `.<tool>/skills` directory in the repository belongs to the project holding
-# that directory, as commit-guards' gg_project_root derives it; a kendex
-# project below the git top level renders there. Any other install, at global
-# scope or in the catalog's source layout, serves the nearest directory from
-# the working directory up to the git top level that holds a render, else the
-# top level: reading the global render would enforce nothing in a project
-# that declares a taxonomy.
+# Print the project whose renders hold the taxonomy: the nearest directory
+# from the working directory up to a bound that holds a render, else the
+# bound. A linear install in a `.<tool>/skills` directory in the repository
+# bounds the walk at the project holding that directory, as commit-guards'
+# gg_project_root derives it, so a kendex project nested inside it that
+# declares its own taxonomy keeps it; run from outside that project, the
+# install's project is the answer. Any other install, at global scope or in
+# the catalog's source layout, is bounded at the git top level: reading the
+# global render would enforce nothing in a project that declares a taxonomy.
+# The walk stops at the bound: a render above it, in a home directory say,
+# never applies.
 linear_taxonomy_root() {
-    local install dir render
+    local install bound dir render
     if ! install=$(cd -- "$_LIB_DIR/../../.." && pwd -P); then
         jq -cn --arg dir "$_LIB_DIR" '{error: ("Could not resolve the skills directory holding the linear install at " + $dir)}' >&2
         return 1
     fi
+    bound="$PROJECT_ROOT"
     if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-        return 0
+        bound="${BASH_REMATCH[1]}"
     fi
     if ! dir=$(pwd -P); then
         jq -cn '{error: "Could not resolve the working directory to find the project whose label taxonomy applies."}' >&2
         return 1
     fi
-    [[ "$dir/" == "$PROJECT_ROOT/"* ]] || dir="$PROJECT_ROOT"
-    while :; do
-        for render in "$dir"/.[!.]*/skills/project-management/SKILL.md; do
-            if [[ -e "$render" || -L "$render" ]]; then
-                printf '%s\n' "$dir"
-                return 0
-            fi
+    if [[ "$dir/" == "$bound/"* ]]; then
+        while :; do
+            for render in "$dir"/.[!.]*/skills/project-management/SKILL.md; do
+                if [[ -e "$render" || -L "$render" ]]; then
+                    printf '%s\n' "$dir"
+                    return 0
+                fi
+            done
+            [[ "$dir" != "$bound" ]] || break
+            dir="${dir%/*}"
         done
-        [[ "$dir" != "$PROJECT_ROOT" ]] || break
-        dir="${dir%/*}"
-    done
-    printf '%s\n' "$PROJECT_ROOT"
+    fi
+    printf '%s\n' "$bound"
 }
 
 _linear_taxonomy_root=$(linear_taxonomy_root) || exit 1
