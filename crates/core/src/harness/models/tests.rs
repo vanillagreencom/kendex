@@ -703,22 +703,33 @@ fn guard_render_blind_rows_are_the_pi_values_that_render_no_model() {
         .0;
     let rows: std::collections::BTreeSet<_> = table
         .lines()
-        .map(|row| row.strip_prefix(".pi/agents model ").unwrap())
+        .map(|row| match row.split(' ').collect::<Vec<_>>()[..] {
+            [root, "model", value, rendered] => (root, value.to_owned(), rendered.to_owned()),
+            _ => panic!("{row}"),
+        })
         .collect();
-    assert_eq!(
-        rows,
-        std::collections::BTreeSet::from(["inherit", "current", "parent"])
-    );
-    for value in ["inherit", "current", "parent"]
+    // The token each root's file carries when render_model selects nothing:
+    // Claude spells inheritance literally, Codex and Pi omit the line.
+    let roots = [
+        (".claude/agents", HarnessId::Claude, "inherit"),
+        (".codex/agents", HarnessId::Codex, "-"),
+        (".pi/agents", HarnessId::Pi, "-"),
+    ];
+    let values = ["inherit", "current", "parent"]
         .into_iter()
-        .chain(TIERS.iter().flat_map(|row| [row.name, row.legacy]))
-    {
-        assert_eq!(
-            rows.contains(value),
-            render_model(HarnessId::Pi, value, &BTreeMap::new())
-                .id
-                .is_none(),
-            "{value}"
-        );
-    }
+        .chain(TIERS.iter().flat_map(|row| [row.name, row.legacy]));
+    let expected: std::collections::BTreeSet<_> = roots
+        .into_iter()
+        .flat_map(|(root, harness, omitted)| {
+            values.clone().map(move |value| {
+                let rendered = render_model(harness, value, &BTreeMap::new()).id;
+                (
+                    root,
+                    value.to_owned(),
+                    rendered.unwrap_or_else(|| omitted.to_owned()),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(rows, expected);
 }

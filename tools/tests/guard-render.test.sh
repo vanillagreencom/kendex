@@ -276,10 +276,11 @@ git -C "$R" reset -q HEAD -- agents .claude/agents .codex .pi
 rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.toml" "$R/.pi/agents/fresh.md"
 
 echo "=== a render the source change leaves unchanged ==="
-# Pi renders no model for current or inherit, so moving between them leaves the
-# Pi render byte-identical and owes it nothing. Every other change owes the
-# render: a value Pi does render, on either side, a model line removed or
-# added outright (an absent model is sonnet), and a model: line in the body.
+# A root renders current and inherit alike, so moving between them leaves
+# its render byte-identical and owes it nothing. Every other change owes the
+# render: two values the root renders differently, a value no row lists, a
+# model line removed or added outright (an absent model is sonnet), and a
+# model: line in the body.
 write_pinned() { # FRONTMATTER-MODEL BODY-MODEL — an empty frontmatter model writes no line
   {
     printf -- '---\nname: pinned\n'
@@ -406,20 +407,21 @@ else
 fi
 git -C "$R" reset -q --hard HEAD
 
-# The allowance is per render root: the Claude render does carry the model.
-write_pinned inherit current
-printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
-git -C "$R" add agents/pinned.md .codex/agents/pinned.toml
+# The allowance is per render root: Claude and Pi render light as a model,
+# Codex renders it as none.
+write_pinned light current
+git -C "$R" add agents/pinned.md
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .claude/agents/pinned.md"* ]] \
-  && [[ "$OUT" != *"-> .pi/agents/pinned.md"* ]] \
-  && ok "the same edit leaving the Claude render unchanged reds, naming Claude and not Pi" \
-  || bad "the same edit leaving the Claude render unchanged reds, naming Claude and not Pi" "rc=$RC out=$OUT"
-if mutant_guard 's/return (root " " key " " value) in listed/return (".pi\/agents " key " " value) in listed/'; then
+  && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
+  && [[ "$OUT" != *"-> .codex/agents/pinned.toml"* ]] \
+  && ok "a current -> light edit leaving every render unchanged reds, naming Claude and Pi and not Codex" \
+  || bad "a current -> light edit leaving every render unchanged reds, naming Claude and Pi and not Codex" "rc=$RC out=$OUT"
+if mutant_guard 's/row = root " " key " " value/row = ".codex\/agents " key " " value/'; then
   run_mutant
   [ "$RC" -eq 0 ] \
-    && ok "control: with every root read as .pi/agents the unchanged Claude render passes" \
-    || bad "control: with every root read as .pi/agents the unchanged Claude render passes" "rc=$RC out=$OUT"
+    && ok "control: with every root read as .codex/agents the unchanged Claude and Pi renders pass" \
+    || bad "control: with every root read as .codex/agents the unchanged Claude and Pi renders pass" "rc=$RC out=$OUT"
 else
   bad "control: the root scope could not be removed from a guard copy"
 fi
@@ -427,9 +429,9 @@ git -C "$R" reset -q --hard HEAD~1
 
 # ROW: seeded model | seeded body model | edited model | edited body model | guard edit that removes the row's rule
 PINNED_ROWS=(
-  "current|current|sonnet|current|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model sonnet'/"
-  "current|current|opus|current|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model opus'/"
-  "sonnet|current|inherit|current|s/^    \/^-\/ { if (!blind(substr(\$0, 2), o++, old_end)) { bad = 1; exit } /    \/^-\/ { blind(substr(\$0, 2), o++, old_end); /"
+  "current|current|sonnet|current|s/ || ((key in rendered) && rendered\[key\] != renders\[row\])//"
+  "current|current|opus|current|s/ || ((key in rendered) && rendered\[key\] != renders\[row\])//"
+  "gpt-6.1-luna|current|inherit|current|s/^    \/^-\/ { if (!blind(substr(\$0, 2), o++, old_end)) { bad = 1; exit } /    \/^-\/ { blind(substr(\$0, 2), o++, old_end); /"
   "current|current||current|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
   "|current|inherit|current|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
   "current|current|current|inherit|s/ || line >= end + 0 / /"
@@ -450,6 +452,49 @@ for row in "${PINNED_ROWS[@]}"; do
       || bad "control: $edit passes with its rule removed" "rc=$RC out=$OUT"
   else
     bad "control: the rule behind $edit could not be removed from a guard copy"
+  fi
+  git -C "$R" reset -q --hard HEAD~1
+done
+
+# Renders written as the renderer writes each root's model line, every one
+# staged: a render the edit leaves byte-identical is not in the change. The
+# control renders each value alone, so the same edits red, naming those renders.
+render_pinned() { # CLAUDE CODEX PI — each root's rendered model, - for no line
+  printf -- '---\nname: pinned\nmodel: %s\n---\n' "$1" >"$R/.claude/agents/pinned.md"
+  { printf 'name = "pinned"\n'; [ "$2" = - ] || printf 'model = "%s"\n' "$2"; } >"$R/.codex/agents/pinned.toml"
+  { printf -- '---\nname: pinned\n'; [ "$3" = - ] || printf 'model: %s\n' "$3"; printf -- '---\n'; } >"$R/.pi/agents/pinned.md"
+}
+# ROW: seeded model | its Claude, Codex, Pi renders | edited model | its Claude, Codex, Pi renders | renders left byte-identical
+IDENTICAL_ROWS=(
+  "inherit|inherit|-|-|standard|opus|-|standard|.codex/agents/pinned.toml"
+  "standard|opus|-|standard|light|sonnet|-|light|.codex/agents/pinned.toml"
+  "opus|opus|-|standard|standard|opus|-|standard|.claude/agents/pinned.md .codex/agents/pinned.toml .pi/agents/pinned.md"
+)
+for row in "${IDENTICAL_ROWS[@]}"; do
+  IFS='|' read -r seed_model c0 x0 p0 model c1 x1 p1 identical <<<"$row"
+  edit="model $seed_model -> $model with $identical byte-identical"
+  write_pinned "$seed_model" current
+  render_pinned "$c0" "$x0" "$p0"
+  git -C "$R" add -A agents .claude/agents .codex/agents .pi/agents
+  git -C "$R" commit -q -m "chore: an agent with its rendered models"
+  write_pinned "$model" current
+  render_pinned "$c1" "$x1" "$p1"
+  git -C "$R" add -A agents .claude/agents .codex/agents .pi/agents
+  run_guard
+  [ "$RC" -eq 0 ] \
+    && ok "$edit passes" \
+    || bad "$edit passes" "rc=$RC out=$OUT"
+  if mutant_guard 's/renders\[f\[1\] " " f\[2\] " " f\[3\]\] = f\[4\]/renders[f[1] " " f[2] " " f[3]] = f[3]/'; then
+    run_mutant
+    named=1
+    for r in $identical; do
+      [[ "$OUT" == *"agents/pinned.md -> $r"* ]] || named=0
+    done
+    [ "$RC" -ne 0 ] && [ "$named" = 1 ] \
+      && ok "control: with each value rendered alone $edit reds, naming them" \
+      || bad "control: with each value rendered alone $edit reds, naming them" "rc=$RC out=$OUT"
+  else
+    bad "control: each value could not be rendered alone in a guard copy"
   fi
   git -C "$R" reset -q --hard HEAD~1
 done

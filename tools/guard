@@ -882,7 +882,7 @@ fi
 # Presence, not byte equality — a render can carry an injected block the
 # source has no copy of, so bytes cannot be compared. The one allowance is a
 # render left unchanged by a source change that only moves a frontmatter key
-# between values its harness renders to nothing, the render_blind rows below. Rendered is judged at
+# between values its harness renders alike, the render_blind rows below. Rendered is judged at
 # the tree: a skill with anything tracked under .agents/skills/<x> renders
 # every file rendered_in_skill above carries, so each such source there
 # owes a render, and an agent owes a
@@ -983,22 +983,53 @@ for render in sys.stdin.read().splitlines():
   show "$instruction_hits" | sed -n '1,5p'
 }
 
-# Frontmatter a harness renders to nothing, one ROOT KEY VALUE row each: a
-# source change that only moves a key between listed values leaves that
-# root's render byte-identical, so the render owes no change. The model rows
-# mirror native inheritance in crates/core/src/harness/models.rs. Its test
+# Frontmatter values and what each root renders them to, one
+# ROOT KEY VALUE RENDERED row each, - for no line: a source change that only
+# moves a key between listed values with one RENDERED leaves that root's
+# render byte-identical, so the render owes no change. The model rows mirror
+# render_model in crates/core/src/harness/models.rs. Its test
 # guard_render_blind_rows_are_the_pi_values_that_render_no_model holds the
 # copy to it both ways. The guard cannot render a source itself, since no
 # kendex verb renders one source for one harness.
-render_blind='.pi/agents model inherit
-.pi/agents model current
-.pi/agents model parent'
+render_blind='.claude/agents model inherit inherit
+.claude/agents model current inherit
+.claude/agents model parent inherit
+.claude/agents model top fable
+.claude/agents model fable fable
+.claude/agents model standard opus
+.claude/agents model opus opus
+.claude/agents model light sonnet
+.claude/agents model sonnet sonnet
+.claude/agents model fast sonnet
+.claude/agents model haiku sonnet
+.codex/agents model inherit -
+.codex/agents model current -
+.codex/agents model parent -
+.codex/agents model top -
+.codex/agents model fable -
+.codex/agents model standard -
+.codex/agents model opus -
+.codex/agents model light -
+.codex/agents model sonnet -
+.codex/agents model fast -
+.codex/agents model haiku -
+.pi/agents model inherit -
+.pi/agents model current -
+.pi/agents model parent -
+.pi/agents model top top
+.pi/agents model fable top
+.pi/agents model standard standard
+.pi/agents model opus standard
+.pi/agents model light light
+.pi/agents model sonnet light
+.pi/agents model fast fast
+.pi/agents model haiku fast'
 frontmatter_end() { # — the line number of the closing --- of the text on stdin, 0 with none
   awk 'NR == 1 { open = $0 == "---"; next } open && !end && $0 == "---" { end = NR } END { print end + 0 }'
 }
-render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, and each key it removes it adds back
+render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, each key's lines share one RENDERED, and each key it removes it adds back
   # A key removed or added outright moves it to or from its absent default,
-  # which the table does not judge: a Pi agent with no model renders sonnet.
+  # which the table does not judge: an agent with no model requests sonnet.
   [ "$have_head" = 1 ] && render_has "$1" && render_has "$2" || return 1
   local old_source new_source old_end new_end source_diff
   new_source=$(render_read "$1") || return 1
@@ -1008,15 +1039,18 @@ render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a front
   source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${render_diff[@]}" -- "$1") || return 1
   # The rows ride the environment: BSD awk refuses a newline in a -v value.
   RENDER_BLIND="$render_blind" awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" '
-    function blind(text, line, end,   value) {
+    function blind(text, line, end,   value, row) {
       key = ""
       if (line <= 1 || line >= end + 0 || !match(text, /^[A-Za-z0-9_-]+:/)) return 0
       key = substr(text, 1, RLENGTH - 1)
       value = substr(text, RLENGTH + 1)
       gsub(/^[ \t]+|[ \t]+$/, "", value)
-      return (root " " key " " value) in listed
+      row = root " " key " " value
+      if (!(row in renders) || ((key in rendered) && rendered[key] != renders[row])) return 0
+      rendered[key] = renders[row]
+      return 1
     }
-    BEGIN { n = split(ENVIRON["RENDER_BLIND"], r, "\n"); for (i = 1; i <= n; i++) listed[r[i]] = 1 }
+    BEGIN { n = split(ENVIRON["RENDER_BLIND"], r, "\n"); for (i = 1; i <= n; i++) { split(r[i], f, " "); renders[f[1] " " f[2] " " f[3]] = f[4] } }
     /^@@ / { split($2, a, ","); o = substr(a[1], 2) + 0; split($3, c, ","); w = substr(c[1], 2) + 0; hunk = 1; next }
     !hunk { next }
     /^-/ { if (!blind(substr($0, 2), o++, old_end)) { bad = 1; exit } moved[key]--; changed++; next }
