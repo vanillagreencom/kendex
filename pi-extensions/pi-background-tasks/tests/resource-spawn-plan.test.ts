@@ -67,6 +67,13 @@ test("resource spawn plans retain complete argv, metadata and warnings", () => {
 			},
 			systemdProbes: 0,
 		},
+		{
+			name: "nice ionice mode on Windows retains shell with a warning",
+			metadataWarningMatches: false,
+			input: { settings: settings({ mode: "nice-ionice" }), probes: { ...probes(false), platform: "win32" } },
+			expected: { file: "/bin/bash", args: ["-lc", command], warnings: [expect.stringMatching(/^resourceControlMode=nice-ionice(?:\s|$)/)] },
+			systemdProbes: 0,
+		},
 	];
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "resource spawn plan rows must not be empty").toBeGreaterThan(0);
