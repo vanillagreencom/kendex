@@ -1323,7 +1323,7 @@ create_issue() {
             for pre_label_name in "${pre_label_names[@]}"; do
                 case "$pre_label_name" in
                 agent:*)
-                    if ! resolve_label_id "$pre_label_name" >/dev/null; then
+                    if ! resolve_label_id "$pre_label_name" "$team" >/dev/null; then
                         jq -cn --arg label "$pre_label_name" \
                             '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
                         return 1
@@ -1372,7 +1372,7 @@ create_issue() {
         local label_ids=()
         for label_name in "${label_names[@]}"; do
             local label_id label_rc=0
-            if label_id=$(resolve_label_id "$label_name"); then
+            if label_id=$(resolve_label_id "$label_name" "$team"); then
                 label_ids+=("\"$label_id\"")
             elif label_rc=$?; [ "$label_rc" = "2" ]; then
                 # The lookup failed, so whether the label exists is unknown.

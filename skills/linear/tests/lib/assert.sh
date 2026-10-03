@@ -348,6 +348,9 @@ case "$query" in
 *"issueUpdate(id:"*)
   jq -cj '{data: {issueUpdate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json"
   ;;
+*"issueCreate(input:"*)
+  jq -cj '{data: {issueCreate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json"
+  ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}'
   ;;

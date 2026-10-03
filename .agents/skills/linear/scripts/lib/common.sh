@@ -759,8 +759,10 @@ resolve_state_id() {
 }
 
 # Resolve label name to UUID
-# Usage: resolve_label_id "backend" ["issue-team-name"]
+# Usage: resolve_label_id "backend" ["issue-team-name-or-uuid"]
 # With an issue team, only that team's labels and workspace labels can match.
+# Two teams can each own a label of one name, and an unscoped lookup returns
+# whichever the API lists first, which Linear refuses as another team's label.
 # Exit 1 = the workspace has no such label (a caller handling several labels may
 # skip it). Exit 2 = the lookup itself failed, so whether the label exists is
 # unknown — a caller rebuilding a label set must abort rather than drop it,
@@ -773,6 +775,9 @@ resolve_label_id() {
     local vars result
     if [ -n "$team_name" ]; then
         query='query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'
+        if [[ "$team_name" =~ $LINEAR_UUID_PATTERN ]]; then
+            query='query GetLabel($name: String!, $teamName: ID!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {id: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'
+        fi
     fi
     vars=$(jq -cn --arg name "$label_name" --arg teamName "$team_name" \
         '{name: $name} + (if $teamName == "" then {} else {teamName: $teamName} end)') || return 2

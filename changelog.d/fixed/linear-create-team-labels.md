@@ -1,0 +1,1 @@
+- The linear skill's `issues create --labels` resolves labels against the issue's team, so a label name two teams share no longer fails the create.

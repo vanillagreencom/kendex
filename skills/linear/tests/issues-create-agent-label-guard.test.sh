@@ -114,7 +114,7 @@ run() {
 #   created WIRE warn NAME  the same, with the warn-and-skip lines for NAME
 #   help                    one help document, no call
 TEAM='GetTeam(name="Configured")'
-warned() { printf "Warning: Label not found: '%s';" "$1"; }
+warned() { printf '{"error":"Label not found for team \\"Configured\\": \\"%s\\""};' "$1"; }
 expected() {
   local spec="$1"
   case "$spec" in
