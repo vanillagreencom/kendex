@@ -425,7 +425,7 @@ assert_eq "must-fail: a declaration read from the judged checkout is named" "jud
 
 # Without always(), a failed need skips CI, and a skipped required context
 # satisfies the ruleset.
-plant "$TEMPLATE" "    if: always()" "    if: github.event_name != ''" "$SANDBOX/no-always.yml"
+plant "$TEMPLATE" "    if: always()" "    if: github.event_name != ''" "$SANDBOX/no-always.yml" ci line
 assert_eq "must-fail: CI without always() does not run on a failed need" "no" \
   "$(ci_runs "$SANDBOX/no-always.yml" merge_group failure)"
 

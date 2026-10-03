@@ -108,20 +108,28 @@ ci_runs() { # WORKFLOW EVENT RESULT
 
 # A copy of SRC with FROM replaced by TO, where FROM occurs once in the file,
 # or once inside the job JOB when one is named; any other count, or an edit
-# that changes nothing, stops the calling suite.
-plant() { # SRC FROM TO OUT [JOB]
-  local src="$1" from="$2" to="$3" out="$4" job="${5:-}" n
-  n="$(FROM="$from" JOB="$job" awk '
+# that changes nothing, stops the calling suite. MATCH=line requires the
+# entire line, so a job condition cannot match a nested step condition.
+plant() { # SRC FROM TO OUT [JOB] [MATCH=substring|line]
+  local src="$1" from="$2" to="$3" out="$4" job="${5:-}" match="${6:-substring}"
+  case "$match" in
+    substring|line) ;;
+    *) echo "plant: unknown match mode: $match" >&2; exit 1 ;;
+  esac
+  FROM="$from" TO="$to" JOB="$job" MATCH="$match" awk '
     /^  [A-Za-z0-9_-]+:/ { k = $1; sub(/:$/, "", k) }
-    (ENVIRON["JOB"] == "" || k == ENVIRON["JOB"]) && index($0, ENVIRON["FROM"]) > 0 { n++ }
-    END { print n + 0 }
-  ' "$src")"
-  [ "$n" -eq 1 ] || { echo "plant: the planted text occurs $n times${job:+ in job $job}: $from" >&2; exit 1; }
-  FROM="$from" TO="$to" JOB="$job" awk '
-    /^  [A-Za-z0-9_-]+:/ { k = $1; sub(/:$/, "", k) }
-    { i = (ENVIRON["JOB"] == "" || k == ENVIRON["JOB"]) ? index($0, ENVIRON["FROM"]) : 0 }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])) }
+    {
+      i = (ENVIRON["JOB"] == "" || k == ENVIRON["JOB"]) &&
+          (ENVIRON["MATCH"] != "line" || $0 == ENVIRON["FROM"]) ? index($0, ENVIRON["FROM"]) : 0
+    }
+    i > 0 { n++; $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])) }
     { print }
-  ' "$src" >"$out"
+    END {
+      if (n != 1) {
+        printf "plant: the planted text occurs %d times in job [%s]: %s\n", n + 0, ENVIRON["JOB"], ENVIRON["FROM"] > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$src" >"$out" || exit 1
   ! cmp -s "$src" "$out" || { echo "plant: the planted edit changed nothing: $from" >&2; exit 1; }
 }
