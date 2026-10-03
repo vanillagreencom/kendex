@@ -15,6 +15,8 @@ Drop the cache. Lanes today start with no cache seed (fleet FLT-641 removed it),
 - A restored seed makes a lane's first sync incremental, but one seeded sync still costs 2.4 times the points of a whole lane without the cache. The recommendation stays drop; § Lane cache seed gives the design and its owner. [M]
 - Seven of the twelve rules the commands enforce have no owner on a raw route. KEN-2335's thin layer must keep five of them in code: the team target, the agent label and reach lines on create, peer-only blocking relations, and the validate-completion matrix. [L1] [L2] [L3]
 - Freshness: no cache, with live reads, costs the least and needs no new owner. A webhook-fed cache needs a public HTTPS receiver and the `admin` scope, which the kendex app does not hold. [S2] [L4]
+- Drovr is archived and its Linear team was recreated empty, so no consumer, fleet or concurrency figure counts it. The measured full sync still read drovr's 432 issues and 848 comments; without them it costs 225 requests and 152,190 points, and no headroom count changes (§ Drovr). [M]
+- Team-limited write credentials (KEN-2689) should be one OAuth app per team, not personal keys. Personal keys all share the owner's 2,500 requests an hour, and the fleet's no-cache peak hour plus the cross-team read key needs 1,591 of them (63.6 percent). One app per team gives each team its own 5,000; kendex at its cap needs 843 (16.9 percent). [M] [D1]
 
 § Sync runs during this research lists every sync this research ran and its share of each bucket.
 
@@ -121,6 +123,30 @@ An incremental sync reads each delta and every fixed phase again. [M] [L5]
 
 Attachment downloads go to `uploads.linear.app`, not the GraphQL API; their count and limit were not measured.
 
+### Drovr
+
+Drovr is archived on GitHub and its Linear team was recreated empty (owner note 1791065386, overseer directive 1791065479-1890992-11565). It is no live consumer, and no consumer, fleet or concurrency figure counts it: the four fleets are fleet, talk, kendex and vg. [O] The measured syncs still read its rows, because a sync reads every team. The per-team counts from the 20:13Z and 20:19Z pulls give drovr 432 live issues and 848 comments, out of 11 teams. [M] `counts`
+
+| Figure | With drovr, as measured | Without drovr | Derivation |
+|---|---|---|---|
+| Teams | 11 | 10 | [M] `counts.issues_by_team` |
+| Live issues, 20:13Z pull | 6,478 | 6,046 | 6,478 − 432 |
+| Comments, 20:24Z pull | 15,694 | 14,846 | 15,694 − 848 |
+| Full sync issue pages: requests / points | 93 / 35,805 | 87 / 33,495 at most | ⌈(6,496 live + 439 archived − 432) / 75⌉ = 87, at 385 points; drovr's archived issues were not counted, so 87 is an upper bound |
+| Full sync comment pages | 63 / 75,600 | 60 / 72,000 | ⌈14,846 / 250⌉ = 60, at 1,200 points |
+| Full sync, no attachments | 207 / 134,475 | 198 / 128,565 | 207 − 6 − 3; 134,475 − 2,310 − 3,600 |
+| Full sync with the 27 attachment pages | 234 / 158,100 | 225 / 152,190 | Attachment pages kept at 27; drovr's share of them was not measured |
+| Empty-cache lane start | 326 / 229,702 | 317 / 223,792 | 2 + 225 + 90; 252 + 152,190 + 71,350 |
+| Empty-cache lane | 436 / 306,515 | 427 / 300,605 | 436 − 9; 306,515 − 5,910 |
+| Empty-cache TPM audit sync and `reconcile-work-items` | 234 / 158,100 | 225 / 152,190 | As the full sync |
+| Empty-cache starts that empty a bucket | 16 / 9 | 16 / 9 | ⌊5,000 / 317⌋ + 1; ⌊2,000,000 / 223,792⌋ + 1 |
+| All 38 lanes starting on empty caches | 12,388 / 8,728,676 | 12,046 / 8,504,096 | 38 × 317; 38 × 223,792 |
+| Peak hour, 38 empty-cache lanes | 16,568 / 11,647,570 | 16,226 / 11,422,990 | 38 × 427; 38 × 300,605 |
+| Batched reconcile | 26 / 104 | 25 / 100 | ⌈(6,496 − 432) / 250⌉ = 25, at 4 points |
+| Reconcile argv test | 6,488 ids fail | 6,056 ids still fail | More than twice the 3,000 ids (117,029 bytes) that pass, so past 234,058 bytes and the 131,072-byte limit |
+
+The seed size (55.5 MB) includes drovr's rows; their share was not measured, and the scratch cache that held them is deleted. Elsewhere the empty-cache figures are the measured ones, with drovr's rows; this table gives each without them, and no conclusion changes. The no-cache and watch figures read no drovr row; the warm figures read drovr's ids only inside reconcile's 10 capped pages.
+
 ### Load per workflow
 
 Today lanes read Linear live: no seed since FLT-641, no `sync --reconcile` since directive 1790845185. So today's measured load is the no-cache column, measured live with the shim. The warm and empty columns are priced from the sync-query runs and the scratch syncs above.
@@ -140,6 +166,7 @@ One lane, one dev round, one review cycle, no fix rounds. The commands are the o
 | Overseer watch, one long pass: new-issue read (`oversee-watch:1323`), each fleet's window | kendex 17 / 6,209; fleet 11 / 3,905; vg 3 / 833; talk 2 / 449 | Same: the watch reads live | Same |
 | Four overseer watches, per hour at `--interval 900` | 132 / 45,584 | Same | Same |
 | Overseer heartbeat: owed read (`oversee-watch:3569`), once per 25 long passes | 2 / 449 per read; 1.3 / 287 per hour for four watches | Same | Same |
+| Cross-team read with the read key (KEN-2689), on the owner's personal bucket: per overseer pass with N cross-team blockers; per lane start whose issue names another team's issue | Pass: 1 / ⌈2.5 × N⌉, 0 with none; start: 1 / 3, 0 with none [D1] | Same | Same |
 | TPM audit, team mode (`tpm-audit.md` § 1.1.1 to § 1.5) | 75 / 56,315 | 3 / 254 + one sync | 3 / 254 + 234 / 158,100 |
 | `reconcile-work-items` | 36 / 13,505 | 0 + one sync | 234 / 158,100 |
 
@@ -188,7 +215,7 @@ Cost of a lane's first sync:
 
 | Case | Requests | Points | Wall time | Source |
 |---|---|---|---|---|
-| No seed: full sync, as `session-status` runs it | 234 | 158,100 | 711 s without the attachment pages | Runs `seed-full`, `sync-attachments` |
+| No seed: full sync, as `session-status` runs it | 234 | 158,100 | 711 s without the attachment pages | Runs `seed-full`, `sync-attachments`; 225 / 152,190 without drovr's rows (§ Drovr) |
 | Seed from a cache synced and reconciled within the hour, no changed issue | 34 | 34,435 | 7 s without the attachment pages | Runs `seed-incremental`, `sync-attachments` |
 | Same, with 1 to 75 changed issues | 35 | 35,635 | | Plus one comments page, runs `sync-comments-delta-*` |
 | Seed whose last reconcile is over 60 minutes old, today | Fails after 2 or 3 delta requests | 9,190 to 10,390 spent | | Issues and projects pages, plus comments when an issue changed; § Why lanes stopped syncing |
@@ -216,6 +243,7 @@ From the overseer's answer to lane-mail ask 1791058128-12831-9940, read on the c
 | Local overseer watches | 0 | 0 | 0 | [O]: every overseer runs on the control VM |
 | Hook-started single passes, `--interval 900 --max-loops 25` | 3 seen: fleet, vg, talk | 0 when they share the repeat watch's long-pass clock; 64 if not | 0; 20,748 if not | [O]; clock below |
 | Heartbeat owed reads | One per 25 long passes per watch | 1.3 | 287 | `oversee-watch:3978`; 4 × 2 × 3,600 / (25 × 900); 4 × 449 × 3,600 / (25 × 900) |
+| Cross-team reads with the read key (KEN-2689) | 4 watches × 4 passes; up to 38 lane starts | At most 54, on the owner's personal bucket of 2,500, not the app's | 16 × ⌈2.5 × N⌉ + 114, of 3,000,000 | [D1] § Read cost: 1 request per pass with a cross-team blocker, 1 request and 3 points per start; 16 + 38; 38 × 3 |
 | Lane caps (`ORCH_OVERSEER_LANES`) | kendex 20, fleet 12, vg 3, talk 3; 38 in all; 11 kendex lanes live at the read | Per lane start: 6 without cache, 137 warm, 326 empty | 5,195; 107,277; 229,702 | [O]; § Load per workflow |
 | Rest of each lane | Same caps | 29 without cache, 110 with cache | 8,943; 76,813 | § Load per workflow: the lane minus its start |
 | One TPM audit | 1 | 75 without cache; 3 plus a sync with it | 56,315; 254 plus a sync | § Load per workflow |
@@ -237,9 +265,9 @@ Burst headroom: lane starts at once, no spread, against the 5,000-request and 2,
 
 Each figure is the count times the per-start cost above; the last row is the smallest count whose cost passes the bucket. Each 10 minutes of spread adds 833 requests and 333,333 points of refill.
 
-Peak hour without a cache, with every one of the 38 lanes running its whole life inside the hour: lanes 38 × 35 = 1,330 requests and 38 × 14,138 = 537,244 points, the four watches 132 and 45,584, one TPM audit 75 and 56,315. Total 1,537 requests (30.7 percent) and 639,143 points (32.0 percent); 1,601 and 659,891 (32.0 and 33.0 percent) if the hook passes keep their own clocks. The heartbeat adds 1.3 requests and 287 points. With a cache the same hour needs 38 × 247 = 9,386 requests and 38 × 184,090 = 6,995,420 points warm, and 38 × 436 = 16,568 and 38 × 306,515 = 11,647,570 empty, before the watches.
+Peak hour without a cache, with every one of the 38 lanes running its whole life inside the hour: lanes 38 × 35 = 1,330 requests and 38 × 14,138 = 537,244 points, the four watches 132 and 45,584, one TPM audit 75 and 56,315. Total 1,537 requests (30.7 percent) and 639,143 points (32.0 percent); 1,601 and 659,891 (32.0 and 33.0 percent) if the hook passes keep their own clocks. The heartbeat adds 1.3 requests and 287 points. The read key bills the owner's personal bucket, not the app's: at most 54 requests an hour, 2.2 percent of its 2,500. With a cache the same hour needs 38 × 247 = 9,386 requests and 38 × 184,090 = 6,995,420 points warm, and 38 × 436 = 16,568 and 38 × 306,515 = 11,647,570 empty, before the watches.
 
-The four fleets are the live consumers. Drovr is none (owner note 1791065386) and counts in no consumer, fleet or concurrency figure here; its issues appear only inside the sync's workspace-wide read.
+The four fleets are the live consumers. Drovr is none and counts in no figure in this section; § Drovr gives the empty-cache figures without its rows.
 
 Odds of a RATELIMITED answer, from a full bucket, with the complexity refill at 555.6 points a second:
 
@@ -353,6 +381,7 @@ Every scratch cache was deleted at 2026-10-03T22:18:01Z: `tmp/ken-2685/scratch-c
 - [S3] https://linear.app/developers/pagination, read 2026-10-03: default 50, `first`/`after`, `pageInfo`, order by `updatedAt`.
 - [K1] `docs/plans/linear-official-route-research.md` (KEN-2319). [K2] `docs/plans/linear-command-value-research.md` (KEN-2336).
 - [L1] `skills/linear/scripts/lib/common.sh`. [L2] `skills/linear/scripts/commands/issues.sh`. [L3] `skills/linear/scripts/lib/issue-validation.sh`. [L4] `skills/linear/scripts/lib/auth.sh`. [L5] `skills/linear/scripts/commands/sync.sh`. [L6] `skills/linear/scripts/commands/session-status.sh`. [L7] `skills/orch/scripts/oversee-watch`. [L8] `skills/orch/scripts/lib/escapes.sh`. [L9] `skills/orch/scripts/container-close`. [L10] `skills/linear/scripts/lib/cache.sh` and `kendex.settings.toml`. All at `ef4100c7`.
+- [D1] KEN-2689's cross-team links design, file `linear-cross-team-links-design` under `docs/plans`, § Read cost, § Linear's rules on keys and links and § Backlink measurement: PR #3575, read at its head `086f9f7c` and merged at 2026-10-03T22:24:01Z as `cfc24d5a`, after this branch's base. Its figures are measured from headers on 2026-10-03.
 - Linear issues, read live with `issues get` and `comments list` on 2026-10-03 at about 22:00Z: [T1] KEN-2440 and its cancel comment. [T2] KEN-2667. [T3] FLT-641. [T4] FLT-642. [T5] FLT-183. [T6] KEN-2693. [T7] KEN-2695.
 
 The measured X-Complexity values do not follow the [S1] formula literally: a 250-row page of two scalar fields reports 4 points, where the formula gives 50 or more. Every price above uses the measured header, not the formula.
@@ -384,15 +413,16 @@ Owed decisions, each closed:
 3. **The seed is the keep-cache fix, not this recommendation's.** Under drop, no fleet seed item is filed, and KEN-2693 closes when KEN-2335 removes the sync `session-status` runs. If the owner keeps the cache, the fleet item in § Lane cache seed and KEN-2667 are both required; the seed alone leaves every sync past the first hour failing.
 4. **KEN-2667 goes with the cache.** Under drop, KEN-2335 deletes `reconcile_issues`, as KEN-2440's cancel comment set out; under keep, KEN-2667 is required.
 5. **The workflow text goes with the cache.** KEN-2335 removes the sync lines listed in § Why lanes stopped syncing, as KEN-2440's cancel comment folded them in; until then the launch briefs override them.
-6. **Dropped: add a team filter to sync.** The cache goes; the change spends work on code KEN-2335 deletes.
-7. **Dropped: trim `lane-close` and `open-terminal` reads.** Each is one request either way; the saving is bytes only.
-8. **Dropped: a webhook-fed cache.** It needs a new public service and the `admin` scope to fix a freshness problem that live reads do not have.
+6. **Team-limited writers use one OAuth app per team, not personal keys (KEN-2689's route choice).** Personal keys, one per team, all share the owner's 2,500 requests an hour [S1] [D1]. On that route the fleet's no-cache peak hour of 1,537 requests joins the read key's 54: 1,591 (63.6 percent), or 1,655 (66.2 percent) if the hook passes keep their own clocks, before any request the owner sends with another key. The 909 requests left cover 25 more whole lanes (909 / 35). One app per team, its team access limited on its app details page, gives each team 5,000 requests and 2,000,000 points: kendex at its cap of 20, with its watch and one audit, needs 843 requests (16.9 percent) and 363,911 points (18.2 percent): 20 × 35 + 68 + 75; 20 × 14,138 + 24,836 + 56,315. Requests bind on the personal route; its points share is 21.3 percent (639,257 of 3,000,000, plus 16 × ⌈2.5 × N⌉). App tokens also keep the app actor in Linear's history, where a personal key's writes show as the owner's ([D1] § Backlink measurement). The read key stays a personal key, as [D1] designs it.
+7. **Dropped: add a team filter to sync.** The cache goes; the change spends work on code KEN-2335 deletes.
+8. **Dropped: trim `lane-close` and `open-terminal` reads.** Each is one request either way; the saving is bytes only.
+9. **Dropped: a webhook-fed cache.** It needs a new public service and the `admin` scope to fix a freshness problem that live reads do not have.
 
 ### Follow-ups
 
 Filed:
 
-- **KEN-2693** (Backlog): a lane with no cache pays a full sync on its first `session-status`; the 20:13Z run spent 108 requests and 53,805 points before it was stopped, and a whole one costs 234 and 158,100. The fix is the seed, § Lane cache seed. [T6] [M]
+- **KEN-2693** (Backlog): a lane with no cache pays a full sync on its first `session-status`; the 20:13Z run spent 108 requests and 53,805 points before it was stopped, and a whole one costs 234 and 158,100 (225 and 152,190 without drovr's rows, § Drovr). The fix is the seed, § Lane cache seed. [T6] [M]
 - **KEN-2695** (Triage): live `linear.sh` commands in a worktree write the base checkout's cache through the `.cache` symlink (`kendex.settings.toml:363`, `cache.sh:65`); this round saw live reads write the cache too. [T7]
 - **KEN-2667** (Triage): reconcile puts every cached id in one jq argument and fails at 6,488 ids; the same code runs in plain sync's hourly reconcile (`sync.sh:819-828`). [T2] [M]
 
@@ -424,7 +454,7 @@ For filing by the orchestrator:
 ## Research Metadata
 
 - Issue KEN-2685, round `1791058135743507053-2049`, branch `ken-2685`, base `ef4100c734d4fde4e8d48ee5479fc4df999e65b6`, 2026-10-03.
-- Fix round `1791064790379545517-29071` (key `local-1791064548-225494-32075`): the control-host figures, the corrected rule, the scratch syncs `seed-full`, `seed-incremental` and `seed-if-stale`, the four `watch-pass-*` reads, the argv test, and live reads of KEN-2440, KEN-2667, KEN-2693, KEN-2695, FLT-641, FLT-642 and FLT-183, plus a fleet issue search. Every scratch cache deleted at 22:18:01Z.
+- Fix round `1791064790379545517-29071` (key `local-1791064548-225494-32075`): the control-host figures, the corrected rule, the scratch syncs `seed-full`, `seed-incremental` and `seed-if-stale`, the four `watch-pass-*` reads, the argv test, and live reads of KEN-2440, KEN-2667, KEN-2693, KEN-2695, FLT-641, FLT-642 and FLT-183, plus a fleet issue search. Every scratch cache deleted at 22:18:01Z. Added in the same round: drovr out of every consumer figure (owner note 1791065386), and the KEN-2689 read-key cost with the route choice for team-limited writers (overseer directive 1791066016-2083845-11968).
 - Provider: Exa refused the configured key (HTTP 401, `INVALID_API_KEY`), so no Exa search ran. The three provider pages the issue and its subject name were read directly; no general web search ran. Mode recorded in [R] as `lite`, 3 queries attempted, 0 results.
 - Measurement: the actor, method and run ids are in [M]. Own requests are logged with timestamps; the clean window holds none but the samples, and the 20:19Z scratch-sync window is excluded from every interval figure.
 - Validation: `deep-research validate` on this report and [R].
