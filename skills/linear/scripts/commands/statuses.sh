@@ -17,10 +17,10 @@ Actions:
   get     Get a single state by name
 
 List Options:
-  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; unset = all teams)
 
 Get Options:
-  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; unset = all teams)
   --name <name>         State name (required)
 
 Examples:
@@ -56,7 +56,9 @@ list_statuses() {
     # No configured team means no team filter, never a guessed one.
     local filter_json="{}"
     if [ -n "$team" ]; then
-        filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}}"
+        local team_id
+        team_id=$(resolve_team_id "$team") || return 1
+        filter_json=$(jq -cn --arg id "$team_id" '{team: {id: {eq: $id}}}')
     fi
 
     local query='
@@ -119,9 +121,12 @@ get_status() {
         return 1
     fi
 
-    local filter_json="{\"name\": {\"eq\": \"$name\"}}"
+    local filter_json
+    filter_json=$(jq -cn --arg name "$name" '{name: {eq: $name}}')
     if [ -n "$team" ]; then
-        filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}, \"name\": {\"eq\": \"$name\"}}"
+        local team_id
+        team_id=$(resolve_team_id "$team") || return 1
+        filter_json=$(jq -cn --arg id "$team_id" --argjson base "$filter_json" '$base + {team: {id: {eq: $id}}}')
     fi
 
     local query='

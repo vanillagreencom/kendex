@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The --team reference of cycles list, cycles create, issues create and labels
-# create, and the reference of teams get, resolve through resolve_team_id,
+# The --team reference of cycles list, cycles create, issues create, labels
+# create, statuses list and get, and the issues, projects and labels list
+# filters, and the reference of teams get, resolve through resolve_team_id,
 # which matches a team's key or its name: KEN and kendex send the same team id
 # on each call site, a reference matching no team refuses as not found, and
 # one team's key that is another team's name refuses as ambiguous.
@@ -51,6 +52,9 @@ case "$query" in
     '{data: {issue: (.issue + {team: $team})}}' "$FIXTURE_DIR/label-team-issue.json"
   ;;
 *"workflowStates(filter:"*) printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}' ;;
+*"issues(filter:"*) printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
+*"projects(filter:"*) printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
+*"issueLabels(filter:"*) printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}' ;;
 *"team(id:"*) printf '%s' '{"data":{"team":{"id":"5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15","name":"kendex","key":"KEN"}}}' ;;
 *) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
@@ -93,6 +97,11 @@ cycles create|cycles create --team REF --start 2026-10-05 --end 2026-10-18|.vari
 issues create|issues create --team REF --title Ref|.variables.input.teamId
 labels create|labels create --team REF --name ref-label|.variables.input.teamId
 teams get|teams get REF|.variables.id
+statuses list|statuses list --team REF|.variables.filter.team.id.eq
+statuses get|statuses get --team REF --name Todo|.variables.filter.team.id.eq
+issues list|issues list --team REF|.variables.filter.team.id.eq
+projects list|projects list --team REF|.variables.filter.accessibleTeams.some.id.eq
+labels list|labels list --team REF|.variables.filter.team.id.eq
 ROWS
 
 # The issue's team is named ENG, which is another team's key: its state

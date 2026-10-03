@@ -1,0 +1,1 @@
+- The linear skill's `statuses` reads and the `--team` filter of `issues`, `projects` and `labels list` take a team key such as `KEN`, and refuse an unknown team instead of listing nothing.

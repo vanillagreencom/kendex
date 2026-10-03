@@ -57,7 +57,7 @@ List Options:
   --state <name>        Filter by state (e.g., "Todo", "In Progress,Todo")
   --project <name>      Filter by project name
   --project-id <uuid>   Filter by project ID
-  --team <name>         Filter by team name (no default; omit = all teams)
+  --team <ref>          Filter by team key or name (no default; omit = all teams)
   --assignee <name|me>  Filter by assignee
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd>  Filter by created date
@@ -411,7 +411,7 @@ list_issues() {
         fi
     fi
 
-    parse_filter ${args[@]+"${args[@]}"}
+    parse_filter ${args[@]+"${args[@]}"} || return 1
 
     # Server-side search: pipe-separated terms, each matched as a
     # case-insensitive substring of title or description via Linear's

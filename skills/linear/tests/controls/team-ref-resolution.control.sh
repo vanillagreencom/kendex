@@ -29,3 +29,30 @@ control_expect "issues update --state: resolves the state under the issue's own 
 control_replace scripts/commands/issues.sh 1 \
     '    team_id=$(echo "$issue_result" | jq -r '"'"'.issue.team.id // empty'"'"')' \
     '    team_id=$team_name'
+
+# Each team-filtered read filters on the raw reference as a team name again,
+# so the team key reads empty on that surface alone.
+control_expect "statuses list: KEN sends the kendex team id"
+control_replace scripts/commands/statuses.sh 1 \
+    '        filter_json=$(jq -cn --arg id "$team_id" '"'"'{team: {id: {eq: $id}}}'"'"')' \
+    '        filter_json=$(jq -cn --arg id "$team" '"'"'{team: {name: {eq: $id}}}'"'"')'
+
+control_expect "statuses get: KEN sends the kendex team id"
+control_replace scripts/commands/statuses.sh 1 \
+    '        filter_json=$(jq -cn --arg id "$team_id" --argjson base "$filter_json" '"'"'$base + {team: {id: {eq: $id}}}'"'"')' \
+    '        filter_json=$(jq -cn --arg id "$team" --argjson base "$filter_json" '"'"'$base + {team: {name: {eq: $id}}}'"'"')'
+
+control_expect "issues list: KEN sends the kendex team id"
+control_replace scripts/lib/common.sh 1 \
+    '        filter_parts+=("$(jq -cn --arg v "$team_id" '"'"'{team: {id: {eq: $v}}}'"'"')")' \
+    '        filter_parts+=("$(jq -cn --arg v "$team" '"'"'{team: {name: {eq: $v}}}'"'"')")'
+
+control_expect "projects list: KEN sends the kendex team id"
+control_replace scripts/commands/projects.sh 1 \
+    '        filter_parts+=("$(jq -cn --arg v "$team_id" '"'"'{accessibleTeams: {some: {id: {eq: $v}}}}'"'"')")' \
+    '        filter_parts+=("$(jq -cn --arg v "$team" '"'"'{accessibleTeams: {some: {name: {eq: $v}}}}'"'"')")'
+
+control_expect "labels list: KEN sends the kendex team id"
+control_replace scripts/commands/labels.sh 1 \
+    '        filter_json=$(jq -cn --arg id "$team_id" '"'"'{team: {id: {eq: $id}}}'"'"')' \
+    '        filter_json=$(jq -cn --arg id "$team" '"'"'{team: {name: {eq: $id}}}'"'"')'

@@ -433,6 +433,7 @@ linear_iso_days_ago() {
 # holding a quote or backslash must not be able to reshape the filter object.
 parse_filter() {
     local filter_parts=()
+    local team=""
     local first=75
     local include_archived="false"
 
@@ -466,7 +467,7 @@ parse_filter() {
             ;;
         --team)
             linear_require_option_value "$@" || return 1
-            filter_parts+=("$(jq -cn --arg v "$2" '{team: {name: {eq: $v}}}')")
+            team="$2"
             shift 2
             ;;
         --assignee)
@@ -517,6 +518,13 @@ parse_filter() {
             ;;
         esac
     done
+
+    # Resolved after the loop, so a malformed option refuses before any API call.
+    if [ -n "$team" ]; then
+        local team_id
+        team_id=$(resolve_team_id "$team") || return 1
+        filter_parts+=("$(jq -cn --arg v "$team_id" '{team: {id: {eq: $v}}}')")
+    fi
 
     if [ ${#filter_parts[@]} -gt 0 ]; then
         FILTER_JSON=$(printf '%s\n' "${filter_parts[@]}" | jq -cs 'add')

@@ -256,7 +256,7 @@ cycles list resolves no team and filters on none|none|-|err|cycles list --type c
 statuses get sends no guessed team|none|-|err|statuses get --name "In Progress"|ok GetState()
 issues list sends no guessed team|none|-|err|issues list --limit 5|ok ListIssues()
 cycles list scopes to the configured team|Configured|-|err|cycles list --type current|ok GetTeam(name="Configured"),ListCycles(filter.team.id.eq="team-uuid")
-statuses list scopes to the configured team|Configured|-|err|statuses list|ok ListStates(filter.team.name.eq="Configured")
+statuses list scopes to the configured team|Configured|-|err|statuses list|ok GetTeam(name="Configured"),ListStates(filter.team.id.eq="team-uuid")
 sync inlines no team into any document with no team configured|none|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(),SyncInitiatives(),SyncLabels()
 sync scopes cycles to the configured team, in the document and its variables|Configured|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(teamName="Configured",inline-team),SyncInitiatives(),SyncLabels()
 auth-check reports an unresolved team and the global key|none|-|auth|auth-check|auth 0 null unset null false noteam envkey

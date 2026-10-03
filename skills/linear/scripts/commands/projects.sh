@@ -38,7 +38,7 @@ Actions:
 
 List Options:
   --state <name>        Filter by state (e.g., "started", "completed")
-  --team <name>         Filter by team name
+  --team <ref>          Filter by team key or name
   --limit <n>           Max results (default: 50). Values above 50 are fetched
                         transparently by paginating (per request capped at 50,
                         the connection maximum).
@@ -121,6 +121,7 @@ PROJECTS_PAGE_MAX=50
 
 list_projects() {
     local filter_parts=()
+    local team=""
     local limit=50
     local include_archived="false"
     local first_only="false"
@@ -135,7 +136,7 @@ list_projects() {
             shift 2
             ;;
         --team)
-            filter_parts+=("$(jq -cn --arg v "$2" '{accessibleTeams: {some: {name: {eq: $v}}}}')")
+            team="$2"
             shift 2
             ;;
         --limit)
@@ -177,6 +178,12 @@ list_projects() {
         *) break ;;
         esac
     done
+
+    if [ -n "$team" ]; then
+        local team_id
+        team_id=$(resolve_team_id "$team") || return 1
+        filter_parts+=("$(jq -cn --arg v "$team_id" '{accessibleTeams: {some: {id: {eq: $v}}}}')")
+    fi
 
     # Each part is a complete JSON object built through jq --arg, so a project
     # or team name holding a quote cannot reshape the filter.
