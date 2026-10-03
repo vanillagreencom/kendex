@@ -224,7 +224,7 @@ pub fn install(
     npm_install(&package.name, &dest)?;
     let (bins, unbuilt_bins) = link_bins(scope_root, &package, &dest)?;
     settings::upsert_package(&settings_path(scope_root), &package.name, enabled)?;
-    write_append_system(scope_root, &package, &dest, enabled)?;
+    write_append_system(env, scope_root, &package, &dest, enabled)?;
     Ok(InstallOutcome {
         name: package.name,
         version: package.version,
@@ -404,16 +404,17 @@ fn unlink_bins(dir: &Path, dest: &Path) -> Result<()> {
 
 /// The text a package adds to the scope's `APPEND_SYSTEM.md`, or `None`
 /// where it adds none: it ships no `appendSystem` file or an empty one, its
-/// declaration is disabled, or its own `enabled` setting in the scope's
-/// settings is off. A package that is off registers no tools, and its
-/// instructions would tell the model to call tools it does not have.
+/// declaration is disabled, or its own `enabled` setting is off. A package
+/// that is off registers no tools, and its instructions would tell the model
+/// to call tools it does not have.
 fn append_system_block(
+    env: &Env,
     scope_root: &Path,
     package: &PiPackage,
     dest: &Path,
     enabled: bool,
 ) -> Result<Option<String>> {
-    if !enabled || !settings::config_enabled(&settings_path(scope_root), &package.name)? {
+    if !enabled || !settings::config_enabled(&enabled_settings(env, scope_root)?, &package.name)? {
         return Ok(None);
     }
     let Some(relative) = &package.append_system else {
@@ -425,17 +426,31 @@ fn append_system_block(
         .filter(|block| !block.is_empty()))
 }
 
+/// The settings files the package reads its `enabled` setting from, in
+/// merge order: Pi's user settings, then a project scope's own. Pi loads the
+/// global `APPEND_SYSTEM.md` in every project, so a global block follows the
+/// user settings alone.
+fn enabled_settings(env: &Env, scope_root: &Path) -> Result<Vec<PathBuf>> {
+    let user = record::scope_root(env, &crate::model::Scope::Global)?;
+    let mut paths = vec![settings_path(&user)];
+    if scope_root != user {
+        paths.push(settings_path(scope_root));
+    }
+    Ok(paths)
+}
+
 /// The edit that brings an installed package's `APPEND_SYSTEM.md` block in
 /// line with a declaration switched to `enabled`, for a plan that changes
 /// the switch without reinstalling the package.
 pub(crate) fn append_system_edit(
+    env: &Env,
     scope_root: &Path,
     name: &str,
     enabled: bool,
 ) -> Result<(PathBuf, ConfigEdit)> {
     let dest = package_path(scope_root, name)?;
     let package = read(&dest)?;
-    let edit = match append_system_block(scope_root, &package, &dest, enabled)? {
+    let edit = match append_system_block(env, scope_root, &package, &dest, enabled)? {
         Some(block) => ConfigEdit::UpsertMarkerBlock {
             name: package.name,
             block,
@@ -448,13 +463,14 @@ pub(crate) fn append_system_edit(
 /// Mirror the package's [`append_system_block`] into the scope's
 /// `APPEND_SYSTEM.md`, or strip the package's block where it has none.
 fn write_append_system(
+    env: &Env,
     scope_root: &Path,
     package: &PiPackage,
     dest: &Path,
     enabled: bool,
 ) -> Result<()> {
     let path = append_system_path(scope_root);
-    let Some(block) = append_system_block(scope_root, package, dest, enabled)? else {
+    let Some(block) = append_system_block(env, scope_root, package, dest, enabled)? else {
         return strip_append_system(&path, &package.name);
     };
     let current = read_if_exists(&path)?.unwrap_or_default();

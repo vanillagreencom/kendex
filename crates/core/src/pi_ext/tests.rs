@@ -210,32 +210,49 @@ fn a_disabled_declaration_installs_with_no_extensions_and_records_the_native_swi
 /// A package that is off gets no `APPEND_SYSTEM.md` block, and a reinstall
 /// strips the one an earlier install wrote: one row per off-switch, the
 /// declaration's and the package's own `enabled` setting, beside the rows
-/// that leave it on. Another package's block stays whatever the row.
+/// that leave it on. The setting merges as the package reads it, Pi's user
+/// settings and then the project's, the project winning; a global install
+/// reads the user settings alone. Another package's block stays whatever
+/// the row.
 #[test]
 fn a_package_that_is_off_writes_no_append_system_block() {
-    for (declared, setting, block) in [
-        (true, None, true),
-        (true, Some(true), true),
-        (true, Some(false), false),
-        (false, None, false),
+    for (global, declared, user, project, block) in [
+        (false, true, None, None, true),
+        (false, true, None, Some(true), true),
+        (false, true, None, Some(false), false),
+        (false, false, None, None, false),
+        (false, true, Some(false), None, false),
+        (false, true, Some(false), Some(true), true),
+        (false, true, Some(true), Some(false), false),
+        (true, true, None, None, true),
+        (true, true, Some(false), None, false),
+        (true, true, Some(true), None, true),
     ] {
         let f = scope();
+        let user_root = scope_root(&f.env, &crate::model::Scope::Global).unwrap();
+        let root = if global { &user_root } else { &f.scope };
         let source = fixture(&f.root, "pi-widgets", "Widget guidance.\n");
         let other = fixture(&f.root, "pi-other", "Other guidance.\n");
-        install(&f.env, &f.scope, &other, true).unwrap();
-        install(&f.env, &f.scope, &source, true).unwrap();
-        if let Some(enabled) = setting {
-            let mut settings = settings_json(&f.scope);
+        install(&f.env, root, &other, true).unwrap();
+        install(&f.env, root, &source, true).unwrap();
+        for (settings_root, setting) in [(&user_root, user), (&f.scope, project)] {
+            let Some(enabled) = setting else { continue };
+            let path = settings_path(settings_root);
+            let mut settings = read_if_exists(&path)
+                .unwrap()
+                .map_or(serde_json::json!({}), |text| {
+                    serde_json::from_str(&text).unwrap()
+                });
             settings["kendex"] = serde_json::json!({"extensionManager": {"config": {
                 "pi-widgets": {"enabled": enabled}
             }}});
-            write(&settings_path(&f.scope), &settings.to_string());
+            write(&path, &settings.to_string());
         }
 
-        install(&f.env, &f.scope, &source, declared).unwrap();
+        install(&f.env, root, &source, declared).unwrap();
 
-        let append = std::fs::read_to_string(append_system_path(&f.scope)).unwrap();
-        let row = format!("declared={declared} setting={setting:?}");
+        let append = std::fs::read_to_string(append_system_path(root)).unwrap();
+        let row = format!("global={global} declared={declared} user={user:?} project={project:?}");
         assert_eq!(
             append.contains("<!-- kendex:append-system pi-widgets begin -->"),
             block,

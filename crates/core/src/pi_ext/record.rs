@@ -193,7 +193,7 @@ fn record_matching<'a>(
                 if differs && let Some(plan) = plan.as_mut() {
                     switches.push((name.as_str(), decl.enabled));
                     entry.enabled = decl.enabled;
-                    let (path, edit) = super::append_system_edit(&root, name, decl.enabled)?;
+                    let (path, edit) = super::append_system_edit(env, &root, name, decl.enabled)?;
                     plan.edits.push((path, format!("switch {name}"), edit));
                 }
                 lock.entries.insert(key, entry);

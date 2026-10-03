@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -175,18 +175,26 @@ pub fn package_enabled(path: &Path, name: &str) -> Result<Option<bool>> {
 }
 
 /// Whether the package's own `enabled` setting,
-/// `kendex.extensionManager.config["<name>"].enabled`, leaves it on. Only a
-/// boolean `false` turns it off: each package reads any other value, or
-/// none, as its default, which is on.
-pub(super) fn config_enabled(path: &Path, name: &str) -> Result<bool> {
-    let (settings, _) = read(path)?;
-    let setting = settings
-        .get("kendex")
-        .and_then(|kendex| kendex.get("extensionManager"))
-        .and_then(|manager| manager.get("config"))
-        .and_then(|config| config.get(name))
-        .and_then(|package| package.get("enabled"));
-    Ok(setting != Some(&Value::Bool(false)))
+/// `kendex.extensionManager.config["<name>"].enabled`, leaves it on, merged
+/// over `paths` the way each package's `readPackageConfig` merges them: a
+/// later file's value replaces an earlier one's, and a file that sets no
+/// value keeps it. Only a boolean `false` turns it off: each package reads
+/// any other value, or none, as its default, which is on.
+pub(super) fn config_enabled(paths: &[PathBuf], name: &str) -> Result<bool> {
+    let mut setting = None;
+    for path in paths {
+        let (settings, _) = read(path)?;
+        if let Some(value) = settings
+            .get("kendex")
+            .and_then(|kendex| kendex.get("extensionManager"))
+            .and_then(|manager| manager.get("config"))
+            .and_then(|config| config.get(name))
+            .and_then(|package| package.get("enabled"))
+        {
+            setting = Some(value.clone());
+        }
+    }
+    Ok(setting != Some(Value::Bool(false)))
 }
 
 /// Render one settings write for all package switches in a scope. The caller
