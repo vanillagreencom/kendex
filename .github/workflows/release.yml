@@ -30,7 +30,8 @@ jobs:
   build:
     concurrency:
       group: release-build-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+      # Replacing pending builds keeps main current without starving publication.
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
