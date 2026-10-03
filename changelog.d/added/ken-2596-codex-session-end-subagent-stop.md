@@ -1,1 +1,1 @@
-- On Codex, `reviewer-stop-check` now runs at a subagent's stop and `session-end-row` at a session's end.
+- On Codex, kendex now registers `SubagentStop` and `SessionEnd` hooks in `hooks.json`, where it used to deliver them only as advisory prose.
