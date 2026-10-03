@@ -8,6 +8,7 @@ repository checkout this file sits in.
 
 import contextlib
 import gzip
+from unittest import mock
 import io
 import json
 import os
@@ -176,18 +177,29 @@ class Archive(unittest.TestCase):
         self.brief = "kendex=" + os.path.join(FIXTURES, "oversee", "brief-tail-template.md")
 
     def test_one_item(self):
-        code, out, err = run(["archive", "--dir", self.dir, "--oversee-state", self.oversee, "--brief-tail", self.brief, "--min-free-gb", "0"])
+        work = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        before = (sorted(os.listdir(self.dir)), sorted(os.listdir(work)))
+        cwd = os.getcwd()
+        os.chdir(work)
+        try:
+            code, out, err = run(["archive", "--dir", self.dir, "--oversee-state", self.oversee, "--brief-tail", self.brief, "--min-free-gb", "0"])
+        finally:
+            os.chdir(cwd)
+        # Members stream to memory: nothing lands in the item or working directory.
+        self.assertEqual((sorted(os.listdir(self.dir)), sorted(os.listdir(work))), before)
         self.assertEqual(code, 0)
         self.assertIn("Filesystem", err)
         self.assertEqual(len(out.splitlines()), 1)
         data = json.loads(out)
         self.assertEqual((data["repo"], data["item"], data["harness"]), ("kendex", "KEN-9", "pi"))
-        self.assertEqual(data["token_totals"]["claude"], {"input": 11, "output": 21, "cache_read": 31, "cache_write": 41, "total": 104})
+        self.assertEqual(data["token_totals"]["claude"], {"input": 11, "output": 21, "cache_read": 31, "cache_write": 41, "total": 104, "unknown": 0})
         self.assertEqual(data["token_totals"]["pi"]["total"], 10)
         self.assertEqual([e["error"] for e in data["errors"]], ["token-record-shape harness=pi model=bad"])
         archive = data["tmp_archives"][0]
-        # The close-out evidence copy of the mailbox is read but not counted twice.
-        self.assertEqual((archive["members"], archive["skipped"], len(archive["read"])), (5, 1, 4))
+        # The close-out evidence copy of the mailbox is read but not counted
+        # twice; the overseer's mailbox in the same archive is not this item's.
+        self.assertEqual((archive["members"], archive["skipped"], len(archive["read"])), (6, 2, 4))
         self.assertEqual(data["lane_status"][0]["keys"], ["at", "state"])
         self.assertEqual(data["lane_mail"]["by_kind"], {"ask": 2, "notice": 1})
         self.assertEqual(len(data["lane_mail"]["asks"]), 2)
@@ -200,6 +212,27 @@ class Archive(unittest.TestCase):
         self.assertEqual(data["outcome"], {"merged": True, "wall_secs": 4 * 3600, "paused_secs": 3600, "fix_rounds": 1,
                                            "stopped_parked_or_paused": True, "tier": None})
         self.assertEqual(data["brief_tail"], {"clauses": 5, "harness_only": {"pi": 1, "claude": 1, "copilot": 1}})
+
+    def test_member_cap(self):
+        with mock.patch.object(measure, "MEMBER_CAP_BYTES", 8):
+            code, out, _ = run(["archive", "--dir", self.dir, "--min-free-gb", "0"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["tmp_archives"][0]["read"], [])
+        capped = [e for e in data["errors"] if e["error"] == "member over 8 bytes"]
+        self.assertEqual(len(capped), 4)
+
+    def test_null_count_is_kept_as_unknown(self):
+        path = os.path.join(self.dir, "tokens-sb2.json")
+        with open(path, "w") as handle:
+            json.dump({"harnesses": {"codex": {"files": 1, "unreadable": 0, "unrecorded": 0,
+                                               "models": {"gpt-6.1-sol": [5, 6, 7, None]}}}, "at": "2026-10-05T01:00:00Z"}, handle)
+        code, out, _ = run(["archive", "--dir", self.dir, "--min-free-gb", "0"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["token_totals"]["codex"], {"input": 5, "output": 6, "cache_read": 7, "cache_write": 0, "total": 18, "unknown": 1})
+        row = data["token_records"][1]["harnesses"]["codex"]["models"]["gpt-6.1-sol"]
+        self.assertEqual((row["cache_write"], row["unknown"]), (None, ["cache_write"]))
 
     def test_root_sweep_and_since(self):
         make_item(self.tmp, "fleet", "FLT-1")
@@ -236,16 +269,25 @@ class Archive(unittest.TestCase):
 
 
 def archive_object(item, harness, total, merged=True, repo="kendex", model="claude-opus-5-5",
-                   extra_tokens=(), asks=0, lane=True):
-    """A schema-1 archive line, the shape the overseer's run produced."""
+                   extra_tokens=(), asks=0, lane=True, unrecorded=0, lane_extra=None, null_side=None):
+    """A schema-1 archive line, the shape the overseer's run produced.
+    `merged=False` writes the lane with no cycle record, as the real
+    cycle-less lanes are."""
     tokens = {harness: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": total}}
     for other in extra_tokens:
         tokens[other] = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 1}
-    stamps = {"launched": "2026-10-02T00:00:00Z", "merged": "2026-10-02T01:00:00Z" if merged else None}
-    lanes = [{"item": item, "harness": harness, "model": model, "status": "done",
-              "cycle": {"stamps": stamps, "rounds": {"fix": 1}} if merged else None}] if lane else []
+    stamps = {"launched": "2026-10-02T00:00:00Z", "merged": "2026-10-02T01:00:00Z"}
+    lanes = [dict({"item": item, "harness": harness, "model": model, "status": "done",
+                   "cycle": {"stamps": stamps, "rounds": {"fix": 1}} if merged else None}, **(lane_extra or {}))] if lane else []
     record = {"file": "tokens-x.json", "at": "2026-10-02T02:00:00Z",
-              "harnesses": {h: {"files": 1, "unreadable": 0, "unrecorded": 0, "models": {model: t}} for h, t in tokens.items()}}
+              "harnesses": {h: {"files": 1, "unreadable": 0, "unrecorded": unrecorded if h == harness else 0,
+                                "models": {model: t}} for h, t in tokens.items()}}
+    if null_side:
+        # A side harness whose only row has a null count: no known tokens.
+        record["harnesses"][null_side] = {"files": 1, "unreadable": 0, "unrecorded": 0,
+                                          "models": {"gpt-6.1-sol": {"input": 0, "output": 0, "cache_read": 0, "cache_write": None,
+                                                                      "total": 0, "unknown": ["cache_write"]}}}
+        tokens[null_side] = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0, "unknown": 1}
     return {"schema": "pi-session-audit/archive/1", "mode": "archive", "repo": repo, "item": item,
             "token_records": [record], "token_totals": tokens, "tmp_archives": [{"file": "tmp-1.tgz"}],
             "lane_mail": {"asks": [{"id": "a%d" % i, "terms": []} for i in range(asks)] * 2},
@@ -271,8 +313,9 @@ class Aggregate(unittest.TestCase):
         # Both spellings of the model fall in one family row.
         family = table["by_model"][self.MEASURE]["claude-opus-5.5"]["cells"]
         self.assertEqual((family["pi"]["n"], family["claude"]["n"]), (8, 20))
+        # PI-9's lane has no cycle record: its merge is unknown, not "not merged".
         not_merged = table["all"]["5 share not merged"]["cells"]["pi"]
-        self.assertEqual((not_merged["n"], not_merged["share"]), (9, round(1 / 9, 4)))
+        self.assertEqual((not_merged["n"], not_merged["share"]), (8, 0.0))
 
     def test_seven_pi_items_is_too_small(self):
         objects = [archive_object("PI-%d" % i, "pi", i) for i in range(1, 8)]
@@ -287,15 +330,57 @@ class Aggregate(unittest.TestCase):
     def test_exclusions_and_asks(self):
         objects = [archive_object("PI-1", "pi", 5, extra_tokens=("copilot",), asks=3),
                    archive_object("proof-1a", "pi", 5),
-                   archive_object("FLT-1", "pi", 0, lane=False)]
-        table = measure.aggregate(objects, {})
+                   archive_object("FLT-1", "pi", 0, lane=False),
+                   archive_object("issue-2708", "claude", 5)]
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GH_ISSUE_PATTERN", None)
+            table = measure.aggregate(objects, {})
         inputs = table["inputs"]
-        self.assertEqual((inputs["probe_items_excluded"], inputs["no_harness_excluded"], inputs["items"]), (1, 1, 1))
+        # A GitHub issue-N key is a work item; proof-1a is a probe.
+        self.assertEqual((inputs["probe_items_excluded"], inputs["no_harness_excluded"], inputs["items"]), (1, 1, 2))
+        self.assertEqual(inputs["items_by_lead"], {"pi": 1, "claude": 1})
         self.assertEqual(inputs["mixed_token_items_by_lead"], {"pi": 1})
         self.assertEqual(inputs["tokens_under_another_lead"], {"copilot under pi": {"items": 1, "median_total": 1, "max_total": 1}})
-        self.assertEqual(table["all"][self.MEASURE]["verdict"], "not sampled (n=0)")
+        # PI-1 holds copilot tokens beside its lead: no measure-1 point.
+        self.assertEqual({h: c["n"] for h, c in table["all"][self.MEASURE]["cells"].items()}, {"claude": 1})
         # Each ask appears twice in the line; one per envelope id counts.
-        self.assertEqual(len(measure.normalize(objects[0], {})["asks"]), 3)
+        self.assertEqual(len(measure.normalize(objects[0], {}, measure.ItemIdentity())["asks"]), 3)
+
+    def test_incomplete_and_null_side_runs_leave_measure_one(self):
+        objects = [archive_object("PI-%d" % i, "pi", i) for i in range(1, 9)]
+        objects.append(archive_object("PI-9", "pi", 900, unrecorded=1))
+        objects.append(archive_object("PI-10", "pi", 1000, null_side="codex"))
+        table = measure.aggregate(objects, {})
+        self.assertEqual(table["inputs"]["incomplete_token_items_by_harness"], {"pi": 1, "codex": 1})
+        self.assertEqual(table["inputs"]["mixed_token_items_by_lead"], {"pi": 1})
+        self.assertEqual(table["all"][self.MEASURE]["cells"]["pi"]["n"], 8)
+
+    def test_lane_outcome_shapes(self):
+        # Parking is the `parked` object; a lane's status never reads parked.
+        parked = archive_object("PI-1", "pi", 5, lane_extra={"parked": {"pr": 1, "at": "2026-10-02T00:20:00Z"}})
+        # A pause that runs past the merge counts only up to it, and overlaps
+        # with the standing park count once: 00:20 to 01:00.
+        parked["oversee"]["lanes"][0]["pauses"] = [{"from": "2026-10-02T00:30:00Z", "to": "2026-10-02T03:00:00Z", "cause": "parked"}]
+        out = measure.lane_outcome(parked["oversee"]["lanes"][0])
+        self.assertEqual((out["paused_secs"], out["wall_secs"], out["stopped_parked_or_paused"]), (2400, 1200, True))
+        parked_only = archive_object("PI-3", "pi", 5, lane_extra={"parked": {"pr": 1, "at": "2026-10-02T00:20:00Z"}})
+        self.assertTrue(measure.lane_outcome(parked_only["oversee"]["lanes"][0])["stopped_parked_or_paused"])
+        cycleless = measure.lane_outcome(archive_object("PI-2", "pi", 5, merged=False)["oversee"]["lanes"][0])
+        self.assertEqual((cycleless["merged"], cycleless["wall_secs"], cycleless["stopped_parked_or_paused"]), (None, None, False))
+
+    def test_ask_groups(self):
+        for row in measure.ASK_GROUPS:
+            with self.subTest(group=row["group"]):
+                self.assertEqual(measure.ask_group(row["example"]), row["group"])
+        self.assertEqual(measure.ask_group("PR opened"), "other")
+        line = archive_object("PI-1", "pi", 5)
+        line["lane_mail"]["asks"] = [{"id": "x", "terms": [], "excerpt": "returned FAILING"}, {"id": "y", "terms": [], "excerpt": "Merge it?"}]
+        foreign = archive_object("PI-2", "pi", 5)
+        foreign["lane_mail"]["asks"] = [{"id": "z", "terms": [], "excerpt": "From nowhere."}]
+        foreign["tmp_archives"] = [{"file": "tmp-1.tgz", "read": [{"member": "kendex/tmp/lane-mail/overseer/to-overseer.jsonl", "kind": "to-overseer"}]}]
+        table = measure.aggregate([line, foreign], {})
+        self.assertEqual(table["ask_groups"], {"pi": {"items": 1, "asks": 2, "failing receipt or validation": 1, "merge or review gate": 1}})
+        self.assertEqual(table["inputs"]["foreign_mailbox_items_by_lead"], {"pi": 1})
         self.assertEqual(table["all"]["3 tool calls per session"]["verdict"], "not sampled (n=0)")
 
     def test_matched_strata_and_unmatched_totals(self):
@@ -320,13 +405,14 @@ class Aggregate(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         path = os.path.join(tmp, "lines.jsonl.gz")
         with gzip.open(path, "wt", encoding="utf-8") as handle:
-            handle.write(json.dumps(archive_object("PI-1", "pi", 5)) + "\n" + out)
+            handle.write(json.dumps(archive_object("PI-1", "pi", 5)) + "\n" + out * 3)
         code, out, _ = run(["aggregate", path])
         self.assertEqual(code, 0)
         calls = json.loads(out)["all"]["3 tool calls per session"]
+        # Nine Pi sessions (lead, fork, subagent, three times) are one item:
+        # the floor counts items, not sessions.
         self.assertEqual(calls["verdict"], "too small to judge")
-        # Three Pi sessions (lead, fork, subagent) from one item; Claude two, Copilot one.
-        self.assertEqual({h: (c["n"], c["items"]) for h, c in calls["cells"].items()}, {"pi": (3, 1), "claude": (2, 1), "copilot": (1, 1)})
+        self.assertEqual({h: (c["n"], c["items"]) for h, c in calls["cells"].items()}, {"pi": (9, 1), "claude": (6, 1), "copilot": (3, 1)})
         code, out, err = run(["aggregate", os.path.join(FIXTURES, "oversee", "brief-tail-template.md")])
         self.assertEqual((code, out), (2, ""))
 

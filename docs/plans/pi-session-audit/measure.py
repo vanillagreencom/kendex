@@ -96,11 +96,16 @@ Output schema, archive, one line per item (`schema`: "pi-session-audit/archive/2
                          without an oversee lane record
   token_field_order_assumed  the four names given to models.<model>[0..3]
   token_records[]       {file, at, harnesses: {h: {files, unreadable, unrecorded,
-                         models: {m: {input, output, cache_read, cache_write, total}}}}}
-  token_totals          {h: {input, output, cache_read, cache_write, total}}
+                         models: {m: {input, output, cache_read, cache_write, total,
+                         unknown?}}}}}; a null count stays null and is named in
+                         `unknown`; total sums the known counts
+  token_totals          {h: {input, output, cache_read, cache_write, total, unknown}}
+                        `unknown` counts the null counts summed as 0
   tmp_archives[]        {file, members, read: [{member, kind, bytes}], skipped}
   lane_status[]         {member, keys} top-level keys of each lane-status member
   lane_mail             {envelopes, by_kind, asks: [{id, at, terms, excerpt}]}
+                        from the item's own `lane-mail/<item>/to-overseer.jsonl`,
+                        each envelope id once
   item_state            {cycles, rereview_cycles, pr_comment_iterations,
                          fixes, skipped, escalated_items} or null
   oversee               {lanes: [lane record subset], fleet_log: {rows, by_kind,
@@ -114,12 +119,16 @@ Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
   inputs                archive_lines, probe_items_excluded (item keys that are
                         no tracker id), no_harness_excluded, items, items_by_lead,
                         items_with_lane_record, items_with_tokens_by_harness,
-                        mixed_token_items_by_lead, tokens_under_another_lead
+                        mixed_token_items_by_lead, foreign_mailbox_items_by_lead
+                        (schema-1 lines that read another item's mailbox; their
+                        asks are left out), tokens_under_another_lead
                         ("<harness> under <lead>": {items, median_total,
                         max_total}), incomplete_token_items_by_harness,
                         items_with_issue_fields, matched_strata, live_sessions
   model_mix             {lead: {lane_record: {model: items}, token_record:
                          {model: records}}}
+  ask_groups            {lead: {items, asks, <ASK_GROUPS group | other>: asks}}
+                        over the items the lane-mail ask measure counts
   all.<measure>         {source, unit (item | session), pi_items, verdict
                          ("judged" | "too small to judge" | "not sampled (n=0)"),
                          cells: {harness: {n, items, median, p90} or {n, items,
@@ -130,7 +139,9 @@ Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
                         holding Pi and Claude Code or Copilot CLI items
   unmatched.<measure>   the same over every item outside a matched stratum
   --issues FILE is {item: {estimate, agent}} from the tracker; without it no
-  stratum matches.
+  stratum matches. Item keys pass through `git-context issue-canonical`
+  (--git-context, default this checkout's .agents/skills/orch/scripts/
+  git-context): a key it refuses is a probe and left out.
 """
 
 from __future__ import annotations
@@ -469,6 +480,8 @@ def assistant_key(message: Dict[str, Any]) -> str:
     return "t:%s:%s:%s" % (message.get("timestamp"), message.get("model"), usage.get("output"))
 
 
+# Pi's session JSONL is a documented interface (the Session File Format and
+# Message Types documents of @earendil-works/pi-coding-agent); this reads it.
 def measure_pi(path: str, store: str, root: str, seen: set, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     errors = state["errors"]
     entries = read_jsonl(path, errors)
@@ -597,6 +610,15 @@ def measure_pi(path: str, store: str, root: str, seen: set, state: Dict[str, Any
 
 # ------------------------------------------------------------ Claude sessions
 
+# Fallback read of Claude Code's own transcript files, standing in for the
+# Agent SDK's listSessions, getSessionMessages and getSubagentMessages
+# (@anthropic-ai/claude-agent-sdk 0.3.288 sdk.d.ts). Those cannot serve here:
+# they need the Node package installed in the lane sandbox, where this script
+# runs as stdlib Python streamed on stdin and writes nothing; getSessionMessages
+# returns only the parentUuid chain, dropping abandoned branches whose requests
+# were billed, and system entries unless asked; and it types each message's
+# body, usage included, as `unknown`, so the usage fields read below are no
+# more a contract there than here.
 def measure_claude(path: str, store: str, root: str, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     errors = state["errors"]
     usage_by_message: Dict[str, Tuple[Any, ...]] = {}
@@ -670,6 +692,12 @@ def measure_claude(path: str, store: str, root: str, state: Dict[str, Any]) -> O
 
 # ----------------------------------------------------------- Copilot sessions
 
+# Fallback read of Copilot CLI's events.jsonl, standing in for the Copilot
+# SDK's CopilotClient.resumeSession(...).getEvents() (@github/copilot-sdk
+# 1.0.16), whose event types (generated/session-events.d.ts) this parser
+# follows. That interface cannot serve: it starts a Copilot CLI process and
+# resumes the session, which a read must not do to a live lane, and it needs
+# the Node package in the sandbox.
 def measure_copilot(path: str, store: str, root: str, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     errors = state["errors"]
     tools = new_tools()
@@ -847,12 +875,20 @@ def tar_member(archive: str, member: str) -> bytes:
     return data
 
 
+def own_mailbox(member: str, item: str) -> bool:
+    """A close archive also holds other mailboxes: the overseer's and test
+    scratch ones. A lane's own is `lane-mail/<item>/`, the item compared
+    case-insensitively."""
+    parts = [p.lower() for p in member.split("/")]
+    return any(parts[i] == "lane-mail" and parts[i + 1] == item.lower() for i in range(len(parts) - 1))
+
+
 def member_kind(member: str, item: str) -> Optional[str]:
     base = os.path.basename(member)
-    if "lane-status" in member:
-        return "lane-status"
     if base == "to-overseer.jsonl":
-        return "to-overseer"
+        return "to-overseer" if own_mailbox(member, item) else None
+    if base.lower().startswith("lane-status-%s" % item.lower()) or (base.startswith("lane-status") and own_mailbox(member, item)):
+        return "lane-status"
     if base == "workflow-state-%s.json" % item:
         return "item-state"
     return None
@@ -869,12 +905,17 @@ def read_token_record(path: str, errors: List[Dict[str, Any]]) -> Optional[Dict[
     for harness, body in (record.get("harnesses") or {}).items():
         models: Dict[str, Any] = {}
         for model, counts in (body.get("models") or {}).items():
+            # A null count is the writer's "not recorded" (a Codex cache
+            # write): the row keeps its known counts and names the unknown one.
             if not (isinstance(counts, list) and len(counts) == len(TOKEN_RECORD_FIELDS)
-                    and all(isinstance(c, int) and not isinstance(c, bool) for c in counts)):
+                    and all(c is None or (isinstance(c, int) and not isinstance(c, bool)) for c in counts)):
                 errors.append({"path": path, "error": "token-record-shape harness=%s model=%s" % (harness, model)})
                 continue
-            row = dict(zip(TOKEN_RECORD_FIELDS, counts))
-            row["total"] = sum(counts)
+            row: Dict[str, Any] = dict(zip(TOKEN_RECORD_FIELDS, counts))
+            row["total"] = sum(c for c in counts if c is not None)
+            unknown = [f for f, c in zip(TOKEN_RECORD_FIELDS, counts) if c is None]
+            if unknown:
+                row["unknown"] = unknown
             models[model] = row
         harnesses[harness] = {"files": body.get("files"), "unreadable": body.get("unreadable"),
                               "unrecorded": body.get("unrecorded"), "models": models}
@@ -951,8 +992,37 @@ def oversee_summary(state: Dict[str, Any], item: str) -> Dict[str, Any]:
     return {"lanes": lanes, "fleet_log": {"rows": len(rows), "by_kind": by_kind, "relaunch_rows": relaunch}}
 
 
+def paused_within(lane: Dict[str, Any], start: _dt.datetime, end: _dt.datetime) -> int:
+    """Seconds of START..END the lane stood paused: each `pauses` stretch and a
+    standing `parked` (running on to END), clipped to the window, overlaps
+    counted once. This is oversee-cycle's `paused` rule (its pauses and
+    paused() at oversee-cycle:363-381); that script judges the gate gap of
+    one lane through its own state reads, so it cannot be called for the
+    launch-to-merge window of an archive line."""
+    spans = []
+    for pause in lane.get("pauses") or []:
+        a, b = parse_at((pause or {}).get("from")), parse_at((pause or {}).get("to"))
+        if a is not None:
+            spans.append((a, b or end))
+    parked = lane.get("parked")
+    if isinstance(parked, dict) and parse_at(parked.get("at")) is not None:
+        spans.append((parse_at(parked["at"]), end))
+    clipped = sorted((max(a, start), min(b, end)) for a, b in spans if min(b, end) > max(a, start))
+    total = 0
+    cursor = start
+    for a, b in clipped:
+        a = max(a, cursor)
+        if b > a:
+            total += int((b - a).total_seconds())
+            cursor = b
+    return total
+
+
 def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Measure 5 inputs from one oversee lane record; every field None without one."""
+    """Measure 5 inputs from one oversee lane record. Without a lane record,
+    or without its `cycle` (oversee-cycle writes one at merge, so a lane that
+    has none tells nothing about a merge), the merge fields are None: unknown,
+    never unmerged."""
     if lane is None:
         return {"merged": None, "wall_secs": None, "paused_secs": None, "fix_rounds": None,
                 "stopped_parked_or_paused": None, "tier": None}
@@ -960,19 +1030,16 @@ def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     stamps = (cycle or {}).get("stamps") or {}
     launched = parse_at(stamps.get("launched") or lane.get("launched_at"))
     merged_at = parse_at(stamps.get("merged"))
-    paused = 0
-    for pause in lane.get("pauses") or []:
-        start, end = parse_at((pause or {}).get("from")), parse_at((pause or {}).get("to"))
-        if start is not None and end is not None and end > start:
-            paused += int((end - start).total_seconds())
-    wall = int((merged_at - launched).total_seconds()) - paused if launched and merged_at else None
+    paused = paused_within(lane, launched, merged_at) if launched and merged_at else None
+    wall = int((merged_at - launched).total_seconds()) - paused if paused is not None else None
     rounds = (cycle or {}).get("rounds") or {}
     return {
-        "merged": merged_at is not None,
+        "merged": True if merged_at is not None else None,
         "wall_secs": wall,
         "paused_secs": paused,
         "fix_rounds": rounds.get("fix") if isinstance(rounds.get("fix"), int) else None,
-        "stopped_parked_or_paused": lane.get("status") in ("stopped", "parked") or bool(lane.get("pauses")),
+        # Parking is the `parked` object; no lane status reads "parked".
+        "stopped_parked_or_paused": lane.get("status") == "stopped" or bool(lane.get("parked")) or bool(lane.get("pauses")),
         # tier_inputs.estimate is item-tier's estimate of added production
         # lines, not the tracker estimate; the band comes from --issues.
         "tier": lane.get("tier") or (cycle or {}).get("tier"),
@@ -1017,10 +1084,11 @@ def archive_item(directory: str, repo: str, item: str, since: Optional[_dt.datet
     totals: Dict[str, Dict[str, int]] = {}
     for record in records:
         for harness, body in record["harnesses"].items():
-            slot = totals.setdefault(harness, {k: 0 for k in TOKEN_RECORD_FIELDS + ("total",)})
+            slot = totals.setdefault(harness, {k: 0 for k in TOKEN_RECORD_FIELDS + ("total", "unknown")})
             for row in body["models"].values():
-                for key in slot:
-                    slot[key] += row[key]
+                slot["unknown"] += len(row.get("unknown", ()))
+                for key in TOKEN_RECORD_FIELDS + ("total",):
+                    slot[key] += row[key] or 0
     archives = []
     lane_status = []
     mail = {"envelopes": 0, "by_kind": {}, "asks": []}  # type: Dict[str, Any]
@@ -1118,7 +1186,50 @@ def run_archive(root: str, single: bool, since: Optional[_dt.datetime], oversee_
 # item count only, marked outside the comparison.
 COMPARED = ("pi", "claude", "copilot")
 NOT_SAMPLED = "not sampled (n=0)"
-WORK_ITEM = re.compile(r"^[A-Z][A-Z0-9]*-[0-9]+$")
+GIT_CONTEXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                           ".agents", "skills", "orch", "scripts", "git-context")
+
+# Lane-mail asks grouped by what they report, first matching group wins.
+# Each example is a real ask's opening from the 2026-10 archive run.
+ASK_GROUPS = (
+    {"group": "failing receipt or validation", "pattern": r"receipt|FAILING|validation|\bfails?\b|failed",
+     "example": "KEN-2089's dev round committed c889f403 but returned FAILING."},
+    {"group": "merge or review gate", "pattern": r"merge|review|approv|armed|queue|thread",
+     "example": "FLT-614 micro, PR #628 (head a045334): CI green, tier=micro, gate=approval, no open threads."},
+    {"group": "ruling or choice", "pattern": r"ruling|choose|option|decide|A\.|\bcut\b",
+     "example": "The configured Pi-to-Codex fallback has no authorized Codex permission choice.  A. Stop a fallback"},
+)
+_ASK_GROUPS = [dict(g, regex=re.compile(g["pattern"], re.I)) for g in ASK_GROUPS]
+
+
+def ask_group(text: str) -> str:
+    for group in _ASK_GROUPS:
+        if group["regex"].search(text):
+            return group["group"]
+    return "other"
+
+
+class ItemIdentity:
+    """Whether an archive item key names a tracker item, and its canonical
+    spelling. git-context owns that rule (`issue-canonical`, GH_ISSUE_PATTERN):
+    a Linear id or a GitHub `issue-N` passes; a probe key such as `proof-3f2a`
+    does not."""
+
+    def __init__(self, script: str = GIT_CONTEXT) -> None:
+        self.script = script
+        self.cache: Dict[str, Optional[str]] = {}
+
+    def __call__(self, item: str) -> Optional[str]:
+        if item not in self.cache:
+            done = subprocess.run([self.script, "issue-canonical", item], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, universal_newlines=True)
+            if done.returncode == 0:
+                self.cache[item] = done.stdout.strip()
+            elif done.returncode == 1 and done.stderr.startswith("git-context: issue-uncanonical"):
+                self.cache[item] = None
+            else:
+                raise OSError("git-context issue-canonical exit %d: %s" % (done.returncode, done.stderr.strip()[:200]))
+        return self.cache[item]
 
 
 def model_family(model: Any) -> Optional[str]:
@@ -1130,42 +1241,58 @@ def model_family(model: Any) -> Optional[str]:
     return re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", name)
 
 
-def normalize(o: Dict[str, Any], issues: Dict[str, Any]) -> Dict[str, Any]:
+def normalize(o: Dict[str, Any], issues: Dict[str, Any], identity) -> Dict[str, Any]:
     """One archive line (schema 1 or 2) as the fields every measure reads.
 
     The lead harness is the oversee lane record's harness, else the one
     harness with tokens in the kept token records. An item whose token
     records hold another harness beside the lead is `mixed_tokens`: its
     measure 1 is left out, since those tokens may be a side run or a
-    relaunch on another harness.
+    relaunch on another harness. Measures 4 and 5 charge the item to its
+    lead.
     """
     lanes = (o.get("oversee") or {}).get("lanes") or []
     lane = lanes[-1] if lanes else None
-    with_tokens = sorted(h for h, t in (o.get("token_totals") or {}).items() if t.get("total", 0) > 0)
+    totals = o.get("token_totals") or {}
+    # A harness is incomplete for the item where a record says files or
+    # sessions went unread, a count is null, or a model row was refused.
+    incomplete = {h for r in o.get("token_records") or [] for h, b in r["harnesses"].items()
+                  if (b.get("unreadable") or 0) > 0 or (b.get("unrecorded") or 0) > 0
+                  or any(row.get("unknown") for row in (b.get("models") or {}).values())}
+    for error in o.get("errors") or []:
+        refused = re.match(r"token-record-shape harness=(\S+) ", str(error.get("error")))
+        if refused:
+            incomplete.add(refused.group(1))
+    # Tokens a record holds but cannot count still mark the harness present.
+    with_tokens = sorted({h for h, t in totals.items() if t.get("total", 0) > 0} | incomplete)
     lead = (lane or {}).get("harness") or (with_tokens[0] if len(with_tokens) == 1 else None)
-    incomplete = sorted({h for r in o.get("token_records") or [] for h, b in r["harnesses"].items()
-                         if (b.get("unreadable") or 0) > 0 or (b.get("unrecorded") or 0) > 0})
     token_models: Dict[str, int] = {}
     for record in o.get("token_records") or []:
         for model in ((record["harnesses"].get(lead) or {}).get("models") or {}):
             token_models[model] = token_models.get(model, 0) + 1
+    # A schema-1 line counted every to-overseer.jsonl in the archive; one
+    # that read another item's mailbox has asks that are not all its own.
+    foreign = any(r.get("kind") == "to-overseer" and not own_mailbox(r["member"], o["item"])
+                  for a in o.get("tmp_archives") or [] for r in a.get("read") or [])
     asks: Dict[str, Any] = {}
     for ask in (o.get("lane_mail") or {}).get("asks") or []:
         asks.setdefault(str(ask.get("id")), ask)
-    issue = issues.get(o["item"]) or {}
+    canonical = identity(o["item"])
+    issue = issues.get(canonical or o["item"]) or {}
     fleet_log = (o.get("oversee") or {}).get("fleet_log")
     return {
-        "repo": o["repo"], "item": o["item"], "work_item": bool(WORK_ITEM.match(o["item"])),
+        "repo": o["repo"], "item": canonical or o["item"], "work_item": canonical is not None,
         "lead": lead, "with_tokens": with_tokens,
         "mixed_tokens": bool(with_tokens) and with_tokens != [lead],
-        "incomplete": incomplete, "tokens": (o.get("token_totals") or {}).get(lead),
-        "totals": {h: (o.get("token_totals") or {})[h]["total"] for h in with_tokens},
+        "incomplete": sorted(incomplete), "tokens": totals.get(lead),
+        "totals": {h: (totals.get(h) or {}).get("total", 0) for h in with_tokens},
         "token_models": token_models, "lane_model": (lane or {}).get("model"),
         "token_family": model_family(next(iter(token_models))) if len(token_models) == 1 else None,
         "lane_family": model_family((lane or {}).get("model")),
-        "outcome": o.get("outcome") if o.get("schema") != "pi-session-audit/archive/1" else lane_outcome(lane),
+        "outcome": lane_outcome(lane),
         "has_lane": lane is not None, "fleet_log": fleet_log,
-        "asks": list(asks.values()), "has_mail": bool(o.get("tmp_archives")),
+        "asks": [] if foreign else list(asks.values()),
+        "has_mail": bool(o.get("tmp_archives")) and not foreign, "foreign_mailbox": foreign,
         "agent": issue.get("agent"), "band": estimate_band(issue.get("estimate")) if issue else "none",
     }
 
@@ -1282,9 +1409,10 @@ def measure_row(source: str, unit: str, points: Dict[str, List[Tuple[str, float]
     return {"source": source, "unit": unit, "pi_items": pi_items, "verdict": "judged" if judged else TOO_SMALL, "cells": out}
 
 
-def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str, Any]:
+def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any], identity=None) -> Dict[str, Any]:
     """The measure-by-harness table, its matched strata and unmatched totals."""
-    normalized = [normalize(o, issues) for o in objects if o.get("mode") == "archive"]
+    identity = identity or ItemIdentity()
+    normalized = [normalize(o, issues, identity) for o in objects if o.get("mode") == "archive"]
     probes = [n for n in normalized if not n["work_item"]]
     items = [n for n in normalized if n["work_item"] and n["lead"] is not None]
     sessions = [(live.get("item"), s) for live in objects if live.get("mode") == "live" for s in live["sessions"]]
@@ -1345,6 +1473,16 @@ def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str
     for n in items:
         for harness in n["incomplete"]:
             incomplete[harness] = incomplete.get(harness, 0) + 1
+    ask_groups: Dict[str, Dict[str, int]] = {}
+    for n in items:
+        if not n["has_mail"]:
+            continue
+        slot = ask_groups.setdefault(n["lead"], {"items": 0, "asks": 0})
+        slot["items"] += 1
+        for ask in n["asks"]:
+            slot["asks"] += 1
+            group = ask_group(str(ask.get("excerpt") or ask.get("text") or ""))
+            slot[group] = slot.get(group, 0) + 1
     with_tokens: Dict[str, int] = {}
     for n in normalized:
         for harness in n["with_tokens"]:
@@ -1369,6 +1507,7 @@ def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str
             "items_with_lane_record": _count(n["lead"] for n in items if n["has_lane"]),
             "items_with_tokens_by_harness": with_tokens,
             "mixed_token_items_by_lead": _count(n["lead"] for n in items if n["mixed_tokens"]),
+            "foreign_mailbox_items_by_lead": _count(n["lead"] for n in items if n["foreign_mailbox"]),
             "tokens_under_another_lead": under_other_cells,
             "incomplete_token_items_by_harness": incomplete,
             "items_with_issue_fields": sum(1 for n in items if n["agent"] is not None or n["band"] != "none"),
@@ -1377,6 +1516,7 @@ def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str
             "live_sessions": len(sessions),
         },
         "model_mix": model_mix,
+        "ask_groups": ask_groups,
         "all": table, "by_model": by_model, "matched": matched, "unmatched": unmatched,
     }
 
@@ -1435,6 +1575,7 @@ def main(argv: List[str]) -> int:
     arch.add_argument("--min-free-gb", type=float, default=3.0)
     agg = sub.add_parser("aggregate", help="the measure table from archive and live output lines")
     agg.add_argument("--issues", help="JSON {item: {estimate, agent}} read from the tracker")
+    agg.add_argument("--git-context", default=GIT_CONTEXT, help="the orch git-context script that owns item identity")
     agg.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     if args.mode == "live":
@@ -1443,14 +1584,22 @@ def main(argv: List[str]) -> int:
         print_json(result)
         return 0
     if args.mode == "aggregate":
+        if not os.access(args.git_context, os.X_OK):
+            notice("git-context", args.git_context, "The item-identity script is missing or not executable; pass --git-context.")
+            return 2
         try:
             issues: Dict[str, Any] = {}
             if args.issues:
                 with open(args.issues, "r", encoding="utf-8") as handle:
                     issues = json.load(handle)
-            print_json(aggregate(read_objects(args.files), issues))
-        except (OSError, ValueError, KeyError) as error:
-            notice("aggregate-input", str(error), "An input line is not the output of this script's live or archive mode.")
+            objects = read_objects(args.files)
+        except (OSError, ValueError) as error:
+            notice("aggregate-input", str(error), "An input file is unreadable, or a line is not the output of this script's live or archive mode.")
+            return 2
+        try:
+            print_json(aggregate(objects, issues, ItemIdentity(args.git_context)))
+        except OSError as error:
+            notice("git-context-failed", str(error), "git-context issue-canonical failed on an item key.")
             return 2
         return 0
     if args.mode != "archive":
