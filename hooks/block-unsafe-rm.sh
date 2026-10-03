@@ -37,9 +37,9 @@ refuse() { # KEY VALUE [CAUSE]
       echo 'Keep d=$(mktemp -d) and remove "${d:?}" in the same shell call.' >&2
       ;;
     refused=recursive-rm)
-      echo "Any rm on a variable-rooted path stalls the session: the harness stops on" >&2
+      echo "Any rm on a variable-rooted path stalls the session: Claude Code's critical-path check stops on" >&2
       echo "  $COMMAND" >&2
-      echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt." >&2
+      echo "with a prompt that waits two minutes in bypassPermissions mode, then denies the call." >&2
       echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
       echo "  rm -- \"\${NAME:?}/file\"      (bash aborts if NAME is unset or empty)" >&2
       echo "  rm -- /absolute/literal/path" >&2

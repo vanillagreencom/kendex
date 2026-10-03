@@ -603,6 +603,11 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.critical-path-deny]
+source = "."
+harnesses = ["claude"]
+enabled = true
+
 [bundles.commit-guards]
 source = "."
 harnesses = [

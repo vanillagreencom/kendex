@@ -77,6 +77,7 @@ hooks = [
   "lane-mail-start",
   "lane-mail-prompt",
   "lane-mail-compact",
+  "critical-path-deny",
 ]
 
 [bundles.orchestration]
@@ -101,6 +102,7 @@ hooks = [
   "lane-mail-start",
   "lane-mail-prompt",
   "lane-mail-compact",
+  "critical-path-deny",
 ]
 
 [bundles.code-review]

@@ -831,6 +831,7 @@
   ".claude/hooks/block-unsafe-rm.sh",
   ".claude/hooks/block-worktree-refresh.sh",
   ".claude/hooks/command-safety.sh",
+  ".claude/hooks/critical-path-deny.sh",
   ".claude/hooks/doc-drift-check.sh",
   ".claude/hooks/lane-mail-check.sh",
   ".claude/hooks/lane-mail-deliver.sh",
