@@ -114,8 +114,9 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
                   [--repo OWNER/REPO] ITEM
 
 Close one lane recorded in the oversee workflow state. The command refuses a
-live lane. It accepts an exited lane, or an idle lane whose tracker item is
-terminal. A limit banner below the lane's last turn is passed over only where
+live lane. It accepts an exited lane, an idle lane whose tracker item is
+terminal, or, in a full close, a hosted record whose window no pane carries
+on a terminal item. A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
 through the provider's copy, reads the account the record names as room, for
 the model the record names or over the whole account where it names none, and
@@ -155,7 +156,10 @@ record's wake names before the record reads done or stopped, every close of a
 local lane, an exited one included, an idle one's in the same stop as its
 harness, and refuses as stop-failed target=wake where it does not end. A wake identity whose process has exited or whose pid a later
 process holds is a turn already over.
-A record already marked stopped can close its kept sandbox without a pane, as can a hosted idle lane's full close on a terminal item, with no exit wait. A
+A record already marked stopped can close its kept sandbox without a pane.
+A full close of a hosted record whose window no pane carries, on an item its
+tracker answers terminal, closes with no lane state read and no exit wait:
+the harness is stopped through lane-host stop and the host closed. A
 preparing record, a hosted launch whose background job has written no
 outcome, closes without a harness exit: the job the record names is stopped
 and its window closed. --keep-sandbox ends the harness, closes its window and
@@ -985,7 +989,8 @@ stop_harness() {
     # A merged lane's own close-out removes its worktree before the lane goes
     # idle, so a provider that finds the harness by that directory has nothing
     # to find it by; lane-host-ssh stops by launch identity instead. Only an
-    # idle lane on a terminal item reaches this stop, and what follows ends the
+    # idle lane on a terminal item, or the windowless close of a hosted record
+    # on one, reaches this stop, and what follows ends the
     # harness, so the stop is skipped rather than refused: the host close where
     # the provider's close ends the sandbox, otherwise the window kill, which
     # hangs up the lane's ssh session, as a static host's close ends no
