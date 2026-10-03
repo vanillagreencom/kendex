@@ -71,6 +71,7 @@ while IFS='|' read -r site args path; do
     run_status rc run_team_ref "$site-$ref" ${args//REF/$ref}
     if [[ "$ref" == ghost ]]; then
       assert_file_contains "$site: ghost refuses as not found" "$TMP_ROOT/$site-$ref.err" "Team not found: ghost"
+      assert_ne "$site: ghost exits nonzero" "$rc" 0
       assert "$site: ghost sends nothing past the team lookup" \
         jq -s -e 'length == 1 and (.[0].query | contains("teams(filter:"))' "$TMP_ROOT/$site-$ref.jsonl"
       continue
@@ -90,3 +91,6 @@ ROWS
 run_status rc run_team_ref ambiguous teams get ENG
 assert_file_contains "ambiguous: ENG refuses naming both teams" "$TMP_ROOT/ambiguous.err" \
   "Ambiguous team: ENG matches Platform (key ENG) and ENG (key ENX)"
+assert_ne "ambiguous: ENG exits nonzero" "$rc" 0
+assert "ambiguous: ENG sends nothing past the team lookup" \
+  jq -s -e 'length == 1 and (.[0].query | contains("teams(filter:"))' "$TMP_ROOT/ambiguous.jsonl"

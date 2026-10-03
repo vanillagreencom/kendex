@@ -14,3 +14,10 @@ control_expect "ambiguous: ENG refuses naming both teams"
 control_replace scripts/lib/common.sh 1 \
     '        1)' \
     '        [1-9])'
+
+# Keep the ambiguity message and drop the refusal: the resolver warns, returns
+# an empty id and the caller sends its request anyway.
+control_expect "ambiguous: ENG sends nothing past the team lookup"
+control_replace scripts/lib/common.sh 1 \
+    '                <<<"$teams" >&2' \
+    '                <<<"$teams" >&2; return 0'
