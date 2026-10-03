@@ -660,7 +660,7 @@ err_word() {
     raw-kept) printf '→ raw first response preserved: <out>.raw.txt\n' ;;
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;
     generic:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) target=claude\n' "$b" ;;
-    generic:exit:*) printf 'error=claude exited with code %s target=claude\n--- stderr ---\n<quota>\n' "$b" ;;
+    generic:exit:*) printf 'error=claude exited with code %s target=claude\n' "$b" ;;
     # the home
     home-rejected:*) printf '→ artifact home rejected (%s\n' "$(home_reason "$a" "$b")" ;;
     home-not-creatable:*) printf '→ artifact home not creatable: %s\n' "${1#home-not-creatable:}" ;;

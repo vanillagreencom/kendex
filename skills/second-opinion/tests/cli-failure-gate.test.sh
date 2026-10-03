@@ -30,7 +30,8 @@ cause-order|  if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then\n    CLI_FAILURE_CAUSE=
 classify|attempt_cause="result-|: attempt_cause="result-|a success envelope*
 answer-guard|[[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE|[[ -z "${RESULT_ENVELOPE_CAUSE:+}" ]] && $REVIEW_LIKE|an is_error envelope whose result is a whole review*
 retry-zero|      elif [[ $attempt_cause == result-* ]]; then|      elif false && [[ $attempt_cause == result-* ]]; then|a format retry*exit 0*
-retry-exit|        if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|        if false && [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|a format retry*exit 1*'
+retry-exit|        if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|        if false && [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|a format retry*exit 1*
+gate-cause|  select_cli_failure_cause "$RESULT"\n  print_cli_failure_cause|  select_cli_failure_cause "$RESULT"\n  : print_cli_failure_cause|a quick-mode*'
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
@@ -88,7 +89,8 @@ a valid response writes the artifact and no sidecar|-|review|0|<out>|header:revi
 a CLI that dies to a signal is a kill, not a refusal: exit 6, the record and the report name the signal, its last words are the cause|stdout:- stderr:killed signal:TERM|review|6|-|header:review killed:out:SIGTERM:143 cause:stderr:killed preserved:out|calls=1 files=out.failed.json=killed(was killed by SIGTERM (exit 143)|claude stderr|other) $CLEAN
 a failure reported on stdout with an empty stderr names the stdout cause|rc:1 stdout:quota stderr:-|review|5|-|header:review failed:exit:out:1 cause:stdout preserved:out|calls=1 files=out.failed.json=failed(exited with code 1|claude stdout|quota) $CLEAN
 audit carries the no-verdict contract too|rc:1 stdout:- stderr:quota|audit|5|-|header:audit failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.failed.json=$FAILED_EXIT_STDERR $CLEAN
-a quick-mode CLI failure keeps the generic exit 1 and writes no sidecar|rc:1 stdout:- stderr:quota|quick|1|-|header:quick generic:exit:1|calls=1 files=- $CLEAN
+a quick-mode non-zero exit carrying an error envelope with an empty stderr names the envelope's cause|rc:1 stdout:envelope:error|quick|1|-|header:quick generic:exit:1 cause:result:error|calls=1 files=- $CLEAN
+a quick-mode CLI failure keeps the generic exit 1 and writes no sidecar|rc:1 stdout:- stderr:quota|quick|1|-|header:quick generic:exit:1 cause:stderr|calls=1 files=- $CLEAN
 without --output the record lands in the artifact home under --cwd, owner-only and git-ignored, never in TMPDIR|output:- rc:1 stdout:- stderr:quota|review|5|-|header:review failed:exit:home:1 cause:stderr preserved:home|calls=1 files=- home=mode=700,review-claude-failed=$FAILED_EXIT_STDERR,ignore=* tmp=0 dirty=-
 an absolute SECOND_OPINION_ARTIFACT_DIR relocates the record and leaves the default home untouched|output:- rc:1 stdout:- stderr:quota home:abs:alt|review|5|-|header:review failed:exit:home:1 cause:stderr preserved:home|calls=1 files=- home=mode=700,review-claude-failed=$FAILED_EXIT_STDERR tmp=0 dirty=-
 an uncreatable home falls back to system temp, loudly, with the class and the cause kept|output:- rc:1 stdout:- stderr:quota home:abs:proc|review|5|-|header:review home-not-creatable:/proc/no-such-home/second-opinion temp-fallback failed:exit:tmp:1 cause:stderr preserved:tmp|calls=1 files=- home=absent tmp=1 dirty=-

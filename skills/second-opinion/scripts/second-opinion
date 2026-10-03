@@ -306,11 +306,10 @@ Exit codes:
   5  review/audit: the external CLI failed to produce any review — it exited
      non-zero (quota/auth/network), timed out, returned an empty response on
      a zero exit, or ended without a review on a zero exit (a Claude result
-     envelope with no result text or flagged is_error; it never falls through
-     to the next roster target). No external verdict; whatever partial output
-     existed is kept as <output>.failed.json and the CLI's own error text is
-     echoed on stderr; a Claude result envelope's fields are that text when it
-     has them
+     envelope with no result text or flagged is_error). No external verdict;
+     whatever partial output existed is kept as <output>.failed.json and the
+     CLI's own error text is echoed on stderr; a Claude result envelope's
+     fields are that text when it has them
   6  review/audit: the external CLI was KILLED — it died to a signal, named in
      the report and the <output>.failed.json record. Something outside the run
      (a reaper, an operator) took the reviewer away; it did not refuse: retry,
@@ -2609,6 +2608,11 @@ select_cli_failure_cause() {
     CLI_FAILURE_CAUSE_SOURCE="${TARGET_CLI} stdout"
   fi
 }
+# The cause select_cli_failure_cause chose, on stderr; nothing when no stream
+# carried text.
+print_cli_failure_cause() {
+  [[ -z "$CLI_FAILURE_CAUSE" ]] || printf -- '--- cause (%s) ---\n%s\n' "$CLI_FAILURE_CAUSE_SOURCE" "$CLI_FAILURE_CAUSE" >&2
+}
 
 # A failed external-CLI invocation on the primary call — non-zero
 # exit (quota/auth/network), timeout, or a zero exit that returned nothing
@@ -2646,10 +2650,7 @@ preserve_cli_failure_and_fail() {
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
   echo "→ external CLI $verb: $TARGET_CLI $reason" >&2
-  if [[ -n "$cause" ]]; then
-    echo "--- cause (${cause_source}) ---" >&2
-    printf '%s\n' "$cause" >&2
-  fi
+  print_cli_failure_cause
   if [[ -n "$sidecar" ]]; then
     echo "→ failed invocation preserved: $sidecar" >&2
   else
@@ -2781,10 +2782,7 @@ collect_response() {
     # Keep the failed command's text visible before RESULT is overwritten.
     select_cli_failure_cause "$RESULT"
     if ! next_target; then break; fi
-    if [[ -n "$CLI_FAILURE_CAUSE" ]]; then
-      echo "--- cause (${CLI_FAILURE_CAUSE_SOURCE}) ---" >&2
-      printf '%s\n' "$CLI_FAILURE_CAUSE" >&2
-    fi
+    print_cli_failure_cause
     TARGET_CLI="${REVIEW_LANES[${#REVIEW_LANES[@]}-1]}"
     TARGET_CLI_ENV="${LANE_ENVS[${#LANE_ENVS[@]}-1]}"
     invocation_prompt="$PROMPT_TMP"
@@ -2801,7 +2799,9 @@ collect_response() {
 }
 # A first response that holds no answer ends the run: a timeout, a non-zero
 # exit, a result envelope that ended without a review, or an empty stdout.
+# Every mode reports one failure and one cause; only review/audit keep a record.
 gate_first_response() {
+  CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
   if [[ $EXIT_CODE -eq 124 ]]; then
     $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
     echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
@@ -2809,31 +2809,25 @@ gate_first_response() {
   elif [[ $EXIT_CODE -ne 0 ]]; then
     # Classify first, report once: a signal death is a kill, not a refusal, and
     # takes its own exit code so the caller can tell its reviewer was taken away.
-    CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
+    CLI_FAILURE="exited with code $EXIT_CODE"
     [[ "$attempt_cause" != quota ]] || CLI_FAILURE="reported a quota/rate-limit refusal"
     if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
       CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
     fi
-    $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
-    echo "{\"error\": \"$TARGET_CLI $CLI_FAILURE\", \"target\": \"$TARGET_CLI\"}" >&2
-    [[ ! -s "$STDERR_TMP" ]] || { echo "--- stderr ---"; head -20 "$STDERR_TMP"; } >&2
-    exit 1
+  else
+    echo "→ Response received (${#RESULT} bytes)" >&2
+    # A result envelope that ran and ended without review text names its own
+    # end; the auth advice is for a stdout that carried nothing at all.
+    if [[ $attempt_cause == result-* ]]; then CLI_FAILURE=$(result_envelope_reason)
+    elif [[ ${#RESULT} -eq 0 ]]; then CLI_FAILURE="returned an empty response on a zero exit — check CLI auth and configuration"
+    else return 0
+    fi
   fi
-  echo "→ Response received (${#RESULT} bytes)" >&2
-  # A result envelope that ran and ended without review text names its own end;
-  # the auth advice below is for a stdout that carried nothing at all.
-  if [[ $attempt_cause == result-* ]]; then
-    CLI_FAILURE=$(result_envelope_reason)
-    $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT"
-    jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
-    printf -- '--- cause (claude result) ---\n%s\n' "$RESULT_ENVELOPE_CAUSE" >&2
-    exit 1
-  elif [[ ${#RESULT} -eq 0 ]]; then
-    $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
-    echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
-    [[ ! -s "$STDERR_TMP" ]] || { echo "--- stderr ---"; head -20 "$STDERR_TMP"; } >&2
-    exit 1
-  fi
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
+  jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
+  select_cli_failure_cause "$RESULT"
+  print_cli_failure_cause
+  exit 1
 }
 collect_response "$PROMPT_TMP"
 
