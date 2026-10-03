@@ -333,7 +333,7 @@ claude_usage 0  0  0 Opus > "$FIXTURE_DIR/.nclaude.json"
 # oversee-watch calls, so the record is the one it writes.
 stage_wall() {
   (source "$SCRIPTS_DIR/lib/lane-claims.sh" && source "$SCRIPTS_DIR/lib/account-wall.sh" \
-    && OVERSEE_WATCH_STATE_DIR="$1" account_wall_record "" "$H/.nclaude" "$2" "$3" "You've hit your weekly limit") \
+    && OVERSEE_WATCH_STATE_DIR="$1" account_wall_record "" "$H/.nclaude" "$2" "$3" $'  \xe2\x8e\xbf \xc2\xa0'"You've hit your weekly limit") \
     && compgen -G "$1/walls/*.json" >/dev/null \
     || { echo "stage_wall: no wall record under $1" >&2; exit 1; }
 }
@@ -351,13 +351,24 @@ WALL_ROW_PICK="pick passes over the walled account for the one with room|$WALL_A
 WALL_ROW_LANE="pick --lane refuses the walled account for any model|$WALL_AHEAD|pick --lane $H/.nclaude --harness claude --model opus --json|rc=3 wall=100"
 WALL_ROW_PASSED="past the stated reset the account reads its measured value|$WALL_PASSED|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room"
 WALL_ROW_JUNK="a wall record nobody can read leaves the account unmeasured, never room|$WALL_JUNK|$LIST|nclaude.status=error nclaude.verdict=unmeasured claude.verdict=room"
-table "$WALL_ROW_LIST" "$WALL_ROW_PICK" "$WALL_ROW_LANE" "$WALL_ROW_PASSED" "$WALL_ROW_JUNK"
-# Controls, one per rule of lib/account-wall.sh, each row run against a copy
-# of the scripts with that rule's line mutated and expecting what the mutant
-# reads: the overlay keeping the measured weekly figure, which turns all three
-# walled rows to room; the reset test dropped, which keeps a passed wall; and
-# an unreadable record passed over, which reads room. The home goes back to
-# the standard one the sections below read.
+# The record names the account in lane_claims_canon's spelling, and discovery
+# keeps an ORCH_LANE_DIRS entry as written: a trailing slash or a symlink to
+# the account still reaches its wall.
+mkdir -p "$TMP_ROOT/spelled"
+ln -sfn "$H/.nclaude" "$TMP_ROOT/spelled/.nclaude"
+WALL_SLASH="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$H/.nclaude/"
+WALL_LINK="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$TMP_ROOT/spelled/.nclaude"
+WALL_ROW_SLASH="a wall reaches an account ORCH_LANE_DIRS spells with a trailing slash|$WALL_SLASH|$LIST|nclaude.weekly_pct=100 nclaude.verdict=walled"
+WALL_ROW_LINK="a wall reaches an account ORCH_LANE_DIRS names through a symlink|$WALL_LINK|$LIST|nclaude.weekly_pct=100 nclaude.verdict=walled"
+table "$WALL_ROW_LIST" "$WALL_ROW_PICK" "$WALL_ROW_LANE" "$WALL_ROW_PASSED" "$WALL_ROW_JUNK" "$WALL_ROW_SLASH" "$WALL_ROW_LINK"
+# Controls for the reading rules of lib/account-wall.sh these rows reach, each
+# row run against a copy of the scripts with that rule's line mutated and
+# expecting what the mutant reads: the overlay keeping the measured weekly
+# figure, which turns all three walled rows to room; the reset test dropped,
+# which keeps a passed wall; an unreadable record passed over, which reads
+# room; and the account's dir taken as spelled, which misses the wall under
+# both other spellings. The home goes back to the standard one the sections
+# below read.
 wall_control() { # NAME OLD NEW ROW...
   local scripts
   scripts="$(mutant_scripts "$1" lib/account-wall.sh)" || exit 1
@@ -375,6 +386,9 @@ wall_control mutant-wall-fail-open 'unmeasured" >&2
   return 1' 'unmeasured" >&2
   printf '"'"'%s\n'"'"' "$3"; return 0' \
   "control: an unreadable record passed over reads room|$WALL_JUNK|$LIST|nclaude.status=ok nclaude.verdict=room"
+wall_control mutant-wall-spelling 'ACCOUNT_WALL_CANON="$(lane_claims_canon "$2")"' 'ACCOUNT_WALL_CANON="$2"' \
+  "control: a dir taken as spelled misses the wall behind a trailing slash|$WALL_SLASH|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room" \
+  "control: a dir taken as spelled misses the wall behind a symlink|$WALL_LINK|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room"
 standard_home home
 
 echo "=== pick: a Pi launch on a Copilot model is judged on the stated Copilot pool ==="

@@ -3178,7 +3178,7 @@ check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
   local lane pane below cmd pid state window i states="" claims="" claimed pane_key
-  local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
+  local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event quiet
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
   local banner banner_rc turn hosted_item hosted_harness
   # One liveness read and one pane capture per lane per pass: a lane's kind is
@@ -3333,11 +3333,11 @@ check_lanes() {
     # changed: the row is observe_lanes's stamp for this pane and this
     # wall, and the reported column names the event it went out as. The
     # lane stays walled above; a reset going by turns the event into
-    # usage-limit-passed, which is news once more.
-    if [[ "$seen_reported" == "$event" ]]; then continue; fi
+    # usage-limit-passed, which is news once more. Such a pass still keeps
+    # the account's wall record (lib/account-wall.sh), and prints nothing.
+    quiet=""; [[ "$seen_reported" != "$event" ]] || quiet=1
     # The detail is a nicety; a claim store this process cannot read must
-    # not take down the event that carries the payload. Read here, below
-    # the suppression, so its note qualifies a line that is going out.
+    # not take down the event that carries the payload.
     claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
     # Claims are kept for every live tmux server, and a window NAME is
     # unique only within a session: the account is resolved on the pane
@@ -3347,7 +3347,7 @@ check_lanes() {
     # fails on a readable one is not the same thing, and the event goes out
     # without an account rather than with another lane's.
     claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")" || claimed=""
-    if [[ -z "$claimed" && -n "$claims" ]]; then
+    if [[ -z "$claimed" && -z "$quiet" && -n "$claims" ]]; then
       ow_message claim-missing "lane=$lane" >&2
     fi
     # A window around the banner, never the banner alone (banner_payload): the
@@ -3367,6 +3367,7 @@ check_lanes() {
     [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
     [[ -n "$banner" ]] || die limit-banner-missing "" "lane=$lane"
     account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" || true
+    [[ -z "$quiet" ]] || continue
     echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1

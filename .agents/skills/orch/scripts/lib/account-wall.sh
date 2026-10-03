@@ -8,9 +8,11 @@
 # weekly window reads 100 whatever the endpoint said, and once its reset has
 # passed the account reads its measured value again.
 #
-# oversee-watch writes it where it raises `usage-limit` for a claimed lane, and
-# `lanes` reads it in emit_lane, so `list` and both `pick` forms judge one
-# record. It lives in `walls/` beside the claim store lane_claims_dir names,
+# oversee-watch writes it on every pass that finds a claimed lane walled, the
+# pass that raises `usage-limit` and each later one, so a wall reported before
+# the record existed, or whose write failed, is recorded on the next pass. Only
+# the harness's own banner is recorded (ACCOUNT_WALL_DRAWN). `lanes` reads it
+# in emit_lane, so `list` and both `pick` forms judge one record. It lives in `walls/` beside the claim store lane_claims_dir names,
 # one file per account named by a checksum of the config dir in
 # lane_claims_canon's spelling, holding `{config_dir, resets_at}` with the
 # reset in epoch seconds.
@@ -35,15 +37,30 @@ account_wall_file() { # ROOT CONFIG_DIR
   ACCOUNT_WALL_FILE="$dir/${sum%% *}.json"
 }
 
-# Records the wall BANNER states for CONFIG_DIR until RESET, an epoch, where the
-# banner names the weekly window and RESET is after NOW. Nothing else is
-# written: a lane with no claim names no account, a banner whose reset the
-# grammar could not read names no time to keep the wall until, and a reset
-# already behind NOW is a wall that has lifted. Returns 1, after a keyed line
-# on stderr, when the record could not be written.
+# What opens the line Claude Code draws a usage-limit message on: its
+# MessageResponse prefix, two spaces, `⎿`, a space and U+00A0, measured in
+# Claude Code 2.1.288, which renders its rate-limit message inside that
+# component. The lane's own words never open a line with it: its prose starts
+# `⏺ ` or an indent, and the first line of a tool result takes `  ⎿  ` with two
+# plain spaces. So a banner the lane quotes, the case oversee-events.md §
+# usage-limit has the overseer confirm, records no wall. A tool whose output
+# opens with the limit phrase itself would be drawn alike.
+ACCOUNT_WALL_DRAWN=$'  \xe2\x8e\xbf \xc2\xa0'
+
+# Records the wall BANNER states for CONFIG_DIR until RESET, an epoch, where a
+# line of the banner is the harness's own weekly-limit message and RESET is
+# after NOW. Nothing else is written: a lane with no claim names no account, a
+# quoted banner is no wall of that account, a banner whose reset the grammar
+# could not read names no time to keep the wall until, and a reset already
+# behind NOW is a wall that has lifted. Returns 1, after a keyed line on
+# stderr, when the record could not be written.
 account_wall_record() { # ROOT CONFIG_DIR RESET NOW BANNER
-  local file=""
-  [[ -n "$2" && "$3" =~ ^[0-9]+$ && "$3" -gt "$4" && "$5" == *"weekly limit"* ]] || return 0
+  local file="" line own=""
+  [[ -n "$2" && "$3" =~ ^[0-9]+$ && "$3" -gt "$4" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" != "$ACCOUNT_WALL_DRAWN"You*"ve hit your weekly limit"* ]] || own=1
+  done <<<"$5"
+  [[ -n "$own" ]] || return 0
   # Renamed into place only once complete, so `lanes` never reads half a record.
   if account_wall_file "$1" "$2" && file="$ACCOUNT_WALL_FILE" && mkdir -p -- "${file%/*}" \
     && jq -nc --arg d "$ACCOUNT_WALL_CANON" --argjson r "$3" \
@@ -53,7 +70,7 @@ account_wall_record() { # ROOT CONFIG_DIR RESET NOW BANNER
   fi
   [[ -z "$file" ]] || rm -f -- "${file:?}.$$.tmp"
   printf 'account-wall: record-unwritten config_dir=%s\n' "$2" >&2
-  printf '%s\n' "account-wall: the weekly wall this banner states could not be recorded, so lanes reads this account on its usage reading alone" >&2
+  printf '%s\n' "account-wall: the weekly wall this banner states could not be recorded; the next pass tries again, and until then lanes reads this account on its usage reading alone" >&2
   return 1
 }
 
