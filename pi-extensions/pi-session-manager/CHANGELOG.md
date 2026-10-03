@@ -4,7 +4,7 @@
 
 ### 2.0.4
 
-- Delete refuses a session that another running Pi has open, by its session file or its session id, and names that Pi's working directory and process id; the session file and its per-session kendex data are kept. Each Pi running this package records the session it has open under `~/.pi/agent/kendex/pi-session-manager/live/` and removes the record when the session ends; a record left by a Pi that was killed is removed at the next delete.
+- Delete refuses a session that another running Pi has open, by its session file or its session id, and names that Pi's working directory and process id; the session file and its per-session kendex data are kept. Each Pi running this package records the session it has open under `~/.pi/agent/kendex/pi-session-manager/live/` and removes the record when the session ends, keeping it across `/reload`; a record left by a Pi that was killed is removed at the next delete.
 
 ### 2.0.3
 

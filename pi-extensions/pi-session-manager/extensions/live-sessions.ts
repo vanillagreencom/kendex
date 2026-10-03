@@ -97,10 +97,25 @@ async function writeClaim(path: string, owner: SessionOwner): Promise<void> {
 	await rename(temp, path);
 }
 
+// `/reload` shuts a runtime down and builds its replacement on the same
+// session; the record paths a reload keeps wait here for the next runtime this
+// process installs, so the session stays claimed across the gap.
+const RELOAD_HANDOVER_SYMBOL = Symbol.for("kendex.pi-session-manager.reload-claims");
+
+function reloadHandover(): string[] {
+	const host = globalThis as unknown as Record<PropertyKey, unknown>;
+	const slot = host[RELOAD_HANDOVER_SYMBOL];
+	if (Array.isArray(slot)) return slot as string[];
+	const fresh: string[] = [];
+	host[RELOAD_HANDOVER_SYMBOL] = fresh;
+	return fresh;
+}
+
 /** Claims the session each `session_start` opens and releases it at
- * `session_shutdown`. A session with no file (`--no-session`) is not claimed. */
+ * `session_shutdown`. A session with no file (`--no-session`) is not claimed.
+ * A reload keeps the record and the replacement runtime rewrites it. */
 export function installSessionClaim(pi: Pick<ExtensionAPI, "on">): void {
-	const path = join(liveDir(), `${process.pid}-${randomUUID()}.json`);
+	const path = reloadHandover().shift() ?? join(liveDir(), `${process.pid}-${randomUUID()}.json`);
 	const release = () => rm(path, { force: true });
 	pi.on("session_start", async (_event, ctx: ClaimContext) => {
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -110,7 +125,21 @@ export function installSessionClaim(pi: Pick<ExtensionAPI, "on">): void {
 		}
 		await writeClaim(path, { pid: process.pid, cwd: ctx.cwd, sessionFile, sessionId: ctx.sessionManager.getSessionId() });
 	});
-	pi.on("session_shutdown", async () => {
-		await release();
+	pi.on("session_shutdown", async (event) => {
+		switch (event.reason) {
+			case "reload":
+				reloadHandover().push(path);
+				return;
+			case "quit":
+			case "new":
+			case "resume":
+			case "fork":
+				await release();
+				return;
+			default: {
+				const unknownReason: never = event.reason;
+				throw new Error(`unknown session_shutdown reason ${String(unknownReason)}`);
+			}
+		}
 	});
 }
