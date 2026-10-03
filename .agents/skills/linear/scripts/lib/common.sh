@@ -688,8 +688,9 @@ resolve_project_id() {
 resolve_team_id() {
     local team_ref="$1"
 
-    # Check if it's already a UUID
-    if [[ "$team_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+    # resolve_label_id reads the same reference as an id by this grammar, so
+    # the team a create sends and the team its labels are scoped to agree.
+    if [[ "$team_ref" =~ $LINEAR_UUID_PATTERN ]]; then
         echo "$team_ref"
         return 0
     fi
@@ -763,8 +764,10 @@ resolve_state_id() {
 # With an issue team, only that team's labels and workspace labels can match.
 # Two teams can each own a label of one name, and an unscoped lookup returns
 # whichever the API lists first, which Linear refuses as another team's label.
-# Exit 1 = the workspace has no such label (a caller handling several labels may
-# skip it). Exit 2 = the lookup itself failed, so whether the label exists is
+# Exit 1 = no label of that name in scope, with nothing printed: the caller
+# names the miss, because whether it is a warning (a create skips the label) or
+# a refusal (an update replaces the whole set) is the caller's decision.
+# Exit 2 = the lookup itself failed, so whether the label exists is
 # unknown — a caller rebuilding a label set must abort rather than drop it,
 # because "not found" and "could not ask" produce the same empty result.
 resolve_label_id() {
@@ -789,15 +792,7 @@ resolve_label_id() {
     local label_id
     label_id=$(echo "$result" | jq -r '.issueLabels.nodes[0].id // empty') || return 2
 
-    if [ -z "$label_id" ]; then
-        if [ -n "$team_name" ]; then
-            jq -cn --arg team "$team_name" --arg label "$label_name" \
-                '{error: ("Label not found for team " + ($team | tojson) + ": " + ($label | tojson))}' >&2
-        else
-            echo "Warning: Label not found: '$label_name'" >&2
-        fi
-        return 1
-    fi
+    [ -n "$label_id" ] || return 1
 
     echo "$label_id"
 }
