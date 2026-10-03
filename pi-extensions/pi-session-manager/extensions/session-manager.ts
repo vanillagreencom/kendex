@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { installSessionClaim } from "./live-sessions.js";
 import { pinSessionModel } from "./model.js";
 import { openManager } from "./overlay.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
@@ -63,6 +64,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	if (!settingBoolean("enabled", true)) return;
 
 	installSettingsCacheRefresh(pi);
+	installSessionClaim(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 	});

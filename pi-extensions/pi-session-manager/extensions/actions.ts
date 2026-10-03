@@ -4,6 +4,7 @@ import { appendFileSync, existsSync } from "node:fs";
 import { rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { liveOwner, type SessionOwner } from "./live-sessions.js";
 import { piUserDir } from "./package-config.js";
 import { canonicalPath } from "./paths.js";
 import { forEachSessionJsonlLine } from "./session-lines.js";
@@ -110,14 +111,28 @@ export function renameSession(path: string, name: string): void {
 	}
 }
 
-export async function deleteSessionFile(
-	sessionPath: string,
-	cwd: string,
-	sessionId?: string,
-): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+type DeleteMethod = "trash" | "unlink";
+
+/** A failed delete keeps the session file. `live` is a session another running
+ * Pi owns; `owner-check` is a failure to read who owns it. */
+export type DeleteResult =
+	| { ok: true; method: DeleteMethod }
+	| { ok: false; method: DeleteMethod; error: string }
+	| { ok: false; method: "live"; owner: SessionOwner; error: string }
+	| { ok: false; method: "owner-check"; error: string };
+
+export async function deleteSessionFile(sessionPath: string, cwd: string, sessionId?: string): Promise<DeleteResult> {
 	const id = sessionId && sessionId.trim() ? sessionId.trim() : sessionIdFromPath(sessionPath);
 
-	let primary: { ok: boolean; method: "trash" | "unlink"; error?: string } | undefined;
+	let owner: SessionOwner | undefined;
+	try {
+		owner = await liveOwner(sessionPath, id);
+	} catch (error) {
+		return { ok: false, method: "owner-check", error: `could not check whether a running Pi owns the session: ${error instanceof Error ? error.message : String(error)}` };
+	}
+	if (owner) return { ok: false, method: "live", owner, error: `open in the running Pi at ${owner.cwd} (pid ${owner.pid}); the session file was kept` };
+
+	let primary: DeleteResult | undefined;
 	if (settingBoolean("deleteUsesTrash", true, cwd)) {
 		const outcome = await runTrash(sessionPath);
 		if (outcome === "trashed" || !existsSync(sessionPath)) primary = { ok: true, method: "trash" };

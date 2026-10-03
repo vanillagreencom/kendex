@@ -1,0 +1,1 @@
+- Pi session manager refuses to delete a session another running Pi has open, such as another lane's, and names that Pi.

@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sessionFixture } from "./lib/session-fixture.ts";
 
@@ -59,4 +59,77 @@ for (const row of rows) {
 			clearPackageConfigCache();
 		}
 	}, 20_000);
+}
+
+// Each row is a second lane's Pi, a child process that claimed `owned` under
+// the id `owned-id` and is still running or was killed, and the session this
+// lane then deletes. The per-session kendex tree of the deleted id stands in
+// for the state other extensions keep there.
+const ownerRows = [
+	{ name: "a session file another running Pi owns is refused with that Pi named", target: "owned", id: "other-id", alive: true, refused: true },
+	{ name: "a session whose id another running Pi owns is refused, keeping the shared kendex tree", target: "other", id: "owned-id", alive: true, refused: true },
+	{ name: "an unowned session beside a live one is deleted", target: "other", id: "other-id", alive: true, refused: false },
+	{ name: "a claim whose Pi was killed is removed and does not block the delete", target: "owned", id: "other-id", alive: false, refused: false },
+];
+
+for (const row of ownerRows) {
+	test(row.name, async () => {
+		const { clearPackageConfigCache } = await import("../extensions/package-config.ts");
+		const { deleteSessionFile } = await import("../extensions/actions.ts");
+		const root = sessionFixture();
+		const bin = join(root, "bin");
+		mkdirSync(bin);
+		const agentDir = join(root, "pi-agent");
+		const laneB = join(root, "lane-b");
+		const sessions = { owned: join(root, "owned.jsonl"), other: join(root, "other.jsonl") };
+		writeFileSync(sessions.owned, "{}\n");
+		writeFileSync(sessions.other, "{}\n");
+		const target = sessions[row.target as keyof typeof sessions];
+		const extensionState = join(agentDir, "kendex", "sessions", row.id, "pi-prompt-stash");
+		mkdirSync(extensionState, { recursive: true });
+
+		const child = Bun.spawn([process.execPath, "--no-install", join(import.meta.dir, "fixtures/claim-session.ts"), laneB, sessions.owned, "owned-id"], {
+			env: { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: agentDir },
+			stdout: "pipe",
+			stderr: "inherit",
+		});
+		const saved = { PATH: process.env.PATH, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
+		try {
+			const { value } = await child.stdout.getReader().read();
+			expect(new TextDecoder().decode(value)).toBe("claimed\n");
+			if (!row.alive) {
+				child.kill("SIGKILL");
+				await child.exited;
+			}
+
+			// No `trash` on PATH: a delete that is not refused unlinks.
+			process.env.PATH = bin;
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			clearPackageConfigCache();
+			const result = await deleteSessionFile(target, root, row.id);
+
+			if (row.refused) {
+				expect(result).toEqual({
+					ok: false,
+					method: "live",
+					owner: { pid: child.pid, cwd: laneB, sessionFile: sessions.owned, sessionId: "owned-id" },
+					error: expect.stringContaining(laneB),
+				});
+			} else {
+				expect(result).toEqual({ ok: true, method: "unlink" });
+			}
+			expect(existsSync(target)).toBe(row.refused);
+			expect(existsSync(extensionState)).toBe(row.refused);
+			const claims = readdirSync(join(agentDir, "kendex", "pi-session-manager", "live"));
+			expect(claims.length).toBe(row.alive ? 1 : 0);
+		} finally {
+			child.kill("SIGKILL");
+			await child.exited;
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			clearPackageConfigCache();
+		}
+	}, 15_000);
 }

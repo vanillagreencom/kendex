@@ -28,6 +28,8 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The browser reads Pi's saved session files and displays their names and details. You search or select a session. Resume opens that session through Pi. Delete tries the trash command when configured, then uses permanent deletion if trash is unavailable.
 
+Delete refuses a session that another running Pi has open, such as another lane's, and names that Pi's working directory and process id. Each Pi running this package records the session it has open in `~/.pi/agent/kendex/pi-session-manager/live/`, one small file that it removes when the session ends. A Pi without this package, or with it disabled, records nothing, so its session is not protected.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-session-manager"]`.
