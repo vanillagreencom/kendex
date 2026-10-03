@@ -427,9 +427,10 @@ fn append_system_block(
 }
 
 /// The settings files the package reads its `enabled` setting from, in
-/// merge order: Pi's user settings, then a project scope's own. Pi loads the
-/// global `APPEND_SYSTEM.md` in every project, so a global block follows the
-/// user settings alone.
+/// merge order: Pi's user settings, then a project scope's own. Pi loads one
+/// `APPEND_SYSTEM.md`, a trusted project's own when it has one, else the
+/// global one, so the global file serves every project without a trusted
+/// file of its own and a global block follows the user settings alone.
 fn enabled_settings(env: &Env, scope_root: &Path) -> Result<Vec<PathBuf>> {
     let user = record::scope_root(env, &crate::model::Scope::Global)?;
     let mut paths = vec![settings_path(&user)];

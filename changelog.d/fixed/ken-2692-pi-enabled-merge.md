@@ -1,1 +1,1 @@
-- A Pi package installed in a project reads its `enabled` setting from your user settings, then the project's, so a user-level off writes no `APPEND_SYSTEM.md` block there.
+- kendex reads a project-installed Pi package's `enabled` setting from your user settings, then the project's, so a user-level off writes no `APPEND_SYSTEM.md` block there.
