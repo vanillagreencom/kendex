@@ -18,6 +18,8 @@ incomplete answer on stdout does not outrank a quota code on stderr|refusal:code
 usable answer on stdout outranks a quota code on stderr|refusal:codex=insufficient_quota|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true}] order=codex calls=1,0,0
 execution failure during the existing format retry falls through|codex:junk retry-exit:codex=7 inline:claude=1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0|review-fallback
 a fall-through answer passes the first-response gate|codex:junk retry-exit:codex=7 claude:flagged-envelope|review|rc=5 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"result-success\",\"timed\":true}] order=codex,codex,claude calls=2,1,0|envelope-cause
+a fall-through exit passes the first-response gate|models:codex+claude codex:junk retry-exit:codex=7 exit:claude=8|review|rc=5 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"exit-8\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
+a fall-through empty answer passes the first-response gate|models:codex+claude codex:junk retry-exit:codex=7 claude:empty|review|rc=5 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
 replacement review receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean inline:claude=1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|review-fallback
 replacement audit receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean|audit|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|audit-fallback
 union keeps the format retry invocation|count:2 codex:junk retry:codex=clean|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
@@ -85,11 +87,15 @@ attempted target count|exit:codex=7|selected|2
 stdout failure cause|exit:codex=7 failure-stdout:codex=login-required|cause|login-required
 stdout answer outranks stderr|refusal:codex=insufficient_quota|answer|rc=0 [{"name":"codex","cause":"answered","timed":true}] order=codex calls=1,0,0
 fall-through first-response gate|codex:junk retry-exit:codex=7 claude:flagged-envelope|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"result-success","timed":true}] order=codex,codex,claude calls=2,1,0
+fall-through exit first-response gate|models:codex+claude codex:junk retry-exit:codex=7 exit:claude=8|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"exit-8","timed":true}] order=codex,codex,claude calls=2,1,0
+fall-through empty-answer first-response gate|models:codex+claude codex:junk retry-exit:codex=7 claude:empty|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"answered","timed":true}] order=codex,codex,claude calls=2,1,0
 '
+n=0
 while IFS='|' read -r label world rule correct; do
   [[ -n "$label" ]] || continue
+  n=$((n + 1))
   # shellcheck disable=SC2086 # fixture words are a list
-  build "control-$rule" $DEFAULTS $world
+  build "control-$n-$rule" $DEFAULTS $world
   case "$rule" in
     rebuild) mutate_script "$SO" '      PROMPT=$(build_review_prompt)' '      : '\''PROMPT=$(build_review_prompt)'\'' ' ;;
     reset) mutate_script "$SO" '    invocation_prompt="$PROMPT_TMP"' '    : '\''invocation_prompt="$PROMPT_TMP"'\'' ' ;;
