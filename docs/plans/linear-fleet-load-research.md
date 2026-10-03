@@ -6,33 +6,38 @@ Every lane, VM overseer and local overseer reads and writes Linear as one applic
 
 ## Executive Summary
 
-Drop the cache. Without it, one lane costs 35 requests and 14,123 complexity points plus three comment writes, from launch to close. With a warm cache the same lane costs 247 requests, because each of its five `sync --reconcile` calls costs 45 requests when one issue changed, and 44 when none did. On a host with an empty cache, the first sync is a full sync and the lane costs 446 requests. [M]
+Drop the cache. Lanes today start with no cache seed (fleet FLT-641 removed it), run no `sync --reconcile` (directive 1790845185) and read Linear live, so today's measured load is the no-cache case. The with-cache figures come from the sync-query runs and the scratch syncs made under owner exception 1791058163. Without a cache one lane costs 35 requests and 14,138 complexity points from launch to close. With a warm cache it costs 247 requests and 184,090 points, because each of its five syncs pays the fixed phases again. On an empty cache the first sync is full and the lane costs 436 requests and 306,515 points. [M]
 
-- A full sync costs 244 requests and 160,910 complexity points. It reads every team's issues and comments in the workspace, not only kendex's: 6,478 issues, of which 2,634 are kendex's, and 15,694 comments. [M]
-- The complexity bucket, not the request bucket, limits the cache. Sync pages cost up to 8,805 points per request. Nine lanes that start on empty caches at the same time use more than the 2,000,000-point bucket. Without the cache the same limit is 385 lanes. [M]
-- In a 70-minute window with no other request from this sandbox, the shared request bucket never fell below 4,994 of 5,000, and the complexity bucket never below 1,915,628 of 2,000,000. Under the no-sync rule the fleet runs far inside both. [M]
+- A full sync, measured end to end, costs 207 requests and 134,475 points in 711 seconds without attachments, and 234 requests and 158,100 points with the 27 attachment pages. A sync on a fresh seed costs 7 requests and 10,810 points in 7 seconds, and 34 requests and 34,435 points with the attachment pages. [M] runs `seed-full`, `seed-incremental`, `sync-attachments`
+- Peak: the four overseer watches, one per fleet at `--interval 900`, cost 132 requests and 45,584 points an hour. All 38 lanes at the fleets' caps (kendex 20, fleet 12, vg 3, talk 3), each running its whole life in one hour, plus the watches and one TPM audit, use 1,537 requests (30.7 percent) and 639,143 points (32.0 percent) of the shared bucket without a cache. With a warm cache, 19 lane starts at once empty the complexity bucket, and kendex's cap of 20 alone reaches that; with empty caches, 9 do. [M] [O]
+- In a 70-minute window with no other request from this sandbox, in today's state, the shared request bucket never fell below 4,994 of 5,000, and the complexity bucket never below 1,915,628 of 2,000,000. The control host logged no RATELIMITED line in 7 days. [M] [O]
+- Reconcile fails before its first request in this workspace: the 6,488 cached ids make one 272,580-byte jq argument, past Linux's 128 KiB limit (KEN-2667). A plain `sync` reconciles once an hour by itself, so the launch briefs' stop on `--reconcile` does not stop it, and 17 workflow and skill files still name `sync --reconcile`. [L5] [T2]
+- A restored seed makes a lane's first sync incremental, but one seeded sync still costs 2.4 times the points of a whole lane without the cache. The recommendation stays drop; § Lane cache seed gives the design and its owner. [M]
 - Seven of the twelve rules the commands enforce have no owner on a raw route. KEN-2335's thin layer must keep five of them in code: the team target, the agent label and reach lines on create, peer-only blocking relations, and the validate-completion matrix. [L1] [L2] [L3]
 - Freshness: no cache, with live reads, costs the least and needs no new owner. A webhook-fed cache needs a public HTTPS receiver and the `admin` scope, which the kendex app does not hold. [S2] [L4]
 
-Two unplanned sync runs happened in this research. § Incidents states what ran and what was restored.
+§ Sync runs during this research lists every sync this research ran and its share of each bucket.
 
 ## Key Findings
 
-- **Each sync is a fixed cost, paid before any read.** An incremental `sync --reconcile` with one changed issue still reads 27 attachment pages, 10 reconcile pages, 3 failed initiative requests and 5 other pages: 45 requests and 35,675 points. A lane runs five of them. The live reads they replace cost 14 requests. [M] [L5]
-- **`session-status` runs a full sync by itself.** `session-status.sh` runs `sync.sh` whenever the cache is missing or older than 15 minutes (`skills/linear/scripts/commands/session-status.sh:66-70`). `tpm-cycle-plan` and `audit-issues` call it. Under owner rule 1790845185 every such call breaks the rule. This research triggered it once. [M] [L6]
-- **Reconcile never removes a row in this workspace.** It reads at most 10 pages of 250 issue ids, then aborts when the API returned fewer than half of the cached ids (`skills/linear/scripts/commands/sync.sh:544-576`). The cache holds 6,478 issues, so every reconcile reads 2,500 ids, aborts, and spends 10 requests. [M] [L5]
-- **The app token cannot read initiatives.** Linear answers HTTP 400 "Invalid scope: `initiative:read` or `initiative:write` required". `graphql_query` retries every non-200 answer, so each failed read costs 3 requests (`skills/linear/scripts/lib/common.sh:345-363`). Every sync, `initiatives list`, and the `roadmap-create` initiative steps fail this way. [M] [L1]
-- **The overseer watch reads 2.6 KB per issue to use two fields.** Its new-issue read uses `id` and `created_at` only. A trimmed raw query at 250 rows per page answers the 3-day window of 354 rows in 2 requests (first page measured at 4 points), against 6 requests and 1,985 points now. [M] [L7]
+- **Each sync is a fixed cost, paid before any read.** A plain sync with no changed issue still reads projects (8,805 points), cycles, labels and three failing initiative requests: 7 requests and 10,810 points (run `seed-incremental`). With the 27 attachment pages it is 34 requests and 34,435 points, more than the 14,138 points a whole lane spends without the cache. [M] [L5]
+- **Reconcile fails in this workspace, and plain sync runs it.** `reconcile_issues` puts every cached id into one variables string (`sync.sh:529,545`), which `graphql_query` hands to jq as one argument (`common.sh:259`). At 6,488 ids that argument is 272,580 bytes and jq exits 126, "Argument list too long"; 3,000 ids (117,029 bytes) pass (local test, no request). A plain `sync` reconciles whenever the last reconcile is over 60 minutes old (`sync.sh:819-828`), so every sync more than an hour after a full sync fails the same way. [M] `argv_test` [L5] [T1] [T2]
+- **`session-status` runs a full sync on a missing cache.** `session-status.sh:66-70` runs `sync.sh` whenever the cache is missing or older than 15 minutes; `audit-issues.md:57` and `tpm-cycle-plan.md:10` call it. A lane has had no cache since FLT-641, so its first call pays a full sync (KEN-2693). This research triggered it once, at 20:13Z. [M] [L6] [T3] [T6]
+- **The app token cannot read initiatives.** Linear answers HTTP 400 "Invalid scope: `initiative:read` or `initiative:write` required". `graphql_query` retries every non-200 answer, so each failed read costs 3 requests (`skills/linear/scripts/lib/common.sh:345-363`). Every sync, `initiatives list`, and the `roadmap-create` initiative steps fail this way; both syncs of this round logged it. [M] [L1]
+- **The overseer watch window grows every day.** The new-issue read lists every issue the team created since the watch's fixed `--since`, rounded up to whole days (`oversee-watch:1318-1323`), with every field, to use `id` and `created_at`. The kendex watch, started with `--since 2026-09-16T00:32:11Z`, reads 1,168 rows in 17 requests, 6,209 points and 5.6 MB on each pass (run `watch-pass-kendex-18d`). A trimmed read at 250 rows per page answers a 1-day window in 1 request at 4 points (run `watch-created-trim-1d`). [M] [L7] [O]
+- **Live commands write the cache, reads included.** A worktree's `.cache` links to the base checkout's (`kendex.settings.toml:363`, `cache.sh:65`), so the 20:13Z sync and a live `validate-completion` at 21:53:22Z wrote the base checkout's cache (KEN-2695). This round's live `comments list` reads wrote `comments/<ID>.json` into the read cache it pointed `LINEAR_CACHE_ROOT` at. [M] [L10] [T7]
 - **Linear's rate-limit window does not reset hourly.** Every `X-RateLimit-*-Reset` header reads 3,600.2 to 3,600.3 seconds after the request. The bucket refills at a constant 1.39 requests and 555.6 points per second, as the provider page states. [M] [S1]
 
 ## Evidence and Sources
 
 ### Method
 
-- **Actor**: `linear.sh auth-check` reports credential `app-token`, actor kind `application`, id `f9755405-2f06-46a6-b706-1f552ff74bef`, name `vanillagreen agents`, team `kendex`. Headers report 5,000 requests and 2,000,000 points. [M]
-- **Command runs**: each `linear.sh` command ran with a logging `curl` shim first on `PATH`. The shim adds `-D` to the real `curl`, keeps the operation name, and drops the Authorization line. Each call is one row in [M] `calls`, keyed by its command label. [M]
+- **Actor**: `linear.sh auth-check` reports credential `app-token`, actor kind `application`, id `f9755405-2f06-46a6-b706-1f552ff74bef`, name `vanillagreen agents`, team `kendex`. Headers report 5,000 requests and 2,000,000 points. The overseer's answer reports the same credential and actor id in all four fleets' base checkouts, so every fleet, overseer and lane shares this one bucket. [M] [O]
+- **Command runs**: each `linear.sh` command ran with a logging `curl` shim first on `PATH`. The shim adds `-D` to the real `curl`, keeps the operation name, and drops the Authorization line and the variables. Each call is one row in [M] `calls`, keyed by its command label. [M]
 - **Plain reads**: `probe.sh` posts one GraphQL document with the credential `linear.sh` selects (`skills/linear/scripts/lib/auth.sh:65-71`) and records every `X-RateLimit-*` header and `X-Complexity`. `sync-price.sh` sources `sync.sh` and runs each sync function with `graphql_query` replaced by the same recorder; no cache file is written. Each request is one row in [M] `runs`, keyed by its run id. [M]
+- **Scratch syncs**: under exception 1791058163, real `linear.sh sync` runs with `LINEAR_CACHE_ROOT` set to a directory under this worktree's `tmp/`, Linear reads only, every request through the shim. [M] `sync_runs`
 - **Sampler**: `{ viewer { id } }` every 120 seconds from 20:10:16Z. Each sample costs 1 request and 1 point. [M] `sampler`.
+- **Control host**: the overseer's answer to lane-mail ask 1791058128-12831-9940, read on the control VM at about 20:10Z. [O]
 - **Base**: kendex `ef4100c734d4fde4e8d48ee5479fc4df999e65b6`. Source citations name files at that commit. Date 2026-10-03.
 
 ### Bucket behaviour
@@ -58,6 +63,7 @@ A workload uses the complexity bucket first when it spends more than 400 points 
 | `issues get` | 1 | 389 | 5,608 | `issues-get` |
 | `issues get --with-bundle` | 1 | 1,518 | 5,548 | `issues-get-bundle` |
 | `comments list` | 1 | 5 | 63 | `comments-list` |
+| `comments create` | 1 | 5 | 2,716 | `comment-create`, run `2026-10-03T21:53:22.046Z-comment-create` |
 | `issues validate-completion` on a leaf | 3 | 1,912 | 11,219 | `validate-completion` |
 | `issues children --recursive` | 1 | 1,136 | 212 | `children` |
 | `issues bulk-get` of 3 | 4 | 391 | 15,986 | `bulk-get` |
@@ -70,7 +76,6 @@ A workload uses the complexity bucket first when it spends more than 400 points 
 | `projects list` | 1 | 5,870 | 68,815 | `projects-list` |
 | `cycles list` | 2 | 418 | 2,351 | `cycles-list` |
 | `initiatives list` | 3, all HTTP 400 | none reported | none | `initiatives-list` |
-| `comments create` | 1 | not measured | | `skills/linear/scripts/commands/comments.sh:213`, the only request in create |
 | `issues update --state` | 3 | 783 | | Derived: `GetIssue` 389, `GetState` 10, `UpdateIssue` 384, the measured parts of `activate`; `skills/linear/scripts/commands/issues.sh:1802,1951,2062` |
 | `issues complete --done-when-met` | 4 | 1,172 | | Derived: one `get_issue` plus `issues update` (`skills/linear/scripts/commands/issues.sh:3135,3176`) |
 
@@ -78,85 +83,169 @@ A live list costs 1 team lookup plus one request per 75 rows (`skills/linear/scr
 
 ### Sync prices
 
-Full sync, measured from the sync's own queries. [M]
+Full sync, measured end to end: `linear.sh sync --full --no-attachments` into a scratch cache, 22:04:13Z to 22:16:04Z, 711 seconds, 6,496 issues and 45 projects kept. [M] run `seed-full`
 
 | Phase | Requests | Points | Rows | Source |
 |---|---|---|---|---|
-| Issues, every team, archived included, 75 per page | 93 | 35,805 | 6,478 live after the archive filter | Unplanned run, label `session-status`, 20:13:33Z to 20:16:26Z |
-| Comments, every team, 250 per page | 63 | 75,600 | 15,694 | Page cost from label `session-status`; row count from the scratch run (§ Incidents) |
-| Projects, 75 per page | 1 | 8,805 | 55 | Runs `sync-projects-full` |
-| Project dependencies, one request per project | 55 | 15,455 | | Runs `sync-projects-full`, 281 points each |
-| Cycles, team filter | 1 | 395 | 7 | Run `sync-cycles` |
-| Initiatives | 3 | none | 0, HTTP 400 scope error | Run `sync-initiatives`; 3 attempts from `common.sh:345-363` |
-| Labels | 1 | 1,225 | 63 | Run `sync-labels` |
-| Attachments, every page, on every sync | 27 | 23,625 | 6,655 | Runs `sync-attachments`, 875 points each |
-| **Total** | **244** | **160,910** | | |
+| Issues, every team, archived included, 75 per page | 93 | 35,805 | 6,496 live after the archive filter | Run `seed-full`, 385 points a page; the same 93 pages in labels `session-status` and `scratch-sync-full` |
+| Comments, every team, 250 per page | 63 | 75,600 | 15,694 | Run `seed-full`, 1,200 points a page; the same in label `scratch-sync-full` |
+| Projects, 75 per page | 1 | 8,805 | 45 | Run `seed-full` |
+| Project dependencies, one request per project | 45 | 12,645 | | Run `seed-full`, 281 points each |
+| Cycles, team filter | 1 | 395 | 7 | Run `seed-full` |
+| Initiatives | 3 | none | 0, HTTP 400 scope error | Run `seed-full`; 3 attempts from `common.sh:345-363` |
+| Labels | 1 | 1,225 | 63 | Run `seed-full` |
+| **Measured total, no attachments** | **207** | **134,475** | | |
+| Attachments, every page, on every sync without `--no-attachments` | 27 | 23,625 | 6,655 | Runs `sync-attachments`, 875 points each |
+| **Total as `session-status` runs it** | **234** | **158,100** | | 207 + 27; 134,475 + 23,625 |
 
-An incremental `sync --reconcile` reads each delta, the reconcile pages and every fixed phase again. [M] [L5]
+The first round priced the full sync at 244 requests and 160,910 points from run `sync-projects-full`, which read 55 project dependencies at 20:31Z; the end-to-end run read 45. Every figure below uses the end-to-end run.
+
+An incremental sync reads each delta and every fixed phase again. [M] [L5]
 
 | Phase | Requests | Points | Measured on |
 |---|---|---|---|
-| Issues changed since the last sync | 1 per 75 changed | 385 per page | 1 issue in 4 min, 26 in 60 min: runs `sync-issues-delta-4m`, `-60m` |
+| Issues changed since the last sync | 1 per 75 changed | 385 per page | 0 changed: run `seed-incremental`; 1 in 4 min, 26 in 60 min: runs `sync-issues-delta-4m`, `-60m` |
 | Comments on those issues | 1 per 250, only when an issue changed | 1,200 per page | 3 and 71 comments: runs `sync-comments-delta-*` |
-| Projects changed | 1, plus 1 per changed project | 8,805 per page, 281 per project | 0 changed: runs `sync-projects-delta-*` |
-| Reconcile, forced or older than 60 min | 10 at the cap | 4 per page | Runs `reconcile-2613` |
-| Cycles, initiatives, labels | 5 | 1,620 | As in the full sync |
-| Attachments | 27 | 23,625 | As in the full sync |
-| **Total, one change, reconcile forced** | **45** | **35,675** | |
+| Projects changed | 1, plus 1 per changed project | 8,805 per page, 281 per project | 0 changed: run `seed-incremental`, runs `sync-projects-delta-*` |
+| Cycles, initiatives, labels | 5 | 1,620 | Run `seed-incremental` |
+| **Measured, no change, no attachments** | **7** | **10,810** | Run `seed-incremental`, 7 seconds |
+| Attachments | 27 | 23,625 | Runs `sync-attachments` |
+| Reconcile, forced or last one over 60 min old | 10 at the cap as priced | 4 per page | Runs `reconcile-2613`; fails before any request in this workspace (§ Why lanes stopped syncing) |
 
-Without a forced reconcile inside the hour the total is 35 requests and 35,635 points. Attachment downloads go to `uploads.linear.app`, not the GraphQL API; their count and limit were not measured.
+| Incremental sync | Requests | Points | Derivation |
+|---|---|---|---|
+| No change, with attachments | 34 | 34,435 | 7 + 27; 10,810 + 23,625 |
+| One change, with attachments | 35 | 35,635 | 34 + 1 comments page; 34,435 + 1,200 |
+| One change, reconcile at 10 pages | 45 | 35,675 | 35 + 10; 35,635 + 40 |
+| `sync --if-stale 15` on a cache under 15 minutes old | 0 | 0 | Run `seed-if-stale`; `sync.sh:653-656` |
+
+Attachment downloads go to `uploads.linear.app`, not the GraphQL API; their count and limit were not measured.
 
 ### Load per workflow
 
-One lane, one dev round, one review cycle, no fix rounds. The commands are the ones each workflow names at the cited line. "Warm" assumes a cache synced before the lane starts; "empty" is a host whose first sync is full, as in this sandbox before § Incidents. [M]
+Today lanes read Linear live: no seed since FLT-641, no `sync --reconcile` since directive 1790845185. So today's measured load is the no-cache column, measured live with the shim. The warm and empty columns are priced from the sync-query runs and the scratch syncs above.
 
-| Workflow and its Linear calls | Without cache: req / points | Warm cache: req / points | Empty cache: req / points |
+One lane, one dev round, one review cycle, no fix rounds. The commands are the ones each workflow names at the cited line. "Warm" assumes a cache synced before the lane starts and a reconcile that works; "empty" is a host whose first sync is full. As the code stands, each `sync --reconcile` in the warm column fails in this workspace (§ Why lanes stopped syncing). [M]
+
+| Workflow and its Linear calls | Without cache, measured live today: req / points | Warm cache, priced: req / points | Empty cache, priced: req / points |
 |---|---|---|---|
-| Lane start: `open-terminal` `teams get` (`skills/orch/scripts/open-terminal:2985`); bundle read in `start.md` § 3, `start-worktree.md` § 3 and `dev-start.md` preflight; compact read in `dev-start.md` § 1 | 6 / 5,195 | 137 / 107,277 | 336 / 232,512 |
-| Dev round: `dev-implement.md` § 2.1 sync, `activate`, issue and comment reads, completion comment; `dev-start.md` Check B `validate-completion` | 12 / 3,498 + 1 comment | 55 / 38,779 + 1 comment | 55 / 38,779 + 1 comment |
+| Lane start: `open-terminal` `teams get` (`skills/orch/scripts/open-terminal:2985`); bundle read in `start.md` § 3, `start-worktree.md` § 3 and `dev-start.md` preflight; compact read in `dev-start.md` § 1 | 6 / 5,195 | 137 / 107,277 | 326 / 229,702 |
+| Dev round: `dev-implement.md` § 2.1 sync, `activate`, issue and comment reads, completion comment; `dev-start.md` Check B `validate-completion` | 12 / 3,503 | 55 / 38,784 | 55 / 38,784 |
 | Review: `branch-size-check` issue read (`skills/orch/scripts/branch-size-check:280`); `qa-review.md` issue and comment reads | 3 / 783 | 0 / 0 | 0 / 0 |
-| Submit: `branch-size-check`; title read; summary comment (`submit-pr.md:419`) | 3 / 778 + 1 comment | 1 / 1 comment | 1 / 1 comment |
-| Post-summary and In Review (`start-worktree.md` § 5) | 4 / 783 + 1 comment | 4 / 783 + 1 comment | 4 / 783 + 1 comment |
+| Submit: `branch-size-check`; title read; summary comment (`submit-pr.md:419`) | 3 / 783 | 1 / 5 | 1 / 5 |
+| Post-summary and In Review (`start-worktree.md` § 5) | 4 / 788 | 4 / 788 | 4 / 788 |
 | Merge and post-merge: children read (`merge-pr.md` § 4.1), sync, issue read, `issues complete` (`merge-pr.md:316-330`) | 6 / 2,697 | 49 / 36,847 | 49 / 36,847 |
 | Lane close: `issues get` (`skills/orch/scripts/lane-close:515`) | 1 / 389 | 1 / 389 | 1 / 389 |
-| **One lane** | **35 / 14,123** | **247 / 184,075** | **446 / 309,310** |
-| Overseer watch, one long pass: new-issue read (`oversee-watch:1323`), 1-day or 3-day window | 3 / 833 to 6 / 1,985 | Same: the watch reads live | Same |
-| Overseer watch, per hour at `--interval 240` | 45 / 12,495 to 90 / 29,775 | Same | Same |
-| Overseer heartbeat: owed read (`oversee-watch:3569`), at most once per 25 long passes | 2 / 449 | Same | Same |
-| TPM audit, team mode (`tpm-audit.md` § 1.1.1 to § 1.5) | 75 / 56,315 | 3 / 254 + one sync | 3 / 254 + 244 / 160,910 |
-| `reconcile-work-items` | 36 / 13,505 | 0 + one sync | 244 / 160,910 |
+| **One lane** | **35 / 14,138** | **247 / 184,090** | **436 / 306,515** |
+| Overseer watch, one long pass: new-issue read (`oversee-watch:1323`), each fleet's window | kendex 17 / 6,209; fleet 11 / 3,905; vg 3 / 833; talk 2 / 449 | Same: the watch reads live | Same |
+| Four overseer watches, per hour at `--interval 900` | 132 / 45,584 | Same | Same |
+| Overseer heartbeat: owed read (`oversee-watch:3569`), once per 25 long passes | 2 / 449 per read; 1.3 / 287 per hour for four watches | Same | Same |
+| TPM audit, team mode (`tpm-audit.md` § 1.1.1 to § 1.5) | 75 / 56,315 | 3 / 254 + one sync | 3 / 254 + 234 / 158,100 |
+| `reconcile-work-items` | 36 / 13,505 | 0 + one sync | 234 / 158,100 |
+
+Each lane's three comment writes are in its request counts; this round measured their points, 5 each (run `comment-create`). The warm lane is five syncs at 45 requests and 35,675 points plus its live calls; the empty lane replaces the first with the full sync, 234 and 158,100.
 
 The audit without a cache reads the comparison list once (36 requests) and the team's comments as one connection: 29 pages of 250 for 7,119 kendex comments, each page 1,200 points (run `comments-team-page`). As written it also reads the four-state list separately, 5 requests that the six-state list already holds.
 
+### Why lanes stopped syncing
+
+Each fact below was read at its source on 2026-10-03.
+
+- **The stop came from KEN-2440.** Filed 2026-10-01 08:57Z from fleet overseer peer directive 1790844652: `sync --reconcile` failed with `jq: Argument list too long` on a 5,923-issue cache. Its cause section matches the source: `reconcile_issues` builds every cached id into `uuid_array` (`sync.sh:529`) and inlines it in one `$variables` string (`sync.sh:545`); `graphql_query` passes it as `--argjson variables` (`common.sh:259`), one argv word past the 128 KiB per-argument limit. The fix it asked for: batch the ids by 250. [T1] [L5] [L1]
+- **KEN-2440 was canceled, not fixed.** Its comment of 2026-10-01T09:04:01Z cancels it under directive 1790845185 because KEN-2335 removes the cache, folds the lane-end call sites into KEN-2335, and states that lanes run no `sync --reconcile` and read issue state live with `issues get` until KEN-2335 lands. That comment calls the directive the owner's ruling; owner note 1791064681 corrects it: the directive came from the master session and stops only the lane-end `sync --reconcile`. [T1]
+- **The bug is now KEN-2667.** Filed 2026-10-03 06:55Z from the VG-98 lane, state Triage: the same failure plus `Invalid GraphQL variables JSON` (the message `common.sh:261` prints), related to KEN-2335; KEN-2669 is its canceled duplicate. [T2]
+- **It holds in this workspace.** The 6,488-id scratch cache makes a 272,580-byte variables argument; jq exits 126 with "Argument list too long". A 3,000-id argument (117,029 bytes) passes; a 250-id batch is 9,751 bytes. Local test, no request. [M] `argv_test`
+- **Plain sync is incremental.** `sync.sh` help: "Incremental sync (or full if no cache)" (`sync.sh:31-33`); the full path runs only with `--full` or no `meta.json` (`sync.sh:678`). `--if-stale N` skips a cache younger than N minutes (`sync.sh:653-656`; run `seed-if-stale`, 0 requests). [L5] [M]
+- **Plain sync still reconciles.** The incremental path reconciles when forced or when the last reconcile is over 60 minutes old (`sync.sh:819-828`, `reconcile_is_fresh` at `sync.sh:466-479`); a full sync stamps the reconcile time (`sync.sh:863-864`). In this workspace every plain sync more than an hour after a full sync fails in reconcile, after its delta reads and before `meta.json` is written (`sync.sh:851-883`), so the next one fails the same way. This is read from the source; no reconciling sync ran in this research. [L5]
+- **FLT-641 removed the lane seed.** Fleet's FLT-641, Done, last updated 2026-10-01T20:13:55Z, removed `bin/lane_host/linear_cache.py` and its `create.py` caller and invariant 24 of fleet's lanes architecture document, so "a lane reads Linear live with its app token". FLT-642 records it as fleet 97f82a8, PR 642: "lane create seeds no Linear data". Since then a new lane's first sync is a full one. [T3] [T4]
+
+Today's interim state, as one measured case: no seed, no reconcile, live reads. Its load is the no-cache column above (35 requests and 14,138 points a lane) and the § Fleet consumption sampler. Syncs still run where a script or workflow calls one that the launch briefs do not name: `session-status` on a missing cache, and the call sites below.
+
+Every workflow, skill and script file that names a sync, at `ef4100c7`:
+
+| Sync | Files and lines |
+|---|---|
+| `sync --reconcile`, workflow and skill text (17 files) | `skills/dev/workflows/dev-implement.md:19`, `:49`; `skills/orch/workflows/dev-start.md:24`; `start.md:65`; `start-worktree.md:25`; `micro.md:39`; `handoff.md:21`; `merge-pr.md:316`; `skills/project-management/workflows/audit-issues.md:56`; `cycle-plan.md:10`, `:93`; `proposal-sweep.md:11`; `research-complete.md:12`; `research-issue.md:27`; `roadmap-create.md:12`, `:94`; `skills/project-management/references/labels.md:19`; `skills/project-management/SKILL.md:75`; `skills/linear/SKILL.md:49`, `:93`; `skills/linear/patterns/workflow-actions.md:47` |
+| `sync --reconcile`, script | `skills/orch/scripts/container-close:215`, called at `:254`, `:265`, `:316` |
+| `sync --if-stale 15` | `skills/project-management/workflows/research-spike.md:22`; `roadmap-plan.md:24`; `tpm-audit.md:44`; `skills/orch/scripts/lib/escapes.sh:138`, run by `oversee-report:756-787` |
+| Plain `sync.sh` through `session-status` | `skills/linear/scripts/commands/session-status.sh:66-70`, called at `audit-issues.md:57` and `tpm-cycle-plan.md:10` |
+
+If the cache stays, these files and the launch briefs must say the same thing. Today the briefs forbid what 17 files still tell an agent to run.
+
+The keep-cache option needs all three fixes; each is priced for this workspace:
+
+| Fix | Request and complexity cost | Source |
+|---|---|---|
+| Batched reconcile ids (KEN-2667) | 26 requests and 104 points per reconcile at 6,496 ids, against a failed sync today; 16 requests and 64 points above the 10-page price, so 80 and 320 more per warm lane | ⌈6,496 / 250⌉ = 26 pages at 4 points (runs `reconcile-2613`) |
+| Restored lane seed (§ Lane cache seed) | First sync 34 requests and 34,435 points instead of 234 and 158,100 | Runs `seed-incremental`, `seed-full`, `sync-attachments` |
+| `sync --if-stale N` at each workflow step, for long-running lanes | 0 requests when the cache is younger than N minutes, else one incremental sync, 34 to 35 requests and 34,435 to 35,635 points | Run `seed-if-stale`; incremental table above |
+
+### Lane cache seed (design)
+
+Design only; nothing is built. A lane starts from the overseer's cache, so its first sync is incremental, and a missing cache costs one incremental sync, not a full one (owner note 1791064681). KEN-2693 is the kendex-side defect: a lane with no cache pays a full sync on its first `session-status`. [T6]
+
+Cost of a lane's first sync:
+
+| Case | Requests | Points | Wall time | Source |
+|---|---|---|---|---|
+| No seed: full sync, as `session-status` runs it | 234 | 158,100 | 711 s without the attachment pages | Runs `seed-full`, `sync-attachments` |
+| Seed from a cache synced and reconciled within the hour, no changed issue | 34 | 34,435 | 7 s without the attachment pages | Runs `seed-incremental`, `sync-attachments` |
+| Same, with 1 to 75 changed issues | 35 | 35,635 | | Plus one comments page, runs `sync-comments-delta-*` |
+| Seed whose last reconcile is over 60 minutes old, today | Fails after 2 or 3 delta requests | 9,190 to 10,390 spent | | Issues and projects pages, plus comments when an issue changed; § Why lanes stopped syncing |
+| Same, with KEN-2667's batched reconcile | 60 to 61 | 34,539 to 35,739 | | 34 or 35 + 26; 34,435 or 35,635 + 104 |
+| Each later step inside `--if-stale 15` | 0 | 0 | | Run `seed-if-stale` |
+
+The seed itself is 55.5 MB without attachments: `issues.json` 27,976,602 bytes and 5,520 comment files totalling 27,443,013 bytes in the end-to-end scratch cache. Copying it sends no Linear request. [M] `scratch_deleted`
+
+Two shapes:
+
+1. **Copy at launch.** Lane create copies the control host's cache for that repository into the lane, as fleet did before FLT-641: `seed_linear_cache` archived `<host repo>/.cache/linear` into the sandbox, and FLT-183 made it skip `*.tmp` and `*.lock` entries and never fail the create on a read error. It needs a host cache synced and reconciled within the hour before each copy (a host `sync --if-stale 60` costs 0 when fresh, else one incremental sync), KEN-2667's batched reconcile so that host sync does not fail once the hour has passed, and a lane cache root that is the lane's own so its writes stay in the lane (KEN-2695). [T3] [T5] [T7]
+2. **Shared read-only cache.** Lanes read the overseer's cache in place and never sync. It needs the lane on the cache's host or a network mount: hosted lanes run in Daytona sandboxes, which the old seed reached only by an upload. It also needs commands that never write the shared cache, where today every live command writes it, reads included (KEN-2695), and an overseer that refreshes it, one incremental sync per refresh. A lane's freshness is then the overseer's refresh cadence. Lanes pay no sync. [T5] [T7] [M]
+
+Owner: the seed is fleet's. FLT-641 removed it; a live search of fleet issues updated in the last 10 days for "seed", "linear cache" and `LINEAR_CACHE_ROOT` finds no item that restores it (FLT-642 only records the removal on the hub). If the owner keeps the cache, a new item in fleet's tracker must restore `seed_linear_cache` in `bin/lane_host/linear_cache.py` and its call in `create.py`, invariant 24 in fleet's lanes architecture document and the FLT-183 fixture rows, and add the host refresh before the copy. [T3] [T4] [T5]
+
+Recommendation check against these figures and the corrected rule: drop still holds. A seeded lane's first sync costs 34 requests and 34,435 points, 2.4 times the 14,138 points of a whole lane without the cache, and the lane still sends its live writes. Without attachments a seeded sync is 7 requests and 10,810 points, 76 percent of a whole no-cache lane's points, paid again at every step past the `--if-stale` age. The corrected rule changes no figure: it stopped only the lane-end reconcile, and reconcile fails in this workspace either way.
+
 ### Peak concurrency and headroom
 
-The orchestrator fills each placeholder row from the overseer's answer to ask 1791058128-12831-9940. `O` is the number of overseers, `I` a watch's `--interval` in seconds, `N` the issues created since that fleet's `--since`, `Lstart` the lane starts in one burst.
+From the overseer's answer to lane-mail ask 1791058128-12831-9940, read on the control VM at about 20:10Z: [O]
 
 | Load source | Count | Requests per hour | Points per hour | Source |
 |---|---|---|---|---|
-| VM overseer watches | PLACEHOLDER: count (the issue names 4); each `--interval` | `O × (3600 / I) × (1 + ⌈N / 75⌉)` | `O × (3600 / I) × (65 + 384 × ⌈N / 75⌉)` | Overseer answer |
-| Local overseer watches | PLACEHOLDER: count; each `--interval` | Same formula | Same formula | Overseer answer |
-| Heartbeat owed reads | One per watch | `O × 2 × 3600 / (25 × I)` | `O × 449 × 3600 / (25 × I)` | `oversee-watch:3978` |
-| Lane starts per fleet | PLACEHOLDER: each fleet's `ORCH_OVERSEER_LANES` (kendex commits 20, `kendex.settings.toml:124`) | `Lstart × 6` without cache, `× 137` warm, `× 336` empty | `Lstart × 5,195`, `× 107,277`, `× 232,512` | § Load per workflow |
-| Rest of each lane | Same caps | `× 29` without cache, `× 110` with cache | `× 8,928`, `× 76,798` | § Load per workflow |
+| VM overseer watches, `--repeat 60 --interval 900` | 4: fleet, talk, kendex, vg | 132 | 45,584 | [O]; 4 long passes an hour each, priced from runs `watch-pass-*`: kendex 4 × 17, 6,209; fleet 4 × 11, 3,905; vg 4 × 3, 833; talk 4 × 2, 449 |
+| Local overseer watches | 0 | 0 | 0 | [O]: every overseer runs on the control VM |
+| Hook-started single passes, `--interval 900 --max-loops 25` | 3 seen: fleet, vg, talk | 0 when they share the repeat watch's long-pass clock; 64 if not | 0; 20,748 if not | [O]; clock below |
+| Heartbeat owed reads | One per 25 long passes per watch | 1.3 | 287 | `oversee-watch:3978`; 4 × 2 × 3,600 / (25 × 900); 4 × 449 × 3,600 / (25 × 900) |
+| Lane caps (`ORCH_OVERSEER_LANES`) | kendex 20, fleet 12, vg 3, talk 3; 38 in all; 11 kendex lanes live at the read | Per lane start: 6 without cache, 137 warm, 326 empty | 5,195; 107,277; 229,702 | [O]; § Load per workflow |
+| Rest of each lane | Same caps | 29 without cache, 110 with cache | 8,943; 76,813 | § Load per workflow: the lane minus its start |
 | One TPM audit | 1 | 75 without cache; 3 plus a sync with it | 56,315; 254 plus a sync | § Load per workflow |
-| Recorded RATELIMITED answers | PLACEHOLDER: count and log | | | Overseer answer |
+| Recorded RATELIMITED answers | 0 `journalctl --user` lines matching "ratelimited" or "rate limited" in 7 days; overseer fleet-log rows mentioning a rate limit since 2026-09-26: kendex 6, fleet 41, vg 11, talk 7 | | | [O]; rows, not counted answers |
 
-Headroom: a burst empties a bucket when its cost exceeds the bucket plus the refill during the burst. With no spread, the lane-start count that empties each bucket is:
+All four fleets set `LINEAR_TEAM` (kendex, fleet, vanillagreen, talk) and read as the same application, so one bucket serves them all. [O]
 
-| Lane starts at once | Request bucket (5,000) | Complexity bucket (2,000,000) | First to empty |
+A long pass starts only when `--interval` has passed since the start recorded in the fleet's mail state (`oversee-watch:3849-3858`, row `long-pass` at `:285`). That state is keyed by the first repository and `--since` under the checkout's `tmp/oversee-watch` (`:255`, `:1205`), and a pass with no `--repo` takes the checkout's own repository (`:1158`). The hook passes run from the same base checkouts with the same `--state` and a `--since` that starts like the repeat watch's (the ps lines are cut off), so they most likely share the clock and add no long pass.
+
+Burst headroom: lane starts at once, no spread, against the 5,000-request and 2,000,000-point buckets.
+
+| Lane starts at once | Without cache: req / points | Warm cache: req / points | Empty cache: req / points |
 |---|---|---|---|
-| Without cache | 834 | 385 | Complexity, at 385 |
-| Warm cache | 37 | 19 | Complexity, at 19 |
-| Empty cache | 15 | 9 | Complexity, at 9 |
+| kendex at 20 | 120 (2.4%) / 103,900 (5.2%) | 2,740 (54.8%) / 2,145,540 (107.3%) | 6,520 (130.4%) / 4,594,040 (229.7%) |
+| fleet at 12 | 72 (1.4%) / 62,340 (3.1%) | 1,644 (32.9%) / 1,287,324 (64.4%) | 3,912 (78.2%) / 2,756,424 (137.8%) |
+| vg or talk at 3 | 18 (0.4%) / 15,585 (0.8%) | 411 (8.2%) / 321,831 (16.1%) | 978 (19.6%) / 689,106 (34.5%) |
+| All 38 | 228 (4.6%) / 197,410 (9.9%) | 5,206 (104.1%) / 4,076,526 (203.8%) | 12,388 (247.8%) / 8,728,676 (436.4%) |
+| Starts that empty a bucket | 834 / 385 | 37 / 19 | 16 / 9 |
 
-Each 10 minutes of spread adds 833 requests and 333,333 points of refill. One fleet at the committed cap of 20 lanes, all starting together, empties the complexity bucket with a warm cache and both buckets with empty caches. Without the cache it uses 120 requests and 103,900 points. The watch adds at most 90 requests and 29,775 points per overseer-hour.
+Each figure is the count times the per-start cost above; the last row is the smallest count whose cost passes the bucket. Each 10 minutes of spread adds 833 requests and 333,333 points of refill.
 
-Odds of a RATELIMITED answer:
+Peak hour without a cache, with every one of the 38 lanes running its whole life inside the hour: lanes 38 × 35 = 1,330 requests and 38 × 14,138 = 537,244 points, the four watches 132 and 45,584, one TPM audit 75 and 56,315. Total 1,537 requests (30.7 percent) and 639,143 points (32.0 percent); 1,601 and 659,891 (32.0 and 33.0 percent) if the hook passes keep their own clocks. The heartbeat adds 1.3 requests and 287 points. With a cache the same hour needs 38 × 247 = 9,386 requests and 38 × 184,090 = 6,995,420 points warm, and 38 × 436 = 16,568 and 38 × 306,515 = 11,647,570 empty, before the watches.
 
-- **Without cache**: no workload in the table comes near either bucket. A RATELIMITED answer needs more than 385 lane starts inside a few minutes.
-- **Warm cache**: likely when a fleet starts or merges 19 or more lanes inside a few minutes, since each sync spends 35,675 points.
-- **Empty cache**: likely when 9 lanes start on new hosts together; one 20-lane fleet relaunch does it every time.
+The four fleets are the live consumers. Drovr is none (owner note 1791065386) and counts in no consumer, fleet or concurrency figure here; its issues appear only inside the sync's workspace-wide read.
+
+Odds of a RATELIMITED answer, from a full bucket, with the complexity refill at 555.6 points a second:
+
+- **Without cache**: no workload in the tables comes near either bucket. At the caps the peak hour uses about a third of each, and a burst would need 385 lane starts inside a few minutes.
+- **Warm cache**: certain when kendex starts its 20 lanes within 4 minutes, since their 2,145,540 points pass the bucket plus 4 minutes of refill, 2,133,333; likely when any 19 lanes start or merge together.
+- **Empty cache**: certain when 9 lanes start within 2 minutes (2,067,318 points). A kendex relaunch at its cap does it unless spread over more than 78 minutes, a fleet relaunch unless spread over more than 23.
 
 ### Fleet consumption
 
@@ -174,7 +263,7 @@ The fleet's draw cannot be read as "remaining at the start minus remaining at th
 - The request bucket never fell below 99.8 percent in the clean window. The fleet's request draw stayed below the refill rate of 83 per minute for nearly all 70 minutes.
 - The fleet drew at least 127,639 complexity points in the clean window: the sum of the gaps. The largest, 84,372 points, came inside the 152 seconds before 21:46:44Z, which is how long the refill takes to close that gap. One heavy read, such as a full-backlog list or a sync-sized pull, explains it.
 - At 20:10:08Z the bucket stood 166 requests below its cap, of which this research had sent 1. Some caller drew at least 165 requests within the 2 minutes before.
-- No sample came near either limit. At the load the fleet ran in this window, under the no-sync rule, the odds of a RATELIMITED answer were nil.
+- No sample came near either limit. In today's state, with lanes reading live, the odds of a RATELIMITED answer in this window were nil.
 
 ### Guard parity
 
@@ -235,27 +324,36 @@ The raw route needs 26 percent of the skill's bytes when the rules move into tex
 | Option | Who owns it | Cost | Gaps |
 |---|---|---|---|
 | Cache fed by Linear webhooks | A new public HTTPS receiver that answers within 5 seconds, plus a fan-out to every host's cache. No such service exists in kendex. Creating the webhook needs a workspace admin or the `admin` scope [S2]; the app token holds `read,write` (`lib/auth.sh:117-121`), and a scope change revokes every app token. | 0 GraphQL requests per change; one hosted service and its signing secret | Linear retries a failed delivery 3 times, after 1 minute, 1 hour and 6 hours, then may disable the webhook [S2]. A missed event needs a delta read to repair it. |
-| `updatedAt` delta read | The existing incremental path in `sync.sh:47-127`, filter `updatedAt gte` | 2 requests per refresh for issues and comments; the fixed phases add 33 more as written | Archive and trash do not change `updatedAt` (`sync.sh:461`), so deletions need reconcile, which aborts in this workspace. |
-| No cache | Each call site reads live, as KEN-2335 specifies | 35 requests per lane, 15 to 30 per watch-hour trimmed | None for freshness. Each read pays its own request. |
+| `updatedAt` delta read | The existing incremental path in `sync.sh:47-127`, filter `updatedAt gte` | 2 requests per refresh for issues and comments; the fixed phases add 33 more as written (run `seed-incremental` plus the attachment pages) | Archive and trash do not change `updatedAt` (`sync.sh:461`), so deletions need reconcile, which fails in this workspace (KEN-2667). |
+| No cache | Each call site reads live, as KEN-2335 specifies | 35 requests per lane; the four watches 132 requests an hour as written, 40 with the trimmed read | None for freshness. Each read pays its own request. |
+
+The trimmed watch figure is 4 passes an hour times ⌈rows / 250⌉ pages per fleet: kendex 5, fleet 3, vg 1, talk 1, at the rows of runs `watch-pass-*`.
 
 Linear's own guidance is to avoid polling, use webhooks, and filter or order by `updatedAt` when fetching all data. [S1] [S3]
 
-### Incidents
+### Sync runs during this research
 
-- **20:13:33Z to 20:16:54Z, unplanned sync through `session-status`.** The measurement run called `linear.sh session-status` to price the TPM cycle plan. Its auto-sync started a full `sync.sh` against the sandbox base checkout's cache (`/home/dev/dev/kendex/.cache/linear`, empty before). The run was stopped after 93 issue pages and 15 comment pages: 108 requests, 53,805 points, all logged as label `session-status`. The partial cache was deleted; its directory did not exist before 20:13Z, and every file in it dated from that run. [M]
-- **20:19:44Z to about 20:30:30Z, unplanned sync in scratch.** `sync-price.sh` sourced `sync.sh` while its own argument was set. `sync.sh` runs its `main` when sourced with a positional parameter (`sync.sh:900-907`), so a full sync ran. `LINEAR_CACHE_ROOT` pointed at `tmp/ken-2685/scratch-cache`, so it wrote only there. It finished issues (installed 20:22:42Z) and comments (15,694 rows by 20:24:55Z) and was stopped in the projects phase. These requests passed the real `graphql_query` and were not logged: at least 156 (93 + 63) and at most 244. The script now clears its parameters before sourcing. [M]
+Directive 1790845185, from the master session as corrected by owner note 1791064681, stops only the lane-end `sync --reconcile`, because of the reconcile argv bug (KEN-2440, now KEN-2667). A plain incremental sync and `session-status` are allowed. No run below reconciled, and none broke the directive.
 
-Both runs are breaches of owner rule 1790845185. Their figures are used above because they measure the same queries a sync sends.
+- **20:13:33Z to 20:16:54Z, full sync from a missing cache.** The measurement run called `linear.sh session-status` to price the TPM cycle plan. With no cache, its auto-sync started a full `sync.sh` (`session-status.sh:66-70`). It was stopped after 93 issue pages and 15 comment pages: 108 requests and 53,805 points, all logged as label `session-status`. That is 4.3 percent of one API key's 2,500 requests an hour (108 / 2,500), and of the app bucket this fleet uses, 2.2 percent of its 5,000 requests and 2.7 percent of its 2,000,000 points. It wrote the sandbox base checkout's cache, `/home/dev/dev/kendex/.cache/linear`, through the worktree's `.cache` symlink; the partial cache was deleted by the first round. [M]
+- **20:19:44Z to about 20:30:30Z, planned scratch measurement.** Under exception 1791058163, into `tmp/ken-2685/scratch-cache`. It started as a full sync through a bug in `sync-price.sh`: the script sourced `sync.sh` while its own argument was set, and `sync.sh` runs `main` when sourced with a positional parameter (`sync.sh:900-907`). It finished issues and comments and was stopped in the projects phase. These requests passed the real `graphql_query` and were not logged: at least 156 (93 + 63) and at most 244. The script now clears its parameters before sourcing. [M]
+- **21:54:45Z to 21:59:28Z, planned scratch measurement.** `linear.sh sync --full --no-attachments` into `tmp/linear-sync-scratch-KEN-2685`, every request logged as label `scratch-sync-full`: 156 requests and 111,405 points, the issues and comments phases; it ended before projects and wrote no `meta.json`. [M]
+- **22:04:13Z to 22:16:11Z, planned scratch measurement, this round.** Into `tmp/ken-2685/seed-cache`: the full sync (label `seed-full`, 207 requests, 134,475 points), a plain sync 7 seconds later (label `seed-incremental`, 7 requests, 10,810 points) and `sync --if-stale 15` (label `seed-if-stale`, 0 requests). [M]
+- **Write-through, filed as KEN-2695.** Besides the 20:13Z run, a live `issues validate-completion` at 21:53:22Z wrote `comments/KEN-2685.json` and a lock file into the base checkout's cache through the same symlink. This round read Linear with `LINEAR_CACHE_ROOT` pointed at `tmp/ken-2685/reads-cache`, so its reads wrote there and not into the base checkout. [T7]
+
+Every scratch cache was deleted at 2026-10-03T22:18:01Z: `tmp/ken-2685/scratch-cache` (75,160,651 bytes), `tmp/ken-2685/seed-cache` (55,525,696), `tmp/linear-sync-scratch-KEN-2685` (56,730,945) and `tmp/ken-2685/reads-cache` (3,183). [M] `scratch_deleted`
 
 ### Sources
 
-- [M] `linear-fleet-load-research.evidence.json`: every logged request with its headers, the sampler, the counts, the rule text and the query documents. Run ids are UTC timestamps plus the query or command label. No token, issue text or cursor is stored.
+- [M] `linear-fleet-load-research.evidence.json`: every logged request with its headers, the sampler, the counts, the sync runs, the control-host figures, the argv test, the rule text and the query documents. Run ids are UTC timestamps plus the query or command label. No token, issue text or cursor is stored.
 - [R] `linear-fleet-load-research.raw.json`: the provider record. Exa refused the key; the three provider pages were read directly.
+- [O] The overseer's answer to lane-mail ask 1791058128-12831-9940, read on the control VM at about 2026-10-03 20:10Z; its figures are in [M] `control_host`.
 - [S1] https://linear.app/developers/rate-limiting, read 2026-10-03. Quoted: OAuth app "5,000" requests and "2,000,000" points hourly per user or app user; API key "up to 2,500 requests per hour" and "up to 3,000,000 points per hour"; single query "10,000 points"; "leaky bucket"; complexity "Each property is 0.1 point, each object is 1 point and any connection multiplies its children's points based on the given pagination argument, or the default 50"; HTTP 400 with `RATELIMITED`; avoid polling and use webhooks.
 - [S2] https://linear.app/developers/webhooks, read 2026-10-03: events, `admin` scope, public HTTPS, 200 within 5 seconds, retries, `Linear-Signature`.
 - [S3] https://linear.app/developers/pagination, read 2026-10-03: default 50, `first`/`after`, `pageInfo`, order by `updatedAt`.
 - [K1] `docs/plans/linear-official-route-research.md` (KEN-2319). [K2] `docs/plans/linear-command-value-research.md` (KEN-2336).
-- [L1] `skills/linear/scripts/lib/common.sh`. [L2] `skills/linear/scripts/commands/issues.sh`. [L3] `skills/linear/scripts/lib/issue-validation.sh`. [L4] `skills/linear/scripts/lib/auth.sh`. [L5] `skills/linear/scripts/commands/sync.sh`. [L6] `skills/linear/scripts/commands/session-status.sh`. [L7] `skills/orch/scripts/oversee-watch`. All at `ef4100c7`.
+- [L1] `skills/linear/scripts/lib/common.sh`. [L2] `skills/linear/scripts/commands/issues.sh`. [L3] `skills/linear/scripts/lib/issue-validation.sh`. [L4] `skills/linear/scripts/lib/auth.sh`. [L5] `skills/linear/scripts/commands/sync.sh`. [L6] `skills/linear/scripts/commands/session-status.sh`. [L7] `skills/orch/scripts/oversee-watch`. [L8] `skills/orch/scripts/lib/escapes.sh`. [L9] `skills/orch/scripts/container-close`. [L10] `skills/linear/scripts/lib/cache.sh` and `kendex.settings.toml`. All at `ef4100c7`.
+- Linear issues, read live with `issues get` and `comments list` on 2026-10-03 at about 22:00Z: [T1] KEN-2440 and its cancel comment. [T2] KEN-2667. [T3] FLT-641. [T4] FLT-642. [T5] FLT-183. [T6] KEN-2693. [T7] KEN-2695.
 
 The measured X-Complexity values do not follow the [S1] formula literally: a 250-row page of two scalar fields reports 4 points, where the formula gives 50 or more. Every price above uses the measured header, not the formula.
 
@@ -263,57 +361,72 @@ The measured X-Complexity values do not follow the [S1] formula literally: a 250
 
 | Choice | Load | Freshness | Guards | Cost to build |
 |---|---|---|---|---|
-| Keep the cache as it is | 247 to 446 requests per lane; complexity bucket empties at 9 to 19 simultaneous starts | Stale between syncs; reconcile aborts; initiatives always empty | Kept in code | None, but the owner's no-sync rule and `session-status` conflict today |
-| Change the cache: team filter, no attachment pull per sync, `updatedAt` delta only, fix reconcile | Lower than now, still a fixed cost per sync | Same as the delta row | Kept in code | Rework of `sync.sh` that KEN-2335 deletes |
+| Keep the cache as it is | 247 to 436 requests per lane; the complexity bucket empties at 9 to 19 simultaneous starts | Stale between syncs; reconcile fails in this workspace, and plain sync with it after an hour; initiatives always empty | Kept in code | None, but 17 workflow files and the launch briefs disagree today |
+| Keep the cache with the fix set: seed (fleet), batched reconcile (KEN-2667), `sync --if-stale` per step | First sync 34 requests and 34,435 points instead of 234 and 158,100; each later step 0 when fresh, else 34 to 35 requests and 34,435 to 35,635 points; 16 more requests per reconciling sync | Up to the `--if-stale` age | Kept in code | A fleet item, KEN-2667, KEN-2695, and 17 workflow files plus the briefs aligned |
+| Change the cache: team filter, no attachment pull per sync, `updatedAt` delta only | Lower than now, still a fixed cost per sync | Same as the delta row | Kept in code | Rework of `sync.sh` that KEN-2335 deletes |
 | Webhook-fed cache | Close to zero reads | Seconds | Kept in code | New hosted service, `admin` scope, token reissue |
-| Drop the cache, thin commands over live reads (KEN-2335) | 35 requests and 14,123 points per lane | Always current | Kept in code when the five checks stay in the thin layer | Already in progress |
+| Drop the cache, thin commands over live reads (KEN-2335) | 35 requests and 14,138 points per lane | Always current | Kept in code when the five checks stay in the thin layer | Already in progress |
 | Drop the commands too, raw GraphQL from skill text | Close to the thin layer | Always current | Five rules become text | KEN-2676 scope |
 
 ## Recommendation / Decision Criteria
 
 Drop the cache, as KEN-2335 specifies. The decision rests on these figures:
 
-- One lane costs 35 requests and 14,123 points without the cache, against 247 and 184,075 with a warm cache and 446 and 309,310 with an empty one.
-- The complexity bucket empties at 9 simultaneous lane starts on empty caches and 19 on warm ones; without the cache it takes 385.
-- The cache gives no freshness or correctness gain to offset that: reconcile aborts in this workspace, initiatives never load, and every sync reads every team's data.
+- One lane costs 35 requests and 14,138 points without the cache, against 247 and 184,090 with a warm cache and 436 and 306,515 with an empty one.
+- With the seed restored, one seeded sync alone costs 34 requests and 34,435 points, 2.4 times a whole no-cache lane's points.
+- At the fleets' caps, 38 lanes in one peak hour with the watches and an audit use 30.7 percent of the requests and 32.0 percent of the points without a cache. With a cache, kendex's 20 lane starts alone empty the complexity bucket warm, and 9 starts do it on empty caches.
+- The cache gives no freshness or correctness gain to offset that: reconcile fails in this workspace, initiatives never load, and every sync reads every team's data.
 
 Owed decisions, each closed:
 
 1. **KEN-2335 keeps five checks in code.** The thin layer keeps the team-target refusal, the agent-label and reach checks on create, the peer-only relation check, and the validate-completion matrix. Recommendation to KEN-2335's lane; no new issue.
 2. **KEN-2335 retries only RATELIMITED and 5xx answers.** A scope or validation 400 costs 3 requests today. Recommendation to KEN-2335; no new issue.
-3. **Follow-up for filing: `session-status` auto-sync.** Remove the `sync.sh` call at `session-status.sh:66-70` now, before KEN-2335 lands, because every `tpm-cycle-plan` and `audit-issues` run breaks owner rule 1790845185 through it.
-4. **Follow-up for filing: trim the overseer watch reads.** `oversee-watch:1323` and `:3569` read `id`, `created_at`, `priority` and `state` only. A 250-row trimmed read cuts a 3-day pass from 6 requests to 2.
-5. **Follow-up for filing: initiatives under the app actor.** The app token lacks `initiative:read` and `initiative:write`; `roadmap-create.md:56-71` fails. The owner decides between a scope change, which reissues every app token, and moving those steps to another actor.
-6. **Dropped: fix reconcile's 10-page cap.** The cache goes; the fix spends work on code KEN-2335 deletes.
-7. **Dropped: add a team filter to sync.** Same reason as 6.
-8. **Dropped: trim `lane-close` and `open-terminal` reads.** Each is one request either way; the saving is bytes only.
-9. **Dropped: a webhook-fed cache.** It needs a new public service and the `admin` scope to fix a freshness problem that live reads do not have.
-10. **Placeholders**: the orchestrator fills § Peak concurrency and headroom from the overseer's answer; the formulas there give the result without new measurement.
+3. **The seed is the keep-cache fix, not this recommendation's.** Under drop, no fleet seed item is filed, and KEN-2693 closes when KEN-2335 removes the sync `session-status` runs. If the owner keeps the cache, the fleet item in § Lane cache seed and KEN-2667 are both required; the seed alone leaves every sync past the first hour failing.
+4. **KEN-2667 goes with the cache.** Under drop, KEN-2335 deletes `reconcile_issues`, as KEN-2440's cancel comment set out; under keep, KEN-2667 is required.
+5. **The workflow text goes with the cache.** KEN-2335 removes the sync lines listed in § Why lanes stopped syncing, as KEN-2440's cancel comment folded them in; until then the launch briefs override them.
+6. **Dropped: add a team filter to sync.** The cache goes; the change spends work on code KEN-2335 deletes.
+7. **Dropped: trim `lane-close` and `open-terminal` reads.** Each is one request either way; the saving is bytes only.
+8. **Dropped: a webhook-fed cache.** It needs a new public service and the `admin` scope to fix a freshness problem that live reads do not have.
+
+### Follow-ups
+
+Filed:
+
+- **KEN-2693** (Backlog): a lane with no cache pays a full sync on its first `session-status`; the 20:13Z run spent 108 requests and 53,805 points before it was stopped, and a whole one costs 234 and 158,100. The fix is the seed, § Lane cache seed. [T6] [M]
+- **KEN-2695** (Triage): live `linear.sh` commands in a worktree write the base checkout's cache through the `.cache` symlink (`kendex.settings.toml:363`, `cache.sh:65`); this round saw live reads write the cache too. [T7]
+- **KEN-2667** (Triage): reconcile puts every cached id in one jq argument and fails at 6,488 ids; the same code runs in plain sync's hourly reconcile (`sync.sh:819-828`). [T2] [M]
+
+For filing by the orchestrator:
+
+- **Overseer watch reads.** `oversee-watch:1323` reads every row the team created since the watch's fixed `--since`, with every field, to use `id` and `created_at`; the kendex window is 18 days, 1,168 rows, 17 requests and 6,209 points per pass, and grows a day each day. `oversee-watch:3569` reads full rows to use `id`, `priority` and `state`. A trimmed read from the previous pass's start at 250 rows per page answers in 1 request at 4 points. Source: runs `watch-pass-kendex-18d`, `watch-created-trim-1d`, `watch-owed-trim`.
+- **The app token lacks the initiative scope.** `initiatives list`, every sync's initiative phase and `roadmap-create.md:56-71` fail with HTTP 400 at 3 requests each. Owner decision: a scope change reissues every app token. Source: runs `initiatives-list`, `seed-full`; `common.sh:345-363`.
 
 ## Risks / Unknowns
 
 | Unknown or risk | Impact | Condition |
 |---|---|---|
-| Overseer count, intervals, other fleets' lane caps, recorded 429s | The peak table's totals | Filled from the overseer's answer |
-| Lane starts per hour in each fleet | Sustained load per hour; this report gives burst figures | Not measured from a lane |
-| Comment writes' complexity | Up to 3 small mutations per lane | Not measured; `comments create` is one request |
+| Hook-started passes may keep their own long-pass clock | Adds 64 requests and 20,748 points an hour to the peak | The ps lines in [O] are cut off before `--since` ends; `oversee-watch:255,1158,1205` says they share it when it matches |
+| Lane starts per hour in each fleet | Sustained load per hour; this report gives burst figures and a whole-life peak hour | Not measured from a lane |
 | Attachment downloads from `uploads.linear.app` | Any limit on that host would add to the cache's cost | Not measured |
 | Header remaining is approximate | One reading moved 21 requests between two calls 0.3 s apart | [M]; the sampler figures carry that noise |
-| The fleet's use while sampling reflects the no-sync regime | A fleet with caches would draw more | Owner rule 1790845185 is in force |
-| Unlogged requests in the scratch sync | Between 156 and 244 own requests in that window are not individually logged | § Incidents; the sampler excludes that window |
+| The fleet's use while sampling reflects today's state | Lanes with caches would draw more | No seed, no lane-end reconcile, live reads, until KEN-2335 lands or a seed returns |
+| Unlogged requests in the 20:19Z scratch sync | Between 156 and 244 own requests in that window are not individually logged | § Sync runs; the sampler excludes that window |
+| Plain sync's failure after an hour is read from the source | The keep-cache rows assume it | No reconciling sync ran; KEN-2667 observed the `--reconcile` form |
 
 ## Revisit Conditions
 
 - KEN-2335 lands: re-measure one lane end to end on the thin layer with the shim, and compare with the 35-request figure.
 - Linear changes the bucket sizes or the refill rule on [S1], or the headers report other limits.
 - The app gains the `admin` or initiative scopes, which changes the webhook and initiatives rows.
-- A fleet raises its lane cap above 19 while any cache remains.
+- A seed or a lane-end sync returns while kendex's cap is 19 or more: a warm-cache relaunch at that cap empties the complexity bucket.
+- A fleet's `--interval` falls below 900, or a watch runs months on one `--since`: the watch rows grow with both.
 
 ## Research Metadata
 
 - Issue KEN-2685, round `1791058135743507053-2049`, branch `ken-2685`, base `ef4100c734d4fde4e8d48ee5479fc4df999e65b6`, 2026-10-03.
+- Fix round `1791064790379545517-29071` (key `local-1791064548-225494-32075`): the control-host figures, the corrected rule, the scratch syncs `seed-full`, `seed-incremental` and `seed-if-stale`, the four `watch-pass-*` reads, the argv test, and live reads of KEN-2440, KEN-2667, KEN-2693, KEN-2695, FLT-641, FLT-642 and FLT-183, plus a fleet issue search. Every scratch cache deleted at 22:18:01Z.
 - Provider: Exa refused the configured key (HTTP 401, `INVALID_API_KEY`), so no Exa search ran. The three provider pages the issue and its subject name were read directly; no general web search ran. Mode recorded in [R] as `lite`, 3 queries attempted, 0 results.
-- Measurement: the actor, method and run ids are in [M]. Own requests are logged with timestamps; the clean window holds none but the samples, and the scratch-sync window is excluded from every interval figure.
+- Measurement: the actor, method and run ids are in [M]. Own requests are logged with timestamps; the clean window holds none but the samples, and the 20:19Z scratch-sync window is excluded from every interval figure.
 - Validation: `deep-research validate` on this report and [R].
 
 [M]: linear-fleet-load-research.evidence.json
