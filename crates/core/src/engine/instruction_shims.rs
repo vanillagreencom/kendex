@@ -18,7 +18,10 @@
 use std::path::{Path, PathBuf};
 
 mod observe;
-use observe::{agents_files, claude_standing, gemini_edit, gemini_standing, old_link};
+use observe::{
+    agents_files, claude_standing, gemini_edit, gemini_retirement, gemini_standing, old_link,
+    relative_name,
+};
 
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::removal::trash;
@@ -202,7 +205,9 @@ pub(super) fn plan_instruction_shims(
     config_edits: &mut super::config_edits::ConfigEditPlan,
 ) -> Result<(Vec<ShimStanding>, Vec<DriftRow>)> {
     let standings = observe(env, scope, harnesses)?;
-    let mut drift = Vec::new();
+    let mut drift: Vec<DriftRow> = retire_gemini(env, scope, harnesses, config_edits)
+        .into_iter()
+        .collect();
     // The old link goes only once the root shim is planned or in sync: a
     // root position the plan cannot settle keeps its link, so Claude Code
     // keeps reading the root file one way or the other.
@@ -255,6 +260,55 @@ pub(super) fn plan_instruction_shims(
         }
     }
     Ok((standings, drift))
+}
+
+/// Take the Gemini shim back from a project that no longer installs to
+/// Gemini, where its settings file still holds exactly what the shim's edit
+/// wrote. Nothing records the shim, so the value is the proof: anything
+/// else there may be the person's, and stays. A file that will not read or
+/// parse is left alone the same way, since nothing in it can be shown to
+/// be kendex's.
+fn retire_gemini(
+    env: &Env,
+    scope: &Scope,
+    harnesses: &[HarnessId],
+    config_edits: &mut super::config_edits::ConfigEditPlan,
+) -> Option<DriftRow> {
+    let Scope::Project { root } = scope else {
+        return None;
+    };
+    if harnesses.contains(&HarnessId::Gemini) {
+        return None;
+    }
+    let path = crate::harness::gemini::settings::settings_file(env, scope);
+    if !path.is_file() {
+        return None;
+    }
+    let current = crate::fs::read_if_exists(&path).ok().flatten()?;
+    let retirement = gemini_retirement();
+    let updated = retirement.apply(&current).ok()?;
+    let parsed = |text: &str| serde_json::from_str::<serde_json::Value>(text).ok();
+    if parsed(&updated) == parsed(&current) {
+        return None;
+    }
+    config_edits.push(
+        path.clone(),
+        format!("stop naming {AGENTS_FILE} as a context file"),
+        retirement,
+    );
+    Some(DriftRow {
+        kind: ItemKind::Skill,
+        name: relative_name(root, &path),
+        harness: HarnessId::Gemini,
+        scope: scope.clone(),
+        state: DriftState::Orphaned,
+        detail: format!(
+            "{GEMINI_KEY} names {AGENTS_FILE} for Gemini, which this project no longer installs to"
+        ),
+        cause: None,
+        compared: None,
+        also_in_the_way: Vec::new(),
+    })
 }
 
 /// Whether the take-over reaches this shim: the scope-wide flag, or the

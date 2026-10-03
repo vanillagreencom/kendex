@@ -346,7 +346,7 @@ export const commands = {
 	 *  project gains the personal subscription first (§4.1), then the add runs
 	 *  there — every write lands in exactly one scope. `harnesses` and `method`
 	 *  carry the picker's answer; absent, the scope's own install defaults
-	 *  decide, brought up to date against this machine by the add itself.
+	 *  decide, as [`install_targets`] marks them.
 	 *  `optional` carries the optional dependencies the picker ticked, by the
 	 *  name their parent declares them under; the engine records the choice
 	 *  against every item that offers one by that name — a name no item this
@@ -356,12 +356,12 @@ export const commands = {
 	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null, optional: string[]) => typedError<Installed_Serialize, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method, optional })),
 	/**
 	 *  Where an install of these kinds could land, for the picker the install
-	 *  flow draws. Two filters, both read from core: which tools can take the
-	 *  kinds being installed at this scope — the same one the install itself
+	 *  flow draws. Three readings, all from core: which tools can take the
+	 *  kinds being installed at this scope — the same filter the install itself
 	 *  refuses by, so the picker cannot offer a choice the install turns down —
-	 *  and which are on this machine. Detection is read now rather than taken
-	 *  from the scope's manifest: a tool that arrived after the scope was set
-	 *  up has to be offerable, and one gone since must not read as present.
+	 *  which are on this machine, and which the scope's defaults name. The
+	 *  defaults are what an untouched install is sent to, so the picker checks
+	 *  those rather than whatever this machine happens to have.
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
 	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
@@ -2651,12 +2651,19 @@ export type InstallState =
 
 /**
  *  One row of the install picker: a tool the scope can install to, whether
- *  this machine has it, and whether it reads the shared `.agents` tree
- *  rather than a directory of its own.
+ *  this machine has it, whether an install left to the scope's defaults
+ *  lands on it, and whether it reads the shared `.agents` tree rather than
+ *  a directory of its own.
  */
 export type InstallTarget = {
 	harness: HarnessId,
 	detected: boolean,
+	/**
+	 *  The scope's `[install]` list names this tool, or, where the scope
+	 *  declares none, this machine has it: the rows an untouched picker
+	 *  checks, and the tools the install then lands on.
+	 */
+	byDefault: boolean,
 	sharesTheUniversalTree: boolean,
 };
 

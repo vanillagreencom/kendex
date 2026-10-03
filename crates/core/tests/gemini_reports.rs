@@ -227,7 +227,8 @@ fn a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was() {
     // leaves the machine's own switch where the user set it.
     let removal = ops::remove(&f.env, &f.scope, &["gh".to_owned()], None, false).unwrap();
     apply::execute(&f.env, &removal.plan).unwrap();
-    assert!(json(&settings(&f))["mcpServers"].get("gh").is_none());
+    // The entry was all the project's settings held, so the file goes.
+    assert!(!settings(&f).exists());
     assert_eq!(fs::read_to_string(&record).unwrap(), held_off);
 }
 

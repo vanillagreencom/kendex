@@ -384,6 +384,7 @@ fn make(
                     ui::stderr(&block::flag_refused(&style, &offer, choice, &reason));
                     return Ok(Some(Outcome::CommitRefused));
                 }
+                ui::stderr(&block::left_out(&style, &offer.scan));
                 routes::take(
                     &offer,
                     &generated,

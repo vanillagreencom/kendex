@@ -33,8 +33,8 @@ pub struct AddRequest {
     pub pi_extensions: Vec<String>,
     pub all: bool,
     /// The tools this install targets. `None` leaves the choice to the
-    /// scope's `[install]` defaults, which the add itself brings up to date
-    /// against the machine before reading them.
+    /// scope's `[install]` defaults as written, or to the tools on this
+    /// machine where the scope declares none.
     pub harnesses: Option<Vec<HarnessId>>,
     /// How the chosen tools are delivered — one shared tree with links, or
     /// a real copy each. `None` keeps the scope's default.
@@ -126,29 +126,20 @@ pub fn add_seeded(
         manifest.sources.insert(name, decl);
     }
     let mut notes = Vec::new();
-    // Which tools are on this machine is current state, not manifest state,
-    // so a request that leaves the
-    // targets to the scope defaults re-reads them first: a tool installed
-    // since then would otherwise be skipped by every install forever, with
-    // nothing said. The list only grows — dropping a tool would orphan
-    // whatever it already has.
-    //
-    // A request that names its harnesses has already answered this
-    // question. Widening the scope defaults under it would redeploy every
-    // other item in the scope to a tool nobody asked for on this run.
+    // A request that names its harnesses has answered which tools it goes
+    // to. One that leaves them to the scope reads the scope's list as
+    // written, filled from the machine only where it declares none.
     if request.harnesses.is_none()
-        && let Some(gained) = super::adopt_detected(env, &mut manifest)
+        && let Some(left_out) = super::settle_defaults(env, &mut manifest)
     {
-        notes.push(format!(
-            "{gained} is on this machine now — added to what this scope installs to"
-        ));
+        notes.push(left_out);
     }
     // Before a byte of the manifest is persisted: a request whose tools can
     // take none of what it asks for would plan nothing, apply nothing, and
-    // report success. Asked once the scope's list is up to date, so a
-    // request leaving the tools to that list is judged by the list the
-    // declaration would actually be written with — on a machine with no
-    // tool, an empty one.
+    // report success. Asked once the scope's list is settled, so a request
+    // leaving the tools to that list is judged by the list the declaration
+    // would actually be written with — on a machine with no tool and no
+    // list, an empty one.
     let targets =
         crate::engine::desired::requested_or_default(request.harnesses.as_deref(), &manifest);
     if let Some(reason) = lands_nowhere(request, &targets, scope) {
@@ -166,8 +157,9 @@ pub fn add_seeded(
     }
 
     let mut optional_offers: Vec<(String, String)> = Vec::new();
+    let mut declaring: BTreeSet<(ItemKind, String)> = BTreeSet::new();
     for (source_name, wanted) in &groups {
-        add_from(
+        declaring.extend(add_from(
             env,
             scope,
             &mut manifest,
@@ -178,7 +170,7 @@ pub fn add_seeded(
             all_source.as_deref() == Some(source_name),
             &mut notes,
             &mut optional_offers,
-        )?;
+        )?);
     }
     // A choice naming an optional dependency nothing offers is an error
     // that leaves the manifest exactly as it was — never a silently
@@ -199,21 +191,59 @@ pub fn add_seeded(
         }
     }
 
+    // What this request declares comes current; every other follower in
+    // the scope holds at the commit its record names, so an add moves
+    // nothing the person did not name.
     let options = PlanOptions {
         arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,
-        ..PlanOptions::default()
+        ..PlanOptions::for_packages(declaring.iter().cloned())
     };
     let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     report.notes.extend(notes);
+    report
+        .notes
+        .extend(moved(&lock, &report.record, &declaring));
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)
+}
+
+/// Every package this request declares that its record already holds at
+/// one commit and this plan writes at another, one line each: a skill an
+/// added agent requires moves with it, and says so before the write.
+fn moved(before: &Lock, after: &Lock, declaring: &BTreeSet<(ItemKind, String)>) -> Vec<String> {
+    let short = |commit: &str| commit.chars().take(7).collect::<String>();
+    let mut lines = BTreeSet::new();
+    for (key, entry) in &before.entries {
+        if !declaring.contains(&(entry.kind, entry.name.clone())) {
+            continue;
+        }
+        let (Some(was), Some(now)) = (
+            entry.source_commit.as_deref(),
+            after
+                .entries
+                .get(key)
+                .and_then(|entry| entry.source_commit.as_deref()),
+        ) else {
+            continue;
+        };
+        if was != now {
+            lines.insert(format!(
+                "{} {} moves from {} to {} with this add",
+                entry.kind.name(),
+                entry.name,
+                short(was),
+                short(now)
+            ));
+        }
+    }
+    lines.into_iter().collect()
 }
 
 /// Everything this request takes from one subscription: existence checks,
 /// agent-to-skill expansion, item declarations, then bundles — bundles
 /// last, so installing a whole set can subsume the members it now
-/// accounts for.
+/// accounts for. Returns the items it declared, by kind and name.
 #[allow(clippy::too_many_arguments)]
 fn add_from(
     env: &Env,
@@ -226,7 +256,7 @@ fn add_from(
     take_all: bool,
     notes: &mut Vec<String>,
     optional_offers: &mut Vec<(String, String)>,
-) -> Result<()> {
+) -> Result<BTreeSet<(ItemKind, String)>> {
     let ready = source::require_ready(env, scope, source_name, manifest)?;
     let hold_at = hold_commit(request, source_name, &ready)?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
@@ -308,6 +338,7 @@ fn add_from(
         let decl = declare_bundle(manifest, &bundle, source_name, request, hold_at.as_deref());
         subsume(manifest, &bundle, &decl, notes);
     }
+    let mut declared = BTreeSet::new();
     for (kind, names) in [
         (ItemKind::Agent, agents),
         (ItemKind::Skill, skills),
@@ -328,9 +359,10 @@ fn add_from(
                 request,
                 hold_at.as_deref(),
             )?;
+            declared.insert((kind, name));
         }
     }
-    Ok(())
+    Ok(declared)
 }
 
 mod bundles;

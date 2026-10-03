@@ -87,7 +87,14 @@ beforeEach(() => {
   });
   vi.mocked(commands.installTargets).mockResolvedValue({
     status: "ok",
-    data: [{ harness: "claude", detected: true, sharesTheUniversalTree: true }],
+    data: [
+      {
+        harness: "claude",
+        detected: true,
+        byDefault: true,
+        sharesTheUniversalTree: true,
+      },
+    ],
   });
   useMarketplacesStore.setState({
     rows: [],

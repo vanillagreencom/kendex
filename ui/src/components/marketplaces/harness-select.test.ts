@@ -2,35 +2,35 @@ import { expect, it } from "vitest";
 import type { HarnessId } from "@/bindings";
 import { type Choice, isInstallable } from "./harness-select";
 
-it("installs only where the choice, or the machine behind an untouched one, names a tool", () => {
+it("installs only where the choice, or the scope's defaults behind an untouched one, name a tool", () => {
   const rows: {
     name: string;
     harnesses: Choice["harnesses"];
-    detected: HarnessId[];
+    defaults: HarnessId[];
     allowed: boolean;
   }[] = [
     {
-      name: "untouched, nothing on this machine",
+      name: "untouched, no default tool",
       harnesses: null,
-      detected: [],
+      defaults: [],
       allowed: false,
     },
     {
-      name: "untouched, one tool on this machine",
+      name: "untouched, one default tool",
       harnesses: null,
-      detected: ["claude"],
+      defaults: ["claude"],
       allowed: true,
     },
     {
       name: "emptied by hand",
       harnesses: [],
-      detected: ["claude"],
+      defaults: ["claude"],
       allowed: false,
     },
     {
       name: "a real selection",
       harnesses: ["claude"],
-      detected: [],
+      defaults: [],
       allowed: true,
     },
   ];
@@ -39,7 +39,7 @@ it("installs only where the choice, or the machine behind an untouched one, name
     expect(
       isInstallable(
         { harnesses: row.harnesses, method: null, optional: [] },
-        row.detected,
+        row.defaults,
       ),
       row.name,
     ).toBe(row.allowed);

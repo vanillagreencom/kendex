@@ -74,11 +74,25 @@ pub(super) struct Planned {
 pub(super) struct Expansion {
     items: BTreeMap<(ItemKind, String), Planned>,
     reasons: BTreeMap<(ItemKind, String, HarnessId), BTreeSet<Reason>>,
-    /// Derivations that asked for the same item at different revisions:
-    /// (kind, name, kept rev, refused rev). The first derivation wins
-    /// deterministically — map order — and each loser is reported, never
-    /// silently absorbed.
-    rev_disagreements: Vec<(ItemKind, String, Option<String>, Option<String>)>,
+    /// Derivations that asked for the same item at different revisions.
+    /// The first derivation wins deterministically — map order — and each
+    /// loser is reported, never silently absorbed.
+    rev_disagreements: Vec<Disagreement>,
+}
+
+/// One derivation asking for an item at a revision other than the one the
+/// item is already wanted at.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Disagreement {
+    kind: ItemKind,
+    name: String,
+    source: String,
+    kept: Option<String>,
+    refused: Option<String>,
+    /// A set weighed the revision the person chose, which can differ from
+    /// the one the item is read at; only a derivation weighing the read
+    /// revision can be settled by the commit both resolve to.
+    by_a_set: bool,
 }
 
 impl Expansion {
@@ -251,12 +265,14 @@ impl Expansion {
         // whichever got here first (deterministic: parents walk in map
         // order); the refused one is recorded so the plan can say so.
         if planned.decl.source == decl.source && *wanted_at != decl.rev {
-            self.rev_disagreements.push((
+            self.rev_disagreements.push(Disagreement {
                 kind,
-                name.to_owned(),
-                wanted_at.clone(),
-                decl.rev.clone(),
-            ));
+                name: name.to_owned(),
+                source: decl.source.clone(),
+                kept: wanted_at.clone(),
+                refused: decl.rev.clone(),
+                by_a_set: carried_by_a_set,
+            });
         }
         if !planned.harnesses.contains(&harness) {
             planned.harnesses.push(harness);
@@ -269,10 +285,37 @@ impl Expansion {
     /// it: two revisions were asked for, one filesystem identity exists,
     /// and picking one silently would install content somebody pinned away
     /// from.
+    ///
+    /// Two revisions this pass read at one commit are no disagreement: a
+    /// package held at the commit its source still resolves to and one
+    /// following that source want the same bytes. A revision this pass
+    /// holds no resolution for is weighed as written, and so is a set's,
+    /// which weighs the revision the person chose rather than the one read.
     pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
-        for (kind, name, kept, refused) in &self.rev_disagreements {
+        let commit_of = |source: &str, rev: &Option<String>| {
+            let resolved = match rev {
+                None => state.sources.get(source),
+                Some(rev) => state.pinned.get(&(source.to_owned(), rev.clone())),
+            };
+            match resolved {
+                Some(SourceState::Ready(ready)) => ready.commit.clone(),
+                _ => None,
+            }
+        };
+        self.rev_disagreements.retain(|one| {
+            let kept = commit_of(&one.source, &one.kept);
+            one.by_a_set || kept.is_none() || kept != commit_of(&one.source, &one.refused)
+        });
+        for Disagreement {
+            kind,
+            name,
+            kept,
+            refused,
+            ..
+        } in &self.rev_disagreements
+        {
             let show = |rev: &Option<String>| match rev {
                 Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
                 None => "the source's own revision".to_owned(),

@@ -524,6 +524,7 @@ impl Repo {
             regions: BTreeSet::new(),
             held: BTreeSet::new(),
             adopted: Default::default(),
+            alongside: BTreeSet::new(),
         }
     }
 

@@ -205,4 +205,46 @@ impl Plan {
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
+
+    /// Remove the directories this plan's removals left empty, from each
+    /// removed path's parent up to the project root, which stays. An
+    /// empty harness directory is what detection reads as that tool set
+    /// up here, so a tool this project dropped would otherwise keep
+    /// reading as present. `remove_dir` takes only an empty directory, so
+    /// one holding anything at the moment it is asked stays, and the walk
+    /// up from it stops there. Run once the writes are final: a rollback
+    /// restores into the directories it would otherwise find gone.
+    pub(super) fn prune_emptied(&self) {
+        let Some(root) = &self.root else {
+            return;
+        };
+        for planned in &self.ops {
+            let removed = match &planned.op {
+                Op::Trash { path, .. } => path,
+                Op::PiRemove { package, .. } => package,
+                Op::WriteFile { .. }
+                | Op::WriteTree { .. }
+                | Op::Symlink { .. }
+                | Op::Rename { .. }
+                | Op::EditFile { .. }
+                | Op::WriteLock { .. }
+                | Op::WriteManifest { .. }
+                | Op::WriteExecutable { .. }
+                | Op::WritePrivateFile { .. }
+                | Op::GitConfigSwap { .. } => continue,
+            };
+            let mut dir = removed.parent();
+            while let Some(at) = dir {
+                if at == root || !at.starts_with(root) {
+                    break;
+                }
+                match std::fs::remove_dir(at) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => break,
+                }
+                dir = at.parent();
+            }
+        }
+    }
 }

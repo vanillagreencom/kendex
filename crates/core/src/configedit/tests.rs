@@ -527,6 +527,125 @@ fn gemini_context_file_keeps_unrelated_keys_and_refuses_another_shape() {
     assert_eq!(unparseable, readers.to_string());
 }
 
+/// The removal takes back exactly what the add writes over an absent key,
+/// and `context` with it where nothing else is left there. A value the add
+/// cannot have written alone may hold the person's own choices and stays.
+#[test]
+fn gemini_context_file_removal_takes_back_only_what_the_add_wrote() {
+    let edit = ConfigEdit::GeminiRemoveContextFile {
+        name: "AGENTS.md".into(),
+    };
+    let after = |text: &str| -> Value { serde_json::from_str(&edit.apply(text).unwrap()).unwrap() };
+    let rows: [(&str, Value); 5] = [
+        (
+            r#"{"context": {"fileName": ["GEMINI.md", "AGENTS.md"]}}"#,
+            json!({}),
+        ),
+        (
+            r#"{"ui": {"theme": "Dark"}, "context": {"fileName": ["GEMINI.md", "AGENTS.md"], "loadMemoryFromIncludeDirectories": true}}"#,
+            json!({"ui": {"theme": "Dark"}, "context": {"loadMemoryFromIncludeDirectories": true}}),
+        ),
+        (
+            r#"{"context": {"fileName": ["GEMINI.md", "TEAM.md", "AGENTS.md"]}}"#,
+            json!({"context": {"fileName": ["GEMINI.md", "TEAM.md", "AGENTS.md"]}}),
+        ),
+        (
+            r#"{"context": {"fileName": "AGENTS.md"}}"#,
+            json!({"context": {"fileName": "AGENTS.md"}}),
+        ),
+        (r#"{"context": 3}"#, json!({"context": 3})),
+    ];
+    for (start, left) in rows {
+        assert_eq!(after(start), left, "{start}");
+    }
+}
+
+/// A JSON document a removal empties is retired rather than written, in a
+/// project; a document the person left empty, one an upsert writes, one
+/// holding a key of theirs and a file that is not JSON are not. The
+/// OpenCode cleanup retires a lone schema whatever it held before, and a
+/// marker edit defers to the Pi append file's rule, which retires a blank
+/// file.
+#[test]
+fn a_document_a_removal_empties_is_retired() {
+    let gemini = ConfigEdit::GeminiRemoveContextFile {
+        name: "AGENTS.md".into(),
+    };
+    let ours = r#"{"context": {"fileName": ["GEMINI.md", "AGENTS.md"]}}"#;
+    let prune = ConfigEdit::OpencodePruneInstructions {
+        prefix: ".agents/".into(),
+        keep: Default::default(),
+    };
+    let rows: [(&str, Vec<ConfigEdit>, &str, bool, bool); 8] = [
+        (
+            "emptied in a project",
+            vec![gemini.clone()],
+            ours,
+            true,
+            true,
+        ),
+        (
+            "emptied, personal",
+            vec![gemini.clone()],
+            ours,
+            false,
+            false,
+        ),
+        (
+            "left empty by the person",
+            vec![gemini.clone()],
+            "{}",
+            true,
+            false,
+        ),
+        (
+            "a key of theirs",
+            vec![gemini.clone()],
+            r#"{"ui": {}, "context": {"fileName": ["GEMINI.md", "AGENTS.md"]}}"#,
+            true,
+            false,
+        ),
+        (
+            "an upsert",
+            vec![ConfigEdit::UpsertMcpServer {
+                name: "gh".into(),
+                value: json!({"command": "gh"}),
+            }],
+            "{}",
+            true,
+            false,
+        ),
+        (
+            "a lone schema under the OpenCode cleanup",
+            vec![prune],
+            r#"{"$schema": "https://opencode.ai/config.json"}"#,
+            false,
+            true,
+        ),
+        (
+            "not JSON",
+            vec![ConfigEdit::RemoveCodexMcpServer { name: "gh".into() }],
+            "[mcp_servers.gh]\ncommand = \"gh\"\n",
+            true,
+            false,
+        ),
+        (
+            "a blank append file",
+            vec![ConfigEdit::RemoveMarkerBlock { name: "x".into() }],
+            "",
+            false,
+            true,
+        ),
+    ];
+    for (what, edits, current, emptied, retired) in rows {
+        assert_eq!(
+            ConfigEdit::removes_empty_document(&edits, Some(current), emptied).unwrap(),
+            retired,
+            "{what}"
+        );
+    }
+}
+
 #[test]
 fn output_style_selection_is_absent_only_and_removal_is_owned() {
     let insert = ConfigEdit::ClaudeOutputStyle { name: "STE".into() };

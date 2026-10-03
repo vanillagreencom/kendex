@@ -197,10 +197,15 @@ fn configured_copilot_root_owns_native_mcp_reads_writes_and_removal() {
         );
         let removed = ops::remove(&env, &scope, &names, None, false).unwrap();
         apply::execute(&env, &removed.plan).unwrap();
-        let value: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
-        assert!(value.get("disabledMcpServers").is_none());
         assert_eq!(fs::read_to_string(&default).unwrap(), untouched);
+        // The project's file held kendex's key alone, so the removal that
+        // empties it retires it; the personal one keeps the person's own.
+        if matches!(scope, Scope::Project { .. }) {
+            assert!(!target.exists());
+        }
         if matches!(scope, Scope::Global) {
+            let value: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+            assert!(value.get("disabledMcpServers").is_none());
             assert_eq!(value["theme"], "selected");
             fs::write(env.settings_file(), "schema = [").unwrap();
             assert!(engine::registered_in(&env, &scope, record).is_err());
@@ -393,10 +398,9 @@ fn native_mcp_settings_union_holds_and_bad_layers_never_report_on() {
             .any(|warning| warning.message.starts_with("kendex-item-disabled:"))
     );
     apply::execute(&env, &report.plan).unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&fs::read_to_string(repo).unwrap()).unwrap(),
-        json!({})
-    );
+    // Switching the server back on took the last key out of the project's
+    // file, which then holds nothing and is retired.
+    assert!(!repo.exists());
     let read = scan::scan_scopes(&env, &BTreeMap::new(), std::slice::from_ref(&scope));
     assert_eq!(
         read.items

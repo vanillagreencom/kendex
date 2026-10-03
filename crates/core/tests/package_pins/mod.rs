@@ -543,6 +543,7 @@ fn declared_rev(w: &World, name: &str) -> Option<String> {
     loaded.declared(ItemKind::Skill)[name].rev.clone()
 }
 
+mod added;
 mod batched_update;
 mod hook_requires;
 mod sets;

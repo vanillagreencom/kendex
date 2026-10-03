@@ -62,7 +62,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 /// A repository declaring the claude harness with its root `AGENTS.md`
 /// committed: `apply --yes` renders the `CLAUDE.md` shim and the
-/// inventory, which is the offer's two-file set. Nothing is installed, so
+/// inventory and writes the ignore file beside them, which is the offer's
+/// three-file set. Nothing is installed, so
 /// no record is written; the record joins the set where an install is
 /// (`the_install_record_is_committed_with_the_renders`).
 #[allow(clippy::unwrap_used)]
@@ -210,7 +211,7 @@ fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     assert!(output.status.success(), "{text}");
     assert!(
         text.contains(
-            "2 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
+            "3 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
         ),
         "{text}"
     );
@@ -231,9 +232,9 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
     assert!(
-        text.contains(" · committed 2 files"),
+        text.contains(" · committed 3 files"),
         "no ledger part: {text}"
     );
     assert!(
@@ -256,7 +257,7 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     fs::write(project.join("AGENTS.md"), "# app\n\nmore\n").unwrap();
     let (output, text) = apply(&home, &project, &["--commit", "--message", "docs: shim"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
     assert_eq!(head_subject(&project), "docs: shim");
     assert!(
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
@@ -306,9 +307,91 @@ fn the_install_record_is_committed_with_the_renders() {
     }
     assert!(!files.contains("lock-local.json"), "{files}");
     assert!(project.join(".cache/kendex/lock-local.json").is_file());
-    // The ignore file is the person's, edited rather than owned, so it is
-    // the one thing left for them; the machine half is under it.
-    assert_eq!(git(&project, &["status", "--porcelain"]), "?? .gitignore\n");
+    // The ignore file the run wrote where none stood is carried with the
+    // rest, and the machine half is under it, so nothing is left pending.
+    assert!(files.lines().any(|line| line == ".gitignore"), "{files}");
+    assert_eq!(git(&project, &["status", "--porcelain"]), "");
+}
+
+/// `add --commit` in a checkout whose files match the last commit commits
+/// every file the run wrote, the manifest and the ignore file included, and
+/// leaves nothing pending. A manifest that already held a change of the
+/// person's is left out, since git commits whole files, and the offer
+/// names it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_commits_every_file_it_wrote_and_names_a_manifest_it_cannot() {
+    struct Row {
+        what: &'static str,
+        hand_edit: bool,
+    }
+    for row in [
+        Row {
+            what: "a clean checkout",
+            hand_edit: false,
+        },
+        Row {
+            what: "a manifest holding a hand edit",
+            hand_edit: true,
+        },
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let catalog = home.join("catalog");
+        fs::create_dir_all(catalog.join("agents")).unwrap();
+        fs::write(
+            catalog.join("agents/scout.md"),
+            "---\nname: scout\ndescription: look around\n---\nLook.\n",
+        )
+        .unwrap();
+        if row.hand_edit {
+            let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+            fs::write(project.join("kendex.toml"), format!("# mine\n{manifest}")).unwrap();
+        }
+
+        let output = kendex(
+            &home,
+            &project,
+            &[
+                "add",
+                &catalog.to_string_lossy(),
+                "--agent",
+                "scout",
+                "--yes",
+                "--commit",
+                "--throwaway",
+            ],
+        );
+        let text = said(&output);
+        let what = row.what;
+        assert!(output.status.success(), "{what}: {text}");
+        let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+        let status = git(&project, &["status", "--porcelain"]);
+        for carried in [".kendex-lock.json", ".gitignore", ".claude/agents/scout.md"] {
+            assert!(
+                files.lines().any(|line| line == carried),
+                "{what}: {carried} is not in the commit: {files}"
+            );
+        }
+        let named =
+            text.contains("kendex.toml held changes before this run, so the commit leaves it out");
+        match row.hand_edit {
+            false => {
+                assert!(
+                    files.lines().any(|line| line == "kendex.toml"),
+                    "{what}: {files}"
+                );
+                assert_eq!(status, "", "{what}: {text}");
+                assert!(!named, "{what}: {text}");
+            }
+            true => {
+                assert!(!files.contains("kendex.toml"), "{what}: {files}");
+                assert_eq!(status, " M kendex.toml\n", "{what}: {text}");
+                assert!(named, "{what}: {text}");
+            }
+        }
+    }
 }
 
 /// A project whose root `AGENTS.md` carries a managed region the installed
@@ -746,10 +829,10 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let bare = origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--push"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
     assert!(text.contains("pushed to origin/main"), "{text}");
     assert!(
-        text.contains(" · committed and pushed 2 files"),
+        text.contains(" · committed and pushed 3 files"),
         "no ledger part: {text}"
     );
     assert_eq!(
@@ -771,7 +854,7 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let before = git(&project, &["rev-parse", "HEAD"]);
     let (output, text) = apply(&home, &project, &["--push"]);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
     assert!(text.contains("the push was refused"), "{text}");
     assert!(text.contains("git said:"), "{text}");
     assert!(
@@ -1039,7 +1122,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
     origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--pull-request"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
     assert!(text.contains(" on kendex/renders"), "{text}");
     assert!(text.contains("pushed to origin/kendex/renders"), "{text}");
     assert!(
@@ -1051,7 +1134,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
         "{text}"
     );
     assert!(
-        text.contains(" · committed 2 files, pull request open"),
+        text.contains(" · committed 3 files, pull request open"),
         "no ledger part: {text}"
     );
     assert!(home.join("fake-bin/calls").exists(), "gh was never asked");
@@ -1144,13 +1227,15 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("2 files kendex wrote are not committed; a merge is in progress"),
+        text.contains("3 files kendex wrote are not committed; a merge is in progress"),
         "{text}"
     );
     fs::remove_file(project.join(".git/MERGE_HEAD")).unwrap();
 
     let head = git(&project, &["rev-parse", "HEAD"]);
     git(&project, &["checkout", "-q", "--detach", head.trim()]);
+    // The ignore file the first run wrote is pending from before this one,
+    // which writes nothing, so only the renders are counted.
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(
@@ -1191,6 +1276,8 @@ fn the_setting_turns_off_the_asking_and_not_the_flags() {
     let (output, text) = apply(&home, &project, &[]);
     assert!(output.status.success(), "{text}");
     assert!(!text.contains("not committed"), "{text}");
+    // The first run wrote the ignore file and left it pending; this run
+    // writes nothing, so it carries the renders alone.
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(text.contains("committed 2 files as "), "{text}");

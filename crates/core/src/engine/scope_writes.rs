@@ -2,7 +2,7 @@
 //! shared config files edits land in, the install record, the manifest's
 //! compatibility updates, and the project's settings.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::apply::{Op, PlannedOp, Pre};
@@ -69,11 +69,21 @@ pub(super) fn plan_manifest_write(
 /// One mutation per config file, whatever asked for it — a single
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.
+///
+/// A project file the edits empty goes to the trash rather than staying as
+/// an empty document a harness's detection reads as configured. A personal
+/// one stays: a tool's own settings file can be what marks it installed.
+/// The record of each switched-off hook whose registry it retires keeps no
+/// entry, as the next pass reads it.
 pub(super) fn plan_config_edits(
+    scope: &Scope,
+    items: &[super::desired::Desired],
     config_edits: config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
+    let project = matches!(scope, Scope::Project { .. });
+    let mut retired = BTreeSet::new();
     for (path, (labels, mut edits)) in config_edits.by_file {
         // Config edits bind to the bytes reachable at planning. A link
         // already there is kept and its target updated; a same-byte link
@@ -92,34 +102,42 @@ pub(super) fn plan_config_edits(
         let found = crate::fs::read_if_exists(&path)?;
         let current = found.as_deref().unwrap_or_default();
         let written = config_edits::ConfigEditPlan::compose(&path, current, &mut edits, new_lock)?;
-        let remove_empty =
-            crate::configedit::ConfigEdit::removes_empty_document(&edits, found.as_deref())
-                .map_err(|message| crate::error::CoreError::ConfigEdit {
-                    path: path.clone(),
-                    message,
-                })?;
-        let file = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(
+            &edits,
+            found.as_deref(),
+            project,
+        )
+        .map_err(|message| crate::error::CoreError::ConfigEdit {
+            path: path.clone(),
+            message,
+        })?;
         // A retired document goes whole, and an absent one stays absent.
         if remove_empty && !path.is_symlink() {
             if found.is_some() {
                 ops.push(super::removal::trash(
-                    format!("Move {file} to the trash, nothing of its own left").into(),
-                    path,
+                    crate::apply::Description::around(
+                        "Move ",
+                        " to the trash, nothing of its own left",
+                    ),
+                    path.clone(),
                 )?);
+                retired.insert(path);
             }
             continue;
         }
         if written == current {
             continue;
         }
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
         ops.push(PlannedOp {
             description: format!("Update {file} ({})", labels.join(", ")).into(),
             op: Op::EditFile { pre, path, edits },
         });
     }
+    super::item_record::unrecord_retired(items, &retired, new_lock);
     Ok(())
 }
 

@@ -32,6 +32,7 @@ fn the_document_lists_one_sorted_entry_per_line() {
         .collect(),
         held: std::iter::once(root.join(".claude/agents/held.md")).collect(),
         adopted: Default::default(),
+        alongside: std::iter::once(root.join("kendex.toml")).collect(),
     };
     let text = generated.document(root).expect("the document serializes");
     assert_eq!(

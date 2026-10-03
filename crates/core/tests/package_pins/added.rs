@@ -1,0 +1,144 @@
+//! Adding a package within a scope: what the request declares comes
+//! current, and every follower already installed stays at the commit its
+//! record names, the way a single-package update leaves its siblings.
+
+use kendex_core::apply;
+use kendex_core::engine::ops::{self, AddRequest};
+
+use super::{
+    World, commit, declare, fetch_mirrors, installed_body, locked_commit, messages, notes,
+    sync_and_apply, world, write_skill,
+};
+
+/// `add` from the scope's catalog subscription, of these skills.
+#[allow(clippy::unwrap_used)]
+fn add_skills(w: &World, skills: &[&str]) -> kendex_core::engine::EngineReport {
+    let request = AddRequest {
+        source: Some("cat".into()),
+        skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+        ..AddRequest::default()
+    };
+    ops::add(&w.env, &w.scope, &request).unwrap()
+}
+
+/// The source moves while `a` is installed; adding `b` installs `b` at the
+/// new commit and leaves `a`'s files and record where they were.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_leaves_the_scopes_followers_at_their_commits() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "b", "", "b version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = add_skills(&w, &["b"]);
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    assert!(installed_body(&w, "b").contains("b version two."));
+    assert_eq!(locked_commit(&w, "b"), second);
+    assert!(
+        installed_body(&w, "a").contains("a version one."),
+        "an installed follower must not come current with an add"
+    );
+    assert_eq!(locked_commit(&w, "a"), first);
+}
+
+/// A package the request names that is already installed at another
+/// commit moves with it, and the plan says so in one line before the
+/// write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_named_package_installed_at_another_commit_is_said_to_move() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "b", "", "b version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = add_skills(&w, &["b", "a"]);
+    let said = notes(&report);
+    let line = format!(
+        "skill a moves from {} to {} with this add",
+        &first[..7],
+        &second[..7]
+    );
+    assert_eq!(
+        said.iter().filter(|note| **note == line).count(),
+        1,
+        "{said:?}"
+    );
+    assert!(
+        !said.iter().any(|note| note.starts_with("skill b ")),
+        "a package new to the scope moves from nowhere: {said:?}"
+    );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "a").contains("a version two."));
+}
+
+/// Two packages requiring one skill, the second added while the source has
+/// not moved: the shared skill is wanted at one commit, so the add lands
+/// whole with no revision conflict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_shared_with_a_held_package_is_wanted_at_one_commit() {
+    let w = world();
+    let requires_z = "dependencies:\n  required: [z]\n";
+    write_skill(&w.upstream, "a", requires_z, "a.");
+    write_skill(&w.upstream, "b", requires_z, "b.");
+    write_skill(&w.upstream, "z", "", "z.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert!(installed_body(&w, "z").contains("z."));
+
+    let report = add_skills(&w, &["b"]);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "b").contains("b."));
+    assert!(installed_body(&w, "z").contains("z."));
+}
+
+/// The same shared skill after the source moved: the held package wants it
+/// where it is and the added one where the source is now. The plan names
+/// it before the write and leaves it where it is installed, and the added
+/// package still lands.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_shared_with_a_held_package_at_another_commit_is_named_and_stays() {
+    let w = world();
+    let requires_z = "dependencies:\n  required: [z]\n";
+    write_skill(&w.upstream, "a", requires_z, "a.");
+    write_skill(&w.upstream, "z", "", "z version one.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "b", requires_z, "b.");
+    write_skill(&w.upstream, "z", "", "z version two.");
+    commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = add_skills(&w, &["b"]);
+    let named: Vec<&str> = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.message.contains(&first[..7]))
+        .map(|warning| warning.name.as_str())
+        .collect();
+    assert_eq!(named, ["z"], "{:?}", messages(&report));
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "b").contains("b."));
+    assert!(installed_body(&w, "z").contains("z version one."));
+    assert_eq!(locked_commit(&w, "z"), first);
+}

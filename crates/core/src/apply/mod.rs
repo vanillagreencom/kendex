@@ -221,6 +221,10 @@ fn execute_closing(env: &Env, plan: &Plan, close: Close) -> Result<(ApplyOutcome
     let (guards, recovered) = begin_writes(env, std::slice::from_ref(&plan.scope))?;
     let recovered_first = recovered[0];
     let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), &plan.reads, close)?;
+    match close {
+        Close::Clear => plan.prune_emptied(),
+        Close::Hold => {}
+    }
     // The scope just changed; a drift snapshot describing the old state
     // would send the next session chasing drift that is not there.
     // Invalidation is the cheap honest move: the check reads "not yet

@@ -1,10 +1,11 @@
 //! Installing from a subscription: the picker's rows, and the install
 //! itself.
 //!
-//! Which tools an install lands on is a choice made here rather than taken
-//! from the scope's manifest — detection is re-read at install time, so a
-//! tool that arrived after the scope was set up is offerable and one gone
-//! since does not read as present.
+//! Which tools an untouched install lands on is the scope's own
+//! `[install]` list, read here as the install itself reads it. Which tools
+//! are on this machine is read at install time, so a tool that arrived
+//! after the scope was set up is marked as present and one gone since is
+//! not.
 
 use kendex_core::engine::ops::AddRequest;
 use kendex_core::env::Env;
@@ -19,28 +20,35 @@ use super::{AvailablePackage, env};
 use kendex_core::source::browse::{self, Catalog};
 
 /// One row of the install picker: a tool the scope can install to, whether
-/// this machine has it, and whether it reads the shared `.agents` tree
-/// rather than a directory of its own.
+/// this machine has it, whether an install left to the scope's defaults
+/// lands on it, and whether it reads the shared `.agents` tree rather than
+/// a directory of its own.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallTarget {
     pub harness: HarnessId,
     pub detected: bool,
+    /// The scope's `[install]` list names this tool, or, where the scope
+    /// declares none, this machine has it: the rows an untouched picker
+    /// checks, and the tools the install then lands on.
+    pub by_default: bool,
     pub shares_the_universal_tree: bool,
 }
 
 /// Where an install of these kinds could land, for the picker the install
-/// flow draws. Two filters, both read from core: which tools can take the
-/// kinds being installed at this scope — the same one the install itself
+/// flow draws. Three readings, all from core: which tools can take the
+/// kinds being installed at this scope — the same filter the install itself
 /// refuses by, so the picker cannot offer a choice the install turns down —
-/// and which are on this machine. Detection is read now rather than taken
-/// from the scope's manifest: a tool that arrived after the scope was set
-/// up has to be offerable, and one gone since must not read as present.
+/// which are on this machine, and which the scope's defaults name. The
+/// defaults are what an untouched install is sent to, so the picker checks
+/// those rather than whatever this machine happens to have.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn install_targets(scope: Scope, kinds: Vec<ItemKind>) -> Result<Vec<InstallTarget>, String> {
     let env = env()?;
     let detected = kendex_core::engine::ops::detected_harnesses(&env);
+    let defaults =
+        kendex_core::engine::ops::install_defaults(&env, &scope).map_err(|e| e.to_string())?;
     let kinds = match kinds.is_empty() {
         true => ItemKind::ALL.to_vec(),
         false => kinds,
@@ -50,6 +58,7 @@ pub fn install_targets(scope: Scope, kinds: Vec<ItemKind>) -> Result<Vec<Install
         .map(|harness| InstallTarget {
             harness,
             detected: detected.contains(&harness),
+            by_default: defaults.contains(&harness),
             shares_the_universal_tree: kendex_core::engine::desired::native_dir(
                 &env,
                 &scope,
@@ -101,7 +110,7 @@ pub struct Installed {
 /// project gains the personal subscription first (§4.1), then the add runs
 /// there — every write lands in exactly one scope. `harnesses` and `method`
 /// carry the picker's answer; absent, the scope's own install defaults
-/// decide, brought up to date against this machine by the add itself.
+/// decide, as [`install_targets`] marks them.
 /// `optional` carries the optional dependencies the picker ticked, by the
 /// name their parent declares them under; the engine records the choice
 /// against every item that offers one by that name — a name no item this

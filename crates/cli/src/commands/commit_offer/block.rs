@@ -316,6 +316,7 @@ pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
             lines.extend(quoted(style, path));
         }
     }
+    lines.extend(left_out(style, &offer.scan));
     if offer.scan.others > 0 {
         lines.extend(said_as(
             style,
@@ -331,6 +332,22 @@ pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
         lines.extend(said_as(style, Status::Notice, &line));
     }
     lines
+}
+
+/// The manifest the commit leaves out: it held a change before this run,
+/// which a commit of the whole file would carry too. Drawn in the offer,
+/// and before the commit a flag answered, where no offer is drawn.
+pub fn left_out(style: &Style, scan: &Scan) -> Vec<String> {
+    match &scan.manifest {
+        Some(path) => said_as(
+            style,
+            Status::Decision,
+            &format!(
+                "{path} held changes before this run, so the commit leaves it out; commit it yourself so a clone installs what this one does"
+            ),
+        ),
+        None => Vec::new(),
+    }
 }
 
 /// A precondition that removed a choice prints its reason as a line under

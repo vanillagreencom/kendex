@@ -290,8 +290,8 @@ fn two_mcp_servers_install_into_one_settings_file_in_one_apply() {
     )
     .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
-    let after = json(&file);
-    assert!(after["mcpServers"].is_null() || after["mcpServers"].get("gh").is_none());
+    // The two servers were all the file held, so it is retired whole.
+    assert!(!file.exists());
     assert!(is_clean(&f));
 }
 

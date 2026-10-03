@@ -1,8 +1,9 @@
 //! Choosing where an install lands, at the terminal.
 //!
 //! The same choice the app's install flow puts on screen: the shared
-//! `.agents` home is always part of it, the tools on this machine come
-//! pre-checked, every tool kendex can install to is offerable, and the
+//! `.agents` home is always part of it, the scope's own `[install]` tools
+//! come pre-checked (the tools on this machine where it declares none),
+//! every tool kendex can install to is offerable, and the
 //! delivery — one shared tree with links, or a real copy each — is picked
 //! alongside. Non-interactive use skips all of it: `--harness`,
 //! `--all-harnesses` and `--method` say the same things in flags, and a
@@ -16,7 +17,7 @@
 
 use std::io::IsTerminal;
 
-use kendex_core::engine::ops::detected_harnesses;
+use kendex_core::engine::ops::install_defaults;
 use kendex_core::env::Env;
 use kendex_core::manifest::Method;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
@@ -61,8 +62,8 @@ pub fn ask(
             method,
         });
     }
-    let detected = detected_harnesses(env);
-    let checked = rows.iter().map(|row| detected.contains(row)).collect();
+    let defaults = install_defaults(env, scope)?;
+    let checked = rows.iter().map(|row| defaults.contains(row)).collect();
     let style = ui::style();
     let picked = pick_tools(
         &style,

@@ -67,6 +67,13 @@ pub struct GeneratedPaths {
     /// Adoption copies checked against declared package templates. Refresh
     /// records their provenance but does not write or restore their YAML.
     pub adopted: BTreeMap<PathBuf, AdoptedWorkflow>,
+    /// Files a run writes beside its renders — the manifest, the settings
+    /// file, `.gitignore`, a shared configuration file — that matched the
+    /// last commit before it ran, read by
+    /// [`crate::commit_offer::alongside`]. The run's change is all they
+    /// hold, so the commit offer carries them whole. Never part of the
+    /// inventory, and never written over by a restore.
+    pub alongside: BTreeSet<PathBuf>,
 }
 
 impl GeneratedPaths {

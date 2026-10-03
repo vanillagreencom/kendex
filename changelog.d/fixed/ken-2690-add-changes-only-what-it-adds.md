@@ -1,0 +1,1 @@
+- `kendex add` no longer widens `[install].harnesses` or updates other packages, `--commit` also commits `kendex.toml`, and dropping a tool leaves none of its files or folders.

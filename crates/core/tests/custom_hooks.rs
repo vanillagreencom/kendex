@@ -94,15 +94,9 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
     )
     .unwrap();
     kendex_core::apply::execute(&w.env, &removal.plan).unwrap();
-    let registry = fs::read_to_string(w.project.join(".codex/hooks.json")).unwrap();
-    let registry: serde_json::Value = serde_json::from_str(&registry).unwrap();
-    assert_eq!(
-        registry["hooks"]["PreToolUse"]
-            .as_array()
-            .map(Vec::len)
-            .unwrap_or_default(),
-        0
-    );
+    // The registration was all the registry held, so the removal that
+    // empties it retires the file.
+    assert!(!w.project.join(".codex/hooks.json").exists());
 }
 
 #[test]

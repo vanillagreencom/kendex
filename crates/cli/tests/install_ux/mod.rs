@@ -17,6 +17,7 @@ mod catalog_commands;
 mod cloning;
 mod coexistence;
 mod disclosing;
+mod dropping;
 mod guarding;
 mod installing;
 

@@ -255,6 +255,13 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
+    // Read before the write, the only time it can be: which files this plan
+    // writes beside its renders still match the last commit, so the offer
+    // after it carries them. A read that will not run carries none of them,
+    // and the offer's own read after the write reports why.
+    let alongside =
+        kendex_core::commit_offer::alongside(&report.plan.scope, &report.plan, &report.generated)
+            .unwrap_or_default();
     let applied = match report.plan.is_empty() {
         true => 0,
         false => {
@@ -267,6 +274,7 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
         }
     };
     let mut generated = report.generated.clone();
+    generated.alongside = alongside;
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
         ui::report::notice(&skipped.line());

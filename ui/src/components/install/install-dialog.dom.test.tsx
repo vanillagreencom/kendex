@@ -87,8 +87,18 @@ beforeEach(() => {
   vi.mocked(commands.installTargets).mockResolvedValue({
     status: "ok",
     data: [
-      { harness: "claude", detected: true, sharesTheUniversalTree: true },
-      { harness: "codex", detected: true, sharesTheUniversalTree: true },
+      {
+        harness: "claude",
+        detected: true,
+        byDefault: true,
+        sharesTheUniversalTree: true,
+      },
+      {
+        harness: "codex",
+        detected: true,
+        byDefault: true,
+        sharesTheUniversalTree: true,
+      },
     ],
   });
   install = vi.fn<Install>(async () => ({ ok: true, unread: null }));
@@ -451,15 +461,25 @@ describe("the guided install", () => {
     expect(button(INSTALL_ACTION).disabled).toBe(true);
   });
 
-  // An untouched picker installs to the tools on this machine. With none
-  // found, that is the same install nowhere, and the engine's refusal is
-  // not the first thing to say so.
-  it("holds the action back on an untouched picker with no tool on this machine", async () => {
+  // An untouched picker installs to the scope's default tools, not to
+  // whatever this machine has. With none, that is the same install
+  // nowhere, and the engine's refusal is not the first thing to say so.
+  it("holds the action back on an untouched picker with no default tool", async () => {
     vi.mocked(commands.installTargets).mockResolvedValue({
       status: "ok",
       data: [
-        { harness: "claude", detected: false, sharesTheUniversalTree: true },
-        { harness: "codex", detected: false, sharesTheUniversalTree: true },
+        {
+          harness: "claude",
+          detected: true,
+          byDefault: false,
+          sharesTheUniversalTree: true,
+        },
+        {
+          harness: "codex",
+          detected: false,
+          byDefault: false,
+          sharesTheUniversalTree: true,
+        },
       ],
     });
     await open();

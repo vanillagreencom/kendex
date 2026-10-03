@@ -6,8 +6,9 @@
 //! the rows are matched against the set here.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::apply::Plan;
 use crate::engine::GeneratedPaths;
 
 use super::{Branch, Failed, Operation, Owned, Rebase, Scan, git};
@@ -46,6 +47,7 @@ impl Row<'_> {
 pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Failed> {
     let whole = generated.owned(root);
     let owned = relative(root, &whole);
+    let alongside = relative(root, &generated.alongside);
     let shared = relative(root, &generated.shared);
     let declared = declaration(root);
     let status = git::read_required(
@@ -75,6 +77,17 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
                 others += 1;
                 continue;
             }
+            ours.push(Owned {
+                untracked: row.untracked(),
+                added: row.added(),
+                path,
+            });
+            continue;
+        }
+        // A file this run wrote that matched the last commit before it
+        // holds the run's change alone, so committing it whole commits
+        // nothing of the person's.
+        if alongside.contains(&path) {
             ours.push(Owned {
                 untracked: row.untracked(),
                 added: row.added(),
@@ -129,6 +142,42 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
         others,
         branch: branch(root)?,
     }))
+}
+
+/// The files `plan` writes beside the ones kendex owns whole that match the
+/// last commit now, read before the plan runs. git reports nothing for
+/// them: unchanged, absent from both the checkout and the last commit, or
+/// ignored. A file the person already changed is not among them, since git
+/// commits whole files and that change would ride along.
+pub fn alongside(
+    root: &Path,
+    plan: &Plan,
+    generated: &GeneratedPaths,
+) -> Result<BTreeSet<PathBuf>, Failed> {
+    let owned = generated.owned(root);
+    let written: BTreeSet<PathBuf> = plan
+        .ops
+        .iter()
+        .flat_map(|planned| planned.op.touched())
+        .filter(|path| path.starts_with(root) && !owned.contains(path))
+        .collect();
+    if written.is_empty() {
+        return Ok(written);
+    }
+    let status = git::read_required(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    let changed: BTreeSet<&[u8]> = rows(&status).iter().map(|row| row.path).collect();
+    Ok(written
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(root)
+                .ok()
+                .map(crate::paths::slashed)
+                .is_some_and(|spelled| !changed.contains(spelled.as_bytes()))
+        })
+        .collect())
 }
 
 /// Where this project declares what it asks kendex for, spelled the way

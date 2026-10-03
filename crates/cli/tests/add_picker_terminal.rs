@@ -25,20 +25,22 @@ struct Run {
     stderr: fn() -> pty::Stderr,
     steps: &'static [(&'static str, &'static str)],
     code: i32,
+    /// What the project's kendex.toml says after its source.
+    install: &'static str,
     /// The tools and delivery `tidy` is declared with, or `None` where the
     /// run wrote nothing.
     declared: Option<(&'static [&'static str], &'static str)>,
 }
 
-/// Claude Code is on the machine, so it comes checked. `2` checks Codex and
-/// Enter installs to both; `c` copies; `y` is the write consent. Escape at
-/// either question cancels before anything is written. With stderr on a
-/// pipe the same answers are typed lines.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_tools_and_the_delivery_are_picked_by_their_keys() {
+/// Claude Code is on the machine and the project declares no tools, so it
+/// comes checked. `2` checks Codex and Enter installs to both; `c` copies;
+/// `y` is the write consent. Escape at either question cancels before
+/// anything is written. With stderr on a pipe the same answers are typed
+/// lines. A project that declares its tools has those checked instead,
+/// whatever the machine has.
+fn runs() -> [Run; 5] {
     let terminal = || pty::Stderr::Terminal;
-    let runs = [
+    [
         Run {
             what: "keys",
             stderr: terminal,
@@ -49,6 +51,7 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
                 ("[y] yes", "y"),
             ],
             code: 0,
+            install: "",
             declared: Some((&["claude", "codex"], "copy")),
         },
         Run {
@@ -61,6 +64,7 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
                 ("[y] yes", "y\n"),
             ],
             code: 0,
+            install: "",
             declared: Some((&["claude", "codex"], "copy")),
         },
         Run {
@@ -68,6 +72,7 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
             stderr: terminal,
             steps: &[("[Enter] install to Claude Code", "\x1b")],
             code: 130,
+            install: "",
             declared: None,
         },
         Run {
@@ -78,10 +83,29 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
                 ("[c] copy", "\x1b"),
             ],
             code: 130,
+            install: "",
             declared: None,
         },
-    ];
-    for run in runs {
+        Run {
+            what: "a declared list",
+            stderr: terminal,
+            steps: &[
+                ("[Enter] install to Codex", "\n"),
+                ("[c] copy", "c"),
+                ("[y] yes", "y"),
+            ],
+            code: 0,
+            install: "\n[install]\nharnesses = [\"codex\"]\n",
+            declared: Some((&["codex"], "copy")),
+        },
+    ]
+}
+
+/// Each run of [`runs`] through the binary at a pseudoterminal.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_tools_and_the_delivery_are_picked_by_their_keys() {
+    for run in runs() {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         fs::create_dir_all(home.join(".claude")).unwrap();
@@ -91,7 +115,11 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
             "---\nname: tidy\ndescription: tidy up\n---\nTidy.\n",
         );
         let project = home.join("dev/app");
-        let manifest = format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog));
+        let manifest = format!(
+            "schema = 6\n\n[sources.cat]\n{}\n{}",
+            source_path(&catalog),
+            run.install
+        );
         write(&project.join("kendex.toml"), &manifest);
         let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
         command
@@ -124,7 +152,11 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
                     Some(method),
                     "{what}:\n{written}\n{text}"
                 );
-                let landed = fs::symlink_metadata(project.join(".claude/skills/tidy")).unwrap();
+                let tree = match harnesses.contains(&"claude") {
+                    true => ".claude/skills/tidy",
+                    false => ".agents/skills/tidy",
+                };
+                let landed = fs::symlink_metadata(project.join(tree)).unwrap();
                 assert!(landed.is_dir(), "{what}: not a copy:\n{text}");
             }
             None => {

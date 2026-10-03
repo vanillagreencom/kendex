@@ -356,8 +356,9 @@ pub struct Scan {
     /// reports as changed, sorted. Named to the person and left alone.
     pub shared: Vec<String>,
     /// The file this project declares what it asks kendex for in — its
-    /// manifest — where git reports it changed. kendex folds keys into
-    /// that document and owns none of its bytes, so it is one of the files
+    /// manifest — where git reports it changed and the run did not write
+    /// it from a clean state. kendex folds keys into that document and
+    /// owns none of its bytes, so a change of the person's in it is one
     /// the offer names and never commits.
     pub manifest: Option<String>,
     /// How many other paths in this repository changed. The person's own
@@ -399,6 +400,24 @@ pub fn scan(
         return Ok(None);
     }
     paths::scan(root, generated)
+}
+
+/// The files a plan writes into this project beside its renders that match
+/// the last commit now, for [`crate::engine::GeneratedPaths::alongside`].
+/// Read before the plan runs; empty where the scope is not a project or
+/// the project is not a checkout.
+pub fn alongside(
+    scope: &Scope,
+    plan: &crate::apply::Plan,
+    generated: &crate::engine::GeneratedPaths,
+) -> std::result::Result<std::collections::BTreeSet<PathBuf>, Failed> {
+    let Scope::Project { root } = scope else {
+        return Ok(Default::default());
+    };
+    if !root.join(".git").exists() {
+        return Ok(Default::default());
+    }
+    paths::alongside(root, plan, generated)
 }
 
 /// Whether this machine wants to be asked. Machine-local, like every other

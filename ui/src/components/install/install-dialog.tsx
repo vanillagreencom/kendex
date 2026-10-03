@@ -81,9 +81,10 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   const setChoice = useInstallFlow((s) => s.setChoice);
   const install = useInstallFlow((s) => s.install);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
-  // What the tool picker last found on this machine: an untouched picker
-  // installs to exactly these, so the button reads them beside the choice.
-  const [detected, setDetected] = useState<HarnessId[]>([]);
+  // The scope's default tools as the picker last read them: an untouched
+  // picker installs to exactly these, so the button reads them beside the
+  // choice.
+  const [defaults, setDefaults] = useState<HarnessId[]>([]);
   // Only the places a write can reach: a project whose folder the scan
   // could not read is not a destination, and its own card says why.
   const projects = useReachableProjects();
@@ -270,7 +271,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
               dependencies={subject.dependencies}
               value={choice}
               onChange={setChoice}
-              onDetected={setDetected}
+              onDefaults={setDefaults}
             />
           </section>
         ) : places.length > 1 ? (
@@ -301,7 +302,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
               // An empty tool list is an install nowhere, which the engine
               // refuses: emptied by hand, or untouched on a machine with
               // no tool.
-              (onePlace !== null && !isInstallable(choice, detected))
+              (onePlace !== null && !isInstallable(choice, defaults))
             }
             onClick={() => void install()}
           >

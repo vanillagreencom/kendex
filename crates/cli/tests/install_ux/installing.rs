@@ -92,6 +92,87 @@ fn an_explicit_choice_does_not_widen_the_scope_defaults() {
     assert!(!world.at(".codex").exists());
 }
 
+/// The scope's declared tools are where an install left to its defaults
+/// lands, whatever else this machine has: the list stays as written and a
+/// tool it leaves out gets nothing, only a line naming it. A project with
+/// no manifest yet declares nothing, so its first write takes the tools on
+/// this machine.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_declared_tools_are_the_install_and_detection_only_seeds_an_absent_list() {
+    struct Row {
+        what: &'static str,
+        declared: Option<&'static [&'static str]>,
+        list: &'static [&'static str],
+        untouched: &'static [&'static str],
+    }
+    let machine = [
+        "claude", "codex", "copilot", "pi", "gemini", "cursor", "opencode",
+    ];
+    let rows = [
+        Row {
+            what: "a declared list",
+            declared: Some(&["claude", "codex", "copilot", "pi"]),
+            list: &["claude", "codex", "copilot", "pi"],
+            untouched: &[".gemini", ".cursor", ".opencode"],
+        },
+        Row {
+            what: "no manifest",
+            declared: None,
+            list: &[
+                "claude", "codex", "opencode", "cursor", "pi", "gemini", "copilot",
+            ],
+            untouched: &[],
+        },
+    ];
+    for row in rows {
+        let world = World::new(&machine);
+        // Gemini CLI is told from Antigravity by the settings file its
+        // first run writes.
+        super::write(&world.home.join(".gemini/settings.json"), "{}\n");
+        super::write(
+            &world.catalog.join("agents/scout.md"),
+            "---\nname: scout\ndescription: look around\n---\nLook.\n",
+        );
+        let source = match row.declared {
+            Some(harnesses) => {
+                world.declare_no_items(harnesses);
+                "cat".to_owned()
+            }
+            None => world.catalog.display().to_string(),
+        };
+        let said = world.run(&["add", &source, "--agent", "scout", "-y"]);
+
+        let what = row.what;
+        let manifest = world.manifest();
+        let table: toml::Table = manifest.parse().unwrap();
+        assert_eq!(
+            table
+                .get("install")
+                .and_then(|install| install.get("harnesses")),
+            Some(&toml::Value::from(row.list.to_vec())),
+            "{what}:\n{manifest}"
+        );
+        if row.declared.is_some() {
+            assert!(
+                manifest.contains("harnesses = [\"claude\", \"codex\", \"copilot\", \"pi\"]\n"),
+                "{what}: the declared line was rewritten:\n{manifest}"
+            );
+        }
+        assert!(world.at(".claude/agents/scout.md").exists(), "{what}");
+        for dir in row.untouched {
+            assert!(!world.at(dir).exists(), "{what}: {dir} was written");
+        }
+        assert_eq!(
+            said.contains(
+                "OpenCode, Cursor, Gemini CLI are on this machine and not in [install].harnesses"
+            ),
+            row.declared.is_some(),
+            "{what}:\n{said}"
+        );
+    }
+}
+
 /// Every supported tool at once, whether or not it is on this machine.
 #[test]
 fn all_harnesses_targets_every_tool_that_installs_here() {

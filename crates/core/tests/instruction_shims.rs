@@ -368,7 +368,10 @@ fn the_old_claude_link_is_retired_and_any_other_file_there_is_left_alone() {
     assert!(f.project.join("AGENTS.md").is_file());
 
     // A plain file there, and a link elsewhere: neither is the retired
-    // convention, so neither is planned nor reported.
+    // convention, so neither is planned nor reported. The link was all
+    // `.claude` held, so its folder went with it.
+    assert!(!old.parent().unwrap().exists());
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
     fs::write(&old, "# my own\n").unwrap();
     let report = plan(&f);
     assert!(report.plan.is_empty() && report.drift.is_empty());

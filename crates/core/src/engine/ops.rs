@@ -39,30 +39,44 @@ pub fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
         .collect()
 }
 
-/// Bring a manifest's install targets up to date with the machine, and say
-/// which tools that gained. Detection is re-read at install time rather than
-/// trusted from the manifest seed: a tool installed after the scope was set
-/// up would otherwise never receive anything, and nothing would say why.
+/// The tools an install that leaves the choice to the scope lands on: the
+/// scope's `[install].harnesses` as written, or the tools on this machine
+/// where the scope declares none, which is what its next write records.
+/// What the terminal picker and the app's picker check before anyone
+/// touches them, so an untouched picker and `--yes` install to one set.
+pub fn install_defaults(env: &Env, scope: &Scope) -> Result<Vec<HarnessId>> {
+    let mut manifest = manifest_for_reading(env, scope)?;
+    settle_defaults(env, &mut manifest);
+    Ok(manifest.install.harnesses)
+}
+
+/// Give a manifest that declares no tools the ones on this machine, and
+/// name each tool on this machine a declared list leaves out.
 ///
-/// Only additive. A tool the list already names keeps whatever it has, even
-/// if its directory has since gone — narrowing here would leave installed
-/// files with nothing declaring them.
-pub(crate) fn adopt_detected(env: &Env, manifest: &mut Manifest) -> Option<String> {
-    let gained: Vec<HarnessId> = detected_harnesses(env)
-        .into_iter()
-        .filter(|harness| !manifest.install.harnesses.contains(harness))
-        .collect();
-    if gained.is_empty() {
+/// A list the person wrote is never widened: a tool added to it would take
+/// every package in the scope, which nobody asked for on this run. An
+/// empty list declares nothing, the same as a manifest not written yet,
+/// so it takes what [`manifest_for_mutation`] seeds an absent one with.
+pub(crate) fn settle_defaults(env: &Env, manifest: &mut Manifest) -> Option<String> {
+    let detected = detected_harnesses(env);
+    if manifest.install.harnesses.is_empty() {
+        manifest.install.harnesses = detected;
         return None;
     }
-    manifest.install.harnesses.extend(gained.iter().copied());
-    Some(
-        gained
-            .iter()
-            .map(|harness| harness.display_name().to_owned())
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
+    let left_out: Vec<&str> = detected
+        .iter()
+        .filter(|harness| !manifest.install.harnesses.contains(harness))
+        .map(|harness| harness.display_name())
+        .collect();
+    let (verb, them) = match left_out.len() {
+        0 => return None,
+        1 => ("is", "it"),
+        _ => ("are", "them"),
+    };
+    Some(format!(
+        "{} {verb} on this machine and not in [install].harnesses; name {them} with --harness or add {them} to kendex.toml",
+        left_out.join(", ")
+    ))
 }
 
 /// The scope's manifest as a listing reads it: the file where there is
