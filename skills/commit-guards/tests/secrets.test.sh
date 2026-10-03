@@ -170,9 +170,10 @@ assert_eq "and says to rewrite that commit, since a removal does not clear it" "
 row "and under --base" \
   "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --base HEAD~2
 REMOVED="$R"
-# side merges main, whose own commit added a credential: the merge carries
-# main's line and adds none of its own. evil merges the same main and writes
-# a credential into the merge itself.
+# side merges main, whose own commit added a credential and a whole key
+# block: the merge carries main's lines, each of the key's lines over the
+# same one parent, and adds none of its own. evil merges the same main and
+# writes a credential into the merge itself.
 repo merge
 put base.txt "base\n"
 commit
@@ -181,12 +182,13 @@ put s.txt "side\n"
 commit side
 git -C "$R" checkout -q main
 put m.txt "m\naws = $CRED\n"
+put key.pem "$PK_HEAD\n$PK_BODY$PK_FOOT\n"
 commit main-cred
 git -C "$R" checkout -q -b evil side
 git -C "$R" checkout -q side
 git -C "$R" merge -q --no-edit main
 row "a merge passes the lines a parent already carried" \
-  "rc=0 secrets: summary=violations=0 files=2 scope=against skipped=0" "$R" --against main
+  "rc=0 secrets: summary=violations=0 files=3 scope=against skipped=0" "$R" --against main
 MERGE="$R"
 git -C "$R" checkout -q evil
 git -C "$R" merge -q --no-commit main >/dev/null 2>&1
@@ -367,8 +369,11 @@ carries "in commit $ADDED;"
 assert_eq "control: a lane that drops the commit from the refusal names no commit" "absent" "$HAS"
 gg_mutant LANE secrets 'SIDE_COUNT="${#parent_list[@]}"' 'SIDE_COUNT=1'
 git -C "$MERGE" checkout -q side
-row "control: a merge judged as one side fails the line main carried" \
-  "rc=1 secrets: secret=m.txt:2:aws-access-token" "$MERGE" --against main
+row "control: a merge judged as one side fails the lines main carried" \
+  "rc=1 secrets: secret=key.pem:1:private-key" "$MERGE" --against main
+gg_mutant LANE secrets 'print side "\t" $1' 'print side "-" NR "\t" $1'
+row "control: counting each added line as its own side fails the key one parent carried whole" \
+  "rc=1 secrets: secret=key.pem:1:private-key" "$MERGE" --against main
 gg_mutant LANE secrets '$2 >= s && $2 <= e && !($1 in hit) { hit[$1]; held++ } END { exit held < sides }' '$2 >= s && $2 <= e && ++count[$2] == sides { found = 1 } END { exit !found }'
 row "control: counting only a line every parent adds passes the key the merge completes" \
   "rc=0 secrets: summary=violations=0 files=3 scope=against skipped=0" "$SPLIT_KEY" --against main
@@ -383,7 +388,7 @@ row "control: skipping a parentless commit passes its credential" \
 git -C "$MERGE" checkout -q evil
 gg_mutant LANE secrets 'grep -Fxq -- "$COMMIT" "$shallow"' 'grep -Fxq -- "$COMMIT" /dev/null'
 row "control: a shallow boundary read as a root commit judges every line it holds" \
-  "rc=1 secrets: secret=m.txt:2:aws-access-token" "$SHALLOW" --against HEAD^1
+  "rc=1 secrets: secret=key.pem:1:private-key" "$SHALLOW" --against HEAD^1
 gg_mutant LANE secrets '--config "$GG_TMP/gitleaks.toml"' '--log-level warn'
 row "control: without the config flag the environment's configuration allowlists the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$ENV_TOML" "$ENV_CONFIG"
