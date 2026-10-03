@@ -206,6 +206,9 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
       .payload.item.command[-1] = "cat .agents/skills/linear/SKILL.md; true"
     elif $scenario == "failed-wrapper" and .payload.type == "custom_tool_call_output" then
       .payload.output[0].text = "Script failed\nOutput:\n"
+    elif $scenario == "printed-suffix" and .payload.type == "custom_tool_call" then
+      .payload.input |= if test("[.]output[)]") then sub("[.]output[)]"; ".output.slice(0, 0))")
+        else sub("[}][)][)]"; "}).slice(0, 0))") end
     else . end' "$TEST_DIR/fixtures/$fixture.jsonl" >"$TRANSCRIPT"
   case "$fixture" in
     *-failed) skill=missing-KEN-2484; command=skill-capture-command ;;
@@ -232,9 +235,11 @@ exec_rows() { # optional row key for a planted-copy control
 success|skill-load-check-codex-0.160.0|original|rc=0 first=-|functions.exec successful skill read
 captured-success|skill-load-check-codex-0.160.0-live|original|rc=0 first=-|functions.exec captured direct text read
 captured-failed|skill-load-check-codex-0.160.0-live|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec captured failed read
+captured-printed-suffix|skill-load-check-codex-0.160.0-live|printed-suffix|rc=2 first=skill-load-check: unloaded=linear|functions.exec captured printed suffix
 failed|skill-load-check-codex-0.160.0-failed|original|rc=2 first=skill-load-check: unloaded=missing-KEN-2484|functions.exec authentic failed read
 compound-js|skill-load-check-codex-0.160.0|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound JavaScript
 compound-shell|skill-load-check-codex-0.160.0|compound-shell|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound shell
+printed-suffix|skill-load-check-codex-0.160.0|printed-suffix|rc=2 first=skill-load-check: unloaded=linear|functions.exec printed output suffix
 failed-wrapper|skill-load-check-codex-0.160.0|failed-wrapper|rc=2 first=skill-load-check: unloaded=linear|functions.exec failed wrapper
 other-id|skill-load-check-codex-0.160.0|other-id|rc=2 first=skill-load-check: unloaded=linear|functions.exec another call output
 failed-status|skill-load-check-codex-0.160.0|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec failed shell with successful skill body
@@ -245,6 +250,7 @@ field-success|skill-load-check-codex-0.160.0-output-field|original|rc=0 first=-|
 field-failed|skill-load-check-codex-0.160.0-output-field|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field failed read
 field-compound-js|skill-load-check-codex-0.160.0-output-field|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field compound JavaScript
 field-compound-shell|skill-load-check-codex-0.160.0-output-field|compound-shell|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field compound shell
+field-printed-suffix|skill-load-check-codex-0.160.0-output-field|printed-suffix|rc=2 first=skill-load-check: unloaded=linear|functions.exec output field printed suffix
 ROWS
 }
 exec_success_row() { exec_rows success; }
@@ -253,6 +259,7 @@ exec_field_row() { exec_rows field-success; }
 exec_failed_row() { exec_rows failed; exec_rows field-failed; }
 exec_compound_row() { exec_rows compound-js; exec_rows field-compound-js; }
 exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
+exec_suffix_row() { exec_rows printed-suffix; exec_rows captured-printed-suffix; exec_rows field-printed-suffix; }
 exec_output_row() { exec_rows failed-wrapper; }
 exec_id_row() { exec_rows other-id; }
 exec_rows
@@ -272,6 +279,9 @@ skill_load_control exec-standalone-js "$HOOK" '      | .input | strings' \
 skill_load_control exec-standalone-shell "$HOOK" '| ($skill | gsub("[.]"; "\\.")) as $escaped' \
   '    | ($cmd | split(";")[0]) as $cmd' HOOK exec_shell_row 'functions.exec compound shell' \
   'functions.exec output field compound shell'
+skill_load_control exec-printed-tail "$HOOK" '      | .input | strings' \
+  '      | sub("[.]slice\\(0, 0\\)"; "")' HOOK exec_suffix_row 'functions.exec printed output suffix' \
+  'functions.exec captured printed suffix' 'functions.exec output field printed suffix'
 skill_load_control exec-output "$HOOK" '| .text | strings' \
   '          | "Script completed\nOutput:\n"' HOOK exec_output_row 'functions.exec failed wrapper'
 skill_load_control exec-call-id "$HOOK" '    | (.call_id | strings | select(. != "")) as $id' \
