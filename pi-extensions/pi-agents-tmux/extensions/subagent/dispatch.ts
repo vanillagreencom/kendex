@@ -222,7 +222,7 @@ export function parallelResultLimits(cwd: string, count: number): ResultLimits {
 export function formatPreparedParallelSection(prepared: PreparedSingleResult): string {
 	const r = prepared.result;
 	const status = singleResultStatus(r);
-	const text = singleResultNeedsCompletion(r) ? prepared.text || needsCompletionMessage(r) : singleResultIsError(r) ? r.errorMessage || r.stderr || prepared.text || "(no output)" : [r.reuseNotice, prepared.text || "(no output)"].filter(Boolean).join("\n");
+	const text = singleResultNeedsCompletion(r) ? prepared.text || needsCompletionMessage(r) : singleResultIsError(r) ? prepared.text || "(no output)" : [r.reuseNotice, prepared.text || "(no output)"].filter(Boolean).join("\n");
 	const metadata = [
 		r.taskId ? `Task: ${r.taskId}` : undefined,
 		r.transcriptPath ? `Transcript: ${r.transcriptPath}` : undefined,

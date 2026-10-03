@@ -132,6 +132,48 @@ test("parallel sections surface artifacts before inline output", () => {
 	assert.ok(section.endsWith("short verdict"));
 });
 
+async function assertParallelErrorBounded(format: typeof formatPreparedParallelSection): Promise<void> {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-parallel-error-"));
+	tempDirs.push(cwd);
+	writeProjectSettings(cwd, { resultMaxBytes: 128, resultMaxLines: 3, preserveFullOutput: true });
+	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+	clearPackageConfigCache();
+	try {
+		const diagnostic = Array.from({ length: 80 }, (_, index) => `error-${index}-${"x".repeat(40)}`).join("\n");
+		const prepared = await prepareSingleResultForReturn({
+			agent: "reviewer-test",
+			agentSource: "project",
+			errorMessage: diagnostic,
+			exitCode: 1,
+			messages: [],
+			stderr: "",
+			stopReason: "error",
+			task: "review",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		}, join(cwd, "runtime"), cwd, "parallel-1-reviewer-test", undefined, parallelResultLimits(cwd, 1));
+		assert.equal(readFileSync(prepared.fullOutputPath!, "utf8"), diagnostic);
+
+		const section = format(prepared);
+		assert.ok(section.endsWith(`\n${prepared.text}`) && !section.includes("error-0-"), "parallel error section returns the bounded diagnostic tail");
+	} finally {
+		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		clearPackageConfigCache();
+	}
+}
+
+test("parallel error sections return the prepared, bounded diagnostic", () => assertParallelErrorBounded(formatPreparedParallelSection));
+
+test("control: a parallel error section that reselects the raw errorMessage is unbounded", async () => {
+	const mutant = await importRuntimeCopy(
+		"dispatch.ts",
+		'singleResultIsError(r) ? prepared.text || "(no output)"',
+		'singleResultIsError(r) ? r.errorMessage || r.stderr || prepared.text || "(no output)"',
+	) as { formatPreparedParallelSection: typeof formatPreparedParallelSection };
+	await assert.rejects(() => assertParallelErrorBounded(mutant.formatPreparedParallelSection), assert.AssertionError);
+});
+
 for (const source of ["provider", "stderr", "completed"] as const) {
 	test(`parallel preparation preserves ${source} output instead of neighbouring progress or diagnostics`, async () => {
 		await assertProviderProducer(runner, source);
@@ -159,7 +201,7 @@ test("control: error truncation keeps the head instead of the selected diagnosti
 	await assert.rejects(() => assertProviderProducer(mutant), assert.AssertionError);
 });
 
-test("control: synthesized errorMessage hides stderr behind partial output in parallel model text", async () => {
+test("control: synthesized errorMessage hides stderr behind partial output in parallel result details", async () => {
 	const mutant = await importRuntimeCopy("runner.ts", 'prepared.errorMessage = output.text;', 'prepared.errorMessage = finalOutput;') as typeof runner;
 	const preparation = spyOn(runner, "prepareSingleResultForReturn").mockImplementation(mutant.prepareSingleResultForReturn);
 	try { await assert.rejects(() => assertParallelPreparedOutput("stderr"), assert.AssertionError); }

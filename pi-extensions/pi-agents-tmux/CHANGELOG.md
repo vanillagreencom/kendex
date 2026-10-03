@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.3.3
+
+- A parallel sub-agent that fails with a long error returns its error within `resultMaxBytes` and `resultMaxLines`, as single and chain calls already do. The full error stays in the saved full-output file.
+
 ### 3.3.2
 
 - Background children and headless pane agents default to a 2-hour deadline (`bgTaskTimeoutMs` 7200000), up from 30 minutes, so a child whose full validation run, bounded at 60 minutes, starts within 60 minutes of launch outlives that run. The idle-stall watchdog does not reach background children, so a hung one now runs up to 2 hours before termination; set `bgTaskTimeoutMs` lower to keep a shorter bound.

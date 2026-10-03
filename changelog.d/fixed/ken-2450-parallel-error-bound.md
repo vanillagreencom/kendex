@@ -1,0 +1,1 @@
+- pi-agents-tmux 3.3.3: a parallel sub-agent that fails with a long error returns it within `resultMaxBytes` and `resultMaxLines`; the full error stays in the saved full-output file.

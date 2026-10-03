@@ -520,6 +520,7 @@ export async function assertParallelPreparedOutput(source: "provider" | "stderr"
 		assert.equal(rows.at(-1)?.status, completed ? "completed" : "failed");
 		assert.ok(rows.at(-1)?.message?.includes(completed ? "progress-head" : "403 forbidden"));
 		assert.ok(result.content[0]?.text.includes(completed ? "progress-head" : "403 forbidden"));
+		if (!completed) assert.ok(child.errorMessage?.includes("403 forbidden"), "result details carry the diagnostic the panel renders");
 		assert.ok(child.fullOutputPath);
 		assert.equal(readFileSync(child.fullOutputPath, "utf8"), completed ? progress : diagnostic);
 		assert.equal(child.truncation?.content.includes(completed ? "progress-head" : "403 forbidden"), true);
