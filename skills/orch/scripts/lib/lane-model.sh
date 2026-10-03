@@ -359,6 +359,12 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
     elif .binding_bucket == "credits" then . + {_tier: 2, _expires: 0, _score: .credits.balance}
     else . + {_tier: 1, _expires: 0, _score: .selection_score} end;
 
+# A cloud-session launch only admits the accounts lane_tier_inputs names for
+# the checkout repository. Null leaves every other launch unchanged.
+def with_lane_cloud_repo($cloud_repo):
+  if $cloud_repo == null or (.config_dir as $d | any($cloud_repo[]; . == $d)) then .
+  else . + {verdict: "cloud-repo-unset"} end;
+
 # Partition on the same verdict the named pick reads. The tier key orders the
 # room lanes, `lanes --help` § pick; a score cannot buy a launch past the
 # projected wall. The counts preserve the distinction between an allowance
@@ -372,8 +378,7 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
     | with_lane_selection_score($now)
     | with_lane_verdict(judged_wall; $max; $credit_floor)
     | with_lane_tier($pool; $cloud_floor; $retire; $now)
-    | if $cloud_repo == null or (.config_dir as $d | any($cloud_repo[]; . == $d)) then .
-      else . + {verdict: "cloud-repo-unset"} end ]
+    | with_lane_cloud_repo($cloud_repo) ]
   | { chosen: ([ .[] | select(.verdict == "room") ]
                 | sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall]) | first
                 | if . == null then null
@@ -401,17 +406,18 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR POOL CLOUD_FLOOR
 }
 
 # Judge one record by the pick tiers, using the reading or the launch projection.
+# The caller loads lane_tier_inputs so it can name the repository on refusal.
 lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR
   local now
-  lane_tier_inputs "[$1]" || return 1
   now="$(date +%s)" || return 1
   jq -c --arg model "$2" --argjson floor "$3" --argjson burn "$4" \
     --argjson max "$5" --argjson projected "$6" --argjson credit_floor "$7" \
     --arg pool "$TIER_POOL" --argjson cloud_floor "$CLOUD_CREDIT_FLOOR" \
-    --argjson retire "$TIER_RETIRE" --argjson now "$now" "$LANE_MODEL_JQ"'
+    --argjson retire "$TIER_RETIRE" --argjson cloud_repo "$TIER_CLOUD_REPO" --argjson now "$now" "$LANE_MODEL_JQ"'
     with_lane_binding($model; $floor) | with_lane_projection($burn)
     | with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
       | with_lane_tier($pool; $cloud_floor; $retire; $now)
+      | with_lane_cloud_repo($cloud_repo)
   ' <<<"$1"
 }
 

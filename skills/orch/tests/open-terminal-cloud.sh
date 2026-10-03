@@ -40,7 +40,19 @@ source "$TEST_DIR/lib/assertions.sh"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
-printf '#!/usr/bin/env bash\ncase "${1:-}" in list) echo "[]" ;; esac\nexit 0\n' > "$BIN/lanes"
+cat > "$BIN/lanes" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list) echo "[]" ;;
+  pick)
+    if [[ "${STUB_LANES_REPO_UNSET:-false}" == true ]]; then
+      printf 'lanes: cloud-repo-unset account=%s repo=owner/repo\n' "$3" >&2
+      exit 7
+    fi
+    ;;
+esac
+exit 0
+EOF
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
 { printf -- '--\n'; printf 'config=%s\ncwd=%s\n' "${CLAUDE_CONFIG_DIR:-}" "$PWD"; printf '%q\n' "$@"; } >> "$STUB_CLAUDE_LOG"
@@ -126,6 +138,16 @@ assert_eq "task=$([[ "$(sed -n 3p <<<"$ARGV")" == "$TASK_WORD" ]] && echo brief 
   "the task is the brief file's text closed by the session words, never a start command or the mailbox words"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-1 running standard" \
   "the record names the host and kind, the account and the session id, no window, and the standard tier the brief's orch words leave"
+
+echo "=== a named account with no repository entry stops before launch ==="
+run_ot STUB_LANES_REPO_UNSET=true -- "${CLOUD[@]}" CC-30
+assert_eq "rc=$RC refused=$(grep -cxF "lanes: cloud-repo-unset account=$LANE_DIR repo=owner/repo" <<<"$ERR" || true) made=$(made) claude=$([[ -e "$TMP_ROOT/claude.log" ]] && echo ran || echo none)" \
+  "rc=1 refused=1 made=no claude=none" "the launcher preserves the repository refusal and starts nothing" "$TMP_ROOT/err"
+CTRL="$(mutant_scripts mutant-named-cloud-repo open-terminal)" || exit 1
+mutate_file "$CTRL/open-terminal" '7) return 1 ;;' '7) : ;;'
+run_ot SCRIPT="$CTRL/open-terminal" STUB_LANES_REPO_UNSET=true -- "${CLOUD[@]}" CC-31
+assert_eq "rc=$RC made=$(made) claude=$([[ -e "$TMP_ROOT/claude.log" ]] && echo ran || echo none)" \
+  "rc=0 made=yes claude=ran" "control: ignoring the repository refusal launches the cloud session" "$TMP_ROOT/err"
 
 echo "=== what a cloud session cannot take refuses before anything is made ==="
 # KEY FIELDS|ARGS|OLD|NEW: the refusal's first line past its key word, the

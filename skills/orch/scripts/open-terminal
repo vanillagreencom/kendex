@@ -1100,6 +1100,8 @@ named_lane_judge() {
     # the account, and none counted is not none in flight, so the launch is
     # refused as `--lane auto` refuses it.
     6) ot_message lane-claims-unreadable "lane=${LANE_ENV#*=}" >&2; return 1 ;;
+    # The judge already names the missing repository entry on stderr.
+    7) return 1 ;;
     # Anything else is the judge itself failing, including the threshold it
     # refused as malformed. Its own keyed `lanes:` line is already on stderr
     # above this one and names which, so this line names none.

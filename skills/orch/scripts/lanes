@@ -239,7 +239,9 @@
 #         is that keyed stderr line alone; 4 is a directory that is no
 #         configured lane of this harness and no account the provider reports a
 #         reading for, which a launcher reads as nothing to
-#         judge rather than as a refusal; 1 is the judge itself failing, on a
+#         judge rather than as a refusal; 7 is `cloud-repo-unset`, a cloud
+#         session account with no repository entry, and prints no record;
+#         1 is the judge itself failing, on a
 #         measurement or on a --max-pct this parser refused. Every exit but 0
 #         puts its keyed line on stderr. A claim store that could not be read is
 #         a NOTICE on stderr and no exit of its own: the record's `claims` and
@@ -2824,7 +2826,8 @@ render_table() {
 #
 # Exit 0 room, 3 walled, 5 nothing measured this lane for this launch, 4 the
 # directory is no configured lane of this harness, 6 the claim store could not
-# be read, 1 the judge itself failed — a measurement, a wall, a verdict, or a
+# be read, 7 the cloud session account has no repository entry, 1 the judge
+# itself failed: a measurement, a wall, a verdict, or a
 # --max-pct this parser refused. Each refusal has its own status because a
 # launcher dispatches on the status and would otherwise name the wrong
 # dependency to an operator.
@@ -2935,10 +2938,15 @@ cmd_pick_lane() {
 	# lane's own claim is among the ones charged, so a projection would send
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
+	lane_tier_inputs "[$record]" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	record="$(jq -c "$LANE_MODEL_JQ"' del(.verdict) | lane_public' <<<"$record")" || return 1
 	case "$verdict" in
+		cloud-repo-unset)
+			message cloud-repo-unset "$found" "${TIER_REPO:-none}" >&2
+			return 7
+			;;
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
 			# The mapping is lib/lane-launch.sh's, shared with the launchers

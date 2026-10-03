@@ -217,8 +217,8 @@ CPICK='pick --harness claude --json'
 echo "=== tier 0 spends the expiring Claude cloud credit first ==="
 table \
   "on claude-cloud a credit outranks plan room, whatever its spent week reads|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude credits.remaining_dollars=241" \
-  "a named cloud credit has room despite its spent week|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=0 credits.remaining_dollars=241" \
-  "a named cloud credit has room under the launch projection|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --projected --json|rc=0 credits.remaining_dollars=241" \
+  "a named cloud credit has room despite its spent week|$CLOUD;$(dirs bclaude);$(repos bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=0 credits.remaining_dollars=241" \
+  "a named cloud credit has room under the launch projection|$CLOUD;$(dirs bclaude);$(repos bclaude)|pick --lane $H/.bclaude --harness claude --projected --json|rc=0 credits.remaining_dollars=241" \
   "a named credit on a local host keeps its walled plan verdict|$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=3" \
   "on a local kind the same pair is judged on plan windows alone|$(dirs aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
   "between two credits the earlier expiry is spent first|$CLOUD;$(dirs cclaude dclaude);$(repos cclaude dclaude)|$CPICK|rc=0 config_dir=$H/.cclaude" \
@@ -227,9 +227,9 @@ table \
 echo "=== the floor, the lock, the expiry and an unread credit ==="
 table \
   "a credit at the floor takes its walled plan verdict|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled=1" \
-  "a named credit at the floor stays walled|$CLOUD;$(dirs fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|pick --lane $H/.fclaude --harness claude --json|rc=3" \
-  "a named locked credit stays walled|$CLOUD;$(dirs lclaude)|pick --lane $H/.lclaude --harness claude --json|rc=3" \
-  "a named expired credit stays walled|$CLOUD;$(dirs eclaude)|pick --lane $H/.eclaude --harness claude --json|rc=3" \
+  "a named credit at the floor stays walled|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|pick --lane $H/.fclaude --harness claude --json|rc=3" \
+  "a named locked credit stays walled|$CLOUD;$(dirs lclaude);$(repos lclaude)|pick --lane $H/.lclaude --harness claude --json|rc=3" \
+  "a named expired credit stays walled|$CLOUD;$(dirs eclaude);$(repos eclaude)|pick --lane $H/.eclaude --harness claude --json|rc=3" \
   "a credit above the floor is tier 0|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=4|$CPICK|rc=0 config_dir=$H/.fclaude" \
   "a locked credit takes its walled plan verdict|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=3 walled=1" \
   "a credit past its expiry takes its walled plan verdict, named as no unread one|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=3 walled=1 line.cloud-credit-unread=none" \
@@ -241,6 +241,11 @@ echo "=== a cloud session reaches only a repository its account was given ==="
 table \
   "an account with no entry for this checkout's repository is passed over|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
   "with no account given the repository the pick names each one|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner/other|$CPICK|rc=3 line.cloud-repo-unset=account=$H/.bclaude,repo=Owner/Repo" \
+  "a named cloud account with no repository entry is refused|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=7 key=cloud-repo-unset,account=$H/.bclaude,repo=Owner/Repo" \
+  "a named projected cloud account with an entry for another repository is refused|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner/other|pick --lane $H/.bclaude --harness claude --projected --json|rc=7 key=cloud-repo-unset,account=$H/.bclaude,repo=Owner/Repo" \
+  "a named cloud account on plan room also needs repository access|$CLOUD;$(dirs aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=7 key=cloud-repo-unset,account=$H/.aclaude,repo=Owner/Repo" \
+  "a named listed cloud account on plan room passes|$CLOUD;$(dirs aclaude);$(repos aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \
+  "a named local account needs no cloud repository entry|$(dirs aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \
   "an entry nobody can read refuses the pick|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner|$CPICK|rc=1 line.invalid-cloud-repos=entry=bclaude=owner"
 
 echo "=== controls ==="
@@ -339,7 +344,7 @@ cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._tier, ._expires, (._
   "control: without the tier key plan room outranks the credit|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude"
 # shellcheck disable=SC2016  # Keep the tier call as a jq comment in the mutant.
 cloud_control mutant-named-cloud-tier lib/lane-model.sh '      | with_lane_tier($pool; $cloud_floor; $retire; $now)' '      # | with_lane_tier($pool; $cloud_floor; $retire; $now)' \
-  "control: without the named tier call its cloud credit stays walled|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=3 credits.remaining_dollars=241"
+  "control: without the named tier call its cloud credit stays walled|$CLOUD;$(dirs bclaude);$(repos bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=3 credits.remaining_dollars=241"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 cloud_control mutant-cloud-floor lib/lane-model.sh 'and $c.remaining_dollars > $cloud_floor and' 'and' \
   "control: without the floor comparison a credit at the floor is picked|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=0 config_dir=$H/.fclaude"
@@ -352,8 +357,13 @@ cloud_control mutant-cloud-expiry lib/lane-model.sh ' and $e > $now' '' \
 # shellcheck disable=SC2016
 cloud_control mutant-cloud-pool lib/lane-model.sh 'if $pool == "cloud-credit" and $read' 'if $read' \
   "control: without the pool test a local kind spends the credit first|$(dirs aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
-cloud_control mutant-cloud-repo lib/lane-model.sh 'else . + {verdict: "cloud-repo-unset"} end ]' 'else . end ]' \
+cloud_control mutant-cloud-repo lib/lane-model.sh 'else . + {verdict: "cloud-repo-unset"} end;' 'else . end;' \
   "control: without cloud-repo-unset an account with no entry is picked|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
+# shellcheck disable=SC2016  # Keep the named eligibility call as a jq comment.
+cloud_control mutant-named-cloud-repo lib/lane-model.sh '      | with_lane_cloud_repo($cloud_repo)' '      # | with_lane_cloud_repo($cloud_repo)' \
+  "control: without the named repository check an unlisted cloud account passes|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=0 config_dir=$H/.bclaude"
+cloud_control mutant-named-cloud-repo-status lanes 'return 7' 'return 1' \
+  "control: a repository refusal with the wrong status looks like a failed judge|$CLOUD;$(dirs bclaude)|pick --lane $H/.bclaude --harness claude --json|rc=1 key=cloud-repo-unset,account=$H/.bclaude,repo=Owner/Repo"
 # shellcheck disable=SC2016
 cloud_control mutant-cloud-unread lanes 'message cloud-credit-unread "$dir" >&2' ':' \
   "control: without its note a body with no credit drops it silently|$CLOUD;$(dirs uclaude aclaude);$(repos uclaude aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude line.cloud-credit-unread=none"
