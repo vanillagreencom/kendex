@@ -357,7 +357,10 @@ export function convertResponsesMessages<TApi extends Api>(
 					const [callId, itemIdRaw] = block.id.split("|");
 					const customInputProperty = options?.grammarToolInputProperties?.get(block.name);
 					let itemId: string | undefined = itemIdRaw;
-					if ((isDifferentModel && itemId?.startsWith("fc_")) || (customInputProperty === undefined && !itemId?.startsWith("fc_"))) itemId = undefined;
+					// OpenAI refuses a replayed item id whose prefix does not match the item
+					// type: fc_ for function_call, ctc_ for custom_tool_call.
+					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
+					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) itemId = undefined;
 					if (customInputProperty !== undefined) {
 						output.push({
 							type: "custom_tool_call",

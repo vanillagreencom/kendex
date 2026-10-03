@@ -1,0 +1,1 @@
+- pi-codex-minimal-tools 2.1.4: an `openai-codex` request no longer fails when history holds a grammar tool call another provider made, as in Pi 1.0.0.

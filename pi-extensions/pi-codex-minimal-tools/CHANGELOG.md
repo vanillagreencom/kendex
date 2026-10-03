@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.4
+
+- Pi 1.0.0 parity: a replayed tool call keeps its item id only when the same model made it and the id matches the call type, `fc_` for a function call and `ctc_` for a grammar tool call. Before, a grammar tool call that another provider made replayed on `openai-codex` with an `fc_` id, and OpenAI refused the request with "Expected an ID that begins with 'ctc'".
+
 ### 2.1.3
 
 - Codex SSE requests remain cancellable after headers arrive. Stalled SSE bodies and silent WebSockets end at the HTTP idle timeout; WebSocket handshakes use the connect timeout. A timed-out or cancelled handshake releases its transport instead of retaining sockets. Background image commands run at most four jobs at once, and session shutdown aborts them.

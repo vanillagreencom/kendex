@@ -32,6 +32,42 @@ for (const row of [
 	});
 }
 
+// Pi 1.0.0 keeps a replayed tool call's item id only when the same model made it
+// and its prefix matches the item type: fc_ for function_call, ctc_ for
+// custom_tool_call.
+const sameModel = { api: model.api, provider: model.provider, model: model.id };
+const otherModel = { ...sameModel, model: "gpt-6-other" };
+const otherProvider = { api: "anthropic-messages", provider: "anthropic", model: "claude-test" };
+for (const row of [
+	{ name: "grammar call drops an fc_ id", tool: "sql", callId: "call_1|fc_1", source: sameModel, type: "custom_tool_call", id: undefined },
+	{ name: "grammar call keeps a ctc_ id", tool: "sql", callId: "call_1|ctc_1", source: sameModel, type: "custom_tool_call", id: "ctc_1" },
+	{ name: "grammar call from a different model drops a ctc_ id", tool: "sql", callId: "call_1|ctc_1", source: otherModel, type: "custom_tool_call", id: undefined },
+	{ name: "grammar call from another provider drops its normalized fc_ id", tool: "sql", callId: "call_1|toolu_1", source: otherProvider, type: "custom_tool_call", id: undefined },
+	{ name: "function call keeps an fc_ id", tool: "lookup", callId: "call_1|fc_1", source: sameModel, type: "function_call", id: "fc_1" },
+	{ name: "function call drops a ctc_ id", tool: "lookup", callId: "call_1|ctc_1", source: sameModel, type: "function_call", id: undefined },
+	{ name: "function call from a different model drops an fc_ id", tool: "lookup", callId: "call_1|fc_1", source: otherModel, type: "function_call", id: undefined },
+]) {
+	test(`replayed tool call item id matches Pi: ${row.name}`, () => {
+		const target = { ...model, compat: { supportsOpenAIGrammarTools: true } } as typeof model;
+		const tools = [
+			{ name: "sql", description: "Generate SQL", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }, constrainedSampling: { type: "grammar", variants: { openai_lark: "start: /.+/" } } },
+			{ name: "lookup", description: "Look up", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+		];
+		const assistant = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: row.callId, name: row.tool, arguments: { query: "select 1" } }],
+			...row.source,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "toolUse",
+			timestamp: 0,
+		};
+		const body = buildRequestBody(target, normalizeContext({ messages: [assistant], tools } as never));
+		const call = body.input.find((item: any) => item.call_id === "call_1") as any;
+		assert.equal(call?.type, row.type);
+		assert.equal(call.id, row.id);
+	});
+}
+
 test("Codex request body forwards required tool choice", () => {
 	const body = buildRequestBody(model, normalizeContext({ messages: [], tools: [] } as any), { toolChoice: "required" } as any);
 	assert.equal(body.tool_choice, "required");
