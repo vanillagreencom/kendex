@@ -146,6 +146,13 @@ PROSE_DELIVERED='My review is complete; the final JSON verdict was already deliv
 PROSE_SQL='I found a critical SQL injection in login(); the JSON verdict was already delivered above.'
 PROSE_PREVIOUSLY='As I said, the review is done and the JSON was provided previously.'
 KILLED='killed from outside'
+# Claude Code's --output-format json result envelopes: a run that ended on an
+# error with no result text, and one whose result is the good review.
+ENVELOPE_ERROR='{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":37,"stop_reason":null,"result":"","session_id":"s"}'
+# the cause the gate records for ENVELOPE_ERROR
+ENVELOPE_ERROR_CAUSE='subtype=error_during_execution is_error=true num_turns=37 stop_reason=null'
+ENVELOPE_GOOD="$(jq -cn --arg review "$GOOD" '{type: "result", subtype: "success", is_error: false, num_turns: 12, stop_reason: "end_turn", result: $review, session_id: "s"}')" \
+  || { echo "stub-cli-world: envelope=jq-failed" >&2; exit 1; }
 
 # --- the world -----------------------------------------------------------------
 ROW="" WORK="" OUT="" HOME_DIR="" ROW_TMP=""
@@ -180,6 +187,9 @@ stdout_of() {
     truncated) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, one issue noted"}' ;;
     blockers-string) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"ok","blockers":"none","suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     agent-null) printf '{"agent":null,"timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
+    # a Claude Code result envelope: envelope:error or envelope:good
+    envelope:error) printf '%s' "$ENVELOPE_ERROR" ;;
+    envelope:good) printf '%s' "$ENVELOPE_GOOD" ;;
     agent-foreign) printf '{"agent":"someone-elses-reviewer","timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     -) printf '' ;;
     *) echo "UNKNOWN-STDOUT: $1" >&2; exit 2 ;;
@@ -465,7 +475,7 @@ content_class() {
     "$PROSE_PREVIOUSLY") printf 'prose:previously' ;;
     ANSWER) printf 'answer' ;;
     "{"*)
-      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" else "other" end) + ")"
+      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" elif .cause_source == "claude result" then .cause else "other" end) + ")"
              elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) + (if .qa_metadata.review_performed? == false then ":" + ((.qa_metadata.reason // "-") | tostring) else "" end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
       ;;
     "") printf 'empty' ;;
@@ -606,14 +616,17 @@ err_word() {
     # cause block by its source
     failed:exit:*) printf 'error=claude exited with code %s — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:empty:*) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration — refusing to write a review artifact response=%s\n→ external CLI failed: claude returned an empty response on a zero exit — check CLI auth and configuration\n' "$(record_path "$b")" ;;
+    failed:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) — refusing to write a review artifact response=%s\n→ external CLI failed: claude ended without a review on a zero exit (claude result subtype=%s)\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:timeout:*) printf 'error=claude timed out after %ss — refusing to write a review artifact response=%s\n→ external CLI failed: claude timed out after %ss\n' "$c" "$(record_path "$b")" "$c" ;;
     # a signal death: killed:<where>:<signal>:<exit>
     killed:*) printf 'error=claude was killed by %s (exit %s) — refusing to write a review artifact response=%s\n→ external CLI was killed: claude was killed by %s (exit %s)\n' "$b" "$c" "$(record_path "$a")" "$b" "$c" ;;
     cause:stderr) printf -- '--- cause (claude stderr) ---\n<quota>\n' ;;
     cause:stderr:killed) printf -- '--- cause (claude stderr) ---\n%s\n' "$KILLED" ;;
+    cause:result) printf -- '--- cause (claude result) ---\n%s\n' "$ENVELOPE_ERROR_CAUSE" ;;
     cause:stdout) printf -- '--- cause (claude stdout) ---\n<quota>\n' ;;
     preserved:*) printf '→ failed invocation preserved: %s\n' "$(record_path "$a")" ;;
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;
+    generic:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) target=claude\n' "$b" ;;
     generic:exit:*) printf 'error=claude exited with code %s target=claude\n--- stderr ---\n<quota>\n' "$b" ;;
     # the home
     home-rejected:*) printf '→ artifact home rejected (%s\n' "$(home_reason "$a" "$b")" ;;

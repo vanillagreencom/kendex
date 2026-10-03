@@ -241,12 +241,19 @@ Response handling and stamping (review and audit modes):
   with external-<target> for a lane or external-union(...) for a union.
 
 Default commands:
-  claude: claude -p --no-session-persistence --model claude-opus-5-5 --effort high
+  claude: claude -p --output-format json --no-session-persistence
+            --model claude-opus-5-5 --effort high
             --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep
             --allowedTools Bash(read-only:true),Read,Glob,Grep
             --setting-sources=
           Bash uses Claude's built-in read-only checks; dontAsk denies writes.
           User/project settings and their hooks are excluded.
+          The answer is the JSON result's result field. A result with no
+          text, or flagged is_error, is a CLI failure whose cause is the
+          result's own terminal fields (subtype, is_error, num_turns,
+          stop_reason, terminal_reason), cause_source "claude result".
+          Any command printing such a result envelope is read the same way;
+          text output passes through unchanged.
   codex:  codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh
             --disable hooks --ephemeral
 
@@ -297,7 +304,8 @@ Exit codes:
   5  review/audit: the external CLI failed to produce any review — it exited
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
-     as <output>.failed.json and the CLI's own error text is echoed on stderr
+     as <output>.failed.json and the CLI's own error text is echoed on stderr;
+     a Claude result envelope's terminal fields are that text when it has them
   6  review/audit: the external CLI was KILLED — it died to a signal, named in
      the report and the <output>.failed.json record. Something outside the run
      (a reaper, an operator) took the reviewer away; it did not refuse: retry,
@@ -1009,7 +1017,7 @@ target_model() {
 # SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
 # entry, not code.
 
-DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
+DEFAULT_CLAUDE_CMD="claude -p --output-format json --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
 DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --disable hooks --ephemeral"
 
 # Full command line for a target: its env override, else the built-in default.
@@ -2543,12 +2551,47 @@ run_target_cli() {
   return "$rc"
 }
 
+# Claude Code's --output-format json prints one result envelope; its `result`
+# string is the answer. Keyed on the envelope's own shape, never the target
+# name, so a command that keeps text output passes through unchanged. A text
+# run keeps no record of how it ended, so an envelope with no result text, or
+# flagged is_error, keeps its terminal fields in RESULT_ENVELOPE_CAUSE: the
+# cause of the failure that run is, ahead of either stream.
+RESULT_ENVELOPE_CAUSE=""
+RESULT_ENVELOPE_SUBTYPE=""
+unwrap_result_envelope() {
+  local text failed
+  RESULT_ENVELOPE_CAUSE=""; RESULT_ENVELOPE_SUBTYPE=""
+  jq -e 'type == "object" and .type == "result" and has("subtype") and has("is_error")' \
+    <<<"$RESULT" >/dev/null 2>&1 || return 0
+  if ! text=$(jq -r 'if (.result | type) == "string" then .result else "" end' <<<"$RESULT") \
+    || ! failed=$(jq -r '.is_error == true' <<<"$RESULT"); then
+    echo "second-opinion: result-envelope-read-failed target=$TARGET_CLI" >&2; exit 1
+  fi
+  if [[ -z "$text" || "$failed" == true ]]; then
+    if ! RESULT_ENVELOPE_SUBTYPE=$(jq -r '.subtype | tostring' <<<"$RESULT") \
+      || ! RESULT_ENVELOPE_CAUSE=$(jq -r '. as $e
+        | ([("subtype", "is_error", "num_turns", "stop_reason", "terminal_reason", "api_error_status")
+            | select(. as $k | $e | has($k))
+            | "\(.)=\($e[.] | if type == "string" then . else tojson end)"] | join(" ")),
+          ((.errors // []) | if type == "array" then .[] | tostring else empty end),
+          (if .is_error == true and (.result | type) == "string" and .result != "" then .result else empty end)' \
+        <<<"$RESULT"); then
+      echo "second-opinion: result-envelope-read-failed target=$TARGET_CLI" >&2; exit 1
+    fi
+  fi
+  RESULT="$text"
+}
+
 # Claude can report login/quota failures on stdout with an empty stderr.
 # Select the failure text before another invocation replaces either stream.
 select_cli_failure_cause() {
   local partial="$1"
   CLI_FAILURE_CAUSE=""; CLI_FAILURE_CAUSE_SOURCE=""
-  if [[ -s "$STDERR_TMP" ]]; then
+  if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then
+    CLI_FAILURE_CAUSE="$RESULT_ENVELOPE_CAUSE"
+    CLI_FAILURE_CAUSE_SOURCE="claude result"
+  elif [[ -s "$STDERR_TMP" ]]; then
     CLI_FAILURE_CAUSE=$(head -20 "$STDERR_TMP")
     CLI_FAILURE_CAUSE_SOURCE="${TARGET_CLI} stderr"
   elif [[ -n "$partial" ]]; then
@@ -2699,6 +2742,7 @@ collect_response() {
     EXIT_CODE=0
     attempt_started=$(date +%s)
     RESULT=$(run_target_cli "$invocation_prompt") || EXIT_CODE=$?
+    unwrap_result_envelope
     attempt_finished=$(date +%s)
     attempt_seconds=$((attempt_finished - attempt_started))
     attempt_cause=answered
@@ -2763,6 +2807,16 @@ elif [[ $EXIT_CODE -ne 0 ]]; then
 fi
 
 echo "→ Response received (${#RESULT} bytes)" >&2
+
+# A result envelope that ran and ended without review text names its own end;
+# the auth advice below is for a stdout that carried nothing at all.
+if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then
+  CLI_FAILURE="ended without a review on a zero exit (claude result subtype=$RESULT_ENVELOPE_SUBTYPE)"
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT"
+  jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
+  printf -- '--- cause (claude result) ---\n%s\n' "$RESULT_ENVELOPE_CAUSE" >&2
+  exit 1
+fi
 
 if [[ ${#RESULT} -eq 0 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
@@ -2953,7 +3007,7 @@ if $REVIEW_LIKE; then
     RETRY_PROBLEM=""
     # Byte counts of the raw responses, recorded into the artifact's qa_metadata
     # so a reformat that shrank the review is visible in the artifact itself.
-    # Measured on the untouched CLI output, before extraction.
+    # Measured on the response text before extraction.
     RAW_RESPONSE_BYTES=${#RESULT}
     RETRY_RESPONSE_BYTES=""
     if JSON=$(extract_json "$RESULT"); then

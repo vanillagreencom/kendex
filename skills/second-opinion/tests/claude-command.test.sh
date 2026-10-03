@@ -2,7 +2,7 @@
 # Pin the argv the built-in Claude target receives, not its help text.
 # The host probe checks enforcement; this fixture checks dispatch in every mode.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
-EXPECTED=$'-p\n--no-session-persistence\n--model\nclaude-opus-5-5\n--effort\nhigh\n--restricted\n--permission-mode\ndontAsk\n--tools\nBash,Read,Glob,Grep\n--allowedTools\nBash(read-only:true),Read,Glob,Grep\n--setting-sources='
+EXPECTED=$'-p\n--output-format\njson\n--no-session-persistence\n--model\nclaude-opus-5-5\n--effort\nhigh\n--restricted\n--permission-mode\ndontAsk\n--tools\nBash,Read,Glob,Grep\n--allowedTools\nBash(read-only:true),Read,Glob,Grep\n--setting-sources='
 # Each control retains the flag text but removes it from the executable default.
 ROWS='review|-
 audit|-
@@ -11,6 +11,7 @@ quick|-
 quick|override
 quick|example
 quick|project
+quick|--output-format json
 quick|--permission-mode dontAsk
 quick|--tools Bash,Read,Glob,Grep
 quick|--restricted
