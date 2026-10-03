@@ -3,7 +3,7 @@
 # name: reviewer-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` on Codex, whose `transcript_path` is the parent thread's, and its `transcript_path` elsewhere; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 # safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -17,27 +17,12 @@ set -euo pipefail
 export LC_ALL=C
 
 # What the refusals name, empty until each is known: the calling subagent,
-# whose type names the artifact path, the transcript the worktree is read
-# from, and the worktree's own dirty paths.
+# whose type names the artifact path, the payload field the transcript is
+# read from and the transcript itself, and the worktree's own dirty paths.
 AGENT_TYPE=""
+TRANSCRIPT_FIELD=""
 TRANSCRIPT=""
 STATUS=""
-
-# The payload field naming the subagent's own transcript. Codex's SubagentStop
-# carries the parent thread's rollout as `transcript_path` and the subagent's
-# as `agent_transcript_path` (Codex hooks reference, CLI 0.160.0). Which
-# harness runs this copy comes from where it is installed, the rule
-# lane-mail-check and skill-load-check read it by: `hook_target` writes the
-# codex copy under `.codex/hooks` at project scope and under `$CODEX_HOME/hooks`
-# at global scope.
-TRANSCRIPT_FIELD=transcript_path
-HOOK_DIR=${BASH_SOURCE[0]%/*}
-case "$HOOK_DIR" in
-  */.codex/hooks) TRANSCRIPT_FIELD=agent_transcript_path ;;
-esac
-if [ -n "${CODEX_HOME:-}" ] && [ "$HOOK_DIR" = "${CODEX_HOME%/}/hooks" ]; then
-  TRANSCRIPT_FIELD=agent_transcript_path
-fi
 
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `reviewer-stop-check: <key>=<value>`: a
@@ -65,7 +50,7 @@ refuse() { # KEY VALUE [DETAIL]
         echo "the payload's agent_id is not spelled in the alphabet the harness names subagents in, ASCII letters, digits, underscore and hyphen, so the marker a block would be recorded under is not this subagent's; refusing"
         ;;
       transcript=unreadable)
-        echo "the payload's $TRANSCRIPT_FIELD $TRANSCRIPT is not a readable file, so the reviewed worktree is unknown; refusing"
+        echo "the payload's $TRANSCRIPT_FIELD [$TRANSCRIPT] is not a readable file, so the reviewed worktree is unknown; refusing"
         ;;
       transcript=unread)
         echo "the transcript $TRANSCRIPT could not be read; refusing"
@@ -126,17 +111,29 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # matches before a trailing newline. jq hands back an id it accepted or the
 # empty string, and an accepted id is never empty, so the two cannot be
 # mistaken for one another downstream.
-FIELDS=$(printf '%s' "$INPUT" | jq -r --arg transcript "$TRANSCRIPT_FIELD" '
+#
+# The transcript is the subagent's own. Claude Code and Codex send it as
+# `agent_transcript_path` on SubagentStop, beside a `transcript_path` naming
+# the parent session's, whose delegation names an artifact path of its own and
+# can name another worktree; Codex sends the key null for a thread with no
+# rollout, which reads as empty and is refused below. A payload without the key
+# (Copilot, opencode, Cursor) names the subagent's in `transcript_path`. The
+# field read is a column, so the refusal names it.
+FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
+  (if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end) as $field |
   [str(.agent_type),
    (str(.agent_id) | if . != "" and gsub("[A-Za-z0-9_-]"; "") == "" then . else "" end),
-   str(.[$transcript]),
+   $field,
+   str(.[$field]),
    (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null) ||
   refuse payload invalid-json
 TAB=$'\t'
 AGENT_TYPE=${FIELDS%%"$TAB"*}
 REST=${FIELDS#*"$TAB"}
 AGENT_ID=${REST%%"$TAB"*}
+REST=${REST#*"$TAB"}
+TRANSCRIPT_FIELD=${REST%%"$TAB"*}
 REST=${REST#*"$TAB"}
 TRANSCRIPT=${REST%%"$TAB"*}
 ACTIVE=${REST#*"$TAB"}

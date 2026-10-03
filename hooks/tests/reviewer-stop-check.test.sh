@@ -3,10 +3,11 @@
 #
 # The hook blocks a reviewer subagent's stop once when the worktree its
 # transcript names through the artifact path is not clean, or when the
-# transcript names no artifact path at all. Pinned here: what names the
-# worktree (the newest <dir>/tmp/review-*.json mention, in a Write call or
-# a File: line), what counts as dirty (a modified tracked file, an untracked
-# file, one inside an untracked directory), the once-per-agent marker under the
+# transcript names no artifact path at all. Pinned here: which payload field
+# names the subagent's transcript, what names the worktree (the newest
+# <dir>/tmp/review-*.json mention, in a Write call or a File: line), what
+# counts as dirty (a modified tracked file, an untracked file, one inside an
+# untracked directory), the once-per-agent marker under the
 # reviewed repository's git common dir, that a sibling worktree's dirt is
 # not this worktree's, and the fail-closed edges — an unreadable payload,
 # a transcript that cannot be read, a git that cannot answer, an agent_id not
@@ -346,6 +347,140 @@ set -e
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=status" \
   "an unreadable status blocks rather than passing, the probe its value"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
+
+echo "reviewer-stop-check: the payload names the subagent's transcript"
+# Claude Code and Codex send the subagent's transcript as
+# agent_transcript_path beside the parent session's transcript_path; Copilot,
+# opencode and Cursor send the subagent's as transcript_path alone. In every row
+# the parent's transcript names a clean worktree, so the transcript the hook
+# read is the one its first line follows from.
+FIELD_DIRTY="$(new_repo field-dirty)"
+printf 'probe\n' >"$FIELD_DIRTY/probe.sh"
+FIELD_CLEAN="$(new_repo field-clean)"
+# The marker for the row naming no artifact goes under the repository the hook
+# runs in.
+FIELD_RUN="$(new_repo field-run)"
+FIELD_PARENT="$(transcript_for "$FIELD_CLEAN")"
+FIELD_CHILD="$(transcript_for "$FIELD_DIRTY")"
+FIELD_NOART="$TMP_ROOT/transcript.field-noart.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}\n' >"$FIELD_NOART"
+# A Codex rollout line naming the dirty worktree's artifact, as a Codex
+# reviewer's final message carries it.
+FIELD_ROLLOUT="$TMP_ROOT/rollout.field-child.jsonl"
+jq -n -c --arg text "Verdict: pass
+File: $FIELD_DIRTY/tmp/review-reviewer-test-20261002-101010.json" \
+  '{type:"response_item",payload:{type:"message",role:"assistant",
+    content:[{type:"output_text",text:$text}]}}' >"$FIELD_ROLLOUT"
+
+# A row is `label|shape|subagent transcript|expected`:
+#   shape       codex: Codex 0.160.0's SubagentStop fields; claude: Claude
+#               Code's; transcript-only: a payload carrying transcript_path
+#               and no agent_transcript_path key
+#   transcript  the subagent's own: rollout, child (dirty), noart, or null
+FIELD_ROWS="\
+a Codex payload reads agent_transcript_path, not the parent's transcript_path|codex|rollout|rc=2 first=reviewer-stop-check: worktree=$FIELD_DIRTY
+a Claude Code payload reads agent_transcript_path, not the parent's transcript_path|claude|child|rc=2 first=reviewer-stop-check: worktree=$FIELD_DIRTY
+a Claude Code subagent naming no artifact blocks, though the parent's transcript names one|claude|noart|rc=2 first=reviewer-stop-check: artifact=missing
+a null agent_transcript_path refuses rather than reading the parent's transcript_path|codex|null|rc=2 first=reviewer-stop-check: transcript=unreadable
+a payload without agent_transcript_path reads transcript_path|transcript-only|child|rc=2 first=reviewer-stop-check: worktree=$FIELD_DIRTY
+"
+
+field_payload() { # SHAPE SUBAGENT-TRANSCRIPT ID -> the payload text
+  local child
+  case "$2" in
+    rollout) child="$FIELD_ROLLOUT" ;;
+    child) child="$FIELD_CHILD" ;;
+    noart) child="$FIELD_NOART" ;;
+    null) child="" ;;
+    *) printf 'field rows: no transcript named %s\n' "$2" >&2; exit 2 ;;
+  esac
+  case "$1" in
+    codex)
+      jq -n -c --arg id "$3" --arg parent "$FIELD_PARENT" --arg child "$child" --arg cwd "$FIELD_RUN" \
+        '{session_id:"019a",transcript_path:$parent,cwd:$cwd,hook_event_name:"SubagentStop",
+          permission_mode:"default",turn_id:"t1",agent_id:$id,agent_type:"reviewer-test",
+          agent_transcript_path:(if $child == "" then null else $child end),
+          stop_hook_active:false,last_assistant_message:"Verdict: pass",model:"gpt-6.1"}'
+      ;;
+    claude)
+      jq -n -c --arg id "$3" --arg parent "$FIELD_PARENT" --arg child "$child" --arg cwd "$FIELD_RUN" \
+        '{session_id:"s1",transcript_path:$parent,cwd:$cwd,permission_mode:"default",
+          hook_event_name:"SubagentStop",stop_hook_active:false,agent_id:$id,
+          agent_type:"reviewer-test",agent_transcript_path:$child,
+          last_assistant_message:"Verdict: pass"}'
+      ;;
+    transcript-only)
+      jq -n -c --arg id "$3" --arg child "$child" --arg cwd "$FIELD_RUN" \
+        '{session_id:"s1",transcript_path:$child,cwd:$cwd,hook_event_name:"SubagentStop",
+          agent_id:$id,agent_type:"reviewer-test",stop_hook_active:false}'
+      ;;
+    *) printf 'field rows: no shape named %s\n' "$1" >&2; exit 2 ;;
+  esac
+}
+
+run_in() { # DIR PAYLOAD -> rc, stderr in $err
+  set +e
+  ( cd "$1" && env HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK" <<<"$2" ) >/dev/null 2>"$TMP_ROOT/stderr"
+  rc=$?
+  set -e
+  err="$(cat "$TMP_ROOT/stderr")"
+}
+
+# field_rows TAG: TAG keeps each run's agent ids apart, so a marker an earlier
+# run recorded never passes a later run's stop.
+field_rows() {
+  local tag="$1" row label shape child want n=0 before=$((PASS + FAIL))
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    IFS='|' read -r label shape child want <<<"$row"
+    n=$((n + 1))
+    run_in "$FIELD_RUN" "$(field_payload "$shape" "$child" "$tag$n")"
+    assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+  done <<<"$FIELD_ROWS"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "field rows: no row was asserted" >&2; exit 2; }
+}
+
+field_rows f
+
+# Must-fail controls: the field selection planted in a copy, the rows run
+# against it. Reading transcript_path alone reds every row that carries the
+# key; a swapped branch reds all of them.
+field_control() { # NAME OLD NEW FAILED-ROW...
+  local name="$1" old="$2" new="$3" mutant="$TMP_ROOT/field-$1.sh" log status row
+  shift 3
+  assert_eq "$(grep -c -F -- "$old" "$HOOK")" "1" "control $name finds the selection"
+  OLD="$old" NEW="$new" perl -pe 's/\Q$ENV{OLD}\E/$ENV{NEW}/' -- "$HOOK" >"$mutant"
+  assert_eq "$(grep -c -F -- "$old" "$mutant")" "0" "control $name planted its defect"
+  log="$TMP_ROOT/field-$name.log"
+  set +e
+  (
+    PASS=0
+    FAIL=0
+    HOOK="$mutant"
+    field_rows "$name"
+    [ "$FAIL" -eq 0 ]
+  ) >"$log" 2>&1
+  status=$?
+  set -e
+  assert_eq "$status" 1 "control $name: the planted hook turns the rows red"
+  assert_eq "$(grep -c '^  FAIL  ' -- "$log" || true)" "$#" "control $name: $# rows fail"
+  for row in "$@"; do
+    assert_eq "$(grep -c -F -x -- "  FAIL  $row" "$log" || true)" "1" "control $name: '$row' fails"
+  done
+}
+SELECTION='if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end'
+field_control transcript-path-only "$SELECTION" '"transcript_path"' \
+  "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
+  "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
+  "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
+  "a null agent_transcript_path refuses rather than reading the parent's transcript_path"
+field_control swapped "$SELECTION" \
+  'if has("agent_transcript_path") then "transcript_path" else "agent_transcript_path" end' \
+  "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
+  "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
+  "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
+  "a null agent_transcript_path refuses rather than reading the parent's transcript_path" \
+  "a payload without agent_transcript_path reads transcript_path"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not

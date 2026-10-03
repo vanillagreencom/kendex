@@ -209,8 +209,8 @@ pub fn known_event(name: &str) -> bool {
     EVENTS.iter().any(|event| event.name == name)
 }
 
-/// v1's codex event mapping: identity for the events codex understands,
-/// `None` for events that fall back to advisory prose in agent files.
+/// Codex's event mapping: identity for the events Codex fires, `None` for
+/// events it never fires, which fall back to advisory prose in agent files.
 pub fn codex_event(event: &str) -> Option<&str> {
     match event {
         "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse"
@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_event_mapping_matches_v1() {
+    fn codex_event_maps_the_events_codex_fires() {
         assert_eq!(codex_event("PreToolUse"), Some("PreToolUse"));
         assert_eq!(codex_event("SessionEnd"), Some("SessionEnd"));
         assert_eq!(codex_event("SubagentStop"), Some("SubagentStop"));
