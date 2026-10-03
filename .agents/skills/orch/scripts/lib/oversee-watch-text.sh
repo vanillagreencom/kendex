@@ -986,7 +986,7 @@ ow_message() { # REASON FIELD=VALUE...
     root-unknown-item) text='The --root item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
-    host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. With item= named, that lane is left out of each pass that cannot read its host, reported once while it stands, and the rest of the fleet is carried; without, nothing is.' ;;
+    host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
     lane-stall-secs-invalid) text='ORCH_WATCH_LANE_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-unread) text='The digest of a lane pull request body could not be taken, so whether the lane moved is unknown. The watch stops rather than report a stall it did not measure.' ;;
     pr-read-failed) text='The open pull request on the item branch could not be listed, so this pass settles nothing about a lane whose kind writes no file this watch reads: no start-stalled or lane-stalled goes out for it and its rows stand. gh'"'"'s own words follow.' ;;

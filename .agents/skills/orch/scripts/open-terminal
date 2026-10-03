@@ -220,29 +220,24 @@ fi
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
 # The host kind's capability line, read once: the launch arm is its `launch`,
-# a relaunch its `relaunch`, and every lane record carries its `kind`. A cloud
-# session runs Claude Code's own cloud from this checkout, so it takes the
-# claude harness and the --brief-file the overseer wrote, the item's whole
-# task: the session reaches no tracker to read it from.
+# and every lane record carries its `kind`. A cloud session runs Claude Code's
+# own cloud from this checkout, so it takes the claude harness and the
+# --brief-file the overseer wrote, the item's whole task: the session reaches
+# no tracker to read it from. That brief is one item's, so the launch takes one
+# item, and its relaunch is fresh, which this build does not make.
 host_caps_rc=0
 lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || host_caps_rc=$?
 [[ "$host_caps_rc" -eq 0 ]] || { ot_message host-capabilities-failed "host=$LANE_HOST" "exit=$host_caps_rc" >&2; exit 1; }
 lane_capability HOST_KIND kind
 lane_capability HOST_LAUNCH launch
-lane_capability HOST_RELAUNCH_KIND relaunch
 case "$HOST_LAUNCH" in
   window | ssh) ;;
   cloud-session)
-    [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" ]] \
-      || { ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" >&2; exit 1; }
+    [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" && "$RELAUNCH" != true && ${#ITEMS[@]} -eq 1 ]] \
+      || { ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" "relaunch=$RELAUNCH" "items=${#ITEMS[@]}" >&2; exit 1; }
     [[ -n "$BRIEF_FILE" ]] || { ot_message cloud-brief-missing "host=$LANE_HOST" >&2; exit 1; } ;;
   cloud-task) ot_message kind-unbuilt "kind=$HOST_KIND" >&2; exit 1 ;;
   *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; exit 1 ;;
-esac
-case "$HOST_RELAUNCH_KIND" in
-  resume) ;;
-  fresh) [[ "$RELAUNCH" != true ]] || { ot_message relaunch-unbuilt "host=$LANE_HOST" relaunch=fresh >&2; exit 1; } ;;
-  *) ot_message host-capabilities-failed "host=$LANE_HOST" "relaunch=$HOST_RELAUNCH_KIND" >&2; exit 1 ;;
 esac
 # The brief a --cmd template places as {brief}, read once, here, from the file
 # the caller wrote. The caller never quotes it: start_cmd renders it through
@@ -267,8 +262,12 @@ fi
 # The launch brief is the declared interface, not a harness status read.
 # Its workflow word names what runs; the item-tier line retains the inputs
 # without calling a tracker or classifying the item again. Older callers
-# supply no line, so their inputs are explicitly unknown.
-LAUNCH_TIER_RECORD="$(jq -cn --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
+# supply no line, so their inputs are explicitly unknown. A cloud session runs
+# no orch tier and its brief is the issue's own text, so the template alone,
+# empty there, is read: it records standard.
+TIER_TEXT="$CMD_TEMPLATE"
+[[ "$HOST_LAUNCH" == cloud-session ]] || TIER_TEXT+=$'\n'"$BRIEF_TEXT"
+LAUNCH_TIER_RECORD="$(jq -cn --arg text "$TIER_TEXT" '
   def count: if . == "-" then null else tonumber end;
   ([ $text | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb // "start") as $verb
   | ([ $text | capture("tier=(?:micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)") ] | first) as $inputs
@@ -2821,18 +2820,13 @@ cloud_bundle_risk() { # ACCOUNT
 # the session words. Its session id is the launch record: a launch that prints
 # none stops here, since no pane or listing stands in for it. The record
 # carries the kind, the account and that id, the local worktree as mail_root,
-# and no window. A tree that stands with no record naming the item is an
-# earlier launch of it that failed after its create, so the launch reuses it;
-# a recorded item's tree stays its claim. Status 75 is an item another session
-# owns; 1 a failure, its keyed line printed.
+# and no window. A failure after the create leaves the tree standing as the
+# item's claim. Status 75 is an item another session owns; 1 a failure, its
+# keyed line printed.
 cloud_session_launch() {
-  local wt out session rc=0 launched_at record_rc=0 create_args=("$wt_id")
+  local wt out session rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
-  LANE_RECORD_VALUE=absent
-  [[ "$FLEET" != true ]] || lane_record_read "$wt_id" item || return 1
-  [[ "$LANE_RECORD_VALUE" != absent || "$("$WORKTREE_CLI" exists "$wt_id" 2>/dev/null || true)" != true ]] \
-    || create_args+=(--reuse)
-  wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || rc=$?
+  wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
   [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }

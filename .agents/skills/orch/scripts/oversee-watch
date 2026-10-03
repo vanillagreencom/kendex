@@ -698,7 +698,8 @@ fleet_merge() { # [quiet]
   LAUNCHES=()
   host_routes_reset
   while IFS=$'\x1f' read -r item window host root harness running; do
-    [[ -n "$item" ]] && host_route "$item" "$host" "$root" || continue
+    [[ -n "$item" ]] || continue
+    host_route "$item" "$host" "$root"
     ITEMS+=("$item")
     [[ -z "$window" ]] || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
@@ -1802,13 +1803,11 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 check_mail() {
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at at
-  local mail_items host_flag args state
+  local mail_items host_flag args state="$MAIL_SEEN"
   HOSTED_GONE_ITEMS=""
   # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
   # pass forked after it skips only the lanes whose read failed just now.
   PASS_FAILED_ITEMS=""
-  host_unread_report
-  state="$MAIL_SEEN"
   mail_items=()
   for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
     item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")

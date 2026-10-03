@@ -268,6 +268,26 @@ host_case hosted_resolve_fails "$FIXTURE_HOST" "$RESOLVE_FAILS/oversee-watch"
 assert_eq "rc=$rc first=$(head -1 "$err") out=${out:-none}" \
   "rc=2 first=oversee-watch: host-resolve-failed path=$TMP_ROOT/resolve-fails/orch/scripts/lane-host out=none" \
   "a lane-host that cannot answer refuses the hosted lane, naming it" "$err"
+# Repeat mode refuses at its first read of a state recording a lane whose host
+# cannot declare its kind, before any pass runs, and never loops: the record
+# names the host it is read under, so nothing says where the lane is.
+new_case hosted_repeat
+sleep_stub
+fleet_state "$(lane_rec KEN-10 '' /srv/provider /srv/lane/ken-10)"
+err="$TMP_ROOT/e-hosted_repeat"
+out="$(repeat_watch_run ORCH_LANE_HOST=local -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc refused=$(grep -c '^oversee-watch: host-capabilities-unread host=/srv/provider$' "$err") passes=$(cat "$STUB_DIR"/prwatch.calls.* 2>/dev/null || echo 0)" \
+  "rc=2 refused=1 passes=0" "a repeat loop carrying a lane whose host declares no kind ends before its first pass" "$err"
+# One pass, which a mutant that never refuses still ends, of the same state.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutant capabilities_unread_local lib/watch-host-kinds.sh \
+  '  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$1" || die host-capabilities-unread "" "host=$1"' \
+  '  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$1" || LANE_CAPABILITIES="$(printf "files=local\tchannel=mailbox\tstatus=pane")"'
+out="$(WATCH_BIN="$MUTANT" run_watch ORCH_LANE_HOST=local OVERSEE_WATCH_SUCCEED=/nonexistent -- \
+  --max-loops 1 --state "$STUB_DIR/state.json" 2>"$err")" && rc=0 || rc=$?
+assert_eq "refused=$(grep -c '^oversee-watch: host-capabilities-unread host=/srv/provider$' "$err" || true)" "refused=0" \
+  "control: a failed capability read taken as a local lane fails the refusal row" "$err"
+
 # --- the watch's own record ---------------------------------------------------
 # A loop started under a shell that is not itself the watch, with overseer
 # flags after its `--`: the record names the loop, whose command line carries

@@ -3,10 +3,9 @@
 # declares channel=session, files=none and status=none: the mail pass leaves
 # it out, one open pull request list per repository serves the pass, and once
 # that pull request is open, a head and body that do not move for
-# ORCH_WATCH_LANE_STALL_SECS is lane-stalled. A host whose line cannot be read
-# leaves its lanes out of the pass and the rest of the fleet carried. The
-# kind's line is the real lane-host's; GitHub is the harness's gh stub. Its
-# start, the open pull request, is oversee_watch_start_stall.sh's.
+# ORCH_WATCH_LANE_STALL_SECS is lane-stalled. The kind's line is the real
+# lane-host's; GitHub is the harness's gh stub. Its start, the open pull
+# request, is oversee_watch_start_stall.sh's.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
@@ -14,23 +13,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
-FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 LAUNCHED=2026-08-15T10:00:00Z
 LAUNCHED_EPOCH="$(date -u -d "$LAUNCHED" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$LAUNCHED" +%s)"
 
-# record ITEM HOST ROOT — one running record with no window, launched at
-# LAUNCHED on ROOT, which a lane on this disk has as a worktree holding no
-# status file.
-record() {
-  [[ "$2" == /* ]] || mkdir -p "$3"
-  jq -cn --arg item "$1" --arg host "$2" --arg root "$3" --arg at "$LAUNCHED" \
-    '{item: $item, window: null, host: (if $host == "" then null else $host end), kind: (if $host == "claude-cloud" then $host else null end),
-      mail_root: $root, harness: "claude", session_id: "session_01CLOUD", launched_at: $at, running_at: $at, status: "running"}'
+# One running claude-cloud record, issue-1, its mail_root the local worktree
+# its launch made, which holds no status file.
+cloud_state() {
+  mkdir -p "$STUB_DIR/wt/issue-1"
+  jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" '{issue_id: "oversee", triaged: [], lanes: [
+    {item: "issue-1", window: null, host: "claude-cloud", kind: "claude-cloud", mail_root: $root, harness: "claude",
+     session_id: "session_01CLOUD", launched_at: $at, running_at: $at, status: "running"}]}' > "$STUB_DIR/state.json"
 }
-write_state() { # RECORD...
-  printf '%s\n' "$@" | jq -s '{issue_id: "oversee", triaged: [], lanes: .}' > "$STUB_DIR/state.json"
-}
-cloud_state() { write_state "$(record issue-1 claude-cloud "$STUB_DIR/wt/issue-1")"; }
 # open_pr HEAD BODY — the item branch's open pull request, or none where HEAD
 # is empty.
 open_pr() {
@@ -93,19 +86,6 @@ CASE_LABEL="the body changes" stall_case stall_body \
 CASE_LABEL="the head changes" stall_case stall_head \
   "100|abc111|## Lane status working||" "1900|abc222|## Lane status working||"
 
-echo "=== a host that declares no line leaves its lanes out and the rest carried ==="
-# issue-2 on a provider whose capabilities verb fails, issue-3 a local lane
-# with no status file past the start window.
-unread_case() { # NAME
-  new_case "$1"
-  write_state "$(record issue-2 "$FIXTURE_HOST" /srv/lane/issue-2)" "$(record issue-3 "" "$STUB_DIR/wt/issue-3")"
-  open_pr "" ""
-  watch 700 LANE_HOST_STUB_NO_CAPABILITIES=1 LANE_HOST_STUB_LOG="$STUB_DIR/host.log"
-}
-unread_case cloud_host_unread
-assert_eq "rc=$RC events=$EVENTS unread=$(grep -cxF "oversee-watch: host-capabilities-unread item=issue-2 host=$FIXTURE_HOST" "$STUB_DIR/err" || true)" \
-  "rc=2 events=EVENT start-stalled issue-3 age=700 unread=1" "the unread host is its lane's failure, the local lane judged" "$STUB_DIR/err"
-
 echo "=== controls ==="
 # cloud_mutant NAME SCRIPT OLD NEW — a copy of the scripts with one rule of
 # SCRIPT removed, the github skill beside it as the harness's mutants lay it.
@@ -134,7 +114,7 @@ watch 700
 assert_eq "red=$([[ "$(handoff_reads)" -gt 0 ]] && echo yes || echo no)" "red=yes" \
   "control: a handoff check reading a files=none lane's state fails the state row" "$STUB_DIR/err"
 # shellcheck disable=SC2016
-cloud_mutant list-once lib/watch-host-kinds.sh '    [[ "${entry%%|*}" == "$key" ]] || continue' '    continue'
+cloud_mutant list-once lib/watch-host-kinds.sh '    [[ "${entry%%|*}" == "$1" ]] || continue' '    continue'
 new_case cloud_list_mutant
 cloud_state
 open_pr abc111 "## Lane status"
@@ -153,10 +133,6 @@ cloud_mutant stall-repeat lib/watch-host-kinds.sh '    if (( passes == 0 )); the
 CASE_LABEL="control: reported every pass, the quiet pass after a report" stall_case stall_repeat_mutant \
   "100|abc111|## Lane status working||" "1900|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1800" \
   "1960|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1860"
-# shellcheck disable=SC2016
-cloud_mutant host-unread lib/watch-host-kinds.sh '  host_capabilities "$2" || { HOST_UNREAD+=("$1=$2"); return 1; }' '  host_capabilities "$2" || die host-capabilities-unread "" "host=$2"'
-unread_case cloud_host_unread_mutant
-assert_eq "rc=$RC events=$EVENTS" "rc=2 events=" "control: a host that ends the watch leaves the local lane unjudged" "$STUB_DIR/err"
 unset CLOUD_WATCH
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

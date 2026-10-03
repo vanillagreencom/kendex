@@ -4,32 +4,27 @@
 # its capability line, which fleet_merge routes the record by, and the
 # judgement of a lane whose kind declares status=none, which no process read
 # reaches. Sourced by oversee-watch, and like the rest of its lib/ it reads
-# that script's globals (HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN, MAIL_SEEN,
-# PASS_NOW, LONG_PASSES, MARK_REPEAT, LANE_STALL_SECS) and calls its `die`,
-# `ow_message`, lane failure and lane row helpers.
+# that script's globals (HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN, PASS_NOW,
+# MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message` and lane row
+# helpers.
 
 # The records host_route sorts by their host kind: the host each hosted record
 # names, as `<item>=<host>`, the items whose kind declares no mailbox channel,
-# no file access or no status read, those whose status is a provider verb, and
-# those left out because their host declared no line, as `<item>=<host>`.
+# no file access or no status read, and those whose status is a provider verb.
 HOSTS=()
 MAILLESS=()
 FILELESS=()
 STATUSLESS=()
 STATUS_VERB=()
-HOST_UNREAD=()
-host_routes_reset() { HOSTS=(); MAILLESS=(); FILELESS=(); STATUSLESS=(); STATUS_VERB=(); HOST_UNREAD=(); }
+host_routes_reset() { HOSTS=(); MAILLESS=(); FILELESS=(); STATUSLESS=(); STATUS_VERB=(); }
 
 # Routes one running record by its host kind's declared line, never by a host
 # name: its files decide where its mailbox, status file and state are read,
 # its channel whether the mail pass reads it, and its status how it is judged,
-# a provider asked only where the kind declares status=verb. Status 1 for a
-# record whose host's line could not be read: it is left out of this pass and
-# the rest of the fleet is carried, the mail pass reporting it as its lane's
-# failure (host_unread_report); the next read asks again.
+# a provider asked only where the kind declares status=verb.
 host_route() { # ITEM HOST ROOT
   local files channel status
-  host_capabilities "$2" || { HOST_UNREAD+=("$1=$2"); return 1; }
+  host_capabilities "$2"
   lane_capability files files
   lane_capability channel channel
   lane_capability status status
@@ -75,11 +70,7 @@ item_in() { # ITEM ITEMS...
 }
 # The capability line each host a record names declares, read once per host
 # per process (../../schemas/lane-host.md § Host kinds), as `<host><US><line>`.
-# A read that fails is asked again at the next fleet read, lane-host's own
-# words reaching stderr the first time alone: the first fleet read runs before
-# the scratch directory a detail is kept in.
 HOST_CAPABILITIES=()
-HOSTS_UNREAD=" "
 host_capabilities() { # HOST — sets LANE_CAPABILITIES
   local entry
   for entry in ${HOST_CAPABILITIES[@]+"${HOST_CAPABILITIES[@]}"}; do
@@ -87,25 +78,10 @@ host_capabilities() { # HOST — sets LANE_CAPABILITIES
     LANE_CAPABILITIES="${entry#*$'\x1f'}"
     return 0
   done
-  if [[ "$HOSTS_UNREAD" == *" $1 "* ]]; then
-    lane_capabilities_read "$SCRIPT_DIR/lane-host" "$1" 2>/dev/null || return 1
-  elif ! lane_capabilities_read "$SCRIPT_DIR/lane-host" "$1"; then
-    HOSTS_UNREAD+="$1 "
-    return 1
-  fi
+  # lane-host's own words reach stderr ahead of the refusal: the first
+  # fleet read runs before the scratch directory a detail is kept in.
+  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$1" || die host-capabilities-unread "" "host=$1"
   HOST_CAPABILITIES+=("$1"$'\x1f'"$LANE_CAPABILITIES")
-}
-
-# Each record host_route left out, reported in the mail pass as its lane's
-# failure: noted once while it stands, as any lane read that failed is, and
-# cleared by the lane's next read.
-host_unread_report() {
-  local entry
-  for entry in ${HOST_UNREAD[@]+"${HOST_UNREAD[@]}"}; do
-    lane_failure_set host-capabilities-unread "" "item=${entry%%=*}" "host=${entry#*=}"
-    lane_failure_report "${entry%%=*}" "$MAIL_SEEN"
-    mail_row_commit "$LANE_FAILURE_STATE"
-  done
 }
 
 # The lane's own open pull request on ITEM's branch, in the first repository
@@ -113,15 +89,16 @@ host_unread_report() {
 # OPEN_PR_DIGEST. Only a head the repository owner holds is the lane's,
 # lib/lane-state.sh's lane_own rule, so a fork's pull request on a guessable
 # branch name stands for nothing. One `gh pr list` per repository per item per
-# long pass: the answer is kept for that pass's second caller. Status 0 for
-# one found, 1 for none open, 2 for a list that failed, its words noted.
+# long pass: the answer is kept, keyed on the item, for that pass's second
+# caller, and the forked long pass bounds its life. Status 0 for one found, 1
+# for none open, 2 for a list that failed, its words noted.
 OPEN_PR_HEAD=""
 OPEN_PR_DIGEST=""
 OPEN_PR_SEEN=()
 item_open_pr() { # ITEM
-  local branch repo list row rc=1 entry key="$1 $LONG_PASSES"
+  local branch repo list row rc=1 entry
   for entry in ${OPEN_PR_SEEN[@]+"${OPEN_PR_SEEN[@]}"}; do
-    [[ "${entry%%|*}" == "$key" ]] || continue
+    [[ "${entry%%|*}" == "$1" ]] || continue
     IFS='|' read -r _ rc OPEN_PR_HEAD OPEN_PR_DIGEST <<<"$entry"
     return "$rc"
   done
@@ -140,7 +117,7 @@ item_open_pr() { # ITEM
     rc=0
     break
   done
-  OPEN_PR_SEEN+=("$key|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST")
+  OPEN_PR_SEEN+=("$1|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST")
   return "$rc"
 }
 
