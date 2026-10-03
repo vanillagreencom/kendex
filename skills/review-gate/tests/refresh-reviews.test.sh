@@ -268,16 +268,18 @@ if [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 6 and ([.writes[-2:][] | [.ki
   ok 'a late merged finding is filed and answered alone'
 else bad 'late merged finding' "$OUT"; fi
 
-# Fetched documents past the kernel's per-argument limit (MAX_ARG_STRLEN,
-# 128 KiB on Linux): PR 1's threads, review comments and findings each
-# exceed 256 KiB, through long human thread ids and one long automatic body.
+# Fetched documents past both argv limits: Linux caps one argument at 128 KiB
+# (MAX_ARG_STRLEN) and macOS a whole command at 1 MiB (kern.argmax). PR 1's
+# threads, review comments and findings each exceed 256 KiB, through long
+# human thread ids and one long automatic body, and the findings alone, like
+# the threads and comments together, exceed 2 MiB through that body.
 large_fixture() {
   python3 - "$BASE" "$FIXTURE" <<'PY'
 import json, sys
 base, out = sys.argv[1:]
 world = json.load(open(base))
 pr = world['prs'][0]
-pr['comments'][0]['body'] = 'Rendered source defect. ' + 'x' * (300 * 1024)
+pr['comments'][0]['body'] = 'Rendered source defect. ' + 'x' * (2 * 1024 * 1024)
 for n in range(300):
     pr['threads'].append({'id': f'L{n}' + 'p' * 1000, 'root': 5000 + n, 'resolved': False})
     pr['comments'].append({'id': 5000 + n, 'body': 'Human note.', 'path': 'docs/guide.md',
@@ -285,7 +287,7 @@ for n in range(300):
 compact = lambda doc: len(json.dumps(doc, separators=(',', ':')))
 threads = [{'id': t['id'], 'isResolved': t['resolved'], 'isOutdated': False, 'root': t['root']} for t in pr['threads']]
 sizes = [compact(threads), compact(pr['comments']), compact(pr['comments'][0]['body'])]
-if min(sizes) <= 256 * 1024:
+if min(sizes) <= 256 * 1024 or min(sizes[2], sizes[0] + sizes[1]) <= 2 * 1024 * 1024:
     sys.exit(f'refresh-reviews: fixture=below-argv-limit value={sizes}')
 json.dump(world, open(out, 'w'))
 PY
@@ -546,17 +548,19 @@ run_writer
 if [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4' "$FIXTURE" >/dev/null; then
   ok 'must-fail control: accepting missing thread state permits writes from an incomplete read'
 else bad 'outdated shape control did not detect the planted defect' "$OUT"; fi
-# Each fetched document handed back to argv fails the argv-limit case.
-while IFS='|' read -r name needle replacement; do
+# Each fetched document handed back to argv fails the argv-limit case, under
+# the key of the jq call it breaks and with that failure's own text.
+while IFS='|' read -r name needle replacement key text; do
   mutant "$name" "$needle" "$replacement"
   large_fixture
   run_writer
-  if ! filed_and_resolved; then
+  if ! filed_and_resolved && grep -q "^refresh-reviews-error=$key value=1\$" <<<"$OUT" \
+      && [ "$(grep -c '^refresh-reviews-error=' <<<"$OUT")" -eq 1 ] && grep -qF -- "$text" <<<"$OUT"; then
     ok "must-fail control: $name fails the argv-limit case"
   else bad "$name control did not detect the planted defect" "$OUT"; fi
 done <<'ARGV'
-actions-argv-mutant|actions="$(jq -nc --arg prefix|actions="$(jq -nc --argjson threads "$threads" --argjson comments "$review_comments" --arg prefix
-findings-argv-mutant|jq -en 'input as $findings|jq -en --argjson findings "$findings" 'input as $findings
+actions-argv-mutant|actions="$(jq -nc --arg prefix|actions="$(jq -nc --argjson threads "$threads" --argjson comments "$review_comments" --arg prefix|actions-jq|Argument list too long
+findings-argv-mutant|jq -en 'input as $findings|jq -en --argjson findings "$findings" 'input as $findings|report-shape|::error::refresh-reviews-error=report-shape pr=1
 ARGV
 # Each join refusal reported under the other's key fails its join case.
 while IFS='|' read -r name needle replacement mode key; do
