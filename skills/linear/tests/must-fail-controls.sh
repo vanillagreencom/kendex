@@ -36,8 +36,9 @@ SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
 SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
 
-# Controls run concurrently: each one mutates its own copy of the skill and
-# runs the suite out of that copy, so no two of them share anything writable.
+# Jobs run concurrently, one control's checks or one of its mutations each, so
+# a control with many mutations spreads over every slot: each job stages its
+# own copy of the skill and control files, so no two share anything writable.
 CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
 WORK="$(mktemp -d)"
@@ -161,28 +162,65 @@ control_write() {
 # --- runner -----------------------------------------------------------------
 
 PIDS=()
-BATCH=()
+JOBS=()
+SELECTED=()
+NEXT=0
 FAILURES=0
 
-# Wait out the launched batch, score one failure per control that reported
-# one, then print what that batch found. `wait -n` would keep the pipe full
+# launch JOB COMMAND... — COMMAND in the background, logging to JOB's log.
+launch() {
+	local job="$1"
+	shift
+	"$@" >"$WORK/$job.log" 2>&1 &
+	PIDS+=("$!")
+	JOBS+=("$job")
+	[[ ${#PIDS[@]} -lt "$CONTROL_JOBS" ]] || reap
+}
+
+# Wait out the launched batch, record each job's status, then print what
+# that batch completed. `wait -n` would keep the pipe full
 # instead of draining it in batches, but this skill supports Bash 4.0 and
 # newer (README § Setup) and `wait -n` arrived in 4.3.
 #
 # Printing here rather than after the last batch is what a run killed by CI,
 # a wrapper timeout or Ctrl-C leaves behind: the verdicts already reached.
-# A batch's pids are in roster order and the batches are too, so incremental
-# output is the same order the whole run would have printed.
 reap() {
-	local pid stem
-	for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-		wait "$pid" || FAILURES=$((FAILURES + 1))
-	done
-	for stem in ${BATCH[@]+"${BATCH[@]}"}; do
-		cat "$WORK/$stem.log"
+	local i
+	for ((i = 0; i < ${#PIDS[@]}; i++)); do
+		wait "${PIDS[i]}"
+		printf '%s\n' "$?" >"$WORK/${JOBS[i]}.rc"
 	done
 	PIDS=()
-	BATCH=()
+	JOBS=()
+	flush
+}
+
+# Print each verdict in roster order up to the first not yet in. Batches are
+# reaped whole in launch order, so a control's last mutation reaped means all
+# were. A control scores once, printing its lowest-numbered failing mutation.
+flush() {
+	local stem n k log
+	while [[ "$NEXT" -lt ${#SELECTED[@]} ]]; do
+		stem="${SELECTED[NEXT]}"
+		[[ -f "$WORK/$stem.rc" ]] || return 0
+		log="$WORK/$stem.log"
+		if [[ "$(cat "$WORK/$stem.rc")" -eq 0 ]]; then
+			n="$(cat "$WORK/$stem.count")"
+			[[ -f "$WORK/$stem/mutation$n.rc" ]] || return 0
+			log=""
+			for ((k = n; k >= 1; k--)); do
+				[[ "$(cat "$WORK/$stem/mutation$k.rc")" -eq 0 ]] ||
+					log="$WORK/$stem/mutation$k.log"
+			done
+		fi
+		if [[ -n "$log" ]]; then
+			cat "$log"
+			FAILURES=$((FAILURES + 1))
+		else
+			printf 'ok       %s.test.sh\n' "$stem"
+		fi
+		NEXT=$((NEXT + 1))
+	done
 }
 
 # stage_copy ROOT — a fresh, unmutated copy of the skill at ROOT.
@@ -197,10 +235,8 @@ stage_copy() {
 # whole run. Its mutation is on disk; only the expectations and the mutation
 # count need carrying back out.
 #
-# One expectation file, not one per mutation: control_expect is ungated, so
-# every pass writes the same set, and the runner reads it once from the
-# counting pass. A per-mutation file would name an expectation model this
-# runner does not have.
+# One expectation file per pass only because passes run concurrently:
+# control_expect is ungated, so every pass writes the same set.
 apply_control() {
 	CONTROL_ROOT="$1"
 	CONTROL_MUTATION_ONLY="$2"
@@ -225,11 +261,12 @@ fail_set() {
 	printf '%s\n' "$1" | sed -n 's/^FAIL: //p' | LC_ALL=C sort -u >"$2"
 }
 
-run_one() {
+# prepare_one SUITE STEM — a control's checks before its mutations run.
+prepare_one() {
 	local suite="$1" stem="$2"
 	local control="$CONTROLS_DIR/$stem.control.sh"
 	local root="$WORK/$stem/linear"
-	local out rc mutations k want shared trailing snapshot="$WORK/$stem/staged"
+	local mutations k shared trailing snapshot="$WORK/$stem/staged"
 
 	if [[ ! -f "$control" ]]; then
 		printf 'MISSING  %-52s no controls/%s.control.sh\n' "$suite" "$stem"
@@ -316,14 +353,25 @@ run_one() {
 			"$suite" "$(printf '%s' "$shared" | head -n 1)"
 		return 1
 	fi
+}
+
+# mutate_one SUITE STEM K... — each mutation K of a control prepare_one passed.
+mutate_one() {
+	local suite="$1" stem="$2" root out rc k want
+	shift 2
+	CONTROL_NAME="$stem"
+	CONTROL_PATH="$CONTROLS_DIR/$stem.control.sh"
 
 	# Every mutation gets a copy no suite has run in, mutation 1 included:
 	# the counting pass's copy is the one the green check ran the suite out
 	# of, and residue left there would read as the mutation to the NOOP
 	# check below and would put mutation 1's failures on a different footing
 	# from the sets they are measured against.
-	for ((k = 1; k <= mutations; k++)); do
+	for k; do
 		root="$WORK/$stem/mutation$k/linear"
+		CONTROL_COUNT_FILE="$root.count"
+		CONTROL_EXPECT_FILE="$root.expect"
+		CONTROL_PENDING_FILE="$root.pending"
 		stage_copy "$root"
 		if ! apply_control "$root" "$k"; then
 			printf 'BADCTRL  %-52s mutation %d did not apply cleanly\n' "$suite" "$k"
@@ -365,14 +413,11 @@ run_one() {
 			fi
 		done < <(grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2-)
 	done
-
-	printf 'ok       %s\n' "$suite"
-	return 0
 }
 
 main() {
 	local -a wanted=("$@") stems=()
-	local suite_path control_path suite stem want total=0 orphans=0
+	local suite_path control_path suite stem want k total=0 orphans=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
 		stems+=("$(basename "$suite_path" .test.sh)")
@@ -405,10 +450,15 @@ main() {
 			continue
 		fi
 		total=$((total + 1))
-		run_one "$suite" "$stem" >"$WORK/$stem.log" 2>&1 &
-		PIDS+=("$!")
-		BATCH+=("$stem")
-		[[ ${#PIDS[@]} -lt "$CONTROL_JOBS" ]] || reap
+		SELECTED+=("$stem")
+		launch "$stem" prepare_one "$suite" "$stem"
+	done
+	reap
+	for stem in ${SELECTED[@]+"${SELECTED[@]}"}; do
+		[[ "$(cat "$WORK/$stem.rc")" -eq 0 ]] || continue
+		for ((k = 1; k <= $(cat "$WORK/$stem.count"); k++)); do
+			launch "$stem/mutation$k" mutate_one "$stem.test.sh" "$stem" "$k"
+		done
 	done
 	reap
 
