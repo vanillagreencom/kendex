@@ -146,7 +146,7 @@ jobs:
 
 ### Adoption and the inventory
 
-- The adopter writes the caller from `refresh/kendex-refresh.yml` in its release tree. It accepts the existing file when its bytes equal any template in kendex default-branch history at either template path. This is the KEN-2416 check, extended to the new path, so a hand edit is still refused and kept.
+- The adopter writes the caller from `refresh/kendex-refresh.yml` in its release tree. It accepts the existing file when its bytes equal any template in kendex default-branch history at either template path. This is the KEN-2416 check, extended to the new path, so a hand edit is still refused and kept. Its environment check judges the names the shared workflow declares, because the caller declares no `environment:` and no secret (Migration order step 2).
 - The adopter removes the caller's `.kendex-generated.json` record, and `kendex verify` no longer compares it. The history check is its equality check.
 - A refresh pull request that changes the caller classifies `standard`, so the overseer or a maintainer merges it (KEN-2539). With no version in the file, that happens only when the triggers change.
 
@@ -202,9 +202,9 @@ Steps are the [Migration order](#migration-order). A row lands in the build of i
 ## Migration order
 
 1. **Prerequisites**: KEN-2539, KEN-2557, KEN-2536 and KEN-2310 merge (owner ruling). KEN-2514 completes. Each consumer's overseer confirms one passing run on its current workflow. A consumer that cannot pass is that overseer's drift; no kendex shim is added for it.
-2. **Build A**: the shared workflow, `refresh/`, the caller template, the `release.yml` trigger, the owner hand-off in app-deploy step 4, and the run-start queue read. The owner creates the tag ruleset. The old copies under `skills/review-gate/scripts/` and the old-path template stay unchanged, because every consumer still runs its committed copy.
-3. **Release**: a release is cut and published through app-deploy, and the owner creates `v1` at its commit.
-4. **Build B**: once `v1` exists, `skills/review-gate/templates/kendex-refresh.yml` becomes byte-equal to `refresh/kendex-refresh.yml`, with one test row holding them equal. The old copies except `install-latest.sh` leave `skills/review-gate/scripts/`. Each consumer's next run, still on its committed copy, writes the render without the scripts and adopts the caller in one rolling pull request. Once that pull request merges, the consumer runs the shared workflow. From here a hand run of the adopter, for a first adoption or trusted removal, runs `refresh/adopt-refresh.sh` from a kendex checkout at the release tag.
+2. **Build A**: the shared workflow, `refresh/`, the caller template, the `release.yml` trigger, the owner hand-off in app-deploy step 4, and the run-start queue read. The owner creates the tag ruleset. The old-path template and the old copies under `skills/review-gate/scripts/` stay unchanged, because every consumer still runs its committed copy, except `adopt-refresh.sh`, which gains one branch. Today's adopter takes the replacement template's `environment:` line and `secrets.*` names and passes them to `validate-standard.sh --environment-only` (`adopt-refresh.sh` lines 33 to 37, the same at v1.3.0 and v1.5.1). The caller has neither, so both values are empty, and `validate-standard.sh` refuses them with `standard-setting-missing` before the push. The branch checks a replacement template whose job calls the shared workflow, rather than declaring `environment:` and secrets, against the environment and secret names the shared workflow declares (`kendex`; `FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY`), and exports none of the empty values. Each consumer receives it through its normal render rolling pull request.
+3. **Release**: a release is cut and published through app-deploy, and the owner creates `v1` at its commit. Build B merges only after each consumer's default branch holds the Build A adopter, confirmed as step 1 confirms: by its blob SHA or by one passing run on it.
+4. **Build B**: once `v1` exists, `skills/review-gate/templates/kendex-refresh.yml` becomes byte-equal to `refresh/kendex-refresh.yml`, with one test row holding them equal. The old copies except `install-latest.sh` leave `skills/review-gate/scripts/`. Each consumer's next run, still on its committed copy, whose adopter is Build A's (step 3), writes the render without the scripts and adopts the caller in one rolling pull request. Once that pull request merges, the consumer runs the shared workflow. From here a hand run of the adopter, for a first adoption or trusted removal, runs `refresh/adopt-refresh.sh` from a kendex checkout at the release tag.
 5. **Observe**: each consumer's first run of the shared workflow starts its 7-day sample. The overseer supplies the private rows.
 6. **Build C**: delete the rows marked step 6, after the compatibility window (Owner questions, item 1).
 
@@ -240,13 +240,14 @@ Steps are the [Migration order](#migration-order). A row lands in the build of i
 Filed from this design after approval.
 
 - **Build A**:
-  - Contents: the shared workflow, `refresh/`, the caller template, the `release.yml` `v*.*.*` trigger, and the owner hand-off in app-deploy step 4: it names the owner as the actor who moves `vX`, and tells a lane to stop after publishing and report the tag and its commit. The adopter reads its own tree, drops the inventory record and searches both template paths. The run-start queue read. The refresh suites and their CI shard move with the scripts.
+  - Contents: the shared workflow, `refresh/`, the caller template, the `release.yml` `v*.*.*` trigger, and the owner hand-off in app-deploy step 4: it names the owner as the actor who moves `vX`, and tells a lane to stop after publishing and report the tag and its commit. The adopter reads its own tree, drops the inventory record and searches both template paths. The consumer-side `skills/review-gate/scripts/adopt-refresh.sh` gains the shared-workflow caller branch (Migration order step 2). The run-start queue read. The refresh suites and their CI shard move with the scripts.
   - First acceptance run: `review-gate-sandbox` calls the shared workflow. The run proves that the called job reads the sandbox's `kendex` environment secrets, and that a caller on a non-default branch gets no secret.
   - Must-fail controls:
     - the shared workflow runs a script from the consumer checkout;
     - the installed engine reports a version other than the tag on the checked-out commit;
     - the workflow's commit carries no stable tag of the ref's major, or two, and the run still installs;
     - a higher stable tag of the same major exists, and the run prints no `refresh-warning=behind-release`;
+    - the consumer-side `adopt-refresh.sh` refuses the shared-workflow caller as its replacement template. The v1.5.1 adopter fails this row today, so it is its own control;
     - a queued rolling pull request still reaches the push;
     - the pull request enters the queue between the run-start read and the push, and the run does not end deferred;
     - once the owner has created the ruleset, a lane installation token creates `v2`, force-pushes `v1` or deletes `v1`, and the push succeeds. The in-workflow tag check covers the owner pointing `vX` at the wrong commit only, so this control is the one that tests the ruleset.
