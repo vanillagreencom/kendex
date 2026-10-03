@@ -132,8 +132,10 @@ Create Options:
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
-  activate and block refuse a label it does not declare, naming the label and
-  the taxonomy file. A label the issue already carries is kept.
+  bulk-update --labels, activate and block refuse a label it does not declare,
+  naming the label and the taxonomy file. A label the issue already carries is
+  kept. Create also refuses a declared label Linear does not have, where with
+  no taxonomy it skips that label with a warning.
 
 Update Options:
   --state <name>        New state
@@ -1278,7 +1280,13 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
-    linear_require_declared_labels "$labels" || return 1
+    # The taxonomy judges label writes only: a create with no labels never
+    # reads it, so an unreadable one does not stop a label-less create.
+    local declared=""
+    if [[ -n "$labels" ]]; then
+        declared=$(linear_declared_labels) || return 1
+        linear_require_declared_labels "$labels" || return 1
+    fi
     require_issue_reach "$description" "$priority" "$review_born" || return 1
 
     # --attach: refuse unreadable paths before ANY API call, which is what
@@ -1325,23 +1333,32 @@ create_issue() {
 
     # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        # Resolve declared agent labels BEFORE uploading: under a declared
-        # taxonomy an unresolvable agent label refuses the create later
-        # (routed-or-refused), and uploads done first would strand orphaned
-        # assets in Linear storage.
-        if [ -n "$labels" ] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
+        # Resolve the labels a miss refuses BEFORE uploading: declared agent
+        # labels (routed-or-refused) and, under a declared label taxonomy,
+        # every label. The create would refuse later, and uploads done first
+        # would strand orphaned assets in Linear storage.
+        if [ -n "$labels" ] && { [ -n "${LINEAR_AGENT_LABELS:-}" ] || [ -n "$declared" ]; }; then
             local pre_label_names=() pre_label_name
             IFS=',' read -ra pre_label_names <<<"$labels"
             for pre_label_name in "${pre_label_names[@]}"; do
-                case "$pre_label_name" in
-                agent:*)
+                if [[ "$pre_label_name" == agent:* && -n "${LINEAR_AGENT_LABELS:-}" ]]; then
                     if ! resolve_label_id "$pre_label_name" team-id "$team_id" >/dev/null; then
                         jq -cn --arg label "$pre_label_name" \
                             '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
                         return 1
                     fi
-                    ;;
-                esac
+                elif [ -n "$declared" ]; then
+                    local pre_label_rc=0
+                    resolve_label_id "$pre_label_name" team-id "$team_id" >/dev/null || pre_label_rc=$?
+                    case "$pre_label_rc" in
+                    0) ;;
+                    1)
+                        linear_label_message declared-missing "$pre_label_name" >&2
+                        return 1
+                        ;;
+                    *) return 1 ;;
+                    esac
+                fi
             done
         fi
         upload_attach_paths "${attach_paths[@]}" || return 1
@@ -1374,7 +1391,10 @@ create_issue() {
     # the routing guard's promise is routed-or-refused, so an agent label
     # that fails to resolve, e.g. one declared in LINEAR_AGENT_LABELS but
     # since deleted in Linear, must fail the create rather than silently
-    # produce an unrouted issue that already passed the guard)
+    # produce an unrouted issue that already passed the guard. Under a
+    # declared label taxonomy every miss refuses: a declared label can be
+    # committed before it is created, and skipping it would report success
+    # for an issue missing a label its taxonomy requires)
     if [ -n "$labels" ]; then
         IFS=',' read -ra label_names <<<"$labels"
         local label_ids=()
@@ -1392,6 +1412,10 @@ create_issue() {
                     # keep the historical warn-and-skip for every label.
                     jq -cn --arg label "$label_name" \
                         '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
+                    return 1
+                fi
+                if [ -n "$declared" ]; then
+                    linear_label_message declared-missing "$label_name" >&2
                     return 1
                 fi
                 echo "Skipped label '$label_name' — not found; the create proceeds without it" >&2
@@ -1839,8 +1863,9 @@ update_issue() {
             jq -cn --arg issue "$issue_id" '{error: ("Issue team missing: " + $issue)}' >&2
             return 1
         fi
-        # Activation, block and unblock reach here too: each rebuilds the set
-        # from the issue's own labels plus the one it applies.
+        # Activation, block and unblock reach here too: activation and block
+        # rebuild the set from the issue's own labels plus the one they apply,
+        # and unblock rebuilds it without the label it removes.
         local kept_labels
         kept_labels=$(jq -c '[.issue.labels.nodes[]?.name]' <<<"$issue_result") || return 1
         linear_require_declared_labels "$labels" "$kept_labels" || return 1

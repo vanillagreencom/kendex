@@ -3,10 +3,12 @@
 # `### Project taxonomy`, plus LINEAR_AGENT_LABELS), every path that applies a
 # label (issues create, update --labels, activate, block) refuses a name the
 # taxonomy does not declare, before any write; a name the issue already carries
-# is kept. `labels create` refuses an undeclared name, and a team label whose
-# name a workspace label uses. `labels audit` lists undeclared labels on the
-# team's open issues and same-name team/workspace pairs. A repository with no
-# taxonomy keeps the behaviour it had, and one it cannot read refuses.
+# is kept, and create refuses a declared label Linear does not have. `labels
+# create` and `labels update --name` refuse an undeclared name, and a name a
+# workspace label uses. `labels audit` lists undeclared labels on the team's
+# open issues and same-name team/workspace pairs. A repository with no
+# taxonomy keeps the behaviour it had, and one it cannot read refuses a label
+# write. The taxonomy is the project's own, wherever the CLI is installed.
 
 set -euo pipefail
 
@@ -20,7 +22,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 # make_project DIR KIND — a repository with this skill and, by KIND, the
 # rendered project-management SKILL.md beside it: declared, none (no file),
-# no-heading, no-json (the heading with no JSON block), json-in-next-section
+# no-heading, no-json (the heading with no JSON block), empty-json (an empty
+# block), unclosed-json (a block with no closing fence), json-in-next-section
 # (the only JSON block sits under a later heading) or invalid-json.
 make_project() {
   local project="$1" kind="$2" taxonomy
@@ -35,6 +38,7 @@ make_project() {
     printf '%s\n' '# Project Management' '<!-- kendex:project-instructions:start -->' \
       '### Project taxonomy' '' 'Prose before the contract.' '' '```json' \
       '{"categories": {"agent": {"required": true, "match": {"prefix": "agent:"}},' \
+      ' "platform": {"match": {"parent": "Platform"}, "labels": ["macos"]},' \
       ' "surface": {"labels": ["skills"]}, "classification": {"labels": ["bug"]}}}' \
       '```' '<!-- kendex:project-instructions:end -->' >"$taxonomy"
     ;;
@@ -46,6 +50,14 @@ make_project() {
   no-json)
     printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy' \
       'Labels are prose here.' '<!-- kendex:project-instructions:end -->' >"$taxonomy"
+    ;;
+  empty-json)
+    printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy' \
+      '```json' '```' '<!-- kendex:project-instructions:end -->' >"$taxonomy"
+    ;;
+  unclosed-json)
+    printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy' \
+      '```json' '{"categories": {}}' '<!-- kendex:project-instructions:end -->' >"$taxonomy"
     ;;
   json-in-next-section)
     printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy' \
@@ -78,27 +90,30 @@ jq '.issueLabels.nodes += [{id: "0d6f3b8e-2a41-4c97-b5e2-8f1a7c3d9e60", name: "a
   "$SKILL_DIR/tests/lib/fixtures/issue-team-labels.json" >"$FIXTURES/issue-team-labels.json"
 
 # Recorded issue KEN-2413 carries `harness` (undeclared) and `agent:runtime`.
-# A refused row sends no write; an accepted one sends exactly its mutation.
-while IFS='|' read -r name want undeclared mutation args; do
+# `macos` is declared but absent from Linear. A refused row sends no write and
+# no upload; an accepted one sends exactly its mutation.
+: >"$TMP_ROOT/asset.bin"
+while IFS='|' read -r name want key mutation args; do
   # shellcheck disable=SC2086 # args is the row's word list
   run_status rc run_label_team_request "$PROJECT" "$name" "" "$AGENTS" FIXTURE_DIR="$FIXTURES" $args
   if [[ "$want" == refused ]]; then
     assert_ne "$name: refused" "$rc" 0
-    assert_file_contains "$name: the refusal names the label and the taxonomy" "$TMP_ROOT/$name.err" \
-      "linear-labels: undeclared labels=$undeclared taxonomy=$TAXONOMY"
-    assert_not "$name: no write is sent" grep -qE 'issueCreate|issueUpdate' "$TMP_ROOT/$name.jsonl"
+    assert_file_contains "$name: the refusal names the label and the taxonomy" "$TMP_ROOT/$name.err" "$key"
+    assert_not "$name: no write is sent" grep -qE 'issueCreate|issueUpdate|fileUpload' "$TMP_ROOT/$name.jsonl"
   else
     assert_eq "$name: accepted" "$rc" 0
     assert "$name: the write is sent" grep -q "$mutation" "$TMP_ROOT/$name.jsonl"
   fi
-done <<'ROWS'
-create-undeclared|refused|baseline||create --team kendex --title T --labels skills,agent:runtime,baseline
+done <<ROWS
+create-undeclared|refused|linear-labels: undeclared labels=baseline taxonomy=$TAXONOMY||create --team kendex --title T --labels skills,agent:runtime,baseline
 create-declared|accepted||issueCreate|create --team kendex --title T --labels skills,agent:runtime,bug
-update-undeclared|refused|baseline||update KEN-2413 --labels harness,agent:runtime,baseline
+create-missing|refused|linear-labels: declared-missing label=macos taxonomy=$TAXONOMY||create --team kendex --title T --labels skills,agent:runtime,macos
+create-missing-attach|refused|linear-labels: declared-missing label=macos taxonomy=$TAXONOMY||create --team kendex --title T --labels skills,agent:runtime,macos --attach $TMP_ROOT/asset.bin
+update-undeclared|refused|linear-labels: undeclared labels=baseline taxonomy=$TAXONOMY||update KEN-2413 --labels harness,agent:runtime,baseline
 update-kept|accepted||issueUpdate|update KEN-2413 --labels harness,agent:runtime,bug
-activate-undeclared|refused|agent:rust||activate KEN-2413 --agent rust
+activate-undeclared|refused|linear-labels: undeclared labels=agent:rust taxonomy=$TAXONOMY||activate KEN-2413 --agent rust
 activate-kept|accepted||issueUpdate|activate KEN-2413 --agent runtime
-block-undeclared|refused|blocked||block KEN-2413 --by KEN-1
+block-undeclared|refused|linear-labels: undeclared labels=blocked taxonomy=$TAXONOMY||block KEN-2413 --by KEN-1
 ROWS
 assert "create-undeclared: refused before any request" test ! -s "$TMP_ROOT/create-undeclared.jsonl"
 
@@ -122,45 +137,79 @@ done <<'ROWS'
 none|accepted
 no-heading|accepted
 no-json|refused
+empty-json|refused
+unclosed-json|refused
 json-in-next-section|refused
 invalid-json|refused
 ROWS
 
-# `labels create` and `labels audit` against their own recorded replies. The
-# audit's open issues come in two pages; FIXTURE_FAIL=pages drops pageInfo.
+# A create with no labels is no label write: an unreadable taxonomy leaves it.
+run_status rc run_label_team_request "$TMP_ROOT/no-json" label-less "" "$AGENTS" \
+  create --team kendex --title T --no-agent-label
+assert_eq "label-less: an unreadable taxonomy does not stop a create with no labels" "$rc" 0
+assert "label-less: the create is sent" grep -q issueCreate "$TMP_ROOT/label-less.jsonl"
+
+
+# `labels create`, `update` and `audit` against recorded labels and issues. The
+# stub applies each filter its request sends, as install_label_team_fixture
+# does: another team's labels and issues, and a completed issue, reach a reply
+# only when a filter is dropped. It serves two open issues per page;
+# FIXTURE_FAIL=pages drops pageInfo.
 LABELS_PROJECT="$TMP_ROOT/labels"
 make_project "$LABELS_PROJECT" declared
 mkdir -p "$LABELS_PROJECT/bin"
+LABELS_DATA="$TMP_ROOT/labels-data.json"
+cat >"$LABELS_DATA" <<'JSON'
+{"labels": [
+  {"id": "team-harness", "name": "harness", "team": {"id": "team-kendex"}},
+  {"id": "ws-harness", "name": "harness", "team": null},
+  {"id": "team-skills", "name": "skills", "team": {"id": "team-kendex"}},
+  {"id": "other-skills", "name": "skills", "team": {"id": "team-other"}},
+  {"id": "ws-bug", "name": "bug", "team": null},
+  {"id": "other-bug", "name": "bug", "team": {"id": "team-other"}}],
+ "issues": [
+  {"identifier": "KEN-1", "team": "team-kendex", "state": "started", "labels": ["skills", "legacy"]},
+  {"identifier": "KEN-2", "team": "team-kendex", "state": "unstarted", "labels": ["legacy", "agent:runtime"]},
+  {"identifier": "KEN-4", "team": "team-kendex", "state": "completed", "labels": ["ancient"]},
+  {"identifier": "OTHER-1", "team": "team-other", "state": "started", "labels": ["foreign"]},
+  {"identifier": "KEN-3", "team": "team-kendex", "state": "started", "labels": ["harness"]}]}
+JSON
 cat >"$LABELS_PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 payload=$(sed -n 's/^data = //p' | jq -r)
 printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query=$(jq -r '.query' <<<"$payload")
+has() { [[ "$query" == *"$1"* ]] && echo true || echo false; }
 case "$query" in
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-kendex"}]}}}' ;;
 *"WorkspaceLabel"*)
-  jq -cj '{data: {issueLabels: {nodes: (if .variables.name == "bug" then [{id: "ws-bug"}] else [] end)}}}' <<<"$payload" ;;
-*"issueLabelCreate"*)
-  printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"new","name":"n","color":"#000000","isGroup":false,"parent":null}}}}' ;;
+  jq -cj --argjson payload "$payload" --argjson workspace "$(has 'team: {null: true}')" '
+    {data: {issueLabels: {nodes: [.labels[] | select(.name == $payload.variables.name)
+      | select(($workspace | not) or .team == null) | {id}]}}}' "$LABELS_DATA" ;;
+*"issueLabelCreate"*|*"issueLabelUpdate"*)
+  mutation=issueLabelCreate
+  [[ "$query" != *issueLabelUpdate* ]] || mutation=issueLabelUpdate
+  jq -cnj --arg m "$mutation" '{data: {($m): {success: true, issueLabel: {id: "new", name: "n", color: "#000000", isGroup: false, parent: null}}}}' ;;
 *"AuditIssues"*)
-  if [[ "$(jq -r '.variables.after' <<<"$payload")" == null ]]; then
-    page='{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[
-      {"identifier":"KEN-1","labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"},{"name":"legacy"}]}},
-      {"identifier":"KEN-2","labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"legacy"},{"name":"agent:runtime"}]}}]}'
-  else
-    page='{"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
-      {"identifier":"KEN-3","labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"harness"}]}}]}'
-  fi
-  [[ "$FIXTURE_FAIL" != pages ]] || page=$(jq -c 'del(.pageInfo)' <<<"$page")
-  jq -cj '{data: {issues: .}}' <<<"$page" ;;
+  jq -cj --argjson payload "$payload" --arg fail "$FIXTURE_FAIL" \
+    --argjson open "$(has 'state: {type: {nin: ["completed", "canceled"]}}')" \
+    --argjson team "$(has 'team: {id: {eq: $teamId}}')" '
+    [.issues[] | select(($open | not) or (.state | IN("completed", "canceled") | not))
+      | select(($team | not) or .team == $payload.variables.teamId)
+      | {identifier, labels: {pageInfo: {hasNextPage: false}, nodes: [{name: .labels[]}]}}] as $rows
+    | (if $payload.variables.after == null then
+        {pageInfo: {hasNextPage: ($rows | length > 2), endCursor: "c1"}, nodes: $rows[:2]}
+      else {pageInfo: {hasNextPage: false, endCursor: "c2"}, nodes: $rows[2:]} end)
+    | if $fail == "pages" then del(.pageInfo) else . end
+    | {data: {issues: .}}' "$LABELS_DATA" ;;
 *"AuditLabels"*)
-  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":"l1"},"nodes":[
-    {"id":"team-harness","name":"harness","team":{"id":"team-kendex"}},
-    {"id":"ws-harness","name":"harness","team":null},
-    {"id":"team-skills","name":"skills","team":{"id":"team-kendex"}},
-    {"id":"ws-bug","name":"bug","team":null}]}}}' ;;
+  jq -cj --argjson payload "$payload" \
+    --argjson scoped "$(has 'or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]')" '
+    {data: {issueLabels: {pageInfo: {hasNextPage: false, endCursor: "l1"},
+      nodes: [.labels[] | select(($scoped | not) or .team == null or .team.id == $payload.variables.teamId)]}}}' \
+    "$LABELS_DATA" ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
@@ -168,58 +217,76 @@ printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$LABELS_PROJECT/bin/curl"
 
-run_labels() { # NAME FAIL PROJECT LABELS-ARGS...
-  local name="$1" fail="$2" project="$3"
-  shift 3
+# A linear install outside the project, at global scope, beside a global
+# project-management render that declares no taxonomy.
+GLOBAL="$TMP_ROOT/global/.agents/skills"
+mkdir -p "$GLOBAL/project-management"
+cp -R "$SKILL_DIR" "$GLOBAL/linear"
+printf '%s\n' '# Project Management' >"$GLOBAL/project-management/SKILL.md"
+
+run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
+  local name="$1" fail="$2" project="$3" install="$4"
+  shift 4
   : >"$TMP_ROOT/$name.jsonl"
   (cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$LABELS_PROJECT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=kendex LINEAR_CACHE_ROOT="$project" \
     LINEAR_AGENT_LABELS=agent:runtime FIXTURE_FAIL="$fail" CURL_LOG="$TMP_ROOT/$name.jsonl" \
-    "$BASH" "$project/.agents/skills/linear/scripts/linear.sh" labels "$@") \
+    LABELS_DATA="$LABELS_DATA" "$BASH" "$install/scripts/linear.sh" labels "$@") \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
 }
 
-while IFS='|' read -r name want key args; do
+LABELS_TAXONOMY="$LABELS_PROJECT/.agents/skills/project-management/SKILL.md"
+while IFS='|' read -r name want key install args; do
   # shellcheck disable=SC2086 # args is the row's word list
-  run_status rc run_labels "$name" "" "$LABELS_PROJECT" create $args
+  run_status rc run_labels "$name" "" "$LABELS_PROJECT" "${install:-$LABELS_PROJECT/.agents/skills/linear}" $args
   if [[ "$want" == refused ]]; then
     assert_ne "$name: refused" "$rc" 0
     assert_file_contains "$name: the refusal is keyed" "$TMP_ROOT/$name.err" "$key"
-    assert_not "$name: no label is created" grep -q issueLabelCreate "$TMP_ROOT/$name.jsonl"
+    assert_not "$name: no label is written" grep -qE 'issueLabelCreate|issueLabelUpdate' "$TMP_ROOT/$name.jsonl"
   else
     assert_eq "$name: accepted" "$rc" 0
-    assert "$name: the label is created" grep -q issueLabelCreate "$TMP_ROOT/$name.jsonl"
+    assert "$name: the label is written" grep -qE 'issueLabelCreate|issueLabelUpdate' "$TMP_ROOT/$name.jsonl"
   fi
 done <<ROWS
-label-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_PROJECT/.agents/skills/project-management/SKILL.md|--name legacy
-label-declared|accepted||--name bug
-label-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug|--name bug --team kendex
-label-team|accepted||--name skills --team kendex
+label-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||create --name legacy
+label-outside-install|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY|$GLOBAL/linear|create --name legacy
+label-declared|accepted|||create --name bug
+label-group|accepted|||create --name Platform --group
+label-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug||create --name bug --team kendex
+label-team|accepted|||create --name skills --team kendex
+label-rename-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||update team-skills --name legacy
+label-rename-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug||update team-skills --name bug
+label-rename-self|accepted|||update ws-bug --name bug
+label-rename|accepted|||update team-skills --name macos
 ROWS
 
 NO_TAXONOMY="$TMP_ROOT/labels-none"
 make_project "$NO_TAXONOMY" none
-run_status rc run_labels label-team-none "" "$NO_TAXONOMY" create --name bug --team kendex
+run_status rc run_labels label-team-none "" "$NO_TAXONOMY" "$NO_TAXONOMY/.agents/skills/linear" create --name bug --team kendex
 assert_eq "label-team-none: no taxonomy keeps today's team label create" "$rc" 0
 assert_not "label-team-none: no workspace lookup is sent" grep -q WorkspaceLabel "$TMP_ROOT/label-team-none.jsonl"
 
-run_status rc run_labels audit "" "$LABELS_PROJECT" audit
+run_status rc run_labels audit "" "$LABELS_PROJECT" "$LABELS_PROJECT/.agents/skills/linear" audit
 assert_eq "audit: succeeds" "$rc" 0
 assert "audit: lists each undeclared label with the open issues carrying it" \
   jq -e '.undeclared == [{label: "harness", issues: ["KEN-3"]}, {label: "legacy", issues: ["KEN-1", "KEN-2"]}]' \
   "$TMP_ROOT/audit.out"
 assert "audit: reads the open issues past the first page" \
   jq -e '[.undeclared[].issues[]] | index("KEN-3") != null' "$TMP_ROOT/audit.out"
+assert "audit: skips closed issues" jq -e '[.undeclared[].label] | index("ancient") == null' "$TMP_ROOT/audit.out"
+assert "audit: reads only the team's issues" jq -e '[.undeclared[].label] | index("foreign") == null' "$TMP_ROOT/audit.out"
 assert "audit: lists the same-name team and workspace pair" \
   jq -e '.same_name == [{name: "harness", workspace_label: "ws-harness", team_label: "team-harness"}]' \
   "$TMP_ROOT/audit.out"
+assert "audit: ignores another team's same-name label" \
+  jq -e '[.same_name[].name] | index("bug") == null' "$TMP_ROOT/audit.out"
 
-run_status rc run_labels audit-pages pages "$LABELS_PROJECT" audit
+run_status rc run_labels audit-pages pages "$LABELS_PROJECT" "$LABELS_PROJECT/.agents/skills/linear" audit
 assert_ne "audit-pages: refused" "$rc" 0
 assert_file_contains "audit-pages: a page with no pageInfo fails the audit" \
   "$TMP_ROOT/audit-pages.err" "linear-labels: audit-incomplete connection=issues"
 
-run_status rc run_labels audit-absent "" "$NO_TAXONOMY" audit
+run_status rc run_labels audit-absent "" "$NO_TAXONOMY" "$NO_TAXONOMY/.agents/skills/linear" audit
 assert_ne "audit-absent: refused" "$rc" 0
 assert_file_contains "audit-absent: no taxonomy has nothing to audit against" \
   "$TMP_ROOT/audit-absent.err" "linear-labels: taxonomy-absent taxonomy=$NO_TAXONOMY/.agents/skills/project-management/SKILL.md"

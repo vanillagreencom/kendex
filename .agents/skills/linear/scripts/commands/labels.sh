@@ -35,6 +35,8 @@ Create Options:
   Where the repository declares a label taxonomy (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create refuses a name it
   does not declare, and a --team create a name a workspace label uses.
+  update --name refuses an undeclared name, and a name another workspace
+  label uses.
 
 Audit Options:
   --team <ref>          Team key or name (default: LINEAR_TEAM)
@@ -152,9 +154,6 @@ create_label() {
         echo '{"error": "Required: --name"}' >&2
         return 1
     fi
-    # The taxonomy rules apply only where the repository declares one.
-    local declared
-    declared=$(linear_declared_labels) || return 1
     linear_require_declared_labels "$name" || return 1
 
     # Build input object with proper escaping
@@ -177,18 +176,8 @@ create_label() {
         input_parts+=("\"teamId\": \"$team_id\"")
     fi
 
-    # A team label beside a workspace label of one name makes every name
-    # lookup in that team ambiguous.
-    if [ -n "$team" ] && [ -n "$declared" ]; then
-        local workspace_query='query WorkspaceLabel($name: String!) { issueLabels(filter: {name: {eq: $name}, team: {null: true}}) { nodes { id } } }'
-        local workspace_vars workspace_result workspace_count
-        workspace_vars=$(jq -cn --arg name "$name" '{name: $name}') || return 1
-        workspace_result=$(graphql_query "$workspace_query" "$workspace_vars") || return 1
-        workspace_count=$(jq -r '.issueLabels.nodes | length' <<<"$workspace_result") || return 1
-        if [ "$workspace_count" != 0 ]; then
-            linear_label_message workspace-duplicate "$name" >&2
-            return 1
-        fi
+    if [ -n "$team" ]; then
+        refuse_workspace_name "$name" || return 1
     fi
 
     # Get parent label group ID if specified
@@ -227,6 +216,26 @@ create_label() {
     normalize_mutation_response "$result" "issueLabelCreate" "issueLabel"
 }
 
+# Under a declared taxonomy, refuse a label name a workspace label already
+# uses: a second label of one name beside a workspace label makes every name
+# lookup ambiguous. LABEL_ID, on a rename, is the label itself, which keeps
+# its own name. With no taxonomy it sends no request.
+# Usage: refuse_workspace_name NAME [LABEL_ID]
+refuse_workspace_name() {
+    local name="$1" label_id="${2:-}" declared
+    declared=$(linear_declared_labels) || return 1
+    [ -n "$declared" ] || return 0
+    local workspace_query='query WorkspaceLabel($name: String!) { issueLabels(filter: {name: {eq: $name}, team: {null: true}}) { nodes { id } } }'
+    local workspace_vars workspace_result workspace_count
+    workspace_vars=$(jq -cn --arg name "$name" '{name: $name}') || return 1
+    workspace_result=$(graphql_query "$workspace_query" "$workspace_vars") || return 1
+    workspace_count=$(jq -r --arg self "$label_id" '[.issueLabels.nodes[] | select(.id != $self)] | length' <<<"$workspace_result") || return 1
+    if [ "$workspace_count" != 0 ]; then
+        linear_label_message workspace-duplicate "$name" >&2
+        return 1
+    fi
+}
+
 update_label() {
     local label_id="$1"
     shift
@@ -249,6 +258,10 @@ update_label() {
     local input_parts=()
 
     if [ -n "$name" ]; then
+        # A rename applies a label name, so the create rules hold for it: a
+        # declared name, and no second label beside a workspace one of one name.
+        linear_require_declared_labels "$name" || return 1
+        refuse_workspace_name "$name" "$label_id" || return 1
         local escaped_name
         escaped_name=$(printf '%s' "$name" | jq -Rs '.')
         input_parts+=("\"name\": $escaped_name")

@@ -1,6 +1,6 @@
 # Label Management Reference
 
-Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** the project supplies (`kendex.toml` `[skill-instructions]`, a project doc, or a project reference file). The project defines the names, colors, and required categories.
+Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** the project declares in its kendex manifest's `[skill-instructions]` for this skill, as § Project Taxonomy Contract states. The project defines the names, colors, and required categories.
 
 ## Issue Labels vs Project Labels
 
@@ -20,7 +20,7 @@ Run before any workflow creates an issue or updates issue labels:
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create.
+Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its keyed first line and never read as clean, and `taxonomy-unreadable` halts the create.
 
 GitHub-tracked runs read live instead — `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` — with no cache or sync step.
 
@@ -43,7 +43,7 @@ Declare it in the manifest's `[skill-instructions].project-management`, as this 
   "required_categories_for_new_issues": ["agent", "domain"],
   "categories": {
     "agent":     {"required": true,  "exclusive": true,  "match": {"prefix": "agent:"}, "forbid_group_labels": true},
-    "platform":  {"required": false, "exclusive": true,  "match": {"parent": "Platform"}, "forbid_group_labels": true},
+    "platform":  {"required": false, "exclusive": true,  "match": {"parent": "Platform"}, "labels": ["macos", "linux"], "forbid_group_labels": true},
     "domain":    {"required": true,  "exclusive": false, "labels": ["project-specific-domain-labels"]},
     "workflow":  {"required": false, "exclusive": false, "labels": ["research", "blocked"]},
     "classification": {"required": false, "exclusive": false, "labels": []}
@@ -53,7 +53,7 @@ Declare it in the manifest's `[skill-instructions].project-management`, as this 
 
 Category matching order: explicit `labels[]`, then `match.prefix`, then `match.parent` from live inventory, then a project-documented matcher. A label matching two categories must be disambiguated by the taxonomy before mutation.
 
-The declared names are every category's `labels[]` and `match.parent`, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare: on `issues create`, `issues update --labels`, `issues activate` and `issues block`, and on `labels create`. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block refuses every label write; with no heading the CLI enforces nothing.
+The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block, an empty one included, refuses every label write; with no heading the CLI enforces nothing.
 
 ## Validation
 

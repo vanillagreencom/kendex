@@ -21,7 +21,7 @@ Resources:
   projects        Project operations (list, get, create, update, list-dependencies, add-dependency, post-update, list-updates)
   initiatives     Initiative operations (list, get, create, add-project)
   milestones      Project milestone operations (list, get, create)
-  labels          Issue label operations (list, create, update, delete)
+  labels          Issue label operations (list, create, update, delete, audit)
   project-labels  Project label operations (list, create, update, delete)
   teams           Team operations (list, get)
   users           User operations (list, get)
@@ -76,8 +76,8 @@ Environment:
   LINEAR_TEAM     Required for writes; no default. Set it in kendex.settings.toml
                   [env] (committed, non-secret). With no team, writes refuse and
                   reads run without a team filter. Only issues/projects/cycles/
-                  labels create, cycles list and statuses list/get take
-                  --team <key-or-name> as a per-call override.
+                  labels create, labels audit, cycles list and statuses
+                  list/get take --team <key-or-name> as a per-call override.
 
 For resource-specific help:
   ./linear.sh <resource> --help

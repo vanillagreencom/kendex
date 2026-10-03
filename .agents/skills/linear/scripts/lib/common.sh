@@ -852,11 +852,14 @@ resolve_label_id() {
 # A repository declares its labels once: the JSON contract of project-management
 # references/labels.md, in the first ```json block under `### Project taxonomy`
 # in that skill's project instructions, which kendex renders from the manifest's
-# [skill-instructions].project-management into the SKILL.md installed beside
-# this skill. Its declared names are every category's `labels[]` and
-# `match.parent`, plus each LINEAR_AGENT_LABELS name. With no such heading the
-# repository declares no taxonomy, and no rule below applies.
-LINEAR_TAXONOMY_FILE="${_LIB_DIR%/*/*/*}/project-management/SKILL.md"
+# [skill-instructions].project-management into the project's own install. It is
+# read from PROJECT_ROOT, where LINEAR_TEAM and LINEAR_AGENT_LABELS come from,
+# not beside this script: a linear install at global scope would otherwise
+# read the global render and enforce nothing in a project that declares one.
+# Its declared names are every category's `labels[]` and `match.parent`, plus
+# each LINEAR_AGENT_LABELS name. With no such heading the repository declares
+# no taxonomy, and no rule below applies.
+LINEAR_TAXONOMY_FILE="$PROJECT_ROOT/.agents/skills/project-management/SKILL.md"
 
 # Every taxonomy and label-definition refusal: the keyed first line, then the
 # JSON error.
@@ -866,7 +869,12 @@ linear_label_message() {
     undeclared)
         printf 'linear-labels: undeclared labels=%s taxonomy=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
         jq -cn --arg labels "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
-            '{error: ("Refusing labels the repository taxonomy does not declare: " + $labels + ". A label is a taxonomy change, never a side effect: use a declared label, or add this one to the taxonomy in " + $file + " (agent labels: LINEAR_AGENT_LABELS) through a reviewed commit.")}'
+            '{error: ("Refusing labels the repository taxonomy does not declare: " + $labels + ". A label is a taxonomy change, never a side effect: use a declared label, or add this one to the taxonomy in the manifest [skill-instructions].project-management (agent labels: LINEAR_AGENT_LABELS) through a reviewed commit and render it; " + $file + " is that render.")}'
+        ;;
+    declared-missing)
+        printf 'linear-labels: declared-missing label=%s taxonomy=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
+        jq -cn --arg label "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
+            '{error: ("The taxonomy in " + $file + " declares label " + ($label | tojson) + " but Linear has no such label for this team or the workspace. Refusing rather than writing the issue without a declared label: create the label (project-management references/labels.md § Creating Labels), then retry.")}'
         ;;
     unreadable)
         printf 'linear-labels: taxonomy-unreadable taxonomy=%s\n' "$value"
@@ -881,7 +889,7 @@ linear_label_message() {
     workspace-duplicate)
         printf 'linear-labels: workspace-duplicate name=%s\n' "$value"
         jq -cn --arg name "$value" \
-            '{error: ("Refusing to create team label " + ($name | tojson) + ": a workspace label already uses this name, and a second label of one name makes every name lookup ambiguous. Use the workspace label.")}'
+            '{error: ("Refusing label name " + ($name | tojson) + ": a workspace label already uses this name, and a second label of one name makes every name lookup ambiguous. Use the workspace label.")}'
         ;;
     audit-incomplete)
         printf 'linear-labels: audit-incomplete connection=%s\n' "$value"
@@ -914,13 +922,15 @@ linear_declared_labels() {
         state == 1 && /^##?#? / { exit 3 }
         state == 2 && /^``` *$/ { state = 3; exit }
         state == 2 { print }
-        END { if (state == 1 || state == 2) exit 3 }
+        END { if (state == 0) exit 5; if (state != 3) exit 3 }
     ' "$file") || rc=$?
+    # Exit 5 is no heading: the repository declares no taxonomy. A heading
+    # whose block is empty reaches jq with no input, which refuses it.
+    [[ "$rc" != 5 ]] || return 0
     if [[ "$rc" != 0 ]]; then
         linear_label_message unreadable "$file" >&2
         return 1
     fi
-    [[ -n "$block" ]] || return 0
     if ! jq -ce --arg agents "${LINEAR_AGENT_LABELS:-}" '
         select(type == "object" and (.categories | type == "object")
             and all(.categories[]; type == "object"

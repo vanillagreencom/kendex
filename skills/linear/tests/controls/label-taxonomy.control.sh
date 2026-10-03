@@ -3,8 +3,8 @@ control_expect "create-undeclared: refused"
 control_expect "create-undeclared: no write is sent"
 control_expect "create-undeclared: refused before any request"
 control_replace scripts/commands/issues.sh 1 \
-    '    linear_require_declared_labels "$labels" || return 1' \
-    '    linear_require_declared_labels "$labels" || :'
+    '        linear_require_declared_labels "$labels" || return 1' \
+    '        linear_require_declared_labels "$labels" || :'
 
 # Let the update path apply an undeclared label, which activation and block
 # reach through it.
@@ -27,12 +27,61 @@ control_replace scripts/lib/common.sh 1 \
     '        [$requested | split(",")[] | select(length > 0)] - $declared - $kept | unique | join(",")'"'"') || return 1' \
     '        [$requested | split(",")[] | select(length > 0)] - $declared | unique | join(",")'"'"') || return 1'
 
-# Read a taxonomy heading with no JSON block as no taxonomy.
-control_expect "no-json: refused"
-control_expect "no-json: the refusal names the unreadable taxonomy"
+# Read a JSON block with no closing fence as the taxonomy.
+control_expect "unclosed-json: the refusal names the unreadable taxonomy"
 control_replace scripts/lib/common.sh 1 \
-    '        END { if (state == 1 || state == 2) exit 3 }' \
-    '        END { }'
+    '        END { if (state == 0) exit 5; if (state != 3) exit 3 }' \
+    '        END { if (state == 0) exit 5 }'
+
+# Read a taxonomy heading over an empty JSON block as no taxonomy.
+control_expect "empty-json: refused"
+control_expect "empty-json: the refusal names the unreadable taxonomy"
+control_replace scripts/lib/common.sh 1 \
+    '    [[ "$rc" != 5 ]] || return 0' \
+    '    [[ "$rc" != 5 && -n "$block" ]] || return 0'
+
+# Read a render with no taxonomy heading as an unreadable taxonomy.
+control_expect "no-heading: create keeps today's behaviour"
+control_expect "no-heading: create sends the undeclared label"
+control_replace scripts/lib/common.sh 1 \
+    '    [[ "$rc" != 5 ]] || return 0' \
+    '    [[ "$rc" != 6 ]] || return 0'
+
+# Read the taxonomy beside the linear install, not in the project: a global
+# install reads the global render and enforces nothing.
+control_expect "label-outside-install: refused"
+control_expect "label-outside-install: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    'LINEAR_TAXONOMY_FILE="$PROJECT_ROOT/.agents/skills/project-management/SKILL.md"' \
+    'LINEAR_TAXONOMY_FILE="${_LIB_DIR%/*/*/*}/project-management/SKILL.md"'
+
+# Declare a match.parent category's labels[] without its group name.
+control_expect "label-group: accepted"
+control_replace scripts/lib/common.sh 1 \
+    '        | [.categories[] | (.labels // [])[], (.match.parent // empty)]' \
+    '        | [.categories[] | (.labels // [])[]]'
+
+# Read the taxonomy for a create with no labels.
+control_expect "label-less: an unreadable taxonomy does not stop a create with no labels"
+control_expect "label-less: the create is sent"
+control_replace scripts/commands/issues.sh 1 \
+    '    if [[ -n "$labels" ]]; then' \
+    '    if true; then'
+
+# Skip a declared label Linear does not have, creating the issue without it.
+control_expect "create-missing: refused"
+control_expect "create-missing: no write is sent"
+control_expect "create-missing: the refusal names the label and the taxonomy"
+control_replace scripts/commands/issues.sh 1 \
+    '                if [ -n "$declared" ]; then' \
+    '                if false; then'
+
+# Upload attachments before a declared label Linear does not have refuses.
+control_expect "create-missing-attach: no write is sent"
+control_expect "create-missing-attach: the refusal names the label and the taxonomy"
+control_replace scripts/commands/issues.sh 1 \
+    '                elif [ -n "$declared" ]; then' \
+    '                elif false; then'
 
 # Read a JSON block under a later heading as the taxonomy.
 control_expect "json-in-next-section: the refusal names the unreadable taxonomy"
@@ -65,7 +114,7 @@ control_replace scripts/lib/common.sh 1 \
 
 # Let labels create make an undeclared label.
 control_expect "label-undeclared: refused"
-control_expect "label-undeclared: no label is created"
+control_expect "label-undeclared: no label is written"
 control_replace scripts/commands/labels.sh 1 \
     '    linear_require_declared_labels "$name" || return 1' \
     '    linear_require_declared_labels "$name" || :'
@@ -73,23 +122,68 @@ control_replace scripts/commands/labels.sh 1 \
 # Let a team label take a name a workspace label uses.
 control_expect "label-workspace-duplicate: refused"
 control_expect "label-workspace-duplicate: the refusal is keyed"
-control_expect "label-workspace-duplicate: no label is created"
+control_expect "label-workspace-duplicate: no label is written"
 control_replace scripts/commands/labels.sh 1 \
-    '        if [ "$workspace_count" != 0 ]; then' \
-    '        if [ "$workspace_count" = -1 ]; then'
+    '    if [ "$workspace_count" != 0 ]; then' \
+    '    if [ "$workspace_count" = -1 ]; then'
+
+# Look the workspace label up without its workspace filter: a team label of
+# the name reads as a workspace one.
+control_expect "label-team: accepted"
+control_replace scripts/commands/labels.sh 1 \
+    "    local workspace_query='query WorkspaceLabel(\$name: String!) { issueLabels(filter: {name: {eq: \$name}, team: {null: true}}) { nodes { id } } }'" \
+    "    local workspace_query='query WorkspaceLabel(\$name: String!) { issueLabels(filter: {name: {eq: \$name}}) { nodes { id } } }'"
 
 # Judge a team label create by the workspace rule with no taxonomy declared.
 control_expect "label-team-none: no taxonomy keeps today's team label create"
 control_expect "label-team-none: no workspace lookup is sent"
 control_replace scripts/commands/labels.sh 1 \
-    '    if [ -n "$team" ] && [ -n "$declared" ]; then' \
-    '    if [ -n "$team" ]; then'
+    '    [ -n "$declared" ] || return 0' \
+    '    :'
+
+# Rename a label to a name the taxonomy does not declare.
+control_expect "label-rename-undeclared: refused"
+control_expect "label-rename-undeclared: no label is written"
+control_replace scripts/commands/labels.sh 1 \
+    '        linear_require_declared_labels "$name" || return 1' \
+    '        linear_require_declared_labels "$name" || :'
+
+# Rename a label to a name a workspace label uses.
+control_expect "label-rename-workspace-duplicate: refused"
+control_expect "label-rename-workspace-duplicate: no label is written"
+control_replace scripts/commands/labels.sh 1 \
+    '        refuse_workspace_name "$name" "$label_id" || return 1' \
+    '        refuse_workspace_name "$name" "$label_id" || :'
+
+# Count the renamed workspace label as the duplicate of its own name.
+control_expect "label-rename-self: accepted"
+control_replace scripts/commands/labels.sh 1 \
+    "    workspace_count=\$(jq -r --arg self \"\$label_id\" '[.issueLabels.nodes[] | select(.id != \$self)] | length' <<<\"\$workspace_result\") || return 1" \
+    "    workspace_count=\$(jq -r '.issueLabels.nodes | length' <<<\"\$workspace_result\") || return 1"
 
 # Report declared labels as the drift.
 control_expect "audit: lists each undeclared label with the open issues carrying it"
 control_replace scripts/commands/labels.sh 1 \
     '                | select(IN($declared[]) | not) | {label: ., issue: $issue}]' \
     '                | select(IN($declared[])) | {label: ., issue: $issue}]'
+
+# Read every state's issues, closed ones included.
+control_expect "audit: skips closed issues"
+control_replace scripts/commands/labels.sh 1 \
+    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \' \
+    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \'
+
+# Read every team's open issues.
+control_expect "audit: reads only the team's issues"
+control_replace scripts/commands/labels.sh 1 \
+    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \' \
+    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \'
+
+# Read every team's labels.
+control_expect "audit: ignores another team's same-name label"
+control_replace scripts/commands/labels.sh 1 \
+    '    labels=$(audit_pages '"'"'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \' \
+    '    labels=$(audit_pages '"'"'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \'
 
 # Stop at the first page of open issues.
 control_expect "audit: reads the open issues past the first page"
