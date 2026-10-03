@@ -163,9 +163,7 @@ fn an_agent_installs_under_the_global_root_and_toggles_by_rename() {
     let file = f.env.home.join(".gemini/config/agents/rust.md");
     let text = fs::read_to_string(&file).unwrap();
     assert!(
-        text.starts_with(
-            "---\nname: rust\ndescription: \"Rust engineer\"\nmodel: pro\nsubagent: true\n---\n"
-        ),
+        text.starts_with("---\nname: rust\ndescription: \"Rust engineer\"\nsubagent: true\n---\n"),
         "{text}"
     );
     assert!(text.contains("Use the grep_search tool."), "{text}");

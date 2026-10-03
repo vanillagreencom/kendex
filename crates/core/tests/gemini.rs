@@ -123,7 +123,7 @@ fn an_agent_installs_in_geminis_own_format_and_toggles_by_rename() {
     let file = f.project.join(".gemini/agents/rust.md");
     let text = fs::read_to_string(&file).unwrap();
     assert!(text.starts_with("---\nname: rust\ndescription: \"Rust engineer\"\nkind: local\n"));
-    assert!(text.contains("model: gemini-3-pro-preview\n"));
+    assert!(!text.contains("model:"), "{text}");
     assert!(text.contains("Use the grep_search tool."), "{text}");
     assert!(is_clean(&f));
 

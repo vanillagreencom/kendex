@@ -12,9 +12,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply;
+use kendex_core::engine::desired::RefusalKind;
 use kendex_core::engine::{EngineReport, audit};
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::Scope;
+use kendex_core::model::{HarnessId, Scope};
 use serde_json::Value;
 
 const AGENT: &str = "---\nname: rust\ndescription: Rust engineer\nmodel: claude-sonnet-4.6\nrole: engineer\n---\nUse the Grep tool.\n";
@@ -211,14 +212,18 @@ fn a_shared_skill_names_only_readers_that_accept_its_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_model_the_repository_will_not_run_is_named() {
-    for (model, record) in [
+    // A selector no harness can load is refused at render, and the refusal
+    // names it, so the agent file it withholds is never missing in silence.
+    for (model, record, refusal) in [
         (
             "claude-sonnet-4.6",
             "kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6 allowed=gpt-5.4",
+            None,
         ),
         (
             "claude-sonnet-4.6\nother",
             "kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6\\nother allowed=gpt-5.4",
+            Some("kendex-model-selector-invalid: harness=copilot model=claude-sonnet-4.6\\nother"),
         ),
     ] {
         let f = fixture("\"copilot\"", "[agents.rust]\nsource = \"cat\"\n");
@@ -241,7 +246,24 @@ fn a_model_the_repository_will_not_run_is_named() {
             "{record}: {:?}",
             report.warnings
         );
-        assert!(f.project.join(".github/agents/rust.agent.md").is_file());
+        let refused: Vec<_> = report
+            .refused
+            .iter()
+            .filter(|row| row.name == "rust" && row.harness == HarnessId::Copilot)
+            .map(|row| {
+                assert_eq!(row.refusal, RefusalKind::Render);
+                row.reason.split_once(" — ").map(|(message, _)| message)
+            })
+            .collect();
+        match refusal {
+            Some(refusal) => assert_eq!(refused, [Some(refusal)], "{record}"),
+            None => assert!(refused.is_empty(), "{record}: {refused:?}"),
+        }
+        assert_eq!(
+            f.project.join(".github/agents/rust.agent.md").is_file(),
+            refusal.is_none(),
+            "{record}"
+        );
     }
 }
 
