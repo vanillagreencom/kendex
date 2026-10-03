@@ -429,13 +429,6 @@ LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 # under.
 PI_LANES=()
 LAUNCHES=()
-# The records fleet_merge routes by their host kind: the host each hosted
-# record names, as `<item>=<host>`, and the items whose kind declares no
-# mailbox channel, no file access and no status read.
-HOSTS=()
-MAILLESS=()
-FILELESS=()
-STATUSLESS=()
 # What argv itself gave, kept before the first state read rebuilds the four
 # arrays: every merge adds the command line's own entries to the records the
 # state names, so the baseline has to outlive the set a loop carries.
@@ -681,7 +674,7 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window host root harness running kept carried parked files channel status
+  local state rows dropped line item window host root harness running kept carried parked
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
@@ -700,43 +693,16 @@ fleet_merge() { # [quiet]
   ITEMS=()
   LANES=()
   HOSTED=()
-  HOSTS=()
   ROOTS=()
   PI_LANES=()
   LAUNCHES=()
-  MAILLESS=()
-  FILELESS=()
-  STATUSLESS=()
-  # Each record is routed by its host kind's declared line, never by a host
-  # name: its files decide where its mailbox, status file and state are read,
-  # its channel whether the mail pass reads it, and its status how it is
-  # judged where no process read reaches it.
+  host_routes_reset
   while IFS=$'\x1f' read -r item window host root harness running; do
-    [[ -n "$item" ]] || continue
+    [[ -n "$item" ]] && host_route "$item" "$host" "$root" || continue
     ITEMS+=("$item")
     [[ -z "$window" ]] || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
     [[ -z "$running" || -z "$root" ]] || LAUNCHES+=("$item=$running")
-    host_capabilities "$host"
-    lane_capability files files
-    lane_capability channel channel
-    lane_capability status status
-    case "$files" in
-      local) [[ -z "$root" ]] || ROOTS+=("$item=$root") ;;
-      verb) HOSTED+=("$item=$root"); HOSTS+=("$item=$host") ;;
-      none) FILELESS+=("$item") ;;
-      *) die host-capabilities-unread "" "host=$host" "files=$files" ;;
-    esac
-    case "$channel" in
-      mailbox) ;;
-      session | task) MAILLESS+=("$item") ;;
-      *) die host-capabilities-unread "" "host=$host" "channel=$channel" ;;
-    esac
-    case "$status" in
-      pane | verb) ;;
-      none) STATUSLESS+=("$item") ;;
-      *) die host-capabilities-unread "" "host=$host" "status=$status" ;;
-    esac
   done <<<"$rows"
   for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || item_parked "$line" || ITEMS+=("$line"); done
   for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do window_listed "$line" || LANES+=("$line"); done
@@ -1500,6 +1466,7 @@ check_handoff() {
   local item rec key prior file errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     grep -qxF -- "$item" <<<"$PASS_FAILED_ITEMS" && continue
+    ! item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} || continue
     if ! item_state_dir "$item"; then
       lane_failure_report "$item" "$state"
       state="$LANE_FAILURE_STATE"
@@ -1835,12 +1802,13 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 check_mail() {
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at at
-  local mail_items host_flag args
-  local state="$MAIL_SEEN"
+  local mail_items host_flag args state
   HOSTED_GONE_ITEMS=""
   # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
   # pass forked after it skips only the lanes whose read failed just now.
   PASS_FAILED_ITEMS=""
+  host_unread_report
+  state="$MAIL_SEEN"
   mail_items=()
   for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
     item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")
@@ -3267,7 +3235,7 @@ check_lanes() {
     # having no news.
     hosted_lane_item "$lane"
     hosted_item=""; hosted_harness=""
-    if [[ -n "$HOSTED_ROOT" ]]; then
+    if item_in "$LANE_ITEM" ${STATUS_VERB[@]+"${STATUS_VERB[@]}"}; then
       hosted_harness="$(jq -r --arg item "$LANE_ITEM" "$LANE_RUNNING_JQ"'
         [.lanes[]? | select(running and .item == $item)][0].harness // ""' <<<"${FLEET_STATE:-null}")" \
         || die state-invalid "" "item=$LANE_ITEM"

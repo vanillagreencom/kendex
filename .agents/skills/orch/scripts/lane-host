@@ -9,9 +9,10 @@ case "${1:-}" in
       'ORCH_LANE_HOST: local (default), claude-cloud, or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
       'capabilities prints the host kind'"'"'s one tab-separated key=value line (schemas/lane-host.md § Host kinds):' \
-      'the dispatcher answers local and claude-cloud, a provider answers its own, and a provider that exits 2' \
-      'gets the static ssh line lane-host-ssh prints. A key outside the closed set, a missing key or a value' \
-      'outside its key'"'"'s set refuses capability-invalid key=KEY value=VALUE with exit 1.' \
+      'the dispatcher answers local and claude-cloud, a provider answers its own, and one that exits 2, or 64' \
+      'with a verb-unsupported line, gets the static ssh line lane-host-ssh prints. It takes no slot.' \
+      'A key outside the closed set, a missing key or a value outside its key'"'"'s set refuses' \
+      'capability-invalid key=KEY value=VALUE with exit 1.' \
       'create preserves ownership exit 75; other provider failures report host-create-failed.' \
       'A local selection refuses provider verbs with exit 2, and claude-cloud refuses them as host-kind-verb with exit 2.' \
       'An unavailable provider or slot failure exits 1. No local fallback runs.' \
@@ -97,6 +98,27 @@ if [[ ! -x "$host" || -d "$host" ]]; then
   exit 1
 fi
 status=0
+# Answered before a slot is taken: the verb reads no host state, so a full
+# slot cap never stands between a caller and the kind's line.
+if [[ "$verb" == capabilities ]]; then
+  words="$(mktemp)" || exit 1
+  line="$("$host" capabilities 2>"$words")" || status=$?
+  words="$(cat -- "$words"; rm -f -- "${words:?}")"
+  # A provider kendex does not ship that predates the verb gives its
+  # absent-verb answer: exit 2, or exit 64 with a verb-unsupported line, as
+  # fleet's Daytona provider does. Every provider kendex ships declares its
+  # own line, so this arm stands in for those alone, with the static line its
+  # own SSH provider declares.
+  if [[ "$status" -eq 2 || ( "$status" -eq 64 && "$words" == *"verb-unsupported verb=capabilities"* ) ]]; then
+    status=0
+    line="$("$SCRIPT_DIR/lane-host-ssh" capabilities)" || status=$?
+  else
+    [[ -z "$words" ]] || printf '%s\n' "$words" >&2
+  fi
+  [[ "$status" -eq 0 ]] || exit "$status"
+  capabilities_print "$line"
+  exit 0
+fi
 lane_host_slot_take "$@" || {
   status=$?
   # Slot failures are dispatcher-owned, never the provider's absent-verb 2.
@@ -104,16 +126,6 @@ lane_host_slot_take "$@" || {
   exit "$status"
 }
 trap lane_host_slot_release EXIT
-if [[ "$verb" == capabilities ]]; then
-  line="$("$host" capabilities)" || status=$?
-  # A provider kendex does not ship that predates the verb answers 2. Every
-  # provider it ships declares its own line, so this arm stands in for those
-  # alone, with the static line its own SSH provider declares.
-  if [[ "$status" -eq 2 ]]; then status=0; line="$("$SCRIPT_DIR/lane-host-ssh" capabilities)" || status=$?; fi
-  [[ "$status" -eq 0 ]] || exit "$status"
-  capabilities_print "$line"
-  exit 0
-fi
 "$host" "$@" || status=$?
 if [[ "$verb" == create && "$status" -ne 0 && "$status" -ne 75 ]]; then
   printf 'lane-host: host-create-failed path=%s exit=%s\n' "$host" "$status" >&2

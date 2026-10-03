@@ -270,7 +270,7 @@ def with_lane_selection_score($now):
       (if .projected_headroom_pct == null then null
        else .projected_headroom_pct * (if $hours == null then 1 else 1 + 1 / (1 + $hours) end) end)};
 
-def lane_public: del(._rate_prior, ._rate_elapsed_s, ._rate_sample_claims, ._tier, ._expires, ._score, ._id);
+def lane_public: del(._rate_prior, ._rate_elapsed_s, ._rate_sample_claims, ._tier, ._expires, ._score, ._credit_unread, ._id);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a
 # Z, the form Codex resets are rendered in. The Claude usage endpoint writes
@@ -337,41 +337,35 @@ def with_lane_verdict($wall; $max; $credit_floor):
               usage_rate_pct_per_min: null, projected_wall_minutes: null}
     else . + {verdict: $v} end;
 
-# with_lane_tier($pool; $cloud_floor; $retire; $now) over one judged record:
-# the pool the launch spends first, as the tier of the expires-first rule
-# (`lanes --help` § pick; D020). Tier 0 is a grant that expires and does not
-# refill: the Claude cloud credit, where the kind declares pool=cloud-credit,
-# remaining_dollars is above $cloud_floor, locked_reason is null and its
-# expiry E is ahead. Its verdict is room whatever the plan windows read. E is
-# the earlier of the credit reset and the ORCH_LANE_RETIRE date of the account,
-# which $retire maps from config_dir. Tier 2 is a balance with no expiry, a
-# Codex account on its credits; tier 1 is every refilling window. _score is S
-# of the key: for tier 0, H * (1 + 1 / (1 + T)) with H the share of the credit
-# left and T the hours to E; for tier 2 the balance; for tier 1
-# selection_score.
+# with_lane_tier($pool; $cloud_floor; $retire; $now) over one judged record
+# applies the expires-first rule, `lanes --help` § pick, whose one statement
+# that is. It adds the fields of the key, which lane_public drops as they order
+# the pick and are no record of it: _tier, _expires (E, 0 outside tier 0) and
+# _score (S); and _credit_unread, a measured Claude account of a
+# pool=cloud-credit kind whose usage body forms no tier 0 credit to judge.
 def with_lane_tier($pool; $cloud_floor; $retire; $now):
   (.credits // {}) as $c
   | ([($c.resets_at | utc_stamp | reset_epoch),
       ($retire[.config_dir] // null | if . == null then null else (. + "T00:00:00Z" | fromdateiso8601) end)]
      | map(select(. != null)) | min) as $e
-  | if $pool == "cloud-credit" and $c.unit == "usd" and ($c.remaining_dollars | type) == "number"
-       and $c.remaining_dollars > $cloud_floor and $c.locked_reason == null
-       and ($c.limit_dollars | type) == "number" and $c.limit_dollars > 0 and $e != null and $e > $now
+  | ($c.unit == "usd" and ($c.remaining_dollars | type) == "number" and ($c.limit_dollars | type) == "number"
+     and $e != null) as $read
+  | . + {_credit_unread: ($pool == "cloud-credit" and ($read | not) and .harness == "claude"
+                          and (.status == "ok" or .status == "rate_limited") and .headroom_pct != null)}
+  | if $pool == "cloud-credit" and $read and $c.remaining_dollars > $cloud_floor and $c.locked_reason == null
+       and $c.limit_dollars > 0 and $e > $now
     then . + {verdict: "room", _tier: 0, _expires: $e,
               _score: (100 * $c.remaining_dollars / $c.limit_dollars * (1 + 1 / (1 + ($e - $now) / 3600)))}
     elif .binding_bucket == "credits" then . + {_tier: 2, _expires: 0, _score: .credits.balance}
     else . + {_tier: 1, _expires: 0, _score: .selection_score} end;
 
 # Partition on the same verdict the named pick reads. The tier key orders the
-# room lanes, [tier, E, -S, claims, -projected_headroom_pct, wall]: the pool
-# that expires first is spent first, and within a tier the score, then fewer
-# live claims, then more projected room. A score cannot buy a launch past the
+# room lanes, `lanes --help` § pick; a score cannot buy a launch past the
 # projected wall. The counts preserve the distinction between an allowance
 # spent and one never measured. A launch=cloud-session pick names in
 # $cloud_repo the accounts whose ORCH_LANE_CLOUD_REPOS entry names the
-# repository of the checkout; every other account takes the verdict
-# cloud-repo-unset, so no launch meets the repository access card. Null for
-# any other launch.
+# repository of the checkout, and every other account takes the verdict
+# cloud-repo-unset; null for any other launch.
 def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo):
   def neg: if . == null then null else 0 - . end;
   [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
@@ -389,6 +383,7 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
       walled: ([ .[] | select(.verdict == "walled") ] | length),
       unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
       cloud_repo_unset: [ .[] | select(.verdict == "cloud-repo-unset") | .config_dir ],
+      cloud_credit_unread: [ .[] | select(._credit_unread) | .alias ],
       unread: [ .[] | select(.verdict == "unmeasured") ] };
 '
 
@@ -403,66 +398,6 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR POOL CLOUD_FLOOR
     --argjson max "$4" --argjson credit_floor "$5" --arg pool "$6" --argjson cloud_floor "$7" \
     --argjson retire "$8" --argjson cloud_repo "$9" --argjson now "$now" "$LANE_MODEL_JQ"'
     lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo)'
-}
-
-# The tier inputs of one pick over LANES, `lanes`' JSON array of records, as
-# TIER_POOL, the pool the kind declares, TIER_RETIRE, each account's
-# ORCH_LANE_RETIRE date, TIER_CLOUD_REPO, the accounts a cloud-session launch
-# may take, null for any other launch, and TIER_REPO, the checkout's
-# github.com repository they were judged against. Read once per pick: an
-# expiring credit is tier 0 only where the kind declares it, and a cloud
-# session reaches only a repository its account was given. Runs in `lanes`'
-# own shell and calls its readers and its `message` and `die`.
-TIER_POOL="" TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
-lane_tier_inputs() { # LANES
-	local pool launch dir date name
-	TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
-	lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || die host-capabilities-unread "${ORCH_LANE_HOST:-local}"
-	lane_capability pool pool
-	TIER_POOL="$pool"
-	lane_capability launch launch
-	case "$pool" in
-		plan) ;;
-		cloud-credit)
-			while IFS=$'\t' read -r dir name; do
-				[[ -n "$dir" ]] || continue
-				date="$(lane_retire_date "$dir")"
-				[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1
-				[[ -n "$name" ]] || continue
-				message cloud-credit-unread "$name" >&2
-			done < <(jq -r '.[] | [.config_dir, (if .harness == "claude" and (.status == "ok" or .status == "rate_limited")
-				and .headroom_pct != null and .credits == null then .alias else "" end)] | @tsv' <<<"$1")
-			;;
-		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
-	esac
-	case "$launch" in
-		window | ssh | cloud-task) ;;
-		cloud-session)
-			# The github skill's reading of the checkout's origin, sourced on this
-			# path alone; its own helper-missing line refuses a copy without it.
-			# shellcheck source=lib/gh-repo.sh
-			source "$SCRIPT_DIR/lib/gh-repo.sh" || exit 1
-			TIER_REPO="$(kendex_github_origin_slug "$PROJECT_ROOT")" || TIER_REPO=""
-			TIER_CLOUD_REPO='[]'
-			while IFS= read -r dir; do
-				[[ -n "$dir" && -n "$TIER_REPO" ]] && lane_cloud_repo "$dir" "$TIER_REPO" || continue
-				TIER_CLOUD_REPO="$(jq -c --arg d "$dir" '. + [$d]' <<<"$TIER_CLOUD_REPO")" || return 1
-			done < <(jq -r '.[].config_dir' <<<"$1")
-			;;
-		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
-	esac
-}
-
-# Whether an ORCH_LANE_CLOUD_REPOS entry names REPO, an owner/name, for the
-# lane at DIR: the account has the repository access a cloud session needs.
-# GitHub reads both names case-insensitively.
-lane_cloud_repo() { # DIR REPO
-	local pair
-	while IFS= read -r pair; do
-		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
-		[[ "$(trim "${pair#*=}" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<<"$2")" ]] || return 0
-	done < <(setting_items "${ORCH_LANE_CLOUD_REPOS:-}")
-	return 1
 }
 
 # Consult DIR for an unreachable host or a measured Claude row missing MODEL.

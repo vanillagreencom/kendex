@@ -279,12 +279,18 @@ lane_table \
 echo "=== hosted lane exits: the provider reads past a live ssh child ==="
 # Control: local debounce must not hide a provider exit. A status=verb host
 # answering the absent-verb 2 is a provider fault, so the lane stays unjudged.
+# The record alone names the host, so a status read made under the ambient
+# host, the prefix control, asks lane-host's local answer and judges nothing.
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
 mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
+PREFIX_WATCH="$(mutant_scripts prefix-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/prefix-watch/github"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutate_file "$PREFIX_WATCH" '    ORCH_LANE_HOST="$HOSTED_HOST" lane_state state' '    lane_state state'
 provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control'; do
-  IFS='|' read -r remote_status provider_rc want_exit judge <<<"$row"
+for row in 'exited|0|true|live|1' 'running|0|false|live|1' 'exited|2|false|live|1' 'exited|7|false|live|1' 'garbage|0|false|live|1' 'exited|0|false|control|1' 'exited|0|false|prefix-control|0'; do
+  IFS='|' read -r remote_status provider_rc want_exit judge calls <<<"$row"
   new_case "remote_${remote_status}_${provider_rc}_$judge"
   lane fish_child; screen question
   remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
@@ -292,14 +298,39 @@ for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'ex
   printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
   printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
   jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude", status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
-  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" == live ]] || target="$REMOTE_WATCH"
-  OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
+  case "$judge" in live) target="$REPO_ROOT/skills/orch/scripts/oversee-watch" ;; control) target="$REMOTE_WATCH" ;; *) target="$PREFIX_WATCH" ;; esac
+  OUT="$(WATCH_BIN="$target" run_watch LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
   want_asking=false
   case "$remote_status/$provider_rc/$judge" in running/0/*) want_asking=true ;; esac
   expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit out~EVENT+lane-asking+gh-2=$want_asking"
   assert_eq "$(watch "$expect")" "$expect" "hosted $judge $remote_status/$provider_rc exit in one pass" "$ERR"
-  assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
+  assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls" || true)" "$calls" "$calls remote harness call per lane per pass"
+done
+
+echo "=== a provider is asked status only where its kind declares status=verb ==="
+# A provider line declaring files=verb and status=pane: the files are read
+# through lane-host, and the pane, not the provider, judges the lane. The
+# control routes a status=pane lane as status=verb.
+PANE_WATCH="$(mutant_scripts pane-watch/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/pane-watch/github"
+# shellcheck disable=SC2016
+mutate_file "${PANE_WATCH%/*}/lib/watch-host-kinds.sh" '    pane) ;;' '    pane) STATUS_VERB+=("$1") ;;'
+PANE_LINE=$'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=pane\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane'
+for row in 'live|0' 'control|1'; do
+  IFS='|' read -r judge calls <<<"$row"
+  new_case "status_pane_$judge"
+  lane fish_child; screen question
+  remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
+  mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
+  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
+  jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude", status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
+  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" == live ]] || target="$PANE_WATCH"
+  WATCH_BIN="$target" run_watch LANE_HOST_STUB_CAPABILITIES="$PANE_LINE" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" \
+    LANE_HOST_STUB_HARNESS_STATE=exited -- --state "$STUB_DIR/fleet.json" --max-loops 1 >/dev/null 2>"$ERR" || true
+  assert_eq "calls=$(grep -c '^status ' "$STUB_DIR/host.calls" || true) cats=$([[ "$(grep -c '^cat ' "$STUB_DIR/host.calls" || true)" -gt 0 ]] && echo some || echo none)" \
+    "calls=$calls cats=some" "status=pane on a files=verb kind: $judge" "$ERR"
 done
 
 echo "=== hosted provider reads require a running record naming the harness ==="
@@ -309,6 +340,8 @@ EXPLICIT_WATCH="$(mutant_scripts explicit-watch/orch oversee-watch)/oversee-watc
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/explicit-watch/github"
 mutate_file "$EXPLICIT_WATCH" '      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"' '      hosted_item="$LANE_ITEM"'
 mutate_file "$EXPLICIT_WATCH" 'select(running and .item == $item)' 'select(.item == $item)'
+# shellcheck disable=SC2016
+mutate_file "$EXPLICIT_WATCH" '    if item_in "$LANE_ITEM" ${STATUS_VERB[@]+"${STATUS_VERB[@]}"}; then' '    if [[ -n "$HOSTED_ROOT" ]]; then'
 while IFS='|' read -r record pane_kind capture loops event provider_rc want calls judge; do
   new_case "explicit_${record}_${event}_${provider_rc}_$judge"
   lane "$pane_kind"; screen "$capture"

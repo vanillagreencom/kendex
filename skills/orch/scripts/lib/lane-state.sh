@@ -1040,19 +1040,22 @@ lane_key_tracker() {
   esac
 }
 
-# LANE_MERGED_JQ defines `lane_merged($branch; $owner; $since)`, the one
-# filter over a `gh pr list --state merged` array answering which pull requests
-# are a lane's own: head branch equal to the item key lower-cased, head owner
-# equal to the repository owner (a head GitHub returns with no owner, a
-# deleted fork, is not the lane's), merged at or after the epoch $since. Each
-# kept pull request gains `at`, its merge epoch. A caller prepends it to its
-# own program: jq -r "$LANE_MERGED_JQ"' lane_merged($b; $o; $s)[] | ...'.
-# mergedAt carries fractional seconds on some responses, which fromdateiso8601
-# refuses, so they are cut first.
-LANE_MERGED_JQ='def lane_merged($branch; $owner; $since):
+# LANE_MERGED_JQ defines `lane_own($branch; $owner)`, the one filter over a
+# `gh pr list` row answering whether a pull request is a lane's own: head
+# branch equal to the item key lower-cased, head owner equal to the repository
+# owner (a head GitHub returns with no owner, a deleted fork, is not the
+# lane's). Over a `--state merged` array, `lane_merged($branch; $owner;
+# $since)` keeps the lane's own merged at or after the epoch $since, each
+# gaining `at`, its merge epoch. A caller prepends it to its own program:
+# jq -r "$LANE_MERGED_JQ"' lane_merged($b; $o; $s)[] | ...'. mergedAt carries
+# fractional seconds on some responses, which fromdateiso8601 refuses, so they
+# are cut first.
+LANE_MERGED_JQ='def lane_own($branch; $owner):
+  select((.headRefName | ascii_downcase) == ($branch | ascii_downcase))
+  | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase));
+def lane_merged($branch; $owner; $since):
   [ .[]
-    | select((.headRefName | ascii_downcase) == ($branch | ascii_downcase))
-    | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+    | lane_own($branch; $owner)
     | select(.mergedAt != null)
     | . + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
     | select(.at >= $since) ];'

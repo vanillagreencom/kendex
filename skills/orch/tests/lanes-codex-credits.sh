@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Tests for the Codex credit room rule: a Codex account at or past its plan
-# windows stays pickable while its credit balance sits above
-# ORCH_LANE_CODEX_CREDIT_FLOOR, ranked after every account with plan room, and
-# the chooser, `pick --lane` and `list` give it one verdict. The network layer
-# is the fetch stub lib/lanes-fixture.sh writes, so every row runs offline.
+# Tests for the credit tiers of the expires-first key. The Codex credit room
+# rule: a Codex account at or past its plan windows stays pickable while its
+# credit balance sits above ORCH_LANE_CODEX_CREDIT_FLOOR, ranked after every
+# account with plan room, and the chooser, `pick --lane` and `list` give it one
+# verdict. The Claude cloud credit on a claude-cloud host kind: above
+# ORCH_LANE_CLOUD_CREDIT_FLOOR it ranks before every refilling window, the
+# earliest expiry first, and a cloud-session pick keeps only the accounts
+# ORCH_LANE_CLOUD_REPOS gives this checkout's repository. The kind's line is
+# the real lane-host's; the network layer is the fetch stub
+# lib/lanes-fixture.sh writes, so every row runs offline.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
-unset ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_CODEX_CREDIT_FLOOR ORCH_LANE_HOST ORCH_STATE_DIR
+unset ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_CODEX_CREDIT_FLOOR ORCH_LANE_CLOUD_CREDIT_FLOOR ORCH_LANE_CLOUD_REPOS
+unset ORCH_LANE_HOST ORCH_STATE_DIR
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
 
@@ -27,11 +33,13 @@ FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
 
 # Runs start in a repository carrying no settings, so neither the checkout's
-# kendex.settings.toml nor its fleet state reaches a row.
+# kendex.settings.toml nor its fleet state reaches a row. Its origin is the
+# github.com repository the cloud-session rows give or withhold.
 NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"
 git -C "$NOSETTINGS" init -q -b main
 git -C "$NOSETTINGS" config gc.auto 0
 git -C "$NOSETTINGS" config maintenance.auto false
+git -C "$NOSETTINGS" remote add origin git@github.com:Owner/Repo.git
 
 # codex_body WEEKLY BALANCE HAS_CREDITS OVERAGE SPEND [RESET] — a Codex usage
 # body, its 5-hour window at 20 and its weekly window at WEEKLY, resetting at
@@ -67,11 +75,42 @@ for spec in codex:100:62300:true:false:false 1codex:40:0:false:false:false 2code
   make_codex_lane "$H/.$name"
   codex_body "$week" "$balance" "$has" "$over" "$spend" "$reset" > "$FIXTURE_DIR/.$name.json"
 done
+
+# cloud_body WEEKLY [CREDIT] — a Claude usage body, its 5-hour window at 10
+# and its weekly window at WEEKLY, carrying the cloud credit CREDIT as
+# `remaining:limit:resets_at[:locked_reason]`, or none where CREDIT is absent.
+cloud_body() {
+  local remaining="" limit="" resets="" locked=""
+  [[ -z "${2:-}" ]] || IFS=':' read -r remaining limit resets locked <<<"$2"
+  jq -n --argjson w "$1" --arg rem "$remaining" --arg lim "$limit" --arg at "$resets" --arg locked "$locked" '{
+    five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+    seven_day: {utilization: $w, resets_at: "2026-08-01T06:00:00Z"}}
+    + if $rem == "" then {} else {iguana_necktie: {limit_dollars: ($lim | tonumber), remaining_dollars: ($rem | tonumber),
+        used_dollars: (($lim | tonumber) - ($rem | tonumber)), resets_at: ($at | sub("_"; ":"; "g")),
+        locked_reason: (if $locked == "" then null else $locked end)}} end'
+}
+# Claude accounts, `name|weekly|credit`. aclaude holds plan room and no
+# credit; bclaude a spent week and a credit; cclaude and dclaude credits
+# expiring in 2099-03 and 2099-06; eclaude a credit that expired in 2020;
+# fclaude a credit of 5 dollars; lclaude a locked credit; uclaude a spent week
+# and no credit reading at all, and mclaude one whose credit names no
+# remaining_dollars.
+for spec in "aclaude|10|" "bclaude|100|241:250:2099-06-01T07_59_00Z" "cclaude|100|200:250:2099-03-01T00_00_00Z" \
+  "dclaude|100|200:250:2099-06-01T00_00_00Z" "eclaude|100|241:250:2020-01-01T00_00_00Z" "fclaude|100|5:250:2099-06-01T00_00_00Z" \
+  "lclaude|100|241:250:2099-06-01T00_00_00Z:overage" "uclaude|100|" "mclaude|100|241:250:2099-06-01T00_00_00Z"; do
+  IFS='|' read -r name week credit <<<"$spec"
+  make_lane "$H" "$name" 3600
+  cloud_body "$week" "$credit" > "$FIXTURE_DIR/.$name.json"
+done
+jq 'del(.iguana_necktie.remaining_dollars)' "$FIXTURE_DIR/.mclaude.json" > "$FIXTURE_DIR/.mclaude.next"
+mv -- "$FIXTURE_DIR/.mclaude.next" "$FIXTURE_DIR/.mclaude.json"
 dirs() { local d out=""; for d in "$@"; do out="$out:$H/.$d"; done; printf 'ORCH_LANE_DIRS=%s' "${out#:}"; }
+repos() { local d out=""; for d in "$@"; do out="$out,$d=owner/repo"; done; printf 'ORCH_LANE_CLOUD_REPOS=%s' "${out#,}"; }
 
 # table ROW... — `label|env|args|expect`: env is `;`-separated `env`
 # arguments. expect is `name=value` tokens: rc, key (the first keyed stderr
-# line as `key,field=value,...`, or none), cr.LANE (the credit balance the
+# line as `key,field=value,...`, or none), line.KEY (the fields of the first
+# `lanes: KEY` line, comma-joined, or none), cr.LANE (the credit balance the
 # table prints as LANE's headroom, or none), or a field of the JSON record.
 RUN_SEQ=0
 table() {
@@ -94,6 +133,10 @@ table() {
         rc) value="$RC" ;;
         key)
           value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
+          value="${value:-none}"
+          ;;
+        line.*)
+          value="$(awk -v k="${name#line.}" '$1 == "lanes:" && $2 == k { $1 = ""; $2 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
           value="${value:-none}"
           ;;
         cr.*)
@@ -167,6 +210,32 @@ rate_samples() { # LANES_SCRIPT
 rate_samples "$LANES" || { echo "lanes-codex-credits: rate-samples=failed" >&2; exit 1; }
 table \
   "a named account on its credits after 99 then 100 percent carries no rate and no wall minutes|$(dirs codex);OVERSEE_WATCH_STATE_DIR=$RATE_STORE|pick --lane $H/.codex --harness codex --json|rc=0 binding_bucket=credits usage_rate_state=credits projected_wall_minutes=null usage_rate_pct_per_min=null"
+
+CLOUD="ORCH_LANE_HOST=claude-cloud"
+CPICK='pick --harness claude --json'
+
+echo "=== tier 0 spends the expiring Claude cloud credit first ==="
+table \
+  "on claude-cloud a credit outranks plan room, whatever its spent week reads|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude credits.remaining_dollars=241" \
+  "on a local kind the same pair is judged on plan windows alone|$(dirs aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
+  "between two credits the earlier expiry is spent first|$CLOUD;$(dirs cclaude dclaude);$(repos cclaude dclaude)|$CPICK|rc=0 config_dir=$H/.cclaude" \
+  "an ORCH_LANE_RETIRE date before the credit reset is the account's expiry|$CLOUD;$(dirs cclaude dclaude);$(repos cclaude dclaude);ORCH_LANE_RETIRE=dclaude=2099-01-01|$CPICK|rc=0 config_dir=$H/.dclaude"
+
+echo "=== the floor, the lock, the expiry and an unread credit ==="
+table \
+  "a credit at the floor takes its walled plan verdict|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled=1" \
+  "a credit above the floor is tier 0|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=4|$CPICK|rc=0 config_dir=$H/.fclaude" \
+  "a locked credit takes its walled plan verdict|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=3 walled=1" \
+  "a credit past its expiry takes its walled plan verdict, named as no unread one|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=3 walled=1 line.cloud-credit-unread=none" \
+  "a body without the credit is named and judged on its plan windows|$CLOUD;$(dirs uclaude aclaude);$(repos uclaude aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude line.cloud-credit-unread=account=uclaude" \
+  "a credit with no remaining_dollars is named as unread|$CLOUD;$(dirs mclaude aclaude);$(repos mclaude aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude line.cloud-credit-unread=account=mclaude" \
+  "a floor nobody can read refuses the pick|$CLOUD;$(dirs bclaude);$(repos bclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=five|$CPICK|rc=1 line.invalid-lane-cloud-credit-floor=value=five"
+
+echo "=== a cloud session reaches only a repository its account was given ==="
+table \
+  "an account with no entry for this checkout's repository is passed over|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
+  "with no account given the repository the pick names each one|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner/other|$CPICK|rc=3 line.cloud-repo-unset=account=$H/.bclaude,repo=Owner/Repo" \
+  "an entry nobody can read refuses the pick|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner|$CPICK|rc=1 line.invalid-cloud-repos=entry=bclaude=owner"
 
 echo "=== controls ==="
 # Without the tier the score alone orders the pair, and the credit-backed
@@ -244,6 +313,44 @@ LANES_UNDER_TEST="$CTRL/lanes" table "control: without its credit fields the ref
 CTRL="$(mutant_scripts mutant-credit-table lib/lane-context.sh)" || exit 1
 mutate_file "$CTRL/lib/lane-context.sh" 'if .binding_bucket == "credits"' 'if false'
 LANES_UNDER_TEST="$CTRL/lanes" table "control: without the credits arm the table prints no balance|$(dirs codex 1codex)|list --harness codex|rc=0 cr.codex=none cr.1codex=none"
+
+# The Claude cloud credit's rules, one control each. A cloud-session pick
+# reads the checkout's repository through the github skill, so its mutants
+# carry that skill beside them.
+cloud_mutant() { # NAME SCRIPT
+  local dir
+  dir="$(mutant_scripts "$1/orch" "$2")" || return 1
+  ln -s "$(cd "$TEST_DIR/../.." && pwd)/github" "$TMP_ROOT/$1/github" || return 1
+  printf '%s\n' "$dir"
+}
+# cloud_control NAME SCRIPT OLD NEW ROW — ROW's table run under the mutant.
+cloud_control() {
+  CTRL="$(cloud_mutant "$1" "$2")" || exit 1
+  mutate_file "$CTRL/$2" "$3" "$4"
+  LANES_UNDER_TEST="$CTRL/lanes" table "$5"
+}
+cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
+  "control: without the tier key plan room outranks the credit|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.aclaude"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+cloud_control mutant-cloud-floor lib/lane-model.sh 'and $c.remaining_dollars > $cloud_floor and' 'and' \
+  "control: without the floor comparison a credit at the floor is picked|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=0 config_dir=$H/.fclaude"
+# shellcheck disable=SC2016
+cloud_control mutant-cloud-lock lib/lane-model.sh ' and $c.locked_reason == null' '' \
+  "control: without the lock test a locked credit is picked|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=0 config_dir=$H/.lclaude"
+# shellcheck disable=SC2016
+cloud_control mutant-cloud-expiry lib/lane-model.sh ' and $e > $now' '' \
+  "control: without the expiry test an expired credit is picked|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=0 config_dir=$H/.eclaude"
+# shellcheck disable=SC2016
+cloud_control mutant-cloud-pool lib/lane-model.sh 'if $pool == "cloud-credit" and $read' 'if $read' \
+  "control: without the pool test a local kind spends the credit first|$(dirs aclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
+cloud_control mutant-cloud-repo lib/lane-model.sh 'else . + {verdict: "cloud-repo-unset"} end ]' 'else . end ]' \
+  "control: without cloud-repo-unset an account with no entry is picked|$CLOUD;$(dirs aclaude bclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
+# shellcheck disable=SC2016
+cloud_control mutant-cloud-unread lanes 'message cloud-credit-unread "$dir" >&2' ':' \
+  "control: without its note a body with no credit drops it silently|$CLOUD;$(dirs uclaude aclaude);$(repos uclaude aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude line.cloud-credit-unread=none"
+# shellcheck disable=SC2016
+cloud_control mutant-cloud-partial lib/lane-model.sh '($read | not)' '(.credits == null)' \
+  "control: read as unread only when absent, a credit with no remaining_dollars is passed over and aclaude named first|$CLOUD;$(dirs mclaude aclaude);$(repos mclaude aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude line.cloud-credit-unread=account=aclaude"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

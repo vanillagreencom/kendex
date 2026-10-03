@@ -14,9 +14,12 @@ fi
 # a caller spends: the static ssh kind's line by default, as the shipped
 # provider declares it. LANE_HOST_STUB_CAPABILITIES replaces it, and
 # LANE_HOST_STUB_NO_CAPABILITIES is a provider that predates the verb and
-# answers its absent-verb 2.
+# exits that status, LANE_HOST_STUB_CAPABILITIES_WORDS on stderr when set.
 if [[ "${1:-}" == capabilities ]]; then
-  [ -z "${LANE_HOST_STUB_NO_CAPABILITIES:-}" ] || exit 2
+  if [ -n "${LANE_HOST_STUB_NO_CAPABILITIES:-}" ]; then
+    [ -z "${LANE_HOST_STUB_CAPABILITIES_WORDS:-}" ] || printf '%s\n' "$LANE_HOST_STUB_CAPABILITIES_WORDS" >&2
+    exit "$LANE_HOST_STUB_NO_CAPABILITIES"
+  fi
   printf '%s\n' "${LANE_HOST_STUB_CAPABILITIES:-$(printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane')}"
   exit 0
 fi

@@ -206,17 +206,6 @@ exec git "$@"
                  if line.startswith("kendex ")}
         self.assertEqual(verbs & {"refresh", "update-pi"}, set())
 
-    def test_capabilities_declares_the_static_line_without_an_inventory(self):
-        line = (b"kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb"
-                b"\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n")
-        result = self.call("capabilities", LANE_HOST_SSH_INVENTORY="")
-        self.assertEqual((result.returncode, result.stdout), (0, line), result.stderr)
-        original = self.script.read_text()
-        rule = "        print(CAPABILITIES)\n"
-        self.assertEqual(original.count(rule), 1)
-        self.script.write_text(original.replace(rule, "        pass\n"))
-        self.assertNotEqual(self.call("capabilities").stdout, line)
-
     def test_create_places_per_harness_pre_approval(self):
         """The overseer's trust file lands where each harness reads it; Claude's merges."""
         seed = b'{"userID": "kept", "projects": {"/c": {"allowedTools": ["Bash"], "hasTrustDialogAccepted": false}}}'

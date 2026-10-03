@@ -2,7 +2,9 @@
 # oversee-watch's start-stalled report: a running lane record whose status
 # file, tmp/lane-status-<item>.md under its mail_root, is still missing
 # ORCH_WATCH_START_STALL_SECS after the record went running, its running_at, on
-# every harness, a hosted one read through `lane-host cat`. Reported once, then every
+# every harness, a hosted one read through `lane-host cat`. A lane whose host
+# kind declares files=none, a Claude cloud session, writes no file: its own
+# open pull request on the item branch is its start. Reported once, then every
 # ORCH_OVERSEER_MARK_REPEAT passes while it stands.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -130,6 +132,26 @@ watch 1300 "${HOSTED_ENV[@]}" LANE_HOST_STUB_CAT_STATUS=5 LANE_HOST_STUB_CAT_ITE
 assert_eq "events=$EVENTS unread=$(grep -c '^oversee-watch: start-stall-unread item=issue-5 exit=2$' "$STUB_DIR/err" || true)" \
   "events= unread=1" "a failed hosted read is noted and reports no stall" "$STUB_DIR/err"
 
+echo "=== a lane whose kind writes no file starts with its own pull request ==="
+# One claude-cloud record per case, its mail_root a local worktree holding no
+# status file. OPEN is the item branch's open pull request line, the head
+# owner last: none, the lane's own, or a fork's on the same branch name.
+OWN_PR=$'7\tissue-7\tcloud lane\toctocat\tabc111\t## Lane status'
+FORK_PR=$'8\tissue-7\tfork lane\tforker\tdef222\t## Lane status\tforker'
+cloud_start() { # NAME OPEN [WATCH_BIN]
+  new_case "$1"
+  write_state "$(launched issue-7 "$(worktree issue-7)" claude claude-cloud)"
+  printf '%s\n' "$2" > "$STUB_DIR/open.txt"
+  WATCH_BIN="${3:-}" watch 700
+}
+# NAME|OPEN|WANT
+for row in "start_stall_cloud_none||EVENT start-stalled issue-7 age=700" "start_stall_cloud_own|$OWN_PR|" \
+  "start_stall_cloud_fork|$FORK_PR|EVENT start-stalled issue-7 age=700"; do
+  IFS='|' read -r name open want <<<"$row"
+  cloud_start "$name" "$open"
+  assert_eq "events=$EVENTS" "events=$want" "$name: a files=none lane's start is its own open pull request" "$STUB_DIR/err"
+done
+
 echo "=== the window is a setting ==="
 new_case start_stall_bound
 ROOT_1="$(worktree issue-1)"
@@ -139,6 +161,10 @@ assert_eq "events=$EVENTS" "events=EVENT start-stalled issue-1 age=61" "ORCH_WAT
 watch 120 ORCH_WATCH_START_STALL_SECS=060
 assert_eq "refused=$(grep -c '^oversee-watch: start-stall-secs-invalid value=060$' "$STUB_DIR/err" || true)" "refused=1" \
   "a window that is not a positive whole number refuses the watch" "$STUB_DIR/err"
+watch 120 ORCH_WATCH_LANE_STALL_SECS=060
+LANE_STALL_REFUSED="$(grep -c '^oversee-watch: lane-stall-secs-invalid value=060$' "$STUB_DIR/err" || true)"
+assert_eq "refused=$LANE_STALL_REFUSED" "refused=1" \
+  "a lane-stalled window that is not a positive whole number refuses the watch" "$STUB_DIR/err"
 
 echo "=== must-fail control ==="
 # The status file never looked for: a lane that wrote its file is reported
@@ -166,6 +192,36 @@ write_state "$(launched issue-1 "$ROOT_1" pi "" 1000)"
 WATCH_BIN="$ANCHOR_WATCH" watch 1599
 assert_eq "events=$EVENTS" "events=EVENT start-stalled issue-1 age=1599" \
   "control: anchored on launched_at a lane that went running 599s ago is reported stalled" "$STUB_DIR/err"
+
+# A files=none lane read as one with a status file, which has no root to read
+# it under: a lane with no pull request is never reported.
+FILELESS_DIR="$TMP_ROOT/start-stall-fileless"
+FILELESS_WATCH="$(mutant_scripts start-stall-fileless/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$FILELESS_DIR/github"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutate_file "$FILELESS_WATCH" '    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then' '    if false; then'
+cloud_start start_stall_fileless_mutant "" "$FILELESS_WATCH"
+assert_eq "events=$EVENTS" "events=" \
+  "control: read for a status file, a files=none lane with no pull request is never reported" "$STUB_DIR/err"
+# The head owner never compared: a fork's pull request on the branch name
+# stands in for the lane's start.
+FORK_DIR="$TMP_ROOT/start-stall-fork"
+FORK_WATCH="$(mutant_scripts start-stall-fork/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$FORK_DIR/github"
+mutate_file "${FORK_WATCH%/*}/lib/watch-host-kinds.sh" '[.[] | lane_own($branch; $owner)] | first' '[.[]] | first'
+cloud_start start_stall_fork_mutant "$FORK_PR" "$FORK_WATCH"
+assert_eq "events=$EVENTS" "events=" "control: without the owner rule a fork's pull request starts the lane" "$STUB_DIR/err"
+# The lane-stalled window never validated: 060 runs the watch.
+SECS_DIR="$TMP_ROOT/lane-stall-secs"
+SECS_WATCH="$(mutant_scripts lane-stall-secs/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$SECS_DIR/github"
+# shellcheck disable=SC2016
+mutate_file "$SECS_WATCH" '[[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die' 'true || die'
+new_case lane_stall_secs_mutant
+write_state "$(launched issue-1 "$(worktree issue-1 status)" pi)"
+WATCH_BIN="$SECS_WATCH" watch 120 ORCH_WATCH_LANE_STALL_SECS=060
+assert_eq "refused=$(grep -c '^oversee-watch: lane-stall-secs-invalid' "$STUB_DIR/err" || true)" "refused=0" \
+  "control: without its check a lane-stalled window of 060 is taken" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -4,7 +4,7 @@ The `scripts/lane-host` command selects a host from `ORCH_LANE_HOST`. `resolve` 
 
 ## Host kinds
 
-Every place a lane runs is a host kind ([D020](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D020-lane-host-kinds.md)). `lane-host capabilities` prints the kind's one tab-separated `key=value` line, and every caller acts on a declared value, never on a host or provider name. The dispatcher answers the line for `local` and `claude-cloud`, the kinds kendex owns; for a provider path it asks the provider, and a provider that exits `2` on the verb gets the static `ssh` line `lane-host-ssh capabilities` prints. A key outside the set below, a missing key or a value outside its key's set refuses as `capability-invalid key=KEY value=VALUE` with exit `1`. Provider verbs under `claude-cloud` refuse as `host-kind-verb kind=claude-cloud verb=VERB` with exit `2`.
+Every place a lane runs is a host kind ([D020](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D020-lane-host-kinds.md)). `lane-host capabilities` prints the kind's one tab-separated `key=value` line, and every caller acts on a declared value, never on a host or provider name. The dispatcher answers the line for `local` and `claude-cloud`, the kinds kendex owns; for a provider path it asks the provider, taking no slot since the verb reads no host state. A provider that gives the absent-verb answer gets the static `ssh` line `lane-host-ssh capabilities` prints; the arm reads two answers as absent, exit `2`, and exit `64` with a `verb-unsupported verb=capabilities` line on stderr, which is fleet's Daytona provider's answer. A key outside the set below, a missing key or a value outside its key's set refuses as `capability-invalid key=KEY value=VALUE` with exit `1`. Provider verbs under `claude-cloud` refuse as `host-kind-verb kind=claude-cloud verb=VERB` with exit `2`.
 
 | Key | Values | Caller that matches on it |
 |---|---|---|
@@ -18,7 +18,7 @@ Every place a lane runs is a host kind ([D020](https://github.com/vanillagreenco
 | `park` | `verb`, `none` | read by no caller until the Daytona provider declares its line; `lane-close --park` keeps its `stop-sandbox --check` read |
 | `accounts` | `verb`, `none` | read by no caller until then; `lanes` keeps its exit-2 read of `accounts` |
 | `pool` | `plan`, `cloud-credit` | `lanes pick`, the tier of its expires-first rule |
-| `land` | `lane`, `handoff` | the overseer at review convergence |
+| `land` | `lane`, `handoff` | read by no caller in this build |
 
 | Kind | `launch` | `channel` | `files` | `status` | `stop` | `relaunch` | `park` | `accounts` | `pool` | `land` |
 |---|---|---|---|---|---|---|---|---|---|---|

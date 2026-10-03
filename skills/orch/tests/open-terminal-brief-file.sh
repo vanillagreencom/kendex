@@ -266,7 +266,7 @@ mutant() {
 INLINE_CMD="$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL 'an inline brief'"
 refusal_row "a brief file beside a command with no {brief} is refused, since it would reach no harness" \
   "$OT" brief-unreferenced option=--brief-file --cmd "$INLINE_CMD" --brief-file "$BRIEF_FILE"
-mutant brief-unreferenced '[[ "$CMD_TEMPLATE" == *"{brief}"* ]] || { ot_message brief-unreferenced' 'true || { ot_message brief-unreferenced'
+mutant brief-unreferenced '[[ "$CMD_TEMPLATE" == *"{brief}"* || "$HOST_LAUNCH" == cloud-session ]] || { ot_message brief-unreferenced' 'true || { ot_message brief-unreferenced'
 control_row "control: without its refusal the unreferenced brief file launches" \
   "$MUTANT_OT" \
   --cmd "$INLINE_CMD" --brief-file "$BRIEF_FILE"

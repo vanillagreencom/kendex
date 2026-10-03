@@ -1596,18 +1596,19 @@ CLOUD_CLOSED="rc=0 kept=1 host=0 tmux=0 worktree=remove $TMP_ROOT/cloud-wt statu
 cloud_close "$SCRIPT"
 assert_eq "$(cloud_observed)" "$CLOUD_CLOSED" \
   'a cloud lane closes its record and local worktree, stops nothing and names the session it keeps'
-cloud_close "$SCRIPT" --keep-sandbox
-assert_eq "rc=$RC refused=$(grep -cxF 'lane-close: record-invalid item=KEN-1 field=stop value=none option=--keep-sandbox' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 refused=1 status=running' 'a cloud lane has no sandbox to keep'
-MUTANT="$(mutant cloud-stop '  window | verb) ;;' '  window | verb | none) ;;')"
-cloud_close "$MUTANT"
-assert_eq "red=$([[ "$(cloud_observed)" != "$CLOUD_CLOSED" ]] && echo yes || echo no)" 'red=yes' \
-  'control: a stop=none lane taken through the stop path fails the cloud close row'
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-stop '    [[ "$PARK" != true ]] || park_judge
+    remove_item_files' '    [[ "$PARK" != true ]] || park_judge
+    ORCH_LANE_HOST="$host" "$LANE_HOST" stop --item "$ITEM" --harness claude >/dev/null
+    remove_item_files')"
+cloud_close "$MUTANT"
+assert_eq "$(cloud_observed)" "rc=0 kept=1 host=1 tmux=0 worktree=remove $TMP_ROOT/cloud-wt status=done" \
+  'control: a stop=none arm that calls a stop verb fails the host=0 pin'
+# shellcheck disable=SC2016
 MUTANT="$(mutant cloud-kept '    message host-kept "kind=$host_kind" "session=$(record_field session_id)"' '    :')"
 cloud_close "$MUTANT"
-assert_eq "red=$([[ "$(cloud_observed)" != "$CLOUD_CLOSED" ]] && echo yes || echo no)" 'red=yes' \
-  'control: without its host-kept line the close fails the cloud close row'
+assert_eq "$(cloud_observed)" "rc=0 kept=0 host=0 tmux=0 worktree=remove $TMP_ROOT/cloud-wt status=done" \
+  'control: without its host-kept line the close fails the kept=1 pin alone'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"

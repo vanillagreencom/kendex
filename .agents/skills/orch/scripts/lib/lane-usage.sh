@@ -1,19 +1,17 @@
 # shellcheck shell=bash
 #
 # The readers of a usage endpoint's answer: each harness's body turned into the
-# bucket record `lanes` emits and lib/lane-model.sh judges. `lanes` is the one
-# caller, through parse_usage_body.
+# bucket record `lanes` emits and lib/lane-model.sh judges, and the tier inputs
+# a pick reads beside them. `lanes` is the one caller, through parse_usage_body
+# and lane_tier_inputs.
 #
-# Sourced, never run. parse_usage_body reads the SESSION_WINDOW_S `lanes` sets
-# and calls copilot_credits_parse from lib/copilot-credits.sh.
+# Sourced, never run, by `lanes` alone: parse_usage_body reads the
+# SESSION_WINDOW_S `lanes` sets and calls copilot_credits_parse from
+# lib/copilot-credits.sh, and lane_tier_inputs runs in `lanes`' own shell,
+# calling its readers and its `die`.
 
 # Claude: `.five_hour` and `.seven_day` carry utilization/resets_at directly.
-# `.iguana_necktie` is the Claude cloud credit, an expiring grant cloud
-# sessions spend before the plan windows, carried as `credits` in dollars. No
-# document names it: the credit's one documented surface is claude.ai
-# Settings > Usage, a web page with no API, and this body is the read `lanes`
-# already makes for the windows. A body without it carries no credits, which
-# `lanes pick` names as cloud-credit-unread where the kind spends it.
+# `.iguana_necktie`, the Claude cloud credit in dollars, kept as `credits`: undocumented; its page, claude.ai Settings > Usage, has no API.
 # The model-scoped weekly window moved out of the legacy seven_day_sonnet /
 # seven_day_opus fields into `limits[]` entries with kind=="weekly_scoped";
 # the legacy fields stand in where an older response carries no entries, so an
@@ -153,4 +151,59 @@ parse_usage_body() { # HARNESS
 		copilot) copilot_credits_parse ;;
 		*) parse_codex_usage "$SESSION_WINDOW_S" ;;
 	esac
+}
+
+# The tier inputs of one pick over LANES, `lanes`' JSON array of records, as
+# TIER_POOL, the pool the kind declares, TIER_RETIRE, each account's
+# ORCH_LANE_RETIRE date, TIER_CLOUD_REPO, the accounts a cloud-session launch
+# may take, null for any other launch, and TIER_REPO, the checkout's
+# github.com repository they were judged against. Read once per pick: an
+# expiring credit is tier 0 only where the kind declares it, and a cloud
+# session reaches only a repository its account was given.
+TIER_POOL="" TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
+lane_tier_inputs() { # LANES
+	local pool launch dir date
+	TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
+	lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || die host-capabilities-unread "${ORCH_LANE_HOST:-local}"
+	lane_capability pool pool
+	TIER_POOL="$pool"
+	lane_capability launch launch
+	case "$pool" in
+		plan) ;;
+		cloud-credit)
+			while IFS= read -r dir; do
+				date="$(lane_retire_date "$dir")"
+				[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1
+			done < <(jq -r '.[].config_dir' <<<"$1")
+			;;
+		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
+	esac
+	case "$launch" in
+		window | ssh | cloud-task) ;;
+		cloud-session)
+			# The github skill's reading of the checkout's origin, sourced on this
+			# path alone; its own helper-missing line refuses a copy without it.
+			# shellcheck source=lib/gh-repo.sh
+			source "$SCRIPT_DIR/lib/gh-repo.sh" || exit 1
+			TIER_REPO="$(kendex_github_origin_slug "$PROJECT_ROOT")" || TIER_REPO=""
+			TIER_CLOUD_REPO='[]'
+			while IFS= read -r dir; do
+				[[ -n "$dir" && -n "$TIER_REPO" ]] && lane_cloud_repo "$dir" "$TIER_REPO" || continue
+				TIER_CLOUD_REPO="$(jq -c --arg d "$dir" '. + [$d]' <<<"$TIER_CLOUD_REPO")" || return 1
+			done < <(jq -r '.[].config_dir' <<<"$1")
+			;;
+		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
+	esac
+}
+
+# Whether an ORCH_LANE_CLOUD_REPOS entry names REPO, an owner/name, for the
+# lane at DIR: the account has the repository access a cloud session needs.
+# GitHub reads both names case-insensitively.
+lane_cloud_repo() { # DIR REPO
+	local pair
+	while IFS= read -r pair; do
+		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
+		[[ "$(trim "${pair#*=}" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<<"$2")" ]] || return 0
+	done < <(setting_items "${ORCH_LANE_CLOUD_REPOS:-}")
+	return 1
 }

@@ -295,8 +295,11 @@ The long pass's events, checked and reported in this order:
                              request on the item branch whose head commit and
                              body, its `## Lane status`, have not changed for
                              ORCH_WATCH_LANE_STALL_SECS: one `gh pr list` per
-                             such lane per long pass, the watch state keeping
-                             the last head and a body digest. Reported once
+                             such lane per repository per long pass, shared
+                             with the start-stall check, where a fork's pull
+                             request on the branch name never counts, the
+                             watch state keeping the last head and a body
+                             digest. Reported once
                              and again every ORCH_OVERSEER_MARK_REPEAT passes
                              while it stands; a change starts a fresh window
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
@@ -587,8 +590,9 @@ Options:
                       record names and routed by what that host kind
                       declares (lane-host capabilities): files=verb through
                       lane-host, files=local on this disk, files=none not
-                      at all, and only a channel=mailbox lane in the mail
-                      pass. A run carrying a lane passed with this option
+                      at all, only a channel=mailbox lane in the mail
+                      pass, and the provider's status verb asked only of a
+                      status=verb lane. A run carrying a lane passed with this option
                       while `lane-host resolve` answers local is refused as
                       hosted-without-host rather than read on this disk
   --root ITEM=PATH    the item's lane worktree on this disk, where its
@@ -982,7 +986,7 @@ ow_message() { # REASON FIELD=VALUE...
     root-unknown-item) text='The --root item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
-    host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
+    host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. With item= named, that lane is left out of each pass that cannot read its host, reported once while it stands, and the rest of the fleet is carried; without, nothing is.' ;;
     lane-stall-secs-invalid) text='ORCH_WATCH_LANE_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-unread) text='The digest of a lane pull request body could not be taken, so whether the lane moved is unknown. The watch stops rather than report a stall it did not measure.' ;;
     pr-read-failed) text='The open pull request on the item branch could not be listed, so this pass settles nothing about a lane whose kind writes no file this watch reads: no start-stalled or lane-stalled goes out for it and its rows stand. gh'"'"'s own words follow.' ;;

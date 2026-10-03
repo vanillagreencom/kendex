@@ -17,9 +17,10 @@ OVERSEE_WATCH_STATE_DIR = ""
 # launch and names that path.
 WORKTREE_CLI = ""
 
-# Where lanes run. "local" runs them on this machine. A path to a script
-# runs them wherever that script reaches. Credentials alone never send a
-# lane to another machine.
+# Where lanes run. "local" runs them on this machine. "claude-cloud" runs
+# them in Claude Code's own cloud sessions. A path to a script runs them
+# wherever that script reaches. Each is a host kind (schemas/lane-host.md
+# § Host kinds). Credentials alone never send a lane to another machine.
 ORCH_LANE_HOST = "local"
 
 # Runtime the overseer's own session runs in, which oversee launch and
