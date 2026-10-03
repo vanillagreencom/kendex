@@ -72,6 +72,6 @@ gg_mutant() { # VAR SCRIPT FROM TO
     "$dir/$2" >"$dir/$2.new" || exit 2
   ! cmp -s -- "$dir/$2" "$dir/$2.new" || { echo "harness: control on $2 changed nothing: $3" >&2; exit 2; }
   mv -- "$dir/$2.new" "$dir/$2"
-  chmod +x -- "$dir/$2"
+  chmod -- +x "$dir/$2"
   eval "$1=\$dir/\$2"
 }
