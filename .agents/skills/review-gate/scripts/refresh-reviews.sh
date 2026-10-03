@@ -81,6 +81,9 @@ trap 'rm -f -- "${class_log:?}"' EXIT
 REPLY_PREFIX='Filed upstream as '
 REPLY_TAIL='. This pull request contains generated kendex files, so the fix belongs in the kendex source catalog.'
 NOT_FILED_PREFIX='Not filed upstream: '
+# The actions program halts with this status for a thread root the REST read
+# lacks. jq's own failures exit 2, 3 or 5, and a failed exec 126 or 127.
+ROOT_MISSING_EXIT=6
 
 # REST pagination emits one array per page. A blank or error-object response
 # cannot mean that there are no findings.
@@ -135,17 +138,25 @@ while IFS= read -r pr; do
     || fail comments-shape "$PR_NUMBER" 'The review comments are malformed.'
 
   # A missing REST root means the reads disagree. Refuse before any write.
-  actions="$(jq -nc --argjson threads "$threads" --argjson comments "$review_comments" \
-    --arg prefix "$REPLY_PREFIX" --arg not_filed "$NOT_FILED_PREFIX" --arg author "$PR_AUTHOR" "$AUTOMATIC_AUTHOR_DEF"'
-    [$threads[] | . as $thread
+  # Fetched documents reach jq on stdin: Linux caps one argv string at 128 KiB.
+  actions_status=0
+  actions="$(jq -nc --arg prefix "$REPLY_PREFIX" --arg not_filed "$NOT_FILED_PREFIX" --arg author "$PR_AUTHOR" \
+    --argjson root_missing "$ROOT_MISSING_EXIT" "$AUTOMATIC_AUTHOR_DEF"'
+    [inputs] as [$threads, $comments]
+    | [$threads[] | . as $thread
       | ([$comments[] | select(.id == $thread.root)] | first) as $root
-      | if $root == null then error("thread root missing from comments") else . end
+      | if $root == null then "thread root missing from comments\n" | halt_error($root_missing) else . end
       | select($root.user | automatic_author)
       | {id, root: .root, resolved: .isResolved, outdated: .isOutdated, path: $root.path, body: $root.body,
           url: $root.html_url,
           answered: any($comments[]; .in_reply_to_id == $thread.root
-            and .user.login == $author and (.body | startswith($prefix) or startswith($not_filed)))}]')" \
-    || fail thread-actions "$PR_NUMBER" 'The thread and comment reads disagree.'
+            and .user.login == $author and (.body | startswith($prefix) or startswith($not_filed)))}]' \
+    <<<"$threads"$'\n'"$review_comments")" || actions_status=$?
+  case "$actions_status" in
+    0) ;;
+    "$ROOT_MISSING_EXIT") fail thread-actions "$PR_NUMBER" 'The thread and comment reads disagree.' ;;
+    *) fail actions-jq "$PR_NUMBER" "jq exited $actions_status while joining the thread and comment reads." ;;
+  esac
 
   if ! pending="$(jq 'any(.[]; (.answered | not) or (.resolved | not))' <<<"$actions")"; then
     fail pending-actions "$PR_NUMBER" 'Could not determine whether review findings still require an answer.'
@@ -207,10 +218,10 @@ while IFS= read -r pr; do
       hold report "$PR_NUMBER" 'The upstream reporter failed; no thread on this pull request was answered.'
       continue
     fi
-    if ! jq -e --argjson findings "$findings" 'type == "array"
+    if ! jq -en 'input as $findings | inputs | type == "array"
         and ([.[].root] | sort) == ([$findings[].root] | sort)
         and all(.[]; (.issue == null or (.issue | type) == "string") and (.note | type) == "string")' \
-        <<<"$results" >/dev/null 2>&1; then
+        <<<"$findings"$'\n'"$results" >/dev/null 2>&1; then
       hold report-shape "$PR_NUMBER" 'The upstream reporter did not return one result per finding; no thread on this pull request was answered.'
       continue
     fi
