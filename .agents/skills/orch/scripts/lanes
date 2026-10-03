@@ -134,7 +134,7 @@
 #         `cloud-repo-unset`, a `lanes: cloud-repo-unset` line when none
 #         qualifies. The entry records the account's one-time setup: the
 #         cloud environment's setup script
-#         `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/kendex/main/install.sh | sh -s -- --cli-only`
+#         (kendex's main-branch install.sh, run with --cli-only)
 #         and repository access approved once, both claude.ai cards in a
 #         session of that account on that repository. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
