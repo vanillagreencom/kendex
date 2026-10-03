@@ -363,6 +363,8 @@ an installation placeholder through the router is validated once, then read|file
 an installation token through the router is too|file:no-token env:GH_TOKEN=ghs_APPTOKEN|router:pr-view|0|pr=42|user,installation,pr-view
 a placeholder the user endpoint accepts costs that one request|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|router:pr-view|0|pr=42|user,pr-view
 an invalid placeholder is asked again by the command and fails closed|file:no-token env:GH_TOKEN=dtn_BADPLACEHOLDER|router:pr-view|3|status=auth_error|user,user,keyring,user
+a refused value two names hold is asked once by the router|file:no-token env:GH_TOKEN=dtn_BADPLACEHOLDER env:GITHUB_TOKEN=dtn_BADPLACEHOLDER|router:pr-view|3|status=auth_error|user,user,keyring,user
+an installation token both endpoints refuse is not recorded, so the keyring answers|file:no-token keyring env:GH_TOKEN=ghs_APPDENIED|router:pr-view|0|pr=42|user,installation,keyring,keyring,pr-view
 a command run directly validates the value itself|file:no-token env:GH_TOKEN=dtn_APPPLACEHOLDER|pr-view|0|pr=42|user,installation,pr-view
 a recorded validation of another value does not stand for this one|file:no-token env:GH_TOKEN=dtn_APPPLACEHOLDER env:KENDEX_GITHUB_VALIDATED_TOKEN=dtn_OTHERVALUE|pr-view|0|pr=42|user,installation,pr-view
 "
