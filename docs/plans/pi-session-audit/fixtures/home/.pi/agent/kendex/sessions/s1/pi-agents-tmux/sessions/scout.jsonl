@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"sub1","timestamp":"2026-10-01T10:30:00.000Z","cwd":"/work"}
+{"type":"message","id":"g1","parentId":null,"timestamp":"2026-10-01T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t9","name":"web_fetch","arguments":{}}],"api":"openai-completions","provider":"github-copilot","model":"claude-opus-5.5","responseId":"r5","usage":{"input":5,"output":5,"cacheRead":5,"cacheWrite":5,"totalTokens":20},"stopReason":"toolUse","timestamp":1}}
+{"type":"message","id":"g2","parentId":"g1","timestamp":"2026-10-01T10:00:01.000Z","message":{"role":"toolResult","toolCallId":"t9","toolName":"web_fetch","content":[{"type":"text","text":"HTTP 500 from provider"}],"isError":true,"timestamp":2}}

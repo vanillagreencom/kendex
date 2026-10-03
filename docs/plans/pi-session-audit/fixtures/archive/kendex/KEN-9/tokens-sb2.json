@@ -1,0 +1,18 @@
+{
+ "harnesses": {
+  "claude": {
+   "files": 1,
+   "unreadable": 0,
+   "unrecorded": 0,
+   "models": {
+    "claude-opus-5-5": [
+     1,
+     1,
+     1,
+     1
+    ]
+   }
+  }
+ },
+ "at": "2026-10-05T01:00:00Z"
+}

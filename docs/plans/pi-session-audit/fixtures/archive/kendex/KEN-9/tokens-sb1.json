@@ -1,0 +1,35 @@
+{
+ "harnesses": {
+  "claude": {
+   "files": 3,
+   "unreadable": 0,
+   "unrecorded": 1,
+   "models": {
+    "claude-opus-5-5": [
+     10,
+     20,
+     30,
+     40
+    ]
+   }
+  },
+  "pi": {
+   "files": 1,
+   "unreadable": 0,
+   "unrecorded": 0,
+   "models": {
+    "github-copilot/claude-opus-5.5": [
+     1,
+     2,
+     3,
+     4
+    ],
+    "bad": [
+     1,
+     2
+    ]
+   }
+  }
+ },
+ "at": "2026-10-05T00:00:00Z"
+}

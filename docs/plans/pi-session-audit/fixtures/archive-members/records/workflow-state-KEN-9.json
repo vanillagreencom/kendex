@@ -1,0 +1,24 @@
+{
+ "issue_id": "KEN-9",
+ "cycles": 2,
+ "rereview_cycles": 1,
+ "escalated_items": [
+  "x"
+ ],
+ "pr_comment_review": {
+  "iterations": 3,
+  "fixes": [
+   {
+    "a": 1
+   },
+   {
+    "b": 2
+   }
+  ],
+  "skipped": [
+   {
+    "c": 3
+   }
+  ]
+ }
+}

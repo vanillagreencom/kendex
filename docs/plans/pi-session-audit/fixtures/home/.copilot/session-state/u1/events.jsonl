@@ -1,0 +1,7 @@
+{"type":"session.start","data":{"sessionId":"u1","context":{"cwd":"/work"},"copilotVersion":"1.0.91","producer":"copilot-agent","startTime":"2026-10-01T13:00:00.000Z","version":1},"id":"session.start","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"k1","toolName":"bash"},"id":"tool.execution_start","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"k1","success":false,"error":{"message":"boom"}},"id":"tool.execution_complete","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"k2","toolName":"view"},"id":"tool.execution_start","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"k2","success":true},"id":"tool.execution_complete","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"session.error","data":{"errorType":"rate_limit","message":"Rate limited"},"id":"session.error","parentId":null,"timestamp":"2026-10-01T13:00:00.000Z"}
+{"type":"session.shutdown","data":{"modelMetrics":{"claude-opus-5.5":{"requests":{"count":3},"usage":{"inputTokens":7,"outputTokens":8,"cacheReadTokens":9,"cacheWriteTokens":10}}},"shutdownType":"routine","sessionStartTime":0,"totalApiDurationMs":1,"codeChanges":{"filesModified":[],"linesAdded":0,"linesRemoved":0}},"id":"session.shutdown","parentId":null,"timestamp":"2026-10-01T13:10:00.000Z"}
