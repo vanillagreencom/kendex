@@ -30,13 +30,16 @@
 #      install and mirror steps continue on error and the classify step does
 #      not, so a repository whose default branch does not yet carry this
 #      package still classifies, with the `render` class out of reach.
+#   6. the credential scan: default-branch scripts scan the PR merge ref
+#      and execute no script from it, even when both subject scripts exit 0.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
 # lane's own verdict, one reading the class, a
 # declaration read from the judged checkout, CI without always(), a
 # template without merge_group, a render-reach step that fails the job, and
-# an evaluator that refuses every expression.
+# an evaluator that refuses every expression, a credential scanner or
+# installer read from the PR, and guards checked out at its merge ref.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -312,11 +315,12 @@ secrets_contract() { # TEMPLATE
   awk -v condition="always() && github.event_name == 'pull_request'" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
     !in_job { next }
-    /^      - / { checkout = /uses: actions\/checkout@/; installed = 0; cond = "" }
+    /^      - / { checkout = 0; installed = 0; cond = "" }
+    /uses: actions\/checkout@/ { checkout = 1 }
     checkout && /^          fetch-depth:/ { depth = $2 }
     /^        if:/ { cond = $0; sub(/^        if: /, "", cond) }
-    $1 == ".agents/skills/commit-guards/scripts/install-gitleaks" && $2 == "\"$RUNNER_TEMP/gitleaks\"" { installed = 1 }
-    $2 == ".agents/skills/commit-guards/scripts/secrets" && $3 == "--against" && $4 == "HEAD^1" {
+    $1 ~ /commit-guards\/scripts\/install-gitleaks"?$/ && $2 == "\"$RUNNER_TEMP/gitleaks\"" { installed = 1 }
+    $2 ~ /commit-guards\/scripts\/secrets"?$/ && $3 == "--against" && $4 == "HEAD^1" {
       scans++; if (installed && cond == condition && $1 == "PATH=\"$RUNNER_TEMP/gitleaks:$PATH\"") ready++
     }
     END { printf "depth=%s scans=%d ready=%d", depth, scans, ready }
@@ -329,8 +333,114 @@ while IFS='|' read -r from to expected; do
 done <<'ROWS'
 if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=0 scans=1 ready=0
 fetch-depth: 0|fetch-depth: 1|depth=1 scans=1 ready=1
-.agents/skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"|: # .agents/skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"|depth=0 scans=1 ready=0
+"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=0 scans=1 ready=0
 ROWS
+
+# Read the CI job's checkout inputs and the secrets step from the template.
+# An omitted checkout ref selects the PR merge ref on pull_request.
+credential_checkouts() { # TEMPLATE
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    !in_job { next }
+    /^      - / {
+      if (checkout) print path "|" ref "|" depth
+      checkout = 0; path = "."; ref = ""; depth = "1"
+    }
+    /uses: actions\/checkout@/ { checkout = 1 }
+    checkout && /^          path:/ { path = $2 }
+    checkout && /^          ref:/ { ref = $0; sub(/^          ref: /, "", ref) }
+    checkout && /^          fetch-depth:/ { depth = $2 }
+    END { if (checkout) print path "|" ref "|" depth }
+  ' "$1"
+}
+credential_step() { # TEMPLATE KEY
+  awk -v key="$2" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    !in_job { next }
+    /^      - / { step = /name: secrets \(credential scan/; body = 0 }
+    step && index($0, "        " key ": ") == 1 {
+      sub("^        " key ": ", ""); print; next
+    }
+    step && key == "body" && /^        run: \|$/ { body = 1; next }
+    step && body && /^          / { sub(/^          /, ""); print }
+  ' "$1"
+}
+
+# Both the installer and scanner in the PR are no-ops. The credential is
+# assembled at runtime, so the suite itself contains no credential.
+CREDENTIAL_REPO="$(new_repo credential-source)" || exit 1
+git -C "$CREDENTIAL_REPO" config gc.auto 0
+git -C "$CREDENTIAL_REPO" config maintenance.auto false
+mkdir -p "$CREDENTIAL_REPO/.agents/skills/commit-guards"
+cp -R "$TEST_DIR/../../commit-guards/scripts" "$CREDENTIAL_REPO/.agents/skills/commit-guards/"
+git -C "$CREDENTIAL_REPO" add -A
+git -C "$CREDENTIAL_REPO" commit -qm base
+git -C "$CREDENTIAL_REPO" checkout -qb evil
+for script in install-gitleaks secrets; do
+  printf '#!/usr/bin/env bash\nprintf ran >"$RUNNER_TEMP/subject-code-ran"\nexit 0\n' >"$CREDENTIAL_REPO/.agents/skills/commit-guards/scripts/$script"
+done
+printf '%s\n' "AKIA""Z7Q3R5T2V4X6Y7W2" >"$CREDENTIAL_REPO/cred.txt"
+git -C "$CREDENTIAL_REPO" add -A
+git -C "$CREDENTIAL_REPO" commit -qm 'disable scanner and add credential'
+git -C "$CREDENTIAL_REPO" checkout -qb pr-merge main
+git -C "$CREDENTIAL_REPO" merge -q --no-ff evil -m merge
+GITLEAKS_BIN="$(command -v gitleaks)" || { echo "ci-template: gitleaks=missing" >&2; exit 2; }
+
+credential_scan() { # TEMPLATE NAME -> exit and credential finding, never its value
+  local wf="$1" root="$SANDBOX/$2" path ref depth branch work body status=0
+  mkdir -p "$root" "$root/runner/gitleaks"
+  cp "$GITLEAKS_BIN" "$root/runner/gitleaks/gitleaks"
+  credential_checkouts "$wf" >"$root/checkouts"
+  [ -s "$root/checkouts" ] || { echo "credential checkout extractor is broken" >&2; exit 1; }
+  while IFS='|' read -r path ref depth; do
+    case "$ref" in
+      "") branch=pr-merge ;;
+      '${{ github.event.repository.default_branch }}') branch=main ;;
+      *) echo "credential checkout ref is unsupported: $ref" >&2; exit 1 ;;
+    esac
+    if [ "$depth" = 0 ]; then
+      git clone -q --no-hardlinks --branch "$branch" "$CREDENTIAL_REPO" "$root/$path"
+    else
+      git clone -q --depth "$depth" --branch "$branch" "file://$CREDENTIAL_REPO" "$root/$path"
+    fi
+    git -C "$root/$path" config gc.auto 0
+    git -C "$root/$path" config maintenance.auto false
+  done <"$root/checkouts"
+  work="$(credential_step "$wf" working-directory)" || exit 1
+  body="$(credential_step "$wf" body)" || exit 1
+  [ -n "$body" ] || { echo "credential step extractor is broken" >&2; exit 1; }
+  (cd -- "$root/${work:-.}" && env -i PATH="$PATH" HOME="$root" CI=true GITHUB_ACTIONS=true \
+    GITHUB_WORKSPACE="$root" RUNNER_TEMP="$root/runner" bash -e -o pipefail -c "$body") >"$root/out" 2>&1 || status=$?
+  printf 'exit=%s\n' "$status"
+  awk '/^secrets: secret=cred.txt:1:aws-access-token$/ { print }' "$root/out"
+  if [ -e "$root/runner/subject-code-ran" ]; then
+    printf 'subject-code=ran\n'
+  else
+    printf 'subject-code=absent\n'
+  fi
+}
+assert_eq "CI refuses a credential when the PR replaces its scanner and installer with exit 0" \
+  "exit=1
+secrets: secret=cred.txt:1:aws-access-token
+subject-code=absent" "$(credential_scan "$TEMPLATE" trusted-scan)"
+
+# Keep the scanner command present, but execute the PR copy. This control
+# passes the credential and proves the assertion detects the bypass.
+plant "$TEMPLATE" '/guards/.agents/skills/commit-guards/scripts/secrets' \
+  '/subject/.agents/skills/commit-guards/scripts/secrets' "$SANDBOX/pr-scanner.yml" ci
+assert_eq "must-fail: the PR scanner passes its planted credential" "exit=0
+subject-code=ran" \
+  "$(credential_scan "$SANDBOX/pr-scanner.yml" pr-scanner)"
+plant "$TEMPLATE" '/guards/.agents/skills/commit-guards/scripts/install-gitleaks' \
+  '/subject/.agents/skills/commit-guards/scripts/install-gitleaks' "$SANDBOX/pr-installer.yml" ci
+assert_eq "must-fail: the installer runs from the PR" "exit=1
+secrets: secret=cred.txt:1:aws-access-token
+subject-code=ran" "$(credential_scan "$SANDBOX/pr-installer.yml" pr-installer)"
+plant "$TEMPLATE" 'ref: ${{ github.event.repository.default_branch }}' \
+  'ref: ' "$SANDBOX/pr-guards.yml" ci
+assert_eq "must-fail: guards from the merge ref pass the planted credential" "exit=0
+subject-code=ran" \
+  "$(credential_scan "$SANDBOX/pr-guards.yml" pr-guards)"
 
 # --- 4a. The permission the proof reads with ------------------------------
 # The action reads the workflow's earlier runs and their records with the job

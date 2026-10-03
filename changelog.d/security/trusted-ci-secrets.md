@@ -1,0 +1,1 @@
+- The CI template runs credential scans with default-branch scripts, so a pull request cannot disable the scan by changing its scanner or installer.
