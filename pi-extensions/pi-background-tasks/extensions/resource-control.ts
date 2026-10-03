@@ -261,24 +261,24 @@ function resolveMode(
 
 	const platform = platformFor(probes);
 	const hasCommand = commandProbeFor(probes, platform);
+	// The systemd probe can block Pi's thread on a transient unit, so only the
+	// modes that may pick systemd-run ask it.
 	const hasSystemd = systemdProbeFor(probes, hasCommand, platform, settings);
-	const systemdOk = hasSystemd();
-	const niceOk = canUseNiceIonice(hasCommand, platform);
 
 	if (settings.mode === "systemd-run") {
-		return systemdOk
+		return hasSystemd()
 			? { mode: "systemd-run" }
 			: { mode: "none", warning: "resourceControlMode=systemd-run requested, but usable user systemd-run support was not detected; spawning without resource controls." };
 	}
 
 	if (settings.mode === "nice-ionice") {
-		return niceOk
+		return canUseNiceIonice(hasCommand, platform)
 			? { mode: "nice-ionice" }
 			: { mode: "none", warning: "resourceControlMode=nice-ionice requested, but nice/ionice helpers were not detected; spawning without resource controls." };
 	}
 
-	if (systemdOk) return { mode: "systemd-run" };
-	if (niceOk) return { mode: "nice-ionice", warning: "resourceControlMode=auto could not use user systemd-run; using nice/ionice fallback." };
+	if (hasSystemd()) return { mode: "systemd-run" };
+	if (canUseNiceIonice(hasCommand, platform)) return { mode: "nice-ionice", warning: "resourceControlMode=auto could not use user systemd-run; using nice/ionice fallback." };
 	return { mode: "none", warning: "resource controls are enabled, but no supported helper was detected; spawning without resource controls." };
 }
 
@@ -325,7 +325,9 @@ function niceIonicePlan(
 	let args = [...input.shellArgs, input.command];
 	if (useIonice) {
 		file = "ionice";
-		args = ["-c", ioniceClassNumber(settings.ioniceClass), ...(settings.ioniceClass === "idle" ? [] : ["-n", String(settings.ioniceLevel)]), input.shell, ...input.shellArgs, input.command];
+		// -t: a refused IO priority (realtime class without CAP_SYS_ADMIN) still
+		// runs the task, under nice alone, instead of failing it.
+		args = ["-t", "-c", ioniceClassNumber(settings.ioniceClass), ...(settings.ioniceClass === "idle" ? [] : ["-n", String(settings.ioniceLevel)]), input.shell, ...input.shellArgs, input.command];
 	}
 	if (useNice) {
 		args = ["-n", String(settings.nice), file, ...args];
