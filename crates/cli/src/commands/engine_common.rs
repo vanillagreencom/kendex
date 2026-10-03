@@ -1,4 +1,4 @@
-use kendex_core::engine::{DriftRow, DriftState, EngineReport};
+use kendex_core::engine::{DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
@@ -313,9 +313,10 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
 }
 
 /// A refresh failure: any per-item failure or a locked item missing from
-/// its source is a hard error. An orphaned Pi package is the one Pi row
-/// that is not one: refresh keeps orphaned Pi packages and reports them;
-/// `apply` or `remove` takes them.
+/// its source is a hard error. Two Pi rows are not one: an orphaned Pi
+/// package, which refresh keeps and reports and `apply` or `remove` takes,
+/// and a row whose cause says the plan simply writes it, which this run's
+/// plan settles.
 pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
     report
         .notes
@@ -334,6 +335,7 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                 .filter(|row| {
                     row.kind == kendex_core::model::ItemKind::PiExtension
                         && row.state != DriftState::Orphaned
+                        && row.cause.is_none_or(DriftCause::holds_the_write)
                 })
                 .map(|row| format!("{}: {}", row.name, row.detail)),
         )

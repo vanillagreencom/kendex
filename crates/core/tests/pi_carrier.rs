@@ -437,66 +437,122 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
     }
 }
 
-/// Pi's own extension manager can turn a package off while kendex declares
-/// it on; a reinstall keeps that filter and writes the package's block.
-/// Disabling the declaration then needs no native switch, and still takes
-/// the block away.
+/// A package's `APPEND_SYSTEM.md` block follows its declaration whatever
+/// Pi's native filter already says: a declaration switched to agree with
+/// the filter needs no native switch, and still takes the block away or
+/// puts it back. Each row: the declaration installed, whether Pi's filter
+/// loads the package, and the declaration the toggle sets.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn disabling_a_declaration_pi_already_disabled_strips_its_block() {
+fn a_declaration_switch_pi_already_made_moves_only_its_block() {
     use kendex_core::{apply, engine, manifest, pi_ext};
     use serde_json::json;
+    for (declared, native_on, toggled) in [(true, false, false), (false, true, true)] {
+        let row = format!("declared {declared}, toggled {toggled}");
+        let w = world();
+        let (catalog, source) = widgets_catalog(&w);
+        let scope = scope(&w);
+        fs::write(manifest::manifest_path(&w.env, &scope), format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {declared}\n", source_path(&catalog)
+        )).unwrap();
+        let root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        let dest = pi_ext::install(&w.env, &root, &source, declared)
+            .unwrap()
+            .dest;
+        let settings_path = pi_ext::settings_path(&root);
+        let mut entry = json!({"source": dest});
+        if !native_on {
+            entry["extensions"] = json!([]);
+        }
+        fs::write(&settings_path, json!({"packages": [entry]}).to_string()).unwrap();
+        record_installed_packages(&w, &scope);
+        let append_path = pi_ext::append_system_path(&root);
+        let settings = fs::read(&settings_path).unwrap();
+        let instructions = fs::read(&append_path).ok();
+        assert_eq!(
+            instructions
+                .as_deref()
+                .is_some_and(|text| String::from_utf8_lossy(text).contains("Use the widget tool.")),
+            declared,
+            "{row}"
+        );
+
+        let report = engine::ops::toggle(
+            &w.env,
+            &scope,
+            &["pi-widgets".to_owned()],
+            Some(ItemKind::PiExtension),
+            toggled,
+            None,
+        )
+        .unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+
+        let append = fs::read_to_string(&append_path).unwrap_or_default();
+        assert_eq!(
+            append.contains("Use the widget tool."),
+            toggled,
+            "{row}: {append}"
+        );
+        assert_eq!(
+            fs::read(&settings_path).unwrap(),
+            settings,
+            "{row}: no native switch"
+        );
+        let drift = engine::audit(&w.env, &scope).unwrap().drift;
+        assert!(drift.is_empty(), "{row}: {} rows", drift.len());
+        // The block as it stood before the toggle is drift the plan writes.
+        match &instructions {
+            Some(bytes) => fs::write(&append_path, bytes).unwrap(),
+            None => fs::remove_file(&append_path).unwrap(),
+        }
+        let drift = engine::audit(&w.env, &scope).unwrap().drift;
+        assert!(
+            drift.iter().any(|row| row.kind == ItemKind::PiExtension
+                && row.name == "pi-widgets"
+                && row.state == engine::DriftState::Stale
+                && row.cause == Some(engine::DriftCause::UpstreamChanged)),
+            "{row}: {} rows",
+            drift.len()
+        );
+    }
+}
+
+/// A toggle plans before it saves the manifest, so an `APPEND_SYSTEM.md`
+/// that will not read fails it there: no declaration claims a switch whose
+/// block was never compared.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing() {
+    use kendex_core::{engine, lock, manifest, pi_ext};
     let w = world();
     let (catalog, source) = widgets_catalog(&w);
     let scope = scope(&w);
-    fs::write(manifest::manifest_path(&w.env, &scope), format!(
+    let manifest_path = manifest::manifest_path(&w.env, &scope);
+    fs::write(&manifest_path, format!(
         "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
     )).unwrap();
     let root = pi_ext::scope_root(&w.env, &scope).unwrap();
-    let dest = pi_ext::install(&w.env, &root, &source, true).unwrap().dest;
-    let settings_path = pi_ext::settings_path(&root);
-    let native = json!({"packages":[{"source":dest, "extensions":[]}]});
-    fs::write(&settings_path, native.to_string()).unwrap();
     pi_ext::install(&w.env, &root, &source, true).unwrap();
-    let append_path = pi_ext::append_system_path(&root);
-    assert!(
-        fs::read_to_string(&append_path)
-            .unwrap()
-            .contains("Use the widget tool.")
-    );
     record_installed_packages(&w, &scope);
-    let settings = fs::read(&settings_path).unwrap();
-    let instructions = fs::read(&append_path).unwrap();
+    // Bytes that are not UTF-8, as an editor saving another encoding leaves.
+    fs::write(pi_ext::append_system_path(&root), b"Notes \xff\n").unwrap();
+    let lock_path = lock::lock_path(&w.env, &scope);
+    let settings_path = pi_ext::settings_path(&root);
+    let before = [&manifest_path, &settings_path, &lock_path].map(|path| fs::read(path).unwrap());
 
-    let report = engine::ops::toggle(
+    let toggled = engine::ops::toggle(
         &w.env,
         &scope,
         &["pi-widgets".to_owned()],
         Some(ItemKind::PiExtension),
         false,
         None,
-    )
-    .unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
+    );
 
-    let append = fs::read_to_string(&append_path).unwrap_or_default();
-    assert!(!append.contains("Use the widget tool."), "{append}");
-    assert_eq!(
-        fs::read(&settings_path).unwrap(),
-        settings,
-        "no native switch"
-    );
-    assert!(engine::audit(&w.env, &scope).unwrap().drift.is_empty());
-    // A block put back under the disabled declaration is drift, not clean.
-    fs::write(&append_path, instructions).unwrap();
-    let drift = engine::audit(&w.env, &scope).unwrap().drift;
-    assert!(
-        drift.iter().any(|row| row.kind == ItemKind::PiExtension
-            && row.name == "pi-widgets"
-            && row.state == engine::DriftState::Stale),
-        "{} rows",
-        drift.len()
-    );
+    assert!(toggled.is_err(), "the toggle planned over an unread block");
+    let after = [&manifest_path, &settings_path, &lock_path].map(|path| fs::read(path).unwrap());
+    assert_eq!(after, before);
 }
 
 /// A package installed after the scope's Pi output style puts its block

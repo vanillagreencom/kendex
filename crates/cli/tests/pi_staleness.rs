@@ -334,3 +334,66 @@ fn refresh_retries_an_unrecorded_package_after_a_bin_conflict_is_removed() {
             .is_some()
     );
 }
+
+/// A package's own `enabled` setting, which Pi's extension manager writes
+/// under `kendex.extensionManager.config`, takes its instructions away or
+/// puts them back at the next refresh. `verify` reports the block until
+/// then, and the refresh that writes the block does not fail on it.
+#[test]
+fn refresh_moves_the_block_when_the_package_setting_flips() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("project");
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let scope = kendex_core::model::Scope::Global;
+    let manifest = kendex_core::manifest::manifest_path(&env, &scope);
+    let source = home.join("catalog/pi-extensions/pi-widgets");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::create_dir_all(project.join(".agents")).unwrap();
+    fs::write(
+        manifest,
+        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("package.json"),
+        r#"{"name":"pi-widgets","version":"1.0.0","pi":{"extensions":["index.js"],"appendSystem":"system.md"}}"#,
+    )
+    .unwrap();
+    fs::write(source.join("index.js"), "export const version = 1;\n").unwrap();
+    fs::write(source.join("system.md"), "Use the widget tool.\n").unwrap();
+    let installed = run(&home, &project, &["update-pi", "--scope", "global"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    let pi_root = kendex_core::pi_ext::scope_root(&env, &scope).unwrap();
+    let settings_path = kendex_core::pi_ext::settings_path(&pi_root);
+    let append_path = kendex_core::pi_ext::append_system_path(&pi_root);
+
+    for enabled in [false, true] {
+        let mut settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        settings["kendex"] = serde_json::json!({
+            "extensionManager": {"config": {"pi-widgets": {"enabled": enabled}}}
+        });
+        fs::write(&settings_path, settings.to_string()).unwrap();
+        let verify = run(&home, &project, &["verify", "--global"]);
+        assert_eq!(
+            verify.status.code(),
+            Some(1),
+            "{enabled}: {}",
+            said(&verify)
+        );
+
+        let refresh = run(&home, &project, &["refresh", "--global", "--yes"]);
+        assert!(refresh.status.success(), "{enabled}: {}", said(&refresh));
+        let append = fs::read_to_string(&append_path).unwrap_or_default();
+        assert_eq!(append.contains("Use the widget tool."), enabled, "{append}");
+        let verify = run(&home, &project, &["verify", "--global"]);
+        assert_eq!(
+            verify.status.code(),
+            Some(0),
+            "{enabled}: {}",
+            said(&verify)
+        );
+    }
+}

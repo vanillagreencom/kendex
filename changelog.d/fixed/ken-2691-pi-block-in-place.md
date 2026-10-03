@@ -1,1 +1,1 @@
-- Disabling a Pi package Pi already turned off now removes its `APPEND_SYSTEM.md` instructions, and a Pi output style no longer reads as stale after a package update.
+- Disabling a Pi package Pi already turned off removes its `APPEND_SYSTEM.md` instructions, and the next `apply` or `refresh` follows the package's own `enabled` setting.

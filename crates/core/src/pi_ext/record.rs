@@ -126,7 +126,8 @@ pub struct SwitchPlan<'a> {
 }
 
 /// Compare each declared carrier package and preserve durable provenance.
-/// Missing or unreadable bytes produce drift rather than an omitted row.
+/// Missing or unreadable bytes produce drift rather than an omitted row,
+/// except an `APPEND_SYSTEM.md` a plan cannot compare, which fails it.
 /// A package's `APPEND_SYSTEM.md` block follows its declaration, not the
 /// native filter: a disable Pi already set needs no switch, yet the
 /// declaration still takes the block away. With `plan`, plan native
@@ -179,7 +180,7 @@ fn record_matching<'a>(
     basis: RecordBasis,
     mut plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
-    use crate::engine::{DriftRow, DriftState};
+    use crate::engine::{DriftCause, DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
     let root = scope_root(env, scope)?;
     let mut drift = Vec::new();
@@ -189,12 +190,16 @@ fn record_matching<'a>(
         let result = resolve_declared(env, scope, manifest, name, decl).and_then(|package| {
             matching_lock_entry(&root, name, &package, lock.entries.get(&key), basis)
         });
-        let detail = match result {
+        let (detail, cause) = match result {
             Ok(Some(mut entry)) => {
                 let differs = entry.enabled != decl.enabled;
-                let block = block_edit(env, &root, name, decl.enabled);
-                // A switch never lands without its block: one whose block
-                // cannot be compared plans neither.
+                // A plan fails on a block it cannot compare, as a toggle
+                // must before it saves the manifest: a switch never lands
+                // without its block. Only the read-only pass reports it.
+                let block = match block_edit(env, &root, name, decl.enabled) {
+                    Err(error) if plan.is_some() => return Err(error),
+                    block => block,
+                };
                 if let Some(plan) = plan.as_mut()
                     && let Ok(edit) = &block
                 {
@@ -209,21 +214,28 @@ fn record_matching<'a>(
                 }
                 lock.entries.insert(key, entry);
                 match block {
-                    Err(error) => format!("APPEND_SYSTEM.md block could not be compared: {error}"),
-                    Ok(_) if differs => {
-                        "native extension filter does not match the enabled declaration".to_owned()
-                    }
-                    Ok(Some(_)) => {
-                        "APPEND_SYSTEM.md block does not match the declaration".to_owned()
-                    }
+                    Err(error) => (
+                        format!("APPEND_SYSTEM.md block could not be compared: {error}"),
+                        None,
+                    ),
+                    Ok(_) if differs => (
+                        "native extension filter does not match the enabled declaration".to_owned(),
+                        None,
+                    ),
+                    // The block alone is what a plan simply writes.
+                    Ok(Some(_)) => (
+                        "APPEND_SYSTEM.md block does not match the package's enabled state (declaration or kendex.extensionManager.config)".to_owned(),
+                        Some(DriftCause::UpstreamChanged),
+                    ),
                     Ok(None) => continue,
                 }
             }
-            Ok(None) => {
+            Ok(None) => (
                 "carrier package or completed install record does not match; update-pi must settle it"
-                    .to_owned()
-            }
-            Err(error) => format!("carrier package could not be compared: {error}"),
+                    .to_owned(),
+                None,
+            ),
+            Err(error) => (format!("carrier package could not be compared: {error}"), None),
         };
         drift.push(DriftRow {
             kind: ItemKind::PiExtension,
@@ -232,7 +244,7 @@ fn record_matching<'a>(
             scope: scope.clone(),
             state: DriftState::Stale,
             detail,
-            cause: None,
+            cause,
             compared: None,
             also_in_the_way: Vec::new(),
         });
