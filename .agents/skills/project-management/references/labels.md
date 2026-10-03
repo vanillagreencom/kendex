@@ -55,6 +55,8 @@ Category matching order: explicit `labels[]`, then `match.prefix`, then `match.p
 
 The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block, an empty one included, refuses every label write, and so do two renders whose taxonomy sections differ; with no heading the CLI enforces nothing.
 
+A taxonomy still in an earlier form (TOML, JSON or prose in `[skill-instructions]`, or a linked project doc or reference file) under no `### Project taxonomy` heading still binds agents: they validate labels against it as before until it moves into that block. The linear CLI enforces nothing for it, as in earlier releases, and `linear.sh labels audit` reports `taxonomy-absent` until it moves.
+
 ## Validation
 
 Validate the **final label set** before every create and update:
