@@ -2,9 +2,10 @@
 # The label-taxonomy refusals ../SKILL.md § Issue Creation Routing states,
 # driven against recorded Linear replies; that section is the one list of the
 # commands that refuse. The rows also pin which project-management renders the
-# CLI reads: the one beside a project install, every project skills directory
-# a delivery writes, never the one beside a global install, and two renders
-# that differ as unreadable.
+# CLI reads: every project skills directory a delivery writes in one project,
+# the one holding a project install or else the nearest one above the working
+# directory, never the one beside a global install or another project's, and
+# two renders that differ as unreadable.
 
 set -euo pipefail
 
@@ -233,13 +234,21 @@ run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
 }
 
 # Where kendex delivered project-management: with method = "copy", only under
-# .claude/skills; in a kendex project below the git top level; and twice, in
-# .agents/skills and .claude/skills, once agreeing and once not.
+# .claude/skills; in kendex projects below a git top level whose own render
+# declares `legacy` and not `bug`, one delivering linear to .agents/skills and
+# project-management only to .claude/skills; and twice, in .agents/skills and
+# .claude/skills, once agreeing and once not.
 COPY="$TMP_ROOT/copy"
 make_project "$COPY" declared .claude/skills
 NESTED="$TMP_ROOT/nested"
 make_project "$NESTED/sub" declared
-rm -rf -- "${NESTED:?}/sub/.git"
+make_project "$NESTED/copy" declared .claude/skills
+mkdir -p "$NESTED/copy/.agents/skills" "$NESTED/sub/src" "$NESTED/.agents/skills/project-management"
+mv -- "$NESTED/copy/.claude/skills/linear" "$NESTED/copy/.agents/skills/"
+rm -rf -- "${NESTED:?}/sub/.git" "${NESTED:?}/copy/.git"
+printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy' '```json' \
+  '{"categories": {"surface": {"labels": ["legacy"]}}}' '```' \
+  '<!-- kendex:project-instructions:end -->' >"$NESTED/.agents/skills/project-management/SKILL.md"
 git -C "$NESTED" init -q -b main
 git -C "$NESTED" config gc.auto 0
 git -C "$NESTED" config maintenance.auto false
@@ -275,6 +284,10 @@ label-source-layout|refused|linear-labels: undeclared labels=legacy taxonomy=$LA
 label-copy-delivery|refused|linear-labels: undeclared labels=legacy taxonomy=$COPY/.claude/skills/project-management/SKILL.md|$COPY|$COPY/.claude/skills/linear|create --name legacy
 label-copy-outside-install|refused|linear-labels: undeclared labels=legacy taxonomy=$COPY/.claude/skills/project-management/SKILL.md|$COPY|$GLOBAL/linear|create --name legacy
 label-nested-project|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED/sub||create --name legacy
+label-nested-declared|accepted||$NESTED/sub||create --name bug
+label-nested-from-top|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED|$NESTED/sub/.agents/skills/linear|create --name legacy
+label-nested-global|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED/sub/src|$GLOBAL/linear|create --name legacy
+label-nested-copy|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/copy/.claude/skills/project-management/SKILL.md|$NESTED/copy||create --name legacy
 label-renders-agree|accepted||$TMP_ROOT/agree||create --name bug
 label-renders-differ|refused|linear-labels: taxonomy-unreadable taxonomy=$TMP_ROOT/differ/.agents/skills/project-management/SKILL.md differs=$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md|$TMP_ROOT/differ||create --name bug
 label-declared|accepted||||create --name bug

@@ -855,34 +855,61 @@ resolve_label_id() {
 # [skill-instructions].project-management into each project skills directory a
 # delivery writes: `.agents/skills`, and under method = "copy" each tool's own
 # `.<tool>/skills` (every project root in crates/core/src/guard/resolve.rs
-# SKILL_ROOTS but the source layout `skills`). Every render found is read: the
-# one beside this linear install when the install lies in such a directory in
-# the project (a kendex project below the git top level renders there), then each
-# `$PROJECT_ROOT/.<tool>/skills/project-management/SKILL.md` (`.[!.]*` keeps
-# out `.` and `..`, which bash before 5.2 matches with `.*`). A linear install
-# outside the project, at global scope, reads only the project's renders: the
-# global one would enforce nothing in a project that declares a taxonomy.
-# Renders of one manifest carry one block, so two that differ refuse. Its
-# declared names are every category's `labels[]` and `match.parent`, plus each
-# LINEAR_AGENT_LABELS name. With no such heading the repository declares no
-# taxonomy, and no rule below applies. LINEAR_TAXONOMY_FILE is the render a
-# message names: the first found, or the shared one when none is.
-if ! _LINEAR_INSTALL_ROOT=$(cd -- "$_LIB_DIR/../../.." && pwd -P); then
-    jq -cn --arg dir "$_LIB_DIR" '{error: ("Could not resolve the skills directory holding the linear install at " + $dir)}' >&2
-    exit 1
-fi
-_linear_taxonomy_candidates=()
-if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* && "$_LINEAR_INSTALL_ROOT" =~ /\.[^./][^/]*/skills$ ]]; then
-    _linear_taxonomy_candidates+=("$_LINEAR_INSTALL_ROOT/project-management/SKILL.md")
-fi
-_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md)
+# SKILL_ROOTS but the source layout `skills`). Every render read is one
+# project's, so all of them render one manifest: each
+# `<root>/.<tool>/skills/project-management/SKILL.md` (`.[!.]*` keeps out `.`
+# and `..`, which bash before 5.2 matches with `.*`, and the source layout).
+# linear_taxonomy_root names that project. Renders of one manifest carry one
+# block, so two that differ refuse. Its declared names are every category's
+# `labels[]` and `match.parent`, plus each LINEAR_AGENT_LABELS name. With no
+# such heading the repository declares no taxonomy, and no rule below applies.
+# LINEAR_TAXONOMY_FILE is the render a message names: the first found, or the
+# shared one when none is.
+
+# Print the project whose renders hold the taxonomy. A linear install in a
+# `.<tool>/skills` directory in the repository belongs to the project holding
+# that directory, as commit-guards' gg_project_root derives it; a kendex
+# project below the git top level renders there. Any other install, at global
+# scope or in the catalog's source layout, serves the nearest directory from
+# the working directory up to the git top level that holds a render, else the
+# top level: reading the global render would enforce nothing in a project
+# that declares a taxonomy.
+linear_taxonomy_root() {
+    local install dir render
+    if ! install=$(cd -- "$_LIB_DIR/../../.." && pwd -P); then
+        jq -cn --arg dir "$_LIB_DIR" '{error: ("Could not resolve the skills directory holding the linear install at " + $dir)}' >&2
+        return 1
+    fi
+    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if ! dir=$(pwd -P); then
+        jq -cn '{error: "Could not resolve the working directory to find the project whose label taxonomy applies."}' >&2
+        return 1
+    fi
+    [[ "$dir/" == "$PROJECT_ROOT/"* ]] || dir="$PROJECT_ROOT"
+    while :; do
+        for render in "$dir"/.[!.]*/skills/project-management/SKILL.md; do
+            if [[ -e "$render" || -L "$render" ]]; then
+                printf '%s\n' "$dir"
+                return 0
+            fi
+        done
+        [[ "$dir" != "$PROJECT_ROOT" ]] || break
+        dir="${dir%/*}"
+    done
+    printf '%s\n' "$PROJECT_ROOT"
+}
+
+_linear_taxonomy_root=$(linear_taxonomy_root) || exit 1
 LINEAR_TAXONOMY_RENDERS=()
-for _linear_render in "${_linear_taxonomy_candidates[@]}"; do
+for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md; do
     [[ -e "$_linear_render" || -L "$_linear_render" ]] || continue
     LINEAR_TAXONOMY_RENDERS+=("$_linear_render")
 done
-unset _linear_taxonomy_candidates _linear_render
-LINEAR_TAXONOMY_FILE="${LINEAR_TAXONOMY_RENDERS[0]:-$PROJECT_ROOT/.agents/skills/project-management/SKILL.md}"
+LINEAR_TAXONOMY_FILE="${LINEAR_TAXONOMY_RENDERS[0]:-$_linear_taxonomy_root/.agents/skills/project-management/SKILL.md}"
+unset _linear_taxonomy_root _linear_render
 
 # Every taxonomy and label-definition refusal: the keyed first line, then the
 # JSON error.

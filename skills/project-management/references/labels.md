@@ -36,7 +36,7 @@ For Linear, match each label by ID and scope as well as name. The inventory's `t
 
 ## Project Taxonomy Contract
 
-Declare it in the project's kendex manifest (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions].project-management`, as this JSON in a fenced `json` code block under a `### Project taxonomy` heading. kendex renders it into this skill's SKILL.md in each project skills directory it delivers the skill to, and the linear CLI reads every such render:
+Declare it in the project's kendex manifest (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions].project-management`, as this JSON in a fenced `json` code block under a `### Project taxonomy` heading. kendex renders it into this skill's SKILL.md in each project skills directory it delivers the skill to. The linear CLI reads every render in one project's `.<tool>/skills` directories, never the source layout `skills/`. That project holds the linear install when the install sits in a `.<tool>/skills` directory in the repository. For any other install, global or source layout, it is the nearest directory from the working directory up to the git top level that holds a render, else the top level:
 
 ```json
 {

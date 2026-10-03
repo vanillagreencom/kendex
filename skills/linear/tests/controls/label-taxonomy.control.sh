@@ -47,44 +47,71 @@ control_replace scripts/lib/common.sh 1 \
     '    [[ "$rc" != 5 ]] || return 0' \
     '    [[ "$rc" != 6 ]] || return 0'
 
-# Read the taxonomy beside the linear install, not in the project: a global
-# install reads the global render and enforces nothing.
+# Take a linear install outside the repository for a project install: a
+# global install reads the global render and enforces nothing.
 control_expect "label-outside-install: refused"
 control_expect "label-outside-install: no label is written"
 control_replace scripts/lib/common.sh 1 \
-    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md)' \
-    '_linear_taxonomy_candidates+=("$_LINEAR_INSTALL_ROOT"/project-management/SKILL.md)'
+    '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
+    '    if [[ "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then'
 
-# Read the project's shared skills directory alone: a copy delivery into a
-# tool's own directory goes unread.
-control_expect "label-copy-outside-install: refused"
-control_expect "label-copy-outside-install: no label is written"
+# Take the catalog's source layout for a project install: the project's
+# parent holds no render, and nothing is enforced.
+control_expect "label-source-layout: refused"
 control_replace scripts/lib/common.sh 1 \
-    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md)' \
-    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.agents/skills/project-management/SKILL.md)'
+    '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
+    '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/[^./][^/]*/skills$ ]]; then'
 
-# Read the one fixed path the lookup replaced, $PROJECT_ROOT/.agents/skills:
-# a copy delivery with both skills under .claude/skills enforces nothing.
-control_expect "label-copy-delivery: refused"
-control_expect "label-copy-delivery: no label is written"
+# Skip the project holding a project install: run from the git top level,
+# a nested project's install reads the top level's taxonomy.
+control_expect "label-nested-from-top: refused"
+control_expect "label-nested-from-top: no label is written"
 control_replace scripts/lib/common.sh 1 \
-    'for _linear_render in "${_linear_taxonomy_candidates[@]}"; do' \
-    'for _linear_render in "$PROJECT_ROOT/.agents/skills/project-management/SKILL.md"; do'
+    '    if [[ "$install/" == "$PROJECT_ROOT/"* && "$install" =~ ^(.*)/\.[^./][^/]*/skills$ ]]; then' \
+    '    if false; then'
 
-# Skip the render beside a project install: a kendex project below the git
-# top level goes unread.
-control_expect "label-nested-project: refused"
-control_expect "label-nested-project: no label is written"
+# Start a global install's walk at the git top level: inside a nested
+# project it reads the top level's taxonomy.
+control_expect "label-nested-global: refused"
 control_replace scripts/lib/common.sh 1 \
-    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* && "$_LINEAR_INSTALL_ROOT" =~ /\.[^./][^/]*/skills$ ]]; then' \
-    'if false; then'
+    '    [[ "$dir/" == "$PROJECT_ROOT/"* ]] || dir="$PROJECT_ROOT"' \
+    '    dir="$PROJECT_ROOT"'
+
+# Stop a global install's walk at the working directory: run from below a
+# project's root it reads no render and enforces nothing.
+control_expect "label-nested-global: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    '            if [[ -e "$render" || -L "$render" ]]; then' \
+    '            if true; then'
 
 # Read the source beside a linear run from the catalog's source layout as a
 # render: its missing taxonomy section differs from the project's render.
 control_expect "label-source-layout: the refusal is keyed"
 control_replace scripts/lib/common.sh 1 \
-    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* && "$_LINEAR_INSTALL_ROOT" =~ /\.[^./][^/]*/skills$ ]]; then' \
-    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* ]]; then'
+    'for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md; do' \
+    'for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md "$_linear_taxonomy_root"/skills/project-management/SKILL.md; do'
+
+# Read the git top level's renders beside a nested project's: two projects'
+# taxonomies differ, and every label write in the nested one refuses.
+control_expect "label-nested-declared: accepted"
+control_expect "label-nested-declared: the label is written"
+control_expect "label-nested-project: the refusal is keyed"
+control_replace scripts/lib/common.sh 1 \
+    'for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md; do' \
+    'for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md "$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md; do'
+
+# Read the project's shared skills directory alone: a copy delivery into a
+# tool's own directory goes unread.
+control_expect "label-copy-outside-install: refused"
+control_expect "label-copy-outside-install: no label is written"
+control_expect "label-copy-delivery: refused"
+control_expect "label-copy-delivery: no label is written"
+control_expect "label-nested-copy: refused"
+control_expect "label-nested-copy: the refusal is keyed"
+control_expect "label-nested-copy: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    'for _linear_render in "$_linear_taxonomy_root"/.[!.]*/skills/project-management/SKILL.md; do' \
+    'for _linear_render in "$_linear_taxonomy_root"/.agents/skills/project-management/SKILL.md; do'
 
 # Read the first render alone: a stale second render goes unnoticed.
 control_expect "label-renders-differ: refused"
