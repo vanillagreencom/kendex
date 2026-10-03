@@ -26,7 +26,7 @@ From 1.0, kendex keeps a retired consumer-visible form reading, with one warning
 
 ### Validation budget
 
-The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run. It sits above a measured hooks-tree range run of 659 s and full runs of 535 to 676 s.
+The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run. It sits above a serial run of the hooks tree's 27 suites, 659 s, and full runs of 535 to 676 s.
 '''
 orch = '''
 ### Owner messages

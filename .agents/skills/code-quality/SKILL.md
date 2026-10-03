@@ -37,7 +37,7 @@ From 1.0, kendex keeps a retired consumer-visible form reading, with one warning
 
 ### Validation budget
 
-The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run. It sits above a measured hooks-tree range run of 659 s and full runs of 535 to 676 s.
+The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run. It sits above a serial run of the hooks tree's 27 suites, 659 s, and full runs of 535 to 676 s.
 
 <!-- kendex:project-instructions:end -->
 
@@ -92,7 +92,7 @@ A new or modified production gate or guard ships with one must-fail control per 
 
 ## Tests
 
-- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards. A control that plants its defect in an input, a fixture or a copy of a script is permanent: it stays in its surface's test file and runs whenever that test runs; a control that must edit compiled source is shown once and its result recorded in the change.
+- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards. A control that plants its defect in an input, a fixture or a copy of a source file it runs uncompiled is permanent: it stays in its surface's test file and runs whenever that test runs; a control that must edit compiled source is shown once and its result recorded in the commit message.
 - Where no production edit can redden a surface's test, the test states that, why, and what it holds, in place of its control. A test of the mechanism that implements a guarantee moves with the mechanism: assert the guarantee.
 - A test pins values a program parses: keys, codes, enums, exit status, flags, and a text protocol a named consumer reads, stated in the producer's header. A test that pins prose or the test harness's own configuration is deleted.
 - A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
