@@ -1350,6 +1350,13 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$SCRIPT"
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 missing=1 host=0 status=running' 'a hosted record with no pane on an open item refuses pane-missing before any host call'
+for args in '--park --pr 7' --keep-sandbox; do
+  write_state running claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
+  # shellcheck disable=SC2086  # the row's options are several words
+  run_close "$SCRIPT" $args
+  assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 missing=1 host=0 status=running' "lane-close $args on a hosted record with no pane refuses pane-missing before any host call"
+done
 
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
 LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
@@ -1560,6 +1567,14 @@ MUTANT="$(mutant windowless-open "$WINDOWLESS" '[[ -n "$host" && "$PARK" == fals
 write_state running claude /host; : >"$ROWS"
 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: without the terminal-item gate a hosted record with no pane closes an open item'
+for row in 'park|--park --pr 7|"$PARK" == false && ' 'keep|--keep-sandbox| && "$KEEP_SANDBOX" == false'; do
+  IFS='|' read -r name args guard <<<"$row"
+  MUTANT="$(mutant "windowless-$name" "$WINDOWLESS" "${WINDOWLESS/"$guard"/}")"
+  write_state running claude /host linear owner/repo; : >"$ROWS"
+  # shellcheck disable=SC2086  # the row's options are several words
+  run_close "$MUTANT" $args
+  assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'missing=0' "control: without its own guard lane-close $args takes a hosted record with no pane past pane-missing"
+done
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
