@@ -35,10 +35,12 @@ Output, one JSON object on stdout:
                         author submitted: a lane that opens its PR as an app
                         answers its threads in reviews of its own, which are
                         no bot's review of the PR,
-    "first_gate_met":   the first success the gate context posted on any head
-                        the PR carried, force-pushed-over heads included,
-                        read from each head's whole status history, since a
-                        later status on that head replaces the earlier one,
+    "first_gate_met":   the first approval submitted on any head the PR
+                        carried; where none was submitted, the first success
+                        the gate context posted on any head the PR carried,
+                        force-pushed-over heads included, read from each
+                        head's whole status history, since a later status on
+                        that head replaces the earlier one,
     "gate_met":         the first approval submitted on the final head;
                         where none was submitted, the gate context's
                         success on the final head,
@@ -97,8 +99,9 @@ through every page with the GraphQL cursor, up to 20 pages of 50 suites per
 commit and 10 pages of 100 runs per suite; a connection still open at that
 cap refuses the same way, as `truncated: check-suites` or
 `truncated: check-runs`. Each head's status history is read through every
-page of the REST commit statuses endpoint, and the head branch's pushes
-through every page of the REST repository activity endpoint.
+page of the REST commit statuses endpoint, read only for a PR with no
+approval, and the head branch's pushes through every page of the REST
+repository activity endpoint.
 
 Examples:
   pr-timeline.sh 42
@@ -238,7 +241,6 @@ def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[]
              elif .conclusion == "NEUTRAL" then "SKIPPED" else .conclusion end),
      startedAt, completedAt}];
 def gate($c): $c.status.context // null | select(. != null and .state == "SUCCESS") | .createdAt;
-def approved($reviews; $oid): [$reviews[] | select(.state == "APPROVED" and .submittedAt != null and .commit.oid == $oid) | .submittedAt] | min;
 def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - ($a | fromdate) end;
 # A commit connection lists its check suites oldest first.
 def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
@@ -270,6 +272,7 @@ def rounds($reviews; $pushed):
   | [$p.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent")] as $pushes
   | ([$p.commits.nodes[].commit, ($pushes[] | .beforeCommit // empty), ($p.reviews.nodes[] | .commit // empty)]
      | map({key: .oid, value: pushed(.)}) | from_entries) as $pushed
+  | [$p.reviews.nodes[] | select(.state == "APPROVED" and .submittedAt != null)] as $approvals
   | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null
       and .author.login != $p.author.login)] as $bot
   | {
@@ -277,8 +280,9 @@ def rounds($reviews; $pushed):
       created: $p.createdAt,
       last_push: ([($pushed[$head.oid] // $head.committedDate), ($pushes[] | .createdAt)] | map(select(. != null)) | max),
       first_bot_review: ($bot | map(.submittedAt) | min),
-      first_gate_met: null,
-      gate_met: (approved($p.reviews.nodes; $head.oid) // ([gate($head)] | first // null)),
+      first_gate_met: ($approvals | map(.submittedAt) | min),
+      gate_met: (([$approvals[] | select(.commit.oid == $head.oid) | .submittedAt] | min)
+                 // ([gate($head)] | first // null)),
       ci_green: null,
       armed: ([$p.timelineItems.nodes[] | select(.__typename == "AutoMergeEnabledEvent") | .createdAt] | max),
       queued: ([$p.timelineItems.nodes[] | select(.__typename == "AddedToMergeQueueEvent") | .createdAt] | max),
@@ -356,27 +360,30 @@ pr_timeline() {
         | .ci_head_secs = span($head) | .ci_merge_group_secs = span($group)' <<<"$result") \
         || { github_error 'pr-timeline: unreadable checks'; exit 1; }
 
-    # first_gate_met, from the status history of every head the PR carried:
-    # the GraphQL status names only each head's latest, and the review writer
-    # posts success, then failure or pending when a late thread opens, then
-    # success again on one head.
-    local heads sha statuses first="" earliest
-    heads=$(jq -r '.repository.pullRequest | [.commits.nodes[].commit.oid,
-        (.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent") | .beforeCommit.oid // empty)]
-        | unique[]' <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
-    for sha in $heads; do
-        statuses=$(gh_rest "repos/$owner/$name/commits/$sha/statuses?per_page=100" --paginate) || exit 1
-        if ! earliest=$(jq -rs --arg gate "$gate" \
-            '[.[][] | select(.context == $gate and .state == "success") | .created_at] | min // empty' <<<"$statuses"); then
-            github_error "pr-timeline: unreadable statuses for $sha"
-            exit 1
-        fi
-        if [[ -n "$earliest" && ( -z "$first" || "$earliest" < "$first" ) ]]; then
-            first="$earliest"
-        fi
-    done
-    result=$(jq -c --arg first "$first" '.stamps.first_gate_met = (if $first == "" then null else $first end)' <<<"$result") \
-        || { github_error 'pr-timeline: unreadable response'; exit 1; }
+    # first_gate_met, where no approval set it, from the status history of
+    # every head the PR carried: the GraphQL status names only each head's
+    # latest, and the review writer posts success, then failure or pending
+    # when a late thread opens, then success again on one head.
+    local approved heads sha statuses first="" earliest
+    approved=$(jq -r '.stamps.first_gate_met // empty' <<<"$result") || { github_error 'pr-timeline: unreadable response'; exit 1; }
+    if [ -z "$approved" ]; then
+        heads=$(jq -r '.repository.pullRequest | [.commits.nodes[].commit.oid,
+            (.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent") | .beforeCommit.oid // empty)]
+            | unique[]' <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
+        for sha in $heads; do
+            statuses=$(gh_rest "repos/$owner/$name/commits/$sha/statuses?per_page=100" --paginate) || exit 1
+            if ! earliest=$(jq -rs --arg gate "$gate" \
+                '[.[][] | select(.context == $gate and .state == "success") | .created_at] | min // empty' <<<"$statuses"); then
+                github_error "pr-timeline: unreadable statuses for $sha"
+                exit 1
+            fi
+            if [[ -n "$earliest" && ( -z "$first" || "$earliest" < "$first" ) ]]; then
+                first="$earliest"
+            fi
+        done
+        result=$(jq -c --arg first "$first" '.stamps.first_gate_met = (if $first == "" then null else $first end)' <<<"$result") \
+            || { github_error 'pr-timeline: unreadable response'; exit 1; }
+    fi
 
     # push_times, from the head branch's activity log: GitHub records no plain
     # push on the pull request, and a commit's committer date is when it was

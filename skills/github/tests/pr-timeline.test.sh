@@ -224,7 +224,19 @@ an approval on an older head is not the final head's gate@.data.repository.pullR
 a final head with an approval and no gate status@.data.repository.pullRequest |= (.headCommit.nodes[0].commit.status = null | .reviews.nodes[2].state = "APPROVED")@"2026-09-20T10:30:00Z"
 ROWS
 
-echo "=== the first gate pass is read from each head's status history ==="
+echo "=== the first gate pass is the first approval on any head, else each head's status history ==="
+# Each row asserts first_gate_met and how many status histories were read.
+while IFS='@' read -r label edit want; do
+  [[ -n "$label" ]] || continue
+  run "$edit" >/dev/null
+  assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" "$want" "$label"
+done <<'ROWS'
+an approval on a force-pushed-over head is the first pass, and no status history is read@.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
+approvals on two heads: the first@.data.repository.pullRequest.reviews.nodes[1,2].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
+an approval on the final head stands ahead of an older head's earlier status pass@.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"@"2026-09-20T10:30:00Z" 0
+no approval reads every head's status history@.@"2026-09-20T10:05:00Z" 2
+ROWS
+
 while IFS='|' read -r label b1 h2 want; do
   [[ -n "$label" ]] || continue
   HISTORY_B1="$b1" HISTORY_H2="$h2"
@@ -546,16 +558,28 @@ assert_eq "$(jq -c '[.bot_reviews, .bot_review_times[-1]]' "$TMP_ROOT/stdout")" 
   "control: without the author test the PR author's own review is counted and timed"
 
 # The final head's gate read from its historical status alone.
-mutate 'gate_met: (approved($p.reviews.nodes; $head.oid) // ' 'gate_met: ('
+mutate 'gate_met: (([$approvals[] | select(.commit.oid == $head.oid) | .submittedAt] | min)' 'gate_met: (null'
 run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
 assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:25:00Z"' \
   "control: without the approval the final head's gate is its historical status"
 
 # Approvals read on any head: an older head's approval stands for the final one's.
-mutate ' and .commit.oid == $oid)' ')'
+mutate 'select(.commit.oid == $head.oid)' 'select(true)'
 run '.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"' >/dev/null
 assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T09:40:00Z"' \
   "control: without the head binding an older head's approval is the final head's gate"
+
+# The first gate pass read from the status history alone.
+mutate 'first_gate_met: ($approvals | map(.submittedAt) | min),' 'first_gate_met: null,'
+run '.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"' >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:05:00Z"' \
+  "control: without the approvals an older head's approval is not the first gate pass"
+
+# The status history read beside an approval: its earlier pass replaces it.
+mutate 'if [ -z "$approved" ]; then' 'if :; then'
+run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" '"2026-09-20T10:05:00Z" 2' \
+  "control: with the status history read beside an approval its older pass is the first gate pass"
 BIN="$PR_TIMELINE"
 
 echo
