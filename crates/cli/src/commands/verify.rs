@@ -51,7 +51,7 @@ pub struct Output {
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
     #[arg(long)]
     pub json: bool,
-    /// A git revision of the project; with --json, each shared file kendex writes keys in under the project scope says whether the rest of it is as that revision held it
+    /// A git revision of the project; with --json, each shared file kendex writes keys in under the project scope says whether the rest of it is as that revision held it, and base_owned lists the whole files and trees that revision's install record names
     #[arg(long, requires = "json", value_name = "REV")]
     pub base: Option<String>,
 }
@@ -214,7 +214,10 @@ impl Tally {
 /// above with its state and the positions the engine resolved for it,
 /// which is what a reader owning changed paths reads instead of the rows'
 /// wording. The human rows, the closing counts line and the exit status
-/// are the same with or without it.
+/// are the same with or without it. With `--base` under the project scope
+/// the document also carries `base_owned`, the whole files and trees the
+/// base revision's record names, which a reader granting a deletion reads
+/// because no row prints a position the head no longer renders.
 ///
 /// `--at-record` renders each package that follows its source and that
 /// the record can place at the commit the record names rather than at the
@@ -241,6 +244,7 @@ pub fn run(
                 .join(", "),
         ),
     );
+    let base_owned = base_owned(&scopes, output.base.as_deref());
     let mut tally = Tally::default();
     for scope in scopes {
         check_scope(env, scope, &names, &output, warnings, &mut tally, &style)?;
@@ -266,12 +270,34 @@ pub fn run(
             tally.failed,
             tally.rows,
             tally.stale,
+            base_owned,
         ))?);
     }
     Ok(match clean {
         true => ExitCode::SUCCESS,
         false => ExitCode::FAILURE,
     })
+}
+
+/// [`attest::owned_at`] the base revision for the one project scope a run
+/// checks, spelled as a row's positions are; `None` without `--base` or a
+/// project scope. The global scope has no project revision to read.
+fn base_owned(scopes: &[Scope], base: Option<&str>) -> Option<Vec<Placed>> {
+    let (root, rev) = scopes.iter().find_map(|scope| match (scope, base) {
+        (Scope::Project { root }, Some(rev)) => Some((root, rev)),
+        (Scope::Project { .. }, None) | (Scope::Global, _) => None,
+    })?;
+    let owned = attest::owned_at(root, rev)?;
+    Some(
+        owned
+            .into_iter()
+            .map(|position| Placed {
+                path: spelled(root, &position.path),
+                owns: position.owns,
+                foreign: None,
+            })
+            .collect(),
+    )
 }
 
 /// One scope's rows, into the tally. A scope whose record or manifest
@@ -523,7 +549,7 @@ fn bookkeeping_rows(
         let Some(standing) = standing else {
             continue;
         };
-        let name = placer.spelled(&standing.path);
+        let name = spelled(&placer.root, &standing.path);
         let problem = say_bookkeeping(style, kind, &name, &standing);
         tally.bookkeeping_failed += usize::from(problem.is_some());
         let position = Position {
@@ -742,12 +768,6 @@ impl<'a> Placer<'a> {
         }
     }
 
-    /// The path as the document spells it: the remainder under the scope's
-    /// root, slashed, or the whole path slashed where it sits elsewhere.
-    fn spelled(&self, path: &Path) -> String {
-        kendex_core::paths::slashed(path.strip_prefix(&self.root).unwrap_or(path))
-    }
-
     fn row(
         &self,
         kind: &str,
@@ -767,7 +787,7 @@ impl<'a> Placer<'a> {
             positions: positions
                 .iter()
                 .map(|position| Placed {
-                    path: self.spelled(&position.path),
+                    path: spelled(&self.root, &position.path),
                     owns: position.owns,
                     foreign: match position.owns {
                         Owns::Keys => self.foreign.as_ref().map(|foreign| {
@@ -782,6 +802,12 @@ impl<'a> Placer<'a> {
                 .collect(),
         }
     }
+}
+
+/// The path as the document spells it: the remainder under the scope's
+/// root, slashed, or the whole path slashed where it sits elsewhere.
+fn spelled(root: &Path, path: &Path) -> String {
+    kendex_core::paths::slashed(path.strip_prefix(root).unwrap_or(path))
 }
 
 /// The line that closes the run: the count, or why there was none, and

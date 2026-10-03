@@ -84,7 +84,14 @@ document() { # FOREIGN AGENT_STATE FAILED [without]
 # rows and counts verify prints for a person, on stdout, as a kendex without
 # the document would answer. other-version: a document this script does not
 # read. no-bookkeeping: the passing run without the record and inventory rows,
-# so a bookkeeping diff has no position to be owned from.
+# so a bookkeeping diff has no position to be owned from. owned: the passing
+# run whose base record owned the retired agent file and the skill tree
+# whole. owned-elsewhere: the same run whose base record names neither: a
+# sibling file, a tree whose name is a prefix of the skill's, and the skill's
+# own path as a file. retired-registry: the passing run with no hook row,
+# whose base record owned the agent and the skill and, as kendex never
+# records one, not the shared registry file.
+owned_by_base='[{"path":".agents/skills/orch","owns":"tree"},{"path":".codex/agents/rust.md","owns":"file"}]'
 set_verifier() { # MODE
   : >"$KENDEX_STUB_CALLS"
   : >"$KENDEX_STUB_TREES"
@@ -93,7 +100,15 @@ set_verifier() { # MODE
     clean) echo 0 >"$KENDEX_STUB_STATUS"
       document unchanged ok 0 >"$KENDEX_STUB_LEDGER" ;;
     retired-registry) echo 0 >"$KENDEX_STUB_STATUS"
-      document unchanged ok 0 | jq '.rows |= map(select(.kind != "hook"))' >"$KENDEX_STUB_LEDGER" ;;
+      document unchanged ok 0 | jq --argjson owned "$owned_by_base" \
+        '.rows |= map(select(.kind != "hook")) | .base_owned = $owned' >"$KENDEX_STUB_LEDGER" ;;
+    owned) echo 0 >"$KENDEX_STUB_STATUS"
+      document unchanged ok 0 | jq --argjson owned "$owned_by_base" '.base_owned = $owned' \
+        >"$KENDEX_STUB_LEDGER" ;;
+    owned-elsewhere) echo 0 >"$KENDEX_STUB_STATUS"
+      document unchanged ok 0 | jq '.base_owned = [{"path":".agents/skills/orc","owns":"tree"},
+        {"path":".agents/skills/orch","owns":"file"},{"path":".codex/agents/rust.md.bak","owns":"file"}]' \
+        >"$KENDEX_STUB_LEDGER" ;;
     foreign-changed) echo 0 >"$KENDEX_STUB_STATUS"
       document changed ok 0 >"$KENDEX_STUB_LEDGER" ;;
     foreign-unknown) echo 0 >"$KENDEX_STUB_STATUS"
@@ -206,13 +221,14 @@ excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
 
-# Refresh retires whole artifacts and shared registrations. The released
-# verify interface cannot prove whole-file ownership at the base, so neither
-# inventory absence nor a surviving head tree can authorize a deletion. A
-# retirement whose every read came in, and beside which no other changed path
-# is refused, is standard by rule, so measured; a deletion the head inventory
-# still names, one verify refuses, or a refused path after a retirement is the
-# fallback.
+# Refresh retires whole artifacts and shared registrations. Neither inventory
+# absence nor a surviving head tree can authorize a deletion: the base
+# record's whole positions, verify's `base_owned`, must name the path as a
+# file or hold it under a tree. A retirement they do not name, or a document
+# without them, whose every read came in, and beside which no other changed
+# path is refused, is standard by rule, so measured; a deletion the head
+# inventory still names, one verify refuses, or a refused path after a
+# retirement is the fallback.
 removed_repo=$(new_repo removed-render)
 commit_paths "$removed_repo" 'recorded renders' .codex/agents/rust.md .agents/skills/orch/app.ts
 # Hook registration removal preserves unrelated user settings in this file.
@@ -226,9 +242,12 @@ removed_base=$(git -C "$removed_repo" rev-parse HEAD)
 # `cause=`, `-` where the cause is the verifier's own. A path list is
 # space-separated, `-` for none.
 cat >"$SANDBOX/removals" <<'REMOVALS'
-retired render with no base whole-file proof|.codex/agents/rust.md|-|-|clean|standard|true|render-retirement-unproved path=.codex/agents/rust.md
-retired file under a surviving skill tree has no base proof|.agents/skills/orch/app.ts|-|-|clean|standard|true|render-retirement-unproved path=.agents/skills/orch/app.ts
+retired render the base record owned whole|.codex/agents/rust.md|-|-|owned|render|true|renders-match-their-sources
+retired file under a skill tree the base record owned|.agents/skills/orch/app.ts|-|-|owned|render|true|renders-match-their-sources
+retired render the base record does not name|.codex/agents/rust.md|-|-|owned-elsewhere|standard|true|render-retirement-unproved path=.codex/agents/rust.md
+retired file under no tree the base record names|.agents/skills/orch/app.ts|-|-|owned-elsewhere|standard|true|render-retirement-unproved path=.agents/skills/orch/app.ts
 retired shared registry still holds user settings|.pi/settings.json|-|-|retired-registry|standard|true|render-retirement-unproved path=.pi/settings.json
+retired render under a kendex with no base ownership|.codex/agents/rust.md|-|-|clean|standard|true|render-retirement-unproved path=.codex/agents/rust.md
 a deletion still named in the head inventory|-|.codex/agents/rust.md|-|clean|standard|false|render-path-unowned path=.codex/agents/rust.md
 a deletion under a tree still named in the head inventory|-|.agents/skills/orch/app.ts|-|clean|standard|false|render-path-unowned path=.agents/skills/orch/app.ts
 verify refuses an unsanctioned deletion|.codex/agents/rust.md|-|-|dirty|standard|false|-
@@ -283,7 +302,8 @@ done <<<"$removals_out"
 require_rows change-class-removals "$removed_rows"
 
 # Must-fail controls, one per rule the rows hold, each naming the rows it
-# turns red: a retirement passed as owned, with the refusal text kept; every
+# turns red: a retirement passed as owned, with the refusal text kept; a
+# retirement passed on any base ownership field, whatever it names; every
 # render refusal marked measured; the retirement's measured mark dropped; and
 # a retirement answered before the paths after it are read.
 removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
@@ -292,11 +312,19 @@ removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
   rows=$(removal_rows "$planted") || return
   awk -F '\t' '$2 != $3 { print $1 }' <<<"$rows"
 }
-retirement_rows='retired render with no base whole-file proof
-retired file under a surviving skill tree has no base proof
-retired shared registry still holds user settings'
+retirement_rows='retired render the base record does not name
+retired file under no tree the base record names
+retired shared registry still holds user settings
+retired render under a kendex with no base ownership'
 control_reds=$(removal_reds removal-control '  [ -n "$retired" ] || return 0' '  return 0')
 assert_eq "the removal control turns the retirement rows red" "$retirement_rows" "$control_reds"
+control_reds=$(removal_reds base-owned-unlisted \
+  "$(grep '^base_owned() ' "$CHANGE_CLASS")" \
+  "base_owned() { jq -e '(.base_owned // []) | length > 0' <<<\"\$VERIFY_JSON\" >/dev/null 2>&1; }")
+assert_eq "passing a retirement the field does not name turns the unnamed rows red" \
+  'retired render the base record does not name
+retired file under no tree the base record names
+retired shared registry still holds user settings' "$control_reds"
 control_reds=$(removal_reds every-refusal-measured \
   '  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"' \
   '  answer standard "$RENDER_REFUSAL" measured')

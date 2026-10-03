@@ -31,7 +31,8 @@ Options:
       --base <REV>
           A git revision of the project; with --json, each shared file kendex
           writes keys in under the project scope says whether the rest of it is
-          as that revision held it
+          as that revision held it, and base_owned lists the whole files and
+          trees that revision's install record names
 
       --strict
           Also fail on warnings: a path an installed agent declares as tracked

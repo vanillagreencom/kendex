@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::apply::Op;
-use crate::engine::{EngineReport, StoodIn};
+use crate::engine::{EngineReport, Owns, Position, StoodIn};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{BundleRev, LOCK_FILE, Lock, LockEntry, SourceRev};
@@ -122,8 +122,8 @@ pub struct Stale {
 }
 
 /// The whole document: the rows, the closing counts, whether the run
-/// closed clean, which is its exit status as a field, and the source
-/// commits the record trails.
+/// closed clean, which is its exit status as a field, the source commits
+/// the record trails, and what the base revision's record owned whole.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub version: u32,
@@ -133,6 +133,14 @@ pub struct Document {
     pub rows: Vec<Row>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stale: Vec<Stale>,
+    /// With a base revision and the project scope only: [`owned_at`] that
+    /// revision, each position spelled as a row's are and carrying no
+    /// `foreign`. Absent is unknown, never none: no base was named, the
+    /// scope is global, or the revision does not resolve or holds no record
+    /// this build reads. A reader granting a deletion on it needs the path
+    /// here, as a `file` or under a `tree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_owned: Option<Vec<Placed>>,
 }
 
 impl Document {
@@ -142,6 +150,7 @@ impl Document {
         failed: usize,
         rows: Vec<Row>,
         stale: Vec<Stale>,
+        base_owned: Option<Vec<Placed>>,
     ) -> Document {
         Document {
             version: DOCUMENT_VERSION,
@@ -150,6 +159,7 @@ impl Document {
             failed,
             rows,
             stale,
+            base_owned,
         }
     }
 }
@@ -766,6 +776,43 @@ pub fn foreign_since(
         .collect()
 }
 
+/// Every whole file and tree the record at revision `rev` of the project
+/// at `root` names in its entries' `emitted` paths, once each, with what
+/// the revision holds there: a blob, which is a file or a link, as `File`
+/// and a tree as `Tree`. A recorded path the revision holds nothing at,
+/// or holds a submodule at, is left out. Shared files kendex writes keys
+/// in are never on the record's `emitted` paths, so none is here, and an
+/// entry recorded before those paths were kept contributes nothing.
+///
+/// `None` where the revision does not resolve, holds no record, holds one
+/// this build cannot read, or git cannot answer for a recorded path: the
+/// caller cannot tell a short list from a complete one, so there is none.
+pub fn owned_at(root: &Path, rev: &str) -> Option<Vec<Position>> {
+    let base = Base { root, rev };
+    let lock = match base.resolves().then(|| base.record()).flatten()? {
+        BaseRecord::Held(lock) => lock,
+        BaseRecord::Absent => return None,
+    };
+    let recorded: BTreeSet<&PathBuf> = lock
+        .entries
+        .values()
+        .filter_map(|entry| entry.emitted.as_ref())
+        .flat_map(|emitted| &emitted.paths)
+        .collect();
+    let mut owned = Vec::new();
+    for path in recorded {
+        match base.object(path) {
+            BaseObject::Whole(owns) => owned.push(Position {
+                path: path.clone(),
+                owns,
+            }),
+            BaseObject::Other => {}
+            BaseObject::Unreadable => return None,
+        }
+    }
+    Some(owned)
+}
+
 /// The edits that take out every entry `record` holds and the pass's own
 /// record does not, the writer's removal of each read off the one place
 /// that names it. `None` where one of them cannot be named: the file it
@@ -808,6 +855,16 @@ enum BaseCopy {
     Unreadable,
 }
 
+/// What one path names in the revision's tree.
+enum BaseObject {
+    /// A file or a link, as `File`, or a directory, as `Tree`.
+    Whole(Owns),
+    /// Nothing, or a submodule's commit, which no record entry wrote.
+    Other,
+    /// The path is not under the root, or git could not be run.
+    Unreadable,
+}
+
 /// The record as the revision held it, which names what each registration
 /// was written under then. Read as the head's record is read, so a record
 /// another lock version wrote is one this build cannot read here too: a
@@ -847,6 +904,26 @@ impl Base<'_> {
             },
             Ok(None) => BaseCopy::Absent,
             Err(_) => BaseCopy::Unreadable,
+        }
+    }
+
+    /// The object type the revision spec [`Base::copy`] reads names, which
+    /// is exact where a pathspec would match patterns. A non-zero exit is
+    /// read as nothing there, as `copy` reads one: a caller granting on a
+    /// whole position only ever under-grants from it.
+    fn object(&self, path: &Path) -> BaseObject {
+        let Ok(relative) = path.strip_prefix(self.root) else {
+            return BaseObject::Unreadable;
+        };
+        let spec = format!("{}:./{}", self.rev, crate::paths::slashed(relative));
+        match crate::commit_offer::git::read(self.root, &["cat-file", "-t", &spec]) {
+            Ok(Some(kind)) => match String::from_utf8_lossy(&kind).trim_end() {
+                "blob" => BaseObject::Whole(Owns::File),
+                "tree" => BaseObject::Whole(Owns::Tree),
+                _ => BaseObject::Other,
+            },
+            Ok(None) => BaseObject::Other,
+            Err(_) => BaseObject::Unreadable,
         }
     }
 

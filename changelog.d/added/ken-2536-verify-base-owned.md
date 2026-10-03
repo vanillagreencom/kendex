@@ -1,0 +1,1 @@
+- `kendex verify --json --base REV` prints `base_owned`, the files and trees the base record owned whole, and a refresh whose only deletions are those renders classifies `render`.

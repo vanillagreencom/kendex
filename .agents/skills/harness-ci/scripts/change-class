@@ -50,14 +50,16 @@
 #            owns whole, a tree it owns whole, or keys inside a shared file
 #            whose rest that run says did not move since the range's base.
 #            A removed path needs base inventory membership, absence from the
-#            verified head inventory, and trusted base whole-file ownership.
-#            verify exposes only current positions, so unproved retirement
-#            answers standard with cause=render-retirement-unproved, including
-#            whole-file and tree removals. That answer comes after every
+#            verified head inventory, and trusted base whole-file ownership:
+#            the document's `base_owned`, the whole files and trees the base
+#            revision's install record names, naming the path as a `file`
+#            or holding it under a `tree`. A retirement it does not name, or
+#            a document without the field, answers standard with
+#            cause=render-retirement-unproved. That answer comes after every
 #            other changed path is read, and any of them that is refused
 #            answers in its place. It is a rule, marked measured=true like
 #            cause=base-inventory-absent: every read behind it succeeded, and
-#            the proof it lacks is one verify does not offer. Any other
+#            the proof it lacks is one the base record does not give. Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
 #            cause=render-path-partial. That verdict
@@ -697,11 +699,19 @@ renders_match() {
 # a keys position without the foreign judgement owns nothing, and a changed
 # path nothing owns refuses the class carrying the path.
 #
+# A deleted path has no row to be owned from: the head no longer renders it.
+# Its owner is the base revision's install record, which kendex reads at that
+# revision and prints as `base_owned`, whole files and trees only, so a shared
+# registry file never appears there. The branch cannot rewrite that record.
+# Whether PATH is a `file` there, or under a `tree`: exit 0 yes, 1 no or no
+# field, any other status an unreadable document.
+base_owned() { jq -e --arg path "$1" '(.base_owned // []) | any(.[]; .path as $owned | (.owns == "file" and $owned == $path) or (.owns == "tree" and ($owned == $path or ($path | startswith($owned + "/")))))' <<<"$VERIFY_JSON" >/dev/null 2>&1; }
+#
 # Every position a passing row printed, one per line: what it owns, the
 # foreign judgement or `-`, and the path.
 named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
 render_paths_covered() {
-  local path owns foreign position owned partial head_entry inventory_status retired=""
+  local path owns foreign position owned partial head_entry inventory_status owned_status retired=""
   if ! named_positions >"$work/render-named" 2>/dev/null; then
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
     return 1
@@ -720,16 +730,23 @@ render_paths_covered() {
       # inventory. Never use the branch's record to grant that ownership.
       # Head inventory absence is necessary, but does not prove the base
       # owned the whole file: its inventory includes shared keys and regions.
+      # The base record's whole positions do.
       inventory_status=0
       jq -e --arg path "$path" \
         'all(.[]; (if type == "string" then . else .path end) != $path)' \
         "$proof_tree/.kendex-generated.json" >/dev/null 2>&1 || inventory_status=$?
       case "$inventory_status" in
         0)
-          # verify --base exposes current positions, not the files and trees
-          # the base owned whole, and a current tree cannot grant that. Refuse
-          # the render class until the engine exposes base ownership, once
-          # every later path is read: a refusal among them answers instead.
+          owned_status=0
+          base_owned "$path" || owned_status=$?
+          case "$owned_status" in
+            0) continue ;;
+            1) ;;
+            *) RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"; return 1 ;;
+          esac
+          # A retirement the base record does not name refuses the render
+          # class once every later path is read: a refusal among them
+          # answers instead.
           [ -n "$retired" ] || retired="cause=render-retirement-unproved path=$path"
           continue ;;
         1) ;;

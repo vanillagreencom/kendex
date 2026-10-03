@@ -257,7 +257,7 @@ pub(crate) fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
 
 /// One verify run of `scope` from the project, with the document it
 /// printed.
-fn verify_scope(world: &World, scope: &str, base: Option<&str>) -> (Output, Document) {
+pub(crate) fn verify_scope(world: &World, scope: &str, base: Option<&str>) -> (Output, Document) {
     verify_from(&world.home, &world.project, scope, base)
 }
 
@@ -1907,7 +1907,7 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
 /// by `edit`, applied and committed under `after`, and verified against
 /// the tag.
 #[allow(clippy::unwrap_used)]
-fn retired(
+pub(crate) fn retired(
     world: &World,
     name: &str,
     before: &str,
