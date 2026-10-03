@@ -53,15 +53,25 @@ capability_values() { # KEY
 }
 CAPABILITY_KEYS='kind launch channel files status stop relaunch park accounts pool land'
 
+# Succeeds when VALUE equals one word of KEY's set; a value holding a space
+# or a key outside the sets matches none.
+capability_allowed() { # KEY VALUE
+  local values allowed
+  values="$(capability_values "$1")" || return 1
+  for allowed in $values; do
+    [[ "$2" == "$allowed" ]] && return 0
+  done
+  return 1
+}
+
 # Prints LINE when it holds every key once, each with a value from its set.
 capabilities_print() { # LINE
-  local fields=() field key value values given=" "
+  local fields=() field key value given=" "
   [[ "$1" != *$'\n'* ]] || { printf 'lane-host: capability-invalid key=line value=lines\n' >&2; exit 1; }
   IFS=$'\t' read -r -a fields <<<"$1"
   for field in ${fields[@]+"${fields[@]}"}; do
     key="${field%%=*}" value="${field#*=}"
-    if [[ "$field" != *=* || "$given" == *" $key "* ]] || ! values="$(capability_values "$key")" \
-      || [[ " $values " != *" $value "* ]]; then
+    if [[ "$field" != *=* || "$given" == *" $key "* ]] || ! capability_allowed "$key" "$value"; then
       printf 'lane-host: capability-invalid key=%s value=%s\n' "$key" "$value" >&2
       exit 1
     fi

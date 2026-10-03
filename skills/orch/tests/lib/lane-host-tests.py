@@ -216,6 +216,8 @@ class LaneHostTests(unittest.TestCase):
                  64, b"", b"usage-invalid\n"),
                 ("value-unknown", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("status=verb", "status=probe")},
                  1, b"", b"lane-host: capability-invalid key=status value=probe\n"),
+                ("value-spaced", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("launch=ssh", "launch=window ssh")},
+                 1, b"", b"lane-host: capability-invalid key=launch value=window ssh\n"),
                 ("key-unknown", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared + "\tcolour=red"},
                  1, b"", b"lane-host: capability-invalid key=colour value=red\n"),
                 ("key-missing", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("\tland=lane", "")},
@@ -254,7 +256,8 @@ class LaneHostTests(unittest.TestCase):
                     ("provider-absent", '"$status" -eq 2 || ', '"$status" -eq 99 || '),
                     ("provider-absent-64", '( "$status" -eq 64 && ', '( 1 -eq 0 && '),
                     ("provider-failed-64", ' && "$words" == *"verb-unsupported verb=capabilities"* )', ' )'),
-                    ("value-unknown", '|| [[ " $values " != *" $value "* ]]; then', '|| false; then')]
+                    ("value-unknown", '|| ! capability_allowed "$key" "$value"; then', '|| false; then'),
+                    ("value-spaced", '[[ "$2" == "$allowed" ]]', '[[ " $values " == *" $2 "* ]]')]
         for row, rule, removed in controls:
             with self.subTest(control=row):
                 self.assertEqual(original.count(rule), 1)
