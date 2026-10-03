@@ -286,6 +286,8 @@ repo gap
 put cred.txt "aws = $CRED\n"
 row "a selected file with no gitleaks installed passes at the gap notice" \
   "rc=0 secrets: gap=gitleaks-missing:1" "$NO_TOOL" "$R"
+carries '.agents/skills/commit-guards/scripts/install-gitleaks DIR'
+assert_eq "the gap names the shipped installer" "present" "$HAS"
 GAP="$R"
 repo gap-all
 put cred.txt "aws = $CRED\n"
@@ -294,6 +296,8 @@ row "outside CI an --all scan with no gitleaks passes at the gap notice too" \
   "rc=0 secrets: gap=gitleaks-missing:1" "$NO_TOOL" "$R" --all
 row "under CI an --all scan with no gitleaks refuses" \
   "rc=2 secrets: tool-missing=gitleaks" CI=true "$NO_TOOL" "$R" --all
+carries '.agents/skills/commit-guards/scripts/install-gitleaks DIR'
+assert_eq "the CI refusal names the shipped installer" "present" "$HAS"
 row "GITHUB_ACTIONS alone marks CI as well" \
   "rc=2 secrets: tool-missing=gitleaks" GITHUB_ACTIONS=true "$NO_TOOL" "$R" --all
 row "under CI a range scan with no gitleaks refuses" \
@@ -342,6 +346,10 @@ echo "=== must-fail controls: a copy of the lane with one rule removed ==="
 # Each control copies the scripts and changes one line of the lane, asserting
 # the line matched once and the file changed, then reruns the row that rule
 # decides.
+gg_mutant LANE secrets '.agents/skills/commit-guards/scripts/install-gitleaks DIR' 'installer DIR'
+lane "$NO_TOOL" "$GAP"
+carries '.agents/skills/commit-guards/scripts/install-gitleaks DIR'
+assert_eq "control: a gap without the installer fails the path row" "absent" "$HAS"
 gg_mutant LANE secrets 'gg_message secret "${PATHS[$n]}:$start:$rule"' 'gg_message secret "${PATHS[$n]}:$start:$rule:$(cat -- "$GG_TMP/tree/r/$n/${PATHS[$n]}")"'
 lane "$STAGED"
 carries "$CRED"

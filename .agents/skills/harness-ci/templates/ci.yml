@@ -182,7 +182,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: secrets (credential scan of the pull request diff)
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          .agents/skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"
+          PATH="$RUNNER_TEMP/gitleaks:$PATH" .agents/skills/commit-guards/scripts/secrets --against HEAD^1
       - name: the classifier ran and every lane that skipped was told to
         env:
           RESULTS: ${{ toJSON(needs) }}

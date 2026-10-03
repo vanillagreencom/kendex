@@ -1,0 +1,1 @@
+- Consumer lane setups can install pinned gitleaks from commit-guards. The shared CI template installs it and scans every pull request for credentials.

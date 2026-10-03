@@ -25,7 +25,7 @@
 #      classifier succeeded and `lanes` or the lane's verdict was false, and
 #      CI runs on both events whatever its needs did.
 #   4. the copy: every expression closes on its line and every script path
-#      it names is one this package ships.
+#      it names is one this package or its required dependencies ship.
 #   5. the steps the classifier can live without: the render-reach, kendex
 #      install and mirror steps continue on error and the classify step does
 #      not, so a repository whose default branch does not yet carry this
@@ -299,11 +299,38 @@ assert_eq "every workflow expression closes on its own line" "" \
 # A comment may cite the package's docs; every path a step runs is a script
 # this package ships.
 assert_eq "the template's steps name the shipped script paths" \
-  ".agents/skills/harness-ci/scripts/aggregate-needs
+  ".agents/skills/commit-guards/scripts/install-gitleaks
+.agents/skills/commit-guards/scripts/secrets
+.agents/skills/harness-ci/scripts/aggregate-needs
 .agents/skills/harness-ci/scripts/harness-only" \
   "$(grep -vE '^[[:space:]]*#' "$TEMPLATE" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | LC_ALL=C sort -u)"
-assert_eq "those paths are scripts this package ships" "yes yes" \
-  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
+assert_eq "those paths are shipped scripts" "yes yes yes yes" \
+  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no)"
+
+# The CI job scans every pull request, with its installer in the same step.
+secrets_contract() { # TEMPLATE
+  awk -v condition="always() && github.event_name == 'pull_request'" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    !in_job { next }
+    /^      - / { checkout = /uses: actions\/checkout@/; installed = 0; cond = "" }
+    checkout && /^          fetch-depth:/ { depth = $2 }
+    /^        if:/ { cond = $0; sub(/^        if: /, "", cond) }
+    $1 == ".agents/skills/commit-guards/scripts/install-gitleaks" && $2 == "\"$RUNNER_TEMP/gitleaks\"" { installed = 1 }
+    $2 == ".agents/skills/commit-guards/scripts/secrets" && $3 == "--against" && $4 == "HEAD^1" {
+      scans++; if (installed && cond == condition && $1 == "PATH=\"$RUNNER_TEMP/gitleaks:$PATH\"") ready++
+    }
+    END { printf "depth=%s scans=%d ready=%d", depth, scans, ready }
+  ' "$1"
+}
+assert_eq "CI scans pull requests with an installer and full history" "depth=0 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
+while IFS='|' read -r from to expected; do
+  plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" ci
+  assert_eq "must-fail: secrets contract with $to" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
+done <<'ROWS'
+if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=0 scans=1 ready=0
+fetch-depth: 0|fetch-depth: 1|depth=1 scans=1 ready=1
+.agents/skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"|: # .agents/skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"|depth=0 scans=1 ready=0
+ROWS
 
 # --- 4a. The permission the proof reads with ------------------------------
 # The action reads the workflow's earlier runs and their records with the job

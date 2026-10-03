@@ -47,6 +47,7 @@
   ".agents/skills/commit-guards/scripts/commit-msg",
   ".agents/skills/commit-guards/scripts/conflict-markers",
   ".agents/skills/commit-guards/scripts/install-git-hooks",
+  ".agents/skills/commit-guards/scripts/install-gitleaks",
   ".agents/skills/commit-guards/scripts/lib/atomic-install.sh",
   ".agents/skills/commit-guards/scripts/lib/changelog-collate.sh",
   ".agents/skills/commit-guards/scripts/lib/changelog-grammar.sh",

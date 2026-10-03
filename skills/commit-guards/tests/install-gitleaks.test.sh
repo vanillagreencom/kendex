@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins tools/install-gitleaks: it installs the archive its platform maps to
+# Pins scripts/install-gitleaks: it installs the archive its platform maps to
 # only when the archive matches the pinned SHA-256, leaves a current install
 # alone, and refuses an unpinned platform or a failed download. The release
 # server is a fake curl serving a fixture archive; the rows that install run a
@@ -9,7 +9,7 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOLS="$(cd "$TEST_DIR/.." && pwd)"
+SCRIPTS="$(cd "$TEST_DIR/../scripts" && pwd)"
 TMP_ROOT="$(mktemp -d)" || { echo "install-gitleaks: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "install-gitleaks: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "install-gitleaks: scratch=resolve-failed" >&2; exit 1; }
@@ -72,7 +72,7 @@ copy() {
   local name=$1 from to n before
   shift
   SCRIPT="$TMP_ROOT/$name"
-  cp "$TOOLS/install-gitleaks" "$SCRIPT"
+  cp "$SCRIPTS/install-gitleaks" "$SCRIPT"
   while [ $# -gt 0 ]; do
     from=$1 to=$2
     shift 2

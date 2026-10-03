@@ -92,11 +92,12 @@ SH
 [ "${1-}" != dir ] || exit 0
 printf '8.30.1\n'
 SH
-  cat >"$R/tools/install-gitleaks" <<'SH'
+  mkdir -p "$R/skills/commit-guards/scripts"
+  cat >"$R/skills/commit-guards/scripts/install-gitleaks" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>install-gitleaks.log
 SH
-  chmod +x "$R/tools/install-gitleaks"
+  chmod +x "$R/skills/commit-guards/scripts/install-gitleaks"
   cat >"$R/fake-bin/rustc" <<'SH'
 #!/usr/bin/env bash
 printf 'rustc 1.96.1 (fixture)\n'

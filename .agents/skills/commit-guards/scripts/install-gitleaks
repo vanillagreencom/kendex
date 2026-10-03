@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# install-gitleaks DIR: installs the pinned gitleaks release as DIR/gitleaks,
+# the tool the commit-guards secrets lane runs. lane-setup calls it on a lane
+# whose PATH holds no gitleaks that can run the lane's dir scan, and
+# skill-tests.yml before every step that runs the lane or its suite. A
+# DIR/gitleaks already at the pinned version is left alone.
+#
+# The release archive is checked against the SHA-256 pinned below for its
+# platform before anything is extracted. Each message opens with an
+# `install-gitleaks: <key>=<value>` line; its explanation, or the usage text,
+# follows on unprefixed lines.
+#
+# Exit codes: 0 installed or already current; 1 a step that failed, named on
+# its line; 2 usage.
+set -euo pipefail
+
+VERSION=8.30.1
+# The SHA-256 of each release archive, from the release's own checksums file.
+sha_for() { # ASSET — its pinned digest on stdout; 1 for an asset with no pin
+  case "$1" in
+    gitleaks_8.30.1_linux_x64.tar.gz) echo 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb ;;
+    gitleaks_8.30.1_linux_arm64.tar.gz) echo e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080 ;;
+    gitleaks_8.30.1_darwin_x64.tar.gz) echo dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709 ;;
+    gitleaks_8.30.1_darwin_arm64.tar.gz) echo b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5 ;;
+    *) return 1 ;;
+  esac
+}
+
+say() { printf 'install-gitleaks: %s=%s\n' "$1" "$2"; } # KEY VALUE
+fail() { say "$1" "$2"; printf '%s\n' "$3"; exit 1; } # KEY VALUE EXPLANATION
+
+[ $# -eq 1 ] && [ -n "$1" ] || { say usage "$#"; echo "usage: install-gitleaks DIR"; exit 2; }
+dir=$1
+
+current=""
+if [ -x "$dir/gitleaks" ]; then
+  current="$("$dir/gitleaks" version 2>/dev/null)" || current=""
+fi
+if [ "$current" = "$VERSION" ]; then
+  say skip "$dir/gitleaks"
+  exit 0
+fi
+
+os="$(uname -s)" || fail platform unreadable "uname -s did not answer."
+arch="$(uname -m)" || fail platform unreadable "uname -m did not answer."
+case "$os" in
+  Linux) os=linux ;;
+  Darwin) os=darwin ;;
+  *) fail platform "$os" "No gitleaks release is pinned for this operating system." ;;
+esac
+case "$arch" in
+  x86_64 | amd64) arch=x64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) fail platform "$arch" "No gitleaks release is pinned for this architecture." ;;
+esac
+asset="gitleaks_${VERSION}_${os}_${arch}.tar.gz"
+want="$(sha_for "$asset")" || fail platform "$os-$arch" "No gitleaks release is pinned for this platform."
+
+if command -v sha256sum >/dev/null 2>&1; then
+  digest() { sha256sum -- "$1"; }
+elif command -v shasum >/dev/null 2>&1; then
+  digest() { shasum -a 256 -- "$1"; }
+else
+  fail digest-tool missing "Neither sha256sum nor shasum is on PATH, so the archive cannot be checked."
+fi
+
+work="$(mktemp -d)" || fail scratch mktemp "Could not create a scratch directory."
+trap 'rm -rf -- "$work"' EXIT
+curl -fsSL --retry 3 -o "$work/$asset" \
+  "https://github.com/gitleaks/gitleaks/releases/download/v$VERSION/$asset" \
+  || fail download "$asset" "The release archive could not be downloaded."
+got="$(digest "$work/$asset")" || fail digest "$asset" "The archive's digest could not be computed."
+got="${got%% *}"
+[ "$got" = "$want" ] || fail checksum "$asset" "The archive's SHA-256 is $got, not the pinned $want. Nothing was installed."
+tar -xzf "$work/$asset" -C "$work" gitleaks || fail extract "$asset" "The archive holds no gitleaks binary tar could extract."
+mkdir -p -- "$dir" || fail install-dir "$dir" "The install directory could not be created."
+cp -- "$work/gitleaks" "$dir/.gitleaks.install" && chmod 755 "$dir/.gitleaks.install" \
+  && mv -f -- "$dir/.gitleaks.install" "$dir/gitleaks" \
+  || fail install "$dir/gitleaks" "The binary could not be put in place."
+say installed "$VERSION:$dir/gitleaks"

@@ -48,10 +48,10 @@ fi
 gitleaks_path=""
 if ! gitleaks_path="$(command -v gitleaks)"; then
   printf 'lane-setup: gitleaks=install reason=missing\n'
-  tools/install-gitleaks "$HOME/.local/bin"
+  skills/commit-guards/scripts/install-gitleaks "$HOME/.local/bin"
 elif ! gitleaks dir --help >/dev/null 2>&1; then
   printf 'lane-setup: gitleaks=install reason=unusable path=%s\n' "$gitleaks_path"
-  tools/install-gitleaks "$HOME/.local/bin"
+  skills/commit-guards/scripts/install-gitleaks "$HOME/.local/bin"
 else
   printf 'lane-setup: gitleaks=skip path=%s\n' "$gitleaks_path"
 fi

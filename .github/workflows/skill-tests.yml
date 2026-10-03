@@ -349,7 +349,7 @@ jobs:
         run: |
           start=$SECONDS
           status=0
-          tools/install-gitleaks "$RUNNER_TEMP/gitleaks" || status=$?
+          skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks" || status=$?
           if [ "$status" -eq 0 ]; then
             PATH="$RUNNER_TEMP/gitleaks:$PATH" skills/commit-guards/scripts/secrets --against HEAD^1 || status=$?
           fi
@@ -877,11 +877,11 @@ jobs:
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
 
-      # secrets.test.sh runs the lane's tool, the release tools/install-gitleaks pins.
+      # secrets.test.sh runs the lane's tool, the release commit-guards pins.
       - name: gitleaks for the secrets suite
         if: matrix.shard == 'guards-commit'
         run: |
-          tools/install-gitleaks "$RUNNER_TEMP/gitleaks"
+          skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks"
           echo "$RUNNER_TEMP/gitleaks" >>"$GITHUB_PATH"
 
       # This shard is the fallback for the moved tail: a suite of the glob is

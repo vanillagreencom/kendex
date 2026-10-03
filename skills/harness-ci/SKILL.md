@@ -4,7 +4,7 @@ description: "Load to wire, tune, or debug a repo's changed-file CI skip."
 summary: "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
 dependencies:
-  required: [orch]
+  required: [orch, commit-guards]
 user-invocable: true
 metadata:
   author: vanillagreen
