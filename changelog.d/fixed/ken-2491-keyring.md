@@ -1,1 +1,0 @@
-- `lanes` measures a Copilot CLI account whose login sits in the Linux Secret Service, read by `secret-tool`, and names an absent, locked, refused or empty keyring as its `no_credentials` reason.

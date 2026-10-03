@@ -1,1 +1,0 @@
-- pi-prompt-stash: the stash popup stays responsive with many large drafts, a stash is capped at 500 prompts and 8 MiB, and store writes no longer block Pi.

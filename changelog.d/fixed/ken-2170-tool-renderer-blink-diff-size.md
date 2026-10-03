@@ -1,1 +1,0 @@
-- pi-tool-renderer 2.0.10: interrupted tool rows stop blinking, and a write over a file larger than 700 KB no longer reads the whole file before skipping its diff.

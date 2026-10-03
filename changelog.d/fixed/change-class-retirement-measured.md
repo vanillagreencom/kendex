@@ -1,1 +1,0 @@
-- A consumer refresh whose only refused path is a retired rendered file now opens its pull request for review instead of stopping; removing a shared hook, MCP server or plugin entry still stops.

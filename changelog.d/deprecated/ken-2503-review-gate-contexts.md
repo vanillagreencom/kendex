@@ -1,1 +1,0 @@
-- review-gate: an unset or empty `REVIEW_GATE_STANDARD_CONTEXTS` reports `standard-required-contexts` advisory until 2.0, and fails it while `Review gate` is required; set it in `[env]`.

@@ -1,1 +1,0 @@
-- A lane launched with `open-terminal --lane-refresh` is told at session start that `kendex refresh` and `kendex apply` run there with `--lane-refresh`, not that they never run.

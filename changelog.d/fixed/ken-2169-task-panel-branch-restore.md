@@ -1,1 +1,0 @@
-- pi-task-panel 3.0.5: an older point in the session tree restores its own task list, not the newest one; a fork that cannot recover a large list warns.

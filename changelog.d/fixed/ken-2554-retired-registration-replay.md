@@ -1,1 +1,0 @@
-- `kendex verify --base` no longer reports a hook, MCP server or plugin registry as hand-edited after one of its hooks, servers or plugins is retired.

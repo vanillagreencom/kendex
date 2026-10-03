@@ -1,1 +1,0 @@
-- Refuse deletes of shared temporary or home directory roots, their direct globs, and child paths with . or .. segments. Keep a private mktemp directory for cleanup in the same shell call.

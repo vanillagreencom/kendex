@@ -8,6 +8,56 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-03
+
+### Added
+
+- pi-qol 2.3.4: the package test suite runs copied extension code against the installed Pi packages, at one version at or above Pi 0.86.0, with no stand-in modules.
+- Dev rounds for an Apple item in a repository with the xcode-run `mac-run.yml` workflow run `fleet-mac-run test`, and the completion receipt refuses a pass or no-verdict that does not record it.
+- `lanes pick` keeps a Codex account at its plan limit pickable on a credit balance above `ORCH_LANE_CODEX_CREDIT_FLOOR` while its spend control is not reached, after every account with plan room.
+- The kendex refresh pull request, or the run summary when no render changed, lists each committed setting that pins Fable or Astra under Deprecated models, as a warning.
+- harness-ci: with `HARNESS_CI_QUEUE_PATHS` unset, every change stays queue-only and the classifier prints one warning to set it in `[env]` to the repository's CI inputs, or empty for none.
+- `lane-mail ask --to owner --draft` asks the owner to approve a Slack message or email sent as them, and records the recipient, medium, exact text and its SHA-256 hash.
+- Add a Linear page module that completes requested connection chains and handles large replies without passing response data as command arguments.
+- Release checks refuse, from 1.0, a patch version bump whose release holds an Added or Breaking entry and a minor bump whose release holds a Breaking entry, naming the first such entry.
+
+### Changed
+
+- orch: `REVIEW_MAX_CYCLES = "0"` now runs one blockers-only fix round, recorded in `review_fix_round` and accepted on its validation, with no re-review; before, it escalated nearly every blocker.
+
+### Deprecated
+
+- review-gate: `standard-required-approvals` and `standard-stale-dismissal` report advisory until 2.0 with one warning; meet them in the organization ruleset.
+- review-gate: an unset or empty `REVIEW_GATE_STANDARD_CONTEXTS` reports `standard-required-contexts` advisory until 2.0, and fails it while `Review gate` is required; set it in `[env]`.
+- review-gate: `standard-ruleset-source` reports advisory until 2.0 with one warning; move shared rules to organization rulesets, checks and queue to repository ones.
+- review-gate: the standard report reads an unset `REVIEW_GATE_STANDARD_APP`, `_ENVIRONMENT` or `_SECRETS` as its pre-1.3.0 value, with one warning to set it in `[env]`; this read ends at 2.0.
+
+### Fixed
+
+- The warning for a legacy catalog agent name says compatibility remains until the next major release, no longer through 1.4.x.
+- A finding kendex accepts in its own packages stays accepted after an edit elsewhere in its file, including one that moves its line; an edit to the line itself still shows the finding again.
+- A consumer refresh whose only refused path is a retired rendered file now opens its pull request for review instead of stopping; removing a shared hook, MCP server or plugin entry still stops.
+- `lane-close` and the SSH lane host's `stop` end a lane's harness by its recorded launch identity, so a lane whose worktree was removed still stops, and a close also ends a woken turn.
+- pi-questions 2.1.0: interrupting the agent cancels its open question, an unanswered native dialog cancels it after `dialogTimeoutMinutes`, and a queued question stops leaking behind a popup.
+- Pi session manager: search no longer blocks typing or acts on stale results, a runaway `re:` pattern stops with an error, a hung `trash` times out, and prompt text is freed on close.
+- pi-session-bridge: session shutdown, reload and session replacement no longer hang on a client that never closes its connection; it is disconnected after one second.
+- pi-skills-manager: Pi keeps drawing while a deleted skill's files are removed, and scrolling a long skill preview or typing a search stays responsive with a large catalog.
+- pi-task-panel 3.0.5: an older point in the session tree restores its own task list, not the newest one; a fork that cannot recover a large list warns.
+- pi-tool-renderer 2.0.10: interrupted tool rows stop blinking, and a write over a file larger than 700 KB no longer reads the whole file before skipping its diff.
+- pi-caveman: a prompt with a long run of spaces after `git push` no longer stalls on submit; the force-push check now scans the prompt once.
+- pi-prompt-stash: the stash popup stays responsive with many large drafts, a stash is capped at 500 prompts and 8 MiB, and store writes no longer block Pi.
+- pi-agents-tmux: session shutdown stops a pane agent's inbox poller first, so a task queued during shutdown stays queued instead of reaching the closing session.
+- On Pi, a skill read in a `tool_batch` call now loads that skill when each batch call on that file is a read that reached the model whole, so skill-load-check passes the next guarded call.
+- `lanes` measures a Copilot CLI account whose login sits in the Linux Secret Service, read by `secret-tool`, and names an absent, locked, refused or empty keyring as its `no_credentials` reason.
+- A lane launched with `open-terminal --lane-refresh` is told at session start that `kendex refresh` and `kendex apply` run there with `--lane-refresh`, not that they never run.
+- Lane selection shares measured account usage across sampled claims, keeps busy accounts with room available, and refuses model windows whose live lanes will spend their room.
+- A Slack owner ask that carries a draft now shows the draft's recipient and medium, and its full text exactly as typed with no link or Markdown rendered in it.
+- `kendex verify --base` no longer reports a hook, MCP server or plugin registry as hand-edited after one of its hooks, servers or plugins is retired.
+
+### Security
+
+- Refuse deletes of shared temporary or home directory roots, their direct globs, and child paths with . or .. segments. Keep a private mktemp directory for cleanup in the same shell call.
+
 ## [1.5.1] - 2026-10-02
 
 ### Fixed
@@ -1331,7 +1381,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.6.0
 [1.5.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.1
 [1.5.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.0
 [1.4.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.4.0
