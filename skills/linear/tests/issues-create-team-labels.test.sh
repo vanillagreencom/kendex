@@ -65,8 +65,8 @@ assert "uuid: create sends only workspace labels for a team that owns none" \
 
 printf 'x' >"$TMP_ROOT/asset.bin"
 
-# The team resolves before the pre-upload agent-label check: a team that
-# matches nothing refuses as itself, with no label lookup and no upload.
+# The team resolves before the label lookups: a team that matches nothing
+# refuses as itself, with no label lookup and no upload.
 run_status rc run_label_team_request "$PROJECT" unknown-team "" LINEAR_AGENT_LABELS=agent:runtime \
   create --team ghost --title "Unknown team" --labels "agent:runtime" --attach "$TMP_ROOT/asset.bin"
 assert_file_contains "unknown-team: the refusal names the team" \
@@ -95,7 +95,7 @@ jq '.issueLabels.nodes += [{id: "60cc6fb0-773f-4279-9015-86940d812d8e", name: "a
 run_status rc run_label_team_request "$PROJECT" attach "" LINEAR_AGENT_LABELS=agent:rust FIXTURE_DIR="$FIXTURES" \
   create --team kendex --title "Foreign agent label" --labels "skills,agent:rust" \
   --attach "$TMP_ROOT/asset.bin"
-assert_file_contains "attach: the pre-upload guard refuses, naming the agent label" \
-  "$TMP_ROOT/attach.err" "Agent label failed to resolve in Linear: agent:rust - refusing before uploading attachments"
+assert_file_contains "attach: the label resolution refuses, naming the agent label" \
+  "$TMP_ROOT/attach.err" "Agent label failed to resolve in Linear: agent:rust - refusing to create"
 assert_file_lacks "attach: no upload is sent for another team's agent label" \
   "$TMP_ROOT/attach.jsonl" "fileUpload"

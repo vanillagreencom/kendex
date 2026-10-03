@@ -154,7 +154,7 @@ create_label() {
         echo '{"error": "Required: --name"}' >&2
         return 1
     fi
-    linear_require_declared_labels "$name" || return 1
+    linear_require_declared_labels --name "$name" || return 1
 
     # Build input object with proper escaping
     local escaped_name
@@ -260,7 +260,7 @@ update_label() {
     if [ -n "$name" ]; then
         # A rename applies a label name, so the create rules hold for it: a
         # declared name, and no second label beside a workspace one of one name.
-        linear_require_declared_labels "$name" || return 1
+        linear_require_declared_labels --name "$name" || return 1
         refuse_workspace_name "$name" "$label_id" || return 1
         local escaped_name
         escaped_name=$(printf '%s' "$name" | jq -Rs '.')

@@ -24,14 +24,14 @@ control_expect "update-kept: the write is sent"
 control_expect "activate-kept: accepted"
 control_expect "activate-kept: the write is sent"
 control_replace scripts/lib/common.sh 1 \
-    '        [$requested | split(",")[] | select(length > 0)] - $declared - $kept | unique | join(",")'"'"') || return 1' \
-    '        [$requested | split(",")[] | select(length > 0)] - $declared | unique | join(",")'"'"') || return 1'
+    '        $requested - $declared - $kept | unique | join(",")'"'"') || return 1' \
+    '        $requested - $declared | unique | join(",")'"'"') || return 1'
 
 # Read a JSON block with no closing fence as the taxonomy.
 control_expect "unclosed-json: the refusal names the unreadable taxonomy"
 control_replace scripts/lib/common.sh 1 \
-    '        END { if (state == 0) exit 5; if (state != 3) exit 3 }' \
-    '        END { if (state == 0) exit 5 }'
+    '            END { if (state == 0) exit 5; if (state != 3) exit 3 }' \
+    '            END { if (state == 0) exit 5 }'
 
 # Read a taxonomy heading over an empty JSON block as no taxonomy.
 control_expect "empty-json: refused"
@@ -52,8 +52,66 @@ control_replace scripts/lib/common.sh 1 \
 control_expect "label-outside-install: refused"
 control_expect "label-outside-install: no label is written"
 control_replace scripts/lib/common.sh 1 \
-    'LINEAR_TAXONOMY_FILE="$PROJECT_ROOT/.agents/skills/project-management/SKILL.md"' \
-    'LINEAR_TAXONOMY_FILE="${_LIB_DIR%/*/*/*}/project-management/SKILL.md"'
+    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md)' \
+    '_linear_taxonomy_candidates+=("$_LINEAR_INSTALL_ROOT"/project-management/SKILL.md)'
+
+# Read the project's shared skills directory alone: a copy delivery into a
+# tool's own directory goes unread.
+control_expect "label-copy-outside-install: refused"
+control_expect "label-copy-outside-install: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.[!.]*/skills/project-management/SKILL.md)' \
+    '_linear_taxonomy_candidates+=("$PROJECT_ROOT"/.agents/skills/project-management/SKILL.md)'
+
+# Read the one fixed path the lookup replaced, $PROJECT_ROOT/.agents/skills:
+# a copy delivery with both skills under .claude/skills enforces nothing.
+control_expect "label-copy-delivery: refused"
+control_expect "label-copy-delivery: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    'for _linear_render in "${_linear_taxonomy_candidates[@]}"; do' \
+    'for _linear_render in "$PROJECT_ROOT/.agents/skills/project-management/SKILL.md"; do'
+
+# Skip the render beside a project install: a kendex project below the git
+# top level goes unread.
+control_expect "label-nested-project: refused"
+control_expect "label-nested-project: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* && "$_LINEAR_INSTALL_ROOT" =~ /\.[^./][^/]*/skills$ ]]; then' \
+    'if false; then'
+
+# Read the source beside a linear run from the catalog's source layout as a
+# render: its missing taxonomy section differs from the project's render.
+control_expect "label-source-layout: the refusal is keyed"
+control_replace scripts/lib/common.sh 1 \
+    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* && "$_LINEAR_INSTALL_ROOT" =~ /\.[^./][^/]*/skills$ ]]; then' \
+    'if [[ "$_LINEAR_INSTALL_ROOT/" == "$PROJECT_ROOT/"* ]]; then'
+
+# Read the first render alone: a stale second render goes unnoticed.
+control_expect "label-renders-differ: refused"
+control_expect "label-renders-differ: the refusal is keyed"
+control_expect "label-renders-differ: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    '        if [[ "$rc:$block" != "$first" ]]; then' \
+    '        if false; then'
+
+# Refuse any second render, agreeing or not.
+control_expect "label-renders-agree: accepted"
+control_expect "label-renders-agree: the label is written"
+control_replace scripts/lib/common.sh 1 \
+    '        if [[ "$rc:$block" != "$first" ]]; then' \
+    '        if [[ "$file" != "$LINEAR_TAXONOMY_FILE" ]]; then'
+
+# Split a label definition's name on commas: a rename to two declared names
+# joined by one passes.
+control_expect "label-comma: refused"
+control_expect "label-comma: the refusal is keyed"
+control_expect "label-comma: no label is written"
+control_expect "label-rename-comma: refused"
+control_expect "label-rename-comma: the refusal is keyed"
+control_expect "label-rename-comma: no label is written"
+control_replace scripts/lib/common.sh 1 \
+    "        requested=\$(jq -cn --arg name \"\$2\" '[\$name]') || return 1" \
+    "        requested=\$(jq -cn --arg name \"\$2\" '\$name | split(\",\")') || return 1"
 
 # Declare a match.parent category's labels[] without its group name.
 control_expect "label-group: accepted"
@@ -68,26 +126,22 @@ control_replace scripts/commands/issues.sh 1 \
     '    if [[ -n "$labels" ]]; then' \
     '    if true; then'
 
-# Skip a declared label Linear does not have, creating the issue without it.
+# Skip a declared label Linear does not have, creating the issue without it,
+# after uploading the attachments.
 control_expect "create-missing: refused"
 control_expect "create-missing: no write is sent"
 control_expect "create-missing: the refusal names the label and the taxonomy"
+control_expect "create-missing-attach: no write is sent"
+control_expect "create-missing-attach: the refusal names the label and the taxonomy"
 control_replace scripts/commands/issues.sh 1 \
     '                if [ -n "$declared" ]; then' \
     '                if false; then'
 
-# Upload attachments before a declared label Linear does not have refuses.
-control_expect "create-missing-attach: no write is sent"
-control_expect "create-missing-attach: the refusal names the label and the taxonomy"
-control_replace scripts/commands/issues.sh 1 \
-    '                elif [ -n "$declared" ]; then' \
-    '                elif false; then'
-
 # Read a JSON block under a later heading as the taxonomy.
 control_expect "json-in-next-section: the refusal names the unreadable taxonomy"
 control_replace scripts/lib/common.sh 1 \
-    '        state == 1 && /^##?#? / { exit 3 }' \
-    '        state == 1 && /^##?#? / { }'
+    '            state == 1 && /^##?#? / { exit 3 }' \
+    '            state == 1 && /^##?#? / { }'
 
 # Accept a JSON block of the wrong shape.
 control_expect "invalid-json: the refusal names the unreadable taxonomy"
@@ -95,12 +149,18 @@ control_replace scripts/lib/common.sh 1 \
     '                and ((.labels // []) | type == "array" and all(type == "string"))' \
     '                and true'
 
-# Read a repository with no taxonomy as declaring none: every label refuses.
+# Read a render path that does not exist: a repository with no render
+# refuses every label as unreadable.
 control_expect "none: create keeps today's behaviour"
+control_replace scripts/lib/common.sh 1 \
+    '    [[ -e "$_linear_render" || -L "$_linear_render" ]] || continue' \
+    '    :'
+
+# Read a repository with no render as an empty taxonomy block.
 control_expect "none: create sends the undeclared label"
 control_replace scripts/lib/common.sh 1 \
-    '    [[ -e "$file" || -L "$file" ]] || return 0' \
-    '    [[ -e "$file" || -L "$file" ]] || { printf '"'"'[]\n'"'"'; return 0; }'
+    '    [[ ${#LINEAR_TAXONOMY_RENDERS[@]} -gt 0 ]] || return 0' \
+    '    :'
 
 # Name the refused labels without the taxonomy file that declares them.
 control_expect "create-undeclared: the refusal names the label and the taxonomy"
@@ -116,8 +176,8 @@ control_replace scripts/lib/common.sh 1 \
 control_expect "label-undeclared: refused"
 control_expect "label-undeclared: no label is written"
 control_replace scripts/commands/labels.sh 1 \
-    '    linear_require_declared_labels "$name" || return 1' \
-    '    linear_require_declared_labels "$name" || :'
+    '    linear_require_declared_labels --name "$name" || return 1' \
+    '    linear_require_declared_labels --name "$name" || :'
 
 # Let a team label take a name a workspace label uses.
 control_expect "label-workspace-duplicate: refused"
@@ -145,8 +205,8 @@ control_replace scripts/commands/labels.sh 1 \
 control_expect "label-rename-undeclared: refused"
 control_expect "label-rename-undeclared: no label is written"
 control_replace scripts/commands/labels.sh 1 \
-    '        linear_require_declared_labels "$name" || return 1' \
-    '        linear_require_declared_labels "$name" || :'
+    '        linear_require_declared_labels --name "$name" || return 1' \
+    '        linear_require_declared_labels --name "$name" || :'
 
 # Rename a label to a name a workspace label uses.
 control_expect "label-rename-workspace-duplicate: refused"

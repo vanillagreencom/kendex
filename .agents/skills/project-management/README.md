@@ -24,5 +24,5 @@ You provide a planning question or select issues to audit. The main session assi
 ## Settings
 
 - Set `PM_CREATE_AUTONOMY` in `kendex.settings.toml` under `[env]`: `ask`, the caller default, requests approval; `auto` executes the audit's accepted creations and cancellations and reports reasons for declined entries and cancellations. Under `ORCH_USER_MODE=ceo` an unset key composes to `auto`.
-- Define the project's required labels in `kendex.toml` under `[skill-instructions]`, or in a project document linked from those instructions. [references/labels.md](references/labels.md) defines the label workflow.
+- Declare the project's label taxonomy as the `json` block under `### Project taxonomy` in the manifest's `[skill-instructions].project-management`. [references/labels.md § Project Taxonomy Contract](references/labels.md#project-taxonomy-contract) defines the block, and the rest of that file the label workflow.
 - Set `LINEAR_REQUIRE_REACH` and `LINEAR_AGENT_LABELS` in `kendex.settings.toml` under `[env]` to check issue descriptions and routing labels during creation.

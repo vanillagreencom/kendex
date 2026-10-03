@@ -1,6 +1,6 @@
 # Label Management Reference
 
-Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** the project declares in its kendex manifest's `[skill-instructions]` for this skill, as § Project Taxonomy Contract states. The project defines the names, colors, and required categories.
+Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** § Project Taxonomy Contract defines. The project defines the names, colors, and required categories.
 
 ## Issue Labels vs Project Labels
 
@@ -20,7 +20,7 @@ Run before any workflow creates an issue or updates issue labels:
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its keyed first line and never read as clean, and `taxonomy-unreadable` halts the create.
+Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its error output and never read as clean, and `taxonomy-unreadable` halts the create.
 
 GitHub-tracked runs read live instead — `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` — with no cache or sync step.
 
@@ -36,7 +36,7 @@ For Linear, match each label by ID and scope as well as name. The inventory's `t
 
 ## Project Taxonomy Contract
 
-Declare it in the manifest's `[skill-instructions].project-management`, as this JSON in a fenced `json` code block under a `### Project taxonomy` heading; kendex renders it into this skill's SKILL.md, where the linear CLI reads it:
+Declare it in the project's kendex manifest (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions].project-management`, as this JSON in a fenced `json` code block under a `### Project taxonomy` heading. kendex renders it into this skill's SKILL.md in each project skills directory it delivers the skill to, and the linear CLI reads every such render:
 
 ```json
 {
@@ -53,7 +53,7 @@ Declare it in the manifest's `[skill-instructions].project-management`, as this 
 
 Category matching order: explicit `labels[]`, then `match.prefix`, then `match.parent` from live inventory, then a project-documented matcher. A label matching two categories must be disambiguated by the taxonomy before mutation.
 
-The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block, an empty one included, refuses every label write; with no heading the CLI enforces nothing.
+The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block, an empty one included, refuses every label write, and so do two renders whose taxonomy sections differ; with no heading the CLI enforces nothing.
 
 ## Validation
 
@@ -90,7 +90,7 @@ A bare `issues update [ID] --labels "agent:new"` strips every other label; use i
 
 A label is a taxonomy change, never a side effect of the work at hand. A lane never creates a label. Change the taxonomy in a reviewed commit whose message gives a one-line reason, and create the label only after that commit merges and the user authorizes the creation, workflow and classification labels included. An `agent:*` label additionally requires the agent definition to exist first; `agent:researcher` is reserved for research issues owned by the researcher agent.
 
-Do not create for a one-off categorization, when an existing label covers the case, or for a project label. `labels create` refuses a name the taxonomy does not declare, and a team label whose name a workspace label already uses. After creating, rerun preflight before mutating.
+Do not create for a one-off categorization, when an existing label covers the case, or for a project label. The label commands that refuse a name are listed in [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing). After creating, rerun preflight before mutating.
 
 ## Label drift check
 

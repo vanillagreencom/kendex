@@ -1297,12 +1297,11 @@ create_issue() {
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
 
-    # Resolve --project and --milestone BEFORE uploading, for the reason the
-    # label pre-resolution below states: each can still refuse — an unknown
-    # project, a milestone name with no project, an ambiguous one, a failed
-    # lookup — and a refusal after the upload strands the asset in Linear
-    # storage with no issue referencing it. The ids they yield are what the
-    # input below carries.
+    # Resolve --project and --milestone BEFORE uploading: each can still
+    # refuse — an unknown project, a milestone name with no project, an
+    # ambiguous one, a failed lookup — and a refusal after the upload strands
+    # the asset in Linear storage with no issue referencing it. The ids they
+    # yield are what the input below carries.
     local project_id=""
     if [ -n "$project" ]; then
         project_id=$(resolve_project_id "$project")
@@ -1331,62 +1330,6 @@ create_issue() {
     local team_id
     team_id=$(resolve_team_id "$team") || return 1
 
-    # Uploads run only after the routing guard and the resolvers above.
-    if [ ${#attach_paths[@]} -gt 0 ]; then
-        # Resolve the labels a miss refuses BEFORE uploading: declared agent
-        # labels (routed-or-refused) and, under a declared label taxonomy,
-        # every label. The create would refuse later, and uploads done first
-        # would strand orphaned assets in Linear storage.
-        if [ -n "$labels" ] && { [ -n "${LINEAR_AGENT_LABELS:-}" ] || [ -n "$declared" ]; }; then
-            local pre_label_names=() pre_label_name
-            IFS=',' read -ra pre_label_names <<<"$labels"
-            for pre_label_name in "${pre_label_names[@]}"; do
-                if [[ "$pre_label_name" == agent:* && -n "${LINEAR_AGENT_LABELS:-}" ]]; then
-                    if ! resolve_label_id "$pre_label_name" team-id "$team_id" >/dev/null; then
-                        jq -cn --arg label "$pre_label_name" \
-                            '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
-                        return 1
-                    fi
-                elif [ -n "$declared" ]; then
-                    local pre_label_rc=0
-                    resolve_label_id "$pre_label_name" team-id "$team_id" >/dev/null || pre_label_rc=$?
-                    case "$pre_label_rc" in
-                    0) ;;
-                    1)
-                        linear_label_message declared-missing "$pre_label_name" >&2
-                        return 1
-                        ;;
-                    *) return 1 ;;
-                    esac
-                fi
-            done
-        fi
-        upload_attach_paths "${attach_paths[@]}" || return 1
-    fi
-
-    # Build input object - use jq for proper JSON escaping
-    # printf, not `echo -n`: `echo -n "-n"` prints nothing, so a title or
-    # description of exactly -n/-e/-E became an empty string server-side.
-    local escaped_title
-    escaped_title=$(printf '%s' "$title" | jq -Rs '.')
-    local input_parts=("\"title\": $escaped_title")
-
-    input_parts+=("\"teamId\": \"$team_id\"")
-
-    if [ -n "$description" ]; then
-        local escaped_desc
-        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
-        input_parts+=("\"description\": $escaped_desc")
-    fi
-    if [ -n "$priority" ]; then
-        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
-        input_parts+=("\"priority\": $priority")
-    fi
-    if [ -n "$estimate" ]; then
-        linear_require_pattern --estimate "$estimate" '^[0-9]+(\.[0-9]+)?$' "a non-negative number" || return 1
-        input_parts+=("\"estimate\": $estimate")
-    fi
-
     # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
     # the routing guard's promise is routed-or-refused, so an agent label
     # that fails to resolve, e.g. one declared in LINEAR_AGENT_LABELS but
@@ -1395,9 +1338,9 @@ create_issue() {
     # declared label taxonomy every miss refuses: a declared label can be
     # committed before it is created, and skipping it would report success
     # for an issue missing a label its taxonomy requires)
+    local label_ids=()
     if [ -n "$labels" ]; then
         IFS=',' read -ra label_names <<<"$labels"
-        local label_ids=()
         for label_name in "${label_names[@]}"; do
             local label_id label_rc=0
             label_id=$(resolve_label_id "$label_name" team-id "$team_id") || label_rc=$?
@@ -1430,14 +1373,44 @@ create_issue() {
                 ;;
             esac
         done
-        if [ ${#label_ids[@]} -gt 0 ]; then
-            local label_json
-            label_json=$(
-                IFS=,
-                echo "[${label_ids[*]}]"
-            )
-            input_parts+=("\"labelIds\": $label_json")
-        fi
+    fi
+
+    # Uploads run only after the routing guard and the resolvers above.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        upload_attach_paths "${attach_paths[@]}" || return 1
+    fi
+
+    # Build input object - use jq for proper JSON escaping
+    # printf, not `echo -n`: `echo -n "-n"` prints nothing, so a title or
+    # description of exactly -n/-e/-E became an empty string server-side.
+    local escaped_title
+    escaped_title=$(printf '%s' "$title" | jq -Rs '.')
+    local input_parts=("\"title\": $escaped_title")
+
+    input_parts+=("\"teamId\": \"$team_id\"")
+
+    if [ -n "$description" ]; then
+        local escaped_desc
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
+        input_parts+=("\"description\": $escaped_desc")
+    fi
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
+    if [ -n "$estimate" ]; then
+        linear_require_pattern --estimate "$estimate" '^[0-9]+(\.[0-9]+)?$' "a non-negative number" || return 1
+        input_parts+=("\"estimate\": $estimate")
+    fi
+
+    # Resolved above, before the attachment upload.
+    if [ ${#label_ids[@]} -gt 0 ]; then
+        local label_json
+        label_json=$(
+            IFS=,
+            echo "[${label_ids[*]}]"
+        )
+        input_parts+=("\"labelIds\": $label_json")
     fi
 
     # Resolved above, before the attachment upload.

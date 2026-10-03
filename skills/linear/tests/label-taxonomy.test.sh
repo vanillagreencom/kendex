@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Under a declared label taxonomy (the project-management JSON contract under
-# `### Project taxonomy`, plus LINEAR_AGENT_LABELS), every path that applies a
-# label (issues create, update --labels, activate, block) refuses a name the
-# taxonomy does not declare, before any write; a name the issue already carries
-# is kept, and create refuses a declared label Linear does not have. `labels
-# create` and `labels update --name` refuse an undeclared name, and a name a
-# workspace label uses. `labels audit` lists undeclared labels on the team's
-# open issues and same-name team/workspace pairs. A repository with no
-# taxonomy keeps the behaviour it had, and one it cannot read refuses a label
-# write. The taxonomy is the project's own, wherever the CLI is installed.
+# The label-taxonomy refusals ../SKILL.md § Issue Creation Routing states,
+# driven against recorded Linear replies; that section is the one list of the
+# commands that refuse. The rows also pin which project-management renders the
+# CLI reads: the one beside a project install, every project skills directory
+# a delivery writes, never the one beside a global install, and two renders
+# that differ as unreadable.
 
 set -euo pipefail
 
@@ -20,19 +16,20 @@ assert_tmpdir TMP_ROOT
 TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P)
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-# make_project DIR KIND — a repository with this skill and, by KIND, the
-# rendered project-management SKILL.md beside it: declared, none (no file),
+# make_project DIR KIND [ROOT] — a repository with this skill under ROOT
+# (default .agents/skills) and, by KIND, the rendered project-management
+# SKILL.md beside it: declared, none (no file),
 # no-heading, no-json (the heading with no JSON block), empty-json (an empty
 # block), unclosed-json (a block with no closing fence), json-in-next-section
 # (the only JSON block sits under a later heading) or invalid-json.
 make_project() {
-  local project="$1" kind="$2" taxonomy
-  mkdir -p "$project/.agents/skills/project-management"
+  local project="$1" kind="$2" root="${3:-.agents/skills}" taxonomy
+  mkdir -p "$project/$root/project-management"
   git -C "$project" init -q -b main
   git -C "$project" config gc.auto 0
   git -C "$project" config maintenance.auto false
-  cp -R "$SKILL_DIR" "$project/.agents/skills/linear"
-  taxonomy="$project/.agents/skills/project-management/SKILL.md"
+  cp -R "$SKILL_DIR" "$project/$root/linear"
+  taxonomy="$project/$root/project-management/SKILL.md"
   case "$kind" in
   declared)
     printf '%s\n' '# Project Management' '<!-- kendex:project-instructions:start -->' \
@@ -235,10 +232,34 @@ run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
 }
 
+# Where kendex delivered project-management: with method = "copy", only under
+# .claude/skills; in a kendex project below the git top level; and twice, in
+# .agents/skills and .claude/skills, once agreeing and once not.
+COPY="$TMP_ROOT/copy"
+make_project "$COPY" declared .claude/skills
+NESTED="$TMP_ROOT/nested"
+make_project "$NESTED/sub" declared
+rm -rf -- "${NESTED:?}/sub/.git"
+git -C "$NESTED" init -q -b main
+git -C "$NESTED" config gc.auto 0
+git -C "$NESTED" config maintenance.auto false
+for twin in agree differ; do
+  make_project "$TMP_ROOT/$twin" declared
+  mkdir -p "$TMP_ROOT/$twin/.claude/skills"
+  cp -R "$TMP_ROOT/$twin/.agents/skills/project-management" "$TMP_ROOT/$twin/.claude/skills/"
+done
+printf '%s\n' '# Project Management' >"$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md"
+# A catalog checkout runs the CLI from its source layout, beside the unrendered
+# project-management source.
+mkdir -p "$LABELS_PROJECT/skills/project-management"
+cp -R "$SKILL_DIR" "$LABELS_PROJECT/skills/linear"
+printf '%s\n' '# Project Management' >"$LABELS_PROJECT/skills/project-management/SKILL.md"
+
 LABELS_TAXONOMY="$LABELS_PROJECT/.agents/skills/project-management/SKILL.md"
-while IFS='|' read -r name want key install args; do
+while IFS='|' read -r name want key project install args; do
+  project="${project:-$LABELS_PROJECT}"
   # shellcheck disable=SC2086 # args is the row's word list
-  run_status rc run_labels "$name" "" "$LABELS_PROJECT" "${install:-$LABELS_PROJECT/.agents/skills/linear}" $args
+  run_status rc run_labels "$name" "" "$project" "${install:-$project/.agents/skills/linear}" $args
   if [[ "$want" == refused ]]; then
     assert_ne "$name: refused" "$rc" 0
     assert_file_contains "$name: the refusal is keyed" "$TMP_ROOT/$name.err" "$key"
@@ -248,16 +269,24 @@ while IFS='|' read -r name want key install args; do
     assert "$name: the label is written" grep -qE 'issueLabelCreate|issueLabelUpdate' "$TMP_ROOT/$name.jsonl"
   fi
 done <<ROWS
-label-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||create --name legacy
-label-outside-install|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY|$GLOBAL/linear|create --name legacy
-label-declared|accepted|||create --name bug
-label-group|accepted|||create --name Platform --group
-label-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug||create --name bug --team kendex
-label-team|accepted|||create --name skills --team kendex
-label-rename-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||update team-skills --name legacy
-label-rename-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug||update team-skills --name bug
-label-rename-self|accepted|||update ws-bug --name bug
-label-rename|accepted|||update team-skills --name macos
+label-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY|||create --name legacy
+label-outside-install|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||$GLOBAL/linear|create --name legacy
+label-source-layout|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY||$LABELS_PROJECT/skills/linear|create --name legacy
+label-copy-delivery|refused|linear-labels: undeclared labels=legacy taxonomy=$COPY/.claude/skills/project-management/SKILL.md|$COPY|$COPY/.claude/skills/linear|create --name legacy
+label-copy-outside-install|refused|linear-labels: undeclared labels=legacy taxonomy=$COPY/.claude/skills/project-management/SKILL.md|$COPY|$GLOBAL/linear|create --name legacy
+label-nested-project|refused|linear-labels: undeclared labels=legacy taxonomy=$NESTED/sub/.agents/skills/project-management/SKILL.md|$NESTED/sub||create --name legacy
+label-renders-agree|accepted||$TMP_ROOT/agree||create --name bug
+label-renders-differ|refused|linear-labels: taxonomy-unreadable taxonomy=$TMP_ROOT/differ/.agents/skills/project-management/SKILL.md differs=$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md|$TMP_ROOT/differ||create --name bug
+label-declared|accepted||||create --name bug
+label-group|accepted||||create --name Platform --group
+label-comma|refused|linear-labels: undeclared labels=skills,bug taxonomy=$LABELS_TAXONOMY|||create --name skills,bug
+label-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug|||create --name bug --team kendex
+label-team|accepted||||create --name skills --team kendex
+label-rename-undeclared|refused|linear-labels: undeclared labels=legacy taxonomy=$LABELS_TAXONOMY|||update team-skills --name legacy
+label-rename-comma|refused|linear-labels: undeclared labels=skills,bug taxonomy=$LABELS_TAXONOMY|||update team-skills --name skills,bug
+label-rename-workspace-duplicate|refused|linear-labels: workspace-duplicate name=bug|||update team-skills --name bug
+label-rename-self|accepted||||update ws-bug --name bug
+label-rename|accepted||||update team-skills --name macos
 ROWS
 
 NO_TAXONOMY="$TMP_ROOT/labels-none"
