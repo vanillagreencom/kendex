@@ -21,8 +21,9 @@
 #          sentence unsupported_flag carries), `-` when empty
 #   op     how many times the row called op
 #   calls  every gh call by kind, in order: auth (auth status), user (api
-#          user; a selected token is probed by the router and again by
-#          pr-view's own preflight), and a pr view call as its argv; `-` for none
+#          user; a selected token is validated once by the router, and the
+#          exec'd pr-view reuses that result), and a pr view call as its argv;
+#          `-` for none
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
