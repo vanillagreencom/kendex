@@ -661,6 +661,7 @@ err_word() {
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;
     generic:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) target=claude\n' "$b" ;;
     generic:exit:*) printf 'error=claude exited with code %s target=claude\n' "$b" ;;
+    generic:empty) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration target=claude\n' ;;
     # the home
     home-rejected:*) printf '→ artifact home rejected (%s\n' "$(home_reason "$a" "$b")" ;;
     home-not-creatable:*) printf '→ artifact home not creatable: %s\n' "${1#home-not-creatable:}" ;;

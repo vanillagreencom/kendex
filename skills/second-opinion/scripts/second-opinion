@@ -2799,7 +2799,8 @@ collect_response() {
 }
 # A first response that holds no answer ends the run: a timeout, a non-zero
 # exit, a result envelope that ended without a review, or an empty stdout.
-# Every mode reports one failure and one cause; only review/audit keep a record.
+# Every failure but a challenge or quick timeout reports at most one cause; a
+# challenge or quick timeout prints no cause. Only review/audit keep a record.
 gate_first_response() {
   CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
   if [[ $EXIT_CODE -eq 124 ]]; then
