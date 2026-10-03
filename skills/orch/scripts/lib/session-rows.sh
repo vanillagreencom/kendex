@@ -18,19 +18,15 @@
 #
 # The writer is the lane-mail-check hook, run with the argument `row` and the
 # event by the session-start-row, session-end-row and stop-failure-row hooks,
-# and in its own turn-end run for the overseer: SessionStart on every harness
-# that fires it, SessionEnd and StopFailure on Claude Code and Copilot CLI,
-# whose StopFailure is an errorOccurred naming a failed model call, and Stop
-# at every overseer turn end, which lifts a standing StopFailure row and dates
-# the turn end oversee-watch holds the overseer's context record against. The
-# readers are oversee-watch's overseer judgement, `oversee register` and
-# oversee-succeed's caller identity.
+# on the harnesses each one's harnesses line names (hooks/README.md), and in
+# its own turn-end run for the overseer: a Stop at every overseer turn end,
+# which lifts a standing StopFailure row and dates the turn end oversee-watch
+# holds the overseer's context record against. The readers are oversee-watch's
+# overseer judgement, `oversee register` and oversee-succeed's caller identity.
 #
-# The verdict answers for Claude Code alone: Codex fires SessionStart but no
-# session end and no usage-limit event, Pi a session start alone, and how a
-# Copilot failed model call names a usage limit is unmeasured, so a
-# session whose last row names another harness reads `unsupported` and its
-# reader takes the pane, the named fallback, reported as fallback.
+# The verdict answers for Claude Code alone: a session whose last row names
+# another harness reads `unsupported` and its reader takes the pane, the named
+# fallback, reported as fallback.
 #
 # ONE OWNER, THE WRITER, for "whose facts are these": only the pane's own
 # top-level harness writes a row, so a harness that session starts in its own

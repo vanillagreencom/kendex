@@ -1013,7 +1013,7 @@ package_case "control: a hook row that never looks under its judge fails a wrapp
 plant "$STAND_SMOKE" 's/^    \[ "\$line" = "\$args" \] || continue$/    :/'
 package_run "$STAND_SMOKE" STANDIN_WRAP=session-end-row
 package_case "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran" hook:session-end-row pass "reading the payload Copilot sent"
-plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop'\$/PKG_UNRAISED=''/"
+plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop StopFailure'\$/PKG_UNRAISED=''/"
 package_run "$STAND_SMOKE"
 package_case "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent" hook:reviewer-stop-check pass "reading the payload Copilot sent"
 

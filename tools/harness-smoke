@@ -2037,9 +2037,9 @@ pkg_session_verdict() {
   fi
 }
 # The events the session of tool calls raises none of on Copilot: it runs no
-# subagent. The copilot event rows record what Copilot sends there, and the
-# hook's own suite holds it to that payload.
-PKG_UNRAISED='SubagentStop'
+# subagent and no failing model call. The copilot event rows record what
+# Copilot sends at each, and the hook's own suite holds it to that payload.
+PKG_UNRAISED='SubagentStop StopFailure'
 pkg_hook_row() { # HOOK — after the session
   local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1" denial
   event=$(sed -n 's/^# event: //p' "$SELF/hooks/$hook.sh")
