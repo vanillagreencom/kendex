@@ -52,7 +52,7 @@ case "$*" in
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
   'api graphql '*)
-    [ -f "$TEST_STATE/push-refused" ] || exit 89
+    [ -f "$TEST_STATE/push-refused" ] || [ -f "$TEST_STATE/disable-refused" ] || exit 89
     [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
     # GitHub returns only requested fields. Never supply a complete fixture
     # to a query that omits the branch or pull-request state selections.
@@ -66,7 +66,13 @@ case "$*" in
   'pr merge '*)
     case " $* " in
       *' --auto '*) : >"$TEST_STATE/armed" ;;
-      *' --disable-auto '*) rm -f -- "$TEST_STATE/armed" ;;
+      *' --disable-auto '*)
+        if [ "${TEST_DISABLE_MODE:-normal}" = refused ]; then
+          : >"$TEST_STATE/disable-refused"
+          printf "GraphQL: Can't disable auto-merge for this pull request. (disablePullRequestAutoMerge)\n" >&2
+          exit 1
+        fi
+        rm -f -- "$TEST_STATE/armed" ;;
       *) exit 2 ;;
     esac ;;
   'pr close '*) : ;;
@@ -604,8 +610,8 @@ s = p.read_text()
 mutations = {
     'defer': ('if [ "$reason" != active ]; then', 'if false; then'),
     'fail-open': ('if [ "$reason" != active ]; then', 'if true; then'),
-    'query-open': ("printf 'refresh-error=push-state value=query\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=query\\n' >&2\n      exit 0"),
-    'output-open': ("printf 'refresh-error=push-state value=output\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=output\\n' >&2\n      exit 0"),
+    'query-open': ("printf 'refresh-error=push-state value=query\\n' >&2\n    exit 1", "printf 'refresh-error=push-state value=query\\n' >&2\n    exit 0"),
+    'output-open': ("printf 'refresh-error=push-state value=output\\n' >&2\n    exit 1", "printf 'refresh-error=push-state value=output\\n' >&2\n    exit 0"),
     'ordering': ('  push_status=0', "  gh api graphql -f query='query { viewer { login } }'\n  push_status=0"),
     'queue-field': ('{ state isInMergeQueue autoMergeRequest { enabledAt } }', '{ state autoMergeRequest { enabledAt } }'),
     'no-old': ('elif .ref == null and $old != "" then "branch-gone"', 'elif .ref == null then "branch-gone"'),
@@ -636,6 +642,66 @@ PUSH_CONTROL
   done
 done
 unset PUSH_MODE PUSH_QUERY
+reset_default
+git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
+# A non-render run disables auto-merge on the open rolling pull request.
+# GitHub refuses that once the pull request is queued or merged; the run then
+# defers on the post-refusal state, and any other refusal still fails.
+cp "$runner" "$TMP/disable-runner"
+DISABLE_MODE=refused
+CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*'
+for row in \
+  'queued|OPEN|true|present|0|queued' \
+  'merged|MERGED|false|gone|0|merged' \
+  'active|OPEN|false|present|1|active'; do
+  IFS='|' read -r name pr_state queued branch expected reason <<<"$row"
+  jq -cn --arg state "$pr_state" --argjson queued "$queued" --arg branch "$branch" \
+    '{data:{repository:{ref:(if $branch == "gone" then null else {target:{oid:"abc"}} end),pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:null}}}}' >"$TMP/state/push-state.json"
+  # Each defer outcome has a planted behavior defect on a disposable copy.
+  controls=""
+  case "$name" in
+    queued) controls=bare ;;
+    active) controls=open ;;
+  esac
+  for mutation in none $controls; do
+    reset_default
+    if [ "$mutation" != none ]; then
+      python3 - "$runner" "$mutation" <<'DISABLE_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+mutations = {
+    'bare': ('gh pr merge "$pr" --repo "$GH_REPO" --disable-auto || disable_status=$?', 'gh pr merge "$pr" --repo "$GH_REPO" --disable-auto'),
+    'open': ('        queued | merged | closed)', '        *)'),
+}
+old, new = mutations[sys.argv[2]]
+assert s.count(old) == 1
+changed = s.replace(old, '# ' + old.strip() + '\n' + new)
+assert changed != s
+p.write_text(changed)
+DISABLE_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
+    git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+    printf '1\n' >"$TMP/state/pr"
+    : >"$TMP/state/calls"
+    run_refresh "disable-$name-$mutation" pass standard
+    if [ "$mutation" = none ]; then
+      if refresh_disable_matches "$expected" "$reason"; then ok "$name refused disable state"; else bad "$name refused disable state" "$OUT"; fi
+    else
+      if ! refresh_disable_matches "$expected" "$reason"; then ok "control: $name $mutation disable assertion turns red"; else bad "$name $mutation disable control" "$OUT"; fi
+      reset_default
+      cp "$TMP/disable-runner" "$runner"
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
+  done
+done
+unset DISABLE_MODE
+CLASS_REASON='cause=renders-match-their-sources'
 reset_default
 git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"

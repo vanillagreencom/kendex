@@ -238,12 +238,62 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
+# GitHub owns the queue and may merge the rolling pull request and delete its
+# branch at any moment, so only a read after GitHub refuses a write can
+# establish that lifecycle. Sets reason to merged, closed, queued, armed,
+# branch-gone or active for the pull request in pr; a failed or malformed
+# read exits.
+refresh_lifecycle() {
+  local has_pr=false push_state
+  if [ -n "$pr" ]; then has_pr=true; fi
+  if ! push_state="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" \
+    -F number="${pr:-0}" -F hasPR="$has_pr" \
+    -f query='query($owner: String!, $repo: String!, $number: Int!, $hasPR: Boolean!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } } pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } } } }')"; then
+    printf 'refresh-error=push-state value=query\n' >&2
+    exit 1
+  fi
+  if ! reason="$(jq -er -s --argjson has_pr "$has_pr" --arg old "$old" '
+    if length != 1 then error("expected one response") else .[0] end |
+    if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository end |
+    if type != "object" or (has("ref") | not) or
+      (.ref != null and (.ref.target.oid | type != "string" or length == 0)) or
+      ($has_pr and (.pullRequest | type != "object" or
+        (has("state") and has("isInMergeQueue") and has("autoMergeRequest") | not) or
+        (.state != "OPEN" and .state != "MERGED" and .state != "CLOSED") or
+        (.isInMergeQueue | type != "boolean") or
+        (.autoMergeRequest != null and (.autoMergeRequest.enabledAt | type != "string" or length == 0))))
+    then error("incomplete refresh state") else . end |
+    if .pullRequest.state == "MERGED" then "merged"
+    elif .pullRequest.state == "CLOSED" then "closed"
+    elif .pullRequest.isInMergeQueue == true then "queued"
+    elif .pullRequest.autoMergeRequest != null then "armed"
+    elif .ref == null and $old != "" then "branch-gone"
+    else "active" end
+  ' <<<"$push_state")"; then
+    printf 'refresh-error=push-state value=output\n' >&2
+    exit 1
+  fi
+}
 if [ "$class" = render ]; then
   merge_note='Render equality is verified. The refresh workflow arms auto-merge.'
 else
   merge_note='Auto-merge is disabled. A repository maintainer reviews and merges this pull request through the normal review and CI gates.'
   if [ -n "$pr" ]; then
-    gh pr merge "$pr" --repo "$GH_REPO" --disable-auto
+    disable_status=0
+    gh pr merge "$pr" --repo "$GH_REPO" --disable-auto || disable_status=$?
+    if [ "$disable_status" -ne 0 ]; then
+      # GitHub refuses the disable once the pull request is queued or merged.
+      # The read follows the refusal, because the pull request can enter the
+      # queue between any earlier read and this call.
+      refresh_lifecycle
+      case "$reason" in
+        queued | merged | closed)
+          printf 'refresh-state=deferred reason=%s\n' "$reason"
+          exit 0 ;;
+      esac
+      printf 'refresh-error=disable value=%s\n' "$disable_status" >&2
+      exit 1
+    fi
   fi
 fi
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
@@ -254,43 +304,13 @@ if [ "$state" = pushed ]; then
   push_status=0
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh || push_status=$?
   if [ "$push_status" -ne 0 ]; then
-    # GitHub owns the queue and may merge and delete this branch during
-    # rendering. Only a post-refusal API read can establish that lifecycle.
     if [ "$pr" = "" ]; then
       if ! pr="$(gh api "repos/$GH_REPO/pulls?state=open&head=${GH_REPO%%/*}:kendex/refresh&sort=created&direction=desc&per_page=1" --jq '.[0].number // empty')"; then
         printf 'refresh-error=push-state value=pulls\n' >&2
         exit 1
       fi
     fi
-    has_pr=false
-    if [ -n "$pr" ]; then has_pr=true; fi
-    if ! push_state="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" \
-      -F number="${pr:-0}" -F hasPR="$has_pr" \
-      -f query='query($owner: String!, $repo: String!, $number: Int!, $hasPR: Boolean!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } } pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } } } }')"; then
-      printf 'refresh-error=push-state value=query\n' >&2
-      exit 1
-    fi
-    if ! reason="$(jq -er -s --argjson has_pr "$has_pr" --arg old "$old" '
-      if length != 1 then error("expected one response") else .[0] end |
-      if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository end |
-      if type != "object" or (has("ref") | not) or
-        (.ref != null and (.ref.target.oid | type != "string" or length == 0)) or
-        ($has_pr and (.pullRequest | type != "object" or
-          (has("state") and has("isInMergeQueue") and has("autoMergeRequest") | not) or
-          (.state != "OPEN" and .state != "MERGED" and .state != "CLOSED") or
-          (.isInMergeQueue | type != "boolean") or
-          (.autoMergeRequest != null and (.autoMergeRequest.enabledAt | type != "string" or length == 0))))
-      then error("incomplete refresh state") else . end |
-      if .pullRequest.state == "MERGED" then "merged"
-      elif .pullRequest.state == "CLOSED" then "closed"
-      elif .pullRequest.isInMergeQueue == true then "queued"
-      elif .pullRequest.autoMergeRequest != null then "armed"
-      elif .ref == null and $old != "" then "branch-gone"
-      else "active" end
-    ' <<<"$push_state")"; then
-      printf 'refresh-error=push-state value=output\n' >&2
-      exit 1
-    fi
+    refresh_lifecycle
     if [ "$reason" != active ]; then
       printf 'refresh-state=deferred reason=%s\n' "$reason"
       exit 0
