@@ -24,6 +24,9 @@ fn invoke_at(
         .current_dir(cwd)
         .env_clear()
         .envs(fixture_env(home))
+        // Windows known folders ignore HOME, and the personal install lives
+        // under the fixture home's own config dir.
+        .env("KENDEX_REAL_HOME", home)
         .env("KENDEX_UI", "plain")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
