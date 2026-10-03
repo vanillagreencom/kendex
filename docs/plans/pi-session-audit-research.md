@@ -44,7 +44,7 @@ Every cell is n / items / median / p90, or n / items / share for a 0-or-1 measur
 | 4 candidate harness-defect asks per item | item | asks naming harness words | 137 / 137 / 0 / 1 | 159 / 159 / 0 / 1 | not sampled (n=0) | 52 |
 | 4 turns ended with work owed | session | live transcript | not sampled (n=0) | not sampled (n=0) | not sampled (n=0) | — |
 | 5 share stopped, parked or paused | item | lane record `status`, `parked`, `pauses` | 139 / 139 / 1.4% (2) | 154 / 154 / 3.9% (6) | not sampled (n=0) | 54 |
-| 5 share not merged | item | lane record `cycle.stamps.merged` | 137 / 137 / 0.0% | 151 / 151 / 0.0% | not sampled (n=0) | 53 |
+| 5 share not merged | item | lane record `cycle.stamps.merged`; 0 by construction | 137 / 137 / 0.0% (structural) | 151 / 151 / 0.0% (structural) | not sampled (n=0) | 53 |
 | 5 wall seconds, launch to merge, less pauses | item | lane record `cycle.stamps`, `pauses` | 137 / 137 / 11,753 / 37,389 | 151 / 151 / 8,455 / 26,953 | not sampled (n=0) | 53 |
 | 5 fix rounds per merged item | item | lane record `cycle.rounds.fix` | 56 / 56 / 0 / 2 | 31 / 31 / 1 / 3 | not sampled (n=0) | 31 |
 
@@ -73,7 +73,7 @@ The provider was not held fixed. Every Pi lane ran through the `github-copilot` 
 | 4 overseer rulings per item | 66 / 66 / 2 / 6 | 148 / 148 / 2 / 6 |
 | 4 lane-mail asks per item | 65 / 65 / 1 / 2 | 145 / 145 / 0 / 2 |
 | 5 share stopped, parked or paused | 66 / 66 / 0.0% (0) | 148 / 148 / 4.1% (6) |
-| 5 share not merged | 64 / 64 / 0.0% | 145 / 145 / 0.0% |
+| 5 share not merged | 64 / 64 / 0.0% (structural) | 145 / 145 / 0.0% (structural) |
 | 5 wall seconds, launch to merge, less pauses | 64 / 64 / 7,866.5 / 19,989 | 145 / 145 / 8,722 / 27,030 |
 | 5 fix rounds per merged item | 19 / 19 / 1 / 3 | 29 / 29 / 1 / 3 |
 
@@ -140,7 +140,7 @@ These are listed with their class. They file nothing.
 - Close records: every kept close record dated 2026-10-01 or later, across every repository and fleet under `/home/admin/.fleet/archive/<repo>/<item>/`, plus each new close. A close record is a `tokens-<sandbox-id>.json` and a `tmp-*.tgz`. [R]
 - Live Pi lanes: measures 2 and 3 need a transcript, and a close keeps none (FLT-671). They come only from Pi lanes still open, read before close. At the read none was open in kendex, fleet, vg or talk, and none was routed. [R] [O]
 - No routing change and no Copilot spend. [R]
-- Excluded: 75 item keys that `git-context issue-canonical` refuses, such as `proof-3f2a` and `fleet-probe-v1-max`, and 30 tracker items with neither a lane record nor exactly one harness with tokens. A Linear id and a GitHub `issue-N` key both count as tracker items. [E]
+- Excluded: 77 probe keys, such as `proof-02328f9`, `proof-3342777` and `fleet-probe-v23-max`, and 28 tracker items with neither a lane record nor exactly one harness with tokens. `measure.py` owns the rule (`work_item_id`) and reads no environment: a key is a tracker item when it has a tracker id's shape (`ABC-123` in any case, or a GitHub `issue-123`) and, with `--issues`, an entry in the tracker data. [E]
 
 ### Comparison
 
@@ -167,7 +167,7 @@ An overseer-briefed control-host subagent runs every read, with the script as it
 | 1 | `archive` | control host | `measure.py archive --root /home/admin/.fleet/archive --oversee-state REPO=<repo>/tmp/workflow-state-oversee.json ... > items.jsonl` |
 | 2 | `live` | each open Pi lane's sandbox, before close | `python3 - live --item ITEM --repo REPO`, through `lane-host-daytona exec --item ITEM` with `measure.py` on stdin |
 | 3 | tracker read | any checkout | `linear.sh issues bulk-get ID...` for every tracker item, saved as `{item: {estimate, agent}}` |
-| 4 | `aggregate` | a kendex checkout (it runs that checkout's `git-context`) | `measure.py aggregate --issues issues.json items.jsonl.gz [live.jsonl]` |
+| 4 | `aggregate` | any checkout | `measure.py aggregate --issues issues.json items.jsonl.gz [live.jsonl]` |
 | 5 | outcome | any checkout | `gh pr view N --json state,mergedAt` for a lane with no `cycle` record, where its outcome matters |
 
 `archive` prints one line per item with a close record dated on or after `--since` (default 2026-10-01): the record's `at`, else the file's modification time. It prints `df -h /` before each item and stops with exit 3 under 3 GB free; lines already printed are complete. It lists each archive with `tar -tzf` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`, never extracting an archive, and refuses a member over 16 MiB. A close archive can hold the lane mailbox twice (the worktree's and the close-out evidence copy); `archive` and `aggregate` count each envelope id once. A close archive also holds other mailboxes, the overseer's and test scratch ones; `archive` reads only `lane-mail/<item>/to-overseer.jsonl`, and `aggregate` leaves out the asks of a schema-1 line that read another. The subagent runs no `git log -S`, `-G` or `--all -p`, and writes no bulk data.
@@ -232,7 +232,7 @@ pi-tool-renderer's pass-through `read`, `bash`, `edit`, `write`, `grep`, `find` 
 | Candidate harness-defect ask | an ask naming harness or extension words; a reviewer confirms each | `lane_mail.asks[].terms` |
 | Harness-only brief clause | a clause of `tmp/brief-tail-template.md` naming one harness; per repository | `brief_tail`; none in this sample |
 | Stopped, parked or paused | lane `status` `stopped`, a `parked` object, or `pauses` not empty | lane record |
-| Not merged | a `cycle` whose `stamps.merged` is empty | lane record; an item with no lane record or no `cycle` is unknown, never unmerged |
+| Not merged | never shown: oversee-cycle writes a lane's `cycle` only at merge, so a merged stamp reads merged and every other lane, one with no lane record or no `cycle` included, reads unknown; the not-merged share is 0 by construction | lane record |
 | Wall time | `cycle.stamps.launched` (else `launched_at`) to `merged`, less the pause time inside that window: each `pauses` stretch and a standing `parked`, clipped to the window, overlaps counted once, as oversee-cycle counts its pauses | lane record |
 | Fix rounds | `cycle.rounds.fix` | lane record |
 
@@ -278,5 +278,5 @@ pi-tool-renderer's pass-through `read`, `bash`, `edit`, `write`, `grep`, `find` 
 
 - Mode: kept close records plus static code reads. No provider query, no Exa search, no live lane.
 - Script: `docs/plans/pi-session-audit/measure.py` (Python 3.8+, standard library), modes `archive`, `live`, `aggregate`.
-- Tests: `docs/plans/pi-session-audit/test_measure.py`, 26 tests, run by hand (Read procedure step 0).
+- Tests: `docs/plans/pi-session-audit/test_measure.py`, 27 tests, run by hand (Read procedure step 0).
 - Archive read: the overseer's run, 462 lines, every one exit 0 with no error; `--oversee-state` for fleet, kendex, talk and vg.

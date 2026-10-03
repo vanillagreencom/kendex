@@ -332,9 +332,7 @@ class Aggregate(unittest.TestCase):
                    archive_object("proof-1a", "pi", 5),
                    archive_object("FLT-1", "pi", 0, lane=False),
                    archive_object("issue-2708", "claude", 5)]
-        with mock.patch.dict(os.environ):
-            os.environ.pop("GH_ISSUE_PATTERN", None)
-            table = measure.aggregate(objects, {})
+        table = measure.aggregate(objects, {})
         inputs = table["inputs"]
         # A GitHub issue-N key is a work item; proof-1a is a probe.
         self.assertEqual((inputs["probe_items_excluded"], inputs["no_harness_excluded"], inputs["items"]), (1, 1, 2))
@@ -344,14 +342,30 @@ class Aggregate(unittest.TestCase):
         # PI-1 holds copilot tokens beside its lead: no measure-1 point.
         self.assertEqual({h: c["n"] for h, c in table["all"][self.MEASURE]["cells"].items()}, {"claude": 1})
         # Each ask appears twice in the line; one per envelope id counts.
-        self.assertEqual(len(measure.normalize(objects[0], {}, measure.ItemIdentity())["asks"]), 3)
+        self.assertEqual(len(measure.normalize(objects[0], {})["asks"]), 3)
+
+    def test_item_identity_ignores_the_callers_issue_pattern(self):
+        # kendex.settings.toml sets GH_ISSUE_PATTERN=ken-[0-9]+; the archive
+        # spans fleet, vg and talk trackers, which that setting must not drop.
+        objects = [archive_object(key, "pi", 5) for key in ("KEN-1", "FLT-2", "vg-3", "TLK-4", "issue-5", "proof-3342777", "fleet-probe-v23-max")]
+        issues = {key: {"estimate": 1, "agent": "agent:runtime"} for key in ("KEN-1", "FLT-2", "VG-3", "TLK-4", "issue-5")}
+        with mock.patch.dict(os.environ, {"GH_ISSUE_PATTERN": "ken-[0-9]+"}):
+            table = measure.aggregate(objects, issues)
+        self.assertEqual((table["inputs"]["items"], table["inputs"]["probe_items_excluded"]), (5, 2))
+        # proof-3342777 has a tracker id's shape but no tracker entry.
+        self.assertIsNone(measure.work_item_id("proof-3342777", issues))
+        self.assertEqual(measure.work_item_id("vg-3", issues), "VG-3")
+        self.assertEqual(measure.work_item_id("proof-3342777", {}), "PROOF-3342777")
 
     def test_incomplete_and_null_side_runs_leave_measure_one(self):
         objects = [archive_object("PI-%d" % i, "pi", i) for i in range(1, 9)]
         objects.append(archive_object("PI-9", "pi", 900, unrecorded=1))
         objects.append(archive_object("PI-10", "pi", 1000, null_side="codex"))
+        refused = archive_object("PI-11", "pi", 1100)
+        refused["errors"] = [{"path": "tokens-x.json", "error": "token-record-shape harness=pi model=bad"}]
+        objects.append(refused)
         table = measure.aggregate(objects, {})
-        self.assertEqual(table["inputs"]["incomplete_token_items_by_harness"], {"pi": 1, "codex": 1})
+        self.assertEqual(table["inputs"]["incomplete_token_items_by_harness"], {"pi": 2, "codex": 1})
         self.assertEqual(table["inputs"]["mixed_token_items_by_lead"], {"pi": 1})
         self.assertEqual(table["all"][self.MEASURE]["cells"]["pi"]["n"], 8)
 
@@ -373,6 +387,8 @@ class Aggregate(unittest.TestCase):
             with self.subTest(group=row["group"]):
                 self.assertEqual(measure.ask_group(row["example"]), row["group"])
         self.assertEqual(measure.ask_group("PR opened"), "other")
+        # An ask matching two groups takes the first in table order.
+        self.assertEqual(measure.ask_group("review failed"), "failing receipt or validation")
         line = archive_object("PI-1", "pi", 5)
         line["lane_mail"]["asks"] = [{"id": "x", "terms": [], "excerpt": "returned FAILING"}, {"id": "y", "terms": [], "excerpt": "Merge it?"}]
         foreign = archive_object("PI-2", "pi", 5)

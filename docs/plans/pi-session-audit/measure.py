@@ -139,9 +139,10 @@ Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
                         holding Pi and Claude Code or Copilot CLI items
   unmatched.<measure>   the same over every item outside a matched stratum
   --issues FILE is {item: {estimate, agent}} from the tracker; without it no
-  stratum matches. Item keys pass through `git-context issue-canonical`
-  (--git-context, default this checkout's .agents/skills/orch/scripts/
-  git-context): a key it refuses is a probe and left out.
+  stratum matches. An item key is a work item when it has a tracker id's
+  shape (`ABC-123` in any case, or a GitHub `issue-123`) and, when --issues
+  is given, its canonical id is a key there; every other key is a probe and
+  left out. The rule reads no environment and no repository setting.
 """
 
 from __future__ import annotations
@@ -1019,10 +1020,10 @@ def paused_within(lane: Dict[str, Any], start: _dt.datetime, end: _dt.datetime) 
 
 
 def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Measure 5 inputs from one oversee lane record. Without a lane record,
-    or without its `cycle` (oversee-cycle writes one at merge, so a lane that
-    has none tells nothing about a merge), the merge fields are None: unknown,
-    never unmerged."""
+    """Measure 5 inputs from one oversee lane record. oversee-cycle writes a
+    lane's `cycle` only at merge, so kept records never show a non-merge:
+    `merged` is True where the cycle holds a merged stamp, and None (unknown)
+    for every other lane, one with no lane record or no cycle included."""
     if lane is None:
         return {"merged": None, "wall_secs": None, "paused_secs": None, "fix_rounds": None,
                 "stopped_parked_or_paused": None, "tier": None}
@@ -1186,8 +1187,9 @@ def run_archive(root: str, single: bool, since: Optional[_dt.datetime], oversee_
 # item count only, marked outside the comparison.
 COMPARED = ("pi", "claude", "copilot")
 NOT_SAMPLED = "not sampled (n=0)"
-GIT_CONTEXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
-                           ".agents", "skills", "orch", "scripts", "git-context")
+# A tracker id's shape: a Linear-style `ABC-123` or a GitHub `issue-123`.
+WORK_ITEM_SHAPE = re.compile(r"^(?:issue-[0-9]+|[A-Za-z][A-Za-z0-9]*-[0-9]+)$", re.I)
+
 
 # Lane-mail asks grouped by what they report, first matching group wins.
 # Each example is a real ask's opening from the 2026-10 archive run.
@@ -1209,27 +1211,20 @@ def ask_group(text: str) -> str:
     return "other"
 
 
-class ItemIdentity:
-    """Whether an archive item key names a tracker item, and its canonical
-    spelling. git-context owns that rule (`issue-canonical`, GH_ISSUE_PATTERN):
-    a Linear id or a GitHub `issue-N` passes; a probe key such as `proof-3f2a`
-    does not."""
+def work_item_id(key: str, issues: Dict[str, Any]) -> Optional[str]:
+    """The canonical id of an archive item key, or None for a probe.
 
-    def __init__(self, script: str = GIT_CONTEXT) -> None:
-        self.script = script
-        self.cache: Dict[str, Optional[str]] = {}
-
-    def __call__(self, item: str) -> Optional[str]:
-        if item not in self.cache:
-            done = subprocess.run([self.script, "issue-canonical", item], stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, universal_newlines=True)
-            if done.returncode == 0:
-                self.cache[item] = done.stdout.strip()
-            elif done.returncode == 1 and done.stderr.startswith("git-context: issue-uncanonical"):
-                self.cache[item] = None
-            else:
-                raise OSError("git-context issue-canonical exit %d: %s" % (done.returncode, done.stderr.strip()[:200]))
-        return self.cache[item]
+    This audit owns the rule, and it reads no environment: the archive spans
+    repositories whose trackers differ, so one checkout's GH_ISSUE_PATTERN
+    would drop the others' items. A key needs a tracker id's shape and, where
+    tracker data was read (--issues), an entry there, which keeps out a probe
+    key of that shape such as `proof-3342777`."""
+    if not WORK_ITEM_SHAPE.match(key):
+        return None
+    canonical = key.lower() if key.lower().startswith("issue-") else key.upper()
+    if issues and canonical not in issues:
+        return None
+    return canonical
 
 
 def model_family(model: Any) -> Optional[str]:
@@ -1241,7 +1236,7 @@ def model_family(model: Any) -> Optional[str]:
     return re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", name)
 
 
-def normalize(o: Dict[str, Any], issues: Dict[str, Any], identity) -> Dict[str, Any]:
+def normalize(o: Dict[str, Any], issues: Dict[str, Any]) -> Dict[str, Any]:
     """One archive line (schema 1 or 2) as the fields every measure reads.
 
     The lead harness is the oversee lane record's harness, else the one
@@ -1277,7 +1272,7 @@ def normalize(o: Dict[str, Any], issues: Dict[str, Any], identity) -> Dict[str, 
     asks: Dict[str, Any] = {}
     for ask in (o.get("lane_mail") or {}).get("asks") or []:
         asks.setdefault(str(ask.get("id")), ask)
-    canonical = identity(o["item"])
+    canonical = work_item_id(o["item"], issues)
     issue = issues.get(canonical or o["item"]) or {}
     fleet_log = (o.get("oversee") or {}).get("fleet_log")
     return {
@@ -1360,7 +1355,7 @@ MEASURES = (
     ("4 turns ended with work owed per session", "session", "live: Stop hook refusals in the transcript",
      lambda s: s["owed_turns"] if isinstance(s["owed_turns"], int) else None),
     ("5 share stopped, parked or paused", "item", "oversee lane record status, pauses", _outcome("stopped_parked_or_paused")),
-    ("5 share not merged", "item", "oversee lane record cycle.stamps.merged",
+    ("5 share not merged", "item", "oversee lane record cycle.stamps.merged; 0 by construction, kept records never show a non-merge",
      lambda n: None if n["outcome"]["merged"] is None else int(not n["outcome"]["merged"])),
     ("5 wall seconds launch to merge, less pauses", "item", "oversee lane record cycle.stamps, pauses", _outcome("wall_secs", True)),
     ("5 fix rounds per merged item", "item", "oversee lane record cycle.rounds.fix", _outcome("fix_rounds", True)),
@@ -1409,10 +1404,9 @@ def measure_row(source: str, unit: str, points: Dict[str, List[Tuple[str, float]
     return {"source": source, "unit": unit, "pi_items": pi_items, "verdict": "judged" if judged else TOO_SMALL, "cells": out}
 
 
-def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any], identity=None) -> Dict[str, Any]:
+def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str, Any]:
     """The measure-by-harness table, its matched strata and unmatched totals."""
-    identity = identity or ItemIdentity()
-    normalized = [normalize(o, issues, identity) for o in objects if o.get("mode") == "archive"]
+    normalized = [normalize(o, issues) for o in objects if o.get("mode") == "archive"]
     probes = [n for n in normalized if not n["work_item"]]
     items = [n for n in normalized if n["work_item"] and n["lead"] is not None]
     sessions = [(live.get("item"), s) for live in objects if live.get("mode") == "live" for s in live["sessions"]]
@@ -1575,7 +1569,6 @@ def main(argv: List[str]) -> int:
     arch.add_argument("--min-free-gb", type=float, default=3.0)
     agg = sub.add_parser("aggregate", help="the measure table from archive and live output lines")
     agg.add_argument("--issues", help="JSON {item: {estimate, agent}} read from the tracker")
-    agg.add_argument("--git-context", default=GIT_CONTEXT, help="the orch git-context script that owns item identity")
     agg.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     if args.mode == "live":
@@ -1584,9 +1577,6 @@ def main(argv: List[str]) -> int:
         print_json(result)
         return 0
     if args.mode == "aggregate":
-        if not os.access(args.git_context, os.X_OK):
-            notice("git-context", args.git_context, "The item-identity script is missing or not executable; pass --git-context.")
-            return 2
         try:
             issues: Dict[str, Any] = {}
             if args.issues:
@@ -1596,11 +1586,7 @@ def main(argv: List[str]) -> int:
         except (OSError, ValueError) as error:
             notice("aggregate-input", str(error), "An input file is unreadable, or a line is not the output of this script's live or archive mode.")
             return 2
-        try:
-            print_json(aggregate(objects, issues, ItemIdentity(args.git_context)))
-        except OSError as error:
-            notice("git-context-failed", str(error), "git-context issue-canonical failed on an item key.")
-            return 2
+        print_json(aggregate(objects, issues))
         return 0
     if args.mode != "archive":
         parser.print_help(sys.stderr)
