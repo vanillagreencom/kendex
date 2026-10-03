@@ -130,7 +130,7 @@
         {
           "key": "resourceControlEnabled",
           "label": "Resource controls",
-          "description": "Run background tasks at lower CPU and IO priority so Pi stays responsive while they work. On by default; when off, spawn and stop behavior is unchanged.",
+          "description": "Run background tasks at lower priority so Pi stays responsive while they work: CPU and disk priority on Linux (nice and ionice), CPU priority only on macOS (nice). On Windows tasks run unchanged and a session warns once. On by default; when off, spawn and stop behavior is unchanged.",
           "type": "boolean",
           "default": true,
           "category": "Execution",

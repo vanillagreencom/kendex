@@ -6,7 +6,7 @@ Use `bg_task action: "spawn"` for long-running processes that should outlive the
 
 `bg_status` actions: `list`, `log` (by pid/id), `stop` (SIGTERM to process group). `bg_task` adds `clear` to drop finished entries.
 
-Resource controls are on by default: background tasks run under `nice`/`ionice` at lower CPU and IO priority, with log capture, wakeups, timeouts, and `/bg:stop` semantics unchanged. The setting can turn them off or pick a probed Linux user `systemd-run` transient service instead.
+Resource controls are on by default: background tasks run at lower CPU and IO priority on Linux (`nice` and `ionice`), at lower CPU priority only on macOS (`nice`), and unchanged on Windows. Log capture, wakeups, timeouts, and `/bg:stop` semantics stay the same. The setting can turn them off or pick a probed Linux user `systemd-run` transient service instead.
 
 Spawn parameters worth knowing:
 

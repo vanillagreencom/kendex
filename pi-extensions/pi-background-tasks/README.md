@@ -22,7 +22,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Move configured blocking commands into background tasks.
 - Notify the agent when a task exits or produces selected output.
 - Read recent output and task history in the dashboard. Open the task's Log file for full output.
-- Run tasks at lower CPU and disk priority.
+- Run tasks at lower priority: CPU and disk on Linux, CPU only on macOS. On Windows tasks run unchanged and a session warns once.
 
 ## How it works
 
