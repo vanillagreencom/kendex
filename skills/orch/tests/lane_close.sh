@@ -1070,10 +1070,10 @@ run_close "$SCRIPT"
 assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 kill=1 status=done' 'a session-qualified record resolves the pane whose session name matches'
 
-write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
+write_state running claude '' linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
 run_close "$SCRIPT"
-assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=kendex:KEN-1$' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 missing=1 host=0' 'a qualified record whose session name differs refuses pane-missing'
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=kendex:KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 missing=1 host=0 status=running' 'a local record whose qualified window no pane carries refuses pane-missing'
 
 write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash duplicate; claude_screen
 run_close "$SCRIPT"
@@ -1341,9 +1341,15 @@ LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=linear source=given cause=no-state-type$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a linear payload carrying no state_type refuses as a read that did not answer'
 
+# A hosted lane's window is only a view of its sandbox: a tmux restart that
+# ended it leaves a finished item's full close to the provider alone.
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$SCRIPT"
-assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 missing=1 host=0' 'a missing recorded pane refuses before provider close'
+assert_eq "rc=$RC stop=$(stop_count KEN-1 claude) close=$(close_call_count) window=$(grep -cE '^(new-window|kill-window) ' "$CALLS" || true) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 stop=1 close=1 window=0 removed=1 status=done' 'a hosted record with no pane on a terminal item closes through its provider'
+write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
+LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$SCRIPT"
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 missing=1 host=0 status=running' 'a hosted record with no pane on an open item refuses pane-missing before any host call'
 
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
 LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
@@ -1542,6 +1548,18 @@ echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
+# The windowless close's three rules, each planted out on its own copy.
+WINDOWLESS='[[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?'
+MUTANT="$(mutant windowless-none "$WINDOWLESS" 'false || tracker_rc=$?')"
+write_state running claude /host; : >"$ROWS"; run_close "$MUTANT"
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'rc=1 missing=1' 'control: without the hosted exemption a hosted record with no pane refuses'
+MUTANT="$(mutant windowless-all "$WINDOWLESS" '[[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?')"
+write_state running claude '' linear '' 'kendex:KEN-1'; : >"$ROWS"; run_close "$MUTANT"
+assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'missing=0' 'control: an exemption widened to every record takes a local record past pane-missing'
+MUTANT="$(mutant windowless-open "$WINDOWLESS" '[[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] || tracker_rc=$?')"
+write_state running claude /host; : >"$ROWS"
+LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$MUTANT"
+assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: without the terminal-item gate a hosted record with no pane closes an open item'
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

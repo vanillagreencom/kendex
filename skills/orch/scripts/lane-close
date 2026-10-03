@@ -155,7 +155,7 @@ record's wake names before the record reads done or stopped, every close of a
 local lane, an exited one included, an idle one's in the same stop as its
 harness, and refuses as stop-failed target=wake where it does not end. A wake identity whose process has exited or whose pid a later
 process holds is a turn already over.
-A record already marked stopped can close its kept sandbox without a pane. A
+A record already marked stopped can close its kept sandbox without a pane, as can a hosted idle lane's full close on a terminal item, with no exit wait. A
 preparing record, a hosted launch whose background job has written no
 outcome, closes without a harness exit: the job the record names is stopped
 and its window closed. --keep-sandbox ends the harness, closes its window and
@@ -814,7 +814,6 @@ fi
 [[ -n "$window_name" ]] || { message record-invalid "item=$ITEM" "field=window" >&2; exit 1; }
 
 resolve_window
-[[ -n "$RESOLVED_PANE" ]] || { message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1; }
 pane_id="$LANE_PANE_ID"
 pane_pid="$LANE_PANE_PID"
 pane_cmd="$LANE_PANE_CMD"
@@ -825,10 +824,20 @@ pane_cmd="$LANE_PANE_CMD"
 case "$pane_cmd" in
   claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
-pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
-  || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
-  || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+if [[ -n "$pane_id" ]]; then
+  pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+else
+  # A hosted lane's sandbox outlives its window; elsewhere it reads as open.
+  tracker_rc=0; [[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?
+  case "$tracker_rc" in
+    0) state=windowless ;;
+    1) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;
+    *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
+  esac
+fi
 
 # usage-reset.sh's one import: a reset clause the banner scan could not read.
 die() { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=$1" >&2; exit 1; }
@@ -914,7 +923,7 @@ if [[ "$state" == walled ]]; then
 fi
 
 case "$state" in
-  exited) ;;
+  exited | windowless) ;;
   idle)
     tracker_rc=0
     tracker_terminal || tracker_rc=$?
@@ -1010,7 +1019,7 @@ stop_harness() {
 
 # End the harness by signal and wait for its pane to read exited, for an idle
 # lane's close and for a park alike; a park's lane is working, and the
-# signal is the same. A stop the full close skipped ends the close-out.
+# signal is the same. A skipped stop, or no pane to wait on, ends the close-out.
 stop_and_await_exit() {
   case "$harness" in
     claude|codex|pi|copilot) ;;
@@ -1021,7 +1030,7 @@ stop_and_await_exit() {
   [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
   stop_harness
-  [[ "$STOP_SKIPPED" == false ]] || finish_close
+  [[ "$STOP_SKIPPED" == false && -n "$pane_id" ]] || finish_close
   passes=$((close_secs * 5))
   while :; do
     rc=0
@@ -1053,6 +1062,6 @@ if [[ "$PARK" == true ]]; then
   park_sandbox
 fi
 
-[[ "$state" != idle ]] || stop_and_await_exit
+[[ "$state" != idle && "$state" != windowless ]] || stop_and_await_exit
 
 finish_close
