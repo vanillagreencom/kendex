@@ -147,7 +147,9 @@ pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>&1)" || refuse settings
 status=0
 # Shell line continuations can split a denied command or token. Keep the raw
 # text too: single quotes preserve backslash-newline pairs as literal text.
-joined_command_text="${command_text//$'\\\n'/}"
+# Bash 3.2 needs ANSI-C quoting expanded before the replacement pattern.
+continuation=$'\\\n'
+joined_command_text="${command_text//"$continuation"/}"
 # grep's words on a pattern it cannot read are captured: stderr becomes the
 # substitution's stdout and grep's own stdout is discarded, so the status still
 # decides and the cause reaches the refusal below its keyed line.
