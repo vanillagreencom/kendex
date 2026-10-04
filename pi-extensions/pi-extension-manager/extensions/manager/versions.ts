@@ -1,11 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { npmCachePath } from "./paths.js";
-import { runCommand } from "./process.js";
+import { commandFailure, runCommand } from "./process.js";
 import { request } from "node:https";
 import { NPM_CACHE_TTL_MS, type NpmCache, type Scope, type SettingsFile, type SourceIndex, type SourceIndexEntry } from "./types.js";
 
-const npmRootCaches = new WeakMap<AbortSignal, Map<string, string | undefined>>();
+/** `npm root` answers from local configuration; past this it is treated as hung. */
+const NPM_ROOT_DEADLINE_MS = 15_000;
+
+type NpmRootLookup = { kind: "found"; root: string } | { kind: "failed"; detail: string };
+
+const npmRootCaches = new WeakMap<AbortSignal, Map<string, Promise<NpmRootLookup>>>();
 
 export function loadSourceIndex(settingsFiles: SettingsFile[]): SourceIndex {
 	const merged: SourceIndex = {};
@@ -85,7 +90,8 @@ export function readSourceRepoVersion(repoRoot: string, packageName: string, sou
 	return readPackageVersionFromDir(sourcePath) ?? readPackageVersionFromDir(join(repoRoot, "pi-extensions", localPackageDirName(packageName)));
 }
 
-function npmRoot(signal: AbortSignal, args: string[], cwd?: string): string | undefined {
+/** The session signal keys the memo and stops a running lookup. */
+function npmRoot(signal: AbortSignal, args: string[], cwd: string): Promise<NpmRootLookup> {
 	let memo = npmRootCaches.get(signal);
 	if (!memo) {
 		memo = new Map();
@@ -94,11 +100,24 @@ function npmRoot(signal: AbortSignal, args: string[], cwd?: string): string | un
 		signal.addEventListener("abort", () => cache.clear(), { once: true });
 	}
 	const key = JSON.stringify([args, cwd]);
-	if (memo.has(key)) return memo.get(key);
-	const result = runCommand("npm", ["root", ...args], { cwd });
-	const value = result.error || (result.status ?? 1) !== 0 ? undefined : (result.stdout.trim() || undefined);
-	memo.set(key, value);
-	return value;
+	const cached = memo.get(key);
+	if (cached) return cached;
+	const lookup = lookupNpmRoot(signal, args, cwd);
+	memo.set(key, lookup);
+	return lookup;
+}
+
+async function lookupNpmRoot(signal: AbortSignal, args: string[], cwd: string): Promise<NpmRootLookup> {
+	const argv = ["root", ...args];
+	const label = `npm ${argv.join(" ")}`;
+	const result = await runCommand("npm", argv, { cwd, deadlineMs: NPM_ROOT_DEADLINE_MS, signal });
+	const failure = commandFailure(result);
+	if (failure) return { kind: "failed", detail: `${label}: ${failure.reason}=${failure.termination}` };
+	if (result.kind !== "exited") throw new Error(`npm-root: a run with no failure ended as ${result.kind}`);
+	const root = result.output.stdout.trim();
+	if (result.output.truncated) return { kind: "failed", detail: `${label}: output exceeded the capture bound` };
+	if (!root) return { kind: "failed", detail: `${label}: printed no root` };
+	return { kind: "found", root };
 }
 
 function npmPrefixRoot(): string | undefined {
@@ -125,26 +144,16 @@ function cheapNpmRoots(scope: Scope, baseDir: string): string[] {
 	return roots;
 }
 
-function expensiveNpmRoots(signal: AbortSignal, scope: Scope, baseDir: string, cwd: string): string[] {
-	const roots: string[] = [];
-	if (scope === "project") {
-		const projectRoot = npmRoot(signal, ["--prefix", join(baseDir, "npm")], cwd);
-		if (projectRoot) roots.push(projectRoot);
-		const cwdRoot = npmRoot(signal, [], cwd);
-		if (cwdRoot) roots.push(cwdRoot);
-	} else if (scope === "user") {
-		const globalRoot = npmRoot(signal, ["-g"], cwd);
-		if (globalRoot) roots.push(globalRoot);
-	} else {
-		const localRoot = npmRoot(signal, [], cwd);
-		if (localRoot) roots.push(localRoot);
-		const globalRoot = npmRoot(signal, ["-g"], cwd);
-		if (globalRoot) roots.push(globalRoot);
-	}
-	return roots;
+function expensiveNpmRootArgs(scope: Scope, baseDir: string): string[][] {
+	if (scope === "project") return [["--prefix", join(baseDir, "npm")], []];
+	if (scope === "user") return [["-g"]];
+	return [[], ["-g"]];
 }
 
-export function resolveNpmPackageDir(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): string | undefined {
+/** A missed package reports each `npm root` lookup that failed rather than reading it as not installed. */
+export type NpmPackageDirLookup = { kind: "found"; dir: string } | { kind: "missing"; lookupFailures: string[] };
+
+export async function resolveNpmPackageDir(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): Promise<NpmPackageDirLookup> {
 	const seen = new Set<string>();
 	const tryRoot = (root: string): string | undefined => {
 		const dir = npmPackageDir(root, npmName);
@@ -154,13 +163,27 @@ export function resolveNpmPackageDir(signal: AbortSignal, npmName: string, scope
 	};
 	for (const root of cheapNpmRoots(scope, baseDir)) {
 		const hit = tryRoot(root);
-		if (hit) return hit;
+		if (hit) return { kind: "found", dir: hit };
 	}
-	for (const root of expensiveNpmRoots(signal, scope, baseDir, cwd)) {
-		const hit = tryRoot(root);
-		if (hit) return hit;
+	const lookupFailures: string[] = [];
+	for (const args of expensiveNpmRootArgs(scope, baseDir)) {
+		const lookup = await npmRoot(signal, args, cwd);
+		switch (lookup.kind) {
+			case "found": {
+				const hit = tryRoot(lookup.root);
+				if (hit) return { kind: "found", dir: hit };
+				break;
+			}
+			case "failed":
+				lookupFailures.push(lookup.detail);
+				break;
+			default: {
+				const unreachable: never = lookup;
+				throw new Error(`npm-root: unknown lookup ${JSON.stringify(unreachable)}`);
+			}
+		}
 	}
-	return undefined;
+	return { kind: "missing", lookupFailures };
 }
 
 const UNSAFE_GIT_COMPONENT_RE = /[\\/]|[\0-\x1f\x7f]/;

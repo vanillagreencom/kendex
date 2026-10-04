@@ -10,7 +10,7 @@ test("runtime bootstrap registers host commands and recovery updates the global 
 	try {
 		for (const [kind, mode] of [["pi", "enabled"], ["pi", "disabled"], ["omp", "enabled"], ["omp", "disabled"]]) {
 				const home = join(root, `${kind}-${mode}`);
-				const child = Bun.spawn([process.execPath, fixture, home, kind, mode], {
+				const child = Bun.spawn([process.execPath, "--no-install", fixture, home, kind, mode], {
 					stdout: "ignore", stderr: "pipe", timeout: 10_000,
 					env: { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: join(home, "agent") },
 				});

@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,8 +14,14 @@ const originalEnv = {
 	HOME: process.env.HOME,
 	NPM_CONFIG_PREFIX: process.env.NPM_CONFIG_PREFIX,
 	npm_config_prefix: process.env.npm_config_prefix,
+	PATH: process.env.PATH,
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 };
+const nodePath = Bun.which("node");
+
+function live(): AbortSignal {
+	return new AbortController().signal;
+}
 
 function resetTmp(): void {
 	rmSync(rootTmp, { force: true, recursive: true });
@@ -63,11 +67,13 @@ beforeEach(() => {
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
 	clearPackageConfigCache();
-	__setSpawnSyncForTests(((command: string, args: string[], options: object) => spawnSync(command, args, { ...options, env: { ...process.env, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR } })) as never);
+	// Package scripts and npm-root lookups inherit the live environment.
+	if (!nodePath) throw new Error("inventory-test: node is not on PATH");
+	process.env.PATH = [dirname(nodePath), "/usr/bin", "/bin"].join(":");
 });
 
 afterEach(() => {
-	__setSpawnSyncForTests(undefined);
+	process.env.PATH = originalEnv.PATH;
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -236,11 +242,11 @@ test("toggle runs the package's own append-system script", async () => {
 	const ctx = { cwd: project, ui: { notify() {} } } as never;
 
 	const disable = await inventoryWithTrust(project, true);
-	await toggleItem({} as never, ctx, disable, disable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	await toggleItem({} as never, ctx, disable, disable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!, live());
 	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Toggle instructions");
 
 	const enable = await inventoryWithTrust(project, true);
-	await toggleItem({} as never, ctx, enable, enable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	await toggleItem({} as never, ctx, enable, enable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!, live());
 	expect(readFileSync(target, "utf8")).toContain("Toggle instructions");
 });
 
@@ -294,7 +300,7 @@ test.each([
 	for (const pkg of original.packages) expect(packageExtensions(original.items, pkg)).toHaveLength(1);
 	const selected = packageExtensions(original.items, original.packages[0]!)[0]!;
 	expect(original.packages.map((pkg) => pkg.packageDir)).toEqual(dirs);
-	await toggleItem({} as never, ctx, original, selected);
+	await toggleItem({} as never, ctx, original, selected, live());
 	const moved = join(rootTmp, "deeper", "relocated");
 	cpSync(project, moved, { recursive: true });
 	const movedCtx = { cwd: moved, isProjectTrusted: () => true, ui: { notify() {} } } as never;
@@ -303,13 +309,13 @@ test.each([
 	const module = relocated.items.find((item) => item.id === selected.id)!;
 	expect(module.state).toBe("disabled");
 	expect(packageExtensions(relocated.items, relocated.packages[0]!)[0]!.id).toBe(selected.id);
-	await toggleItem({} as never, movedCtx, relocated, module);
+	await toggleItem({} as never, movedCtx, relocated, module, live());
 	const settingsPath = join(moved, ".pi", "settings.json");
 	const saved = JSON.parse(readFileSync(settingsPath, "utf8"));
 	expect(saved.packages).toEqual(sources);
 	expect(saved.kendex.extensionManager.disabledItems).toEqual([]);
 	const enabled = await buildInventory({} as never, movedCtx);
-	await toggleItem({} as never, movedCtx, enabled, enabled.packages[0]!);
+	await toggleItem({} as never, movedCtx, enabled, enabled.packages[0]!, live());
 	expect(JSON.parse(readFileSync(settingsPath, "utf8")).packages).toEqual([{ source: sources[0], extensions: [] }, ...sources.slice(1)]);
 });
 
@@ -338,7 +344,7 @@ test("toggle writes stay in the selected scope through disable, other-scope togg
 	const steps = [projectPackage.id, userModule.id, projectPackage.id];
 	for (const [step, id] of steps.entries()) {
 		const inv = await buildInventory({} as never, ctx);
-		toggleItem({} as never, ctx, inv, inv.items.find((item) => item.id === id)!);
+		await toggleItem({} as never, ctx, inv, inv.items.find((item) => item.id === id)!, live());
 		for (const row of roots) {
 			const saved = JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8"));
 			const selected = row.scope === "project" ? (step < 2 ? [projectPackage.id] : []) : (step > 0 ? [userModule.id] : []);
@@ -375,13 +381,13 @@ test("legacy toggle ids migrate to the owning installation with a warning", asyn
 			const current = await inventoryWithTrust(project, true);
 			const pkg = current.packages.find((pkg) => pkg.scope === row.scope)!;
 			const module = packageExtensions(current.items, pkg)[0]!;
-			toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, current, pkg);
+			await toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, current, pkg, live());
 			const saved = JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8"));
 			expect(saved.kendex.extensionManager.disabledItems).toEqual([module.id, `unrelated:${row.scope}`].sort());
 			expect(saved.kendex.extensionManager.config).toEqual({ owned: { scope: row.scope } });
 			const enabled = await inventoryWithTrust(project, true);
 			expect(enabled.managerState.disabledItems).not.toContain(pkg.id);
-			toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, enabled, enabled.items.find((item) => item.id === module.id)!);
+			await toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, enabled, enabled.items.find((item) => item.id === module.id)!, live());
 			expect(JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8")).kendex.extensionManager.disabledItems).toEqual([`unrelated:${row.scope}`]);
 		}
 	} finally { warning.mockRestore(); }

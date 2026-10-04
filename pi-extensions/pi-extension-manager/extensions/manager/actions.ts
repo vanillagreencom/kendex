@@ -5,7 +5,7 @@ import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from 
 import { managerFailure, managerNotice, stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { normalizePackageEntry } from "./inventory.js";
-import { runCommand } from "./process.js";
+import { commandFailure, runCommand } from "./process.js";
 import { asRecord, defaultWriteScope, findSettingsFile, updateManagerState, writeSettingsFile } from "./settings.js";
 import { loadSourceIndex, npmPackageNameFromSource } from "./versions.js";
 import {
@@ -17,15 +17,18 @@ import {
 	type UpdatePlan,
 } from "./types.js";
 
-function launchFailure(key: string, command: string, error: unknown): string {
-	return managerNotice(key, command, `Could not start the command: ${stringifyError(error)}`);
-}
+/** npm and kendex installs can fetch and build; past this the command is treated as hung. */
+const PACKAGE_COMMAND_DEADLINE_MS = 10 * 60_000;
 
-function exitFailure(key: string, result: ReturnType<typeof runCommand>): string {
-	const value = result.status ?? result.signal ?? "unknown";
-	const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim()
-		|| (result.signal ? `signal ${result.signal}` : result.status !== null ? `exit ${result.status}` : "unknown termination");
-	return managerNotice(key, value, detail);
+/**
+ * Run one package command; the failure notice, or `undefined` only for a
+ * confirmed exit 0. The notice value is the command for a launch failure or a
+ * cancellation, else the exit code, signal or deadline.
+ */
+async function runPackageCommand(key: string, command: string, args: string[], cwd: string, signal: AbortSignal): Promise<string | undefined> {
+	const failure = commandFailure(await runCommand(command, args, { cwd, deadlineMs: PACKAGE_COMMAND_DEADLINE_MS, signal }));
+	if (!failure) return undefined;
+	return managerNotice(`${key}-${failure.reason}`, failure.reason === "launch" || failure.reason === "cancelled" ? command : failure.termination, failure.detail);
 }
 
 function npmRootFromPackageDir(packageDir: string | undefined): string | undefined {
@@ -123,16 +126,14 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 		|| normalized.source === item.packageSourceName;
 }
 
-export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
+/** An npm uninstall changes settings only after npm's confirmed exit 0, never on a signal, deadline, cancellation or launch failure. */
+export async function runUninstall(plan: UninstallPlan, inventory: Inventory, signal: AbortSignal): Promise<{ ok: boolean; message: string }> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("uninstall-unsupported", plan.item.id, "Package uninstall is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
 		if (plan.method.scope === "user") args.push("--global");
-		const result = runCommand("kendex", args, { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: launchFailure("kendex-uninstall-launch", "kendex", result.error) };
-		if ((result.status ?? 1) !== 0) {
-			return { ok: false, message: exitFailure("kendex-uninstall-exit", result) };
-		}
+		const kendexFailure = await runPackageCommand("kendex-uninstall", "kendex", args, plan.method.cwd, signal);
+		if (kendexFailure) return { ok: false, message: kendexFailure };
 		// `kendex remove` already handled APPEND_SYSTEM.md, so no extra cleanup here.
 		return { ok: true, message: managerNotice("kendex-uninstalled", plan.item.packageName!, `Removed ${plan.item.displayName} via kendex.`) };
 	}
@@ -143,17 +144,14 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
 		// APPEND_SYSTEM.md block goes with the tree.
-		removeAppendSystemBlockForUninstall(plan.item);
-		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: launchFailure("npm-uninstall-launch", plan.method.command, result.error) };
-		if ((result.status ?? 1) !== 0) {
-			return { ok: false, message: exitFailure("npm-uninstall-exit", result) };
-		}
+		await removeAppendSystemBlockForUninstall(plan.item, signal);
+		const npmUninstallFailure = await runPackageCommand("npm-uninstall", plan.method.command, [...plan.method.argsPrefix, ...args], plan.method.cwd, signal);
+		if (npmUninstallFailure) return { ok: false, message: npmUninstallFailure };
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		return { ok: true, message: managerNotice("npm-uninstalled", plan.method.npmName, `Uninstall succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}`) };
 	}
 	// A returned script failure must leave saved and in-memory settings intact.
-	removeAppendSystemBlockForUninstall(plan.item);
+	await removeAppendSystemBlockForUninstall(plan.item, signal);
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	return stripped
 		? { ok: true, message: managerNotice("settings-entry-removed", plan.item.sourceName, `Removed the entry from ${plan.item.scope} settings.json.`) }
@@ -185,27 +183,21 @@ export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: Exten
 	return undefined;
 }
 
-export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
+export async function runUpdate(plan: UpdatePlan, signal: AbortSignal): Promise<{ ok: boolean; message: string }> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("update-unsupported", plan.item.id, "Package update is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["add", plan.method.sourceRepo];
 		if (plan.method.scope === "user") args.push("--global");
 		args.push("--pi-extension", plan.method.packageName, "--harness", "pi", "-y");
-		const result = runCommand("kendex", args, { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: launchFailure("kendex-update-launch", "kendex", result.error) };
-		if ((result.status ?? 1) !== 0) {
-			return { ok: false, message: exitFailure("kendex-update-exit", result) };
-		}
+		const kendexFailure = await runPackageCommand("kendex-update", "kendex", args, plan.method.cwd, signal);
+		if (kendexFailure) return { ok: false, message: kendexFailure };
 		return { ok: true, message: managerNotice("kendex-updated", plan.item.packageName!, `Updated ${plan.item.displayName} via kendex.`) };
 	}
 	const args = ["install", `${plan.method.npmName}@latest`];
 	const prepared = ensureWorkingDir("npm-update-cwd", plan.method.cwd);
 	if (!prepared.ok) return prepared;
-	const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-	if (result.error) return { ok: false, message: launchFailure("npm-update-launch", plan.method.command, result.error) };
-	if ((result.status ?? 1) !== 0) {
-		return { ok: false, message: exitFailure("npm-update-exit", result) };
-	}
+	const npmFailure = await runPackageCommand("npm-update", plan.method.command, [...plan.method.argsPrefix, ...args], plan.method.cwd, signal);
+	if (npmFailure) return { ok: false, message: npmFailure };
 	return { ok: true, message: managerNotice("npm-updated", plan.method.npmName, "Package updated via npm.") };
 }
 
@@ -267,7 +259,7 @@ function setPackageExtensionFiltered(item: InventoryItem, files: SettingsFile[],
 	return changed;
 }
 
-export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, item: InventoryItem): void {
+export async function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, item: InventoryItem, signal: AbortSignal): Promise<void> {
 	if ((item.id === `package:${MANAGER_ID}` || item.packageName === MANAGER_ID) && item.state !== "disabled") {
 		ctx.ui.notify(managerNotice("self-disable", MANAGER_ID, "The manager cannot disable itself. Use the host controls outside this manager."), "warning");
 		return;
@@ -285,7 +277,7 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 	const file = findSettingsFile(inventory.settingsFiles, scope);
 	const currentlyDisabled = item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
 	const willDisable = !currentlyDisabled;
-	if (item.kind === "package" && item.packageName) syncAppendSystemForPackage(item, willDisable);
+	if (item.kind === "package" && item.packageName) await syncAppendSystemForPackage(item, willDisable, signal);
 	updateManagerState(file, (state) => {
 		const disabled = new Set(state.disabledItems);
 		if (willDisable) disabled.add(item.id);

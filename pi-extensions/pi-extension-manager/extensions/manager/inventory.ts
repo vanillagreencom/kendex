@@ -38,10 +38,18 @@ function readPackageManifest(dir: string): { manifest?: PackageManifest; error?:
 	}
 }
 
-function readNpmPackageManifest(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): { dir?: string; manifest?: PackageManifest; error?: string } {
-	const dir = resolveNpmPackageDir(signal, npmName, scope, baseDir, cwd);
-	if (!dir) return { error: `package source not found: npm:${npmName}` };
-	return { dir, ...readPackageManifest(dir) };
+async function readNpmPackageManifest(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): Promise<{ dir?: string; manifest?: PackageManifest; error?: string }> {
+	const lookup = await resolveNpmPackageDir(signal, npmName, scope, baseDir, cwd);
+	switch (lookup.kind) {
+		case "found":
+			return { dir: lookup.dir, ...readPackageManifest(lookup.dir) };
+		case "missing":
+			return { error: [`package source not found: npm:${npmName}`, ...lookup.lookupFailures].join("; ") };
+		default: {
+			const unreachable: never = lookup;
+			throw new Error(`npm-package-dir: unknown lookup ${JSON.stringify(unreachable)}`);
+		}
+	}
 }
 
 function readFirstPackageManifest(dirs: string[]): { dir?: string; manifest?: PackageManifest; error?: string } {
@@ -290,7 +298,7 @@ export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): P
 				manifest = read.manifest;
 				brokenError = read.error;
 			} else if (npmName) {
-				const read = readNpmPackageManifest(signal, npmName, file.scope, file.baseDir, ctx.cwd);
+				const read = await readNpmPackageManifest(signal, npmName, file.scope, file.baseDir, ctx.cwd);
 				packageDir = read.dir ?? normalized.resolved;
 				manifest = read.manifest ?? { name: npmName, description: "External npm package source" };
 				brokenError = read.error;

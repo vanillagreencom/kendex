@@ -1,7 +1,6 @@
-import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { YAML } from "bun";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { host, selectHost, type OmpRuntime } from "../extensions/manager/host.ts";
 import { buildInventory, closeInventorySession, inventorySession, refreshInventory, npmCandidatesFromInventory } from "../extensions/manager/inventory.ts";
@@ -21,6 +20,7 @@ mock.module("@earendil-works/pi-tui", () => ({
 const { openManager } = await import("../extensions/manager/manager-ui.ts");
 const { openQuickSettings, quickSettingsCompletions } = await import("../extensions/manager/quick-settings-ui.ts");
 import { pendingRequest } from "./fixtures/http.ts";
+import { writeCommand } from "./fixtures/commands.ts";
 
 const root = join(process.cwd(), "tmp", "manager-host-tests");
 const agent = join(root, "home", ".omp", "agent");
@@ -68,7 +68,6 @@ beforeEach(async () => {
 	clearPackageConfigCache();
 });
 afterEach(async () => {
-	__setSpawnSyncForTests(undefined);
 	await selectHost({ getAgentDir: piUserDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	rmSync(root, { recursive: true, force: true });
 	clearPackageConfigCache();
@@ -82,7 +81,7 @@ test("native disabled package without settings.json or YAML packages is inventor
 	expect(item?.state).toBe("disabled");
 	const before = readFileSync(join(agent, "config.yml"), "utf8");
 	const notices: string[] = [];
-	await toggleItem({} as never, { ...ctx, ui: { notify: (message: string) => notices.push(message) } } as never, inv, item!);
+	await toggleItem({} as never, { ...ctx, ui: { notify: (message: string) => notices.push(message) } } as never, inv, item!, new AbortController().signal);
 	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
 	expect(lock.plugins[name]).toEqual({ version: "1.2.3", enabled: true, enabledFeatures: null, custom: "keep" });
 	expect(lock.settings[name]).toEqual({ color: "blue" });
@@ -155,8 +154,8 @@ test("native capabilities refuse Pi update, uninstall, module toggles and other-
 	const item = inv.packages[0]!;
 	expect(planUninstall(item, inv, ctx as never)).toBeUndefined();
 	expect(planUpdate({ ...item, updateAvailable: true, updateSource: "npm", npmName: name }, inv, ctx as never)).toBeUndefined();
-	const update = runUpdate({ item } as never);
-	const uninstall = runUninstall({ item } as never, inv);
+	const update = await runUpdate({ item } as never, new AbortController().signal);
+	const uninstall = await runUninstall({ item } as never, inv, new AbortController().signal);
 	expect([update.ok, update.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: update-unsupported=${item.id}`]);
 	expect([uninstall.ok, uninstall.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: uninstall-unsupported=${item.id}`]);
 	expect(npmCandidatesFromInventory(inv)).toEqual([]);
@@ -401,38 +400,43 @@ test("Pi popup actions address the selected user install when both scopes are vi
 		json(join(base, "settings.json"), { packages: [source] });
 		json(join(base, "npm", "node_modules", "@example", "duplicate", "package.json"), { name: "@example/duplicate", version: "1.0.0", pi: { extensions: ["index.ts"] } });
 	}
-	const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
 	const pi = {} as never;
-	__setSpawnSyncForTests(((command: string, args: string[], options: { cwd?: string }) => {
-		calls.push({ command, args, cwd: options?.cwd });
-		return { status: 0, signal: null, stdout: "", stderr: "", output: [], pid: 0 };
-	}) as never);
-	const inv = await refreshInventory(pi, ctx as never);
-	const user = inv.packages.find((item) => item.scope === "user")!;
-	const project = inv.packages.find((item) => item.scope === "project")!;
-	expect(user.id).not.toBe(project.id);
-	expect(user.id).toBe("package:user:npm:@example/duplicate:@example/duplicate");
-	expect(project.id).toBe("package:project:npm:@example/duplicate:@example/duplicate");
-	for (const type of ["toggle-item", "update-package", "uninstall-package"] as const) {
-		let selected = false;
-		await openManager(pi, { ...ctx, ui: {
-			custom: async () => {
-				if (selected) return { type: "close" };
-				selected = true;
-				const current = inventorySession(pi).inventory!;
-				const target = current.packages.find((item) => item.scope === "user")!;
-				if (type === "update-package") Object.assign(target, { updateAvailable: true, updateSource: "npm", npmName: "@example/duplicate" });
-				return { type, itemId: target.id };
-			},
-			confirm: async () => true,
-			notify: (message: string, kind: string) => { if (kind === "error") throw new Error(message); },
-		} } as never);
-		const projectSettings = JSON.parse(readFileSync(join(projectPi, "settings.json"), "utf8"));
-		expect(projectSettings.packages).toEqual([source]);
+	// The bare `npm` the plans name resolves to this logging fake on PATH.
+	const log = join(root, "npm-calls.log");
+	writeCommand(join(root, "bin", "npm"), `printf '%s|%s\\n' "$(pwd -P)" "$*" >> "${log}"`);
+	const originalPath = process.env.PATH;
+	process.env.PATH = [join(root, "bin"), "/usr/bin", "/bin"].join(":");
+	try {
+		const inv = await refreshInventory(pi, ctx as never);
+		const user = inv.packages.find((item) => item.scope === "user")!;
+		const project = inv.packages.find((item) => item.scope === "project")!;
+		expect(user.id).not.toBe(project.id);
+		expect(user.id).toBe("package:user:npm:@example/duplicate:@example/duplicate");
+		expect(project.id).toBe("package:project:npm:@example/duplicate:@example/duplicate");
+		for (const type of ["toggle-item", "update-package", "uninstall-package"] as const) {
+			let selected = false;
+			await openManager(pi, { ...ctx, ui: {
+				custom: async () => {
+					if (selected) return { type: "close" };
+					selected = true;
+					const current = inventorySession(pi).inventory!;
+					const target = current.packages.find((item) => item.scope === "user")!;
+					if (type === "update-package") Object.assign(target, { updateAvailable: true, updateSource: "npm", npmName: "@example/duplicate" });
+					return { type, itemId: target.id };
+				},
+				confirm: async () => true,
+				notify: (message: string, kind: string) => { if (kind === "error") throw new Error(message); },
+			} } as never);
+			const projectSettings = JSON.parse(readFileSync(join(projectPi, "settings.json"), "utf8"));
+			expect(projectSettings.packages).toEqual([source]);
+		}
+	} finally {
+		process.env.PATH = originalPath;
 	}
-	expect(calls).toEqual([
-		{ command: "npm", args: ["install", "@example/duplicate@latest"], cwd: join(agent, "npm") },
-		{ command: "npm", args: ["uninstall", "@example/duplicate"], cwd: join(agent, "npm") },
+	const npmDir = realpathSync(join(agent, "npm"));
+	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+		`${npmDir}|install @example/duplicate@latest`,
+		`${npmDir}|uninstall @example/duplicate`,
 	]);
 	expect(JSON.parse(readFileSync(join(agent, "settings.json"), "utf8")).packages).toBeUndefined();
 	closeInventorySession(pi);

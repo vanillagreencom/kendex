@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.0.5
+
+- Package updates and uninstalls no longer freeze the terminal. They run under a progress window where Escape cancels them, and stop after 10 minutes; cancelling or stopping ends npm or kendex and every process it started. npm directory lookups stop after 15 seconds and package instruction scripts after 10 seconds, and ending the session stops any of them still running.
+- An npm or kendex command that dies from a signal, such as an npm out-of-memory crash, is reported as a failure. Uninstall removes the package from your settings only after the command exits with code 0.
+- A failed npm directory lookup is named in the package's broken reason instead of reading as a missing package.
+
 ### 3.0.4
 
 - npm version requests have a total deadline, a response byte limit and error handling. Closing the package popup or ending the session cancels its pending version requests.

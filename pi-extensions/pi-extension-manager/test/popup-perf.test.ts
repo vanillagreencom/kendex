@@ -1,9 +1,9 @@
-import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
+import { writeCommand } from "./fixtures/commands.ts";
 
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-popup-perf-tests");
 
@@ -11,10 +11,19 @@ const originalEnv = {
 	HOME: process.env.HOME,
 	NPM_CONFIG_PREFIX: process.env.NPM_CONFIG_PREFIX,
 	npm_config_prefix: process.env.npm_config_prefix,
+	PATH: process.env.PATH,
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 };
+const npmLog = join(rootTmp, "npm-calls.log");
 
-const spawnSyncMock = mock((_command: string, _args: string[], _options?: unknown) => ({ status: 0, signal: null, stdout: "", stderr: "", error: undefined, output: [], pid: 0 }));
+/** A fake `npm` first on PATH that logs each call and runs `body`. */
+function fakeNpm(body = ""): void {
+	writeCommand(join(rootTmp, "bin", "npm"), `echo "$*" >> "${npmLog}"\n${body}`);
+}
+
+function npmCalls(): string[] {
+	return existsSync(npmLog) ? readFileSync(npmLog, "utf8").trim().split("\n") : [];
+}
 let pi = {} as never;
 
 function resetTmp(): void {
@@ -52,12 +61,14 @@ beforeEach(() => {
 	process.env.NPM_CONFIG_PREFIX = join(rootTmp, "npm-prefix");
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	process.env.PATH = [join(rootTmp, "bin"), "/usr/bin", "/bin"].join(":");
 	clearPackageConfigCache();
-	spawnSyncMock.mockClear();
+	fakeNpm();
 });
 
 afterEach(async () => {
-	__setSpawnSyncForTests(undefined);
+	if (originalEnv.PATH === undefined) delete process.env.PATH;
+	else process.env.PATH = originalEnv.PATH;
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -72,7 +83,6 @@ afterEach(async () => {
 
 async function loadFreshModules() {
 	pi = {} as never;
-	__setSpawnSyncForTests(spawnSyncMock as never);
 	return import("../extensions/manager/inventory.ts");
 }
 
@@ -93,7 +103,7 @@ test("buildInventory does not spawn npm when packages resolve via Pi user npm di
 		expect(pkg.state).toBe("active");
 		expect(pkg.installedVersion).toBe("1.0.0");
 	}
-	expect(spawnSyncMock).not.toHaveBeenCalled();
+	expect(npmCalls()).toEqual([]);
 });
 
 test("buildInventory memoizes npm root spawns across many packages when cheap paths miss", async () => {
@@ -110,16 +120,7 @@ test("buildInventory memoizes npm root spawns across many packages when cheap pa
 	delete process.env.npm_config_prefix;
 	writeJson(join(userPi, "settings.json"), { packages: names.map((n) => `npm:${n}`) });
 
-	spawnSyncMock.mockImplementation((_cmd: string, args: string[]) => {
-		const subArgs = args.slice(1);
-		const minusG = subArgs.includes("-g");
-		return {
-			status: 0,
-			stdout: minusG ? `${fakeNpmRoot}\n` : "",
-			stderr: "",
-			signal: null, error: undefined, output: [], pid: 0,
-		};
-	});
+	fakeNpm(`case "$*" in *-g*) echo "${fakeNpmRoot}" ;; esac`);
 
 	const inv = await buildInventory(pi, { cwd: project } as never);
 	expect(inv.packages.length).toBe(10);
@@ -127,7 +128,7 @@ test("buildInventory memoizes npm root spawns across many packages when cheap pa
 
 	// Memoization: at most one `npm root -g` invocation per (args, cwd) key for the
 	// whole inventory build, regardless of package count.
-	expect(spawnSyncMock.mock.calls.length).toBeLessThanOrEqual(2);
+	expect(npmCalls()).toEqual(["root -g"]);
 });
 
 test("buildInventory wall-clock stays under 100ms for a realistic npm-heavy inventory", async () => {

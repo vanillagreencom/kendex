@@ -396,6 +396,39 @@ function createManagerComponent(
 	return { handleInput, invalidate() {}, render };
 }
 
+/**
+ * Run a confirmed package action under an overlay whose escape cancels it;
+ * ending the session cancels it too. The overlay closes when the action
+ * settles, so the terminal stays live for the whole run.
+ */
+async function runCancellableAction<T>(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, title: string, command: string, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+	const cancel = new AbortController();
+	const running = action(AbortSignal.any([cancel.signal, inventorySession(pi).controller.signal]));
+	const settled = running.then(() => undefined, () => undefined);
+	await ctx.ui.custom<void>(
+		(tui, theme, _keybindings, done) => {
+			void settled.then(() => done());
+			return {
+				handleInput(data: string): void {
+					if (cancel.signal.aborted || !(matchesKey(data, "escape") || matchesKey(data, "ctrl+c"))) return;
+					cancel.abort();
+					tui.requestRender();
+				},
+				invalidate() {},
+				render(width: number): string[] {
+					const bodyWidth = frameContentWidth(Math.max(1, width));
+					const state = cancel.signal.aborted
+						? theme.fg("warning", "Cancelling: stopping the command's process tree.")
+						: `${ansiYellow("esc")} ${theme.fg("dim", "cancel")}`;
+					return frame([...wrapLine(`Running: ${command}`, bodyWidth), "", state], Math.max(1, width), theme, undefined, title);
+				},
+			};
+		},
+		{ overlay: true, overlayOptions: { anchor: "center", width: DEFAULT_WIDTH_PERCENT } },
+	);
+	return running;
+}
+
 export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext): Promise<void> {
 	const releaseModalLock = acquirekendexModalLock();
 	try {
@@ -417,7 +450,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 			if (!action || action.type === "close") return;
 			if (action.type === "toggle-item") {
 				const item = inventory.items.find((candidate) => candidate.id === action.itemId);
-				if (item) await toggleItem(pi, ctx, inventory, item);
+				if (item) await toggleItem(pi, ctx, inventory, item, inventorySession(pi).controller.signal);
 				continue;
 			}
 			if (action.type === "update-package") {
@@ -440,7 +473,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				].join("\n");
 				const confirmed = await ctx.ui.confirm(`Update ${plan.item.displayName}?`, body);
 				if (!confirmed) continue;
-				const result = runUpdate(plan);
+				const result = await runCancellableAction(pi, ctx, `Updating ${plan.item.displayName}`, plan.command, (actionSignal) => runUpdate(plan, actionSignal));
 				if (result.ok) ctx.ui.notify(`${result.message} Run /reload to apply.`, "warning");
 				else ctx.ui.notify(result.message, "error");
 				continue;
@@ -468,7 +501,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				].join("\n");
 				const confirmed = await ctx.ui.confirm(`Uninstall ${plan.item.displayName}?`, body);
 				if (!confirmed) continue;
-				const result = runUninstall(plan, inventory);
+				const result = await runCancellableAction(pi, ctx, `Uninstalling ${plan.item.displayName}`, plan.command, (actionSignal) => runUninstall(plan, inventory, actionSignal));
 				if (result.ok) ctx.ui.notify(`${result.message} Run /reload to apply.`, "warning");
 				else ctx.ui.notify(result.message, "error");
 				continue;

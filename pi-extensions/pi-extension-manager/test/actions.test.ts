@@ -1,14 +1,27 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { spawnSync as realSpawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
+import { mutantManager, processAlive, settleWithin, startedPid, writeCommand } from "./fixtures/commands.ts";
+
+type ActionsModule = typeof import("../extensions/manager/actions.ts");
+type InventoryModule = typeof import("../extensions/manager/inventory.ts");
 
 const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
-const originalEnv = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
-const spawnSucceeded = () => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 });
-const spawnSyncMock = mock(spawnSucceeded);
+const bin = join(rootTmp, "bin");
+const nodePath = Bun.which("node");
+const originalEnv = { HOME: process.env.HOME, PATH: process.env.PATH, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
+// Processes a case started and its control may leave running.
+const leftovers: number[] = [];
+// A case with a mutant control runs real waits on two copies, past bun's 5 s default bound.
+const CONTROL_CASE_MS = 20_000;
+
+function restore(name: keyof typeof originalEnv): void {
+	if (originalEnv[name] === undefined) delete process.env[name];
+	else process.env[name] = originalEnv[name];
+}
 
 function writeJson(path: string, value: unknown): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -36,69 +49,54 @@ function writeAppendSystemPackage(dir: string, name: string): void {
 }
 
 beforeEach(() => {
+	if (!nodePath) throw new Error("actions-test: node is not on PATH");
 	rmSync(rootTmp, { recursive: true, force: true });
-	mkdirSync(rootTmp, { recursive: true });
+	mkdirSync(bin, { recursive: true });
+	// Every command the manager starts inherits the live environment, so the
+	// child's HOME, Pi directory and PATH are pinned here.
+	process.env.HOME = join(rootTmp, "home");
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	process.env.PATH = [dirname(nodePath), "/usr/bin", "/bin"].join(":");
 	clearPackageConfigCache();
-	spawnSyncMock.mockClear();
-	// A case that swaps the implementation must not hand it to the next case.
-	spawnSyncMock.mockImplementation(spawnSucceeded);
 });
 
-afterEach(async () => {
-	const processModule = await import("../extensions/manager/process.ts");
-	processModule.__setSpawnSyncForTests(undefined);
+afterEach(() => {
+	for (const pid of leftovers.splice(0)) {
+		try { process.kill(-pid, "SIGKILL"); } catch {}
+	}
 	rmSync(rootTmp, { recursive: true, force: true });
-	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	for (const name of ["HOME", "PATH", "PI_CODING_AGENT_DIR"] as const) restore(name);
 	clearPackageConfigCache();
 });
 
-// spawnSync snapshots the environment the process started with, so a child
-// spawned from these tests would resolve the developer's real ~/.pi/agent and
-// write into their live APPEND_SYSTEM.md. Every test that lets a real node run
-// goes through this, which pins the child's HOME and PI_CODING_AGENT_DIR.
-function sandboxedEnv(): NodeJS.ProcessEnv {
-	return { ...process.env, HOME: join(rootTmp, "home"), PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
+function live(): AbortSignal {
+	return new AbortController().signal;
 }
 
 function runVendoredScript(packageDir: string, action: string) {
-	return realSpawnSync("node", [join(packageDir, "scripts", "append-system.mjs"), action], { encoding: "utf8", env: sandboxedEnv() });
+	return spawnSync("node", [join(packageDir, "scripts", "append-system.mjs"), action], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR } });
 }
 
-interface SpawnRecord { command: string; args: string[]; options: Record<string, unknown> }
+const looseItem = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
 
-// Real node for the append-system script, a canned result for anything else.
-async function useSandboxedSpawn(nonNodeResult?: object): Promise<SpawnRecord[]> {
-	const seen: SpawnRecord[] = [];
-	const processModule = await import("../extensions/manager/process.ts");
-	processModule.__setSpawnSyncForTests(((command: string, args: string[], options?: never) => {
-		seen.push({ command, args, options: (options ?? {}) as Record<string, unknown> });
-		if (command !== "node" && nonNodeResult) return nonNodeResult as never;
-		return realSpawnSync(command, args, { ...(options ?? {}), encoding: "utf8", env: sandboxedEnv() } as never);
-	}) as never);
-	return seen;
-}
-
-async function useSpawnMock(): Promise<void> {
-	const processModule = await import("../extensions/manager/process.ts");
-	processModule.__setSpawnSyncForTests(spawnSyncMock as never);
+function npmMethod(command: string, cwd = rootTmp) {
+	return { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd, command, argsPrefix: [] };
 }
 
 test("npm update and uninstall execution use configured npmCommand and scope-local cwd", async () => {
-	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
 	const { planUninstall, planUpdate, runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const npmDir = join(userPi, "npm");
-	const packageDir = join(npmDir, "node_modules", "@scope", "pkg");
+	const log = join(rootTmp, "mise.log");
+	const mise = writeCommand(join(bin, "mise"), `printf '%s|%s\\n' "$(pwd -P)" "$*" >> "${log}"`);
 	mkdirSync(join(project, ".pi"), { recursive: true });
 	writeJson(join(userPi, "settings.json"), {
-		npmCommand: ["mise", "exec", "node@22.19", "--", "npm"],
+		npmCommand: [mise, "exec", "node@22.19", "--", "npm"],
 		packages: ["npm:@scope/pkg"],
 	});
-	writePackage(packageDir, "@scope/pkg");
+	writePackage(join(npmDir, "node_modules", "@scope", "pkg"), "@scope/pkg");
 	const inv = await buildInventory({} as never, { cwd: project } as never);
 	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/pkg")!;
 	item.updateAvailable = true;
@@ -106,39 +104,39 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 	item.npmName = "@scope/pkg";
 
 	const update = planUpdate(item, inv, { cwd: project } as never)!;
-	expect(update.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' install @scope/pkg@latest");
-	const updated = runUpdate(update);
+	expect(update.command).toContain("'exec' 'node@22.19' '--' 'npm' install @scope/pkg@latest");
+	const updated = await runUpdate(update, live());
 	expect([updated.ok, updated.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-updated=@scope/pkg"]);
-	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "install", "@scope/pkg@latest"], expect.objectContaining({ cwd: npmDir }));
 
 	const uninstall = planUninstall(item, inv, { cwd: project } as never)!;
-	expect(uninstall.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' uninstall @scope/pkg");
-	const removed = runUninstall(uninstall, inv);
+	expect(uninstall.command).toContain("'exec' 'node@22.19' '--' 'npm' uninstall @scope/pkg");
+	const removed = await runUninstall(uninstall, inv, live());
 	expect([removed.ok, removed.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-uninstalled=@scope/pkg"]);
-	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "uninstall", "@scope/pkg"], expect.objectContaining({ cwd: npmDir }));
+	const cwd = realpathSync(npmDir);
+	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+		`${cwd}|exec node@22.19 -- npm install @scope/pkg@latest`,
+		`${cwd}|exec node@22.19 -- npm uninstall @scope/pkg`,
+	]);
 });
 
 test("npm actions report cwd preparation failures", async () => {
-	await useSpawnMock();
 	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const badCwd = join(rootTmp, "not-a-directory");
 	writeFileSync(badCwd, "file blocks mkdir");
-	spawnSyncMock.mockClear();
-	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
-	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: badCwd, command: "npm", argsPrefix: [] };
+	const marker = join(rootTmp, "npm-ran");
+	const method = npmMethod(writeCommand(join(bin, "npm"), `touch "${marker}"`), badCwd);
 	const rows = [
-		{ run: () => runUpdate({ item, method } as never), firstLine: `pi-extension-manager: npm-update-cwd=${badCwd}` },
-		{ run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: `pi-extension-manager: npm-uninstall-cwd=${badCwd}` },
+		{ run: () => runUpdate({ item: looseItem, method } as never, live()), firstLine: `pi-extension-manager: npm-update-cwd=${badCwd}` },
+		{ run: () => runUninstall({ item: looseItem, method } as never, { settingsFiles: [] } as never, live()), firstLine: `pi-extension-manager: npm-uninstall-cwd=${badCwd}` },
 	];
 	for (const row of rows) {
-		const result = row.run();
+		const result = await row.run();
 		expect([result.ok, result.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 	}
-	expect(spawnSyncMock).not.toHaveBeenCalled();
+	expect(existsSync(marker)).toBe(false);
 });
 
 test("invalid npmCommand is surfaced in npm action plans", async () => {
-	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
 	const { planUninstall, planUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
@@ -168,40 +166,24 @@ test("npm uninstall strips the APPEND_SYSTEM.md block before npm runs", async ()
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const packageDir = join(userPi, "npm", "node_modules", "@scope", "appendpkg");
-	mkdirSync(join(project, ".pi"), { recursive: true });
-	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/appendpkg"] });
-	writeAppendSystemPackage(packageDir, "@scope/appendpkg");
 	const target = join(userPi, "APPEND_SYSTEM.md");
+	const seenByNpm = join(rootTmp, "append-system-seen-by-npm");
+	// npm records the block as it finds it, then fails.
+	const npm = writeCommand(join(bin, "npm"), `cat "${target}" > "${seenByNpm}"; echo "npm ERR! network" >&2; exit 1`);
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { npmCommand: [npm], packages: ["npm:@scope/appendpkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/appendpkg");
 
 	// Real script, real block, so "the block is gone" is a filesystem fact.
 	expect(runVendoredScript(packageDir, "install").status).toBe(0);
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 
-	// npm fails; the append-system spawn passes through to the real node.
-	const seen = await useSandboxedSpawn({ status: 1, stdout: "", stderr: "npm ERR! network", error: undefined, signal: null, output: [], pid: 0 });
-
 	const inv = await buildInventory({} as never, { cwd: project } as never);
 	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/appendpkg")!;
-	const plan = planUninstall(item, inv, { cwd: project } as never)!;
-	const outcome = runUninstall(plan, inv);
+	const outcome = await runUninstall(planUninstall(item, inv, { cwd: project } as never)!, inv, live());
 
-	const removeIndex = seen.findIndex((call) => call.command === "node" && call.args.at(-1) === "remove");
-	const npmIndex = seen.findIndex((call) => call.args.includes("uninstall"));
-	expect(removeIndex).toBeGreaterThanOrEqual(0);
-	expect(npmIndex).toBeGreaterThanOrEqual(0);
-	expect(removeIndex).toBeLessThan(npmIndex);
-
-	expect(outcome.ok).toBe(false);
-
-	// A package-supplied script runs on Pi's TUI thread; an unbounded wait
-	// wedges it. spawnSync only honours a deadline it is given.
-	const nodeCalls = seen.filter((call) => call.command === "node");
-	expect(nodeCalls.length).toBeGreaterThan(0);
-	for (const { options } of nodeCalls) {
-		expect(typeof options.timeout).toBe("number");
-		expect(options.timeout as number).toBeGreaterThan(0);
-		expect(options.killSignal).toBe("SIGKILL");
-	}
+	expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, "pi-extension-manager: npm-uninstall-exit=1"]);
+	expect(readFileSync(seenByNpm, "utf8")).not.toContain("Append pkg instructions");
 });
 
 test("toggling a package under the kendex packages/ layout writes and removes its block", async () => {
@@ -214,14 +196,13 @@ test("toggling a package under the kendex packages/ layout writes and removes it
 	writeAppendSystemPackage(packageDir, "@scope/clonepkg");
 	const target = join(projectPi, "APPEND_SYSTEM.md");
 	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
-	await useSandboxedSpawn();
 
 	const off = await buildInventory({} as never, ctx);
-	toggleItem({} as never, ctx, off, off.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
+	await toggleItem({} as never, ctx, off, off.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!, live());
 	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Append pkg instructions");
 
 	const on = await buildInventory({} as never, ctx);
-	toggleItem({} as never, ctx, on, on.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
+	await toggleItem({} as never, ctx, on, on.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!, live());
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 });
 
@@ -229,10 +210,11 @@ test("append-system launch failures expose the action and script path", async ()
 	const packageDir = join(rootTmp, "append-launch");
 	mkdirSync(join(packageDir, "scripts"), { recursive: true });
 	writeFileSync(join(packageDir, "scripts", "append-system.mjs"), "");
-	spawnSyncMock.mockImplementation(() => ({ status: null, stdout: "", stderr: "", error: new Error("node unavailable"), signal: null, output: [], pid: 0 }));
-	await useSpawnMock();
 	const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
-	expect(() => syncAppendSystemForPackage({ kind: "package", packageName: "@scope/append", packageDir } as never, false)).toThrow(`pi-extension-manager: append-system-launch=install:${join(packageDir, "scripts", "append-system.mjs")}`);
+	// No directory on PATH holds node.
+	process.env.PATH = bin;
+	await expect(syncAppendSystemForPackage({ kind: "package", packageName: "@scope/append", packageDir } as never, false, live()))
+		.rejects.toThrow(`pi-extension-manager: append-system-launch=install:${join(packageDir, "scripts", "append-system.mjs")}`);
 });
 
 test("failed instruction scripts keep toggle and orphan settings unchanged", async () => {
@@ -249,15 +231,14 @@ test("failed instruction scripts keep toggle and orphan settings unchanged", asy
 		const appendPath = join(project, ".pi", "APPEND_SYSTEM.md");
 		const instructionsBefore = readFileSync(appendPath, "utf8");
 		writeFileSync(join(packageDir, "scripts", "append-system.mjs"), "process.exit(7);\n");
-		await useSandboxedSpawn();
 		const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
 		const inv = await buildInventory({} as never, ctx);
 		const item = inv.packages.find((pkg) => pkg.packageName === "@scope/blocked")!;
 		const diskBefore = readFileSync(settingsPath, "utf8");
 		const memoryBefore = JSON.stringify(inv);
-		expect(() => action === "orphan"
-			? runUninstall(planUninstall(item, inv, ctx)!, inv)
-			: toggleItem({} as never, ctx, inv, item)).toThrow("pi-extension-manager: append-system-exit=");
+		await expect(action === "orphan"
+			? runUninstall(planUninstall(item, inv, ctx)!, inv, live())
+			: toggleItem({} as never, ctx, inv, item, live())).rejects.toThrow("pi-extension-manager: append-system-exit=");
 		expect(readFileSync(settingsPath, "utf8")).toBe(diskBefore);
 		expect(JSON.stringify(inv)).toBe(memoryBefore);
 		expect(readFileSync(appendPath, "utf8")).toBe(instructionsBefore);
@@ -265,30 +246,92 @@ test("failed instruction scripts keep toggle and orphan settings unchanged", asy
 });
 
 test("npm action exits expose an exit code or signal", async () => {
-	await useSpawnMock();
 	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
-	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
-	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
 	const rows = [
-		{ result: { status: 7, signal: null }, run: () => runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-exit=7" },
-		{ result: { status: null, signal: "SIGTERM" }, run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-exit=SIGTERM" },
-	] as const;
-	for (const row of rows) {
-		spawnSyncMock.mockImplementation(() => ({ ...row.result, stdout: "", stderr: "", error: undefined, output: [], pid: 0 } as never));
-		const outcome = row.run();
+		{ body: "exit 7", run: (plan: never) => runUpdate(plan, live()), firstLine: "pi-extension-manager: npm-update-exit=7" },
+		{ body: "kill -TERM $$", run: (plan: never) => runUninstall(plan, { settingsFiles: [] } as never, live()), firstLine: "pi-extension-manager: npm-uninstall-exit=SIGTERM" },
+	];
+	for (const [index, row] of rows.entries()) {
+		const method = npmMethod(writeCommand(join(bin, `npm-${index}`), row.body));
+		const outcome = await row.run({ item: looseItem, method } as never);
 		expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 	}
 });
 
 test("npm action launch failures identify the action", async () => {
-	await useSpawnMock();
 	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
-	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
-	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
-	spawnSyncMock.mockImplementation(() => ({ status: null, signal: null, stdout: "", stderr: "", error: new Error("missing"), output: [], pid: 0 } as never));
+	const missing = join(bin, "missing-npm");
+	const method = npmMethod(missing);
 	const rows = [
-		{ outcome: runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-launch=npm" },
-		{ outcome: runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-launch=npm" },
+		{ outcome: await runUpdate({ item: looseItem, method } as never, live()), firstLine: `pi-extension-manager: npm-update-launch=${missing}` },
+		{ outcome: await runUninstall({ item: looseItem, method } as never, { settingsFiles: [] } as never, live()), firstLine: `pi-extension-manager: npm-uninstall-launch=${missing}` },
 	];
 	for (const row of rows) expect([row.outcome.ok, row.outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 });
+
+interface UninstallObservation { ok: boolean; firstLine: string; diskKept: boolean; memoryKept: boolean }
+
+/** An npm uninstall whose npm dies by `npmBody`, observed through the given module copies. */
+async function observeFailedUninstall(actions: ActionsModule, inventory: InventoryModule, npmBody: string, cancelAfterStart?: string): Promise<UninstallObservation | "unsettled"> {
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const settingsPath = join(userPi, "settings.json");
+	const npm = writeCommand(join(bin, `npm-${Math.random()}`), npmBody);
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(settingsPath, { npmCommand: [npm], packages: ["npm:@scope/crash"] });
+	writePackage(join(userPi, "npm", "node_modules", "@scope", "crash"), "@scope/crash");
+	clearPackageConfigCache();
+	const inv = await inventory.buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/crash")!;
+	const diskBefore = readFileSync(settingsPath, "utf8");
+	const memoryBefore = JSON.stringify(inv);
+	const cancel = new AbortController();
+	const run = actions.runUninstall(actions.planUninstall(item, inv, { cwd: project } as never)!, inv, cancel.signal);
+	if (cancelAfterStart) {
+		leftovers.push(await startedPid(cancelAfterStart));
+		cancel.abort();
+	}
+	// A working runner settles a crashed npm at once and a cancelled one within
+	// its SIGTERM grace; a run still going at this bound ignored the cancel.
+	const outcome = await settleWithin(run, 4_000);
+	if (outcome === "unsettled") return outcome;
+	return {
+		ok: outcome.ok,
+		firstLine: outcome.message.split("\n")[0]!,
+		diskKept: readFileSync(settingsPath, "utf8") === diskBefore,
+		memoryKept: JSON.stringify(inv) === memoryBefore,
+	};
+}
+
+test("a natural-signal npm crash keeps disk and in-memory installation settings; control: an unchecked failure strips them", async () => {
+	// npm's heap exhaustion ends in SIGABRT with no exit code.
+	const crash = "kill -ABRT $$";
+	const real = [await import("../extensions/manager/actions.ts"), await import("../extensions/manager/inventory.ts")] as const;
+	expect(await observeFailedUninstall(...real, crash)).toEqual({ ok: false, firstLine: "pi-extension-manager: npm-uninstall-exit=SIGABRT", diskKept: true, memoryKept: true });
+
+	const mutant = mutantManager(join(rootTmp, "mutant-uninstall"), [{
+		file: "actions.ts",
+		before: "if (npmUninstallFailure) return",
+		after: "if (npmUninstallFailure && false) return",
+	}]);
+	const planted = await observeFailedUninstall(await import(join(mutant, "actions.ts")), await import(join(mutant, "inventory.ts")), crash);
+	expect(planted === "unsettled" ? planted : [planted.ok, planted.diskKept, planted.memoryKept]).toEqual([true, false, false]);
+}, CONTROL_CASE_MS);
+
+test("cancelling an npm uninstall stops npm and keeps settings; control: a signal the runner never sees leaves it running", async () => {
+	const pidFile = () => join(rootTmp, `npm-pid-${Math.random()}`);
+	const hung = (path: string) => `echo $$ > "${path}"; exec sleep 30`;
+	const real = [await import("../extensions/manager/actions.ts"), await import("../extensions/manager/inventory.ts")] as const;
+	const realPid = pidFile();
+	const observed = await observeFailedUninstall(...real, hung(realPid), realPid);
+	expect(observed === "unsettled" ? observed : { ...observed, firstLine: observed.firstLine.split("=")[0] }).toEqual({ ok: false, firstLine: "pi-extension-manager: npm-uninstall-cancelled", diskKept: true, memoryKept: true });
+	expect(processAlive(leftovers.at(-1)!)).toBe(false);
+
+	const mutant = mutantManager(join(rootTmp, "mutant-cancel"), [{
+		file: "actions.ts",
+		before: "{ cwd, deadlineMs: PACKAGE_COMMAND_DEADLINE_MS, signal }",
+		after: "{ cwd, deadlineMs: PACKAGE_COMMAND_DEADLINE_MS, signal: new AbortController().signal }",
+	}]);
+	const mutantPid = pidFile();
+	expect(await observeFailedUninstall(await import(join(mutant, "actions.ts")), await import(join(mutant, "inventory.ts")), hung(mutantPid), mutantPid)).toBe("unsettled");
+}, CONTROL_CASE_MS);
