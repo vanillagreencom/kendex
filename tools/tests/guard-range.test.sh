@@ -381,19 +381,25 @@ echo "=== a range runs the suites a skill's changed files map to ==="
 # helped reaches scripts/driven only through tests/lib/helper.sh, which names
 # it; nothing names tests/lib/lonely.sh. battery names the runner and skilldoc
 # names SKILL.md, so the arms that turn those two away are what keep each from
-# mapping to its namer alone.
+# mapping to its namer alone. references/table.conf is read by tool through
+# its path, cited in toolbox's prose, and read whole by docscan's glob and by
+# lib/refs.sh, which refsuse sources; driven reads another reference. In plain,
+# alpha.sh's comment and beta's prose cite its one reference and nothing reads
+# it.
 M="$R/skills/mapped"
-mkdir -p "$M/scripts/lib" "$M/tests/lib" "$M/tests/fixtures"
+mkdir -p "$M/scripts/lib" "$M/tests/lib" "$M/tests/fixtures" "$M/references"
 cp "$REPO/skills/orch/tests/run-all.sh" "$M/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$M/tests/lib/git-env.sh"
 printf 'pid=1\n' >"$M/scripts/lib/pid.sh"
 printf 'source "${BASH_SOURCE[0]%%/*}/pid.sh"\n' >"$M/scripts/lib/wrap.sh"
 printf 'source "${BASH_SOURCE[0]%%/*}/wrap.sh"\n' >"$M/scripts/lib/alpha.sh"
 printf 'VALUE = 1\n' >"$M/scripts/lib/mod.py"
-printf '#!/usr/bin/env bash\necho tool\n' >"$M/scripts/tool"
+printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../references/table.conf"\n' >"$M/scripts/tool"
+printf 'key=1\n' >"$M/references/table.conf"
+printf 'for f in "${BASH_SOURCE[0]%%/*}/../../references"/*; do :; done\n' >"$M/scripts/lib/refs.sh"
 printf '#!/usr/bin/env bash\necho orphan\n' >"$M/scripts/orphan"
 printf '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib/pid.sh"\n' >"$M/scripts/runner"
-printf '#!/usr/bin/env bash\necho driven\n' >"$M/scripts/driven"
+printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../references/unrelated.conf"\n' >"$M/scripts/driven"
 printf 'fixture\n' >"$M/tests/fixtures/x.sh"
 printf 'drive() { "$SKILL/../../scripts/driven"; }\n' >"$M/tests/lib/helper.sh"
 printf 'lonely=1\n' >"$M/tests/lib/lonely.sh"
@@ -401,7 +407,13 @@ printf -- '---\nname: mapped\n---\n' >"$M/SKILL.md"
 suite_naming() { # NAME [TEXT] — a passing suite whose comment holds TEXT
   printf '#!/usr/bin/env bash\n# %s\necho "pass: 1   fail: 0"\n' "${2:-}" >"$M/tests/$1.sh"
 }
-for s in tool tool_extra toolbox other runner; do suite_naming "$s"; done
+for s in tool tool_extra other runner; do suite_naming "$s"; done
+suite_running() { # NAME LINE — a passing suite that runs LINE first
+  printf '#!/usr/bin/env bash\n%s\necho "pass: 1   fail: 0"\n' "$2" >"$M/tests/$1.sh"
+}
+suite_running toolbox 'echo "see references/table.conf"'
+suite_running docscan ': "$(dirname "$0")/../references"/*.md'
+suite_naming refsuse 'sources ../scripts/lib/refs.sh'
 suite_naming pid_direct 'names ../scripts/lib/pid.sh'
 suite_naming wrapped 'names ../scripts/lib/wrap.sh'
 suite_naming deep 'names ../scripts/lib/alpha.sh'
@@ -413,15 +425,17 @@ suite_naming skilldoc 'reads ../SKILL.md'
 # A skill with no runner: each suite runs by its own file, a .test suffix
 # included, and a node suite beside the shell ones.
 P="$R/skills/plain"
-mkdir -p "$P/scripts" "$P/tests"
-printf '#!/usr/bin/env bash\necho a\n' >"$P/scripts/alpha.sh"
+mkdir -p "$P/scripts" "$P/tests" "$P/references"
+printf '# Note\n' >"$P/references/note.md"
+printf '#!/usr/bin/env bash\n# see ../references/note.md\necho a\n' >"$P/scripts/alpha.sh"
 printf '#!/usr/bin/env bash\necho b\n' >"$P/scripts/beta.sh"
 for s in alpha beta; do printf '#!/usr/bin/env bash\necho ok\n' >"$P/tests/$s.test.sh"; done
+printf 'echo "see references/note.md"\n' >>"$P/tests/beta.test.sh"
 printf '%s\n' "import test from 'node:test';" "test('gamma', () => {});" >"$P/tests/gamma.test.mjs"
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: two skills with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
-MAPPED_ALL="battery deep drives helped other pid_direct pyuse runner skilldoc tool tool_extra toolbox wrapped"
+MAPPED_ALL="battery deep docscan drives helped other pid_direct pyuse refsuse runner skilldoc tool tool_extra toolbox wrapped"
 PLAIN_ALL="alpha.test.sh beta.test.sh gamma.test.mjs"
 note_for() { printf 'guard-note: suites=all reason=%s path=%s' "$1" "$2"; }
 mapped_note() { printf 'guard-note: suites=%s reason=mapped skill=skills/%s' "$1" "$2"; }
@@ -448,19 +462,21 @@ change() { # HOW PATH... — append to each, or delete each
 # One row per arm of mapped_suites and per entry of skill_files.
 # label|how|paths, space-separated|suites that start, sorted|the note, or none
 MAP_ROWS=(
-  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/13 mapped)"
-  "a changed script runs each suite named for it, not one its name only begins|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/13 mapped)"
-  "a changed lib runs every suite reaching it through libs, scripts and names|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/13 mapped)"
-  "a changed script reaches a suite through a tests/lib helper naming it|append|skills/mapped/scripts/driven|helped|$(mapped_note 1/13 mapped)"
-  "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/13 mapped)"
-  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/12 mapped)"
+  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/15 mapped)"
+  "a changed script runs each suite named for it, not one its name only begins|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/15 mapped)"
+  "a changed lib runs every suite reaching it through libs, scripts and names|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/15 mapped)"
+  "a changed script reaches a suite through a tests/lib helper naming it|append|skills/mapped/scripts/driven|helped|$(mapped_note 1/15 mapped)"
+  "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/15 mapped)"
+  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/14 mapped)"
   "a deleted tests/lib helper nothing names runs the whole set and says so|delete|skills/mapped/tests/lib/lonely.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/lib/lonely.sh)"
   "a changed script no suite reaches runs the whole set and says so|append|skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
   "a Python module under lib runs the whole set and says so|append|skills/mapped/scripts/lib/mod.py|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/lib/mod.py)"
   "a deleted fixture under tests runs the whole set and says so|delete|skills/mapped/tests/fixtures/x.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/fixtures/x.sh)"
   "a changed runner runs the whole set and says so|append|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
   "a changed SKILL.md runs the whole set and says so|append|skills/mapped/SKILL.md|$MAPPED_ALL|$(note_for unmapped skills/mapped/SKILL.md)"
-  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/13 mapped)"
+  "a changed reference runs the suites of its path readers and of the directory's readers|append|skills/mapped/references/table.conf|docscan refsuse tool tool_extra|$(mapped_note 4/15 mapped)"
+  "a reference only a comment and prose cite runs nothing|append|skills/plain/references/note.md||$(mapped_note 0/3 plain)"
+  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/15 mapped)"
   "a mapped and an unmapped path run the whole set|append|skills/mapped/scripts/tool skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
   "with no runner a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test.sh|$(mapped_note 1/3 plain)"
   "with no runner a changed suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test.sh|$(mapped_note 1/3 plain)"
@@ -502,7 +518,7 @@ back_to_mapped
 # label#how#paths#sed expression breaking the rule#suites that start, sorted
 MAP_CONTROLS=(
   "control: without the suite arm the changed suite runs the whole set#append#skills/mapped/tests/tool.sh#s/^    if grep -Fxq -- \"\$f\" <<<\"\$suites\"; then$/    if false; then/#$MAPPED_ALL"
-  "control: without the deleted-suite arm a deleted suite runs the whole set#delete#skills/mapped/tests/other.sh#s/\] || return 0 ;;$/] || return 1 ;;/#battery deep drives helped pid_direct pyuse runner skilldoc tool tool_extra toolbox wrapped"
+  "control: without the deleted-suite arm a deleted suite runs the whole set#delete#skills/mapped/tests/other.sh#s/\] || return 0 ;;$/] || return 1 ;;/#battery deep docscan drives helped pid_direct pyuse refsuse runner skilldoc tool tool_extra toolbox wrapped"
   "control: with the deleted-suite arm taking any path under tests a deleted helper runs nothing#delete#skills/mapped/tests/lib/lonely.sh#s/^      tests\/\*\/\*) ;;$/      tests\/never) ;;/#"
   "control: with names handed to the runner as substrings the changed suite runs its namesakes#append#skills/mapped/tests/tool.sh#s/filters+=(\"=\${t%.sh}\")/filters+=(\"\${t%.sh}\")/#tool tool_extra toolbox"
   "control: without the name-and-dash arm the script's second suite stands down#append#skills/mapped/scripts/tool#s/case \"\$base\" in \"\$name\" | \"\$name\"-\*)/case \"\$base\" in \"\$name\")/#tool"
@@ -516,6 +532,13 @@ MAP_CONTROLS=(
   "control: without the subdirectory arm the Python module runs only its namer#append#skills/mapped/scripts/lib/mod.py#/^    scripts\/\*\/\* | tests\/\*\/\*) return 1 ;;$/d#pyuse"
   "control: without the runner arm a changed runner runs only its namer#append#skills/mapped/tests/run-all.sh#/^    tests\/run-all.sh) return 1 ;;$/d#battery"
   "control: without the catch-all arm a changed SKILL.md runs only its namer#append#skills/mapped/SKILL.md#/^    \*) return 1 ;;$/d#skilldoc"
+  "control: without the references arm a changed reference runs the whole set#append#skills/mapped/references/table.conf#s/ | references\/\*) ;;$/) ;;/#$MAPPED_ALL"
+  "control: with the reference matched by its bare name the suite citing it in prose runs#append#skills/mapped/references/table.conf#s|grep -qF -e \"/\$rel\"|grep -qF -e \"/\${rel:11}\"|#docscan refsuse tool tool_extra toolbox"
+  "control: with comment lines read as code the script citing a reference in a comment runs its suite#append#skills/plain/references/note.md#s/'^\[\[:space:\]\]\*/'^NEVER/#alpha.test.sh"
+  "control: without the directory-reader match the glob readers stand down#append#skills/mapped/references/table.conf#/grep -qE -e '\/references/s/grep -qE/false/#tool tool_extra"
+  "control: with the directory pattern taking any reference path a reader of another reference runs#append#skills/mapped/references/table.conf#s,/references(/?\\\$,/references(/|/?\$,#docscan helped refsuse tool tool_extra"
+  "control: without the readers growing the needles the suite sourcing one stands down#append#skills/mapped/references/table.conf#/<<<\"\\\$code\"; then\$/{n;d;}#docscan tool tool_extra"
+  "control: without the no-reader arm a reference only a comment and prose cite runs the whole set#append#skills/plain/references/note.md#/^      references\/\*) return 0 ;;$/d#$PLAIN_ALL"
   "control: without the whole-set fallback the unmapped script runs nothing#append#skills/mapped/scripts/orphan#s/unmapped path=\$f\"; run=all; break ;;/unmapped path=\$f\"; break ;;/#"
   "control: with each path's suites overwriting the last only the last path's run#append#skills/mapped/scripts/tool skills/mapped/tests/other.sh#s/^            run=\"\$run\$sel$/            run=\"\$sel/#other"
   "control: with the no-runner loop reading the whole set every suite runs#append#skills/plain/scripts/alpha.sh#s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/#$PLAIN_ALL"
@@ -534,7 +557,7 @@ for row in "${MAP_CONTROLS[@]}"; do
 done
 # The narrowed run's note is the reader's one sign that the set was cut.
 if mutant_guard '/note suites "\$(count_lines/d'; then
-  map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/13 mapped)" "$MUTANT_TOOLS/guard"
+  map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/15 mapped)" "$MUTANT_TOOLS/guard"
   [[ "$VERDICT" == *" started=tool note=missing" ]] \
     && ok "control: without the narrowed-run note the one-suite run says nothing of the cut" \
     || bad "control: without the narrowed-run note the one-suite run says nothing of the cut" "$VERDICT out=$OUT"
@@ -542,42 +565,45 @@ else
   bad "control: the narrowed-run note could not be removed from a guard copy"
 fi
 # A file the scan cannot read is no evidence it names nothing: the skill runs
-# whole, and the note names the read, not the rule. The stub fails the scan's
-# grep alone, the one that passes -qF, on the file FAIL_GREP names: a lib the
-# scan passes through, and a suite it ends on.
+# whole, and the note names the read, not the rule. The stub fails one of the
+# scan's greps alone, the one passing FAIL_FLAG, -qF for the name scan and -v
+# for a reference's reader pass, on the file FAIL_GREP names: a lib the scan
+# passes through, a suite it ends on, and a reader of the whole directory.
 REAL_GREP="$(command -v grep)"
 cat >"$R/fake-bin/grep" <<'SH'
 #!/usr/bin/env bash
 for a in "$@"; do :; done
-if [ -n "${FAIL_GREP:-}" ] && [ "$1" = -qF ] && [ "$a" = "$FAIL_GREP" ]; then
+if [ -n "${FAIL_GREP:-}" ] && [ "$1" = "$FAIL_FLAG" ] && [ "$a" = "$FAIL_GREP" ]; then
   echo "grep: $a: Permission denied" >&2
   exit 2
 fi
 exec "$REAL_GREP" "$@"
 SH
 chmod +x "$R/fake-bin/grep"
-range_grep_fails() { # FILE GUARD
+range_grep_fails() { # FILE FLAG GUARD
   OUT=""
   RC=0
   : >"$CALLS"
-  OUT="$(cd "$R" && env FAIL_GREP="$1" REAL_GREP="$REAL_GREP" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$2" --range "$mapped_base" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env FAIL_GREP="$1" FAIL_FLAG="$2" REAL_GREP="$REAL_GREP" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$3" --range "$mapped_base" 2>&1 </dev/null)" || RC=$?
 }
-# unreadable file|suites that start once the failed read counts as no match
+# changed path#unreadable file#failing grep flag#sed expression taking that
+# grep's failure as no match#suites that start once it does
 UNREAD_ROWS=(
-  "skills/mapped/scripts/lib/wrap.sh|drives pid_direct runner"
-  "skills/mapped/tests/pid_direct.sh|deep drives runner wrapped"
+  "skills/mapped/scripts/lib/pid.sh#skills/mapped/scripts/lib/wrap.sh#-qF#s/^        \*) return 2 ;;$/        *) ;;/#drives pid_direct runner"
+  "skills/mapped/scripts/lib/pid.sh#skills/mapped/tests/pid_direct.sh#-qF#s/^        \*) return 2 ;;$/        *) ;;/#deep drives runner wrapped"
+  "skills/mapped/references/table.conf#skills/mapped/tests/docscan.sh#-v#s/ || \[ \$? -eq 1 \] || return 2\$//#refsuse tool tool_extra"
 )
 for row in "${UNREAD_ROWS[@]}"; do
-  IFS='|' read -r unread lenient <<<"$row"
-  change append skills/mapped/scripts/lib/pid.sh
-  range_grep_fails "$unread" "$GUARD"
+  IFS='#' read -r changed unread flag expr lenient <<<"$row"
+  change append "$changed"
+  range_grep_fails "$unread" "$flag" "$GUARD"
   [ "$RC" -eq 0 ] && [ "$(started)" = "$MAPPED_ALL" ] \
-    && [[ "$OUT" == *"$(note_for unreadable skills/mapped/scripts/lib/pid.sh)"* ]] \
+    && [[ "$OUT" == *"$(note_for unreadable "$changed")"* ]] \
     && [[ "$OUT" != *"no explanation is defined for this value"* ]] \
     && ok "an unreadable $unread runs the whole set and names the read" \
     || bad "an unreadable $unread runs the whole set and names the read" "rc=$RC started=$(started) out=$OUT"
-  if mutant_guard 's/^        \*) return 2 ;;$/        *) ;;/'; then
-    range_grep_fails "$unread" "$MUTANT_TOOLS/guard"
+  if mutant_guard "$expr"; then
+    range_grep_fails "$unread" "$flag" "$MUTANT_TOOLS/guard"
     [ "$(started)" = "$lenient" ] \
       && ok "control: with the failed read of $unread taken as no match the set shrinks silently" \
       || bad "control: with the failed read of $unread taken as no match the set shrinks silently" "rc=$RC started=$(started) out=$OUT"
