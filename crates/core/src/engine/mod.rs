@@ -32,7 +32,7 @@ pub mod fork;
 mod gemini;
 pub mod generated_paths;
 pub(crate) mod output_style;
-pub use generated_paths::GeneratedPaths;
+pub use generated_paths::{GeneratedPaths, Recorded};
 mod holds;
 mod installed;
 mod recovery;
@@ -285,7 +285,7 @@ pub fn plan_scope(
         fork_edits,
         resolved_sources,
         recorded_gone,
-        generated: generated.editing(edited, generated_paths::recorded(env, scope)?),
+        generated: generated.editing(edited, generated_paths::recorded(env, scope, lock)?),
         installations,
         stood_in: readings.stood_in(lock),
         record: new_lock,

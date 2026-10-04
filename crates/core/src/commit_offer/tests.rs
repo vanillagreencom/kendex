@@ -522,7 +522,7 @@ impl Repo {
             whole: whole.iter().map(|p| self.root.join(p)).collect(),
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
             edited: BTreeSet::new(),
-            recorded: BTreeSet::new(),
+            recorded: crate::engine::Recorded::default(),
             regions: BTreeSet::new(),
             held: BTreeSet::new(),
             adopted: Default::default(),

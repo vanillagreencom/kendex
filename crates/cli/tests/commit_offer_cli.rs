@@ -592,51 +592,109 @@ fn a_remove_commits_a_shared_file_it_edits_and_leaves_out_one_the_person_emptied
     }
 }
 
+/// How the last commit holds the install record when the remove runs.
+#[derive(Debug, Clone, Copy)]
+enum RecordAtHead {
+    /// As the add committed it: the record says the hook writes a key in
+    /// the settings file.
+    AsAdded,
+    /// Taken out of the last commit and left on disk: the inventory there
+    /// still lists paths, and nothing at `HEAD` says which are shared.
+    Absent,
+    /// An older format this build does not read.
+    OlderFormat,
+}
+
 /// A remove left uncommitted takes away the shared settings file the
 /// committed hook was the last key in. The passive reading after it, which
 /// no action reads for, still finds the file in the committed inventory,
 /// but a shared file's deletion is never kendex's whole: it is not among
-/// the files a commit or a restore takes whole.
+/// the files a commit or a restore takes whole. Where the record at `HEAD`
+/// cannot say which files are shared, the reading claims no deletion the
+/// record on disk does not name as a render, so the removed script is
+/// left out with the settings file rather than taken on the inventory's
+/// word.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_passive_reading_keeps_a_deleted_shared_file_out_of_the_renders() {
     const SETTINGS: &str = ".claude/settings.json";
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = project(&tmp);
-    let source = scout_and_guard(&home).to_string_lossy().into_owned();
-    let add = kendex(
-        &home,
-        &project,
-        &[
-            "add",
-            "--yes",
-            "--throwaway",
-            "--commit",
-            &source,
-            "--hook",
-            "guard",
-        ],
-    );
-    assert!(add.status.success(), "{}", said(&add));
-    let committed = git(
-        &project,
-        &["show", &format!("HEAD:{}", ".kendex-generated.json")],
-    );
-    assert!(committed.contains(SETTINGS), "{committed}");
+    const LOCK: &str = ".kendex-lock.json";
+    const SCRIPT: &str = ".claude/hooks/guard.sh";
+    for (record, script_claimed) in [
+        (RecordAtHead::AsAdded, true),
+        (RecordAtHead::Absent, false),
+        (RecordAtHead::OlderFormat, false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let source = scout_and_guard(&home).to_string_lossy().into_owned();
+        let add = kendex(
+            &home,
+            &project,
+            &[
+                "add",
+                "--yes",
+                "--throwaway",
+                "--commit",
+                &source,
+                "--hook",
+                "guard",
+            ],
+        );
+        assert!(add.status.success(), "{record:?}: {}", said(&add));
+        let committed = git(
+            &project,
+            &["show", &format!("HEAD:{}", ".kendex-generated.json")],
+        );
+        assert!(committed.contains(SETTINGS), "{record:?}: {committed}");
+        assert!(committed.contains(SCRIPT), "{record:?}: {committed}");
+        match record {
+            RecordAtHead::AsAdded => {}
+            RecordAtHead::Absent => {
+                git(&project, &["rm", "-q", "--cached", LOCK]);
+                git(&project, &["commit", "-q", "-m", "drop record"]);
+            }
+            RecordAtHead::OlderFormat => {
+                let valid = fs::read_to_string(project.join(LOCK)).unwrap();
+                let current = format!("\"version\": {}", kendex_core::lock::LOCK_VERSION);
+                assert_eq!(valid.matches(&current).count(), 1, "{valid}");
+                fs::write(
+                    project.join(LOCK),
+                    valid.replace(&current, "\"version\": 10"),
+                )
+                .unwrap();
+                git(&project, &["commit", "-q", "-am", "older record"]);
+                fs::write(project.join(LOCK), &valid).unwrap();
+            }
+        }
 
-    let remove = kendex(&home, &project, &["remove", "--no-sweep", "guard"]);
-    assert!(remove.status.success(), "{}", said(&remove));
-    assert!(!project.join(SETTINGS).exists(), "{}", said(&remove));
+        let remove = kendex(&home, &project, &["remove", "--no-sweep", "guard"]);
+        assert!(remove.status.success(), "{record:?}: {}", said(&remove));
+        assert!(
+            !project.join(SETTINGS).exists(),
+            "{record:?}: {}",
+            said(&remove)
+        );
+        assert!(
+            !project.join(SCRIPT).exists(),
+            "{record:?}: {}",
+            said(&remove)
+        );
 
-    let passive = kendex(&home, &project, &["generated-paths"]);
-    let owned: Vec<String> = serde_json::from_slice(&passive.stdout)
-        .unwrap_or_else(|error| panic!("{error}: {}", said(&passive)));
-    assert!(
-        !owned.is_empty(),
-        "the removed script is a render: {owned:?}"
-    );
-    assert!(!owned.iter().any(|path| path == SETTINGS), "{owned:?}");
+        let passive = kendex(&home, &project, &["generated-paths"]);
+        let owned: Vec<String> = serde_json::from_slice(&passive.stdout)
+            .unwrap_or_else(|error| panic!("{record:?}: {error}: {}", said(&passive)));
+        assert!(
+            !owned.iter().any(|path| path == SETTINGS),
+            "{record:?}: {owned:?}"
+        );
+        assert_eq!(
+            owned.iter().any(|path| path == SCRIPT),
+            script_claimed,
+            "{record:?}: {owned:?}"
+        );
+    }
 }
 
 /// A project whose root `AGENTS.md` carries a managed region the installed

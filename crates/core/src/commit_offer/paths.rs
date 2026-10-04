@@ -6,9 +6,9 @@
 //! the rows are matched against the set here.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::engine::GeneratedPaths;
+use crate::engine::{GeneratedPaths, Recorded};
 
 use super::pending::{Before, Pending};
 use super::{Branch, Carry, Failed, Operation, Owned, Rebase, Scan, git};
@@ -127,7 +127,10 @@ pub(super) struct Sorted {
 /// into rather than owns ([`GeneratedPaths::beside`]) is not, whatever
 /// the inventory says and whichever reader asks: the person's own keys sit
 /// in a shared edit target, so its deletion is judged as every other file
-/// kendex writes into is, or counted as the person's.
+/// kendex writes into is, or counted as the person's. Where the record at
+/// `HEAD` cannot say which files those are ([`Recorded::Unknown`]), only a
+/// deletion the record on disk names as a render is kendex's whole; any
+/// other is judged as a file kendex writes into is.
 pub(super) fn sort(
     root: &Path,
     generated: &GeneratedPaths,
@@ -135,6 +138,15 @@ pub(super) fn sort(
 ) -> Result<Sorted, Failed> {
     let owned = relative(root, &generated.owned(root));
     let written_into = relative(root, &generated.beside(root));
+    let vouched: Option<Vec<PathBuf>> = match &generated.recorded {
+        Recorded::Known(_) => None,
+        Recorded::Unknown { rendered } => Some(
+            rendered
+                .iter()
+                .filter_map(|path| path.strip_prefix(root).ok().map(Path::to_path_buf))
+                .collect(),
+        ),
+    };
     let beside: BTreeSet<String> = match writes {
         None => BTreeSet::new(),
         Some(writes) => writes
@@ -180,7 +192,10 @@ pub(super) fn sort(
             sorted.owned.push(row.owned(path));
             continue;
         }
-        if row.deleted() && !written_into.contains(&path) {
+        let claimable = vouched
+            .as_ref()
+            .is_none_or(|vouched| vouched.iter().any(|at| Path::new(&path).starts_with(at)));
+        if row.deleted() && claimable && !written_into.contains(&path) {
             let inventory = match &committed {
                 Some(read) => read,
                 None => committed.insert(git::committed_inventory(root)?),

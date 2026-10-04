@@ -68,14 +68,14 @@ pub struct GeneratedPaths {
     /// may be in them, so neither the edit nor the deletion is kendex's
     /// alone.
     pub edited: BTreeSet<PathBuf>,
-    /// Shared configuration files the install record at `HEAD` has kendex
-    /// writing keys in ([`recorded`]). Adds nothing to the inventory. A
-    /// removal left uncommitted has taken its entry out of the record on
-    /// disk and may have taken an emptied file away with it, and the
-    /// inventory at `HEAD` still names that file: this is what keeps it a
-    /// file kendex writes into rather than one it owns, for a reading made
-    /// after the action as for the action's own.
-    pub recorded: BTreeSet<PathBuf>,
+    /// What the install record at `HEAD` says kendex writes keys in
+    /// ([`recorded`]). Adds nothing to the inventory. A removal left
+    /// uncommitted has taken its entry out of the record on disk and may
+    /// have taken an emptied file away with it, and the inventory at `HEAD`
+    /// still names that file: this is what keeps it a file kendex writes
+    /// into rather than one it owns, for a reading made after the action as
+    /// for the action's own.
+    pub recorded: Recorded,
     /// Sections a renderer owns inside files whose other bytes belong to
     /// the project. Commit and restore can only change the named section.
     pub regions: BTreeSet<crate::commit_offer::OwnedRegion>,
@@ -85,6 +85,38 @@ pub struct GeneratedPaths {
     /// Adoption copies checked against declared package templates. Refresh
     /// records their provenance but does not write or restore their YAML.
     pub adopted: BTreeMap<PathBuf, AdoptedWorkflow>,
+}
+
+/// What the install record at `HEAD` says about the shared configuration
+/// files kendex writes keys in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded {
+    /// The record at `HEAD` read, or `HEAD` holds neither a record nor an
+    /// inventory listing paths: these files.
+    Known(BTreeSet<PathBuf>),
+    /// `HEAD` holds a record this build does not read, or none while its
+    /// inventory lists paths. That inventory cannot then tell a render from
+    /// a shared file whose last key went, so a deletion it names is
+    /// kendex's only where the record on disk names the path, or a tree
+    /// holding it, as a file it wrote whole: `rendered`.
+    Unknown { rendered: BTreeSet<PathBuf> },
+}
+
+impl Default for Recorded {
+    fn default() -> Self {
+        Recorded::Known(BTreeSet::new())
+    }
+}
+
+impl Recorded {
+    /// The files the record at `HEAD` names; none where it says nothing.
+    fn files(&self) -> &BTreeSet<PathBuf> {
+        static NONE: BTreeSet<PathBuf> = BTreeSet::new();
+        match self {
+            Recorded::Known(files) => files,
+            Recorded::Unknown { .. } => &NONE,
+        }
+    }
 }
 
 impl GeneratedPaths {
@@ -165,7 +197,7 @@ impl GeneratedPaths {
     /// pass edits or takes away ([`GeneratedPaths::edited`]) and `recorded`
     /// as the ones the record at `HEAD` writes keys in
     /// ([`GeneratedPaths::recorded`]).
-    pub(super) fn editing(self, edited: BTreeSet<PathBuf>, recorded: BTreeSet<PathBuf>) -> Self {
+    pub(super) fn editing(self, edited: BTreeSet<PathBuf>, recorded: Recorded) -> Self {
         Self {
             edited,
             recorded,
@@ -187,7 +219,7 @@ impl GeneratedPaths {
         self.shared
             .iter()
             .chain(&self.edited)
-            .chain(&self.recorded)
+            .chain(self.recorded.files())
             .cloned()
             .chain([
                 crate::manifest::project_manifest_path(root),
@@ -287,41 +319,62 @@ fn collect(
 /// uncommitted removal has already taken the entry out of.
 ///
 /// A scope that is not a project, a project outside git, an unborn `HEAD`
-/// and one holding no record name none. So does a record at `HEAD` this
-/// build will not read: the plan reads the record on disk, and refusing
-/// here would fail every plan over a copy only the commit offer's
-/// deletion rule consults, which then judges by the inventory alone.
-pub(super) fn recorded(env: &Env, scope: &Scope) -> Result<BTreeSet<PathBuf>> {
+/// and one holding neither a record nor an inventory listing paths name
+/// none. A record at `HEAD` this build will not read, or none beside such
+/// an inventory, is [`Recorded::Unknown`] with what `lock`, the record on
+/// disk the plan reads, names whole: refusing here would fail every plan
+/// over a copy only the commit offer's deletion rule consults.
+pub(super) fn recorded(env: &Env, scope: &Scope, lock: &crate::lock::Lock) -> Result<Recorded> {
     let Scope::Project { root } = scope else {
-        return Ok(BTreeSet::new());
+        return Ok(Recorded::default());
     };
     if !root.join(".git").exists() {
-        return Ok(BTreeSet::new());
+        return Ok(Recorded::default());
     }
-    let committed =
-        crate::commit_offer::committed(root, crate::lock::LOCK_FILE).map_err(|error| {
-            crate::error::CoreError::GitFailed {
-                command: "read committed install record".to_owned(),
-                stderr: if error.timed_out() {
-                    "install record read timed out".to_owned()
-                } else {
-                    error.said().join("\n")
-                },
-            }
-        })?;
-    let Some(bytes) = committed else {
-        return Ok(BTreeSet::new());
-    };
+    let committed = crate::commit_offer::committed(root, crate::lock::LOCK_FILE).map_err(
+        git_failed("read committed install record", "install record"),
+    )?;
     let path = crate::lock::lock_path(env, scope);
-    let Ok(lock) = crate::lock::parse_text(&path, &String::from_utf8_lossy(&bytes)) else {
-        return Ok(BTreeSet::new());
+    let at_head = match committed {
+        Some(bytes) => crate::lock::parse_text(&path, &String::from_utf8_lossy(&bytes)).ok(),
+        None => {
+            let inventory = crate::commit_offer::committed_inventory(root).map_err(git_failed(
+                "read committed generated inventory",
+                "inventory",
+            ))?;
+            if inventory.is_empty() {
+                return Ok(Recorded::default());
+            }
+            None
+        }
+    };
+    let Some(at_head) = at_head else {
+        return Ok(Recorded::Unknown {
+            rendered: super::owned::paths(env, scope, lock),
+        });
     };
     let mut recorded = BTreeSet::new();
-    for entry in lock.entries.values() {
+    for entry in at_head.entries.values() {
         let edits = super::owned::installed(env, scope, entry).edits?;
         recorded.extend(edits.into_iter().map(|(path, _)| path));
     }
-    Ok(recorded)
+    Ok(Recorded::Known(recorded))
+}
+
+/// A read of the last commit that would not run, as the plan's error:
+/// `command` names the read and `what` the thing it reads.
+fn git_failed(
+    command: &'static str,
+    what: &'static str,
+) -> impl FnOnce(crate::commit_offer::Failed) -> crate::error::CoreError {
+    move |error| crate::error::CoreError::GitFailed {
+        command: command.to_owned(),
+        stderr: if error.timed_out() {
+            format!("{what} read timed out")
+        } else {
+            error.said().join("\n")
+        },
+    }
 }
 
 /// Collect what this pass renders and plan the inventory write for it.
@@ -348,16 +401,10 @@ pub(super) fn plan(
     };
     generated.adopted = adopted;
     if !generated.held.is_empty() {
-        let committed = crate::commit_offer::committed_inventory(root).map_err(|error| {
-            crate::error::CoreError::GitFailed {
-                command: "read committed generated inventory".to_owned(),
-                stderr: if error.timed_out() {
-                    "inventory read timed out".to_owned()
-                } else {
-                    error.said().join("\n")
-                },
-            }
-        })?;
+        let committed = crate::commit_offer::committed_inventory(root).map_err(git_failed(
+            "read committed generated inventory",
+            "inventory",
+        ))?;
         generated.held.retain(|path| {
             path.strip_prefix(root)
                 .ok()

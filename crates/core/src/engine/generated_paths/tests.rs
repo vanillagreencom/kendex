@@ -21,7 +21,7 @@ fn the_document_lists_one_sorted_entry_per_line() {
             .collect(),
         shared: std::iter::once(root.join(".gemini/settings.json")).collect(),
         edited: BTreeSet::new(),
-        recorded: BTreeSet::new(),
+        recorded: crate::engine::Recorded::default(),
         regions: std::iter::once(
             crate::commit_offer::OwnedRegion::new(
                 root.join("AGENTS.md"),
