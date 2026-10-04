@@ -1,1 +1,1 @@
-- The shared refresh caller passes `secrets: inherit`, so the refresh mints its app token and opens its pull request. Adoption replaces the earlier caller.
+- The shared refresh caller passes `secrets: inherit`, so the refresh mints its app token. A v1.8.0 caller stops at that step, before adoption: add the line or run the adopter by hand.

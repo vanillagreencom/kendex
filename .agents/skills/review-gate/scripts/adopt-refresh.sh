@@ -36,20 +36,21 @@ refresh_template="$templates/kendex-refresh.yml"
 # A caller of the shared workflow declares neither; the called job reads
 # these names from the caller's environment. adopt-refresh.test.sh holds them
 # equal to the names .github/workflows/refresh-consumer.yml declares. The
-# called job reads them only when `secrets: inherit` is the line under the
-# caller's `uses:` line; without it they read empty and the token step fails.
+# called job reads them only when the caller passes `secrets: inherit`;
+# without it they read empty and the token step fails. This judge accepts the
+# key only on the line under `uses:`, where the shipped template carries it.
 caller="$(awk '
-  call { print ($0 == "    secrets: inherit" ? "inherit" : "no-secrets"); judged = 1; exit }
+  call { print ($0 == "    secrets: inherit" ? "inherit" : "no-inherit"); judged = 1; exit }
   /^    uses: vanillagreencom\/kendex\/\.github\/workflows\/refresh-consumer\.yml@/ { call = 1 }
-  END { if (!judged) print (call ? "no-secrets" : "inline") }' "$refresh_template")" ||
+  END { if (!judged) print (call ? "no-inherit" : "inline") }' "$refresh_template")" ||
   { printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2; }
 case "$caller" in
   inherit)
     template_environment=kendex
     template_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY' ;;
-  no-secrets)
+  no-inherit)
     printf 'refresh-error=caller-secrets value=%s\n%s\n' "$refresh_template" \
-      'The caller passes no secrets: put secrets: inherit on the line under its uses: line.' >&2
+      'The caller does not pass secrets: inherit: put it on the line under its uses: line.' >&2
     exit 2 ;;
   inline)
     template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2

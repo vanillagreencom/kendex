@@ -555,9 +555,7 @@ for mutation in none record history; do
 done
 
 # The v1.8.0 caller passes no secrets, so its called job reads them empty. A
-# consumer holding those shipped bytes takes the current caller; a release
-# tree holding them is refused before the environment check, and the control
-# judges that caller by the inherit names in a copy of the adopter.
+# consumer holding those shipped bytes takes the current caller.
 git -C "$SKILL_DIR" show 22391ad71dab8ee853f53622ade4b532216ee691:refresh/kendex-refresh.yml >"$TMP/caller-no-secrets"
 ship_caller_template "$TMP/caller-no-secrets"
 ship_caller_template "$CALLER"
@@ -569,27 +567,38 @@ if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
     jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
   ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
 else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
-OLD_RELEASE="$TMP/release-no-secrets"
-mkdir -p "$OLD_RELEASE"
-cp "$TMP/caller-no-secrets" "$OLD_RELEASE/kendex-refresh.yml"
-for mutation in none inherit; do
+# A release tree whose caller lacks secrets: inherit on the line under its
+# uses: line is refused before the environment check. The v1.8.0 caller ends
+# at uses:, which the END rule judges; the named-secrets caller puts a
+# secrets: mapping there, which the next-line rule judges. Each rule's control
+# edits it in a copy of the adopter.
+{ cat "$TMP/caller-no-secrets"
+  printf '%s\n' '    secrets:' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}' \
+    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'
+} >"$TMP/caller-named-secrets"
+for fixture in no-secrets named-secrets; do
+  mkdir -p "$TMP/release-$fixture"
+  cp "$TMP/caller-$fixture" "$TMP/release-$fixture/kendex-refresh.yml"
+done
+while IFS='|' read -r fixture mutation pattern replacement; do
   sandbox
   cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
   commit "$DIR"
-  case "$mutation" in
-    none) ;;
-    inherit)
-      file_edit "$DIR" "$ADOPT" 1 '^  inherit\)$' 's/^  inherit)$/  inherit | no-secrets)/' ;;
-  esac
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$OLD_RELEASE"
+  [ "$mutation" = none ] || file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement"
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$TMP/release-$fixture"
   matched=no
-  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$OLD_RELEASE/kendex-refresh.yml" <<<"$OUT" &&
+  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$TMP/release-$fixture/kendex-refresh.yml" <<<"$OUT" &&
       cmp -s "$DIR/$REFRESH" "$TMP/caller-no-secrets" && ! grep -q '^ok check=' <<<"$OUT"; then matched=yes; fi
   case "$mutation:$matched" in
-    none:yes) ok 'a caller template with no secrets: inherit is refused and the workflow kept' ;;
-    inherit:no) ok 'control: judging the v1.8.0 caller by the inherit names turns the refusal row red' ;;
-    *) bad "caller secrets refusal mutation=$mutation (rc=$RC)" "$OUT" ;;
+    none:yes) ok "a $fixture caller template is refused and the workflow kept" ;;
+    end-rule:no | next-line:no) ok "control: $mutation turns the $fixture caller refusal row red" ;;
+    *) bad "caller secrets refusal fixture=$fixture mutation=$mutation (rc=$RC)" "$OUT" ;;
   esac
-done
+done <<'ROWS'
+no-secrets|none||
+no-secrets|end-rule|^  END \{ if \(!judged\) print \(call \? "no-inherit"|s/(call ? "no-inherit"/(call ? "inherit"/
+named-secrets|none||
+named-secrets|next-line|^  call \{ print \(\$0 == "    secrets: inherit"|s/(\$0 == "    secrets: inherit"/(1/
+ROWS
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
