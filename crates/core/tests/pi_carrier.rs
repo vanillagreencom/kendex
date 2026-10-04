@@ -344,10 +344,11 @@ fn record_installed_packages(w: &World, scope: &Scope) {
 fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
     use kendex_core::{apply, engine, lock, manifest, pi_ext, scan, settings};
     use serde_json::json;
-    let w = world();
-    let name = "pi-widgets";
-    let (catalog, source) = widgets_catalog(&w);
-    for scope in [Scope::Global, scope(&w)] {
+    for global in [true, false] {
+        let w = world();
+        let name = "pi-widgets";
+        let (catalog, source) = widgets_catalog(&w);
+        let scope = if global { Scope::Global } else { scope(&w) };
         let path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
