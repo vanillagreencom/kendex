@@ -149,8 +149,9 @@ session_rows_last() { # FILE [EVENT]
 #                SESSION_ROWS_PROMPT_TOO_LONG lists: the session's context
 #                filled its window, so every turn it starts fails the same way
 #                while its harness stays up
-#   live         any other Claude Code row, or a Pi StopFailure whose
-#                `message` names neither a limit nor a prompt too long
+#   live         SessionEnd for `clear` or `resume` from either harness, any
+#                other Claude Code row, or a Pi StopFailure whose `message`
+#                names neither a limit nor a prompt too long
 # Exit 2 where the file could not be read, jq could not read its last row, or
 # lane_limit_banner could not scan a Pi StopFailure's `message`; the verdict is
 # then `none` and says nothing.
