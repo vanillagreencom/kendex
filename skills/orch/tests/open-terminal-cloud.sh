@@ -3,7 +3,7 @@
 # refusals of what a cloud session cannot take, the cloud-bundle-risk check,
 # the item worktree and its pushed branch, one `claude -p --cloud` under the
 # lane's account in that worktree whose task is the brief file closed by the
-# session words, naming the lane's model and the pushed branch as --ref with
+# session words, naming the lane's model id and the pushed branch as --ref with
 # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in its environment, a CLI
 # refusal of that --ref as a failed launch, the session id it prints, and the
 # lane record naming the
@@ -127,7 +127,9 @@ run_ot() {
   rm -f -- "${TMP_ROOT:?}/worktree.log" "${TMP_ROOT:?}/claude.log"
   rm -rf -- "${TMP_ROOT:?}/wt"
   set +e
-  (cd "$REPO" && env PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
+  # The ceiling keeps a plain item directory outside every repository wherever
+  # TMPDIR sits, so its branch read fails as a real one does.
+  (cd "$REPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
     LANES_CLI="$BIN/lanes" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' GH_REPO="" TMUX="" \
     STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" STUB_CLAUDE_OUT="$STARTED" ${env_args[@]+"${env_args[@]}"} \
     "$script" "$@" >/dev/null 2>"$TMP_ROOT/err")
@@ -135,7 +137,8 @@ run_ot() {
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
 }
-CLOUD=(--host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" --brief-file "$BRIEF" --state-dir "$STATE")
+# Its model is an alias the claude adapter maps, so the arguments row reads the id.
+CLOUD=(--host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model sonnet --effort high" --brief-file "$BRIEF" --state-dir "$STATE")
 record() {
   "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | first // {} | [.host, .kind, .account, .session_id, .window, .mail_root, .status, .tier] | map(. // "null") | join(" ")'
 }
@@ -144,7 +147,7 @@ claude_argv() { [[ -f "$TMP_ROOT/claude.log" ]] && sed -n '5,$p' "$TMP_ROOT/clau
 # The workaround variable claude ran under and the argv words past the task's
 # --output-format pair, on one line.
 launch_args() { printf '%s %s' "$(sed -n 4p "$TMP_ROOT/claude.log")" "$(claude_argv | sed -n '6,$p' | paste -sd' ' -)"; }
-LAUNCH_ARGS="traffic=1 --model opus --ref cc-1"
+LAUNCH_ARGS="traffic=1 --model claude-sonnet-5 --ref cc-1"
 made() { [[ -e "$WT_LOG" ]] && echo yes || echo no; }
 
 echo "=== a cloud session is launched from the item's pushed branch and recorded ==="
@@ -159,7 +162,7 @@ assert_eq "$(sed -n '1,2p;4,5p' <<<"$ARGV" | paste -sd' ' -)" "-p --cloud --outp
 assert_eq "task=$([[ "$(sed -n 3p <<<"$ARGV")" == "$TASK_WORD" ]] && echo brief || echo other)" "task=brief" \
   "the task is the brief file's text closed by the session words, never a start command or the mailbox words"
 assert_eq "$(launch_args)" "$LAUNCH_ARGS" \
-  "the session runs the lane's model, clones the pushed item branch by --ref, and runs with the #81776 workaround set"
+  "the session runs the lane's model by its id, clones the pushed item branch by --ref, and runs with the #81776 workaround set"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-1 running standard" \
   "the record names the host and kind, the account and the session id, no window, and the standard tier the brief's orch words leave"
 
@@ -238,16 +241,17 @@ for row in '{"ok":true,"url":"https://claude.ai/code"}|no session id' '{"ok":fal
 done
 
 echo "=== a failed push or launch stops with no record ==="
-# ENV|LINE|CLAUDE|OLD -> NEW: the stub's failure, the refusal line past its key
-# word, whether claude ran, and the control's edit, the guard's text kept and
-# its behaviour removed; the edit is the rest of the row, `|` and all. The
+# ENV|LINE|CLAUDE|WORKTREE|OLD -> NEW: the stub's failure, the refusal line
+# past its key word, whether claude ran, the worktree calls made, and the
+# control's edit, the guard's text kept and its behaviour removed; the edit is
+# the rest of the row, `|` and all. The
 # claude refusal of --ref still prints the started answer, so its exit status
 # alone stops the launch.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 FAILURE_ROWS=(
-  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
-  'STUB_CLAUDE_REFUSE=1|cloud-launch-failed item=CC-21 exit=1|ran|[[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed -> true || { ot_message cloud-launch-failed'
-  'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
+  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20,push CC-20 --set-upstream||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
+  'STUB_CLAUDE_REFUSE=1|cloud-launch-failed item=CC-21 exit=1|ran|create CC-21,push CC-21 --set-upstream|[[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed -> true || { ot_message cloud-launch-failed'
+  'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none|create CC-25||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
 )
 failure_row() { # SCRIPT ROW ITEM — the launch, with RC and ERR set
   local env line item
@@ -256,11 +260,11 @@ failure_row() { # SCRIPT ROW ITEM — the launch, with RC and ERR set
   run_ot SCRIPT="$1" "$env" -- "${CLOUD[@]}" "${3:-${item%% *}}"
 }
 for row in "${FAILURE_ROWS[@]}"; do
-  IFS='|' read -r _ line claude _ <<<"$row"
+  IFS='|' read -r _ line claude wt _ <<<"$row"
   item="${line#* item=}"
   failure_row "$OT" "$row"
-  assert_eq "rc=$RC refused=$(grep -cxF "open-terminal: $line" <<<"$ERR" || true) claude=$([[ -e "$TMP_ROOT/claude.log" ]] && echo ran || echo none) record=$(record "${item%% *}")" \
-    "rc=1 refused=1 claude=$claude record=null null null null null null null null" "${line%% *} stops the launch with no record" "$TMP_ROOT/err"
+  assert_eq "rc=$RC refused=$(grep -cxF "open-terminal: $line" <<<"$ERR" || true) claude=$([[ -e "$TMP_ROOT/claude.log" ]] && echo ran || echo none) worktree=$(paste -sd, "$WT_LOG") record=$(record "${item%% *}")" \
+    "rc=1 refused=1 claude=$claude worktree=$wt record=null null null null null null null null" "${line%% *} stops the launch with no record" "$TMP_ROOT/err"
 done
 
 echo "=== the launch arm is the declared launch ==="
@@ -319,18 +323,28 @@ assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD 
   "control: a record written with a window fails the record row"
 # One per failure guard: each removed in turn, its row's launch is recorded.
 for i in "${!FAILURE_ROWS[@]}"; do
-  IFS='|' read -r _ line _ edit <<<"${FAILURE_ROWS[$i]}"
+  IFS='|' read -r _ line _ _ edit <<<"${FAILURE_ROWS[$i]}"
   mutant "failure-$i" "${edit%% -> *}" "${edit#* -> }"
   failure_row "$MUTANT" "${FAILURE_ROWS[$i]}" "CC-2$((i + 2))"
   assert_eq "$(record "CC-2$((i + 2))")" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-2$((i + 2)) running standard" \
     "control: without its guard, the ${line%% *} row is recorded" "$TMP_ROOT/err"
 done
+# The branch read kept, moved below the push: the unread row pushes.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+BRANCH_READ='  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }'
+# shellcheck disable=SC2016
+PUSH='  "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }'
+mutant branch-after-push "$BRANCH_READ"$'\n'"$PUSH" "$PUSH"$'\n'"$BRANCH_READ"
+failure_row "$MUTANT" "${FAILURE_ROWS[2]}"
+assert_eq "worktree=$(paste -sd, "$WT_LOG")" "worktree=create CC-25,push CC-25 --set-upstream" \
+  "control: a branch read below the push fails the cloud-branch-unread row's worktree calls" "$TMP_ROOT/err"
 # One per launch argument: each removed in turn fails the arguments row.
 # NAME|OLD -> NEW: the argument and the edit that drops it.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 ARG_EDITS=(
   'workaround|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p -> claude -p'
-  'model| --model "$LAUNCH_MODEL" --ref -> --ref'
+  'model| --model "$model" --ref -> --ref'
+  'model id|model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" -> model="$LAUNCH_MODEL"'
   'ref| --ref "$branch") -> )'
 )
 for i in "${!ARG_EDITS[@]}"; do

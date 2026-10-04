@@ -344,8 +344,9 @@ Options:
                     MODEL --ref BRANCH` there under the account with
                     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, BRIEF the
                     file's text closed by the session words of
-                    lib/lane-launch.sh, MODEL the --launch-flags model and
-                    BRANCH the pushed item branch, and records the session id
+                    lib/lane-launch.sh, MODEL the --launch-flags model
+                    written as the tmux launch writes it, a sonnet or haiku
+                    alias as its model id, and BRANCH the pushed item branch, and records the session id
                     it prints, refusing as cloud-launch-failed where the CLI
                     fails, a --ref it cannot honor included, and as
                     cloud-session-unread where it prints none. A hosted launch needs tmux mode, a resolved --lane
