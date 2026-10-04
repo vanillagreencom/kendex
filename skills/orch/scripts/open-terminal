@@ -54,6 +54,7 @@ parse_argv() {
   WAKE=false
   WAIT_SLOT=false
   OVER_CAP=false
+  CROSS_REPO=""
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -85,6 +86,8 @@ parse_argv() {
       --wake) WAKE=true; shift ;;
       --wait-slot) WAIT_SLOT=true; shift ;;
       --over-cap) OVER_CAP=true; shift ;;
+      --cross-repo) need_val "$@"; CROSS_REPO="$2"; shift 2 ;;
+      --cross-repo=*) CROSS_REPO="${1#--cross-repo=}"; need_val --cross-repo "$CROSS_REPO"; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -1350,10 +1353,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
+    --arg over_cap "$CAP_PASSED" --arg cross_repo "$CROSS_REPO_RECORD" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap, cross_repo: $cross_repo}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)
@@ -3000,6 +3003,26 @@ elif [[ -n "${LINEAR_TEAM:-}" ]]; then
   checkout_repo="$(jq -er '.team.key | strings | select(length > 0)' <<<"$team_record")" \
     || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
 fi
+# A fleet launch runs in its overseer's repository: the item check above reads
+# the checkout this launch runs from, and nothing there binds that checkout to
+# the fleet it records into. The state's `.overseer.cwd` names the overseer's
+# directory, and the worktrees of one repository share a common root, so a
+# lane's own worktree is the overseer's repository and another repository's
+# clone is not. No state yet, or one with no overseer directory recorded,
+# binds nothing. --cross-repo admits an owner-sanctioned
+# exception, which every lane record of the batch carries as cross_repo.
+OVERSEER_FOREIGN=false overseer_root="" launch_root="" CROSS_REPO_RECORD=""
+if [[ "$FLEET" == true ]] && "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+  overseer_cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')" \
+    || { ot_message overseer-unjudged cause=state-read state=oversee >&2; exit 1; }
+  if [[ -n "$overseer_cwd" ]]; then
+    overseer_root="$("$SCRIPT_DIR/git-context" common-root "$overseer_cwd")" \
+      || { ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; exit 1; }
+    launch_root="$("$SCRIPT_DIR/git-context" common-root "$CLAIM_ROOT")" \
+      || { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; exit 1; }
+    [[ "$overseer_root" == "$launch_root" ]] || { OVERSEER_FOREIGN=true; CROSS_REPO_RECORD="$CROSS_REPO"; }
+  fi
+fi
 launched=0
 preparing=0
 failed=0
@@ -3058,6 +3081,10 @@ for raw in "${ITEMS[@]}"; do
       ot_message item-foreign "repo=$item_repo" route=peer-mail >&2
       exit 1
     fi
+  fi
+  if [[ "$OVERSEER_FOREIGN" == true ]]; then
+    [[ -n "$CROSS_REPO" ]] || { ot_message overseer-foreign "item=$item" "repo=$overseer_root" "checkout=$launch_root" route=peer-mail >&2; exit 1; }
+    ot_message cross-repo-admitted "item=$item" "repo=$overseer_root" "reason=$CROSS_REPO"
   fi
   if [[ "$FLEET" == true && "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then

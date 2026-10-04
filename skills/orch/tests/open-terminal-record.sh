@@ -216,7 +216,7 @@ run_ot --ghostty --harness claude --cmd "true --model opus --verbose --effort hi
 REC="$(record CC-1)"
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=1" "a GUI launch writes one record and the state is created for it"
 assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
-  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
+  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=null status=running over_cap=null cross_repo=null allow_all=null" \
   "the record carries the item, no window off tmux, the worktree as mail_root, the flags' model and status running"
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane running stamps running_at, the watch's start-stall anchor"
@@ -250,7 +250,7 @@ assert_eq "rc=$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.i
 # it, so the model recorded here is the model the harness was started with.
 RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
+  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus effort=high session_id=null status=running over_cap=null cross_repo=null allow_all=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 assert_eq "launch=$(launch_of CC-2) unread=$(grep -c '^open-terminal: launch-identity-unread item=CC-2 pane=%1 step=harness$' <<<"$ERR" || true)" \
   'launch=["%1","number",null,null] unread=1' \
@@ -278,7 +278,7 @@ launch_identity_row CC-4 "$IDENTITY_OT"
 assert_eq "rc=$RC launch=$(launch_of CC-4)" 'rc=0 launch=["%1","number",null,null]' \
   "control: without the read at confirmation the record names no harness"
 STUB_GH_REPO=o/r RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
-assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|kind|mail_root|surface|model|effort|session_id|launched_at|over_cap|allow_all)=[^ ]*//g')" \
+assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|kind|mail_root|surface|model|effort|session_id|launched_at|over_cap|cross_repo|allow_all)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=claude window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
@@ -324,7 +324,7 @@ COP_RECORD_HOME="$TMP_ROOT/copilot-home"
 mkdir -p "$COP_RECORD_HOME/hooks"
 for name in lane-mail-check lane-mail-compact lane-mail-start; do : > "$COP_RECORD_HOME/hooks/$name.sh"; : > "$COP_RECORD_HOME/hooks/$name.json"; done
 COPILOT_HOME="$COP_RECORD_HOME" RUN_TMUX=stub,1,0 run_ot --tmux --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" CC-140
-assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap|allow_all)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
+assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap|cross_repo|allow_all)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
   "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null kind=local mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 effort=high session_id=null status=running extensions=true" \
   "a Copilot fleet launch opens its window and records the lane, its harness and model, its home loading the reader"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-140") | [.tier, .tier_inputs]' | jq -e '. == ["standard", {estimate:null, delta:null, paths:null}]')" \
@@ -462,7 +462,7 @@ RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT" != "$LAUNCHED_AT" ]] && echo yes || echo no)" "iso renewed=yes" \
   "a relaunch renews running_at, so the watch counts a fresh start-stall window from it"
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
-  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=low session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
+  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=low session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null cross_repo=null allow_all=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
   'true' "a native relaunch retains the first file-backed launch tier and inputs"
@@ -524,7 +524,7 @@ echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
-  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
+  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null cross_repo=null allow_all=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
   'true' "a wake retains the first file-backed launch tier and inputs"
@@ -583,7 +583,7 @@ printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB kind=ssh mail_root=/srv/lane surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
+  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB kind=ssh mail_root=/srv/lane surface=tmux model=opus effort=high session_id=null status=running over_cap=null cross_repo=null allow_all=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
@@ -726,6 +726,55 @@ run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" --state-dir "$TMP
 assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length' "$TMP_ROOT/named/workflow-state-oversee.json" 2>/dev/null || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=1 launch_dir=none" \
   "a launch run from another checkout records into the named state directory and not into that checkout's own"
+
+echo "=== a fleet launch runs in the repository its overseer record names ==="
+# The overseer runs in a repository of its own with one linked worktree, the
+# shape a lane's worktree has; the launch from $ELSEWHERE is the clone of
+# another repository. LINEAR_TEAM is empty on every row, the configuration
+# that leaves the item check above with no checkout team to compare.
+OVERSEER_REPO="$TMP_ROOT/overseer-repo"
+OVERSEER_WT="$TMP_ROOT/overseer-wt"
+git -C "$TMP_ROOT" init -q overseer-repo
+git -C "$OVERSEER_REPO" config gc.auto 0
+git -C "$OVERSEER_REPO" config maintenance.auto false
+git -C "$OVERSEER_REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m root
+git -C "$OVERSEER_REPO" worktree add -q "$OVERSEER_WT" -b lane
+BOUND="$TMP_ROOT/bound"
+"$WS" --state-dir "$BOUND" init oversee >/dev/null
+"$WS" --state-dir "$BOUND" update oversee --arg cwd "$OVERSEER_REPO" '.overseer = {cwd: $cwd}' >/dev/null
+bound_record() { "$WS" --state-dir "$BOUND" get oversee '[.lanes[]? | select(.item == "'"$1"'") | .cross_repo // "null"] | join(",")'; }
+LINEAR_TEAM= run_ot STATE_DIR="$BOUND" CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" CC-51
+assert_eq "rc=$RC refused=$(grep -cx "open-terminal: overseer-foreign item=CC-51 repo=$OVERSEER_REPO checkout=$ELSEWHERE route=peer-mail" <<<"$ERR" || true) opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true) record=[$(bound_record CC-51)]" \
+  "rc=1 refused=1 opened=0 record=[]" \
+  "a fleet launch from another repository's clone refuses overseer-foreign, opens nothing and records nothing"
+LINEAR_TEAM= run_ot STATE_DIR="$BOUND" CWD="$OVERSEER_WT" --ghostty "${FLEET_CMD[@]}" CC-52
+assert_eq "rc=$RC record=[$(bound_record CC-52)]" "rc=0 record=[null]" \
+  "a fleet launch from a worktree of the overseer's repository passes with no cross_repo"
+LINEAR_TEAM= run_ot STATE_DIR="$BOUND" CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" --cross-repo 'owner ruling 1' CC-53
+assert_eq "rc=$RC admitted=$(grep -cx "open-terminal: cross-repo-admitted item=CC-53 repo=$OVERSEER_REPO reason=owner ruling 1" <<<"$OUT" || true) record=[$(bound_record CC-53)]" \
+  "rc=0 admitted=1 record=[owner ruling 1]" \
+  "--cross-repo admits the launch from another repository and its lane record carries the reason"
+GONE_STATE="$TMP_ROOT/bound-gone"
+"$WS" --state-dir "$GONE_STATE" init oversee >/dev/null
+"$WS" --state-dir "$GONE_STATE" update oversee --arg cwd "$TMP_ROOT/gone-overseer" '.overseer = {cwd: $cwd}' >/dev/null
+LINEAR_TEAM= run_ot STATE_DIR="$GONE_STATE" CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" CC-54
+assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-root path=$TMP_ROOT/gone-overseer" <<<"$ERR" || true)" \
+  "rc=1 unjudged=1" \
+  "an overseer directory git cannot read leaves the binding unjudged and launches nothing"
+
+# One control per rule: the comparison keeps its text and admits every
+# checkout, and the unread overseer directory falls through to the comparison.
+BIND_OT="$(mutant_scripts bind-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$BIND_OT" '[[ "$overseer_root" == "$launch_root" ]] ||' '[[ "$overseer_root" == "$launch_root" ]] || true ||'
+LINEAR_TEAM= run_ot SCRIPT="$BIND_OT" STATE_DIR="$BOUND" CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" CC-55
+assert_eq "rc=$RC record=[$(bound_record CC-55)]" "rc=0 record=[null]" \
+  "control: without the comparison the foreign launch is admitted, which turns the overseer-foreign row red"
+UNJUDGED_OT="$(mutant_scripts unjudged-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$UNJUDGED_OT" '|| { ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; exit 1; }' \
+  '|| { false && ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; }'
+LINEAR_TEAM= run_ot SCRIPT="$UNJUDGED_OT" STATE_DIR="$GONE_STATE" CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" CC-56
+assert_eq "unjudged=$(grep -c '^open-terminal: overseer-unjudged ' <<<"$ERR" || true)" "unjudged=0" \
+  "control: without the unread-directory refusal no overseer-unjudged line is printed, which turns its row red"
 
 echo "=== a record that cannot be written into a live state fails the item with its window standing ==="
 # The oversee workflow has surface 2 hand-append lane records; a non-object entry

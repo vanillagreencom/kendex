@@ -112,6 +112,9 @@ ot_message() { # REASON FIELD=VALUE...
     item-repo-unresolved) text='The checkout repository or configured Linear team could not be resolved. Nothing was launched.' ;;
     item-foreign) text='This item belongs to another repository. Nothing was launched.
 fix=File a prioritized issue in that repository and send it with lane-mail peer send --repo [REPO]; with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch its overseer.' ;;
+    overseer-foreign) text='The fleet state names an overseer in another repository than the checkout this launch runs from, so its lane would work here while that fleet records and watches it. Nothing was launched. repo is the overseer repository and checkout this launch'"'"'s. Send the item to the checkout'"'"'s overseer with lane-mail peer send --repo [CHECKOUT], or launch again with --cross-repo REASON for an owner-sanctioned cross-repository lane.' ;;
+    overseer-unjudged) text='Whether this launch runs in the fleet overseer'"'"'s repository could not be judged. Nothing was launched. cause=state-read is the fleet state, which workflow-state names above; overseer-root is the directory the state records as the overseer'"'"'s, and checkout-root the checkout this launch runs from, either not a git checkout git can read.' ;;
+    cross-repo-admitted) text='The launch runs outside the fleet overseer'"'"'s repository on --cross-repo, and its lane record carries the reason as cross_repo.' ;;
     claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. Without --cmd, a hosted Codex or Pi relaunch selects a matching session on the host, or runs the start brief in the same call when none exists.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
@@ -434,11 +437,18 @@ Options:
                     each launch's directory is placed: a fleet passes the
                     directory holding the file `workflow-state path oversee`
                     prints from the overseer's checkout, so a launch run
-                    from another repository records into the state the
+                    from another directory records into the state the
                     watch reads. Without it the launch names
                     no fleet: no lane record is written and no state is
                     created, which is what a launch-only handoff wants
-                    (handoff.md § 2).
+                    (handoff.md § 2). A launch under it from a checkout
+                    whose repository is not the one the state's overseer
+                    record names as its directory is refused as
+                    overseer-foreign; worktrees of that repository pass.
+  --cross-repo REASON
+                    Admit an owner-sanctioned launch that overseer-foreign
+                    would refuse, printed as cross-repo-admitted and recorded
+                    in its lane record as cross_repo REASON.
   --launch-flags S  Flags for the harness command THIS LAUNCHER BUILDS, chosen
                     per task by the caller (model, effort, permission posture).
                     They reach a harness only through that command. A --cmd
@@ -679,8 +689,9 @@ mail_root the local worktree), mail_root, surface, model, session_id, session_si
 (the time this launch or relaunch read before its terminal opened), allow_all
 (whether a copilot command grants --allow-all or --yolo), launched_at,
 status `running`, or `preparing` with its `prepare` record for a hosted lane
-handed to a background job (see --host), and over_cap, `fleet` where an
---over-cap launch passed the fleet cap;
+handed to a background job (see --host), over_cap, `fleet` where an
+--over-cap launch passed the fleet cap, and cross_repo, the --cross-repo
+reason where a launch was admitted outside the overseer's repository;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item,

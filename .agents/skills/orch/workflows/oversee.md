@@ -91,7 +91,7 @@ A dead or walled terminal lane uses native resume, as [lane-directive.md § Reco
 
 ### Lane record
 
-The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the file `workflow-state path oversee` prints from the overseer's checkout, which § 4 passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another repository records into the same fleet and not into that repository's own state.
+The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the file `workflow-state path oversee` prints from the overseer's checkout, which § 4 passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another directory of the overseer's repository records into the same fleet; one from another repository's checkout is refused as `overseer-foreign` ([lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate)).
 
 ```bash
 .agents/skills/orch/scripts/workflow-state path oversee
