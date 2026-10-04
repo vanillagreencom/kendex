@@ -142,3 +142,90 @@ fn a_dependency_shared_with_a_held_package_at_another_commit_is_named_and_stays(
     assert!(installed_body(&w, "z").contains("z version one."));
     assert_eq!(locked_commit(&w, "z"), first);
 }
+
+/// A set already installed is added again after its source moved: the set
+/// the request names comes current, its new member with it, and a package
+/// outside it stays at the commit its record names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn adding_an_installed_set_again_brings_it_current_and_no_one_else() {
+    let w = world();
+    write_skill(&w.upstream, "m1", "", "m1 version one.");
+    write_skill(&w.upstream, "solo", "", "solo version one.");
+    std::fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"m1\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.solo]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "m2", "", "m2 version two.");
+    write_skill(&w.upstream, "solo", "", "solo version two.");
+    std::fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"m1\", \"m2\"]\n",
+    )
+    .unwrap();
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let request = AddRequest {
+        source: Some("cat".into()),
+        bundles: vec!["kit".into()],
+        ..AddRequest::default()
+    };
+    let report = ops::add(&w.env, &w.scope, &request).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    assert!(installed_body(&w, "m2").contains("m2 version two."));
+    assert_eq!(locked_commit(&w, "m1"), second);
+    assert!(installed_body(&w, "solo").contains("solo version one."));
+    assert_eq!(locked_commit(&w, "solo"), first);
+}
+
+/// Two sets from one catalog sharing a member, added one after the other to
+/// different tools with the source standing still: the installed set holds
+/// at the commit its record names, which is the commit the new one follows,
+/// so the shared member is wanted at one commit and lands on both tools.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn overlapping_sets_added_to_different_tools_share_their_member() {
+    use kendex_core::lock::{entry_key, load as load_lock, lock_path};
+    use kendex_core::model::{HarnessId, ItemKind};
+    let w = world();
+    for name in ["shared", "first", "second"] {
+        write_skill(&w.upstream, name, "", &format!("{name}."));
+    }
+    std::fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.one]\ndescription = \"a set\"\nskills = [\"shared\", \"first\"]\n\n[bundles.two]\ndescription = \"another\"\nskills = [\"shared\", \"second\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "");
+    sync_and_apply(&w);
+    let add = |bundle: &str, harness: HarnessId| {
+        let request = AddRequest {
+            source: Some("cat".into()),
+            bundles: vec![bundle.into()],
+            harnesses: Some(vec![harness]),
+            ..AddRequest::default()
+        };
+        let report = ops::add(&w.env, &w.scope, &request).unwrap();
+        assert_eq!(messages(&report), Vec::<String>::new(), "{bundle}");
+        apply::execute(&w.env, &report.plan).unwrap();
+    };
+    add("one", HarnessId::Claude);
+    add("two", HarnessId::Gemini);
+
+    let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    for harness in [HarnessId::Claude, HarnessId::Gemini] {
+        let key = entry_key(ItemKind::Skill, "shared", harness);
+        assert!(lock.entries.contains_key(&key), "{key} is not installed");
+    }
+}

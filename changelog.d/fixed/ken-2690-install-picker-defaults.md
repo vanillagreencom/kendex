@@ -1,1 +1,0 @@
-- The app's install picker checks a project's own default tools, and says why it offers none when that project's `kendex.toml` does not parse.

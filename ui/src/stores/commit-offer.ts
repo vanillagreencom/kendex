@@ -676,10 +676,13 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
           return;
         }
       }
+      // The reading the offer was scoped to: the files kendex writes into
+      // and does not own whole ride the commit only through it.
       const committed = await commands.commitOfferCommit(
         offer.root,
         message,
         selection,
+        get().baselines[offer.root] ?? null,
       );
       if (committed.status === "error") return transport(committed.error);
       if (committed.data.kind === "nothing") {

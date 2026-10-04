@@ -116,12 +116,7 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
         // The entry was all the file held, so the removal retires it.
         assert!(
             !settings.exists(),
-            "{asked}: the emptied settings file goes"
-        );
-        let after = fs::read_to_string(&settings).unwrap_or_default();
-        assert!(
-            !after.contains("guard.sh"),
-            "{asked}: and nothing is left registered to run it: {after}"
+            "{asked}: the emptied settings file goes, and nothing is left registered to run it"
         );
     }
 }
@@ -176,10 +171,9 @@ fn switching_off_a_hook_whose_event_changed_leaves_nothing_registered() {
     apply_now(&f);
 
     // The entry was all the file held, so switching it off retires it.
-    let after = fs::read_to_string(&settings).unwrap_or_default();
     assert!(
-        !after.contains("guard.sh"),
-        "a hook switched off runs from nowhere: {after}"
+        !settings.exists(),
+        "a hook switched off runs from nowhere: its emptied settings file goes"
     );
     assert!(
         f.project.join(".claude/hooks/guard.sh.disabled").is_file(),

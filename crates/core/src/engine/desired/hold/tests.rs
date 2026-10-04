@@ -31,7 +31,11 @@ fn manifest_with(items: &[(&str, Option<&str>)], bundles: &[&str]) -> Manifest {
 /// [`held_manifest`] for one target, which is what every case below
 /// names. A set of them is covered end to end in `package_pins`.
 fn held_for(manifest: &Manifest, lock: &Lock, kind: ItemKind, name: &str) -> (Manifest, HeldPins) {
-    held_manifest(manifest, lock, &BTreeSet::from([(kind, name.to_owned())]))
+    let target = Held::Item {
+        kind,
+        name: name.to_owned(),
+    };
+    held_manifest(manifest, lock, &BTreeSet::from([target]))
 }
 
 fn entry_from(

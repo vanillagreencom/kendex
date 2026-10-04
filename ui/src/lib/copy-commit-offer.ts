@@ -54,7 +54,7 @@ export const declaresWhatChanged = (path: string) =>
  *  reproducing the install, not about anything breaking. */
 export const MANIFEST_LEFT_LABEL = "This commit leaves out your package list";
 export const manifestLeft = (path: string) =>
-  `This action changed ${path}, which lists what this project installs. kendex writes keys in that file and leaves the rest of it to you, so it never commits it. Commit ${path} yourself: until you do, a checkout made from this commit holds the files without the list that asks for them, and nobody else can reproduce this install from it.`;
+  `This action changed ${path}, which lists what this project installs. It already held changes of yours, and committing the whole file would commit those too, so kendex leaves it out. Commit ${path} yourself: until you do, a checkout made from this commit holds the files without the list that asks for them, and nobody else can reproduce this install from it.`;
 
 export const ACCEPT_EARLIER_LABEL =
   "Commit the earlier changes in these files too";

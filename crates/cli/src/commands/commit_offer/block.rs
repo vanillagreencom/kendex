@@ -288,35 +288,60 @@ fn set_up_label(stale: &[Stale]) -> String {
     )
 }
 
+/// What the offer says about the changed files kendex writes into and does
+/// not own whole, each in one place: carried by the commit, left out
+/// because it held a change before the write, left out because the reading
+/// before the write would not run, or left alone.
+pub struct Beside<'a> {
+    /// The write changed each from a clean state, and the commit carries it.
+    pub carried: Vec<&'a str>,
+    /// The write changed each over a change of its own, which a commit of
+    /// the whole file would carry too.
+    pub held: Vec<&'a str>,
+    /// The reading before the write would not run, and every changed one is
+    /// left out for it.
+    pub unread: Option<(&'a Failed, Vec<&'a str>)>,
+    /// The rest: no reading says the write changed them alone.
+    pub rest: Vec<&'a str>,
+}
+
 /// The offer itself: what changed, what kendex leaves alone, and why a
 /// choice is missing. The choices follow, from [`pick`].
-pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
-    let mut lines = headed(style, &head(&offer.scan.root, offer.scan.count()));
-    for path in offer.scan.owned.iter().take(PATHS_SHOWN) {
-        lines.extend(said_as(style, Status::Notice, &path.path));
+pub fn offer(style: &Style, offer: &Offer, beside: &Beside) -> Vec<String> {
+    let mut paths: Vec<&str> = offer
+        .scan
+        .owned
+        .iter()
+        .map(|owned| owned.path.as_str())
+        .chain(beside.carried.iter().copied())
+        .collect();
+    paths.sort_unstable();
+    let mut lines = headed(style, &head(&offer.scan.root, paths.len()));
+    for path in paths.iter().take(PATHS_SHOWN) {
+        lines.extend(said_as(style, Status::Notice, path));
     }
-    if offer.scan.owned.len() > PATHS_SHOWN {
+    if paths.len() > PATHS_SHOWN {
         lines.extend(said_as(
             style,
             Status::Notice,
-            &format!("… and {} more", offer.scan.owned.len() - PATHS_SHOWN),
+            &format!("… and {} more", paths.len() - PATHS_SHOWN),
         ));
     }
-    if !offer.scan.shared.is_empty() {
+    if !beside.rest.is_empty() {
         lines.extend(said_as(
             style,
             Status::Decision,
             &format!(
                 "kendex also changed {} shared file{}; it writes one key in each, so committing them would commit your own changes to them too",
-                offer.scan.shared.len(),
-                plural(offer.scan.shared.len())
+                beside.rest.len(),
+                plural(beside.rest.len())
             ),
         ));
-        for path in &offer.scan.shared {
+        for path in &beside.rest {
             lines.extend(quoted(style, path));
         }
     }
-    lines.extend(left_out(style, &offer.scan));
+    lines.extend(left_out(style, beside));
     if offer.scan.others > 0 {
         lines.extend(said_as(
             style,
@@ -334,20 +359,41 @@ pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
     lines
 }
 
-/// The manifest the commit leaves out: it held a change before this run,
-/// which a commit of the whole file would carry too. Drawn in the offer,
-/// and before the commit a flag answered, where no offer is drawn.
-pub fn left_out(style: &Style, scan: &Scan) -> Vec<String> {
-    match &scan.manifest {
-        Some(path) => said_as(
+/// The files the write changed that the commit leaves out, and why: one
+/// held a change before this run, which a commit of the whole file would
+/// carry too, or the reading that would tell had not run. Drawn in the
+/// offer, and before the commit a flag answered, where no offer is drawn.
+pub fn left_out(style: &Style, beside: &Beside) -> Vec<String> {
+    let mut lines = Vec::new();
+    for path in &beside.held {
+        lines.extend(said_as(
             style,
             Status::Decision,
             &format!(
-                "{path} held changes before this run, so the commit leaves it out; commit it yourself so a clone installs what this one does"
+                "{path} held changes before this run, so the commit leaves it out; commit it yourself"
             ),
-        ),
-        None => Vec::new(),
+        ));
     }
+    if let Some((failed, paths)) = &beside.unread {
+        lines.extend(said_as(
+            style,
+            Status::Decision,
+            &format!(
+                "kendex could not read which files held changes before this run, so the commit leaves out {} file{} it writes into and does not own whole; commit {} yourself",
+                paths.len(),
+                plural(paths.len()),
+                match paths.len() {
+                    1 => "it",
+                    _ => "them",
+                }
+            ),
+        ));
+        for path in paths {
+            lines.extend(quoted(style, path));
+        }
+        lines.extend(refusal(style, failed));
+    }
+    lines
 }
 
 /// A precondition that removed a choice prints its reason as a line under

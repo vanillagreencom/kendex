@@ -12,9 +12,8 @@ The offer runs after the write, never before it, and never as part of it.
 
 - The offer is explicit. kendex commits, pushes or opens a pull request only after a person chose that in this run. There is no setting, flag or state that makes any of the three happen without a choice.
 - Leaving the files as diffs is a choice of the same standing as the other three. It is the default answer on both surfaces, and taking it is a success, not a refusal.
-- kendex stages only the files it owns whole. A file the person wrote is never staged and never committed.
-- A file kendex owns one key in is not a file it owns whole. kendex does not commit one, because it cannot commit its own key without committing whatever else the person changed in the same file. It names those files and leaves them.
-- The terminal's commit also carries each file a run writes beside its renders, such as the manifest or `.gitignore`, that matched the last commit before the run (`GeneratedPaths::alongside`). One that already held a change stays out, and a left-out manifest is named.
+- kendex commits only what it wrote. A file the person wrote is never staged and never committed.
+- On every surface, kendex commits a file it writes into and does not own whole (`GeneratedPaths::beside`: the manifest, `kendex.settings.toml`, `.gitignore`, shared configuration files) only where it held no change before the action. One that did stays out and is named, since git commits whole files. § The manifest and the shared files ride only from a clean state says how.
 - The commit runs through `git commit`, so the repository's own hooks run on it.
 - A refusal from git, from a hook, or from `gh` reaches the person in that program's own words, whole.
 - kendex never undoes a commit. It does not revert one, does not move a branch ref backwards, does not reset, and does not stash. KEN-1297 adds one working-tree write, `commit_offer::restore`, which puts named paths back to what the last commit holds; it touches no ref and no index.
@@ -22,13 +21,13 @@ The offer runs after the write, never before it, and never as part of it.
 
 ## The path set
 
-The offer covers the files kendex owns whole in this project that git reports as changed.
+The offer covers the files kendex owns whole in this project that git reports as changed, and the files it writes into that the action changed from a clean state.
 
 `crates/core/src/engine/generated_paths.rs` already collects the paths kendex generates, for the `.kendex-generated.json` inventory that CI reads. Its collection is the right one, so the offer takes it rather than building a second.
 
 `GeneratedPaths` separates whole-file ownership, shared edit targets, and held positions. The inventory writer and its check use one set: whole-file paths, shared targets, and held positions already listed in the inventory at `HEAD`. A newly declared conflict contributes no inventory entry. The offer uses whole-file ownership for existing files and inventory history for deletions. Retaining a held entry grants no permission to replace that file's bytes. A never-recorded conflict cannot become deletion ownership through a later inventory commit.
 
-- Exclude every `Artifact::Registration` `edits` target. Those are shared configuration files kendex writes one key in, and `crates/core/src/engine/desired.rs` states the reason it edits rather than renders them: every unrelated key in them stays intact. `.claude/settings.json`, `.codex/config.toml` and `.codex/hooks.json` are edit targets in this repository, and `.claude/settings.json` also holds the person's own `permissions.allow`. git has no way to commit one key of a file, so committing such a path would commit the person's edits with kendex's. They get the block **Shared files** below instead.
+- Keep every `Artifact::Registration` `edits` target apart from the owned set. Those are shared configuration files kendex writes one key in, and `crates/core/src/engine/desired.rs` states the reason it edits rather than renders them: every unrelated key in them stays intact. `.claude/settings.json`, `.codex/config.toml` and `.codex/hooks.json` are edit targets in this repository, and `.claude/settings.json` also holds the person's own `permissions.allow`. git has no way to commit one key of a file, so committing such a path that held the person's edits would commit them with kendex's. One the action changed from a clean state joins the commit; every other one gets the block **Shared files** below.
 - An unborn `HEAD`, in a repository with no commit yet, contributes nothing here.
 
 git decides what changed, in one call over the whole checkout: `git status --porcelain=v1 -z --untracked-files=all`. `git status` takes no `--pathspec-from-file`, and a pathspec argument per path would not fit a Windows command line, so the call is unscoped and kendex matches its rows against the set itself. `-z` because a path may hold any byte but NUL. `--untracked-files=all` because a first install writes into directories git has not seen.
@@ -38,12 +37,12 @@ That one call answers three questions at once.
 | Rows | Meaning |
 | --- | --- |
 | In the set | The offer's paths |
-| An excluded `edits` target | The **Shared files** block |
+| A file kendex writes into | Carried where the action changed it from a clean state; the **Shared files** block otherwise |
 | Everything else | The person's own changes, which the offer counts and never touches |
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
 
-`kendex.toml` is the person's file, so it is never in the set. `.kendex-lock.json` is kendex's own file end to end and travels with the renders it records, so it is in the owned set beside the inventory; this machine's half of the record sits under `.cache/`, which the managed ignore block keeps out of git.
+`kendex.toml` is the person's file, so it is never in the owned set; it rides a commit only from a clean state, as above. `.kendex-lock.json` is kendex's own file end to end and travels with the renders it records, so it is in the owned set beside the inventory; this machine's half of the record sits under `.cache/`, which the managed ignore block keeps out of git.
 
 ## Where the offer runs
 
@@ -167,7 +166,7 @@ Removing an empty branch kendex made a moment earlier is kendex clearing its own
 - It commits the working tree's content for the named paths, not the index's. A person who staged an older copy of a render path gets the copy kendex wrote, which is the one on disk.
 - It commits a deletion of a named path that is gone from the working tree, which is how a sweep's removals land.
 - It builds a temporary index and exports it to the hooks as `GIT_INDEX_FILE`. A hook running `git diff --cached` sees the named paths and nothing else, and the person's own staged changes to other paths are neither seen by the hook nor committed. A refused commit leaves those staged changes exactly as they were.
-- It commits the whole of each file it names. There is no way to commit part of one, which is why the shared `edits` targets are out of the set.
+- It commits the whole of each file it names. There is no way to commit part of one, which is why a file kendex writes into joins the set only where it held nothing else.
 
 ### Passing the paths
 
@@ -732,15 +731,17 @@ git commits whole files, so two cases have no separable commit. `commit_offer::P
 - a file the action changed that was already changed before it;
 - `.kendex-generated.json` and `.kendex-lock.json`, which say what kendex renders here, where either's own pending change is not the action's and the action adds or removes a render.
 
-### The manifest stays out of the set, and the offer names it
+### The manifest and the shared files ride only from a clean state
 
 `GeneratedPaths::owned` is unchanged, and `generated_paths::companions` names two files: `.kendex-generated.json` and `.kendex-lock.json`.
 
-kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the keys kendex holds and leaves the rest of the document as the person wrote it — comments, blank lines, key order, a note inside a declaration — which is the `shared` group's definition rather than the owned one. `owned` is also the set a restore writes `HEAD` over, so a file kendex only edits keys in can never be in it. A source catalog declares its own installs in `kendex-local.toml` (`manifest::project_manifest_path`), so a fixed manifest name would name the wrong file in this repository.
+kendex owns the manifest's FORMAT and not its bytes: `manifest::fold` edits the keys kendex holds and leaves the rest as the person wrote it, so the manifest is never in `owned`, the set a restore writes `HEAD` over. A source catalog declares its own installs in `kendex-local.toml` (`manifest::project_manifest_path`), so no fixed manifest name is used.
 
-So a commit of renders whose declaration is still only in the working tree costs reproducibility, and on a teammate's next apply the renders themselves. But `kendex.toml` is tracked, so the ordinary case is a manifest committed without the new declaration beside a lock that names the renders — the lock is a companion of the render set and rides the same commit — and both sweeps judge by the written lock (`crates/core/src/engine/removal.rs::orphans` iterates `lock.entries`, and `crates/core/src/engine/stale.rs` states it): an entry the manifest no longer asks for is an orphan, and `kendex apply` moves its renders to the trash with the drift line "no longer wanted — will be removed". That is what the warning below exists for. What such a commit does not hold is the declaration that asks for those files, and nobody else can reproduce the install from that commit.
+A commit of renders without their declaration costs reproducibility, and on a teammate's next apply the renders themselves: the lock rides the commit and names them, both sweeps judge by the written lock (`crates/core/src/engine/removal.rs::orphans`), and an entry the committed manifest does not ask for is an orphan the next apply moves to the trash. That is what the warning below exists for.
 
-kendex cannot stage part of a file, so naming it is the whole answer. `commit_offer::Pending::manifest_not_carried` reports the manifest where this action wrote it and git still reports it changed, decided by the same content comparison every path gets: an action that left the file alone, and a file already back to what the last commit holds, are both silence. The dialog draws it as **This commit leaves out your declaration** and tells the person to commit that file themselves.
+kendex cannot stage part of a file. The reading before the action (`commit_offer::baseline`) records every path git reports changed then; a path with no row matched the last commit. A file kendex writes into that had no row and changed now holds the action's change alone, and every commit after the action carries it (`Pending::carried`), the window's through the reading it passes to `commit_offer_commit`. A path recorded by name only, such as a shared file a new hook first registers in, is never taken for clean. Without a reading none is carried, and the terminal names a failed reading as such.
+
+One that held a change before and that the action changed again stays out and is named; `Pending::manifest_not_carried` reports the manifest so, and the dialog draws it as **This commit leaves out your declaration**. An action that left the file alone, and a file back at what the last commit holds, are both silence. No restore writes over any of these files.
 
 ### Pending changes have a place in the project UI
 

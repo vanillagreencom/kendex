@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use super::{ensure_manifest_persisted, manifest_for_mutation};
-use crate::engine::{EngineReport, PlanOptions, plan_scope};
+use crate::engine::{EngineReport, Held, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::lock::{Lock, lock_path};
@@ -157,7 +157,7 @@ pub fn add_seeded(
     }
 
     let mut optional_offers: Vec<(String, String)> = Vec::new();
-    let mut declaring: BTreeSet<(ItemKind, String)> = BTreeSet::new();
+    let mut declaring: BTreeSet<Held> = BTreeSet::new();
     for (source_name, wanted) in &groups {
         declaring.extend(add_from(
             env,
@@ -197,7 +197,7 @@ pub fn add_seeded(
     let options = PlanOptions {
         arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,
-        ..PlanOptions::for_packages(declaring.iter().cloned())
+        ..PlanOptions::for_declarations(declaring.iter().cloned())
     };
     let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     report.notes.extend(notes);
@@ -211,11 +211,15 @@ pub fn add_seeded(
 /// Every package this request declares that its record already holds at
 /// one commit and this plan writes at another, one line each: a skill an
 /// added agent requires moves with it, and says so before the write.
-fn moved(before: &Lock, after: &Lock, declaring: &BTreeSet<(ItemKind, String)>) -> Vec<String> {
+fn moved(before: &Lock, after: &Lock, declaring: &BTreeSet<Held>) -> Vec<String> {
     let short = |commit: &str| commit.chars().take(7).collect::<String>();
     let mut lines = BTreeSet::new();
     for (key, entry) in &before.entries {
-        if !declaring.contains(&(entry.kind, entry.name.clone())) {
+        let item = Held::Item {
+            kind: entry.kind,
+            name: entry.name.clone(),
+        };
+        if !declaring.contains(&item) {
             continue;
         }
         let (Some(was), Some(now)) = (
@@ -243,7 +247,7 @@ fn moved(before: &Lock, after: &Lock, declaring: &BTreeSet<(ItemKind, String)>) 
 /// Everything this request takes from one subscription: existence checks,
 /// agent-to-skill expansion, item declarations, then bundles — bundles
 /// last, so installing a whole set can subsume the members it now
-/// accounts for. Returns the items it declared, by kind and name.
+/// accounts for. Returns the items and the sets it declared.
 #[allow(clippy::too_many_arguments)]
 fn add_from(
     env: &Env,
@@ -256,9 +260,10 @@ fn add_from(
     take_all: bool,
     notes: &mut Vec<String>,
     optional_offers: &mut Vec<(String, String)>,
-) -> Result<BTreeSet<(ItemKind, String)>> {
+) -> Result<BTreeSet<Held>> {
     let ready = source::require_ready(env, scope, source_name, manifest)?;
     let hold_at = hold_commit(request, source_name, &ready)?;
+    let hold_at = hold_at.as_deref();
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let config = source_config_for(&sealed, &ready.provenance)?;
 
@@ -333,12 +338,7 @@ fn add_from(
     // Bundles first: declaring a set folds in the equal-option members
     // declared earlier, while an item this same request asks for by name
     // is declared after — asking for both is asking for both.
-    for bundle in sets {
-        require_free(manifest, &bundle.name, source_name)?;
-        let decl = declare_bundle(manifest, &bundle, source_name, request, hold_at.as_deref());
-        subsume(manifest, &bundle, &decl, notes);
-    }
-    let mut declared = BTreeSet::new();
+    let mut taken = declare_sets(manifest, sets, source_name, request, hold_at, notes)?;
     for (kind, names) in [
         (ItemKind::Agent, agents),
         (ItemKind::Skill, skills),
@@ -357,10 +357,30 @@ fn add_from(
                 &name,
                 source_name,
                 request,
-                hold_at.as_deref(),
+                hold_at,
             )?;
-            declared.insert((kind, name));
+            taken.insert(Held::Item { kind, name });
         }
+    }
+    Ok(taken)
+}
+
+/// Declare each set this request installs whole, folding in the members it
+/// now accounts for, and return the sets declared.
+fn declare_sets(
+    manifest: &mut Manifest,
+    sets: Vec<crate::source::CatalogBundle>,
+    source_name: &str,
+    request: &AddRequest,
+    hold_at: Option<&str>,
+    notes: &mut Vec<String>,
+) -> Result<BTreeSet<Held>> {
+    let mut declared = BTreeSet::new();
+    for bundle in sets {
+        require_free(manifest, &bundle.name, source_name)?;
+        let decl = declare_bundle(manifest, &bundle, source_name, request, hold_at);
+        subsume(manifest, &bundle, &decl, notes);
+        declared.insert(Held::Set { name: bundle.name });
     }
     Ok(declared)
 }

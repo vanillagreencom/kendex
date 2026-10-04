@@ -13,12 +13,17 @@
 //! leaving the files as diffs is a choice of the same standing as the other
 //! three.
 //!
-//! **kendex stages only the files it owns whole.** A file the person wrote
-//! is never staged and never committed, and a shared configuration file
-//! kendex writes one key in is not a file it owns whole: git has no way to
-//! commit one key, so committing such a path would commit the person's
-//! edits with kendex's. [`crate::engine::GeneratedPaths`] is where that
-//! split is made, once, for the inventory and for this.
+//! **kendex commits only what it wrote.** A file the person wrote is never
+//! staged and never committed. A file kendex writes into and does not own
+//! whole — the manifest, the settings file, `.gitignore`, a shared
+//! configuration file it writes one key in — is committed only where a
+//! reading taken before the action shows it held no change then, so the
+//! action's change is all it holds: git has no way to commit one key, and a
+//! file that held one of the person's edits stays out and is named.
+//! [`crate::engine::GeneratedPaths`] is where the split between the files
+//! kendex owns whole and the ones it writes into is made, once, for the
+//! inventory and for this; [`Pending`] decides which of the second kind
+//! one action's commit carries.
 //!
 //! **kendex never undoes a commit.** It does not revert one, does not move
 //! a branch ref backwards, does not reset, and does not stash. The two
@@ -352,15 +357,12 @@ pub struct Scan {
     pub root: PathBuf,
     /// The files kendex owns whole that git reports as changed, sorted.
     pub owned: Vec<Owned>,
-    /// The shared configuration files kendex writes one key in that git
-    /// reports as changed, sorted. Named to the person and left alone.
-    pub shared: Vec<String>,
-    /// The file this project declares what it asks kendex for in — its
-    /// manifest — where git reports it changed and the run did not write
-    /// it from a clean state. kendex folds keys into that document and
-    /// owns none of its bytes, so a change of the person's in it is one
-    /// the offer names and never commits.
-    pub manifest: Option<String>,
+    /// The files kendex writes into and does not own whole that git
+    /// reports as changed, sorted: [`crate::engine::GeneratedPaths::beside`].
+    /// A commit carries one only where [`Pending::carried`] says the action
+    /// changed it from a clean state; every other one is named to the
+    /// person and left alone, and no restore writes over any of them.
+    pub beside: Vec<Owned>,
     /// How many other paths in this repository changed. The person's own
     /// changes, which the offer counts and never touches.
     pub others: usize,
@@ -400,24 +402,6 @@ pub fn scan(
         return Ok(None);
     }
     paths::scan(root, generated)
-}
-
-/// The files a plan writes into this project beside its renders that match
-/// the last commit now, for [`crate::engine::GeneratedPaths::alongside`].
-/// Read before the plan runs; empty where the scope is not a project or
-/// the project is not a checkout.
-pub fn alongside(
-    scope: &Scope,
-    plan: &crate::apply::Plan,
-    generated: &crate::engine::GeneratedPaths,
-) -> std::result::Result<std::collections::BTreeSet<PathBuf>, Failed> {
-    let Scope::Project { root } = scope else {
-        return Ok(Default::default());
-    };
-    if !root.join(".git").exists() {
-        return Ok(Default::default());
-    }
-    paths::alongside(root, plan, generated)
 }
 
 /// Whether this machine wants to be asked. Machine-local, like every other

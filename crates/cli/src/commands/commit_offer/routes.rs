@@ -6,7 +6,7 @@
 //! and never summarised: the step's own words are printed, then the way on
 //! that step's state allows.
 
-use kendex_core::commit_offer::{self, Committed, Offer, Selection};
+use kendex_core::commit_offer::{self, Baseline, Committed, Offer, Selection};
 use kendex_core::engine::GeneratedPaths;
 
 use super::block::{self, AfterRefusal, Recover, Retry};
@@ -17,19 +17,21 @@ type Taken = Result<Outcome, Box<dyn std::error::Error>>;
 
 /// Take one choice. `asking` is whether a person is at the prompt: a flag
 /// answers once and reports, where a person is offered the way on that the
-/// state allows.
+/// state allows. `since` is the reading taken before the write, through
+/// which alone the commit carries a file kendex writes into.
 pub fn take(
     offer: &Offer,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     choice: Choice,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
     match choice {
         Choice::Leave => Ok(Outcome::Nothing),
-        Choice::Commit => straight(offer, generated, given, asking, Push::No),
-        Choice::Push => straight(offer, generated, given, asking, Push::Yes),
-        Choice::Pr => pull_request(offer, generated, given, asking),
+        Choice::Commit => straight(offer, generated, since, given, asking, Push::No),
+        Choice::Push => straight(offer, generated, since, given, asking, Push::Yes),
+        Choice::Pr => pull_request(offer, generated, since, given, asking),
     }
 }
 
@@ -57,6 +59,7 @@ fn message(offer: &Offer, given: Option<String>, asking: Asking) -> std::io::Res
 fn straight(
     offer: &Offer,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     given: Option<String>,
     asking: Asking,
     then: Push,
@@ -69,7 +72,7 @@ fn straight(
     let before = commit_offer::previous_head(root).unwrap_or(None);
     let mut message = message(offer, given, asking)?;
     loop {
-        match commit_offer::commit(root, generated, &message, &Selection::All) {
+        match commit_offer::commit(root, generated, &message, &Selection::All, since) {
             Ok(Committed::Nothing { .. }) => {
                 ui::stderr(&block::nothing_to_commit(&style));
                 return Ok(Outcome::Nothing);
@@ -229,6 +232,7 @@ fn recover(offer: &Offer, files: usize, message: &str, before: Option<&str>) -> 
 fn pull_request(
     offer: &Offer,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
@@ -245,9 +249,10 @@ fn pull_request(
         // The checkout has not moved and nothing is staged, so the other
         // choices still stand — carrying the message already settled on,
         // so it is not asked for twice.
-        return without_pull_request(offer, generated, Some(message), asking);
+        return without_pull_request(offer, generated, since, Some(message), asking);
     }
-    let (sha, files) = match commit_offer::commit(root, generated, &message, &Selection::All) {
+    let (sha, files) = match commit_offer::commit(root, generated, &message, &Selection::All, since)
+    {
         Ok(Committed::Nothing { .. }) => {
             // The checkout already moved to a branch that will now carry
             // no commit, so kendex clears that leftover the way it does
@@ -265,7 +270,7 @@ fn pull_request(
             };
         }
         Ok(Committed::Made { sha, files, .. }) => (sha, files),
-        Err(refused) => return abandoned(offer, generated, refused, message, asking),
+        Err(refused) => return abandoned(offer, generated, since, refused, message, asking),
     };
     ui::stderr(&block::committed(
         &style,
@@ -319,6 +324,7 @@ fn pull_request(
 fn abandoned(
     offer: &Offer,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     refused: commit_offer::CommitFailure,
     message: String,
     asking: Asking,
@@ -341,10 +347,10 @@ fn abandoned(
     // message is the one they settled on, not the default.
     match again(asking, more.then_some(&refused.failed))? {
         Retry::Leave => Ok(Outcome::CommitRefused),
-        Retry::Same => pull_request(offer, generated, Some(message), asking),
+        Retry::Same => pull_request(offer, generated, since, Some(message), asking),
         Retry::Different => {
             let message = block::different_message(&message)?;
-            pull_request(offer, generated, Some(message), asking)
+            pull_request(offer, generated, since, Some(message), asking)
         }
     }
 }
@@ -354,6 +360,7 @@ fn abandoned(
 fn without_pull_request(
     offer: &Offer,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
@@ -363,8 +370,8 @@ fn without_pull_request(
     let choices = block::without_pull_request(offer);
     match block::pick(&choices)? {
         Choice::Leave => Ok(Outcome::CommitRefused),
-        Choice::Commit => straight(offer, generated, given, asking, Push::No),
-        Choice::Push => straight(offer, generated, given, asking, Push::Yes),
+        Choice::Commit => straight(offer, generated, since, given, asking, Push::No),
+        Choice::Push => straight(offer, generated, since, given, asking, Push::Yes),
         // Filtered out of the list this answer came from.
         Choice::Pr => unreachable!("the pull-request choice was picked from a list without it"),
     }

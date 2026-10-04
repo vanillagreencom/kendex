@@ -621,7 +621,12 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
         ) else {
             continue;
         };
-        super::commit_offer::after_writing(env, &plan.scope, &report.generated)?;
+        super::commit_offer::after_writing(
+            env,
+            &plan.scope,
+            &report.generated,
+            &super::commit_offer::Before::Untaken,
+        )?;
     }
     Ok(())
 }

@@ -12,12 +12,12 @@
 //! The offer is drawn from the CLI's components and asked with keyed
 //! choices; `crates/cli/OUTPUT.md` is their reference.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use kendex_core::commit_offer::{self, Branch, Offer, Probe};
+use kendex_core::commit_offer::{self, Baseline, Branch, Failed, Offer, Pending, Probe};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -224,6 +224,80 @@ fn record(root: &Path, outcome: Outcome) {
     record_of().insert(root.to_owned(), outcome);
 }
 
+/// What a project held before the write the offer follows, which decides
+/// whether a commit may carry the files kendex writes into and does not own
+/// whole.
+pub enum Before {
+    /// Read before the write. A commit carries each such file the write
+    /// changed from a clean state, and names each it changed over a change
+    /// of its own.
+    Read(Baseline),
+    /// The read before the write would not run. None of them is carried,
+    /// and the offer says why rather than naming them as the person's.
+    Unread(Failed),
+    /// No read was taken: the verb writes into none of them, or the write
+    /// stopped before its read could be handed on. None of them is
+    /// carried.
+    Untaken,
+}
+
+impl Before {
+    /// Read `scope` before a write that renders `generated`.
+    pub fn read(scope: &Scope, generated: &GeneratedPaths) -> Before {
+        match commit_offer::baseline(scope, generated) {
+            Ok(baseline) => Before::Read(baseline),
+            Err(failed) => Before::Unread(failed),
+        }
+    }
+
+    fn since(&self) -> Option<&Baseline> {
+        match self {
+            Before::Read(baseline) => Some(baseline),
+            Before::Unread(_) | Before::Untaken => None,
+        }
+    }
+}
+
+/// What the offer says about each changed file kendex writes into, from
+/// the reading after the write against `before`.
+fn beside<'a>(
+    scan: &'a commit_offer::Scan,
+    pending: Option<&'a Pending>,
+    before: &'a Before,
+) -> block::Beside<'a> {
+    let changed = scan.beside.iter().map(|one| one.path.as_str());
+    match (pending, before) {
+        (Some(pending), _) => {
+            let carried: Vec<&str> = changed
+                .clone()
+                .filter(|path| pending.carried().contains(*path))
+                .collect();
+            let held = pending.left_out();
+            block::Beside {
+                rest: changed
+                    .filter(|path| !carried.contains(path) && !held.contains(path))
+                    .collect(),
+                carried,
+                held,
+                unread: None,
+            }
+        }
+        (None, Before::Unread(failed)) => block::Beside {
+            carried: Vec::new(),
+            held: Vec::new(),
+            unread: Some((failed, changed.collect::<Vec<_>>()))
+                .filter(|(_, paths)| !paths.is_empty()),
+            rest: Vec::new(),
+        },
+        (None, Before::Read(_) | Before::Untaken) => block::Beside {
+            carried: Vec::new(),
+            held: Vec::new(),
+            unread: None,
+            rest: changed.collect(),
+        },
+    }
+}
+
 /// Whether this project has already been asked in this run.
 fn asked(root: &Path) -> bool {
     record_of().contains_key(root)
@@ -237,14 +311,22 @@ fn asked(root: &Path) -> bool {
 /// printed. The block above already carries the words and the way on, and
 /// a refusal is its own failure line, never one more item in a verb's
 /// failure count.
-pub fn after_writing(env: &Env, scope: &Scope, generated: &GeneratedPaths) -> CliResult {
+///
+/// `before` is what the project held before the write, read by the caller
+/// while it still could be.
+pub fn after_writing(
+    env: &Env,
+    scope: &Scope,
+    generated: &GeneratedPaths,
+    before: &Before,
+) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
     };
     if asked(root) || cancelled() {
         return Ok(());
     }
-    let outcome = match make(env, scope, root, generated) {
+    let outcome = match make(env, scope, root, generated, before) {
         // Nothing kendex owns had changed by this write: not an answer,
         // so a later report the same verb applies into this project can
         // still offer. `drift-hook` writes an empty report before the one
@@ -274,6 +356,7 @@ fn make(
     scope: &Scope,
     root: &std::path::Path,
     generated: &GeneratedPaths,
+    before: &Before,
 ) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
     let default = Session {
         flags: CommitFlags::default(),
@@ -299,15 +382,22 @@ fn make(
             }
         };
         let answered = session.flags.answered();
+        let pending = before
+            .since()
+            .map(|since| commit_offer::pending(&scan, since));
+        let every = pending.as_ref().map(Pending::every_path);
+        // What a commit would carry: every changed file kendex owns, and
+        // each file it wrote into from a clean state.
+        let count = every.as_ref().map_or(scan.count(), BTreeSet::len);
         // Two states where kendex owns changed files and cannot offer at
         // all: a commit would land somewhere nobody asked for.
         match &scan.branch {
             Branch::Detached => {
-                ui::stderr(&block::no_branch(&style, root, scan.count()));
+                ui::stderr(&block::no_branch(&style, root, count));
                 return Ok(Some(Outcome::Nothing));
             }
             Branch::InProgress(operation) => {
-                ui::stderr(&block::in_progress(&style, root, scan.count(), *operation));
+                ui::stderr(&block::in_progress(&style, root, count, *operation));
                 return Ok(Some(Outcome::Nothing));
             }
             Branch::On(_) => {}
@@ -321,17 +411,15 @@ fn make(
             return Ok(Some(Outcome::Nothing));
         }
         let person = answered.is_none() && std::io::stdin().is_terminal();
+        let carried = match &every {
+            Some(every) => commit_offer::Carried::Only(every),
+            None => commit_offer::Carried::Everything,
+        };
         // Asked before the commit is offered, of the commit it would make:
         // a package not set up here, one whose check says its files are
         // stale, and one whose check fails over the commit itself each hold
         // it.
-        let stale = match commit_offer::stale(
-            env,
-            scope,
-            &scan,
-            &generated,
-            commit_offer::Carried::Everything,
-        ) {
+        let stale = match commit_offer::stale(env, scope, &scan, &generated, carried) {
             Ok(stale) => stale,
             Err(error) => {
                 ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
@@ -356,7 +444,7 @@ fn make(
             }
         }
         if answered.is_none() && !person {
-            ui::stderr(&block::no_terminal(&style, root, scan.count()));
+            ui::stderr(&block::no_terminal(&style, root, count));
             return Ok(Some(Outcome::Nothing));
         }
         // A flag that already chose `commit` never pushes, so `gh` is not
@@ -367,36 +455,42 @@ fn make(
             Some(Choice::Commit) => Probe::Skip,
             Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
         };
-        let offer = match commit_offer::offer(scan, &session.command, probe) {
+        let offer = match commit_offer::offer(scan.clone(), &session.command, probe) {
             Ok(offer) => offer,
             Err(failed) => {
                 ui::stderr(&block::unreadable(&style, root, &failed));
                 return Ok(Some(Outcome::Nothing));
             }
         };
-        return match answered {
-            Some(choice) => {
-                // A precondition that removed the choice a flag names
-                // refuses with that precondition's reason, and the verb's
-                // writes still stand. Nothing was committed, which is what
-                // the ledger says.
-                if let Some(reason) = block::not_on_offer(&offer, choice) {
-                    ui::stderr(&block::flag_refused(&style, &offer, choice, &reason));
-                    return Ok(Some(Outcome::CommitRefused));
-                }
-                ui::stderr(&block::left_out(&style, &offer.scan));
-                routes::take(
-                    &offer,
-                    &generated,
-                    choice,
-                    session.flags.message.clone(),
-                    Asking::No,
-                )
-                .map(Some)
-            }
-            None => ask(&offer, &generated, session.flags.message.clone()).map(Some),
-        };
+        let beside = beside(&scan, pending.as_ref(), before);
+        let message = session.flags.message.clone();
+        let since = before.since();
+        return answer(&offer, &beside, &generated, since, answered, message).map(Some);
     }
+}
+
+/// Take the choice a flag named, or ask for one.
+fn answer(
+    offer: &Offer,
+    beside: &block::Beside,
+    generated: &GeneratedPaths,
+    since: Option<&Baseline>,
+    answered: Option<Choice>,
+    message: Option<String>,
+) -> Result<Outcome, Box<dyn std::error::Error>> {
+    let Some(choice) = answered else {
+        return ask(offer, beside, generated, since, message);
+    };
+    let style = ui::style();
+    // A precondition that removed the choice a flag names refuses with that
+    // precondition's reason, and the verb's writes still stand. Nothing was
+    // committed, which is what the ledger says.
+    if let Some(reason) = block::not_on_offer(offer, choice) {
+        ui::stderr(&block::flag_refused(&style, offer, choice, &reason));
+        return Ok(Outcome::CommitRefused);
+    }
+    ui::stderr(&block::left_out(&style, beside));
+    routes::take(offer, generated, since, choice, message, Asking::No)
 }
 
 /// Where the offer stands when a package holds its commit.
@@ -493,11 +587,13 @@ pub enum Asking {
 /// Draw the block, take the answer, take the route.
 fn ask(
     offer: &Offer,
+    beside: &block::Beside,
     generated: &GeneratedPaths,
+    since: Option<&Baseline>,
     message: Option<String>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    ui::stderr(&block::offer(&ui::style(), offer));
+    ui::stderr(&block::offer(&ui::style(), offer, beside));
     let choices = block::choices(offer);
     let choice = block::pick(&choices)?;
-    routes::take(offer, generated, choice, message, Asking::Yes)
+    routes::take(offer, generated, since, choice, message, Asking::Yes)
 }

@@ -63,8 +63,8 @@ pub enum Staleness {
     /// together.
     Split {
         /// The changed inputs the commit leaves out: the package's paths
-        /// under its tree or its declared writes, the manifest, which no
-        /// commit kendex makes carries, and the inventory. Empty where the
+        /// under its tree or its declared writes, the manifest where the
+        /// commit does not carry it, and the inventory. Empty where the
         /// input left out is a change kendex does not own.
         left: Vec<String>,
         /// What the staged checker said over the commit, escaped.
@@ -75,17 +75,30 @@ pub enum Staleness {
 /// Which of the scan's changed paths a commit carries.
 #[derive(Debug, Clone, Copy)]
 pub enum Carried<'a> {
-    /// Every changed path kendex owns: the terminal's commit, and the
-    /// window's commit of every pending change.
+    /// Every changed path kendex owns whole, and none of the files it
+    /// writes into beside them: a commit with no reading from before the
+    /// action behind it.
     Everything,
-    /// Only these paths: the window's commit of one action's work.
+    /// Only these paths: a commit read against the reading taken before
+    /// the action, of its work alone or of every pending change, with the
+    /// files written into that [`super::Pending::carried`] names.
     Only(&'a std::collections::BTreeSet<String>),
 }
 
 impl Carried<'_> {
+    /// Whether the commit carries this changed path kendex owns whole.
     fn carries(self, path: &str) -> bool {
         match self {
             Carried::Everything => true,
+            Carried::Only(paths) => paths.contains(path),
+        }
+    }
+
+    /// Whether the commit carries this changed file kendex writes into:
+    /// only where the set names it.
+    fn names(self, path: &str) -> bool {
+        match self {
+            Carried::Everything => false,
             Carried::Only(paths) => paths.contains(path),
         }
     }
@@ -210,27 +223,39 @@ fn standing(
 
 /// The scan's changed paths the commit carries.
 fn carried_paths(scan: &Scan, carried: Carried) -> Vec<String> {
-    scan.owned
+    let owned = scan
+        .owned
         .iter()
         .map(|owned| owned.path.clone())
-        .filter(|path| carried.carries(path))
-        .collect()
+        .filter(|path| carried.carries(path));
+    let beside = scan
+        .beside
+        .iter()
+        .map(|beside| beside.path.clone())
+        .filter(|path| carried.names(path));
+    owned.chain(beside).collect()
 }
 
 /// A split package's changed inputs the commit leaves out: its own paths
 /// the commit does not carry, the manifest wherever it changed or was
-/// deleted, and the inventory where it changed and is not carried. The
-/// package renders from the whole manifest and from the inventory, so each
-/// is named where it is left behind; which of them the check read, only
-/// its own words say.
+/// deleted and is not carried, and the inventory where it changed and is
+/// not carried. The package renders from the whole manifest and from the
+/// inventory, so each is named where it is left behind; which of them the
+/// check read, only its own words say.
 fn left_out(scan: &Scan, carried: Carried, left: Vec<&str>) -> Vec<String> {
+    let declared = super::paths::declaration(&scan.root);
+    let manifest = scan
+        .beside
+        .iter()
+        .map(|beside| beside.path.as_str())
+        .filter(|path| declared.as_deref() == Some(*path) && !carried.names(path));
     let inventory = scan
         .owned
         .iter()
         .map(|owned| owned.path.as_str())
         .filter(|path| *path == INVENTORY && !carried.carries(path));
     left.into_iter()
-        .chain(scan.manifest.as_deref())
+        .chain(manifest)
         .chain(inventory)
         .map(str::to_owned)
         .collect()

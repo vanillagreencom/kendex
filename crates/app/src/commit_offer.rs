@@ -123,7 +123,8 @@ pub struct ProjectOffer {
     pub root: String,
     /// The project's folder name, which the title names.
     pub name: String,
-    /// The files kendex owns whole that changed, printed whole: an
+    /// The files kendex owns whole that changed, and the files it wrote
+    /// into that this action changed from a clean state, printed whole: an
     /// abbreviation guesses at a directory and names a different file from
     /// the one being committed.
     pub files: Vec<ChangedFile>,
@@ -137,12 +138,16 @@ pub struct ProjectOffer {
     pub choice: bool,
     /// What stops the action's work from being committed on its own.
     pub tangled: Vec<TangledFile>,
-    /// The shared configuration files kendex writes one key in.
+    /// The changed files kendex writes into and does not own whole that no
+    /// commit on offer carries — the manifest named in `manifest` aside.
+    /// Every such file where a person opened the offer: with no action to
+    /// read against, none is shown to hold the action's change alone.
     pub shared: Vec<String>,
     /// The project's manifest, where this action wrote it and the commit
-    /// does not carry it. `null` where every declaration these renders
-    /// need is committed already, or where a person opened the offer and
-    /// there is no action to attribute a change to.
+    /// does not carry it because it held a change before the action.
+    /// `null` where the commit carries it, the action did not change it,
+    /// or a person opened the offer and there is no action to attribute a
+    /// change to.
     pub manifest: Option<String>,
     /// How many of the person's own files changed.
     pub others: u32,
@@ -497,7 +502,11 @@ fn held_by_scope(
             .map(StalePackage::from)
             .collect())
     };
-    let all = read(commit_offer::Carried::Everything)?;
+    let every = pending.map(Pending::every_path);
+    let all = match &every {
+        Some(every) => read(commit_offer::Carried::Only(every))?,
+        None => read(commit_offer::Carried::Everything)?,
+    };
     let action = match pending {
         Some(pending) if !pending.same() => {
             read(commit_offer::Carried::Only(&pending.action_set()))?
@@ -530,10 +539,13 @@ fn drawn(
             pending
                 .files
                 .iter()
+                .chain(&pending.beside)
                 .map(|file| (file.path.as_str(), file))
                 .collect()
         })
         .unwrap_or_default();
+    let carried = pending.map(Pending::carried).unwrap_or_default();
+    let manifest = pending.and_then(|pending| pending.manifest_not_carried().map(str::to_owned));
     ProjectOffer {
         root: key.to_owned(),
         name: named(root),
@@ -541,6 +553,13 @@ fn drawn(
             .scan
             .owned
             .iter()
+            .chain(
+                offer
+                    .scan
+                    .beside
+                    .iter()
+                    .filter(|beside| carried.contains(&beside.path)),
+            )
             .map(|owned| match did.get(owned.path.as_str()) {
                 // No action opened this offer, so nothing is attributed to
                 // one: every pending change stands on its own.
@@ -577,8 +596,14 @@ fn drawn(
                     .collect()
             })
             .unwrap_or_default(),
-        shared: offer.scan.shared.clone(),
-        manifest: pending.and_then(|pending| pending.manifest_not_carried().map(str::to_owned)),
+        shared: offer
+            .scan
+            .beside
+            .iter()
+            .map(|beside| beside.path.clone())
+            .filter(|path| !carried.contains(path) && manifest.as_ref() != Some(path))
+            .collect(),
+        manifest,
         others: counted(offer.scan.others),
         push: offer.push.as_ref().err().map(Why::from),
         pull_request: offer.pull_request.as_ref().err().map(Why::from),
@@ -894,20 +919,26 @@ impl ChangeSelection {
     }
 }
 
+/// Commit one project's selection. `since` is the reading the offer was
+/// scoped to, where an action opened it: the files kendex writes into and
+/// does not own whole ride the commit only through it, and only where the
+/// action changed them from a clean state.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn commit_offer_commit(
     root: String,
     message: String,
     selection: ChangeSelection,
+    since: Option<ProjectBaseline>,
 ) -> Result<CommitStep, String> {
     let env = env()?;
     let root = PathBuf::from(root);
     let scope = Scope::Project { root: root.clone() };
     let generated = generated(&env, &scope)?;
     let selection = selection.into_core();
+    let since = since.map(ProjectBaseline::into_core);
     Ok(
-        match commit_offer::commit(&root, &generated, &message, &selection) {
+        match commit_offer::commit(&root, &generated, &message, &selection, since.as_ref()) {
             Ok(Committed::Nothing { dropped }) => CommitStep::Nothing { dropped },
             Ok(Committed::Made {
                 sha,
@@ -952,7 +983,9 @@ pub enum ChangesState {
     Pending {
         /// The files kendex owns whole that changed.
         files: Vec<String>,
-        /// The shared configuration files kendex writes one key in.
+        /// The changed files kendex writes into and does not own whole:
+        /// the manifest, the settings file, `.gitignore`, and the shared
+        /// configuration files it writes one key in.
         shared: Vec<String>,
         /// How many of the person's own files changed.
         others: u32,
@@ -997,7 +1030,7 @@ pub fn project_changes_scan(roots: Vec<String>) -> Result<Vec<ProjectChanges>, S
                 Ok(None) => ChangesState::Clean,
                 Ok(Some(scan)) => ChangesState::Pending {
                     files: scan.owned.iter().map(|owned| owned.path.clone()).collect(),
-                    shared: scan.shared.clone(),
+                    shared: scan.beside.iter().map(|one| one.path.clone()).collect(),
                     others: counted(scan.others),
                     branch: scan.on_branch().map(str::to_owned),
                     operation: match &scan.branch {
@@ -1283,8 +1316,7 @@ mod tests {
                         untracked: false,
                         added: false,
                     }],
-                    shared: Vec::new(),
-                    manifest: None,
+                    beside: Vec::new(),
                     others: 0,
                     branch: Branch::On("main".to_owned()),
                 },
@@ -1579,9 +1611,14 @@ mod tests {
                 .iter()
                 .any(|region| region.path() == root.join("AGENTS.md"))
         );
-        let committed =
-            commit_offer::commit(&root, &generated, "chore: kendex apply", &Selection::All)
-                .expect("the app commit route succeeds");
+        let committed = commit_offer::commit(
+            &root,
+            &generated,
+            "chore: kendex apply",
+            &Selection::All,
+            None,
+        )
+        .expect("the app commit route succeeds");
         assert!(matches!(committed, Committed::Made { .. }));
         assert!(
             bot_fixture_git(&root, &home, &["show", "--name-only", "--format=", "HEAD"])
@@ -1901,8 +1938,9 @@ mod tests {
     }
 
     /// A manifest edit the package's render does not read leaves the
-    /// commit on offer: the manifest is never committed, and the check
-    /// over the commit, which reads the last commit's copy, still passes.
+    /// commit on offer: no reading shows the edit is kendex's, so no commit
+    /// carries the manifest, and the check over the commit, which reads
+    /// the last commit's copy, still passes.
     #[test]
     #[cfg(unix)]
     fn a_manifest_edit_the_render_does_not_read_keeps_the_commit() {
@@ -1971,9 +2009,14 @@ mod tests {
             !selected.whole.contains(&rendered),
             "a user-owned bot file entered the app selection"
         );
-        let committed =
-            commit_offer::commit(&root, &selected, "chore: kendex apply", &Selection::All)
-                .expect("the commit selection is evaluated");
+        let committed = commit_offer::commit(
+            &root,
+            &selected,
+            "chore: kendex apply",
+            &Selection::All,
+            None,
+        )
+        .expect("the commit selection is evaluated");
         assert!(matches!(committed, Committed::Nothing { .. }));
         assert_eq!(
             std::fs::read_to_string(&rendered).expect("the user-owned file reads"),

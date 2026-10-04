@@ -25,8 +25,11 @@ fn scan() -> Scan {
                 added: false,
             })
             .collect(),
-        shared: vec![".claude/settings.json".to_owned()],
-        manifest: None,
+        beside: vec![Owned {
+            path: ".claude/settings.json".to_owned(),
+            untracked: false,
+            added: false,
+        }],
         others: 4,
         branch: Branch::On("main".to_owned()),
     }
@@ -418,7 +421,13 @@ fn the_offer_draws_accept_and_decline() {
             (rich(100), &rich_offer[..], rich_tail),
             (plain(), &plain_offer[..], plain_tail),
         ] {
-            let mut drawn = block::offer(&style, &offered);
+            let beside = block::Beside {
+                carried: Vec::new(),
+                held: Vec::new(),
+                unread: None,
+                rest: vec![".claude/settings.json"],
+            };
+            let mut drawn = block::offer(&style, &offered, &beside);
             let (lines, answer) = asked(
                 &style,
                 &block::keyed(&block::choices(&offered)),
@@ -647,5 +656,36 @@ fn the_flags_are_read_off_the_verb_the_person_ran() {
             .try_get_matches_from(["kendex", "list", "--commit"])
             .is_err(),
         "a verb that never offers took the flag"
+    );
+}
+
+/// A reading before the write that would not run leaves every changed file
+/// kendex writes into out of the commit, and the offer says the reading
+/// failed rather than calling any of them the person's earlier change.
+#[test]
+fn a_reading_before_the_write_that_failed_is_named_and_carries_nothing() {
+    let mut read = scan();
+    read.beside = vec![Owned {
+        path: "kendex.toml".to_owned(),
+        untracked: false,
+        added: false,
+    }];
+    let before = super::Before::Unread(Failed {
+        step: Step::Read,
+        refusal: Refusal::Said(vec!["fatal: index file corrupt".to_owned()]),
+    });
+    let beside = super::beside(&read, None, &before);
+    assert!(beside.carried.is_empty());
+    assert!(beside.held.is_empty());
+    assert!(beside.rest.is_empty());
+    let drawn = block::left_out(&plain(), &beside);
+    assert_eq!(
+        drawn,
+        [
+            "  kendex could not read which files held changes before this run, so the commit leaves out 1 file it writes into and does not own whole; commit it yourself",
+            "    kendex.toml",
+            "  git said:",
+            "    fatal: index file corrupt",
+        ]
     );
 }

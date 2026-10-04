@@ -57,13 +57,13 @@ pub enum Changes {
 
 /// The change in one file the offer covers.
 ///
-/// Only the files kendex owns whole. The scan's `shared` set is the other
-/// half of what it reports: whole configuration files of the person's own
-/// that kendex writes one key in — `.mcp.json`, a harness `settings.json` —
-/// and the rest of such a file is theirs, environment values and
-/// credentials included. The offer names those files and commits nothing
-/// of them, and this reads none of one either: a path outside `owned` is
-/// not offered, whoever asks. The check is exact equality against paths
+/// Only the files kendex owns whole. The scan's `beside` set is the other
+/// half of what it reports: files of the person's own that kendex writes
+/// into — `.mcp.json`, a harness `settings.json`, the manifest — and the
+/// rest of such a file is theirs, environment values and credentials
+/// included. A commit carries one only where the action changed it from a
+/// clean state, and this reads none of one: a path outside `owned` is not
+/// offered, whoever asks. The check is exact equality against paths
 /// git itself reported, so nothing outside the project can be named at
 /// all.
 pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {

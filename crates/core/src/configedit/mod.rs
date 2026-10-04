@@ -181,6 +181,15 @@ pub enum ConfigEdit {
     },
 }
 
+/// The kind of file one edit reads and writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Document {
+    Json,
+    Toml,
+    /// Text a marker block sits in, whose other lines are the person's.
+    Text,
+}
+
 impl ConfigEdit {
     /// Response styles never follow a link placed at their shared file.
     pub(crate) fn requires_regular_file(&self) -> bool {
@@ -191,63 +200,68 @@ impl ConfigEdit {
     }
 
     /// Whether these edits retire the document `current` holds (`None`:
-    /// absent) rather than write it. A Pi append file goes when it is left
-    /// with nothing of its own ([`crate::pi_ext::append_system_retires`]).
-    /// A JSON document goes when left holding nothing: an empty object, or
-    /// the lone `$schema` OpenCode's upsert writes. A composed OpenCode
+    /// absent) rather than write it. A text file a marker block sits in is a
+    /// Pi append file, retired when nothing of its own is left
+    /// ([`crate::pi_ext::append_system_retires`]). A JSON file goes when
+    /// left an empty object or the lone `$schema` OpenCode's upsert writes,
+    /// and a TOML file when left with no key or table. A composed OpenCode
     /// cleanup retires one holding only the schema whatever it held before.
-    /// Any other JSON edit retires it only where `emptied` allows and the
-    /// edits took something out of the document, so a file the person left
-    /// empty stays.
+    /// Any other JSON or TOML edit retires it only where `emptied` allows
+    /// and the edits took something out of the document, so a file the
+    /// person left empty stays.
     pub(crate) fn removes_empty_document(
         edits: &[Self],
         current: Option<&str>,
         emptied: bool,
     ) -> Result<bool, String> {
         let current = current.unwrap_or_default();
-        let updated = || {
-            edits
-                .iter()
-                .try_fold(current.to_owned(), |text, edit| edit.apply(&text))
+        let Some(first) = edits.first() else {
+            return Ok(false);
         };
-        let marks = |edit: &Self| {
-            matches!(
-                edit,
-                Self::UpsertMarkerBlock { .. } | Self::RemoveMarkerBlock { .. }
-            )
-        };
-        if edits.iter().any(marks) {
-            return Ok(crate::pi_ext::append_system_retires(&updated()?));
-        }
-        if edits.iter().any(|edit| !edit.edits_json()) {
+        let document = first.document();
+        if edits.iter().any(|edit| edit.document() != document) {
             return Ok(false);
         }
-        let parse = |text: &str| -> Result<Value, String> {
-            match text.trim().is_empty() {
-                true => Ok(json!({})),
-                false => serde_json::from_str(text).map_err(|e| e.to_string()),
-            }
-        };
-        let value = parse(&updated()?)?;
-        let mut schema_only = Map::new();
-        opencode_schema(&mut schema_only);
-        if value != json!({}) && value != Value::Object(schema_only) {
-            return Ok(false);
-        }
-        let prunes = edits
+        let updated = edits
             .iter()
-            .any(|edit| matches!(edit, Self::OpencodePruneInstructions { .. }));
-        Ok(prunes || (emptied && parse(current)? != value))
+            .try_fold(current.to_owned(), |text, edit| edit.apply(&text))?;
+        match document {
+            Document::Text => Ok(crate::pi_ext::append_system_retires(&updated)),
+            Document::Json => {
+                let parse = |text: &str| -> Result<Value, String> {
+                    match text.trim().is_empty() {
+                        true => Ok(json!({})),
+                        false => serde_json::from_str(text).map_err(|e| e.to_string()),
+                    }
+                };
+                let value = parse(&updated)?;
+                let mut schema_only = Map::new();
+                opencode_schema(&mut schema_only);
+                if value != json!({}) && value != Value::Object(schema_only) {
+                    return Ok(false);
+                }
+                let prunes = edits
+                    .iter()
+                    .any(|edit| matches!(edit, Self::OpencodePruneInstructions { .. }));
+                Ok(prunes || (emptied && parse(current)? != value))
+            }
+            Document::Toml => {
+                let parse = |text: &str| -> Result<toml::Table, String> {
+                    text.parse::<toml::Table>().map_err(|e| e.to_string())
+                };
+                let value = parse(&updated)?;
+                Ok(value.is_empty() && emptied && parse(current)? != value)
+            }
+        }
     }
 
-    /// Whether this edit reads and writes its file as a JSON document.
-    fn edits_json(&self) -> bool {
+    /// How this edit reads and writes its file.
+    fn document(&self) -> Document {
         match self {
             Self::CodexEnableHooksFeature
             | Self::UpsertCodexMcpServer { .. }
-            | Self::RemoveCodexMcpServer { .. }
-            | Self::UpsertMarkerBlock { .. }
-            | Self::RemoveMarkerBlock { .. } => false,
+            | Self::RemoveCodexMcpServer { .. } => Document::Toml,
+            Self::UpsertMarkerBlock { .. } | Self::RemoveMarkerBlock { .. } => Document::Text,
             Self::ClaudeOutputStyle { .. }
             | Self::RemoveClaudeOutputStyle { .. }
             | Self::UpsertHook { .. }
@@ -267,7 +281,7 @@ impl ConfigEdit {
             | Self::GeminiRemoveContextFile { .. }
             | Self::OpencodeAddInstruction { .. }
             | Self::OpencodeRemoveInstruction { .. }
-            | Self::OpencodePruneInstructions { .. } => true,
+            | Self::OpencodePruneInstructions { .. } => Document::Json,
         }
     }
     /// Whether the file is in sync with this edit: re-applying it changes

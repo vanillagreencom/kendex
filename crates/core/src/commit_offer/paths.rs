@@ -6,9 +6,8 @@
 //! the rows are matched against the set here.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::apply::Plan;
 use crate::engine::GeneratedPaths;
 
 use super::{Branch, Failed, Operation, Owned, Rebase, Scan, git};
@@ -37,6 +36,14 @@ impl Row<'_> {
     fn deleted(&self) -> bool {
         self.x == b'D' || self.y == b'D'
     }
+
+    fn owned(&self, path: String) -> Owned {
+        Owned {
+            untracked: self.untracked(),
+            added: self.added(),
+            path,
+        }
+    }
 }
 
 /// Read the project: what changed, and where the checkout stands.
@@ -45,11 +52,41 @@ impl Row<'_> {
 /// unbuildable, and its words reach the person as that step's failure, the
 /// way every other step's do.
 pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Failed> {
-    let whole = generated.owned(root);
-    let owned = relative(root, &whole);
-    let alongside = relative(root, &generated.alongside);
-    let shared = relative(root, &generated.shared);
-    let declared = declaration(root);
+    let sorted = sort(root, generated)?;
+    if sorted.owned.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Scan {
+        root: root.to_owned(),
+        owned: sorted.owned,
+        beside: sorted.beside,
+        others: sorted.others.len() + sorted.unnamed,
+        branch: branch(root)?,
+    }))
+}
+
+/// One `git status` over the checkout, sorted by what kendex wrote.
+pub(super) struct Sorted {
+    /// Changed files kendex owns whole, sorted: [`Scan::owned`].
+    pub owned: Vec<Owned>,
+    /// Changed files kendex writes into and does not own whole, sorted:
+    /// [`Scan::beside`].
+    pub beside: Vec<Owned>,
+    /// Every other changed path, by name.
+    pub others: Vec<String>,
+    /// Other changed paths that are not named in [`Sorted::others`]: a
+    /// path whose bytes are not text, and a file kendex owns a region of
+    /// whose region is unchanged. Neither is a path a reading before an
+    /// action has to record: the first is no path kendex writes, and the
+    /// second is judged by its region alone.
+    pub unnamed: usize,
+}
+
+/// Sort what git reports changed. The read every other one here is made
+/// from, and the one [`super::baseline`] records before an action.
+pub(super) fn sort(root: &Path, generated: &GeneratedPaths) -> Result<Sorted, Failed> {
+    let owned = relative(root, &generated.owned(root));
+    let beside = relative(root, &generated.beside(root));
     let status = git::read_required(
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -57,55 +94,33 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
     // Read once and only where it can matter: the rule it feeds adds the
     // paths a sweep removed, and a sweep's removals are deletions.
     let mut committed: Option<BTreeSet<String>> = None;
-    let mut ours: Vec<Owned> = Vec::new();
-    let mut theirs: Vec<String> = Vec::new();
-    let mut manifest: Option<String> = None;
-    let mut others = 0usize;
+    let mut sorted = Sorted {
+        owned: Vec::new(),
+        beside: Vec::new(),
+        others: Vec::new(),
+        unnamed: 0,
+    };
     for row in rows(&status) {
         let Some(path) = text(row.path) else {
             // A path git reports in bytes that are not text is not a path
             // this offer can pass back to git as a pathspec, and it is not
             // one kendex wrote: every path kendex renders is text. It is
             // one of the person's own changed files.
-            others += 1;
+            sorted.unnamed += 1;
             continue;
         };
         if owned.contains(&path) {
             if let Some(region) = generated.region(root, &path)
                 && !super::regions::changed(root, region)?
             {
-                others += 1;
+                sorted.unnamed += 1;
                 continue;
             }
-            ours.push(Owned {
-                untracked: row.untracked(),
-                added: row.added(),
-                path,
-            });
+            sorted.owned.push(row.owned(path));
             continue;
         }
-        // A file this run wrote that matched the last commit before it
-        // holds the run's change alone, so committing it whole commits
-        // nothing of the person's.
-        if alongside.contains(&path) {
-            ours.push(Owned {
-                untracked: row.untracked(),
-                added: row.added(),
-                path,
-            });
-            continue;
-        }
-        if shared.contains(&path) {
-            theirs.push(path);
-            continue;
-        }
-        // Counted with the person's own changed files, which is what it
-        // is: kendex writes keys in this one and owns none of its bytes.
-        // Named as well, because a commit of renders the person has not
-        // declared anywhere committed is the thing the offer must say.
-        if declared.as_deref() == Some(path.as_str()) {
-            manifest = Some(path);
-            others += 1;
+        if beside.contains(&path) {
+            sorted.beside.push(row.owned(path));
             continue;
         }
         if row.deleted() {
@@ -114,7 +129,7 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
                 None => committed.insert(git::committed_inventory(root)?),
             };
             if inventory.contains(&path) {
-                ours.push(Owned {
+                sorted.owned.push(Owned {
                     untracked: row.untracked(),
                     // A path the committed inventory holds is one the last
                     // commit has, whatever git says about it now: this row
@@ -125,59 +140,13 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
                 continue;
             }
         }
-        others += 1;
+        sorted.others.push(path);
     }
-    if ours.is_empty() {
-        return Ok(None);
+    for list in [&mut sorted.owned, &mut sorted.beside] {
+        list.sort_by(|a, b| a.path.cmp(&b.path));
+        list.dedup_by(|a, b| a.path == b.path);
     }
-    ours.sort_by(|a, b| a.path.cmp(&b.path));
-    ours.dedup_by(|a, b| a.path == b.path);
-    theirs.sort();
-    theirs.dedup();
-    Ok(Some(Scan {
-        root: root.to_owned(),
-        owned: ours,
-        shared: theirs,
-        manifest,
-        others,
-        branch: branch(root)?,
-    }))
-}
-
-/// The files `plan` writes beside the ones kendex owns whole that match the
-/// last commit now, read before the plan runs. git reports nothing for
-/// them: unchanged, absent from both the checkout and the last commit, or
-/// ignored. A file the person already changed is not among them, since git
-/// commits whole files and that change would ride along.
-pub fn alongside(
-    root: &Path,
-    plan: &Plan,
-    generated: &GeneratedPaths,
-) -> Result<BTreeSet<PathBuf>, Failed> {
-    let owned = generated.owned(root);
-    let written: BTreeSet<PathBuf> = plan
-        .ops
-        .iter()
-        .flat_map(|planned| planned.op.touched())
-        .filter(|path| path.starts_with(root) && !owned.contains(path))
-        .collect();
-    if written.is_empty() {
-        return Ok(written);
-    }
-    let status = git::read_required(
-        root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    )?;
-    let changed: BTreeSet<&[u8]> = rows(&status).iter().map(|row| row.path).collect();
-    Ok(written
-        .into_iter()
-        .filter(|path| {
-            path.strip_prefix(root)
-                .ok()
-                .map(crate::paths::slashed)
-                .is_some_and(|spelled| !changed.contains(spelled.as_bytes()))
-        })
-        .collect())
+    Ok(sorted)
 }
 
 /// Where this project declares what it asks kendex for, spelled the way

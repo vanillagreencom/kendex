@@ -429,7 +429,16 @@ export const commands = {
 	 *  restore may never take a path the offer has stopped covering.
 	 */
 	projectChangesRestore: (root: string, paths: string[]) => typedError<RestoreResult, string>(__TAURI_INVOKE("project_changes_restore", { root, paths })),
-	commitOfferCommit: (root: string, message: string, selection: ChangeSelection) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message, selection })),
+	/**
+	 *  Commit one project's selection. `since` is the reading the offer was
+	 *  scoped to, where an action opened it: the files kendex writes into and
+	 *  does not own whole ride the commit only through it, and only where the
+	 *  action changed them from a clean state.
+	 */
+	commitOfferCommit: (root: string, message: string, selection: ChangeSelection, since: {
+	root: string,
+	held: HeldPath[],
+} | null) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message, selection, since })),
 	commitOfferPush: (root: string, remote: string, branch: string, tracked: boolean) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push", { root, remote, branch, tracked })),
 	/**
 	 *  Push a commit that already exists to a branch of its own, without
@@ -1291,7 +1300,11 @@ export type ChangesState =
 { kind: "pending"; 
 /**  The files kendex owns whole that changed. */
 files: string[]; 
-/**  The shared configuration files kendex writes one key in. */
+/**
+ *  The changed files kendex writes into and does not own whole:
+ *  the manifest, the settings file, `.gitignore`, and the shared
+ *  configuration files it writes one key in.
+ */
 shared: string[]; 
 /**  How many of the person's own files changed. */
 others: number; 
@@ -4020,7 +4033,8 @@ export type ProjectOffer = {
 	/**  The project's folder name, which the title names. */
 	name: string,
 	/**
-	 *  The files kendex owns whole that changed, printed whole: an
+	 *  The files kendex owns whole that changed, and the files it wrote
+	 *  into that this action changed from a clean state, printed whole: an
 	 *  abbreviation guesses at a directory and names a different file from
 	 *  the one being committed.
 	 */
@@ -4039,13 +4053,19 @@ export type ProjectOffer = {
 	choice: boolean,
 	/**  What stops the action's work from being committed on its own. */
 	tangled: TangledFile[],
-	/**  The shared configuration files kendex writes one key in. */
+	/**
+	 *  The changed files kendex writes into and does not own whole that no
+	 *  commit on offer carries — the manifest named in `manifest` aside.
+	 *  Every such file where a person opened the offer: with no action to
+	 *  read against, none is shown to hold the action's change alone.
+	 */
 	shared: string[],
 	/**
 	 *  The project's manifest, where this action wrote it and the commit
-	 *  does not carry it. `null` where every declaration these renders
-	 *  need is committed already, or where a person opened the offer and
-	 *  there is no action to attribute a change to.
+	 *  does not carry it because it held a change before the action.
+	 *  `null` where the commit carries it, the action did not change it,
+	 *  or a person opened the offer and there is no action to attribute a
+	 *  change to.
 	 */
 	manifest: string | null,
 	/**  How many of the person's own files changed. */

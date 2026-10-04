@@ -3,8 +3,9 @@
 //!
 //! The collection is a value rather than a step inside the write, because
 //! two readers need it: the inventory this file writes, and the commit
-//! offer, which covers only the files kendex owns whole. One collection,
-//! so the two cannot disagree about what kendex wrote.
+//! offer, which tells the files kendex owns whole from the ones it writes
+//! into. One collection, so the two cannot disagree about what kendex
+//! wrote.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,13 +32,13 @@ pub(crate) use adopted::{committable_paths, inventory_paths};
 /// The manifest is deliberately not here. kendex writes keys in it and folds
 /// them into the document the person wrote — `crate::manifest::fold` keeps
 /// their comments, key order and every value it did not touch — so kendex
-/// does not own its bytes and may neither commit nor restore it whole. A
-/// source catalog moves the declaration to a sibling file besides
+/// does not own its bytes and never restores it whole. It is one of the
+/// files [`GeneratedPaths::beside`] names: a commit carries it only where it
+/// held no change before the action, and otherwise the offer names it to
+/// the person ([`crate::commit_offer::Pending::manifest_not_carried`]). A
+/// source catalog moves the declaration to a sibling file
 /// (`crate::manifest::project_manifest_path`), so a fixed name here would
-/// name the wrong file in this very repository. The declaration a render
-/// does need to survive a later apply is that manifest, and the offer names
-/// it to the person rather than committing it:
-/// [`crate::commit_offer::Pending::manifest_not_carried`].
+/// name the wrong file in this very repository.
 pub fn companions(root: &Path) -> [PathBuf; 2] {
     [root.join(INVENTORY), root.join(crate::lock::LOCK_FILE)]
 }
@@ -67,13 +68,6 @@ pub struct GeneratedPaths {
     /// Adoption copies checked against declared package templates. Refresh
     /// records their provenance but does not write or restore their YAML.
     pub adopted: BTreeMap<PathBuf, AdoptedWorkflow>,
-    /// Files a run writes beside its renders — the manifest, the settings
-    /// file, `.gitignore`, a shared configuration file — that matched the
-    /// last commit before it ran, read by
-    /// [`crate::commit_offer::alongside`]. The run's change is all they
-    /// hold, so the commit offer carries them whole. Never part of the
-    /// inventory, and never written over by a restore.
-    pub alongside: BTreeSet<PathBuf>,
 }
 
 impl GeneratedPaths {
@@ -147,6 +141,26 @@ impl GeneratedPaths {
             .cloned()
             .chain(self.regions.iter().map(|region| region.path().to_owned()))
             .chain(companions(root))
+            .collect()
+    }
+
+    /// The files kendex writes into beside its renders and does not own
+    /// whole: the project's manifest, its settings file, `.gitignore`, and
+    /// the shared configuration files in [`GeneratedPaths::shared`]. A
+    /// commit carries one only where a reading taken before the action
+    /// shows it held no change of its own
+    /// ([`crate::commit_offer::Pending::carried`]), and no restore writes
+    /// over one, since the bytes kendex did not write in it are the
+    /// person's.
+    pub fn beside(&self, root: &Path) -> BTreeSet<PathBuf> {
+        self.shared
+            .iter()
+            .cloned()
+            .chain([
+                crate::manifest::project_manifest_path(root),
+                crate::settings_seed::settings_file_path(root),
+                root.join(".gitignore"),
+            ])
             .collect()
     }
 

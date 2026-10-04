@@ -4,7 +4,7 @@ use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
-use super::commit_offer::after_writing;
+use super::commit_offer::{Before, after_writing};
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_synced, refresh_failures,
     require_yes_in_non_interactive,
@@ -559,7 +559,8 @@ pub fn run(
                         break;
                     }
                     failures.push(error.to_string());
-                    if let Err(error) = after_writing(env, &scope, &written.report.generated) {
+                    let generated = &written.report.generated;
+                    if let Err(error) = after_writing(env, &scope, generated, &Before::Untaken) {
                         failures.push(error.to_string());
                     }
                 }

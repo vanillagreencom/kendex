@@ -218,7 +218,7 @@ pub(crate) fn planning_manifest<'a>(
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
-    targets: &BTreeSet<(ItemKind, String)>,
+    targets: &BTreeSet<Held>,
 ) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
     for target in targets {
@@ -281,8 +281,9 @@ fn held_manifest(
     (held, pins)
 }
 
-/// The declarations one target leaves unpinned: its own, and the ones
-/// that carry its revision.
+/// The declarations one target leaves unpinned: its own, and, for an item,
+/// the ones that carry its revision. A set carries its members' revisions
+/// itself, so a set target leaves only its own declaration unpinned.
 ///
 /// Asked per target, because the answer is the target's own. Whether the
 /// sets that carry it own it turns on whether this package has a
@@ -290,7 +291,22 @@ fn held_manifest(
 /// that differently — a declared one keeps its sets held while a derived
 /// one beside it cannot move at all unless they read fresh. Asked once
 /// for the pass, one target's answer would decide for the other.
-fn exempted_by(manifest: &Manifest, lock: &Lock, target: &(ItemKind, String)) -> BTreeSet<Owner> {
+fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held) -> BTreeSet<Owner> {
+    let target = match target {
+        Held::Item { kind, name } => (*kind, name.clone()),
+        Held::Set { name } => {
+            return manifest
+                .bundles
+                .get(name)
+                .map(|decl| Owner::Bundle {
+                    name: name.clone(),
+                    source: decl.source.clone(),
+                })
+                .into_iter()
+                .collect();
+        }
+    };
+    let target = &target;
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
     // The source the named package reads from now, where it is declared at
     // all. A derived target has no declaration to read one off, and its

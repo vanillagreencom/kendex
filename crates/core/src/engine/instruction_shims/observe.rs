@@ -127,7 +127,7 @@ pub(super) fn claude_standing(root: &Path, agents_file: &Path) -> Result<ShimSta
 
 /// A shim kendex cannot read is reported uncompared (invariant 12), never
 /// as passing, and never at the cost of the whole scope.
-fn uncomparable(name: &str, error: &CoreError) -> String {
+pub(super) fn uncomparable(name: &str, error: &CoreError) -> String {
     format!(
         "{} cannot be compared ({error}) — fix its permissions or remove it",
         crate::names::shown(name)

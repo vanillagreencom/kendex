@@ -78,6 +78,10 @@ pub(super) struct Expansion {
     /// The first derivation wins deterministically — map order — and each
     /// loser is reported, never silently absorbed.
     rev_disagreements: Vec<Disagreement>,
+    /// The revisions this pass pinned itself to hold the rest of the scope
+    /// still, by source and commit: read revisions, never a person's
+    /// choice.
+    invented: BTreeSet<(String, String)>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -290,7 +294,9 @@ impl Expansion {
     /// package held at the commit its source still resolves to and one
     /// following that source want the same bytes. A revision this pass
     /// holds no resolution for is weighed as written, and so is a set's,
-    /// which weighs the revision the person chose rather than the one read.
+    /// which weighs the revision the person chose rather than the one read
+    /// — unless either side is a pin this pass invented, which is a read
+    /// revision and no choice of anyone's.
     pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
@@ -304,9 +310,17 @@ impl Expansion {
                 _ => None,
             }
         };
+        let invented = &self.invented;
+        let invented = |source: &str, rev: &Option<String>| {
+            rev.as_ref()
+                .is_some_and(|rev| invented.contains(&(source.to_owned(), rev.clone())))
+        };
         self.rev_disagreements.retain(|one| {
             let kept = commit_of(&one.source, &one.kept);
-            one.by_a_set || kept.is_none() || kept != commit_of(&one.source, &one.refused)
+            let chosen = one.by_a_set
+                && !invented(&one.source, &one.kept)
+                && !invented(&one.source, &one.refused);
+            chosen || kept.is_none() || kept != commit_of(&one.source, &one.refused)
         });
         for Disagreement {
             kind,
@@ -548,7 +562,17 @@ fn expand_read<'a>(
     state: &mut DesiredState,
     installed: Option<&'a crate::lock::Lock>,
 ) -> Expansion {
-    let mut expansion = Expansion::default();
+    let mut expansion = Expansion {
+        invented: held
+            .map(|pins| {
+                pins.pins()
+                    .iter()
+                    .map(|pin| (pin.source.clone(), pin.commit.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ..Expansion::default()
+    };
     for kind in PLANNED_KINDS {
         for (name, decl) in manifest.declared(kind) {
             let harnesses = target_harnesses(decl, manifest, kind, scope);

@@ -1,1 +1,1 @@
-- `kendex add` no longer widens `[install].harnesses` or updates other packages, `--commit` also commits `kendex.toml`, and dropping a tool leaves none of its files or folders.
+- `kendex add` and the app picker keep a project's tools and packages as declared, `--commit` commits `kendex.toml` unless it held your edits, and dropping a tool retires its shims and emptied files.

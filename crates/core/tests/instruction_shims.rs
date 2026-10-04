@@ -487,29 +487,123 @@ fn gemini_settings_are_edited_around_what_they_already_hold() {
     assert!(report.plan.is_empty() && report.drift.is_empty());
 }
 
-/// A settings file kendex cannot parse is refused, never rewritten.
+/// A settings file kendex cannot parse is refused, never rewritten: where
+/// Gemini is declared and the shim would be written, and where it is not
+/// and the shim would be taken back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unparseable_gemini_settings_are_refused_not_rewritten() {
-    let f = fixture("\"gemini\"", true);
-    let settings = f.project.join(".gemini/settings.json");
-    fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(&settings, "{ \"context\": { \"fileName\": ").unwrap();
+    for (harnesses, declared) in [("\"gemini\"", true), ("\"codex\"", false)] {
+        let f = fixture(harnesses, true);
+        let settings = f.project.join(".gemini/settings.json");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, "{ \"context\": { \"fileName\": ").unwrap();
 
+        let report = apply_now(&f);
+        assert!(
+            report.plan.is_empty(),
+            "{harnesses}: {:?}",
+            touched(&f, &report)
+        );
+        let row = report
+            .drift
+            .iter()
+            .find(|row| row.name == ".gemini/settings.json")
+            .unwrap_or_else(|| panic!("{harnesses}: no row names the file"));
+        assert_eq!(row.state, DriftState::Conflict, "{harnesses}");
+        assert!(row.detail.contains("could not be edited"), "{}", row.detail);
+        assert_eq!(shim_bytes(&settings), "{ \"context\": { \"fileName\": ");
+        if declared {
+            assert!(matches!(
+                standings(&f, &[HarnessId::Gemini])[0].1,
+                ShimState::Refused(_)
+            ));
+        }
+    }
+}
+
+/// Claude Code leaving the list takes back the `CLAUDE.md` shim kendex
+/// wrote, which its inventory names. The same one line written by hand in
+/// a project that never installed for Claude Code stays: one import line
+/// is a common way to point Claude Code at `AGENTS.md`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_claude_shim_goes_with_claude_only_where_kendex_wrote_it() {
+    let f = fixture("\"claude\"", true);
+    apply_now(&f);
+    commit(&f.project);
+    fs::write(
+        f.project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+    )
+    .unwrap();
     let report = apply_now(&f);
-    assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
+    assert!(touched(&f, &report).contains(&"CLAUDE.md".to_owned()));
+    assert!(!f.project.join("CLAUDE.md").exists());
     let row = report
         .drift
         .iter()
-        .find(|row| row.name == ".gemini/settings.json")
+        .find(|row| row.name == "CLAUDE.md")
         .unwrap();
-    assert_eq!(row.state, DriftState::Conflict);
-    assert!(row.detail.contains("could not be edited"), "{}", row.detail);
-    assert_eq!(shim_bytes(&settings), "{ \"context\": { \"fileName\": ");
-    assert!(matches!(
-        standings(&f, &[HarnessId::Gemini])[0].1,
-        ShimState::Refused(_)
-    ));
+    assert_eq!(row.state, DriftState::Orphaned);
+    assert!(plan(&f).plan.is_empty(), "the next pass plans again");
+
+    let f = fixture("\"codex\"", true);
+    fs::write(f.project.join("CLAUDE.md"), CLAUDE_SHIM).unwrap();
+    commit(&f.project);
+    let report = plan(&f);
+    assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
+    assert!(report.drift.is_empty(), "{:?}", report.drift);
+}
+
+/// Gemini off the list: a settings file still naming `AGENTS.md` the way
+/// the shim's edit wrote it loses that entry once and keeps the person's
+/// own keys; one holding only the person's keys draws no plan and no row,
+/// that pass or any after it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
+    let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
+    let ours = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  },\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\"]\n  }\n}\n";
+    for (what, held, retired) in [
+        ("kendex's entry", ours, true),
+        ("the person's keys", theirs, false),
+    ] {
+        let f = fixture("\"codex\"", true);
+        let settings = f.project.join(".gemini/settings.json");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, held).unwrap();
+        commit(&f.project);
+
+        let report = apply_now(&f);
+        let named = |report: &EngineReport| {
+            report
+                .drift
+                .iter()
+                .filter(|row| row.name == ".gemini/settings.json")
+                .map(|row| row.state)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            touched(&f, &report).contains(&".gemini/settings.json".to_owned()),
+            retired,
+            "{what}"
+        );
+        assert_eq!(
+            named(&report),
+            match retired {
+                true => vec![DriftState::Orphaned],
+                false => Vec::new(),
+            },
+            "{what}"
+        );
+        let left: serde_json::Value = serde_json::from_str(&shim_bytes(&settings)).unwrap();
+        let wanted: serde_json::Value = serde_json::from_str(theirs).unwrap();
+        assert_eq!(left, wanted, "{what}");
+        let again = plan(&f);
+        assert!(again.plan.is_empty(), "{what}: {:?}", touched(&f, &again));
+        assert_eq!(named(&again), Vec::new(), "{what}");
+    }
 }
 
 /// Both shims ride on the harness list: a project declaring neither owes
@@ -654,6 +748,7 @@ fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
         &report.generated,
         "renders",
         &kendex_core::commit_offer::Selection::Only(chosen),
+        None,
     )
     .unwrap();
     assert_eq!(

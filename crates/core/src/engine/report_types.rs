@@ -307,8 +307,8 @@ pub struct EngineReport {
     /// The paths this pass renders into the scope, split into the files
     /// kendex owns whole and the shared configuration files it writes one
     /// key in. The inventory is written from it, and the commit offer
-    /// covers the whole-file group — one collection, so the two cannot
-    /// name different files.
+    /// covers the whole-file group and reads the rest as files it writes
+    /// into — one collection, so the two cannot name different files.
     pub generated: super::GeneratedPaths,
     /// The settings edits each registration this pass plans is, by lock
     /// entry key, as the pass held them in place: a record write for an
@@ -352,8 +352,9 @@ pub struct HeldPin {
     pub commit: String,
 }
 
-/// What a held pin holds: an item's declaration or a set's.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One declaration in the manifest, an item's or a set's: what a held pin
+/// holds, and what a targeted update brings current.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Held {
     Item { kind: ItemKind, name: String },
     Set { name: String },
@@ -564,7 +565,10 @@ pub struct PlanOptions {
     /// reading is stated per declaration against the pins this pass
     /// invented, so it reads the same whether one package is exempt or
     /// five.
-    pub update_only: Option<BTreeSet<(ItemKind, String)>>,
+    ///
+    /// A set named here comes current itself, its members with it, where an
+    /// add names a set the scope already installs.
+    pub update_only: Option<BTreeSet<Held>>,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file
@@ -616,6 +620,16 @@ impl PlanOptions {
     /// in one reconcile and one apply. What `Update all` asks a place for,
     /// having grouped its rows by the scope they live in.
     pub fn for_packages(targets: impl IntoIterator<Item = (ItemKind, String)>) -> Self {
+        PlanOptions::for_declarations(
+            targets
+                .into_iter()
+                .map(|(kind, name)| Held::Item { kind, name }),
+        )
+    }
+
+    /// [`PlanOptions::for_packages`] over declarations of either kind: the
+    /// items and the sets an add declares.
+    pub fn for_declarations(targets: impl IntoIterator<Item = Held>) -> Self {
         PlanOptions {
             update_only: Some(targets.into_iter().collect()),
             ..PlanOptions::default()

@@ -313,82 +313,130 @@ fn the_install_record_is_committed_with_the_renders() {
     assert_eq!(git(&project, &["status", "--porcelain"]), "");
 }
 
-/// `add --commit` in a checkout whose files match the last commit commits
-/// every file the run wrote, the manifest and the ignore file included, and
-/// leaves nothing pending. A manifest that already held a change of the
-/// person's is left out, since git commits whole files, and the offer
-/// names it.
+/// A catalog declaring kendex's layout, offering the agent `scout` and the
+/// hook `guard`, whose registration lands in Claude Code's settings file.
+#[allow(clippy::unwrap_used)]
+fn scout_and_guard(home: &Path) -> PathBuf {
+    let catalog = home.join("catalog");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    fs::write(
+        catalog.join("agents/scout.md"),
+        "---\nname: scout\ndescription: look around\n---\nLook.\n",
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: block dangerous commands\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    // Hooks are offered only by a catalog that declares kendex's layout.
+    fs::write(catalog.join("kendex.toml"), "[catalog]\n").unwrap();
+    catalog
+}
+
+/// `add --commit` commits every file the run wrote that held no change
+/// before it: the manifest, the ignore file, and the shared settings file a
+/// hook registers in, written where none stood. A file the run wrote into
+/// that already held a change of the person's is left out, since git
+/// commits whole files, stays pending, and the offer names it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_add_commits_every_file_it_wrote_and_names_a_manifest_it_cannot() {
+fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
+    const MANIFEST: &str = "kendex.toml";
+    const SETTINGS: &str = ".claude/settings.json";
     struct Row {
         what: &'static str,
-        hand_edit: bool,
+        add: [&'static str; 2],
+        /// A file committed before the add, then edited and left pending.
+        edited: Option<(&'static str, &'static str, &'static str)>,
+        carried: &'static [&'static str],
+        left: Option<&'static str>,
     }
-    for row in [
+    let rows = [
         Row {
-            what: "a clean checkout",
-            hand_edit: false,
+            what: "an agent in a clean checkout",
+            add: ["--agent", "scout"],
+            edited: None,
+            carried: &[
+                ".kendex-lock.json",
+                ".gitignore",
+                ".claude/agents/scout.md",
+                MANIFEST,
+            ],
+            left: None,
         },
         Row {
-            what: "a manifest holding a hand edit",
-            hand_edit: true,
+            what: "an agent over a manifest holding a hand edit",
+            add: ["--agent", "scout"],
+            edited: Some((
+                MANIFEST,
+                "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+                "# mine\nschema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+            )),
+            carried: &[".kendex-lock.json", ".gitignore", ".claude/agents/scout.md"],
+            left: Some(MANIFEST),
         },
-    ] {
+        Row {
+            what: "a hook in a clean checkout",
+            add: ["--hook", "guard"],
+            edited: None,
+            carried: &[".kendex-lock.json", ".gitignore", MANIFEST, SETTINGS],
+            left: None,
+        },
+        Row {
+            what: "a hook over a settings file holding a hand edit",
+            add: ["--hook", "guard"],
+            edited: Some((SETTINGS, "{\"mine\": 1}\n", "{\"mine\": 2}\n")),
+            carried: &[".kendex-lock.json", ".gitignore", MANIFEST],
+            left: Some(SETTINGS),
+        },
+    ];
+    for row in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = project(&tmp);
-        let catalog = home.join("catalog");
-        fs::create_dir_all(catalog.join("agents")).unwrap();
-        fs::write(
-            catalog.join("agents/scout.md"),
-            "---\nname: scout\ndescription: look around\n---\nLook.\n",
-        )
-        .unwrap();
-        if row.hand_edit {
-            let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-            fs::write(project.join("kendex.toml"), format!("# mine\n{manifest}")).unwrap();
+        let catalog = scout_and_guard(&home);
+        if let Some((path, committed, edit)) = row.edited {
+            fs::write(project.join(path), committed).unwrap();
+            git(&project, &["add", "-A"]);
+            git(&project, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+            fs::write(project.join(path), edit).unwrap();
         }
 
-        let output = kendex(
-            &home,
-            &project,
-            &[
-                "add",
-                &catalog.to_string_lossy(),
-                "--agent",
-                "scout",
-                "--yes",
-                "--commit",
-                "--throwaway",
-            ],
-        );
+        let mut args = vec!["add", "--yes", "--commit", "--throwaway"];
+        let source = catalog.to_string_lossy().into_owned();
+        args.push(&source);
+        args.extend(row.add);
+        let output = kendex(&home, &project, &args);
         let text = said(&output);
         let what = row.what;
         assert!(output.status.success(), "{what}: {text}");
         let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
         let status = git(&project, &["status", "--porcelain"]);
-        for carried in [".kendex-lock.json", ".gitignore", ".claude/agents/scout.md"] {
+        for carried in row.carried {
             assert!(
-                files.lines().any(|line| line == carried),
+                files.lines().any(|line| line == *carried),
                 "{what}: {carried} is not in the commit: {files}"
             );
         }
-        let named =
-            text.contains("kendex.toml held changes before this run, so the commit leaves it out");
-        match row.hand_edit {
-            false => {
-                assert!(
-                    files.lines().any(|line| line == "kendex.toml"),
-                    "{what}: {files}"
-                );
+        match row.left {
+            None => {
                 assert_eq!(status, "", "{what}: {text}");
-                assert!(!named, "{what}: {text}");
+                assert!(
+                    !text.contains("held changes before this run"),
+                    "{what}: {text}"
+                );
             }
-            true => {
-                assert!(!files.contains("kendex.toml"), "{what}: {files}");
-                assert_eq!(status, " M kendex.toml\n", "{what}: {text}");
-                assert!(named, "{what}: {text}");
+            Some(left) => {
+                assert!(!files.lines().any(|line| line == left), "{what}: {files}");
+                assert_eq!(status, format!(" M {left}\n"), "{what}: {text}");
+                assert!(
+                    text.contains(&format!(
+                        "{left} held changes before this run, so the commit leaves it out"
+                    )),
+                    "{what}: {text}"
+                );
             }
         }
     }

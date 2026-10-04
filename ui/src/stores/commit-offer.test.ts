@@ -646,15 +646,23 @@ describe("answering an offer", () => {
       "/home/method/dev/site",
       "chore: kendex refresh",
       { kind: "only", paths: ["one.md"] },
+      null,
     );
 
-    useCommitOfferStore.setState({ scoped: "all" });
+    // The reading taken before the write goes with the commit: the files
+    // kendex writes into are carried only through it.
+    const since: ProjectBaseline = { root: "/home/method/dev/site", held: [] };
+    useCommitOfferStore.setState({
+      scoped: "all",
+      baselines: { "/home/method/dev/site": since },
+    });
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
     await useCommitOfferStore.getState().run();
     expect(commands.commitOfferCommit).toHaveBeenLastCalledWith(
       "/home/method/dev/site",
       "chore: kendex refresh",
       { kind: "all" },
+      since,
     );
   });
 
