@@ -36,8 +36,9 @@ refresh_template="$templates/kendex-refresh.yml"
 # A caller of the shared workflow declares neither; adopt-refresh.test.sh
 # holds these equal to what .github/workflows/refresh-consumer.yml declares.
 # The judge below accepts only the shipped template's form, mapped NAMES with
-# NAMES equal to these, and refuses every other; D003's caller-secrets
-# amendment owns how GitHub reads them.
+# NAMES equal to these, and refuses every other: the called workflow reads a
+# secret only where the caller maps the name to its same-named secret, and
+# reads its value from the calling repository's kendex environment.
 shared_environment=kendex
 shared_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY'
 # Forms: inline (no shared-workflow call), mapped NAMES (each entry of the

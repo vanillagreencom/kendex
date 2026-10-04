@@ -116,7 +116,7 @@
 #         balance) while `credits.balance` exceeds the credit floor below,
 #         `has_credits` is true, and `overage_limit_reached` and
 #         `spend_control_reached` are false. Expires first, the rule's one
-#         statement (D020): the pick spends the allowance that expires first,
+#         statement: the pick spends the allowance that expires first,
 #         sorting room candidates on [tier, E, -S, claims,
 #         -projected_headroom_pct, wall]. Tier 0 is the Claude cloud credit,
 #         a grant that expires and does not refill, where `lane-host

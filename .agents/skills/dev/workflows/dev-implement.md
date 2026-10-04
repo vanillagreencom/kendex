@@ -70,7 +70,7 @@ Read the issue description — `.description` from the cache read above, or `gh 
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
 
-For a missing planning or research path in a Linear brief, follow [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) before classifying the context as missing.
+For a missing planning or research path in a Linear brief, follow the linear skill's SKILL.md § Resolve a cited artifact before classifying the context as missing.
 
 ### 2.3 Evaluate Feasibility
 

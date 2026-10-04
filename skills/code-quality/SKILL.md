@@ -90,7 +90,7 @@ Load only the references for the code being changed:
 
 ## Comments and Prose
 
-A comment states why, or a constraint the code cannot show. No history, review notes, code restatements or change logs. Delete a comment that adds nothing. Keep claims within what the adjacent code establishes. The optional audit is [commit-guards CHECKS.md § comments](../commit-guards/CHECKS.md#comments).
+A comment states why, or a constraint the code cannot show. No history, review notes, code restatements or change logs. Delete a comment that adds nothing. Keep claims within what the adjacent code establishes. The optional audit is the commit-guards skill's CHECKS.md § comments.
 
 Markdown follows [docs-writing](../docs-writing/SKILL.md). Commit bodies explain intent, not the diff.
 

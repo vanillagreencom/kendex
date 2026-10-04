@@ -45,12 +45,11 @@ if [[ "$mode" == full ]]; then
 fi
 if [[ -f kendex.toml ]]; then
   # The refresh judges and the checkout keeps the committed record, whatever
-  # the refresh and the verify returned: a project that records
-  # on its default branch after each merge
-  # (docs/decisions/D007-lock-record-on-main.md) leaves that record stale
-  # until its rolling pull request lands, the next sync-base refuses a dirty
-  # checkout, and its fast-forward refuses an untracked path the landing
-  # would overwrite.
+  # the refresh and the verify returned: a project that records its install
+  # record on its default branch after each merge, through one rolling pull
+  # request, leaves that record stale until that pull request lands, the next
+  # sync-base refuses a dirty checkout, and its fast-forward refuses an
+  # untracked path the landing would overwrite.
   before="$(untracked)" || { status restore 1; exit 1; }
   rc=0
   step refresh kendex refresh --scope project --yes --leave || rc=$?

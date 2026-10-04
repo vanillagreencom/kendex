@@ -398,8 +398,8 @@ lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [
 # documented `InfiniteSessionConfig.backgroundCompactionThreshold` default,
 # 0.80 (copilot-sdk types.d.ts), and the CLI compacts at the first
 # `session.usage_info` reading at or past it.
-# REVISIT(D015): a usage field naming the compaction limit replaces this share
-# with the figure.
+# Where Copilot's usage event gains a field naming the compaction limit, that
+# figure replaces this share.
 LANE_CONTEXT_COPILOT_COMPACTION_PCT=80
 LANE_CONTEXT_COPILOT_CAPACITY_SOURCE="80% of tokenLimit, Copilot's backgroundCompactionThreshold default"
 

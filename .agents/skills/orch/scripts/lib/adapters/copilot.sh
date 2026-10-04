@@ -165,13 +165,12 @@ copilot_context_configure() { # HOME
 # making and removing one probe file there, the empty file a marker is. The
 # marker stands from the moment a reading lands until the lane-mail-check run
 # that records it exits 0, so a turn end during a run that fails never judges
-# the earlier record as room.
-# D015 § D015: A Copilot CLI session is measured by a kendex extension on its usage events, against the limit Copilot compacts at
-# A reading the extension could not
-# mark would leave that record standing as room. The extension still names a
-# marker write that fails after this, as `pending-unwritten`. Refused with
-# COPILOT_CONTEXT_FILE naming the directory and COPILOT_CONTEXT_DETAIL
-# `pending-unwritable`.
+# the earlier record as room. The orch extension measures a Copilot session on
+# its usage events, against the limit Copilot compacts at, and its reading is
+# the primary one: a reading the extension could not mark would leave that
+# record standing as room. The extension still names a marker write that fails
+# after this, as `pending-unwritten`. Refused with COPILOT_CONTEXT_FILE naming
+# the directory and COPILOT_CONTEXT_DETAIL `pending-unwritable`.
 copilot_pending_establish() {
   local dir probe
   dir="$(lane_context_copilot_pending_dir)" || return 1

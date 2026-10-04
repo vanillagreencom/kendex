@@ -33,7 +33,7 @@ orch is the caller and runtime: it owns delegation format, round acceptance, and
 | `workflows/dev-implement.md` | Implementation: activate → plan → implement → validate → commit → QA labels → summary → artifact → return (§ 1-11) |
 | `workflows/dev-fix.md` | Review fixes: evaluate → apply or skip → validate → commit → artifact → return |
 
-Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell; literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
+Review and QA-review belong to the reviewer skill's workflows/review.md and workflows/qa-review.md. Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell; literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
 
 ## Implementer selection
 

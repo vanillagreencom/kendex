@@ -1501,10 +1501,11 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # takes it as the value of `-i`, and its session id attached to `--resume`,
   # whose value is optional, so a bare id can never be read as a prompt.
   #
-  # The hosted Codex resume stays promptless under D002's foreground handoff.
-  # The launch loop reports resume-lineless so the caller pastes its continuation
-  # into the pane. Its session id comes from the same lookup on the host, not
-  # from the local session store.
+  # The hosted Codex resume stays promptless and waits in the foreground, never
+  # in the background job a hosted launch hands its wait to, so the
+  # resume-lineless notice the launch loop reports reaches the caller, which
+  # pastes its continuation into the pane. Its session id comes from the same
+  # lookup on the host, not from the local session store.
   #
   # A relaunch_route verdict of fresh skips this block for the start brief
   # below. The claude arm is resume-or-fresh: where claude answers "No
@@ -2575,8 +2576,9 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # where it named none, never read as no record, which would resume the session
 # the lane retired. The verb's own words reach stderr.
 #
-# Hosted Codex selection stays in the foreground under D002. Its result is
-# unknown until the host starts the harness; launch_finish reads that result.
+# Hosted Codex selection stays in the foreground, never in the background job a
+# hosted launch hands its wait to. Its result is unknown until the host starts
+# the harness; launch_finish reads that result.
 RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
 relaunch_route() { # ITEM STATE_ID WORKTREE
   RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""

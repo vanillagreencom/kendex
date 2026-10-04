@@ -9,7 +9,8 @@ fi
 [ -n "$repositories" ] || { printf 'refresh-error=installation-empty value=0\n' >&2; exit 1; }
 failed=0
 while IFS= read -r repository; do
-  # D007 gives the source catalog its own build-bound lock writer.
+  # The source catalog re-records its own install record after each merge,
+  # with a kendex built from the merged tree.
   if [ "$repository" = vanillagreencom/kendex ]; then
     printf 'refresh-excluded=%s\n' "$repository"
     continue
