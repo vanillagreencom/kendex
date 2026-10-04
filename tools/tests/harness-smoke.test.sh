@@ -661,6 +661,16 @@ case "$1 ${2:-}" in
     jq -R '{sourcePath: .}' standin-sources | jq -s .
     exit 0 ;;
 esac
+if [ -f .github/hooks/interactive.json ]; then
+  mode=$(jq -r '.hooks.userPromptSubmitted[0].args[1]' .github/hooks/interactive.json)
+  token=$(jq -r '.hooks.userPromptSubmitted[0].args[2]' .github/hooks/interactive.json)
+  result=positive reply=$token
+  [ "$mode" != none ] || { result=negative; reply=NO-HOOK-TOKEN; }
+  printf '{"sessionId":"lead-1"}\n' >>smoke-events/calls
+  printf '%s\n' "$reply" >"../../logs/copilot-answer-interactive-$result.md"
+  [ "${STANDIN_COMPACT:-manual}" != manual ] || printf '{"trigger":"manual"}\n' >>smoke-events/compact
+  exit 0
+fi
 if [ -f smoke-events/answer ] && jq -e '[.hooks[][] | has("exec")] | any' .github/hooks/smoke-events.json >/dev/null; then
   event=$(jq -r '.hooks | keys[0]' .github/hooks/smoke-events.json)
   mode=$(jq -r '.hooks[][] | .args[1]' .github/hooks/smoke-events.json)
@@ -686,7 +696,9 @@ case "$prompt" in
     [ "$STANDIN_CROSS" != 1 ] ||
       printf 'PreToolUse %s/.claude/hooks/smoke-tool.sh\nPreToolUse %s/.claude/hooks/smoke-claude-only.sh\n' "$PWD" "$PWD" >>smoke-fired
     printf 'ok\n' ;;
-  "Use your task tool"*) printf '%s\n' "$STANDIN_SUB" ;;
+  "Use your task tool"*)
+    printf '%s%s\n' "$STANDIN_SUB" "$STANDIN_SUB"
+    [ -z "$share" ] || printf '%s\n' "$STANDIN_SUB" >"$share" ;;
   "Run the smoke-child custom agent"*)
     t="$PWD/session-state/lead-1/events.jsonl"
     own="$PWD/session-state/sub-1/events.jsonl"
@@ -865,7 +877,8 @@ a subagentStart naming no subagent passes|event:subagentStart|pass|naming no age
 a subagentStop naming the subagent's session and agent passes|event:subagentStop|pass|own session sub-1 as agentId, smoke-child as agentType
 an agentStop at each agent's end, both naming the lead's transcript, passes|event:agentStop|pass|fired it twice
 an errorOccurred for each try of a failed model call passes|event:errorOccurred|pass|fired it 2 time(s)
-a hook on an event the session never raises is skipped, naming the event rows|hook:reviewer-stop-check|skipped|raises no SubagentStop; the copilot event rows"
+a hook on an event the session never raises is skipped, naming the event rows|hook:reviewer-stop-check|skipped|raises no SubagentStop; the copilot event rows
+a compaction hook is skipped by a session that requests no compaction|hook:lane-mail-compact|skipped|raises no PreCompact; the copilot event rows"
 dup_rows="$(awk '$1 == "copilot" { print $2 }' "$TMP/pkg-out" | sort | uniq -d)"
 if [ -z "$dup_rows" ] && [ "$(awk '$1 == "copilot" && $2 ~ /:/' "$TMP/pkg-out" | wc -l)" -gt 0 ]; then
   ok "every package row prints once"
@@ -1043,9 +1056,23 @@ package_case "control: a hook row that never looks under its judge fails a wrapp
 plant "$STAND_SMOKE" 's/^    \[ "\$line" = "\$args" \] || continue$/    :/'
 package_run "$STAND_SMOKE" STANDIN_WRAP=session-end-row
 package_case "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran" hook:session-end-row pass "reading the payload Copilot sent"
-plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop'\$/PKG_UNRAISED=''/"
+plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop PreCompact'\$/PKG_UNRAISED=''/"
 package_run "$STAND_SMOKE"
 package_case "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent" hook:reviewer-stop-check pass "reading the payload Copilot sent"
+package_case "control: with every event read as raised, a compaction hook is judged without compaction" hook:lane-mail-compact pass "reading the payload Copilot sent"
+plant "$STAND_SMOKE" 's/elif grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "\$transcript"/elif true || grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "$transcript"/'
+package_run "$STAND_SMOKE" STANDIN_SUB=SMOKE-RULES-REACHED
+package_case "control: no subagent token check accepts the lead token alone" instruction:subagent pass "SMOKE-RULES-REACHED-VIA-AGENT"
+# The disposable copy opens the fixture input instead of a terminal. The
+# interactive commands and every verdict check remain in the smoke runner.
+plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
+package_run "$STAND_SMOKE"
+package_case "manual compaction capture passes its dedicated row" event:preCompact pass "/compact fired preCompact with trigger manual"
+package_run "$STAND_SMOKE" STANDIN_COMPACT=none
+package_case "no manual compaction capture fails its dedicated row" event:preCompact fail "/compact recorded no preCompact payload with trigger manual"
+plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@; s/^  if \(.*smoke-events\/compact.*\); then$/  if true || { \1; }; then/'
+package_run "$STAND_SMOKE" STANDIN_COMPACT=none
+package_case "control: no capture check passes absent manual compaction" event:preCompact pass "/compact fired preCompact with trigger manual"
 
 # The skill-load session's other verdicts, on the committed table, whose
 # copilot cells of skill-load-check and skill-load-record read enforced; the

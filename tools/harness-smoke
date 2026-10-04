@@ -1962,7 +1962,7 @@ EOF
   setup 'the helper and the recorder' chmod +x "$PKG/smoke-helper" "$PKG/smoke-load/linear.sh" "$PKG_RECORDER/cat"
 }
 
-# Every row judged on text the model relays asks through here. The turn sees
+# The agent listing and duplicate-count rows ask through here. The turn sees
 # the task tool alone (`--available-tools`), so the model cannot read the
 # project's files or run a shell: the agent names it lists are its task tool's,
 # the rule it counts is the one in its context, and the subagent's answer is
@@ -2036,16 +2036,20 @@ pkg_duplicate_row() {
 # The smoke-rules agent builds its answer from the repository's rules and a
 # suffix only its own instructions name, so the parent, which reads the same
 # rules, cannot give the passing line itself.
+# Copilot's --share transcript separates replies that silent stdout joins.
 pkg_subagent_row() {
-  local label='copilot -p (task tool running smoke-rules, model-relayed)'
-  pkg_ask copilot-packages-subagent \
-    'Use your task tool to run the smoke-rules custom agent. Reply with exactly the text it returned and nothing else.'
-  if grep -qx 'SMOKE-RULES-REACHED-VIA-AGENT' <<<"$OUT"; then
-    pkg_set instruction:subagent pass "$label said SMOKE-RULES-REACHED-VIA-AGENT"
-  elif grep -qx 'NO-RULES-VIA-AGENT' <<<"$OUT"; then
-    pkg_set instruction:subagent fail "$label said NO-RULES-VIA-AGENT: the subagent read no repository instructions"
-  elif [ "$STATUS" -ne 0 ]; then
+  local label='copilot -p (task tool running smoke-rules, model-relayed)' transcript="$LOGS/copilot-packages-subagent.md"
+  run copilot-packages-subagent env COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true copilot -p \
+    'Use your task tool to run the smoke-rules custom agent. Reply with exactly the text it returned and nothing else.' \
+    --available-tools task --allow-all-tools -s --share "$transcript"
+  if [ "$STATUS" -ne 0 ]; then
     pkg_set instruction:subagent unanswerable "$label exited $STATUS: $(clip "$(last_line)")"
+  elif [ ! -f "$transcript" ]; then
+    pkg_set instruction:subagent unanswerable "$label wrote no --share transcript"
+  elif grep -qxF 'SMOKE-RULES-REACHED-VIA-AGENT' "$transcript"; then
+    pkg_set instruction:subagent pass "$label said SMOKE-RULES-REACHED-VIA-AGENT"
+  elif grep -qxF 'NO-RULES-VIA-AGENT' "$transcript"; then
+    pkg_set instruction:subagent fail "$label said NO-RULES-VIA-AGENT: the subagent read no repository instructions"
   else
     pkg_set instruction:subagent fail "$label did not relay an answer the subagent built; its last line: $(clip "$(last_line)")"
   fi
@@ -2133,10 +2137,10 @@ pkg_session_verdict() {
     PKG_SESSION_EVIDENCE='the model ran its tool calls, and Copilot ran no repository hook, the fixture hook included'
   fi
 }
-# The events the session of tool calls raises none of on Copilot: it runs no
-# subagent. The copilot event rows record what Copilot sends there, and the
+# The session of tool calls runs no subagent and requests no compaction.
+# The copilot event rows record what Copilot sends there, and the
 # hook's own suite holds it to that payload.
-PKG_UNRAISED='SubagentStop'
+PKG_UNRAISED='SubagentStop PreCompact'
 pkg_hook_row() { # HOOK — after the session
   local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1" denial
   event=$(sed -n 's/^# event: //p' "$SELF/hooks/$hook.sh")
