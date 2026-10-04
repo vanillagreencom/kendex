@@ -251,14 +251,18 @@ apply_control() {
 	)
 }
 
-# fail_set OUTPUT FILE — the assertion descriptions the suite reddened, one
-# per line, sorted and deduplicated, into FILE. `FAIL: ` is what
-# tests/lib/assert.sh prints for a failed assertion, and also what it prints
-# for the harness verdicts that refuse a suite outright, which is why a
-# mutation is measured against the assertion it named rather than against the
-# set being non-empty.
+# fail_names OUTPUT — the assertion descriptions the suite reddened, one per
+# line, in the order it printed them. `FAIL: ` is what tests/lib/assert.sh
+# prints for a failed assertion, and also what it prints for the harness
+# verdicts that refuse a suite outright, which is why a mutation is measured
+# against the assertion it named rather than against the set being non-empty.
+fail_names() {
+	printf '%s\n' "$1" | sed -n 's/^FAIL: //p'
+}
+
+# fail_set OUTPUT FILE — fail_names, sorted and deduplicated, into FILE.
 fail_set() {
-	printf '%s\n' "$1" | sed -n 's/^FAIL: //p' | LC_ALL=C sort -u >"$2"
+	fail_names "$1" | LC_ALL=C sort -u >"$2"
 }
 
 # prepare_one SUITE STEM — a control's checks before its mutations run.
@@ -277,11 +281,16 @@ prepare_one() {
 
 	# The suite must be green from the staged copy, or its redness under
 	# mutation proves nothing about the mutation.
-	# Its output's tail goes under the verdict, so the failed assertion is
-	# read here rather than found by a second run.
+	# Under the verdict go every line fail_names reads out of the suite's
+	# output, then the output's last 40 lines. assert.sh prints a failed
+	# assertion's detail after its FAIL: line, so a tail alone can hold
+	# detail and no FAIL: line.
 	if ! out="$(timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" 2>&1)"; then
 		printf 'UNSTAGED %-52s suite fails from an unmutated copy\n' "$suite"
-		printf '%s\n' "$out" | tail -n 40 | sed 's/^/         | /'
+		{
+			fail_names "$out" | sed 's/^/FAIL: /'
+			printf '%s\n' "$out" | tail -n 40
+		} | sed 's/^/         | /'
 		return 1
 	fi
 

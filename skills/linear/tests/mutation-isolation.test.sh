@@ -25,13 +25,16 @@
 #   - a suite with no control file is MISSING, one failing from its unmutated
 #     copy is UNSTAGED, a control declaring no mutation is NOOP, and a
 #     mutation whose line the file lacks is BADCTRL
+#   - under UNSTAGED the runner prints the assertion the suite failed on, so
+#     the committer reads it there rather than in a second run
 #
-# One table. A row names the fixture, the control it writes, the cap, and the
-# run's verdict block whole: the exit status, every verdict line the runner
-# printed, and its tally. A verdict whose branch is disabled falls through to
-# another verdict, which is a different line, so every row is reddened by the
-# mutation of its own branch; tests/roster-orphan.test.sh pins that a failing
-# control fails the run and is counted.
+# One table. A row names the fixture, the control it writes, the cap, what it
+# keeps of the run, and the run's verdict block whole: the exit status, every
+# verdict line the runner printed, and its tally. A verdict whose branch is
+# disabled falls through to another verdict, which is a different line, so
+# every row is reddened by the mutation of its own branch;
+# tests/roster-orphan.test.sh pins that a failing control fails the run and is
+# counted.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -160,12 +163,19 @@ control_replace scripts/a.sh 1 '"'"'A=7'"'"' '"'"'A=2'"'"'' ;;
     printf '%s\n' "$body" >"$2/tests/controls/alpha.control.sh"
 }
 
-# run FIXTURE CONTROL CAP — a fresh fixture (`plain`, or `residue`, whose suite
-# writes a scratch file inside its own copy), the named control, the runner under CAP
-# seconds (`-` for its default), rendered as one line: the status, every
-# verdict line with its spacing collapsed, and the tally.
+# run FIXTURE CONTROL CAP KEEP — a fresh fixture (`plain`; `residue`, whose
+# suite writes a scratch file inside its own copy; or `broken`), the named
+# control, the runner under CAP seconds (`-` for its default), rendered as one
+# line: the status, every verdict line with its spacing collapsed, and the
+# tally. KEEP `verdicts` keeps only those; `detail` also keeps the lines the
+# runner prints under a verdict, behind its `         | ` prefix.
 run() {
-    local root="$TMP/$2-$1" rc=0
+    local root="$TMP/$2-$1" rc=0 keep
+    case "$4" in
+    verdicts) keep='^(ok|WRONG|SHARED|NOEXPECT|GREEN|TIMEOUT|UNGATED|UNSTAGED|ORPHAN|MISSING|NOOP|BADCTRL) |controls, ' ;;
+    detail) keep='^(ok|WRONG|SHARED|NOEXPECT|GREEN|TIMEOUT|UNGATED|UNSTAGED|ORPHAN|MISSING|NOOP|BADCTRL) |controls, |^ {9}\| ' ;;
+    *) printf 'mutation-isolation: keep=unknown value=[%s]\n' "$4" >&2; exit 2 ;;
+    esac
     fixture "$root" "$1"
     control "$2" "$root"
     if [ "$3" = "-" ]; then
@@ -173,30 +183,32 @@ run() {
     else
         CONTROL_TIMEOUT="$3" bash "$root/tests/must-fail-controls.sh" >"$root.log" 2>&1 || rc=$?
     fi
-    printf 'rc=%s;%s' "$rc" "$(grep -E '^(ok|WRONG|SHARED|NOEXPECT|GREEN|TIMEOUT|UNGATED|UNSTAGED|ORPHAN|MISSING|NOOP|BADCTRL) |controls, ' "$root.log" | tr -s ' ' | paste -sd';' -)"
+    printf 'rc=%s;%s' "$rc" "$(grep -E "$keep" "$root.log" | tr -s ' ' | paste -sd';' -)"
 }
 
 # --- the table -----------------------------------------------------------------
-# label|fixture|control|cap|expect
+# label|fixture|control|cap|keep|expect
 ROWS='
-a control whose mutations each redden what they named exits 0|plain|clean|-|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
-the misnamed report names the mutation and the assertion|plain|misnamed|-|rc=1;WRONG alpha.test.sh mutation 2 did not redden: b is one;1 controls, 1 failing, 0 orphaned
-the shared report names the assertion|plain|shared|-|rc=1;SHARED alpha.test.sh two mutations name one assertion: a is one;1 controls, 1 failing, 0 orphaned
-the unnamed report names the mutation|plain|unnamed|-|rc=1;NOEXPECT alpha.test.sh mutation 2 names no assertion;1 controls, 1 failing, 0 orphaned
-the green report names its suite|plain|green|-|rc=1;GREEN alpha.test.sh suite passed with mutation 2, its only break;1 controls, 1 failing, 0 orphaned
-the timeout report names the mutation and the cap|plain|capped|1|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
-the ungated report says what it refuses|plain|ungated|-|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
-the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
-the trailing report names the expectation nothing claims|plain|trailing|-|rc=1;NOEXPECT alpha.test.sh an expectation follows the last mutation and names none: c is one;1 controls, 1 failing, 0 orphaned
-the prefix report names the assertion the mutation did not redden|plain|prefix|-|rc=1;WRONG alpha.test.sh mutation 1 did not redden: a is one;1 controls, 1 failing, 0 orphaned
-a suite with no control file is reported missing|plain|missing|-|rc=1;MISSING alpha.test.sh no controls/alpha.control.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
-a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy;1 controls, 1 failing, 0 orphaned
-a control declaring no mutation changed nothing|plain|empty|-|rc=1;NOOP alpha.test.sh control changed nothing;1 controls, 1 failing, 0 orphaned
-a mutation whose line the file lacks did not apply|plain|badctrl|-|rc=1;BADCTRL alpha.test.sh mutation 1 did not apply cleanly;1 controls, 1 failing, 0 orphaned
+a control whose mutations each redden what they named exits 0|plain|clean|-|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
+the misnamed report names the mutation and the assertion|plain|misnamed|-|verdicts|rc=1;WRONG alpha.test.sh mutation 2 did not redden: b is one;1 controls, 1 failing, 0 orphaned
+the shared report names the assertion|plain|shared|-|verdicts|rc=1;SHARED alpha.test.sh two mutations name one assertion: a is one;1 controls, 1 failing, 0 orphaned
+the unnamed report names the mutation|plain|unnamed|-|verdicts|rc=1;NOEXPECT alpha.test.sh mutation 2 names no assertion;1 controls, 1 failing, 0 orphaned
+the green report names its suite|plain|green|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 2, its only break;1 controls, 1 failing, 0 orphaned
+the timeout report names the mutation and the cap|plain|capped|1|verdicts|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
+the ungated report says what it refuses|plain|ungated|-|verdicts|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
+the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
+the trailing report names the expectation nothing claims|plain|trailing|-|verdicts|rc=1;NOEXPECT alpha.test.sh an expectation follows the last mutation and names none: c is one;1 controls, 1 failing, 0 orphaned
+the prefix report names the assertion the mutation did not redden|plain|prefix|-|verdicts|rc=1;WRONG alpha.test.sh mutation 1 did not redden: a is one;1 controls, 1 failing, 0 orphaned
+a suite with no control file is reported missing|plain|missing|-|verdicts|rc=1;MISSING alpha.test.sh no controls/alpha.control.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
+a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy;1 controls, 1 failing, 0 orphaned
+the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy; | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
+a control declaring no mutation changed nothing|plain|empty|-|verdicts|rc=1;NOOP alpha.test.sh control changed nothing;1 controls, 1 failing, 0 orphaned
+a mutation whose line the file lacks did not apply|plain|badctrl|-|verdicts|rc=1;BADCTRL alpha.test.sh mutation 1 did not apply cleanly;1 controls, 1 failing, 0 orphaned
 '
 
-while IFS='|' read -r label fix ctl cap expect; do
+# expect is the last field, so the `|` a detail line carries stays in it.
+while IFS='|' read -r label fix ctl cap keep expect; do
     [ -n "$label" ] || continue
-    assert_eq "$label" "$(run "$fix" "$ctl" "$cap")" "$expect"
+    assert_eq "$label" "$(run "$fix" "$ctl" "$cap" "$keep")" "$expect"
 done <<<"$ROWS"
 

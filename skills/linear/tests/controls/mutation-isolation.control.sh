@@ -96,3 +96,10 @@ control_expect "a mutation whose line the file lacks did not apply"
 control_replace tests/must-fail-controls.sh 1 \
 	'		if ! apply_control "$root" "$k"; then' \
 	'		if ! apply_control "$root" "$k" 2>/dev/null && false; then'
+
+# 15. What goes under the UNSTAGED verdict, discarded while the verdict stays,
+#     so only the row keeping those lines sees it.
+control_expect "the unstaged report shows the assertion the suite failed on"
+control_replace tests/must-fail-controls.sh 1 \
+	"		} | sed 's/^/         | /'" \
+	'		} >/dev/null'
