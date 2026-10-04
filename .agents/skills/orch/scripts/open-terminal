@@ -2816,24 +2816,32 @@ cloud_bundle_risk() { # ACCOUNT
 }
 
 # One launch=cloud-session item. The session clones this repository's
-# github.com remote at the checkout's branch, so the item's worktree is made
-# and its branch pushed from the base tip first, and `claude -p --cloud` runs
-# in that worktree under the lane's account, its task the brief file closed by
-# the session words. Its session id is the launch record: a launch that prints
-# none stops here, since no pane or listing stands in for it. The record
-# carries the kind, the account and that id, the local worktree as mail_root,
-# and no window. A failure after the create leaves the tree standing as the
-# item's claim, and one after the push its branch on origin. Status 75 is an
-# item another session owns; 1 a failure, its keyed line printed.
+# github.com remote at the item branch, so the item's worktree is made and its
+# branch pushed from the base tip first, and `claude -p --cloud` runs in that
+# worktree under the lane's account and model, its task the brief file closed
+# by the session words. --ref names the pushed branch, so the CLI clones it or
+# refuses, and a refusal is a failed launch. Its session id is the launch
+# record: a launch that prints none stops here, since no pane or listing
+# stands in for it. The record carries the kind, the account and that id, the
+# local worktree as mail_root, and no window. A failure after the create
+# leaves the tree standing as the item's claim, and one after the push its
+# branch on origin. Status 75 is an item another session owns; 1 a failure,
+# its keyed line printed.
 cloud_session_launch() {
-  local wt out session rc=0 launched_at record_rc=0
+  local wt branch out session rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
   [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
+  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  out="$(cd -- "$wt" && env "$LANE_ENV" claude -p --cloud "$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT" --output-format json)" || rc=$?
+  # On an account whose GitHub App check reads an installed App as missing
+  # (anthropics/claude-code#81776), the CLI bundles the checkout or refuses
+  # --ref; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set it clones. The
+  # variable goes once that bug is fixed, KEN-2741 being its removal point.
+  out="$(cd -- "$wt" && env "$LANE_ENV" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --cloud "$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT" --output-format json \
+    --model "$LAUNCH_MODEL" --ref "$branch")" || rc=$?
   [[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed "item=$item" "exit=$rc" >&2; return 1; }
   session="$(jq -er 'select(.ok == true) | .session_id | strings | select(length > 0)' <<<"$out" 2>/dev/null)" \
     || { ot_message cloud-session-unread "item=$item" >&2; return 1; }

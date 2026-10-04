@@ -3,7 +3,10 @@
 # refusals of what a cloud session cannot take, the cloud-bundle-risk check,
 # the item worktree and its pushed branch, one `claude -p --cloud` under the
 # lane's account in that worktree whose task is the brief file closed by the
-# session words, the session id it prints, and the lane record naming the
+# session words, naming the lane's model and the pushed branch as --ref with
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in its environment, a CLI
+# refusal of that --ref as a failed launch, the session id it prints, and the
+# lane record naming the
 # kind, the account and that id with no window, and the standard tier
 # whatever orch words the brief quotes. A kind whose launch this build does
 # not make refuses as kind-unbuilt.
@@ -13,7 +16,7 @@
 # github.com URL; the worktree CLI, gh, lanes and the `claude` CLI are stubs.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-unset ORCH_LANE_HOST CCR_FORCE_BUNDLE
+unset ORCH_LANE_HOST CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 export ORCH_OVERSEER_LANES=1000
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
@@ -32,10 +35,13 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/assertions.sh"
 
 # Stubs. gh answers nothing, so the repository resolves from the origin; lanes
-# clears every lane. `claude` logs its CLAUDE_CONFIG_DIR and its working
-# directory under a `--` separator, then its argv one %q-quoted word a line,
-# prints STUB_CLAUDE_OUT and exits STUB_CLAUDE_EXIT. The worktree stub logs
-# every call, makes the item's directory on create and exits STUB_PUSH_EXIT on
+# clears every lane. `claude` logs its CLAUDE_CONFIG_DIR, its working
+# directory and its CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC under a `--`
+# separator, then its argv one %q-quoted word a line, and prints
+# STUB_CLAUDE_OUT; with STUB_CLAUDE_REFUSE=1 it also prints the CLI's refusal
+# of the --ref it was given on stderr and exits 1. The worktree stub logs
+# every call, makes the item's directory on create, a git checkout on the
+# item's lowercased branch unless STUB_WT_PLAIN=1, and exits STUB_PUSH_EXIT on
 # push.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
@@ -55,9 +61,13 @@ exit 0
 EOF
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
-{ printf -- '--\n'; printf 'config=%s\ncwd=%s\n' "${CLAUDE_CONFIG_DIR:-}" "$PWD"; printf '%q\n' "$@"; } >> "$STUB_CLAUDE_LOG"
+{ printf -- '--\n'; printf 'config=%s\ncwd=%s\ntraffic=%s\n' "${CLAUDE_CONFIG_DIR:-}" "$PWD" "${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}"; printf '%q\n' "$@"; } >> "$STUB_CLAUDE_LOG"
 printf '%s\n' "$STUB_CLAUDE_OUT"
-exit "${STUB_CLAUDE_EXIT:-0}"
+[[ "${STUB_CLAUDE_REFUSE:-}" == 1 ]] || exit 0
+ref=""
+while [[ $# -gt 0 ]]; do [[ "$1" != --ref ]] || ref="${2:-}"; shift; done
+printf 'Error: --ref %s cannot be honored: the GitHub App is not set up for this repository\n' "$ref" >&2
+exit 1
 EOF
 WT_LOG="$TMP_ROOT/worktree.log"
 cat > "$BIN/worktree" <<EOF
@@ -65,7 +75,15 @@ cat > "$BIN/worktree" <<EOF
 set -euo pipefail
 printf '%s\n' "\$*" >> "$WT_LOG"
 case "\${1:-}" in
-  create) mkdir -p "$TMP_ROOT/wt/\$2"; printf '%s\n' "$TMP_ROOT/wt/\$2" ;;
+  create)
+    mkdir -p "$TMP_ROOT/wt/\$2"
+    if [[ "\${STUB_WT_PLAIN:-}" != 1 ]]; then
+      git init -q "$TMP_ROOT/wt/\$2"
+      git -C "$TMP_ROOT/wt/\$2" config gc.auto 0
+      git -C "$TMP_ROOT/wt/\$2" config maintenance.auto false
+      git -C "$TMP_ROOT/wt/\$2" symbolic-ref HEAD "refs/heads/\$(printf '%s' "\$2" | tr '[:upper:]' '[:lower:]')"
+    fi
+    printf '%s\n' "$TMP_ROOT/wt/\$2" ;;
   push) exit "\${STUB_PUSH_EXIT:-0}" ;;
   *) echo "unexpected worktree stub call: \$*" >&2; exit 1 ;;
 esac
@@ -122,7 +140,11 @@ record() {
   "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | first // {} | [.host, .kind, .account, .session_id, .window, .mail_root, .status, .tier] | map(. // "null") | join(" ")'
 }
 # The words the claude stub received, one %q-quoted word a line.
-claude_argv() { [[ -f "$TMP_ROOT/claude.log" ]] && sed -n '4,$p' "$TMP_ROOT/claude.log" || true; }
+claude_argv() { [[ -f "$TMP_ROOT/claude.log" ]] && sed -n '5,$p' "$TMP_ROOT/claude.log" || true; }
+# The workaround variable claude ran under and the argv words past the task's
+# --output-format pair, on one line.
+launch_args() { printf '%s %s' "$(sed -n 4p "$TMP_ROOT/claude.log")" "$(claude_argv | sed -n '6,$p' | paste -sd' ' -)"; }
+LAUNCH_ARGS="traffic=1 --model opus --ref cc-1"
 made() { [[ -e "$WT_LOG" ]] && echo yes || echo no; }
 
 echo "=== a cloud session is launched from the item's pushed branch and recorded ==="
@@ -136,6 +158,8 @@ assert_eq "$(sed -n '1,2p;4,5p' <<<"$ARGV" | paste -sd' ' -)" "-p --cloud --outp
   "the session starts through claude -p --cloud with JSON output"
 assert_eq "task=$([[ "$(sed -n 3p <<<"$ARGV")" == "$TASK_WORD" ]] && echo brief || echo other)" "task=brief" \
   "the task is the brief file's text closed by the session words, never a start command or the mailbox words"
+assert_eq "$(launch_args)" "$LAUNCH_ARGS" \
+  "the session runs the lane's model, clones the pushed item branch by --ref, and runs with the #81776 workaround set"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-1 running standard" \
   "the record names the host and kind, the account and the session id, no window, and the standard tier the brief's orch words leave"
 
@@ -217,11 +241,13 @@ echo "=== a failed push or launch stops with no record ==="
 # ENV|LINE|CLAUDE|OLD -> NEW: the stub's failure, the refusal line past its key
 # word, whether claude ran, and the control's edit, the guard's text kept and
 # its behaviour removed; the edit is the rest of the row, `|` and all. The
-# claude failure still prints the started answer.
+# claude refusal of --ref still prints the started answer, so its exit status
+# alone stops the launch.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 FAILURE_ROWS=(
   'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
-  'STUB_CLAUDE_EXIT=1|cloud-launch-failed item=CC-21 exit=1|ran|[[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed -> true || { ot_message cloud-launch-failed'
+  'STUB_CLAUDE_REFUSE=1|cloud-launch-failed item=CC-21 exit=1|ran|[[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed -> true || { ot_message cloud-launch-failed'
+  'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
 )
 failure_row() { # SCRIPT ROW ITEM — the launch, with RC and ERR set
   local env line item
@@ -298,6 +324,21 @@ for i in "${!FAILURE_ROWS[@]}"; do
   failure_row "$MUTANT" "${FAILURE_ROWS[$i]}" "CC-2$((i + 2))"
   assert_eq "$(record "CC-2$((i + 2))")" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-2$((i + 2)) running standard" \
     "control: without its guard, the ${line%% *} row is recorded" "$TMP_ROOT/err"
+done
+# One per launch argument: each removed in turn fails the arguments row.
+# NAME|OLD -> NEW: the argument and the edit that drops it.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+ARG_EDITS=(
+  'workaround|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p -> claude -p'
+  'model| --model "$LAUNCH_MODEL" --ref -> --ref'
+  'ref| --ref "$branch") -> )'
+)
+for i in "${!ARG_EDITS[@]}"; do
+  edit="${ARG_EDITS[$i]#*|}"
+  mutant "arg-$i" "${edit%% -> *}" "${edit#* -> }"
+  run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
+  assert_eq "args=$([[ "$(launch_args)" == "$LAUNCH_ARGS" ]] && echo held || echo broke)" "args=broke" \
+    "control: a launch without the ${ARG_EDITS[$i]%%|*} fails the arguments row" "$TMP_ROOT/err"
 done
 # shellcheck disable=SC2016
 mutant session-unread '|| { ot_message cloud-session-unread "item=$item" >&2; return 1; }' '|| session=""'
