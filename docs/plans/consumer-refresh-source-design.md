@@ -151,7 +151,7 @@ jobs:
 
 - The adopter writes the caller from `refresh/kendex-refresh.yml` in its release tree. It accepts the existing file when its bytes equal any template in kendex default-branch history at either template path. This is the KEN-2416 check, extended to the new path, so a hand edit is still refused and kept. Its environment check judges the names the shared workflow declares, because the caller declares no `environment:` (Migration order step 2). It accepts only the shipped template's form: a `secrets:` key on the line under `uses:` mapping exactly those names, in order, each to its same-named secret. It refuses every other form with `refresh-error=caller-secrets`. A caller that maps neither name has its job read the app secrets empty (runs 37187198901 and 37191124465).
 - The adopter removes the caller's `.kendex-generated.json` record, and `kendex verify` no longer compares it. The history check is its equality check.
-- A refresh pull request that changes the caller classifies `standard`, so the overseer or a maintainer merges it (KEN-2539). With no version in the file, that happens only when the triggers change.
+- A refresh pull request that changes the caller classifies `standard` (KEN-2539) and is armed like every other class (KEN-2759), so it merges once the required approval, thread resolution and checks pass. With no version in the file, that happens only when the triggers change.
 
 ### Compatibility contract
 

@@ -485,7 +485,7 @@ done
 # condition as a comment proves that its behavior, not its spelling, matters.
 reset_default
 cp "$runner" "$TMP/class-runner"
-for mutation in measured disable; do
+for mutation in measured disable note; do
   cp "$TMP/class-runner" "$runner"
   python3 - "$runner" "$mutation" <<'CLASS_CONTROL'
 from pathlib import Path
@@ -495,6 +495,7 @@ s = p.read_text()
 mutations = {
  'measured': ('[[ "$class_line" != "class: class=$class measured=true "* ]]', '[[ " $class_line " != *\' measured=true \'* ]]'),
  'disable': ('gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"', 'if [ "$class" = render ]; then\n  gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"\nelse\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
+ 'note': ("merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'", "merge_note='Auto-merge stays disabled until review and CI gates pass, then the repository overseer arms this pull request on the merge queue, or a maintainer merges it through the queue where no overseer runs.'"),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1
@@ -508,16 +509,16 @@ CLASS_CONTROL
   MEASURED=true; CLASS_EXIT=0
   case "$mutation" in
     measured) MEASURED=false; CLASS_REASON='cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' ;;
-    disable) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
+    disable | note) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
   esac
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
   run_refresh "control-$mutation" pass standard
-  if [ "$mutation" = disable ]; then
+  if [ "$mutation" = disable ] || [ "$mutation" = note ]; then
     if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" &&
         ! refresh_class_matches standard pushed "$CLASS_REASON" PATCH; then
-      ok 'control: the old standard disable path breaks the class assertion'
-    else bad 'standard disable control' "$OUT"; fi
+      ok "control: the old standard $mutation breaks the class assertion"
+    else bad "standard $mutation control" "$OUT"; fi
   else
     if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" && ! refresh_stopped_at_class "$before"; then
       ok "control: $mutation bypass breaks the class stop assertion"
@@ -567,17 +568,19 @@ LEASE_CONTROL
 done
 # GitHub can own the rolling branch after fetch, even with serialized runs.
 # Every state fixture is consumed only after the Git push refusal.
-# A GH006 merge-queue refusal defers queued even when the read answers active.
+# A GH006 merge-queue refusal defers queued even when the read answers active
+# or armed. Any other refusal of an armed pull request is a push failure.
 cp "$runner" "$TMP/push-runner"
 push_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 for row in \
   'queued|queued|OPEN|true|false|present|0|queued' \
   'queue-refusal-active|queued|OPEN|false|false|present|0|queued' \
-  'armed|queued|OPEN|false|true|present|0|armed' \
+  'queue-refusal-armed|queued|OPEN|false|true|present|0|queued' \
   'merged-deleted|deleted|MERGED|false|false|gone|0|merged' \
   'closed|queued|CLOSED|false|false|present|0|closed' \
   'branch-gone|deleted|OPEN|false|false|gone|0|branch-gone' \
   'genuine-failure|failure|OPEN|false|false|present|1|active' \
+  'armed-failure|failure|OPEN|false|true|present|1|armed' \
   'branch-gone-no-pr|deleted|OPEN|false|false|gone|0|branch-gone' \
   'new-branch-failure|failure|OPEN|false|false|gone|1|active' \
   'query-failure|queued|OPEN|true|false|present|1|query' \
@@ -615,8 +618,10 @@ for row in \
   case "$name" in
     queued) mutations='defer ordering queue-field' ;;
     queue-refusal-active) mutations=refusal-text ;;
+    queue-refusal-armed) mutations=refusal-armed ;;
     merged-deleted) mutations=defer ;;
     genuine-failure) mutations=fail-open ;;
+    armed-failure) mutations=armed-defer ;;
     new-branch-failure) mutations=no-old ;;
     query-failure) mutations=query-open ;;
     partial-response) mutations=output-open ;;
@@ -629,14 +634,16 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 mutations = {
-    'defer': ('if [ "$reason" != active ]; then', 'if false; then'),
-    'fail-open': ('if [ "$reason" != active ]; then', 'if true; then'),
+    'defer': ('      queued | merged | closed | branch-gone)', '      no-push-defer)'),
+    'fail-open': ('      queued | merged | closed | branch-gone)', '      *)'),
+    'armed-defer': ('      queued | merged | closed | branch-gone)', '      queued | armed | merged | closed | branch-gone)'),
     'query-open': ("printf 'refresh-error=push-state value=query\\n' >&2\n    exit 1", "printf 'refresh-error=push-state value=query\\n' >&2\n    exit 0"),
     'output-open': ("printf 'refresh-error=push-state value=output\\n' >&2\n    exit 1", "printf 'refresh-error=push-state value=output\\n' >&2\n    exit 0"),
     'ordering': ('  push_status=0', "  gh api graphql -f query='query { viewer { login } }'\n  push_status=0"),
     'queue-field': ('{ state isInMergeQueue autoMergeRequest { enabledAt } }', '{ state autoMergeRequest { enabledAt } }'),
     'no-old': ('elif .ref == null and $old != "" then "branch-gone"', 'elif .ref == null then "branch-gone"'),
-    'refusal-text': ('        [ "$reason" != active ] || reason=queued ;;', '        : ;;'),
+    'refusal-text': ('        case "$reason" in active | armed) reason=queued ;; esac ;;', '        : ;;'),
+    'refusal-armed': ('        case "$reason" in active | armed) reason=queued ;; esac ;;', '        case "$reason" in active) reason=queued ;; esac ;;'),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1

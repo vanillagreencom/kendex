@@ -10,7 +10,7 @@
 # to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
-# refresh-state=deferred reason=queued|armed|merged|closed|branch-gone.
+# refresh-state=deferred reason=queued|merged|closed|branch-gone.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 templates=""
@@ -66,7 +66,9 @@ fi
 # the queue already holds; only a read after GitHub refuses a write, or the
 # refusal itself, can establish the lifecycle at that write. Sets reason to
 # merged, closed, queued, armed, branch-gone or active for the pull request
-# in pr; a failed or malformed read exits.
+# in pr; a failed or malformed read exits. Every run arms the pull request it
+# publishes, so armed is the steady state and defers nothing: GitHub has not
+# taken the branch until the queue holds it.
 refresh_lifecycle() {
   local has_pr=false push_state
   if [ -n "$pr" ]; then has_pr=true; fi
@@ -326,12 +328,15 @@ if [ "$state" = pushed ]; then
     fi
     case "$refusal" in
       *'GH006: Protected branch update failed'*'has been added to a merge queue. Branches that are queued for merging cannot be updated.'*)
-        [ "$reason" != active ] || reason=queued ;;
+        case "$reason" in active | armed) reason=queued ;; esac ;;
     esac
-    if [ "$reason" != active ]; then
-      printf 'refresh-state=deferred reason=%s\n' "$reason"
-      exit 0
-    fi
+    # An armed or active pull request that GitHub has not taken leaves the
+    # refusal unexplained, so the push failure stands.
+    case "$reason" in
+      queued | merged | closed | branch-gone)
+        printf 'refresh-state=deferred reason=%s\n' "$reason"
+        exit 0 ;;
+    esac
     printf 'refresh-error=push value=%s\n' "$push_status" >&2
     exit 1
   fi
