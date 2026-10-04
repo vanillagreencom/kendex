@@ -12,34 +12,22 @@ change came from an outside contributor.
 
 ### Added
 
-- On Codex, the reviewer-stop-check and session-end-row hooks now install and run; session-end-row times out after 3 seconds instead of 30 on every harness, the longest Codex runs a session-end hook.
 - On Pi, the session-end-row and stop-failure-row hooks now install and run, and oversee-watch judges a Pi overseer's exit and usage limit from those rows instead of its pane.
-- Consumers can call the shared workflow `refresh-consumer.yml@v1`, which runs the refresh from the release that tag names.
 
 ### Changed
 
 - The linear skill's app token requests every non-admin Linear data scope, initiatives and customers included. The first mint revokes every older app token; reissue the fleet token.
-- A consumer refresh run whose push GitHub refuses because the merge queue holds the rolling branch ends as deferred, not as a push error.
-- A consumer refresh run ends as deferred, before it refreshes, when its open rolling pull request is already queued, merged or closed.
 
 ### Fixed
 
 - Command safety checks continued shell lines against the deny pattern. Memory caps split across continued lines are refused.
 - `kendex add` and the app picker keep declared tools and packages, `--commit` commits every file the run wrote unless it held your edits, and dropping a tool retires its shims and emptied files.
-- Disabling a Pi package Pi already turned off removes its `APPEND_SYSTEM.md` instructions, and the next `apply` or `refresh` follows the package's own `enabled` setting.
-- A Pi output style no longer reads as stale after a Pi package update.
 - `kendex update --git` and `install.sh --git` refuse a main build older than the installed release instead of moving a stable install back a version.
 - The shared refresh caller maps `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` to its same-named secrets. A v1.8.0 caller stops at the token step: fix it by hand or run the adopter by hand.
 - Pi Claude keeps the pending request as live input after compaction or history navigation, and answers a prompt sent right after an abort. Reported by Janque (#3623).
-- Main builds keep all platform targets until publication finishes, so later pushes cannot cancel a pending target in the active build.
 - Pi apply now removes a project `APPEND_SYSTEM.md` that is blank or holds only inherited global text, and a global style change no longer fails beside the last project package removal.
 - Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Prompt links, non-files, and Pi directory links outside the project block package changes.
 - `kendex verify --at-record` asks the install record for the dependencies each held package required at its recorded commit, not for ones its catalog added since.
-- Disabled hooks with declared companions pass strict verification after apply.
-
-### Security
-
-- The CI template runs credential scans with default-branch scripts, so a pull request cannot disable the scan by changing its scanner or installer.
 
 ## [1.8.0] - 2026-10-04
 
@@ -48,6 +36,8 @@ change came from an outside contributor.
 - Consumer lane setups can install pinned gitleaks from commit-guards. The shared CI template installs it and scans every pull request for credentials.
 - The `critical-path-deny` hook denies Claude Code's critical-path rm prompt at once inside a launched orch lane, with the rewrite that passes, so an unattended lane no longer waits on it.
 - Linear label writes reject undeclared labels when a repository declares a taxonomy. The new `labels audit` command reports undeclared issue labels and duplicate team and workspace names.
+- On Codex, the reviewer-stop-check and session-end-row hooks now install and run; session-end-row times out after 3 seconds instead of 30 on every harness, the longest Codex runs a session-end hook.
+- Consumers can call the shared workflow `refresh-consumer.yml@v1`, which runs the refresh from the release that tag names.
 
 ### Changed
 
@@ -56,6 +46,8 @@ change came from an outside contributor.
 - code-quality: repositories without a build dependency graph can select tests by their paths and input notes. Tests with unclear inputs run on every change; full and release runs run every test.
 - code-quality: controls that plant defects in inputs, fixtures or uncompiled source copies stay with their tests and run each time. Controls that edit compiled source remain recorded one-time checks.
 - code-quality: a repository can set a per-change validation budget. Runs over budget report their time and need a separate item to split slow checks. Full and release runs have no budget.
+- A consumer refresh run whose push GitHub refuses because the merge queue holds the rolling branch ends as deferred, not as a push error.
+- A consumer refresh run ends as deferred, before it refreshes, when its open rolling pull request is already queued, merged or closed.
 
 ### Fixed
 
@@ -69,6 +61,14 @@ change came from an outside contributor.
 - Overseer triage assigns a missing project and agent label before it records a kept issue, so kept issues can reach their work lanes.
 - GitHub review replies match paths with zero-width spaces after skill installation, so display-only characters no longer leave a finding impossible to answer.
 - `oversee-cycle` detects fixes made after an earlier approval, including an approval a later push dismissed, instead of reporting an unknown result from the retired review status.
+- Disabling a Pi package Pi already turned off removes its `APPEND_SYSTEM.md` instructions, and the next `apply` or `refresh` follows the package's own `enabled` setting.
+- A Pi output style no longer reads as stale after a Pi package update.
+- Main builds keep all platform targets until publication finishes, so later pushes cannot cancel a pending target in the active build.
+- Disabled hooks with declared companions pass strict verification after apply.
+
+### Security
+
+- The CI template runs credential scans with default-branch scripts, so a pull request cannot disable the scan by changing its scanner or installer.
 
 ## [1.7.0] - 2026-10-03
 
@@ -1498,7 +1498,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.9.0
 [1.8.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.8.0
 [1.7.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.7.0
 [1.6.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.6.0
