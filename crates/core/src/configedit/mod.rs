@@ -224,10 +224,17 @@ impl ConfigEdit {
                     serde_json::from_str(current).map_err(|e| e.to_string())?
                 };
                 let selection = root.get("outputStyle").cloned();
-                json_edit.apply_json(&mut root)?;
-                // Removing an absent entry must not create a config file.
-                if current.trim().is_empty() && root == json!({}) {
-                    return Ok(current.to_owned());
+                let object = root
+                    .as_object_mut()
+                    .ok_or("config root is not a JSON object")?;
+                if let Some(applied) = json_edit.apply_hook_edit(object) {
+                    applied?;
+                    // A disabled hook must not create an absent registry.
+                    if current.trim().is_empty() && object.is_empty() {
+                        return Ok(current.to_owned());
+                    }
+                } else {
+                    json_edit.apply_json(object)?;
                 }
                 if matches!(
                     json_edit,
@@ -243,13 +250,7 @@ impl ConfigEdit {
         }
     }
 
-    fn apply_json(&self, root: &mut Value) -> Result<(), String> {
-        let object = root
-            .as_object_mut()
-            .ok_or("config root is not a JSON object")?;
-        if let Some(applied) = self.apply_hook_edit(object) {
-            return applied;
-        }
+    fn apply_json(&self, object: &mut Map<String, Value>) -> Result<(), String> {
         match self {
             ConfigEdit::ClaudeOutputStyle { name } => {
                 object

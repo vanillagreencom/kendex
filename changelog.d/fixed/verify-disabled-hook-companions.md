@@ -1,1 +1,1 @@
-- Disabled hooks with declared companions pass strict verification after apply.
+- Disabled hooks with declared companions pass strict verification after apply. Other JSON settings keep their formatting.
