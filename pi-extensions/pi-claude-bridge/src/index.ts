@@ -42,7 +42,7 @@ import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-exe
 import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, recordStartedLane, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, takeStartedLane, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { primeConnectorServers } from "./connector-runtime.js";
-import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
+import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession, trailingUserRunStart } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_TOKEN, formatResetTimestamp } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
@@ -147,6 +147,9 @@ const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 // Deliberately NOT Symbol.for: rotation state rides options between the retry
 // re-entry and the original call within ONE module instance only.
 const ROTATION_STATE_KEY = Symbol("claude-bridge:rotationState");
+// Same scope: the restart re-entry hands its replacement query the request it
+// carries, and an account retry of that query passes it on with the options.
+const HISTORY_RESTART_KEY = Symbol("claude-bridge:historyRestart");
 
 /** Hard cap on account-rotation attempts per request (CHANGELOG 3.0.0). */
 const MAX_ROTATION_ATTEMPTS = 16;
@@ -159,8 +162,19 @@ interface RotationRequestState {
 	announcedModelId?: string;
 }
 
+/** What a history-restart replacement query appended after Pi's messages. */
+interface HistoryRestartState {
+	/** The unanswered request and its captured steers, without the notice: a
+	 *  restart of the replacement carries this, not its whole prompt. */
+	request: Context["messages"];
+	/** Messages Pi holds; the cursor indexes Pi's array, so the appended ones
+	 *  must never advance it. */
+	piMessageCount: number;
+}
+
 type BridgeStreamOptions = SimpleStreamOptions & {
 	[ROTATION_STATE_KEY]?: RotationRequestState;
+	[HISTORY_RESTART_KEY]?: HistoryRestartState;
 };
 
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
@@ -260,8 +274,7 @@ export interface DeferredUserReplayPlan {
  *  the whole run from scratch and the first steer was queued — and delivered to
  *  Claude — twice. */
 export function planDeferredUserReplay(messages: Context["messages"], capturedThrough = 0): DeferredUserReplayPlan {
-	let runStart = messages.length;
-	while (runStart > capturedThrough && messages[runStart - 1]?.role === "user") runStart--;
+	const runStart = trailingUserRunStart(messages, capturedThrough);
 	const trailingUsers = messages.slice(runStart);
 	const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
 	const blocks = trailingUsers.length > 0 ? extractUserPromptBlocks(trailingUsers) : null;
@@ -571,19 +584,32 @@ function applyProviderRegistration(trigger: string): void {
 	}
 }
 
-/** Prompt for the query that replaces one whose Pi history was replaced. Pi's
- *  whole context becomes imported history — the summary, the retained messages
- *  and the results of the tool calls that already ran — so the replacement query
- *  is only told to carry on from it. */
-export const HISTORY_REPLACED_PROMPT = "The conversation above was rewritten by Pi (compaction or history navigation). It is the complete current history, including the results of every tool call that has already run. Continue the turn from there, and do not repeat a tool call whose result is already above.";
+/** Notice closing the live prompt of a query that replaces one whose Pi history
+ *  was replaced, after the request that query was still answering. Pi's whole
+ *  context becomes imported history — the summary, the retained messages and
+ *  the results of the tool calls that already ran. */
+export const HISTORY_REPLACED_PROMPT = "Pi rewrote the conversation history before this message (compaction or history navigation). That history is complete, including the results of every tool call that has already run. The request above was still being answered when it was rewritten: continue it from where the history ends, and do not repeat a tool call whose result is already in the history.";
 
-/** Pi's new context plus the continuation prompt, so the rebuild imports every
- *  message Pi holds — trailing tool results included, which keeps each one
- *  paired with its tool call and present exactly once. */
-function restartContext(request: QueryRestartRequest): Context {
+/** The call that replaces a query whose Pi history was replaced. Every message
+ *  Pi holds is imported as history, trailing tool results included, so each
+ *  stays paired with its tool call and present exactly once; the rebuild sends
+ *  the trailing user run live.
+ *
+ *  A callback ending in user input is a new request, and that batch is the
+ *  live prompt as on any fresh query. A callback delivering tool results
+ *  carries no request of its own: the one the dying query was answering, with
+ *  the steers it captured, may no longer be in Pi's context at all (a summary
+ *  can replace it), so `pending` is appended after Pi's messages with the
+ *  notice. The options tell the replacement which messages Pi does not hold. */
+function historyRestartCall(restart: QueryRestartRequest, pending: Context["messages"]): { context: Context; options: BridgeStreamOptions } {
+	const piMessages = restart.context.messages;
+	if (piMessages[piMessages.length - 1]?.role === "user") return { context: restart.context, options: restart.options };
 	return {
-		...request.context,
-		messages: [...request.context.messages, { role: "user", content: HISTORY_REPLACED_PROMPT, timestamp: Date.now() }],
+		context: {
+			...restart.context,
+			messages: [...piMessages, ...pending, { role: "user", content: HISTORY_REPLACED_PROMPT, timestamp: Date.now() }],
+		},
+		options: { ...restart.options, [HISTORY_RESTART_KEY]: { request: pending, piMessageCount: piMessages.length } },
 	};
 }
 
@@ -668,6 +694,27 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// handlers. Results that arrive before their handler get queued in pendingResults.
 	if (ctx().activeQuery) {
 		const queryCtx = ctx();
+		const abortedTeardown = queryCtx.abortedQueryTeardown;
+		if (abortedTeardown) {
+			// Pi answered the abort before the dying query's teardown released it.
+			// Nothing this call carries belongs to that query: queued on it, a new
+			// prompt is dropped by the abort completion and its stream never ends.
+			debug("provider: call arrived while an aborted query tears down; waiting for teardown");
+			void abortedTeardown
+				.then(async () => {
+					for await (const event of streamClaudeAgentSdk(model, context, options)) stream.push(event);
+					stream.end();
+				})
+				.catch((error) => {
+					debug("provider: call after abort teardown failed:", error);
+					queryCtx.resetTurnState(model);
+					queryCtx.turnOutput!.stopReason = "error";
+					queryCtx.turnOutput!.errorMessage = error instanceof Error ? error.message : String(error);
+					stream.push({ type: "error", reason: "error", error: queryCtx.turnOutput! });
+					stream.end();
+				});
+			return stream;
+		}
 		if (queryCtx.piHistoryReplaced) {
 			// Pi compacted or navigated this conversation while the query ran, so the
 			// query's Claude session holds history Pi has replaced. Restart from THIS
@@ -805,7 +852,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// Image-only runs have no usable text but must still replay — capture
 			// whenever EITHER form has content.
 			if (replay.prompt || replay.blocks) {
-				ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? undefined });
+				ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? undefined, messages: context.messages.slice(replay.runStart) });
 				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${describePrompt(replay.prompt, replay.blocks)}`);
 			} else {
 				capturedThrough = replay.runStart;
@@ -908,6 +955,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	ctx().deadToolCallIds.clear();
 	ctx().callbackGeneration = 0;
 	ctx().deferredUserMessages = [];
+	ctx().abortedQueryTeardown = null;
 	ctx().resetTurnState(model);
 	ctx().resetToolTracking();
 	ctx().latestCursor = 0;
@@ -1054,6 +1102,13 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	const promptMessages = context.messages.slice(promptStart);
 	const promptBlocks = extractUserPromptBlocks(promptMessages);
 	let promptText = extractUserPrompt(promptMessages) ?? "";
+	const historyRestart = (options as BridgeStreamOptions | undefined)?.[HISTORY_RESTART_KEY];
+	// The cursor bound: a replacement query's appended request and notice are
+	// not Pi's messages.
+	const piMessageCount = historyRestart?.piMessageCount ?? context.messages.length;
+	// The user input the running child is answering, which a history restart
+	// sends again: this prompt, then each deferred steer as its continuation runs.
+	let unansweredRequest = historyRestart?.request ?? promptMessages;
 
 	// Guard: a prompt with no usable content means the last context message
 	// isn't a user message (or the batch was all-empty — joined batches turn ""
@@ -1120,6 +1175,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	let retryFailure: ClaudeAttemptFailure | undefined;
 	const sdkQuery = sdkQueryFactory({ prompt, options: queryOptions });
 	ctx().activeQuery = sdkQuery;
+	let releaseTeardownWaiters: () => void;
+	const teardownDone = new Promise<void>((resolve) => { releaseTeardownWaiters = resolve; });
 
 	// 4. Capture context for abort handling (must be AFTER pushContext)
 	const abortCtx = ctx();
@@ -1286,6 +1343,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// mismatch report marks the shared record of whatever lane is current.
 	const onAbort = () => runInRequestLane(laneId, () => {
 		wasAborted = true;
+		abortCtx.abortedQueryTeardown = teardownDone;
 		// Prevent stale deferred messages from being replayed by parent on pop
 		dropDeferredUserMessages("abort");
 		reportToolResultMismatch(abortCtx, "abort", cwd, {
@@ -1386,7 +1444,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				const activeSession = getSharedSession();
 				const failedSessionId = capturedSessionId ?? activeSession?.sessionId;
 				if (failedSessionId) {
-					const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession?.cursor ?? 0);
+					const cursor = Math.max(piMessageCount, abortCtx.latestCursor, activeSession?.cursor ?? 0);
 					debug(`provider: terminal failure, persisting session=${failedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}, droppedSteers=${droppedSteers.length}`);
 					persistSession({ sessionId: failedSessionId, cursor, cwd, ...accountScope, ...(droppedSteers.length > 0 ? { needsRebuild: true } : {}) });
 				}
@@ -1397,7 +1455,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			const activeSession = getSharedSession();
 			const sessionId = capturedSessionId ?? activeSession?.sessionId;
 			if (sessionId) {
-				const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession?.cursor ?? 0);
+				const cursor = Math.max(piMessageCount, abortCtx.latestCursor, activeSession?.cursor ?? 0);
 				debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
 				// Fresh record on purpose: a transient mid-turn needsRebuild/forceRotate
 				// must not survive a completed query and force a rebuild next turn.
@@ -1413,6 +1471,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			try {
 				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
 					const steer = abortCtx.deferredUserMessages.shift()!;
+					unansweredRequest = steer.messages;
 					debug(`provider: replaying deferred user message: ${describePrompt(steer.text, steer.blocks)}`);
 					abortCtx.resetTurnState(queryModel);
 					abortCtx.resetToolTracking();
@@ -1532,6 +1591,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
 			teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
 			closeSdkQuery(sdkQuery);
+			abortCtx.abortedQueryTeardown = null;
+			releaseTeardownWaiters();
 		})
 		.then(async () => {
 			// --- History restart re-entry ---
@@ -1558,8 +1619,11 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 					reentryStream.end();
 					return;
 				}
-				debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s)`);
-				for await (const event of streamClaudeAgentSdk(restart.model, restartContext(restart), restart.options)) reentryStream.push(event);
+				// Carried into the replacement's prompt, which pi's history may not hold.
+				const pending = [...unansweredRequest, ...abortCtx.deferredUserMessages.flatMap((steer) => steer.messages)];
+				const replacement = historyRestartCall(restart, pending);
+				debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s), ${replacement.context.messages.length - restart.context.messages.length} appended`);
+				for await (const event of streamClaudeAgentSdk(restart.model, replacement.context, replacement.options)) reentryStream.push(event);
 				reentryStream.end();
 				return;
 			}

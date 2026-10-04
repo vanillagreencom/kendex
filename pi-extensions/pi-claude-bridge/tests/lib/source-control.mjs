@@ -13,9 +13,9 @@ export function assertSourceControl({ source, before, after, suite, pattern, fai
 	try {
 		cpSync(join(packageRoot, "src"), join(root, "src"), { recursive: true });
 		cpSync(join(packageRoot, "package.json"), join(root, "package.json"));
-		mkdirSync(join(root, "tests", "lib"), { recursive: true });
+		// The whole library, since a suite reaches its fixtures through it.
+		cpSync(join(packageRoot, "tests", "lib"), join(root, "tests", "lib"), { recursive: true });
 		cpSync(join(packageRoot, "tests", suite), join(root, "tests", suite));
-		cpSync(fileURLToPath(import.meta.url), join(root, "tests", "lib", "source-control.mjs"));
 		symlinkSync(join(packageRoot, "node_modules"), join(root, "node_modules"), "dir");
 		const path = join(root, source);
 		const original = readFileSync(path, "utf8");

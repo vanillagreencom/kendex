@@ -408,6 +408,14 @@ interface SyncResult {
 	foreignContext?: boolean;
 }
 
+/** Index where the trailing run of consecutive user messages begins, never
+ *  below `floor`; `messages.length` when the context does not end in one. */
+export function trailingUserRunStart(messages: Context["messages"], floor = 0): number {
+	let runStart = messages.length;
+	while (runStart > floor && (messages[runStart - 1] as { role?: string }).role === "user") runStart--;
+	return runStart;
+}
+
 export interface IncrementalPromptBatchPlan {
 	// Doubles as the cursor to store before the query runs: Claude owns
 	// [0, promptStart) and the prompt delivers [promptStart, end).
@@ -522,9 +530,11 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string, claude
 //     prompt cache warm.
 //   REBUILD — no session yet, or pi's history has diverged (non-trailing
 //     missed messages, e.g. another provider took a turn). Wipes the existing
-//     session file (if any) and writes a fresh one containing all prior
-//     messages, reusing the same sessionId across rebuilds so UUIDs stay
-//     stable for the lifetime of pi's session.
+//     session file (if any) and writes a fresh one containing every message
+//     before the trailing user run, reusing the same sessionId across rebuilds
+//     so UUIDs stay stable for the lifetime of pi's session. The trailing run
+//     is this query's prompt, as on REUSE: a pending user message imported as
+//     history is one Claude reads as already handled.
 //
 // Why a full rebuild rather than patching:
 //   Injecting deltas into an existing session creates a branch that CC's
@@ -548,7 +558,8 @@ export function syncSharedSession(
 	account?: AccountSessionScope,
 ): SyncResult {
 	const sharedSession = getSharedSession();
-	const priorMessages = messages.slice(0, -1); // everything before the current user prompt
+	// Everything before the pending user run, which a rebuild imports.
+	const priorMessages = messages.slice(0, trailingUserRunStart(messages));
 	const accountProfileId = account?.accountProfileId;
 	const scopeConfigDir = account?.claudeConfigDir; // resolved dir for managed, undefined for legacy
 	// What cc-session-io reads/writes. Managed requests always carry a resolved
@@ -589,11 +600,11 @@ export function syncSharedSession(
 		sharedSession && !sharedSession.needsRebuild &&
 		sharedSession.conversationFingerprint && incomingFingerprint &&
 		!conversationFingerprintsMatch(sharedSession.conversationFingerprint, incomingFingerprint) &&
-		priorMessages.length <= sharedSession.cursor
+		messages.length - 1 <= sharedSession.cursor
 	) {
 		debug(
 			`Case 6 foreign-conversation: fingerprint ${incomingFingerprint.slice(0, 8)} != record ${sharedSession.conversationFingerprint.slice(0, 8)} ` +
-			`(cursor=${sharedSession.cursor}, priors=${priorMessages.length}) — clean one-shot, record untouched`,
+			`(cursor=${sharedSession.cursor}, priors=${messages.length - 1}) — clean one-shot, record untouched`,
 		);
 		debug(`syncResult: path=foreign-one-shot`);
 		return { sessionId: null, promptStart: messages.length - 1, foreignContext: true };
@@ -644,7 +655,7 @@ export function syncSharedSession(
 	if (converted.records.length === 0) {
 		debug(`Case 1: clean start, ${messages.length} total messages (${priorMessages.length} prior message(s) carry no Claude record), account=${accountProfileId ?? "default"}`);
 		debug(`syncResult: path=clean-start`);
-		return { sessionId: null, promptStart: messages.length - 1 };
+		return { sessionId: null, promptStart: priorMessages.length };
 	}
 	const replacedSessionId = sharedSession?.sessionId;
 	// Preserve a UUID only within the same credential profile: reusing account
@@ -692,5 +703,5 @@ export function syncSharedSession(
 	}
 	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath, claudeDir);
 	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === undefined ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : "rotated-post-abort"}`);
-	return { sessionId: session.sessionId, promptStart: messages.length - 1 };
+	return { sessionId: session.sessionId, promptStart: priorMessages.length };
 }

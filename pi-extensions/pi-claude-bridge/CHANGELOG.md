@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 4.0.11
+
+- After Pi compacts or navigates the history while a request is still being answered, Claude Code receives that request again as live input, with any steers queued behind it, ahead of the continuation notice. Before, the notice alone was the live prompt and the request became imported history or was gone with the summary, so a reply could ignore it ("No response requested."). Tool calls that already ran are still imported once and not run again. A callback that brings new user messages sends all of them as the prompt.
+- Any rebuild of the Claude session from Pi history sends every pending user message as the prompt, as resuming already did. Before, it imported all but the last one as history.
+- A prompt sent right after an abort, before the aborted query has finished shutting down, now waits for it and gets its own answer. Before, it was queued on the dying query and its turn ended aborted with no reply.
+- Reported, with the live reproduction and the original fix, by Janque (kendex#3623).
+
 ### 4.0.10
 
 - Escape during queued-message replay stops the current Claude Code child and ends the Pi turn as aborted, even when the child sends no further message. Silent replay children also receive the stream-idle deadline.

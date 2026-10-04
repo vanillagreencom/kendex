@@ -42,6 +42,7 @@ describe("account-scoped Claude sessions", () => {
 	it("never resumes or deletes account A's session while switching to account B", () => {
 		const messages = [
 			{ role: "user", content: "prior context", timestamp: Date.now() },
+			{ role: "assistant", content: [{ type: "text", text: "prior reply" }], timestamp: Date.now() },
 			{ role: "user", content: "current prompt", timestamp: Date.now() },
 		];
 		const first = syncSharedSession(
@@ -86,6 +87,7 @@ describe("account-scoped Claude sessions", () => {
 	it("a legacy session never reuses a managed session record", () => {
 		const messages = [
 			{ role: "user", content: "prior context", timestamp: Date.now() },
+			{ role: "assistant", content: [{ type: "text", text: "prior reply" }], timestamp: Date.now() },
 			{ role: "user", content: "current prompt", timestamp: Date.now() },
 		];
 		const managed = syncSharedSession(

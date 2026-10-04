@@ -38,3 +38,19 @@ export function fakeSdkQuery(messages, accountLabel, observed) {
 		},
 	};
 }
+
+/** A child that answers `text` at once, streamed the way Claude Code streams a
+ *  plain reply, then reports `sessionId` as its session. */
+export function answerSdkQuery(text, sessionId, modelId = "claude-haiku-4-5") {
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "system", subtype: "init", session_id: sessionId };
+			yield { type: "stream_event", event: { type: "message_start", message: { model: modelId, usage: { input_tokens: 1 } } } };
+			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } };
+			yield { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } };
+			yield { type: "result", subtype: "success", result: text };
+		},
+		close() {},
+		async interrupt() {},
+	};
+}

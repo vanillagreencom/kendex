@@ -36,10 +36,10 @@ export async function withBridge(ids, run, { prompt = "run", continuationQuery, 
 	const pending = [];
 	const abort = new AbortController();
 	let queries = 0;
-	__testSetSdkQueryFactory(({ options }) => {
+	__testSetSdkQueryFactory(({ prompt, options }) => {
 		// Every query after the first replays a deferred user message and
 		// answers at once.
-		if (++queries > 1 && continuationQuery) return continuationQuery();
+		if (++queries > 1 && continuationQuery) return continuationQuery({ prompt, options });
 		if (queries > 1) return {
 			async *[Symbol.asyncIterator]() {
 				yield { type: "system", subtype: "init", session_id: "offline-queue" };
