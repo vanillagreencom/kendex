@@ -954,6 +954,11 @@ get_issue() {
     local result
     result=$(graphql_query "$query" "$variables") || return 1
 
+    if ! jq -e '.issue.id | strings | select(length > 0)' <<<"$result" >/dev/null; then
+        jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
+        return 1
+    fi
+
     # Apply output format
     case "$FORMAT" in
     raw)
@@ -2029,10 +2034,6 @@ update_issue() {
         attach_only_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
         attach_only_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
         attach_only_url=$(echo "$issue_result" | jq -r '.issue.url // empty')
-        if [[ -z "$attach_only_uuid" ]]; then
-            jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
-            return 1
-        fi
         local attach_only_failed=0
         apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
             "${attach_pending[@]}" || attach_only_failed=1

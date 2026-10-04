@@ -158,11 +158,8 @@ create_comment() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
         local issue_result
-        if ! issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) ||
-            ! comment_issue_id=$(jq -er '.issue.id | strings | select(length > 0)' <<<"$issue_result"); then
-            jq -cn --arg issue "$issue_id" '{error: ("Attachment comment issue lookup failed: " + $issue)}' >&2
-            return 1
-        fi
+        issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) || return 1
+        comment_issue_id=$(jq -r '.issue.id' <<<"$issue_result") || return 1
     fi
 
     if [ -z "$body" ] && [ ${#attach_paths[@]} -eq 0 ]; then

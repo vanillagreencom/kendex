@@ -8,6 +8,7 @@
 # successful write name the issue and exit non-zero.
 
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
@@ -18,6 +19,8 @@ assert_tmpdir TMP_ROOT
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
 git -C "$PROJECT" init -q -b main
+git -C "$PROJECT" config gc.auto 0
+git -C "$PROJECT" config maintenance.auto false
 cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
@@ -75,7 +78,13 @@ case "$query" in
   fi
   ;;
 *"issue(id:"*)
-  printf '%s' "{\"data\":{\"issue\":$ISSUE_JSON}}___HTTP_CODE___200"
+  issue="$(jq -r '.variables.id' <<<"$payload")"
+  case "$issue" in
+    TEAM-404|00000000-0000-0000-0000-000000000404)
+      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200' ;;
+    *)
+      printf '%s' "{\"data\":{\"issue\":$ISSUE_JSON}}___HTTP_CODE___200" ;;
+  esac
   ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
@@ -202,3 +211,32 @@ run_linear issues bulk-update TEAM-9 --attach "$TMP_ROOT/shot.png"
 assert_eq "bulk-update --attach exits zero" "$RC" 0
 assert_log "bulk-update --attach uploads the file" \
   'any(.[]; .query? // "" | contains("fileUpload"))'
+
+echo "=== attachment destination lookup without a configured team ==="
+
+printf '[env]\n' >"$PROJECT/kendex.settings.toml"
+# Linear returns a null issue for a missing destination. Both attachment types
+# must wait for the live reader, including when bulk-update calls update.
+while IFS='|' read -r name action issue file expected; do
+  run_linear issues "$action" "$issue" --attach "$TMP_ROOT/$file"
+  if [[ "$expected" == valid ]]; then
+    assert_eq "$name: attachment succeeds" "$RC" 0
+    assert_log "$name: live lookup precedes upload" \
+      'length == 4 and (.[0].query | contains("query GetIssue("))
+        and (.[1].query | contains("fileUpload(")) and .[2].put != null
+        and (.[3].query | contains("issueUpdate(") or contains("attachmentCreate("))'
+  else
+    assert_ne "$name: missing issue refuses the attachment" "$RC" 0
+    assert_log "$name: lookup is the only request, with no upload or mutation" \
+      'length == 1 and (.[0].query | contains("query GetIssue("))'
+  fi
+done <<'CASES'
+valid update image|update|TEAM-9|shot.png|valid
+valid update file|update|TEAM-9|notes.pdf|valid
+valid bulk image|bulk-update|TEAM-9|shot.png|valid
+valid bulk file|bulk-update|TEAM-9|notes.pdf|valid
+missing update identifier|update|TEAM-404|notes.pdf|missing
+missing update UUID|update|00000000-0000-0000-0000-000000000404|shot.png|missing
+missing bulk identifier|bulk-update|TEAM-404|notes.pdf|missing
+missing bulk UUID|bulk-update|00000000-0000-0000-0000-000000000404|shot.png|missing
+CASES

@@ -6,9 +6,9 @@ control_replace scripts/lib/attachments.sh 1 \
     'attach_markdown_label() {' \
     'attach_markdown_label() { printf "%s" "$1"; return 0; } _unescaped_label_control() {'
 
-# Skip the live destination check while retaining its code. Missing issues
-# then reach the upload and comment requests.
+# Let the shared live reader accept a null destination while retaining its
+# check. Missing issues then reach the upload and comment requests.
 control_expect "missing UUID: lookup is the only request, with no upload or comment"
-control_replace scripts/commands/comments.sh 1 \
-    '        if ! issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) ||' \
-    '        if false && ! issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) &&'
+control_replace scripts/commands/issues.sh 1 \
+    '    if ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then' \
+    '    if false && ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then'
