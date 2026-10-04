@@ -269,15 +269,12 @@ impl Pending {
         }
     }
 
-    /// Whether the action changed anything kendex owns here. An action that
-    /// changed nothing in this project has nothing to offer about it,
-    /// whatever else is pending.
+    /// Whether a commit of only the action's work carries anything here.
+    /// An action whose only change is to a file it leaves out
+    /// ([`Pending::left_out`]) has nothing of its own to commit, and an
+    /// offer about it would put only earlier work in front of the reader.
     pub fn acted(&self) -> bool {
-        !self.beside.is_empty()
-            || self
-                .files
-                .iter()
-                .any(|file| file.attribution != Attribution::Older)
+        !self.action_set().is_empty()
     }
 
     /// The files the action wrote beside the ones kendex owns whole that a

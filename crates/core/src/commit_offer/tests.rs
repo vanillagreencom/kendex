@@ -1956,6 +1956,28 @@ fn an_action_that_wrote_nothing_here_has_nothing_to_offer_about_it() {
     assert_eq!(pending.action_set(), BTreeSet::new());
 }
 
+/// A write whose only change is to a file it leaves out has nothing of its
+/// own to commit. Offering about it would hand the reader only the earlier
+/// renders, under a label that says they are the write's work.
+#[test]
+fn an_action_that_changed_only_a_file_it_leaves_out_has_nothing_to_offer() {
+    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "an earlier render\n");
+    repo.write("kendex.toml", "# an earlier save\n");
+    let before = repo.before(&generated, &["kendex.toml"]);
+    repo.write("kendex.toml", "# a second save\n");
+
+    let scan = repo.scan_since(&generated, &before).unwrap();
+    let pending = scan.carry.pending().unwrap();
+    assert_eq!(pending.left_out(), ["kendex.toml"]);
+    assert!(
+        !pending.acted(),
+        "a left-out file read as the action's work"
+    );
+    assert_eq!(pending.action_set(), BTreeSet::new());
+}
+
 /// A reading the machine refused is not a match. Reporting it as unchanged
 /// would put earlier work into a commit labelled as the action's — the one
 /// thing this comparison exists to stop.

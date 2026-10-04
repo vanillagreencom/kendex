@@ -1818,7 +1818,9 @@ mod tests {
     /// and that is settled in `read` before `gh` is asked anything. With a
     /// render pending, a write read before the render gets an offer, one
     /// read after it, which changed nothing, gets none, and a person who
-    /// asks gets one whatever was read.
+    /// asks gets one whatever was read. A write whose only change is to a
+    /// file that already held a change, which no commit of its work
+    /// carries, gets none either.
     #[test]
     #[cfg(unix)]
     fn a_write_is_offered_only_where_it_acted() {
@@ -1864,6 +1866,24 @@ mod tests {
                 read.map(|one| one.map(|offer| offer.files))
             );
         }
+
+        std::fs::write(
+            root.join(".gitignore"),
+            "/.kendex-lock.json\n# an earlier save\n",
+        )
+        .expect("the hand edit is written");
+        let edited = reading();
+        std::fs::write(
+            root.join(".gitignore"),
+            "/.kendex-lock.json\n# a second save\n",
+        )
+        .expect("the second save is written");
+        let read = read(&env, &root, &key, Opened::ByWrite(edited)).expect("the project reads");
+        assert!(
+            read.is_none(),
+            "a write that changed only a left-out file: {:?}",
+            read.map(|one| one.map(|offer| offer.files))
+        );
     }
 
     /// The window's offer carries each package the terminal would hold the
