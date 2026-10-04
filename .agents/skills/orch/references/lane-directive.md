@@ -22,7 +22,7 @@ A model-free `--cmd` is an argument template starting with the plain harness nam
 
 ## Launch gate
 
-`open-terminal` refuses foreign GitHub repositories and, with `LINEAR_TEAM` configured, foreign Linear team keys as `item-foreign repo=[REPO] route=peer-mail`; route their prioritized tracker issues with `lane-mail peer send --repo [REPO]`, or ask a live registered master, else the owner, with a launch recommendation when no repository overseer runs. A `--state-dir` launch from another repository's checkout goes ahead only where the overseer's checkout lists that repository in `ORCH_CONNECTED_REPOS` ([README § Settings](../README.md#settings)), and otherwise refuses as `overseer-foreign`.
+`open-terminal` refuses foreign GitHub repositories and, with `LINEAR_TEAM` configured, foreign Linear team keys as `item-foreign repo=[REPO] route=peer-mail`; route their prioritized tracker issues with `lane-mail peer send --repo [REPO]`, or ask a live registered master, else the owner, with a launch recommendation when no repository overseer runs. A `--state-dir` launch from another repository's checkout goes ahead only where the overseer's checkout lists that repository in `ORCH_CONNECTED_REPOS` ([README § Settings](../README.md#settings)), and otherwise refuses as `overseer-foreign`; one whose fleet names no overseer repository refuses as `overseer-unjudged`.
 
 After applying [§ Lane preference](#lane-preference), `open-terminal` refuses a lane launch on a harness its flag table names that names no model, and one that names no effort where that harness has an effort flag, one keyed refusal per missing half, because a harness default changes without notice.
 

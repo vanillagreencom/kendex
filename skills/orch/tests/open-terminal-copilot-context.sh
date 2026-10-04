@@ -142,7 +142,9 @@ WTS="$TMP_ROOT/wt"
 # the worktree WTS/NAME, with ARGs; OT names another copy, KENDEX_DIR the
 # directory of the kendex it asks, ahead of any other, the stub where unset,
 # LAUNCH_HOME the COPILOT_HOME it runs under, the home where unset, and
-# LAUNCH_USER_HOME the HOME it runs with, USER_HOME where unset.
+# LAUNCH_USER_HOME the HOME it runs with, USER_HOME where unset. The fleet
+# state sits in the launch checkout, where an overseer's does, so the overseer
+# binding reads the fleet's repository off it.
 # The gate's line open-terminal wrote, or `passed`.
 launch() { # NAME [ARG...]
   local name="$1" line
@@ -151,7 +153,7 @@ launch() { # NAME [ARG...]
     OT_BASE="$BASE" OT_WT="$WTS/$name" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX="" COPILOT_HOME="${LAUNCH_HOME:-$COP_HOME}" \
     HOME="${LAUNCH_USER_HOME:-$USER_HOME}" \
-    "${OT:-$REPO/scripts/open-terminal}" --ghostty --state-dir "$TMP_ROOT/fleet" --harness copilot \
+    "${OT:-$REPO/scripts/open-terminal}" --ghostty --state-dir "$REPO/tmp/fleet" --harness copilot \
       --launch-flags '--model claude-opus-5 --reasoning-effort high' "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || :
   line="$(grep -E '^open-terminal: unsupported-for-oversee ' "$TMP_ROOT/$name.err" || true)"

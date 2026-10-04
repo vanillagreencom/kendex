@@ -2,11 +2,12 @@
 #
 # Owner: open-terminal, the one script that sources this file.
 #
-# The fleet cap a fleet launch is judged on: the count, the launch lock, the
-# reservation and the gate. What the cap bounds is stated where open-terminal
-# decides whether a launch is judged. It reads open-terminal's globals
-# (CLAIM_ROOT, WORKFLOW_STATE, the cap setting and options) and calls
-# its ot_message and lane_rejudge, so it is loaded by that script alone.
+# What a fleet launch is judged on: the overseer binding, the repository the
+# launch may run in, and the fleet cap, its count, launch lock, reservation and
+# gate. What the cap bounds is stated where open-terminal decides whether a
+# launch is judged. It reads open-terminal's globals (CLAIM_ROOT, STATE_DIR,
+# WORKFLOW_STATE, the cap setting and options) and calls its ot_message and
+# lane_rejudge, so it is loaded by that script alone.
 #
 # Sourced, never run.
 
@@ -177,4 +178,75 @@ cap_gate() { # ITEM KEY WINDOW
     sleep "$WAIT_SLOT_POLL_SECS"
     stale=true
   done
+}
+
+# The overseer binding overseer_bind leaves: `own` for a launch in the
+# overseer's repository, `connected` for one its ORCH_CONNECTED_REPOS lists,
+# whose OWNER/REPO is CONNECTED_REPO, `foreign` for any other, which every item
+# refuses naming LAUNCH_NAME and OVERSEER_NAME, `unread` for a state the cap
+# count reads first, and `none` for a launch that names no fleet.
+OVERSEER_BIND=none
+CONNECTED_REPO=""
+LAUNCH_NAME=""
+OVERSEER_NAME=""
+
+# overseer_bind — judges a --state-dir launch on the repository it runs in,
+# before the state is touched: the item check reads the checkout the launch
+# runs from, and nothing there binds that checkout to the fleet it records
+# into. The overseer's directory is the state's `.overseer.cwd`, else the
+# nearest existing directory of the state directory, which lives in the
+# overseer's checkout; a state that records no overseer directory and sits in
+# no checkout binds to nothing and refuses. A checkout sharing that
+# directory's git common root, as its worktrees do, or whose origin names the
+# same OWNER/REPO, as a second clone does, is own. Any other is connected
+# where ORCH_CONNECTED_REPOS lists its origin OWNER/REPO, compared
+# case-insensitively, read in the overseer's directory with the launcher's own
+# value and private-file selector dropped: those are the settings of the
+# checkout the launcher is installed in, which can be the target's. A state
+# that does not parse is the cap count's cap-unreadable on the first item; a
+# wake, which the cap does not count, refuses on it here. Returns 1 with the
+# refusal printed.
+overseer_bind() {
+  local cwd="" dir root launch_root same connected listed
+  if "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+    if ! cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')"; then
+      [[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read state=oversee >&2; return 1; }
+      OVERSEER_BIND=unread
+      return 0
+    fi
+  fi
+  dir="$cwd"
+  if [[ -z "$dir" ]]; then
+    dir="$STATE_DIR"
+    while [[ ! -d "$dir" ]]; do dir="$(dirname -- "$dir")"; done
+  fi
+  if ! root="$("$SCRIPT_DIR/git-context" common-root "$dir")"; then
+    [[ -n "$cwd" ]] || { ot_message overseer-unjudged cause=overseer-unrecorded "path=$STATE_DIR" >&2; return 1; }
+    ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2
+    return 1
+  fi
+  launch_root="$("$SCRIPT_DIR/git-context" common-root "$CLAIM_ROOT")" \
+    || { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; return 1; }
+  OVERSEER_BIND=own
+  [[ "$root" != "$launch_root" ]] || return 0
+  LAUNCH_NAME="$(kendex_github_origin_slug "$CLAIM_ROOT")" || LAUNCH_NAME=""
+  OVERSEER_NAME="$(kendex_github_origin_slug "$dir")" || OVERSEER_NAME=""
+  if [[ -n "$LAUNCH_NAME" ]]; then
+    same="$(jq -n --arg a "$LAUNCH_NAME" --arg b "$OVERSEER_NAME" '($a | ascii_downcase) == ($b | ascii_downcase)')" \
+      || { ot_message overseer-unjudged cause=origin "path=$CLAIM_ROOT" >&2; return 1; }
+    [[ "$same" != true ]] || return 0
+  fi
+  OVERSEER_BIND=foreign
+  connected="$(cd -- "$dir" && env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env" ORCH_CONNECTED_REPOS "")" \
+    || { ot_message overseer-unjudged cause=setting "path=$dir" >&2; return 1; }
+  if [[ -n "${connected//[[:space:]]/}" ]]; then
+    [[ -n "$LAUNCH_NAME" ]] || { ot_message overseer-unjudged cause=origin "path=$CLAIM_ROOT" >&2; return 1; }
+    listed="$(jq -n --arg repo "$LAUNCH_NAME" --arg list "$connected" \
+      '($repo | ascii_downcase) as $r | any($list | ascii_downcase | splits("\\s+"); . == $r)')" \
+      || { ot_message overseer-unjudged cause=setting "path=$dir" >&2; return 1; }
+    # shellcheck disable=SC2034  # read by open-terminal's item loop and lane_record_write
+    [[ "$listed" != true ]] || { OVERSEER_BIND=connected; CONNECTED_REPO="$LAUNCH_NAME"; }
+  fi
+  OVERSEER_NAME="${OVERSEER_NAME:-$root}"
+  LAUNCH_NAME="${LAUNCH_NAME:-$launch_root}"
 }

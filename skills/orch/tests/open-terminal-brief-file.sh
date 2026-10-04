@@ -174,7 +174,10 @@ assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
   "the GUI launch hands bash -lc a line whose brief the harness receives verbatim" "$OUT"
 
 TMUX_BRIEF_ASSERTION="the local tmux fleet launch pastes a line whose brief the harness receives verbatim"
+# Each fleet state records the suite's own checkout, the one every launch runs
+# from, as its overseer's directory.
 while IFS='|' read -r harness flags; do
+  ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" || exit 1
   run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
     --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
     --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
@@ -217,6 +220,7 @@ git -C "$TMP_ROOT/brief-pi-append" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/brief-pi-append"
 mutate_file "$APPEND_OT" 'local text rendered="" quoted brief="$BRIEF_TEXT"' \
   'local text rendered="" quoted brief="${BRIEF_TEXT}"; if [[ "$HARNESS" == pi ]]; then brief+=" As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $mail_id through bg_task per watch-delivery.md."; fi'
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" || exit 1
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
   --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2

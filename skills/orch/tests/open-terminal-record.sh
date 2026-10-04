@@ -152,7 +152,12 @@ git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
-STATE="$TMP_ROOT/state"
+# Every fleet state sits in the temp repo every row launches from unless it
+# names another, where an overseer's state sits, so the overseer binding reads
+# the fleet's repository off the state directory.
+FLEET_ROOT="$REPO/tmp"
+mkdir -p "$FLEET_ROOT"
+STATE="$FLEET_ROOT/state"
 LANE_DIR="$TMP_ROOT/.eclaude"
 mkdir -p "$LANE_DIR"
 
@@ -169,9 +174,9 @@ printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-40\",\"message\":{\"
 # OUT (stdout), ERR and RC. STATE_DIR= is passed as --state-dir, the flag that
 # names the fleet; an empty one passes no flag, so the launch names no fleet
 # unless ARGS carry the flag themselves. CWD= is the directory the launch
-# runs from.
+# runs from, the temp repo where unset.
 run_ot() {
-  local script="$OT" state_dir="$STATE" cwd="$PWD" state_args=()
+  local script="$OT" state_dir="$STATE" cwd="$REPO" state_args=()
   while [[ "${1:-}" == SCRIPT=* || "${1:-}" == STATE_DIR=* || "${1:-}" == CWD=* ]]; do
     case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; STATE_DIR=*) state_dir="${1#STATE_DIR=}" ;; CWD=*) cwd="${1#CWD=}" ;; esac
     shift
@@ -344,7 +349,7 @@ TMUX_LOG="$TMP_ROOT/tmux-targets"
 # logged OP — the target the last OP call named, empty where none was made.
 logged() { awk -v op="$1" '$1 == op { t = $2 } END { print t }' "$TMUX_LOG"; }
 session_row() {
-  local state="$TMP_ROOT/$1"
+  local state="$FLEET_ROOT/$1"
   : > "$TMUX_LOG"
   STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX="${RUN_TMUX-stub,1,0}" run_ot STATE_DIR="$state" --tmux "${FLEET_CMD[@]}" "$2"
   printf 'rc=%s target=%s list=%s pane=%s window=%s recorded=%s refused=%s' "$RC" \
@@ -422,7 +427,7 @@ assert_eq "rc=$RC first=$(grep '^open-terminal: tmux-session-' <<<"$ERR")" \
 # A fleet state whose tmux entry is no object: the session read fails, and the
 # launch refuses naming the state rather than opening anywhere.
 session_row sess-broken CC-117 >/dev/null
-"$WS" --state-dir "$TMP_ROOT/sess-broken" update oversee '.tmux = 42' >/dev/null
+"$WS" --state-dir "$FLEET_ROOT/sess-broken" update oversee '.tmux = 42' >/dev/null
 assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-118+state=oversee" \
   "a fleet state whose tmux entry cannot be read refuses as session-record-failed and opens nothing"
@@ -430,8 +435,8 @@ assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
 # and not lock takes the same refusal. The state's own lock path is a
 # directory, which workflow-state cannot open; the fleet launch lock beside it
 # is another file, so the launch reaches the session write.
-"$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
-mkdir "$TMP_ROOT/sess-ro/workflow-state-oversee.json.lock"
+"$WS" --state-dir "$FLEET_ROOT/sess-ro" init oversee >/dev/null
+mkdir "$FLEET_ROOT/sess-ro/workflow-state-oversee.json.lock"
 assert_eq "$(RUN_SESSION=fleetx session_row sess-ro CC-128)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
   "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
@@ -722,6 +727,9 @@ mkdir -p "$ELSEWHERE"
 git -C "$ELSEWHERE" init -q
 git -C "$ELSEWHERE" config gc.auto 0
 git -C "$ELSEWHERE" config maintenance.auto false
+# The fleet's overseer runs in that checkout, as its record names.
+"$WS" --state-dir "$TMP_ROOT/named" init oversee >/dev/null
+"$WS" --state-dir "$TMP_ROOT/named" update oversee --arg cwd "$ELSEWHERE" '.overseer = {cwd: $cwd}' >/dev/null
 run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" --state-dir "$TMP_ROOT/named" CC-50
 assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length' "$TMP_ROOT/named/workflow-state-oversee.json" 2>/dev/null || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=1 launch_dir=none" \
@@ -732,9 +740,9 @@ echo "=== a record that cannot be written into a live state fails the item with 
 # (which the watch's own filter anticipates) makes the update-report filter
 # index it and fail, the write path record-write-failed guards. The state is
 # created by an ordinary launch first, then broken.
-run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-80
-"$WS" --state-dir "$TMP_ROOT/rwf-state" update oversee '.lanes += [42]' >/dev/null
-run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-81
+run_ot STATE_DIR="$FLEET_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-80
+"$WS" --state-dir "$FLEET_ROOT/rwf-state" update oversee '.lanes += [42]' >/dev/null
+run_ot STATE_DIR="$FLEET_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-81
 assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: record-write-failed item=CC-81 state=oversee$' <<<"$ERR" || true) summary=$(grep -o 'failed=[0-9]*' <<<"$ERR")" \
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
@@ -766,7 +774,7 @@ echo "=== a refused item and a wake create no state where none exists ==="
 # Both rows share one directory no earlier row wrote: the state is minted only
 # past the item refusals, and a wake mints none, so a mistyped id or a wake
 # pointed at the wrong address leaves no empty fleet for the watch to read.
-EMPTY_STATE="$TMP_ROOT/empty-state"
+EMPTY_STATE="$FLEET_ROOT/empty-state"
 run_ot STATE_DIR="$EMPTY_STATE" --ghostty "${FLEET_CMD[@]}" bad_id
 assert_eq "rc=$RC refused=$(grep -c '^open-terminal: issue-invalid item=bad_id$' <<<"$ERR" || true) state=$([[ -e "$EMPTY_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=1 refused=1 state=none" \
@@ -777,8 +785,8 @@ assert_eq "rc=$RC refused=$(grep -c "^open-terminal: state-absent item=CC-40 sta
   "a wake against an address holding no state names the file it looked for, wakes nothing and creates nothing"
 
 echo "=== a state that cannot be created refuses the batch before any window opens ==="
-: > "$TMP_ROOT/blocker"
-run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty "${FLEET_CMD[@]}" CC-20 CC-21
+: > "$FLEET_ROOT/blocker"
+run_ot STATE_DIR="$FLEET_ROOT/blocker/state" --ghostty "${FLEET_CMD[@]}" CC-20 CC-21
 assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: state-unwritable state=oversee$' <<<"$ERR" || true) summary=$(grep -c '^open-terminal: summary ' <<<"$ERR$OUT" || true)" \
   "rc=1 opened=0 refused=1 summary=0" \
   "a state directory under a file refuses the whole batch as state-unwritable, with no window opened and no summary"
@@ -813,8 +821,8 @@ git -C "$TMP_ROOT/unwritten" config gc.auto 0
 git -C "$TMP_ROOT/unwritten" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unwritten"
 mutate_file "$UNWRITTEN_OT" '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
-run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty "${FLEET_CMD[@]}" CC-30
-assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
+run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$FLEET_ROOT/unwritten-state" --ghostty "${FLEET_CMD[@]}" CC-30
+assert_eq "rc=$RC records=$("$WS" --state-dir "$FLEET_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
 # The running_at stamp's own control: dropped from a copy of the launcher, a
 # lane recorded running carries none, so the watch would fall back to a
@@ -825,8 +833,8 @@ git -C "$TMP_ROOT/unstamped" config gc.auto 0
 git -C "$TMP_ROOT/unstamped" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unstamped"
 mutate_file "$UNSTAMPED_OT" '  [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1' '  :'
-run_ot SCRIPT="$UNSTAMPED_OT" STATE_DIR="$TMP_ROOT/unstamped-state" --ghostty "${FLEET_CMD[@]}" CC-31
-assert_eq "rc=$RC running_at=$("$WS" --state-dir "$TMP_ROOT/unstamped-state" get oversee '.lanes[0].running_at // "null"' | tr -d '"')" "rc=0 running_at=null" \
+run_ot SCRIPT="$UNSTAMPED_OT" STATE_DIR="$FLEET_ROOT/unstamped-state" --ghostty "${FLEET_CMD[@]}" CC-31
+assert_eq "rc=$RC running_at=$("$WS" --state-dir "$FLEET_ROOT/unstamped-state" get oversee '.lanes[0].running_at // "null"' | tr -d '"')" "rc=0 running_at=null" \
   "control: without the stamp a lane recorded running carries no running_at"
 
 echo "=== a host still preparing the item hands the launch to a background job ==="
@@ -928,9 +936,9 @@ assert_eq "rc=$RC logged=$(log_line "$STATE/lane-prepare-CC-77.log" 'open-termin
 
 # The hand-off record cannot be written: the state holds an entry the write
 # path cannot index. Nothing is left running and the window closes.
-run_ot STATE_DIR="$TMP_ROOT/pu-state" --ghostty "${FLEET_CMD[@]}" CC-80
-"$WS" --state-dir "$TMP_ROOT/pu-state" update oversee '.lanes += [42]' >/dev/null
-hand_off CC-78 -- STATE_DIR="$TMP_ROOT/pu-state"
+run_ot STATE_DIR="$FLEET_ROOT/pu-state" --ghostty "${FLEET_CMD[@]}" CC-80
+"$WS" --state-dir "$FLEET_ROOT/pu-state" update oversee '.lanes += [42]' >/dev/null
+hand_off CC-78 -- STATE_DIR="$FLEET_ROOT/pu-state"
 assert_eq "rc=$RC refused=$(grep -c '^open-terminal: prepare-unrecorded item=CC-78 state=oversee$' <<<"$ERR" || true) closed=$(grep -c '^kill-window %1$' "$TMUX_LOG" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$ERR")" \
   "rc=1 refused=1 closed=1 summary=launched=0 skipped=0 failed=1" \
   "a hand-off whose record cannot be written names prepare-unrecorded, closes its window and counts failed"

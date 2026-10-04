@@ -56,6 +56,9 @@ observe() { # PREFERENCE WALL MODE TEXT
   RUN="$TMP_ROOT/run"
   rm -rf -- "${RUN:?}"
   mkdir -p "$RUN"
+  # The fleet state records the checkout every launch runs from as its
+  # overseer's directory, which the overseer binding reads.
+  ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
   : > "$RUN/picks"
   if [[ "$mode" == cmd ]]; then args=(--cmd "$text" --brief-file "$TMP_ROOT/brief")
   elif [[ -n "$text" ]]; then args=(--launch-flags "$text"); fi
@@ -225,12 +228,12 @@ for surface in batch wait; do
     fi
     RUN="$TMP_ROOT/real-$surface-$control"
     mkdir -p "$RUN"
+    ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
     args=(--lane auto CC-11 CC-12)
     cap=3
     if [[ "$surface" == wait ]]; then
       cap=1
       args=(--lane "$TMP_ROOT/home/.claude" --wait-slot CC-12)
-      "$REPO/scripts/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null
       "$REPO/scripts/workflow-state" --state-dir "$RUN/state" set oversee lanes '[{"item":"CC-9","status":"running","window":"stub:CC-9"}]' >/dev/null
       printf 1 > "$RUN/panes"
     fi

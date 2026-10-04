@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# open-terminal's overseer binding: a launch under --state-dir runs in the
-# repository of the directory the fleet state's overseer record names, or in
-# one that directory's ORCH_CONNECTED_REPOS lists by origin OWNER/REPO; any
-# other is refused as overseer-foreign before the state is touched, and one
-# that cannot be judged as overseer-unjudged. The lane record of a launch the
-# list admits carries the listed repository as repo.
+# open-terminal's overseer binding, lib/lane-cap.sh's overseer_bind: a launch
+# under --state-dir runs in the overseer's repository, the one of the directory
+# the fleet state's overseer record names, else of the --state-dir itself, by
+# git common root or by origin OWNER/REPO, or in one that directory's
+# ORCH_CONNECTED_REPOS lists by origin OWNER/REPO; any other is refused as
+# overseer-foreign before the state is touched, and one that cannot be judged
+# as overseer-unjudged. The lane record of a launch the list admits carries the
+# listed repository as repo.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state,
 # git-context and orch-env, with the worktree CLI, gh, the GUI terminal and
 # the harness stubbed. The overseer runs in a repository of its own with one
-# linked worktree, the shape a lane's worktree has; the target is the clone of
-# another repository. LINEAR_TEAM is empty on every row, the configuration
-# that leaves the item check with no checkout team to compare.
+# linked worktree, the shape a lane's worktree has, and a second clone; the
+# target is the clone of another repository. LINEAR_TEAM is empty on every
+# row, the configuration that leaves the item check with no checkout team to
+# compare.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
@@ -89,10 +92,14 @@ OVERSEER_REPO="$TMP_ROOT/overseer-repo"
 OVERSEER_WT="$TMP_ROOT/overseer-wt"
 new_repo "$OVERSEER_REPO" git@github.com:own/fleet.git
 git -C "$OVERSEER_REPO" worktree add -q "$OVERSEER_WT" -b lane
+OVERSEER_CLONE="$TMP_ROOT/overseer-clone"
+new_repo "$OVERSEER_CLONE" https://github.com/Own/Fleet.git
 TARGET="$TMP_ROOT/target"
 new_repo "$TARGET" https://github.com/acme/target.git
 BARE_TARGET="$TMP_ROOT/bare-target"
 new_repo "$BARE_TARGET"
+NO_GIT="$TMP_ROOT/no-git"
+mkdir -p "$NO_GIT"
 
 # connected VALUE — the overseer checkout's ORCH_CONNECTED_REPOS: `absent`
 # writes no settings file, anything else is the value.
@@ -101,13 +108,26 @@ connected() {
   [[ "$1" == absent ]] || printf '[env]\nORCH_CONNECTED_REPOS = "%s"\n' "$1" > "$OVERSEER_REPO/kendex.settings.toml"
 }
 
-# fleet DIR CWD — a fresh fleet state at DIR whose overseer record names CWD.
+# fleet KIND [CWD] — a fresh fleet state, into STATE: `cwd` is one at
+# $TMP_ROOT/state, outside any checkout, whose overseer record names CWD;
+# `bare` one whose overseer record names no directory and `none` no state at
+# all, each at a --state-dir in the overseer's checkout; `bare-outside` and
+# `none-outside` the same at $TMP_ROOT/state.
 fleet() {
-  rm -rf -- "$1"
-  "$WS" --state-dir "$1" init oversee >/dev/null
-  "$WS" --state-dir "$1" update oversee --arg cwd "$2" '.overseer = {cwd: $cwd}' >/dev/null
+  case "$1" in
+    cwd | bare-outside | none-outside) STATE="$TMP_ROOT/state" ;;
+    bare | none) STATE="$OVERSEER_REPO/tmp/fleet" ;;
+    *) echo "open-terminal-overseer: fleet=unknown kind=$1" >&2; exit 1 ;;
+  esac
+  rm -rf -- "${TMP_ROOT:?}/state" "${OVERSEER_REPO:?}/tmp"
+  [[ "$1" != none* ]] || return 0
+  "$WS" --state-dir "$STATE" init oversee >/dev/null
+  if [[ "$1" == cwd ]]; then
+    "$WS" --state-dir "$STATE" update oversee --arg cwd "$2" '.overseer = {cwd: $cwd}' >/dev/null
+  else
+    "$WS" --state-dir "$STATE" update oversee '.overseer = {pane: "%1"}' >/dev/null
+  fi
 }
-STATE="$TMP_ROOT/state"
 
 # run_ot [SCRIPT=PATH] [CWD=PATH] [ENV=NAME=VALUE]... ARGS — one fleet launch
 # into $STATE; sets OUT, ERR and RC. ENV= adds a variable to the launcher's
@@ -128,108 +148,170 @@ run_ot() {
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
 }
-# record ITEM — the item's lane record as `repo=VALUE`, or `none`.
-record() { "$WS" --state-dir "$STATE" get oversee '[.lanes[]? | select(.item == "'"$1"'") | "repo=\(.repo // "null")"] | if . == [] then "none" else join(",") end'; }
+# record ITEM — the item's lane record as `repo=VALUE`, or `none`, as for a
+# state the launch never created.
+record() {
+  "$WS" --state-dir "$STATE" exists oversee || { echo none; return 0; }
+  "$WS" --state-dir "$STATE" get oversee '[.lanes[]? | select(.item == "'"$1"'") | "repo=\(.repo // "null")"] | if . == [] then "none" else join(",") end'
+}
 refused() { grep -c "^open-terminal: $1" <<<"$ERR" || true; }
 FOREIGN_LINE="open-terminal: overseer-foreign item=CC-1 repo=acme/target overseer=own/fleet route=connected-repos,peer-mail"
 
 echo "=== a fleet launch runs in its overseer's repository or one it lists ==="
-# The overseer's checkout setting, the directory the launch runs from, a
-# variable the launcher already holds, the item, and the expected exit, lane
-# record and overseer refusal count. A variable the launcher holds is what it
-# loads from the checkout it is installed in, which can be the target's own.
+# The fleet state's kind, the overseer's checkout setting, the directory the
+# launch runs from, a variable the launcher already holds, and the expected
+# exit, lane record and overseer refusal count. A variable the launcher holds
+# is what it loads from the checkout it is installed in, which can be the
+# target's own. KENDEX_ENV_FILE names alt.env, the overseer checkout's private
+# file that lists the target.
 rows=(
-  "absent|$OVERSEER_WT||CC-1|rc=0 record=repo=null foreign=0|a worktree of the overseer's repository passes with the setting absent"
-  "|$OVERSEER_WT||CC-1|rc=0 record=repo=null foreign=0|a worktree of the overseer's repository passes with the setting empty"
-  "absent|$TARGET||CC-1|rc=1 record=none foreign=1|another repository's clone refuses overseer-foreign with the setting absent"
-  "other/repo|$TARGET||CC-1|rc=1 record=none foreign=1|a clone whose repository the setting does not list refuses overseer-foreign"
-  "other/repo ACME/Target|$TARGET||CC-1|rc=0 record=repo=acme/target foreign=0|a listed repository passes, matched case-insensitively, and its lane record carries it as repo"
-  "absent|$TARGET|ORCH_CONNECTED_REPOS=acme/target|CC-1|rc=1 record=none foreign=1|a setting the target checkout or the launcher's own environment holds admits nothing"
+  "cwd|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|a worktree of the overseer's repository passes with the setting absent"
+  "cwd||$OVERSEER_WT||rc=0 record=repo=null foreign=0|a worktree of the overseer's repository passes with the setting empty"
+  "cwd|absent|$OVERSEER_CLONE||rc=0 record=repo=null foreign=0|a second clone of the overseer's repository passes by its origin with the setting absent"
+  "cwd|absent|$TARGET||rc=1 record=none foreign=1|another repository's clone refuses overseer-foreign with the setting absent"
+  "cwd|other/repo acme/target-web|$TARGET||rc=1 record=none foreign=1|a clone whose repository the setting does not list, beside one it prefixes, refuses overseer-foreign"
+  "cwd|other/repo ACME/Target|$TARGET||rc=0 record=repo=acme/target foreign=0|a listed repository passes, matched case-insensitively, and its lane record carries it as repo"
+  "cwd|absent|$TARGET|ORCH_CONNECTED_REPOS=acme/target|rc=1 record=none foreign=1|a setting the target checkout or the launcher's own environment holds admits nothing"
+  "cwd|absent|$TARGET|KENDEX_ENV_FILE=alt.env|rc=1 record=none foreign=1|the launcher's own private-file selector does not pick the overseer's private file"
+  "none|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no state yet a worktree of the overseer's repository passes, bound by the --state-dir"
+  "none|absent|$TARGET||rc=1 record=none foreign=1|with no state yet another repository's clone refuses overseer-foreign"
+  "bare|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no overseer directory recorded a worktree of the overseer's repository passes, bound by the --state-dir"
+  "bare|absent|$TARGET||rc=1 record=none foreign=1|with no overseer directory recorded another repository's clone refuses overseer-foreign"
 )
 printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$TARGET/kendex.settings.toml"
+printf 'ORCH_CONNECTED_REPOS=acme/target\n' > "$OVERSEER_REPO/alt.env"
 for row in "${rows[@]}"; do
-  IFS='|' read -r setting cwd env item expected label <<<"$row"
+  IFS='|' read -r kind setting cwd env expected label <<<"$row"
   connected "$setting"
-  fleet "$STATE" "$OVERSEER_REPO"
+  fleet "$kind" "$OVERSEER_REPO"
   env_args=()
   [[ -z "$env" ]] || env_args=("ENV=$env")
-  run_ot CWD="$cwd" ${env_args[@]+"${env_args[@]}"} "$item"
-  assert_eq "rc=$RC record=$(record "$item") foreign=$(grep -cxF "$FOREIGN_LINE" <<<"$ERR" || true)" "$expected" "$label"
+  run_ot CWD="$cwd" ${env_args[@]+"${env_args[@]}"} CC-1
+  assert_eq "rc=$RC record=$(record CC-1) foreign=$(grep -cxF "$FOREIGN_LINE" <<<"$ERR" || true)" "$expected" "$label"
 done
+fleet cwd "$BARE_TARGET"
+run_ot CWD="$BARE_TARGET" CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
+  "the overseer's own repository passes on its common root where no origin names it"
 
 echo "=== the refusal names the item, both repositories and both routes ==="
 connected absent
-fleet "$STATE" "$OVERSEER_REPO"
+fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$TARGET" CC-1
 assert_eq "$(head -n 1 <<<"$ERR")" "$FOREIGN_LINE" \
   "the first line keys the refusal on the item, the target and overseer origins and the setting and peer-mail routes"
 
 echo "=== a binding that cannot be judged launches nothing ==="
 connected acme/target
-fleet "$STATE" "$OVERSEER_REPO"
+fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$BARE_TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=origin path=$BARE_TARGET" <<<"$ERR" || true) record=$(record CC-1)" \
   "rc=1 unjudged=1 record=none" "a clone with no origin remote, where the setting must be matched, is unjudged"
 connected absent
-fleet "$STATE" "$OVERSEER_REPO"
+fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$BARE_TARGET" CC-1
 assert_eq "rc=$RC foreign=$(grep -cx "open-terminal: overseer-foreign item=CC-1 repo=$BARE_TARGET overseer=own/fleet route=connected-repos,peer-mail" <<<"$ERR" || true)" \
   "rc=1 foreign=1" "with no setting to match, a clone with no origin is refused and named by its directory"
-fleet "$STATE" "$TMP_ROOT/gone-overseer"
+fleet cwd "$TMP_ROOT/gone-overseer"
 run_ot CWD="$TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-root path=$TMP_ROOT/gone-overseer" <<<"$ERR" || true)" \
   "rc=1 unjudged=1" "an overseer directory git cannot read is unjudged"
+for kind in bare-outside none-outside; do
+  fleet "$kind"
+  run_ot CWD="$OVERSEER_WT" CC-1
+  assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-unrecorded path=$TMP_ROOT/state" <<<"$ERR" || true) record=$(record CC-1)" \
+    "rc=1 unjudged=1 record=none" "$kind: a --state-dir outside any checkout whose state records no overseer directory is unjudged"
+done
+connected absent
+fleet cwd "$OVERSEER_REPO"
+run_ot CWD="$NO_GIT" CC-1
+assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=checkout-root path=$NO_GIT" <<<"$ERR" || true) record=$(record CC-1)" \
+  "rc=1 unjudged=1 record=none" \
+  "a launch from a directory no git checkout holds is unjudged"
 printf '[env]\nORCH_CONSUMER_REPOS = ""\n' > "$OVERSEER_REPO/kendex.settings.toml"
-fleet "$STATE" "$OVERSEER_REPO"
+fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=setting path=$OVERSEER_REPO" <<<"$ERR" || true) retired=$(grep -c '^orch-env: retired-setting ' <<<"$ERR" || true)" \
   "rc=1 unjudged=1 retired=1" "a setting orch-env refuses to read from the overseer's checkout is unjudged, under orch-env's own line"
 
 # One control per rule, each on a copy of the script that keeps the matched
 # text and drops its behaviour.
-# control NAME OLD NEW — prints the mutant's path.
+# control NAME FILE OLD NEW — mutates FILE, open-terminal or lib/lane-cap.sh,
+# in a copy of the scripts and prints that copy's open-terminal.
 control() {
-  local ot
-  ot="$(mutant_scripts "$1" open-terminal)/open-terminal" || exit 1
-  mutate_file "$ot" "$2" "$3"
-  printf '%s\n' "$ot"
+  local dir
+  dir="$(mutant_scripts "$1" "$2")" || exit 1
+  mutate_file "$dir/$2" "$3" "$4"
+  printf '%s\n' "$dir/open-terminal"
 }
-MUT="$(control same-root 'if [[ "$overseer_root" != "$launch_root" ]]; then' 'if false && [[ "$overseer_root" != "$launch_root" ]]; then')"
-connected absent; fleet "$STATE" "$OVERSEER_REPO"
+BIND=lib/lane-cap.sh
+MUT="$(control same-root "$BIND" '[[ "$root" != "$launch_root" ]] || return 0' '[[ "$root" != "$launch_root" ]] || true')"
+connected absent; fleet cwd "$BARE_TARGET"
+run_ot SCRIPT="$MUT" CWD="$BARE_TARGET" CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
+  "control: without the common-root comparison the overseer's own origin-less repository is refused"
+MUT="$(control same-origin "$BIND" '[[ "$same" != true ]] || return 0' '[[ "$same" != true ]] || true')"
+connected absent; fleet cwd "$OVERSEER_REPO"
+run_ot SCRIPT="$MUT" CWD="$OVERSEER_CLONE" CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
+  "control: without the origin comparison a second clone of the overseer's repository is refused"
+MUT="$(control state-dir "$BIND" 'if [[ -z "$dir" ]]; then' 'if false && [[ -z "$dir" ]]; then')"
+connected absent; fleet bare
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
-  "control: without the common-root comparison another repository's clone is admitted"
-MUT="$(control listed '[[ "$listed" != true ]] ||' '[[ "$listed" == "$listed" ]] ||')"
-connected 'other/repo ACME/Target'; fleet "$STATE" "$OVERSEER_REPO"
+  "control: without the --state-dir binding a state with no overseer directory admits another repository's clone"
+MUT="$(control unrecorded "$BIND" '[[ -n "$cwd" ]] || { ot_message overseer-unjudged cause=overseer-unrecorded' '[[ -n "$cwd" ]] || true || { ot_message overseer-unjudged cause=overseer-unrecorded')"
+fleet bare-outside
+run_ot SCRIPT="$MUT" CWD="$OVERSEER_WT" CC-1
+assert_eq "unrecorded=$(refused 'overseer-unjudged cause=overseer-unrecorded ')" "unrecorded=0" \
+  "control: without the unrecorded refusal no overseer-unrecorded line is printed"
+MUT="$(control checkout-root "$BIND" '|| { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; return 1; }' \
+  '|| { false && ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; }')"
+connected absent; fleet cwd "$OVERSEER_REPO"
+run_ot SCRIPT="$MUT" CWD="$NO_GIT" CC-1
+assert_eq "unjudged=$(refused 'overseer-unjudged cause=checkout-root ')" "unjudged=0" \
+  "control: without the checkout-root refusal no overseer-unjudged line is printed"
+MUT="$(control setting-dir "$BIND" 'connected="$(cd -- "$dir" &&' 'connected="$(cd -- "$CLAIM_ROOT" &&')"
+connected absent; fleet cwd "$OVERSEER_REPO"
+run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
+  "control: reading the setting in the launch checkout lets the target's own setting admit it"
+MUT="$(control env-file "$BIND" 'env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"' 'env -u ORCH_CONNECTED_REPOS "$SCRIPT_DIR/orch-env"')"
+connected absent; fleet cwd "$OVERSEER_REPO"
+run_ot SCRIPT="$MUT" CWD="$TARGET" ENV=KENDEX_ENV_FILE=alt.env CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
+  "control: keeping the launcher's private-file selector lets the overseer's other private file admit the target"
+MUT="$(control listed "$BIND" '[[ "$listed" != true ]] ||' '[[ "$listed" == "$listed" ]] ||')"
+connected 'other/repo ACME/Target'; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
   "control: without the list match a listed repository is refused"
-MUT="$(control inherited 'env -u ORCH_CONNECTED_REPOS "$SCRIPT_DIR/orch-env"' 'env "$SCRIPT_DIR/orch-env"')"
-connected absent; fleet "$STATE" "$OVERSEER_REPO"
+MUT="$(control inherited "$BIND" 'env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"' 'env -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"')"
+connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" ENV=ORCH_CONNECTED_REPOS=acme/target CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
   "control: keeping the launcher's own value lets it admit the target"
-MUT="$(control origin '[[ -n "$launch_name" ]] || { ot_message overseer-unjudged cause=origin' '[[ -n "$launch_name" ]] || true || { ot_message overseer-unjudged cause=origin')"
-connected acme/target; fleet "$STATE" "$OVERSEER_REPO"
+MUT="$(control origin "$BIND" '[[ -n "$LAUNCH_NAME" ]] || { ot_message overseer-unjudged cause=origin' '[[ -n "$LAUNCH_NAME" ]] || true || { ot_message overseer-unjudged cause=origin')"
+connected acme/target; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$BARE_TARGET" CC-1
 assert_eq "unjudged=$(refused 'overseer-unjudged cause=origin ')" "unjudged=0" \
   "control: without the origin refusal a clone with no origin is not unjudged"
-MUT="$(control record-repo '[[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"' '[[ -n "$record_repo" ]] || true')"
-connected acme/target; fleet "$STATE" "$OVERSEER_REPO"
+MUT="$(control record-repo open-terminal '[[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"' '[[ -n "$record_repo" ]] || true')"
+connected acme/target; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC record=$(record CC-1)" "rc=0 record=repo=null" \
   "control: without the fallback the admitted lane's record names no repository"
-MUT="$(control overseer-root '|| { ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; exit 1; }' \
-  '|| { false && ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; }')"
-fleet "$STATE" "$TMP_ROOT/gone-overseer"
+MUT="$(control overseer-root "$BIND" 'ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2' \
+  'false && ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2')"
+fleet cwd "$TMP_ROOT/gone-overseer"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "unjudged=$(refused 'overseer-unjudged cause=overseer-root ')" "unjudged=0" \
   "control: without the unread-directory refusal no overseer-unjudged line is printed"
-MUT="$(control setting '|| { ot_message overseer-unjudged cause=setting "path=$overseer_cwd" >&2; exit 1; }
-      launch_name=' '|| true
-      launch_name=')"
+MUT="$(control setting "$BIND" '|| { ot_message overseer-unjudged cause=setting "path=$dir" >&2; return 1; }
+  if' '|| true
+  if')"
 printf '[env]\nORCH_CONSUMER_REPOS = ""\n' > "$OVERSEER_REPO/kendex.settings.toml"
-fleet "$STATE" "$OVERSEER_REPO"
+fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "unjudged=$(refused 'overseer-unjudged cause=setting ')" "unjudged=0" \
   "control: without the setting-read refusal no overseer-unjudged line is printed"

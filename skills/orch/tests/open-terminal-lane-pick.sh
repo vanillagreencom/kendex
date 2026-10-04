@@ -214,11 +214,15 @@ pi_fleet_root() { # DIR COMPACTION
 }
 pi_fleet_root "$H/.pi1" false
 pi_fleet_root "$H/.pi2" true
+# Each batch's fleet state records the suite's own checkout, the one every
+# launch runs from, as its overseer's directory.
 PI_BATCH="ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000,$H/.pi2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;$PI_COPILOT"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/pi-fleet-1" "$PWD" || exit 1
 run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" KEN-1670 KEN-1671
 assert_eq "$(observe "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json")" \
   "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json" \
   "a fleet batch's re-pick onto a second pool account is gated on that account's own settings"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/pi-fleet-2" "$PWD" || exit 1
 pi_control ctl-pi-repick open-terminal 'ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
   'ot_message lane-selected "lane=$LANE_ENV"; copilot_fleet_gate || return 1; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" KEN-1670 KEN-1671
 assert_eq "$(observe "launched=2 pi_root=pi1,pi2 compactionon=none")" "launched=2 pi_root=pi1,pi2 compactionon=none" \
@@ -249,10 +253,12 @@ printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings
 printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"
 CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;cmd=true --model claude-sonnet-5 --reasoning-effort high"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/cp-fleet-1" "$PWD" || exit 1
 run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" KEN-1680 KEN-1681
 assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line")" \
   "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line" \
   "a Copilot batch's re-pick onto a second pool account is gated on that account's own context reader"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/cp-fleet-2" "$PWD" || exit 1
 pi_control ctl-copilot-repick open-terminal 'pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
   'pi_lane_root_apply || return 1; }' "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-2" KEN-1680 KEN-1681
 assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none")" "launched=2 copilot_home=copilot1,copilot2 statusline=none" \

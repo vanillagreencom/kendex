@@ -94,11 +94,13 @@ run_ot() {
     printf '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}\n' > "$RUN/remote/srv/pi/packages/@vanillagreen/pi-hooks/package.json"
     printf 'export const f = { context_window: 1 };\n' > "$RUN/remote/srv/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
   fi
+  # A seeded state's overseer record names the checkout the launch runs from,
+  # the directory the overseer binding reads the fleet's repository off.
   if [[ "$recorded" == - ]]; then
     cp -R "$prev/state" "$RUN/state" || { echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2; exit 1; }
   elif ! mkdir -p "$RUN/state" || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null \
-    || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg h "$recorded" --argjson extra "$SEED_LANES" \
-      '.lanes = [{item: "KEN-1", harness: $h, model: "last-model", account: "last-account", session_id: "last-session", status: "running"}] + $extra' >/dev/null; then
+    || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg h "$recorded" --argjson extra "$SEED_LANES" --arg cwd "$PWD" \
+      '.overseer = {cwd: $cwd} | .lanes = [{item: "KEN-1", harness: $h, model: "last-model", account: "last-account", session_id: "last-session", status: "running"}] + $extra' >/dev/null; then
     echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2
     exit 1
   fi

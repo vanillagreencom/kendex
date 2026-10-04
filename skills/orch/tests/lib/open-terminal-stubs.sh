@@ -8,7 +8,8 @@
 # argument where OT_SLEEP_INSTANT is set. The
 # suites that drive open-terminal through lanes and hosts share them: the
 # open-terminal-lane suites, open-terminal-brief-file.sh and the others that
-# call ot_stub_bin.
+# call ot_stub_bin. ot_fleet_state seeds the fleet state a launch under
+# --state-dir binds to.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run.
@@ -295,4 +296,13 @@ EOF
     previous="$arg"
   done < "$run/harness.log"
   printf 'rc=%d runs=%d resume=%d fresh=%d target=%d\n' "$rc" "$runs" "$resume" "$fresh" "$target"
+}
+
+# ot_fleet_state WORKFLOW_STATE DIR CWD — a fleet state at DIR whose overseer
+# record names CWD, as `oversee register` records the overseer's directory:
+# open-terminal binds a launch under --state-dir DIR to CWD's repository, so a
+# suite whose launches run from its own checkout seeds it with that directory.
+ot_fleet_state() {
+  "$1" --state-dir "$2" init oversee >/dev/null || return 1
+  "$1" --state-dir "$2" update oversee --arg cwd "$3" '.overseer = {cwd: $cwd}' >/dev/null
 }

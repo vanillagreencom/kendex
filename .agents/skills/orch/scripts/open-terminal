@@ -3004,44 +3004,9 @@ elif [[ -n "${LINEAR_TEAM:-}" ]]; then
     || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
 fi
 # A fleet launch runs in its overseer's repository, or in one the overseer's
-# checkout lists in ORCH_CONNECTED_REPOS: the item check above reads the
-# checkout this launch runs from, and nothing there binds that checkout to the
-# fleet it records into. The state's `.overseer.cwd` names the overseer's
-# directory, whose worktrees share its common root. The list is read there,
-# with the value this launcher loaded dropped: that is the settings of the
-# checkout it is installed in, which can be the target's. The target is named
-# by its origin remote. No state, or no overseer directory recorded, binds
-# nothing. A state that does not parse is the cap count's cap-unreadable on the
-# first item; a wake, which the cap does not count, refuses on it here.
-OVERSEER_BIND=none CONNECTED_REPO="" overseer_name="" launch_name=""
-if [[ "$FLEET" == true ]] && "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
-  if ! overseer_cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')"; then
-    [[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read state=oversee >&2; exit 1; }
-    OVERSEER_BIND=unread overseer_cwd=""
-  fi
-  if [[ -n "$overseer_cwd" ]]; then
-    overseer_root="$("$SCRIPT_DIR/git-context" common-root "$overseer_cwd")" \
-      || { ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; exit 1; }
-    launch_root="$("$SCRIPT_DIR/git-context" common-root "$CLAIM_ROOT")" \
-      || { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; exit 1; }
-    OVERSEER_BIND=own
-    if [[ "$overseer_root" != "$launch_root" ]]; then
-      OVERSEER_BIND=foreign
-      connected="$(cd -- "$overseer_cwd" && env -u ORCH_CONNECTED_REPOS "$SCRIPT_DIR/orch-env" ORCH_CONNECTED_REPOS "")" \
-        || { ot_message overseer-unjudged cause=setting "path=$overseer_cwd" >&2; exit 1; }
-      launch_name="$(kendex_github_origin_slug "$CLAIM_ROOT")" || launch_name=""
-      if [[ -n "${connected//[[:space:]]/}" ]]; then
-        [[ -n "$launch_name" ]] || { ot_message overseer-unjudged cause=origin "path=$CLAIM_ROOT" >&2; exit 1; }
-        listed="$(jq -n --arg repo "$launch_name" --arg list "$connected" \
-          '($repo | ascii_downcase) as $r | any($list | ascii_downcase | splits("\\s+"); . == $r)')" \
-          || { ot_message overseer-unjudged cause=setting "path=$overseer_cwd" >&2; exit 1; }
-        [[ "$listed" != true ]] || { OVERSEER_BIND=connected; CONNECTED_REPO="$launch_name"; }
-      fi
-      overseer_name="$(kendex_github_origin_slug "$overseer_cwd")" || overseer_name="$overseer_root"
-      launch_name="${launch_name:-$launch_root}"
-    fi
-  fi
-fi
+# checkout lists in ORCH_CONNECTED_REPOS; lib/lane-cap.sh's overseer_bind judges
+# it.
+[[ "$FLEET" != true ]] || overseer_bind || exit 1
 launched=0
 preparing=0
 failed=0
@@ -3102,7 +3067,7 @@ for raw in "${ITEMS[@]}"; do
     fi
   fi
   [[ "$OVERSEER_BIND" != foreign ]] \
-    || { ot_message overseer-foreign "item=$item" "repo=$launch_name" "overseer=$overseer_name" route=connected-repos,peer-mail >&2; exit 1; }
+    || { ot_message overseer-foreign "item=$item" "repo=$LAUNCH_NAME" "overseer=$OVERSEER_NAME" route=connected-repos,peer-mail >&2; exit 1; }
   if [[ "$FLEET" == true && "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
       if [[ "$WAKE" == true ]]; then

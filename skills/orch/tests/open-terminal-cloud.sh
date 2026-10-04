@@ -104,7 +104,9 @@ OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
 LANE_DIR="$TMP_ROOT/.eclaude"
 mkdir -p "$LANE_DIR"
-STATE="$TMP_ROOT/state"
+# In the launch checkout, where an overseer's state sits, so the overseer
+# binding reads the fleet's repository off the state directory.
+STATE="$REPO/tmp/state"
 SESSION_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 [[ -n "$SESSION_TEXT" ]] || { echo "open-terminal-cloud: lib/lane-launch.sh named no session words" >&2; exit 1; }
 STARTED='{"ok":true,"session_id":"session_01CLOUD","url":"https://claude.ai/code/session_01CLOUD"}'

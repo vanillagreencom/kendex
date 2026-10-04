@@ -140,7 +140,9 @@ mkdir -p "$LANE_A" "$LANE_B"
 row() {
   ROW="$TMP_ROOT/rows/$1"
   mkdir -p "$ROW"
-  STATE="$ROW/state"
+  # In the checkout every launch runs from, where an overseer's state sits, so
+  # the overseer binding reads the fleet's repository off the state directory.
+  STATE="$REPO/tmp/rows/$1/state"
   CLAIMS="$ROW/watch"
 }
 

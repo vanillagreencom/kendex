@@ -104,9 +104,11 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
   done
   [[ "$sole" != yes ]] || tm kill-window -t "$NEIGHBOUR"
   ADDR="$(tm display-message -p -t fleet '#{socket_path},#{pid},0')"
+  # The overseer record names the checkout the launch runs from, the directory
+  # the overseer binding reads the fleet's repository off.
   "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null
-  "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg item "$STATE_ID" \
-    '.lanes = [{item: $item, harness: "claude", status: "running"}]' >/dev/null
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg item "$STATE_ID" --arg cwd "$TMP_ROOT/repo" \
+    '.overseer = {cwd: $cwd} | .lanes = [{item: $item, harness: "claude", status: "running"}]' >/dev/null
   local host_env=() host_args=()
   if [[ "$host" == hosted ]]; then
     host_args=(--host "$HOST" --lane "$H/.eclaude")
