@@ -126,12 +126,11 @@
 # the rest of the file did not move. The paths trivial, micro and small all
 # refuse are orch's references/narrow-change.conf, beside this package; the
 # ceilings in that file are micro's and small's alone. The render inventory
-# on that list is read against it only where its change is more than names:
-# where harness-only prints `inventory-change: names-only` and each root it
-# names is one of the measurement's render roots, the inventory lists only
-# render mirrors the same diff adds beside their sources and unlists only
-# paths it deletes, a render effect, and it leaves the path set that list
-# and the subsystem rule read.
+# on that list is read against it only where its change is more than names.
+# In the size path, where harness-only prints `inventory-change: names-only`
+# and each named root is one of the measurement's render roots, the inventory
+# unlists only paths the diff deletes, a render effect, and it leaves the
+# path set that list and the subsystem rule read.
 #
 # THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
 # any other author-writable field, and no flag carries one: the author of the
@@ -850,10 +849,9 @@ load_measurement() {
   branch_growth_render_roots_from_env
 }
 
-# A names-only inventory change is the render effect of paths the diff adds
-# or deletes, which are measured themselves; the inventory leaves the path
-# set before the list and the subsystem rule read it. harness-only pairs each
-# added entry with a source the diff adds and names its root; a root outside
+# In the size path, a names-only inventory change unlists only paths the diff
+# deletes, which are measured themselves; the inventory leaves the path set
+# before the list and the subsystem rule read it. A root outside
 # the measurement's render roots, or roots this script cannot load, keep the
 # inventory on the diff, where the list below refuses it. Any other change to
 # it, a changed entry or an entry for a path that stays, keeps it there too.
