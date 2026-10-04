@@ -138,6 +138,32 @@ if [ "$git_channel" -eq 1 ]; then
     message main-pointer-invalid commit "The main build pointer has no source commit." >&2
     exit 1
   }
+  # Until a release commit's own main build publishes, the pointer still
+  # names a build from before that release. A build whose version core is
+  # behind the installed command's is a downgrade, refused by the rule
+  # `ReleaseFeed::relation_to` holds for `kendex update --git`. The installed
+  # command orders the two cores itself, so the ordering is the parser its
+  # own update reads with; a core runs up to the first `-` or `+`.
+  if installed_command="$(command -v kendex)"; then
+    if ! offered=$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",*$/\1/p' "$work/feed.json") \
+       || [ -z "$offered" ]; then
+      message main-pointer-invalid version "The main build pointer names no version." >&2
+      exit 1
+    fi
+    if ! installed="$("$installed_command" --version)"; then
+      message installed-version-unreadable "$installed_command" "The installed kendex command did not report its version, so this build cannot be checked against it." >&2
+      exit 1
+    fi
+    installed="${installed#kendex }"
+    if ! order="$("$installed_command" version-compare "${offered%%[-+]*}" "${installed%%[-+]*}")"; then
+      message installed-version-unordered "$installed_command" "The installed kendex command could not order this build against itself." >&2
+      exit 1
+    fi
+    [ "$order" != older ] || {
+      message main-downgrade-refused "$offered" "main feed offers $offered, older than installed $installed; rolling updates cannot downgrade" >&2
+      exit 1
+    }
+  fi
 fi
 
 # Where kendex keeps its own state, spelled the way the app's resolver

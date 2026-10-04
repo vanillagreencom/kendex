@@ -73,8 +73,24 @@ fn run_install_in(
     run_install_in_args(os, arch, fail, home, path_ahead, sudo, &[])
 }
 
-#[allow(clippy::unwrap_used)]
 fn run_install_in_args(
+    os: &str,
+    arch: &str,
+    fail: Option<(&str, i32)>,
+    home: &Path,
+    path_ahead: &[&str],
+    sudo: &str,
+    args: &[&str],
+) -> (std::process::Output, String) {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    run_script(&script, os, arch, fail, home, path_ahead, sudo, args)
+}
+
+/// The same run of `script`, which a control points at an edited copy of
+/// `install.sh`.
+#[allow(clippy::unwrap_used, clippy::too_many_arguments)]
+fn run_script(
+    script: &Path,
     os: &str,
     arch: &str,
     fail: Option<(&str, i32)>,
@@ -125,7 +141,6 @@ fn run_install_in_args(
             log = home.join("urls.txt").display()
         ),
     );
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
     let output = Command::new("bash")
         .arg(script)
         .args(args)
@@ -269,6 +284,100 @@ fn git_channel_resolves_one_immutable_main_build() {
     assert_eq!(
         fs::read_to_string(record).unwrap(),
         format!("{}/.local/bin/kendex\nmain\n", root.display())
+    );
+}
+
+/// A `kendex` command in `dir` that reports `version` and hands every other
+/// verb, `version-compare` included, to the real binary, so the ordering
+/// under test is the one an installed command answers with.
+#[allow(clippy::unwrap_used)]
+fn installed_command(dir: &Path, version: &str) {
+    fs::create_dir_all(dir).unwrap();
+    write_exe(
+        &dir.join("kendex"),
+        &format!(
+            "#!/bin/sh\ncase \"$1\" in --version) echo 'kendex {version}' ;; *) exec '{}' \"$@\" ;; esac\n",
+            env!("CARGO_BIN_EXE_kendex")
+        ),
+    );
+}
+
+/// `--git` over an installed command: the pointer's build, core 5.0.1, is
+/// refused before any download when the installed core is ahead of it, and
+/// installed when the cores are equal or the installed one is behind.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn git_channel_refuses_a_build_older_than_the_installed_command() {
+    let offered = "5.0.1+main.42.0123456789abcdef0123456789abcdef01234567";
+    for (installed, refused) in [
+        ("5.1.0", true),
+        ("5.0.2-rc.1", true),
+        ("5.0.1", false),
+        (
+            "5.0.1+main.50.89abcdef0123456789abcdef0123456789abcdef",
+            false,
+        ),
+        ("5.0.0", false),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let root = rooted(&home);
+        let ahead = root.join("installed-bin");
+        installed_command(&ahead, installed);
+        let (output, urls) = run_install_in_args(
+            "Linux",
+            "x86_64",
+            None,
+            &root,
+            &[ahead.to_str().unwrap()],
+            SUDO_STUB,
+            &["--cli-only", "--git"],
+        );
+        let downgrade = value(&output.stderr, "main-downgrade-refused");
+        let downloaded = urls.contains("/main-build-42/kendex-x86_64-unknown-linux-gnu");
+        assert_eq!(
+            (output.status.success(), downgrade, downloaded),
+            match refused {
+                true => (false, Some(offered), false),
+                false => (true, None, true),
+            },
+            "installed {installed}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// The control for the refusal above: a copy of `install.sh` whose
+/// comparison never reads `older` installs the build the real script
+/// refuses.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn without_the_comparison_an_older_build_installs() {
+    let home = tempfile::tempdir().unwrap();
+    let root = rooted(&home);
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let source = fs::read_to_string(real).unwrap();
+    let guard = "[ \"$order\" != older ]";
+    assert_eq!(source.matches(guard).count(), 1, "install.sh comparison");
+    let mutant = source.replace(guard, &format!("{guard} || [ \"$order\" = older ]"));
+    assert_ne!(mutant, source);
+    let script = root.join("install-mutant.sh");
+    fs::write(&script, mutant).unwrap();
+    let ahead = root.join("installed-bin");
+    installed_command(&ahead, "5.1.0");
+    let (output, urls) = run_script(
+        &script,
+        "Linux",
+        "x86_64",
+        None,
+        &root,
+        &[ahead.to_str().unwrap()],
+        SUDO_STUB,
+        &["--cli-only", "--git"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        urls.contains("/main-build-42/kendex-x86_64-unknown-linux-gnu"),
+        "{urls}"
     );
 }
 

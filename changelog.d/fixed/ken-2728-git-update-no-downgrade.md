@@ -1,0 +1,1 @@
+- `kendex update --git` and `install.sh --git` refuse a main build older than the installed release instead of moving a stable install back a version.

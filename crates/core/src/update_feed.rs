@@ -104,7 +104,27 @@ impl ReleaseFeed {
                     std::cmp::Ordering::Equal => VersionRelation::Current,
                     std::cmp::Ordering::Greater => VersionRelation::Newer,
                 },
-                None => VersionRelation::Newer,
+                // A release switching to the rolling channel. The pointer
+                // still names a build from before the release commit until
+                // that commit's own main build publishes, so a build whose
+                // version core is behind the release is a downgrade. An
+                // equal core is a build from on or after the release commit,
+                // and its build metadata alone cannot order it against a
+                // release, so it is taken as the switch the run asked for.
+                None => {
+                    let offered = parse_version("feed", &self.version)?;
+                    let running = parse_version("running build", current)?;
+                    match (offered.major, offered.minor, offered.patch).cmp(&(
+                        running.major,
+                        running.minor,
+                        running.patch,
+                    )) {
+                        std::cmp::Ordering::Less => VersionRelation::Older,
+                        std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => {
+                            VersionRelation::Newer
+                        }
+                    }
+                }
             });
         }
         precedence("feed", &self.version, "running build", current)
@@ -420,6 +440,39 @@ mod tests {
             r#"{{"schema":1,"version":"5.0.1+main.12.{new}","main_build":12,"commit":"{old}","assets":{{}}}}"#
         );
         assert!(ReleaseFeed::parse(mismatched.as_bytes()).is_err());
+    }
+
+    /// A release switching to the rolling channel: the pointer can still
+    /// name a build from before the release commit, which is refused as a
+    /// downgrade, while a build carrying the release's own core or a later
+    /// one is the switch.
+    #[test]
+    fn a_main_feed_against_a_running_release_is_ordered_by_version_core() {
+        let commit = "4447321bf7237cbbbd8155b1c00fb6e9d17c20f3";
+        for (offered, running, relation) in [
+            ("1.7.0+main.721", "1.8.0", VersionRelation::Older),
+            ("1.8.0+main.722", "1.8.0", VersionRelation::Newer),
+            ("1.9.0+main.730", "1.8.0", VersionRelation::Newer),
+            ("1.8.0+main.722", "1.8.1", VersionRelation::Older),
+            ("1.8.0+main.722", "1.8.0-rc.1", VersionRelation::Newer),
+            (
+                "1.8.0+main.722",
+                "1.8.0+git.89abcdef0123456789abcdef0123456789abcdef",
+                VersionRelation::Newer,
+            ),
+        ] {
+            let version = format!("{offered}.{commit}");
+            let build = offered.rsplit_once('.').unwrap().1;
+            let body = format!(
+                r#"{{"schema":1,"version":"{version}","main_build":{build},"commit":"{commit}","assets":{{}}}}"#
+            );
+            let feed = ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Main).unwrap();
+            assert_eq!(
+                feed.relation_to(running, UpdateChannel::Main).unwrap(),
+                relation,
+                "main feed {version} against a running {running}"
+            );
+        }
     }
 
     #[test]
