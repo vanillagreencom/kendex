@@ -1270,7 +1270,7 @@ pub fn commit_offer_open_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kendex_core::commit_offer::{Branch, Offer, Owned, Refusal, Scan, Selection};
+    use kendex_core::commit_offer::{Branch, Offer, Owned, Refusal, Scan};
 
     /// The root a surface matches on is the string the caller sent, never a
     /// display spelling of it. The window looks every answer up under the
@@ -1357,6 +1357,7 @@ mod tests {
     /// was drawn against travels with the offer, and the file viewer handed
     /// it back opens the carried manifest.
     #[test]
+    #[cfg(unix)]
     fn the_window_lists_what_the_commit_carries_and_names_what_it_leaves() {
         for (what, edited, listed, named) in [
             (
