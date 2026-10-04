@@ -68,14 +68,28 @@ pub(crate) fn try_read(
     kind: ItemKind,
     path: &Path,
 ) -> crate::error::Result<Metadata> {
+    Ok(try_text(sealed, kind, path)?
+        .map(|text| header_of(kind, &text))
+        .unwrap_or_default())
+}
+
+/// The text of one item's header file, for a caller that reads more out of
+/// it than [`header_of`] does: `None` where the kind writes no header or
+/// the file is not there, and an error where the seal refuses a file it
+/// called a file, as in [`try_read`].
+pub(crate) fn try_text(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    path: &Path,
+) -> crate::error::Result<Option<String>> {
     let Some(file) = header_file(kind, path) else {
-        return Ok(Metadata::default());
+        return Ok(None);
     };
     if !sealed.is_file(&file) {
-        return Ok(Metadata::default());
+        return Ok(None);
     }
     let bytes = sealed.read(&file)?;
-    Ok(header_of(kind, &String::from_utf8_lossy(&bytes)))
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 /// The catalogs one scope's declarations resolve to, opened once each.

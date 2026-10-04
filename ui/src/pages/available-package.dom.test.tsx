@@ -62,6 +62,9 @@ const view: PackageView = {
     dependencies: { required: [], optional: [] },
     state: "available",
     collision: null,
+    unsupported: [],
+    advisory: [],
+    fallback: [],
   },
   safety: {
     kind: "skill",

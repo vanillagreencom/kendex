@@ -12,6 +12,8 @@ use serde::Serialize;
 
 use crate::check_catalog;
 use crate::error::Result;
+use crate::model::HarnessId;
+use crate::package::support::{FallbackTool, UnsupportedTool, tool_support};
 use crate::source_read::SealedSource;
 use crate::tags::Tag;
 
@@ -66,6 +68,15 @@ pub struct IndexPackage {
     pub summary: Option<String>,
     pub tags: Vec<Tag>,
     pub safety: IndexSafety,
+    /// The tools that never run the package, from
+    /// [`crate::package::support::tool_support`].
+    pub unsupported: Vec<UnsupportedTool>,
+    /// The tools that take the package, a hook, only as instructions the
+    /// model may ignore. Not in `unsupported`.
+    pub advisory: Vec<HarnessId>,
+    /// The tools that run the package, a hook, while a fallback there does
+    /// its job, each with the hook's reason. Not in `unsupported`.
+    pub fallback: Vec<FallbackTool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -132,7 +143,12 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
         // The directory publishes these rows: a header file the seal
         // will not hand over stops the run rather than publishing a row
         // that describes the package with nothing.
-        let header = super::header::try_read(sealed, item.kind, &path)?;
+        let text = super::header::try_text(sealed, item.kind, &path)?;
+        let header = text
+            .as_deref()
+            .map(|text| super::header::header_of(item.kind, text))
+            .unwrap_or_default();
+        let support = tool_support(item.kind, text.as_deref());
         packages.push(IndexPackage {
             kind: item.kind.name(),
             name: safe_text(&item.name, MAX_TEXT),
@@ -147,6 +163,23 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
             safety: IndexSafety {
                 score: item.advisory.safety.score,
             },
+            unsupported: support
+                .unsupported
+                .into_iter()
+                .map(|gap| UnsupportedTool {
+                    tool: gap.tool,
+                    reason: gap.reason.map(|text| safe_text(&text, MAX_DESCRIPTION)),
+                })
+                .collect(),
+            advisory: support.advisory,
+            fallback: support
+                .fallback
+                .into_iter()
+                .map(|note| FallbackTool {
+                    reason: safe_text(&note.reason, MAX_DESCRIPTION),
+                    ..note
+                })
+                .collect(),
         });
     }
     let bundles = bundle_rows(sealed, &config)?;

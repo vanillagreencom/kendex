@@ -1,12 +1,14 @@
-//! `hooks/README.md` is rendered from this catalog's own hooks through core's
-//! hook delivery decision, and the committed file is held to that rendering.
-//! Every cell is `hook::delivery` for one hook on one harness at project
-//! scope, the pi-hooks carrier registered the way a Pi install enforces
-//! hooks. A harness the hook's own `harnesses:` line leaves out, an
-//! applicable companion core cannot deliver, and any refusal other than
-//! the by-name-only one, show the hook's
-//! `Not run on <id>: <reason>.` sentence instead, and a missing or
-//! unterminated sentence fails the rendering naming the hook and harness.
+//! `hooks/README.md` is rendered from this catalog's own hooks, and the
+//! committed file is held to that rendering. The rendering also holds each
+//! hook to a stated reason wherever it does not run, judged by
+//! `hook::delivery` for one hook on one harness at project scope, the
+//! pi-hooks carrier registered the way a Pi install enforces hooks: a
+//! harness the hook's own `harnesses:` line leaves out, an applicable
+//! companion core cannot deliver, and any refusal other than the
+//! by-name-only one, need the hook's `Not run on <id>: <reason>.` sentence,
+//! read by `hook::not_run_reason`, the reader the package's supported-tools
+//! row takes. A missing or unterminated sentence fails the rendering naming
+//! the hook and harness.
 //!
 //! Every failure opens with `hooks-readme: <key>=<value>`, English below it.
 //! Regenerate the file with the command in `REGENERATE`.
@@ -19,8 +21,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::harness::{Enforcement, hook_enforcement};
-use kendex_core::hook::{Delivery, HookSource, HookSpec, by_name_only, delivery, parse_hook};
+use kendex_core::hook::{
+    Delivery, HookSource, HookSpec, NotRun, by_name_only, delivery, not_run_reason, parse_hook,
+};
 use kendex_core::model::{HarnessId, Scope};
 
 const REGENERATE: &str =
@@ -88,25 +91,18 @@ fn catalog_hooks() -> Vec<HookSource> {
         .collect()
 }
 
-/// The reason in `Not run on <id>: <reason>.`: the text up to the first
-/// period followed by a space, or up to the period that ends the description.
-fn reason(description: &str, hook: &str, harness: HarnessId) -> Result<String, String> {
-    let marker = format!("Not run on {}: ", harness.name());
-    let Some(start) = description.find(&marker) else {
-        return Err(format!(
-            "hooks-readme: missing-reason={hook}:{id}\nthe hook does not run on {id} and its description carries no '{marker}<reason>.' sentence",
-            id = harness.name()
-        ));
-    };
-    let rest = &description[start + marker.len()..];
-    match rest.find(". ") {
-        Some(end) => Ok(rest[..end].to_owned()),
-        None => rest.strip_suffix('.').map(str::to_owned).ok_or_else(|| {
-            format!(
-                "hooks-readme: unterminated-reason={hook}:{id}\nthe '{marker}' sentence ends in no period followed by a space or the end of the description",
-                id = harness.name()
-            )
-        }),
+/// The hook's own `Not run on <id>: <reason>.` sentence is there, or the
+/// finding naming why it is not.
+fn reason(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
+    let (hook, id) = (&spec.name, harness.name());
+    match not_run_reason(&spec.description, harness) {
+        NotRun::Stated(_) => Ok(()),
+        NotRun::Absent => Err(format!(
+            "hooks-readme: missing-reason={hook}:{id}\nthe hook does not run on {id} and its description carries no 'Not run on {id}: <reason>.' sentence"
+        )),
+        NotRun::Unterminated => Err(format!(
+            "hooks-readme: unterminated-reason={hook}:{id}\nthe 'Not run on {id}: ' sentence ends in no period followed by a space or the end of the description"
+        )),
     }
 }
 
@@ -131,53 +127,32 @@ fn companion_absent(
     })
 }
 
-/// One cell: core's delivery answer, or the hook's own reason where the hook
-/// does not run there, `withheld` being [`companion_absent`]'s answer.
-fn cell(
+/// Whether core delivers the hook on `harness`, or else the hook states its
+/// reason, `withheld` being [`companion_absent`]'s answer. Advisory delivery
+/// and the by-name-only refusal need no sentence: core states both.
+fn judged(
     world: &World,
     spec: &HookSpec,
     withheld: bool,
     harness: HarnessId,
-) -> Result<String, String> {
+) -> Result<(), String> {
     if spec.applies_to(harness) && !withheld {
         match delivery(&world.env, &world.scope, harness, spec) {
-            Delivery::Registered | Delivery::InAgentFile => return Ok("enforced".to_owned()),
-            Delivery::Advisory => return Ok("advisory".to_owned()),
+            Delivery::Registered | Delivery::InAgentFile | Delivery::Advisory => return Ok(()),
             Delivery::NotInstallable(refusal) if refusal == by_name_only(harness) => {
-                return Ok("not named".to_owned());
+                return Ok(());
             }
             Delivery::NotInstallable(_) => {}
         }
     }
-    Ok(reason(&spec.description, &spec.name, harness)?.replace('|', "\\|"))
-}
-
-/// Names joined the way a sentence lists them: `A`, `A and B`, `A, B and C`.
-fn listed(names: &[&str]) -> String {
-    match names.split_last() {
-        None => String::new(),
-        Some((last, [])) => (*last).to_owned(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    }
+    reason(spec, harness)
 }
 
 /// The whole README, or every finding the hooks' frontmatter holds.
 fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
-    // Columns: the harnesses that run hooks, then the ones that take them as
-    // prose, each in `HarnessId::ALL` order.
-    let advisory = |harness: &HarnessId| {
-        hook_enforcement(&world.env, &world.scope, *harness) == Enforcement::Advisory
-    };
-    let columns: Vec<HarnessId> = HarnessId::ALL
-        .into_iter()
-        .filter(|harness| !advisory(harness))
-        .chain(HarnessId::ALL.into_iter().filter(advisory))
-        .collect();
-
     let catalog: Vec<HookSpec> = hooks.iter().cloned().map(HookSpec::from).collect();
     let mut findings = Vec::new();
     let mut list = String::new();
-    let mut rows = String::new();
     for hook in hooks {
         list.push_str(&format!(
             "- `{}`: {}\n",
@@ -185,40 +160,18 @@ fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
             hook.human_summary().unwrap_or_default()
         ));
         let spec = HookSpec::from(hook.clone());
-        let mut row = format!("| `{}` |", spec.name);
-        for harness in &columns {
-            let withheld = companion_absent(world, hook, &catalog, *harness);
-            match cell(world, &spec, withheld, *harness) {
-                Ok(text) => row.push_str(&format!(" {text} |")),
-                Err(finding) => findings.push(finding),
+        for harness in HarnessId::ALL {
+            let withheld = companion_absent(world, hook, &catalog, harness);
+            if let Err(finding) = judged(world, &spec, withheld, harness) {
+                findings.push(finding);
             }
         }
-        rows.push_str(&row);
-        rows.push('\n');
     }
     if !findings.is_empty() {
         return Err(findings);
     }
-
-    let advisory_names: Vec<&str> = columns
-        .iter()
-        .filter(|harness| advisory(harness))
-        .map(|harness| harness.display_name())
-        .collect();
-    let by_name: String = columns
-        .iter()
-        .filter(|harness| harness.hooks_by_name_only())
-        .map(|harness| format!("{}.", by_name_only(*harness)))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let header: String = columns
-        .iter()
-        .map(|harness| format!(" {} |", harness.name()))
-        .collect();
-    let rule: String = columns.iter().map(|_| " --- |").collect();
     Ok(format!(
-        "# hooks\n\nThe catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` renders this file from each hook's frontmatter through kendex's hook delivery decision, and fails when the committed file differs.\n\n## Hooks\n\n{list}\n## Harnesses\n\n- `enforced`: the harness runs the hook on its event.\n- `advisory`: {} run no hooks, so the hook's description reaches the agent as an instruction.\n- `not named`: {by_name}\n- Any other cell is the hook's own reason that harness does not run it.\n\n| Hook |{header}\n| --- |{rule}\n{rows}",
-        listed(&advisory_names)
+        "# hooks\n\nThe catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` renders this file from each hook's frontmatter, and fails when the committed file differs. The tools a hook does not run on, each with its reason, are on its package page and in `kendex show hook <name>` and `kendex index --json`.\n\n{list}"
     ))
 }
 
@@ -234,7 +187,7 @@ fn compare(committed: &str, rendered: &str) -> Result<(), String> {
         .unwrap_or_else(|| committed.lines().count().min(rendered.lines().count()))
         + 1;
     Err(format!(
-        "hooks-readme: drift=hooks/README.md\nline {line} is not what core's hook delivery renders; regenerate the file with: {REGENERATE}"
+        "hooks-readme: drift=hooks/README.md\nline {line} is not what the hooks' frontmatter renders; regenerate the file with: {REGENERATE}"
     ))
 }
 
@@ -243,7 +196,7 @@ fn rendered(world: &World, hooks: &[HookSource]) -> String {
 }
 
 #[test]
-fn the_committed_readme_is_what_hook_delivery_renders() {
+fn the_committed_readme_is_what_the_hooks_render() {
     let world = world();
     let committed = fs::read_to_string(readme_path()).unwrap_or_default();
     if let Err(finding) = compare(&committed, &rendered(&world, &catalog_hooks())) {
@@ -324,9 +277,9 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
     let hooks = catalog_hooks();
     let clean = rendered(&world, &hooks);
 
-    let edited = clean.replacen("| enforced |", "| advisory |", 1);
-    assert_ne!(edited, clean, "the planted cell edit changed nothing");
-    let drift = compare(&edited, &clean).expect_err("a hand-edited cell is refused");
+    let edited = clean.replacen("- `block-argv-kill`: ", "- `block-argv-kill`: Edited. ", 1);
+    assert_ne!(edited, clean, "the planted line edit changed nothing");
+    let drift = compare(&edited, &clean).expect_err("a hand-edited line is refused");
     assert_eq!(
         drift.lines().next(),
         Some("hooks-readme: drift=hooks/README.md")

@@ -8,9 +8,10 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::model::ItemKind;
+use crate::model::{HarnessId, ItemKind};
 use crate::names;
 use crate::package::detail::PackageFile;
+use crate::package::support::{FallbackTool, UnsupportedTool, tool_support};
 use crate::tags::Tag;
 
 use super::{Catalog, InstallState};
@@ -46,6 +47,15 @@ pub struct PackagePreview {
     /// engine would refuse for that same record.
     pub state: InstallState,
     pub collision: Option<String>,
+    /// The tools that never run the package, from its own header
+    /// ([`crate::package::support`]).
+    pub unsupported: Vec<UnsupportedTool>,
+    /// The tools that take the package, a hook, only as instructions the
+    /// model may ignore. Not in `unsupported`.
+    pub advisory: Vec<HarnessId>,
+    /// The tools that run the package, a hook, while a fallback there does
+    /// its job. Not in `unsupported`.
+    pub fallback: Vec<FallbackTool>,
 }
 
 /// `destination` redirects an install into a project. The package's bytes
@@ -103,6 +113,7 @@ pub fn package_preview(
     // for the same item.
     let text = super::item_text(&browsed, kind, Some(path.as_path()));
     let header = super::header_of(kind, text.as_deref());
+    let support = tool_support(kind, text.as_deref());
     Ok(PackagePreview {
         kind,
         name: name.to_owned(),
@@ -124,6 +135,9 @@ pub fn package_preview(
         ),
         state: browsed.state(&landing, kind, name),
         collision: browsed.collision(&landing, kind, name),
+        unsupported: support.unsupported,
+        advisory: support.advisory,
+        fallback: support.fallback,
     })
 }
 

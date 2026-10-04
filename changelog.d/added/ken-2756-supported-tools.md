@@ -1,0 +1,1 @@
+- `kendex show` prints each package's supported tools, and `kendex index --json` lists each package's `unsupported`, `advisory` and `fallback` tools, with the reasons a hook gives.

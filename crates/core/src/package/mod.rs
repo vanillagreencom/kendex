@@ -16,6 +16,7 @@ pub mod detail;
 pub mod diff;
 pub(crate) mod item_file;
 mod outcome;
+pub mod support;
 pub use outcome::{held_back, moving, removed};
 mod timeline;
 mod update;

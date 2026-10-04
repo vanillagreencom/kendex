@@ -2,7 +2,9 @@ use clap::Args;
 
 use kendex_core::env::Env;
 use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
+use kendex_core::model::HarnessId;
 use kendex_core::package::detail;
+use kendex_core::package::support::{FallbackTool, UnsupportedTool};
 
 use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, payload, resolve_scopes};
@@ -78,6 +80,49 @@ fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
     )
 }
 
+/// The package's supported tools in one value: every tool, less the ones
+/// core names unsupported, each with its reason where the package states
+/// one, then the tools that take it only as advice, then the tools where a
+/// fallback does its job.
+fn supported_tools(
+    unsupported: &[UnsupportedTool],
+    advisory: &[HarnessId],
+    fallback: &[FallbackTool],
+) -> String {
+    let named = |gap: &UnsupportedTool| match &gap.reason {
+        Some(reason) => format!("{} ({reason})", gap.tool.display_name()),
+        None => gap.tool.display_name().to_owned(),
+    };
+    let mut value = if unsupported.is_empty() {
+        "all".to_owned()
+    } else if unsupported.len() == HarnessId::ALL.len() {
+        let mut reasons: Vec<&str> = unsupported
+            .iter()
+            .filter_map(|gap| gap.reason.as_deref())
+            .collect();
+        reasons.dedup();
+        match reasons.as_slice() {
+            [] => "none".to_owned(),
+            reasons => format!("none ({})", reasons.join("; ")),
+        }
+    } else {
+        let gaps: Vec<String> = unsupported.iter().map(named).collect();
+        format!("all except {}", gaps.join(", "))
+    };
+    if !advisory.is_empty() {
+        let tools: Vec<&str> = advisory.iter().map(|tool| tool.display_name()).collect();
+        value.push_str(&format!("; advisory on {}", tools.join(", ")));
+    }
+    if !fallback.is_empty() {
+        let tools: Vec<String> = fallback
+            .iter()
+            .map(|note| format!("{} ({})", note.tool.display_name(), note.reason))
+            .collect();
+        value.push_str(&format!("; fallback on {}", tools.join(", ")));
+    }
+    value
+}
+
 fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
     let mut lines = Vec::new();
     let mut field = |label: &str, value: &str, status, url: Option<&str>| {
@@ -120,6 +165,12 @@ fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
             None,
         );
     }
+    field(
+        "supported tools",
+        &supported_tools(&meta.unsupported, &meta.advisory, &meta.fallback),
+        Status::Notice,
+        None,
+    );
     if let Some(catalog) = &meta.catalog {
         for (label, value) in [
             ("author", &catalog.author),

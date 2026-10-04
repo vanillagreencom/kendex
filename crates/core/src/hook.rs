@@ -5,7 +5,7 @@ use crate::model::HarnessId;
 pub mod delivery;
 pub mod spec;
 
-pub use delivery::{AgentScoping, Delivery, agent_scoping, by_name_only, delivery};
+pub use delivery::{AgentScoping, Delivery, agent_scoping, by_name_only, delivery, never_fires};
 pub use spec::{HookBody, HookSpec, Registration};
 
 /// A hook source: shell script with YAML-in-comments frontmatter between
@@ -127,6 +127,37 @@ fn names(value: &str) -> Vec<String> {
 fn prose(text: &str) -> Option<String> {
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// What a hook's `description` says about one harness in its
+/// `Not run on <id>: <reason>.` sentence, the one place a hook header
+/// states why it does not run on a harness (`hooks/AGENTS.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotRun<'a> {
+    /// The reason: the text up to the first period followed by a space,
+    /// or up to the period that ends the description.
+    Stated(&'a str),
+    /// No sentence names this harness.
+    Absent,
+    /// The sentence ends in no period followed by a space and is not
+    /// ended by the description's own final period.
+    Unterminated,
+}
+
+/// The `Not run on <id>: <reason>.` sentence for `harness` in a hook's
+/// `description`, spelled with the harness's [`HarnessId::name`] id.
+pub fn not_run_reason(description: &str, harness: HarnessId) -> NotRun<'_> {
+    let marker = format!("Not run on {}: ", harness.name());
+    let Some(start) = description.find(&marker) else {
+        return NotRun::Absent;
+    };
+    let rest = &description[start + marker.len()..];
+    match rest.find(". ") {
+        Some(end) => NotRun::Stated(&rest[..end]),
+        None => rest
+            .strip_suffix('.')
+            .map_or(NotRun::Unterminated, NotRun::Stated),
+    }
 }
 
 impl HookSource {

@@ -127,6 +127,9 @@ const RECORD: PackageMeta_Serialize = {
   enabled: true,
   fork: null,
   catalog: null,
+  unsupported: [],
+  advisory: [],
+  fallback: [],
 };
 
 const version = (

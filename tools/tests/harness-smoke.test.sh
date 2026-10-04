@@ -153,10 +153,40 @@ ROWS_REPO="$TMP/rows-repo"
 ROWS_BIN="$TMP/rows-bin"
 ROWS_CFG="$TMP/rows-cfg"
 mkdir -p "$ROWS_REPO" "$ROWS_BIN" "$ROWS_CFG"
-kendex_stub() { # FILE VERSION-LINE — a kendex whose --version prints that line and whose every other verb answers
+# What a stub kendex prints for `index`, in the shape `kendex index --json`
+# gives: one package per hook this checkout ships, unsupported on a tool with
+# that reason where a row of INDEX_GAPS says so, OpenCode and Cursor taking it
+# as advice, and every other tool running it. The rows are the answers of the
+# real summary that a run here reads: the lane-mail-check and lane-mail-halt
+# hooks on every harness, and every hook on Copilot.
+INDEX_GAPS="critical-path-deny copilot the critical-path check whose prompt this answers is Claude Code's
+lane-mail-check gemini it has no Stop event
+lane-mail-check antigravity its Stop payload carries no stop_hook_active
+lane-mail-halt gemini the lane-mail-check hook it runs is not installed there, having no Stop event
+lane-mail-halt antigravity the lane-mail-check hook it runs is not installed there
+reviewer-read-only copilot its preToolUse payload names no calling agent
+stop-failure-row copilot Copilot has no turn-failure event
+task-completed-check copilot it has no TaskCompleted event"
+STUB_INDEX="$TMP/index.json"
+stub_hooks=""
+for stub_hook in "$REPO"/hooks/*.sh; do
+  stub_hook=${stub_hook##*/}
+  stub_hooks="$stub_hooks${stub_hook%.sh}
+"
+done
+jq -n --arg hooks "$stub_hooks" --arg gaps "$INDEX_GAPS" '
+  ($gaps | split("\n") | map(capture("^(?<hook>[^ ]+) (?<tool>[^ ]+) (?<reason>.*)$"))) as $rows
+  | {schema: 2, packages: [$hooks | split("\n")[] | select(. != "") as $name
+      | {kind: "hook", name: $name,
+         unsupported: [$rows[] | select(.hook == $name) | {tool, reason}],
+         advisory: ["opencode", "cursor"], fallback: []}]}
+' >"$STUB_INDEX" || { echo "harness-smoke.test: the stub index could not be written" >&2; exit 1; }
+cp "$STUB_INDEX" "$STUB_INDEX.intact"
+kendex_stub() { # FILE VERSION-LINE — a kendex whose --version prints that line, whose index prints STUB_INDEX, and whose every other verb answers
   cat >"$1" <<EOF
 #!/bin/sh
 [ "\$1" != --version ] || { printf '%s\n' '$2'; exit 0; }
+[ "\$1" != index ] || exec cat '$STUB_INDEX'
 exit 0
 EOF
   chmod +x "$1"
@@ -230,14 +260,15 @@ else
 fi
 
 # Which harness gets a lane's mail by which mechanism is read out of the
-# `lane-mail-check` row of hooks/README.md, and whether it refuses the question
-# tool out of the `lane-mail-halt` row. A table answering for one harness less
-# would leave that harness's row skipped — a run that says nothing about
-# delivery or the question tool and passes. Both reads happen before any row, so a stand-in
-# checkout holding only the script and the two files they read reaches them and
-# the real checkout is never edited. The control is that same tree unmutated,
-# which gets past both reads to the row table.
-echo "=== a delivery table or hook event it cannot read refuses before any row ==="
+# lane-mail-check hook in the summary `kendex index` prints, and whether it
+# refuses the question tool out of the lane-mail-halt hook. A summary missing
+# either would leave every harness's row skipped — a run that says nothing
+# about delivery or the question tool and passes. Both reads happen before any
+# row, so a stand-in checkout holding only the script and the hook it reads
+# reaches them and the real checkout is never edited. The control is that same
+# tree and the stub's summary unmutated, which gets past both reads to the row
+# table.
+echo "=== a delivery summary or hook event it cannot read refuses before any row ==="
 STAND="$TMP/stand-in"
 mkdir -p "$STAND/tools" "$STAND/hooks"
 # A repository whose HEAD is this checkout's HEAD, borrowing its objects, and
@@ -253,10 +284,8 @@ git -C "$STAND" update-ref HEAD "$REPO_HEAD"
 STAND_SMOKE="$STAND/tools/harness-smoke"
 cp "$SMOKE" "$STAND_SMOKE"
 cp "$STAND_SMOKE" "$STAND_SMOKE.intact"
-cp "$REPO/hooks/lane-mail-check.sh" "$REPO/hooks/README.md" "$STAND/hooks/"
-STAND_TABLE="$STAND/hooks/README.md"
+cp "$REPO/hooks/lane-mail-check.sh" "$STAND/hooks/"
 STAND_HOOK="$STAND/hooks/lane-mail-check.sh"
-cp "$STAND_TABLE" "$STAND_TABLE.intact"
 cp "$STAND_HOOK" "$STAND_HOOK.intact"
 printf '#!/bin/sh\nexit 0\n' >"$ROWS_BIN/claude"
 chmod +x "$ROWS_BIN/claude"
@@ -289,16 +318,16 @@ plant() { # FILE SED-SCRIPT — an edit that has to change the file
   fi
 }
 
-stand_case "the committed table and hook reach the rows" 1 -
-plant "$STAND_TABLE" 's/^| `lane-mail-check` |/| `lane-mail-checked` |/'
-stand_case "a table with no lane-mail-check row is refused" 2 "mail-delivery=$STAND_TABLE"
-plant "$STAND_TABLE" 's/^| `lane-mail-halt` |/| `lane-mail-halted` |/'
-stand_case "a table with no lane-mail-halt row is refused" 2 "mail-delivery=$STAND_TABLE"
-plant "$STAND_TABLE" 's/^| Hook | claude |/| Hook | claudius |/'
-stand_case "a table with no column for a harness is refused" 2 "mail-delivery=$STAND_TABLE"
-mv -- "$STAND_TABLE" "$STAND_TABLE.away"
-stand_case "a table that cannot be read is refused on its keyed line" 2 "mail-delivery=$STAND_TABLE"
-cp "$STAND_TABLE.intact" "$STAND_TABLE"
+stand_case "the summary and the committed hook reach the rows" 1 -
+plant "$STUB_INDEX" 's/"name": "lane-mail-check"/"name": "lane-mail-checked"/'
+stand_case "a summary with no lane-mail-check hook is refused" 2 "mail-delivery=$STAND"
+plant "$STUB_INDEX" 's/"name": "lane-mail-halt"/"name": "lane-mail-halted"/'
+stand_case "a summary with no lane-mail-halt hook is refused" 2 "mail-delivery=$STAND"
+plant "$STUB_INDEX" 's/"unsupported"/"unsupported-tools"/'
+stand_case "a summary whose hooks carry no unsupported list is refused" 2 "mail-delivery=$STAND"
+mv -- "$STUB_INDEX" "$STUB_INDEX.away"
+stand_case "a summary kendex could not print is refused on its keyed line" 2 "mail-delivery=$STAND"
+cp "$STUB_INDEX.intact" "$STUB_INDEX"
 plant "$STAND_HOOK" 's/^# event: .*$/# matcher:/'
 stand_case "a hook whose frontmatter gives no event is refused" 2 "mail-frontmatter=$STAND_HOOK"
 cp "$STAND_HOOK.intact" "$STAND_HOOK"
@@ -582,14 +611,14 @@ verdict_case "control: a Claude Code row that ignores the shared copy passes the
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 # The Copilot package table lists what its readers find under the checkout, so
-# a reader that finds nothing, or a hook the delivery table has no copilot cell
-# for, is refused before any row. The stand-in tree has hooks and, by the link
+# a reader that finds nothing, or a hook the summary does not list, is refused
+# before any row. The stand-in tree has hooks and, by the link
 # above, skills; it has no agents directory until one is linked.
 echo "=== the Copilot package table refuses a checkout it cannot list ==="
 stand_case "a checkout with no agents is refused" 2 "packages=$STAND/agents" --only copilot
 ln -s -- "$REPO/agents" "$STAND/agents"
 printf '#!/usr/bin/env bash\n' >"$STAND/hooks/zz-unlisted.sh"
-stand_case "a hook the delivery table has no copilot cell for is refused" 2 "package-cell=zz-unlisted" --only copilot
+stand_case "a hook the summary does not list is refused" 2 "package-cell=zz-unlisted" --only copilot
 rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 
 # A Copilot stand-in answers each package question from the run's STANDIN_*
@@ -869,8 +898,8 @@ a hook that received its trigger, refuses it on replay and held it back passes|h
 a bare cd received and refused on replay passes|hook:block-bare-cd|pass|the model was shown: Denied by preToolUse hook: block-bare-cd: refused=standin
 a refusal the model was shown under the hook's name passes|hook:block-argv-kill|pass|the model was shown: Denied by preToolUse hook: block-argv-kill: refused=standin
 a hook with no trigger passes on running|hook:command-safety|pass|reading the payload Copilot sent
-an excluded hook is excluded with the table's reason|hook:reviewer-read-only|excluded|(hooks/README.md)
-the lane-mail row the table enforces is pending, naming the missing session|lane-mail|pending|pending=this script runs no lane session on copilot, and
+an excluded hook is excluded with the summary's reason|hook:reviewer-read-only|excluded|names no calling agent (kendex index)
+the lane-mail row kendex enforces is pending, naming the missing session|lane-mail|pending|pending=this script runs no lane session on copilot, and
 and so is the lane-question row|lane-question|pending|pending=this script runs no lane session on copilot, and
 the pending lane row names the live-lane proof it waits on|lane-mail|pending|proof: a live copilot lane session
 a mixed install whose Copilot ran its own copy alone passes|mixed-hook|pass|and neither .claude/hooks copy
@@ -1116,14 +1145,19 @@ plant "$STAND_SMOKE" 's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" |
 package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
 package_case "control: a relay check that never reads the reply passes a refusal nobody saw" hook:skill-load-check pass "its reply relaying"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-# The session runs only where those cells read enforced: a table giving each
+# The session runs only where those cells read enforced: a summary giving each
 # a reason there leaves both rows excluded with that reason, no session run.
-plant "$STAND_TABLE" '/^| `skill-load-check` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1planted judge reason |/
-/^| `skill-load-record` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1planted carrier reason |/'
+jq '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
+  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' \
+  "$STUB_INDEX.intact" >"$STUB_INDEX"
+if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
+  echo "harness-smoke.test: the planted summary edit changed nothing" >&2
+  exit 2
+fi
 package_run "$STAND_SMOKE"
-package_table "a skill-load-check the table does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
+package_table "a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
 and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
-cp "$STAND_TABLE.intact" "$STAND_TABLE"
+cp "$STUB_INDEX.intact" "$STUB_INDEX"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

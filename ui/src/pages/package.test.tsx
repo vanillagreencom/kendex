@@ -673,6 +673,9 @@ describe("what the package page says instead of Update", () => {
         enabled: true,
         fork: null,
         catalog: null,
+        unsupported: [],
+        advisory: [],
+        fallback: [],
       },
     },
   ) => {
@@ -698,6 +701,9 @@ describe("what the package page says instead of Update", () => {
       enabled: true,
       fork: { source: "cat", "forked-at": "2026-01-01T00:00:00Z" },
       catalog: null,
+      unsupported: [],
+      advisory: [],
+      fallback: [],
     },
   });
 
@@ -914,6 +920,9 @@ describe("the package page's Files tab", () => {
         enabled: true,
         fork: null,
         catalog: null,
+        unsupported: [],
+        advisory: [],
+        fallback: [],
       },
     });
     useUpdatesStore.setState({ rows: [updateRow(VG)], read: READ_LANDED });

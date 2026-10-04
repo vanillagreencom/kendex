@@ -640,6 +640,21 @@ export const commands = {
 	enabled: boolean,
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
+	/**
+	 *  The tools that never run the package, read from the package's own
+	 *  header at the revision this scope reads ([`super::support`]).
+	 */
+	unsupported: UnsupportedTool[],
+	/**
+	 *  The tools that take the package, a hook, only as instructions the
+	 *  model may ignore. Not in `unsupported`.
+	 */
+	advisory: HarnessId[],
+	/**
+	 *  The tools that run the package, a hook, while a fallback there does
+	 *  its job. Not in `unsupported`.
+	 */
+	fallback: FallbackTool[],
 } | null, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
 	/**
 	 *  Every saved item, read against this machine. One read for the whole
@@ -2203,6 +2218,16 @@ export type Excluded = {
 	why: string,
 };
 
+/**  One tool that runs a hook while a fallback there does the hook's job. */
+export type FallbackTool = {
+	tool: HarnessId,
+	/**
+	 *  The hook's own `Not run on <id>: <reason>.` sentence naming the
+	 *  fallback, control characters shown rather than acted on.
+	 */
+	reason: string,
+};
+
 /**
  *  What this action does to the file, read from the operations it will
  *  run rather than from what happens to sit on disk. A person pressing a
@@ -3680,6 +3705,21 @@ export type PackageMeta_Deserialize = {
 	enabled: boolean,
 	fork: ForkProvenance_Deserialize | null,
 	catalog: CatalogGroupMeta | null,
+	/**
+	 *  The tools that never run the package, read from the package's own
+	 *  header at the revision this scope reads ([`super::support`]).
+	 */
+	unsupported: UnsupportedTool[],
+	/**
+	 *  The tools that take the package, a hook, only as instructions the
+	 *  model may ignore. Not in `unsupported`.
+	 */
+	advisory: HarnessId[],
+	/**
+	 *  The tools that run the package, a hook, while a fallback there does
+	 *  its job. Not in `unsupported`.
+	 */
+	fallback: FallbackTool[],
 };
 
 export type PackageMeta_Serialize = {
@@ -3697,6 +3737,21 @@ export type PackageMeta_Serialize = {
 	enabled: boolean,
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
+	/**
+	 *  The tools that never run the package, read from the package's own
+	 *  header at the revision this scope reads ([`super::support`]).
+	 */
+	unsupported: UnsupportedTool[],
+	/**
+	 *  The tools that take the package, a hook, only as instructions the
+	 *  model may ignore. Not in `unsupported`.
+	 */
+	advisory: HarnessId[],
+	/**
+	 *  The tools that run the package, a hook, while a fallback there does
+	 *  its job. Not in `unsupported`.
+	 */
+	fallback: FallbackTool[],
 };
 
 /**
@@ -3770,6 +3825,21 @@ export type PackagePreview = {
 	 */
 	state: InstallState,
 	collision: string | null,
+	/**
+	 *  The tools that never run the package, from its own header
+	 *  ([`crate::package::support`]).
+	 */
+	unsupported: UnsupportedTool[],
+	/**
+	 *  The tools that take the package, a hook, only as instructions the
+	 *  model may ignore. Not in `unsupported`.
+	 */
+	advisory: HarnessId[],
+	/**
+	 *  The tools that run the package, a hook, while a fallback there does
+	 *  its job. Not in `unsupported`.
+	 */
+	fallback: FallbackTool[],
 };
 
 /**
@@ -5567,6 +5637,18 @@ export type Unsubscribed_Deserialize = {
  */
 export type Unsubscribed_Serialize = {
 	undone?: string[],
+};
+
+/**  One tool the package does not run on. */
+export type UnsupportedTool = {
+	tool: HarnessId,
+	/**
+	 *  Why, in the package's own words where it states them: a hook's
+	 *  `Not run on <id>: <reason>.` sentence, control characters shown
+	 *  rather than acted on ([`crate::names::shown`]). `None` where nothing
+	 *  states one, as for a kind the tool takes no package of.
+	 */
+	reason: string | null,
 };
 
 /**  One declared package's update standing. */

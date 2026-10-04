@@ -55,6 +55,15 @@ pub struct PackageMeta {
     pub enabled: bool,
     pub fork: Option<crate::manifest::ForkProvenance>,
     pub catalog: Option<CatalogGroupMeta>,
+    /// The tools that never run the package, read from the package's own
+    /// header at the revision this scope reads ([`super::support`]).
+    pub unsupported: Vec<super::support::UnsupportedTool>,
+    /// The tools that take the package, a hook, only as instructions the
+    /// model may ignore. Not in `unsupported`.
+    pub advisory: Vec<HarnessId>,
+    /// The tools that run the package, a hook, while a fallback there does
+    /// its job. Not in `unsupported`.
+    pub fallback: Vec<super::support::FallbackTool>,
 }
 
 /// The sealed root and item path the declaration reads right now — its own
@@ -263,6 +272,16 @@ pub fn package_meta(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Res
         .iter()
         .find_map(|entry| entry.source_commit.clone())
         .map(|commit| labeled_version(env, scope, &manifest, kind, name, commit));
+    // Only a hook declares the tools it runs on in its header; every other
+    // kind is answered by the capability table, with no read to fail.
+    let header = match kind {
+        ItemKind::Hook => {
+            let (sealed, item_path) = effective_item(env, scope, kind, name)?;
+            crate::source::header::try_text(&sealed, kind, &item_path)?
+        }
+        _ => None,
+    };
+    let support = super::support::tool_support(kind, header.as_deref());
     Ok(PackageMeta {
         repo_url: repo.as_deref().and_then(safe_repo_url),
         repo,
@@ -282,6 +301,9 @@ pub fn package_meta(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Res
             .cloned(),
         catalog: catalog_meta(env, scope, &manifest, kind, name),
         source: decl.source,
+        unsupported: support.unsupported,
+        advisory: support.advisory,
+        fallback: support.fallback,
     })
 }
 

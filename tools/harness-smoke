@@ -30,8 +30,8 @@
 # Pi; pi-ext on Pi alone; lane-mail and lane-question everywhere; mail-wake
 # on Claude, Codex and Pi; mixed-hook on Claude and Copilot, asked of one
 # project installed for both, whose .claude/settings.json Copilot also reads;
-# one event row per Copilot hook event the hooks/README.md copilot cells rest
-# on, on Copilot alone. Plugin has no row anywhere —
+# one event row per Copilot hook event the copilot answers of `kendex index`
+# rest on, on Copilot alone. Plugin has no row anywhere —
 # `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
 # plugin for one to load — and Antigravity has no agent row for the same
 # reason: agy reads agents from its global root alone, so kendex renders no
@@ -39,7 +39,7 @@
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
 # or this harness cannot answer, with the reason), `pending` (a lane-mail or
-# lane-question row the table enforces on a harness this script starts no lane
+# lane-question row kendex enforces on a harness this script starts no lane
 # session on: the live-lane proof it needs is not made here, with that reason),
 # or `skipped` (left out by --only, by the frontmatter of the hook a row
 # measures, or for a package hook by an event the package session never
@@ -84,7 +84,7 @@
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
 # antigravity, five on pi, one on gemini, fifteen on copilot (sixteen where the
-# skill-load-check copilot cell of hooks/README.md reads enforced), two on
+# skill-load-check copilot cell `kendex index` gives reads enforced), two on
 # cursor when logged in. The interactive Copilot flag adds two turns.
 #
 # The report is the row table: one aligned line per row as it is decided, then
@@ -152,11 +152,11 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
     mail-frontmatter)
       echo "that hook could not be read, or its frontmatter gives no event, so the event that hands a lane its mail over is unknown." ;;
     mail-delivery)
-      echo "that table gives no lane-mail-check cell for some harness this script installs into, so which harness gets a lane's mail by which mechanism is unknown." ;;
+      echo "the kendex on PATH printed no summary of that checkout, or its summary lists no lane-mail-check or lane-mail-halt hook there, so which harness gets a lane's mail by which mechanism is unknown." ;;
     packages)
       echo "no package of that kind was found there, so the Copilot package table would list none of them: the checkout or this script's reader is broken." ;;
     package-cell)
-      echo "hooks/README.md gives no copilot cell for that hook, so whether kendex installs it on Copilot is unknown." ;;
+      echo "the summary kendex index prints for this checkout lists no such hook, so whether kendex installs it on Copilot is unknown." ;;
     package-row)
       echo "the Copilot package table has no answer, or a second one, for that row: tools/harness-smoke is broken." ;;
     setup)
@@ -689,20 +689,21 @@ holds() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT MARKER-LINE — a plain-te
 }
 # ---- the lane-mail row -----------------------------------------------------
 # A fleet overseer's directive reaches a lane two ways, and kendex's own hook
-# delivery decision says which way each harness gets it. That decision is
-# rendered per harness into the `lane-mail-check` row of hooks/README.md by
-# `crates/core/tests/hooks_readme.rs`, which fails when the committed file
-# differs, so the row is where the answer already lives and reading it is
-# reading the hook's frontmatter through its owner rather than parsing that
-# frontmatter a second time. `enforced` means the hook's event hands the
-# directive over at the turn's end, so the row runs a one-turn lane session and
-# passes only where the lane read the directive and the mailbox cursor moved.
-# `advisory` — OpenCode and Cursor run no hooks — means the lane's workflow
-# reads the mailbox at a wait point, so the row asks that harness's own listing
-# for the instruction kendex rendered there and reports `advisory`, never
-# `pass`. Any other cell is the hook's own reason that harness does not run it,
-# and the row carries that reason. Only the event name still comes from the
-# hook, which the table does not carry. The row's evidence opens
+# delivery decision says which way each harness gets it. That decision is the
+# one `kendex index --json` prints for each hook of this checkout, from the
+# hook's own frontmatter through core (`crates/core/src/package/support.rs`),
+# so reading it is reading the hook's frontmatter through its owner rather
+# than parsing that frontmatter a second time. A tool in neither the hook's
+# `unsupported` nor its `advisory` list is `enforced`, a fallback tool among
+# them, since the hook runs there: the hook's event hands the directive over
+# at the turn's end, so the row runs a one-turn lane session and passes only
+# where the lane read the directive and the mailbox cursor moved. `advisory`
+# — OpenCode and Cursor run no hooks — means the lane's workflow reads the
+# mailbox at a wait point, so the row asks that harness's own listing for the
+# instruction kendex rendered there and reports `advisory`, never `pass`. An
+# unsupported tool's cell is the hook's own reason that harness does not run
+# it, and the row carries that reason. Only the event name still comes from
+# the hook, which the summary does not carry. The row's evidence opens
 # `harness=<id> delivery=<arm|wait-point|none>` in the table that already has a
 # harness and a row column, and it is each harness's last row because its
 # install adds the hook and the orch skill carrying its reader over the fixture.
@@ -711,46 +712,35 @@ MAIL_LOWER=$(printf '%s' "$MAIL_ITEM" | tr '[:upper:]' '[:lower:]')
 MAIL_ANSWER=SMOKE-MAIL-DELIVERED
 MAIL_TASK='Run the shell command true, then run the shell command true a second time, then reply with exactly: ok'
 MAIL_HOOK="$SELF/hooks/lane-mail-check.sh"
-MAIL_TABLE="$SELF/hooks/README.md"
+MAIL_INDEX="$DIR/index.json"
 [ -r "$MAIL_HOOK" ] || refuse mail-frontmatter "$MAIL_HOOK"
 MAIL_ARM=""
 MAIL_ARM=$(sed -n 's/^# event: \(.*\)$/\1/p' "$MAIL_HOOK") || refuse mail-frontmatter "$MAIL_HOOK"
 [ -n "$MAIL_ARM" ] || refuse mail-frontmatter "$MAIL_HOOK"
-# The header row names the column each harness owns; the escape the renderer
-# writes for a `|` inside a cell is undone here, so the cell reads as the
-# reason the hook's description gives.
 MAIL_CELL_ERR="$DIR/mail-cell.err"
-mail_cell() { # HARNESS [HOOK] — the HOOK's cell, lane-mail-check unless named; awk's own words go to MAIL_CELL_ERR
-  awk -v harness="$1" -v hook="${2:-lane-mail-check}" '
-    BEGIN { FS = " \\| " }
-    $1 == "| Hook" {
-      for (i = 2; i <= NF; i++) {
-        name = $i
-        sub(/ \|$/, "", name)
-        if (name == harness) col = i
-      }
-      next
-    }
-    col && $1 == "| `" hook "`" {
-      cell = $col
-      sub(/ \|$/, "", cell)
-      gsub(/\\\|/, "|", cell)
-      print cell
-      exit
-    }
-  ' "$MAIL_TABLE" 2>"$MAIL_CELL_ERR"
+kendex index "$SELF" --json >"$MAIL_INDEX" 2>"$MAIL_CELL_ERR" ||
+  refuse_cause mail-delivery "$SELF" "$(cat -- "$MAIL_CELL_ERR")"
+mail_cell() { # HARNESS [HOOK] — the HOOK's cell, lane-mail-check unless named; jq's own words go to MAIL_CELL_ERR
+  jq -er --arg harness "$1" --arg hook "${2:-lane-mail-check}" '
+    [.packages[] | select(.kind == "hook" and .name == $hook)]
+    | if length == 1 then .[0] else error("\(length) hooks named \($hook)") end
+    | ([.unsupported[] | select(.tool == $harness)] | first) as $gap
+    | if $gap != null then ($gap.reason // "unsupported, with no reason given")
+      elif any(.advisory[]; . == $harness) then "advisory"
+      else "enforced" end
+  ' "$MAIL_INDEX" 2>"$MAIL_CELL_ERR"
 }
-# A table this could not read would leave every harness without a mechanism and
-# every row skipped, which is a run that says nothing about delivery and passes.
-# Every harness resolving here is what lets the calls below read the cell
-# without a second refusal path; awk's own words are replayed under the keyed
-# line rather than reaching the stream ahead of it.
+# A summary this could not read would leave every harness without a mechanism
+# and every row skipped, which is a run that says nothing about delivery and
+# passes. Every harness resolving here is what lets the calls below read the
+# cell without a second refusal path; jq's own words are replayed under the
+# keyed line rather than reaching the stream ahead of it.
 for mail_harness in $HARNESSES; do
   for mail_hook in lane-mail-check lane-mail-halt; do
     mail_check=""
     mail_check=$(mail_cell "$mail_harness" "$mail_hook") ||
-      refuse_cause mail-delivery "$MAIL_TABLE" "$(cat -- "$MAIL_CELL_ERR")"
-    [ -n "$mail_check" ] || refuse mail-delivery "$MAIL_TABLE"
+      refuse_cause mail-delivery "$SELF" "$(cat -- "$MAIL_CELL_ERR")"
+    [ -n "$mail_check" ] || refuse mail-delivery "$SELF"
   done
 done
 printf 'Reply with exactly %s and nothing else.\n' "$MAIL_ANSWER" >"$DIR/mail-directive.txt"
@@ -843,7 +833,7 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
     *) mail_skipped "$harness" "$cell"; return ;;
   esac
   if [ "$#" -eq 0 ]; then
-    row "$harness" lane-mail unanswerable "harness=$harness $label, and $MAIL_TABLE reads $cell"
+    row "$harness" lane-mail unanswerable "harness=$harness $label, and kendex index reads $cell"
     return
   fi
   MAIL_BOX="$PROJECT/tmp/lane-mail/$MAIL_ITEM"
@@ -923,7 +913,7 @@ question_row() { # HARNESS TOOL LABEL [CMD...]
     *) row "$harness" lane-question skipped "harness=$harness skipped=$cell"; return ;;
   esac
   if [ "$#" -eq 0 ]; then
-    row "$harness" lane-question unanswerable "harness=$harness $label, and $MAIL_TABLE reads $cell"
+    row "$harness" lane-question unanswerable "harness=$harness $label, and kendex index reads $cell"
     return
   fi
   if ! (cd "$PROJECT" && kendex add "$SELF" --hook lane-mail-halt --harness "$harness" -y) \
@@ -945,10 +935,10 @@ question_row() { # HARNESS TOOL LABEL [CMD...]
 }
 
 # A lane-mail or lane-question row on a harness this script starts no lane
-# session on. Where the table says the hook does not run there, the row is the
-# one mail_row or question_row gives with that label. Where it says the hook
-# runs, the row is pending naming the missing session and the live-lane proof
-# it waits on: the table's claim is unmeasured, so the run exits 3, never 0.
+# session on. Where kendex index says the hook does not run there, the row is
+# the one mail_row or question_row gives with that label. Where it says the
+# hook runs, the row is pending naming the missing session and the live-lane
+# proof it waits on: that claim is unmeasured, so the run exits 3, never 0.
 no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
   local why="this script runs no lane session on $1" cell=""
   case "$2" in
@@ -956,7 +946,7 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
     lane-question) cell=$(mail_cell "$1" lane-mail-halt) ;;
   esac
   case "$2:$cell" in
-    *:enforced) row "$1" "$2" pending "harness=$1 pending=$why, and $MAIL_TABLE reads $cell; proof: a live $1 lane session" ;;
+    *:enforced) row "$1" "$2" pending "harness=$1 pending=$why, and kendex index reads $cell; proof: a live $1 lane session" ;;
     lane-mail:*) mail_row "$1" "$why" '' ;;
     lane-question:*) question_row "$1" - "$why" ;;
   esac
@@ -1049,7 +1039,7 @@ every_row() { # HARNESS RESULT EVIDENCE — one row per question this harness an
   halt_cell=$(mail_cell "$1" lane-mail-halt)
   for q in $(questions "$1"); do
     # A harness the hook does not run on has its lane-mail and lane-question
-    # answers from the table, and Codex and Pi their mail-wake answers from their runtimes,
+    # answers from kendex index, and Codex and Pi their mail-wake answers from their runtimes,
     # none of which anything about this machine changes.
     case "$1:$q:$cell:$halt_cell" in
       codex:mail-wake:*) row "$1" "$q" skipped "$WAKE_SKIPPED" ;;
@@ -1488,8 +1478,8 @@ antigravity_rows() {
 }
 
 # ---- the Copilot event rows ------------------------------------------------
-# What Copilot CLI sends the six events the hooks/README.md copilot cells rest
-# on, one row each, judged against the payload those cells assume: a row
+# What Copilot CLI sends the six events the copilot answers of kendex index
+# rest on, one row each, judged against the payload those cells assume: a row
 # passes where the payload still has that shape and fails where it does not,
 # naming what it saw. The project registers one recorder on all six by
 # hand, in .github/hooks/smoke-events.json, and holds one custom agent,
@@ -1750,7 +1740,7 @@ answer_config() { # EVENT MODE TOKEN
 # one answer a producer below recorded where copilot ran. Beside the results
 # above, a row here reads `differs` (it works, and its evidence says how it
 # differs from Claude Code) or `excluded` (kendex installs no Copilot render of
-# that hook, for the reason the copilot cell of hooks/README.md gives). The
+# that hook, for the reason its copilot cell from kendex index gives). The
 # skill, instruction and skill-directory rows need no model turn and answer
 # wherever copilot is on PATH. The agent, hook, helper, duplicate
 # and subagent rows need a login and spend four model turns: the agent listing,
@@ -1854,7 +1844,7 @@ pkg_fixed() { # ROW — RESULT<SEP>EVIDENCE where no machine changes the answer,
   case "$1" in
     hook:*)
       cell=$(pkg_cell "${1#hook:}") || cell=""
-      [ "$cell" = enforced ] || printf 'excluded%skendex installs no Copilot render: %s (hooks/README.md)' "$PKG_SEP" "$cell" ;;
+      [ "$cell" = enforced ] || printf 'excluded%skendex installs no Copilot render: %s (kendex index)' "$PKG_SEP" "$cell" ;;
     agent:effort)
       printf 'skipped%snothing here reads the effort a subagent runs at, so the effort question D008 leaves open is not measured' "$PKG_SEP" ;;
     mcp:catalog)

@@ -72,6 +72,13 @@ pub fn by_name_only(harness: HarnessId) -> String {
     )
 }
 
+/// Why a catalog script installs nothing on a harness that never fires its
+/// event: the one sentence the plan and the package's supported-tools row
+/// both say.
+pub fn never_fires(harness: HarnessId, event: &str) -> String {
+    format!("{} never fires {event}", harness.display_name())
+}
+
 pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -> Delivery {
     let support = crate::harness::capabilities(harness, ItemKind::Hook).install;
     let here = match scope {
@@ -96,11 +103,7 @@ pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -
         // keeps its advisory prose there.
         return match &spec.body {
             HookBody::Command(_) => Delivery::Advisory,
-            HookBody::Script(_) => Delivery::NotInstallable(format!(
-                "{} never fires {}",
-                harness.display_name(),
-                spec.event
-            )),
+            HookBody::Script(_) => Delivery::NotInstallable(never_fires(harness, &spec.event)),
         };
     }
     if !spec.every_agent() {
