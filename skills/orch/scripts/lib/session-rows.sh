@@ -50,8 +50,11 @@
 # overseer and lane verdicts lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
 # like its callers.
 
-# Seconds an append waits for the file's lock before it gives up.
-SESSION_ROWS_WAIT=5
+# Seconds an append waits for the file's lock before it gives up. Below the
+# least `timeout:` any hook that writes a row declares, session-end-row's 3 s,
+# the longest Codex runs a SessionEnd hook: a writer that loses the lock says
+# so on stderr rather than being killed first (hooks/tests/session-rows.test.sh).
+SESSION_ROWS_WAIT=2
 # The rows a reader looks back over for the last row of an event: a session
 # appends a start, an end, a failure per wall and a Stop per turn, so the rows
 # are taken from those naming the event first and the span bounds that list.

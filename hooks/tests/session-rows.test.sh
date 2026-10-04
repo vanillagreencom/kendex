@@ -267,7 +267,56 @@ printf '%s' '{"session_id":"5f0c","stop_hook_active":false}' |
 assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=2 last=Stop" \
   "the overseer's turn end, whose payload names no event, writes the Stop over its wall"
 
+# The lock wait against the hooks that write rows. A writer is a hook under
+# ROOT/hooks whose body runs a session_rows writer or lane-mail-check's row
+# arm; each copy of it git tracks under ROOT, the source and every harness
+# render, declares a `timeout:` the harness kills it at, which must sit above
+# the library's SESSION_ROWS_WAIT so a writer losing the lock says so before
+# it is killed. Prints one `copy=<path> timeout=<n> wait=<n>` line per copy
+# past the bound, then `writers=<name,...>` and `copies=<n>`. A non-writer
+# taken in only adds a copy to judge, so over-inclusion stays open.
+wait_bound() { # LIB ROOT
+  local wait writer name copies copy timeout names="" count=0
+  wait="$(sed -n 's/^SESSION_ROWS_WAIT=\([0-9][0-9]*\)$/\1/p' "$1")" || return 2
+  [[ $wait =~ ^[0-9]+$ ]] || { echo "wait=unreadable value=[$wait]"; return 0; }
+  for writer in "$2"/hooks/*.sh; do
+    grep -q -E 'session_rows_(lane_)?write |"\$JUDGE" row ' "$writer" || continue
+    name="${writer##*/}"
+    names="$names${names:+,}${name%.sh}"
+    copies="$(git -C "$2" ls-files -- ":(glob)**/hooks/$name")" || return 2
+    while IFS= read -r copy; do
+      [ -n "$copy" ] || continue
+      count=$((count + 1))
+      timeout="$(awk '/^# ---$/ { n++; next } n == 1 && sub(/^# timeout: */, "") { print; exit }' "$2/$copy")" || return 2
+      [[ $timeout =~ ^[0-9]+$ ]] && [ "$wait" -lt "$timeout" ] ||
+        echo "copy=$copy timeout=${timeout:-absent} wait=$wait"
+    done <<<"$copies"
+  done
+  echo "writers=$names"
+  echo "copies=$count"
+}
+BOUND="$(wait_bound "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh" "$REPO_ROOT")" ||
+  { echo "session-rows: wait-bound=unreadable" >&2; exit 1; }
+assert_eq "$(grep -c -E '^(copy|wait)=' <<<"$BOUND" || true)" "0" \
+  "every tracked copy of a row-writing hook times out above the row lock wait: $BOUND"
+# Floor and required members: the extractor finds the wrappers and the writer,
+# and each one's source copy at least.
+assert_eq "$(grep -c -E '^writers=(.*,)?lane-mail-check,(.*,)?session-end-row(,|$)' <<<"$BOUND" || true)" "1" \
+  "the writer extractor finds lane-mail-check and session-end-row"
+assert_eq "$(sed -n 's/^copies=\([0-9]*\)$/\1/p' <<<"$BOUND" | awk '{ print ($1 >= 4) }')" "1" \
+  "the copy extractor finds each writer's source"
+
 # --- control ------------------------------------------------------------------
+# SESSION_ROWS_WAIT raised to session-end-row's own 3 s in a copy of the
+# library: its source copy is past the bound.
+WAIT_LIB="$TMP_ROOT/wait-session-rows.sh"
+cp "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh" "$WAIT_LIB"
+assert_eq "$(grep -c -x 'SESSION_ROWS_WAIT=[0-9]*' "$WAIT_LIB" || true)" "1" "control finds the lock wait"
+sed -i.bak 's/^SESSION_ROWS_WAIT=[0-9]*$/SESSION_ROWS_WAIT=3/' "$WAIT_LIB"
+assert_eq "$(grep -c -x 'SESSION_ROWS_WAIT=3' "$WAIT_LIB" || true)" "1" "control set it to 3"
+BOUND="$(wait_bound "$WAIT_LIB" "$REPO_ROOT")" || { echo "session-rows: wait-bound=unreadable" >&2; exit 1; }
+assert_eq "$(grep -c -x 'copy=hooks/session-end-row.sh timeout=3 wait=3' <<<"$BOUND" || true)" "1" \
+  "control: a lock wait of 3 s puts session-end-row past the bound"
 # The row arm's write removed from a copy of the hook: the start row is gone.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   MUTANT="$TMP_ROOT/mutant-lane-mail-check.sh"
