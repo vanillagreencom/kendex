@@ -27,7 +27,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 - **Subset case**: a new case whose assertions are a subset of an existing case on the same function. A new input does not rescue it: the existing case takes that input as one more row or gains the assertion, and the new case is deleted. The finding names the existing case. Authoring copy: `.agents/skills/dev/SKILL.md` § Engineering Rules.
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
-- **Clock**: a test that bounds a duration with `sleep`, `setTimeout`, or `date` proves nothing on a loaded runner; the boundary is staged or the clock is injected.
+- **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests. Inject time for logic and require progress evidence for concurrency. Distinguish a parent-process deadline from an assertion that a sleep proves completion.
 - Any test you mutation-validate follows the reviewer skill's § Mutation-Stability Pairing.
 
 ## Output

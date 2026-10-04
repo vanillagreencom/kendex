@@ -13,6 +13,7 @@ Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shell
 ## Features
 
 - Check shell syntax and selected shell error patterns.
+- Reject direct process-environment mutation in Rust test files.
 - Find unwired test suites and unmanaged temporary directories.
 - Check cited paths and JSON or TOML syntax.
 - Detect edits to configured applied migrations.

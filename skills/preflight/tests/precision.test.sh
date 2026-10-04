@@ -661,4 +661,44 @@ git -C "$R" add -A
 run_pf --staged
 fires "the base's own migration, staged, still fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
 
+echo "=== Rust environment calls are judged only in test code ==="
+seed rustenv
+mkdir -p "$R/.agents/skills/example/tests"
+cat >"$R/src/lib.rs" <<'RUST'
+#[cfg(test)]
+mod tests {
+    // std::env::set_var("KEY", "value");
+    /* outer /* nested */
+       std::env::remove_var("KEY");
+    */
+    const EXAMPLE: &str = r##"
+        #[test] fn example() { std::env::set_var("KEY", "value"); }
+    "##;
+    const QUOTED: &str = "std::env::remove_var(\"KEY\")";
+    fn child() { std::process::Command::new("child").env("KEY", "value"); }
+}
+fn boot() { unsafe { std::env::set_var("KEY", "value"); } }
+RUST
+printf 'fn fixture() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/.agents/skills/example/tests/env.rs"
+git -C "$R" add -A
+run_pf
+clean "comments, literals, child environment, production code and installed renders" 2
+printf '#[test]\nfn changed() { unsafe { std::env::remove_var("KEY"); } }\n' >>"$R/src/lib.rs"
+git -C "$R" add -A
+run_pf
+fires "a real test call beside the benign forms still fails" "src/lib.rs:15: [rust-test-env-mutation]"
+
+seed rustenvold
+printf 'fn fixture() { unsafe { std::env::set_var("KEY", "value"); } }\n' >"$R/tests/env.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm baseline
+printf '// fixture description\n' >>"$R/tests/env.rs"
+git -C "$R" add -A
+run_pf --staged
+clean "an unchanged Rust environment call is outside the staged lines" 1
+printf 'fn added() { unsafe { std::env::remove_var("KEY"); } }\n' >>"$R/tests/env.rs"
+git -C "$R" add -A
+run_pf --staged
+fires "an added call in the same test file still fails" "tests/env.rs:3: [rust-test-env-mutation]"
+
 pf_summary

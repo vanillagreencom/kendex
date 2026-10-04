@@ -200,6 +200,16 @@ pf_world() {
     # Written from the shell, never with cat reading a file: a cat-fed
     # fixture pushes several hundred KB before it blocks, so it passes
     # either way.
+    rustenv)
+      mkdir -p "$R/tests"
+      printf 'fn fixture() {\n    unsafe { std::env::set_var("KEY", "value"); }\n}\n' >"$R/tests/env.rs"
+      ;;
+    rustremove)
+      printf 'use std::env;\n#[cfg(test)]\nmod tests {\n    fn fixture() { unsafe { env::remove_var("KEY"); } }\n}\n' >"$R/src/lib.rs"
+      ;;
+    rusttestfn)
+      printf '#[test]\nfn case() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/src/lib.rs"
+      ;;
     earlyclose) printf '#!/usr/bin/env bash\nset -euo pipefail\nif echo "$1" | grep -q x; then echo hit; fi\n' >"$R/scripts/existing.sh" ;;
     # The same lane inside the test tree, on the mid-pipeline shape: the
     # reader is two stages down and another stage runs after it, and the
@@ -270,6 +280,9 @@ pf_world() {
 # a finding because it is absent from the list, and the verdict row owns both
 # heads its count names. The -z row pins the look-ahead edge on its own.
 IFS= read -r -d '' rows <<'ROWS' || :
+Rust test files cannot set the process environment|rustenv|-|-|1|tests/env.rs:2: [rust-test-env-mutation]|-
+Rust inline test modules cannot remove process environment|rustremove|-|-|1|src/lib.rs:4: [rust-test-env-mutation]|-
+Rust test functions cannot mutate process environment|rusttestfn|--staged|-|1|src/lib.rs:2: [rust-test-env-mutation]|-
 an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
 an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
 a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155

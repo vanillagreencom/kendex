@@ -47,7 +47,7 @@ For an item spanning domains, split the delegation by domain. If the selected ag
 - Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change, and a committed render of a source file you changed traces to whatever its source traces to. Two exceptions:
   - the mechanical enablers of landing it ride without tracing to it: locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime;
   - a defect the change introduces or arms is in scope by definition, unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
-- Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that pins prose, drives a second implementation, or stubs the function under test does not count as a test.
+- Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that drives a second implementation or stubs the function under test does not count. Message assertions follow [code-quality § Tests](../code-quality/SKILL.md#tests).
 - A review finding adds a case only when it names a behaviour no existing case reaches. Otherwise it tightens the existing case's assertion, and the item reasoning names that case.
 - A second fix round on the same function's guard is recurrence: redesign the rule under test so the class is unrepresentable, and fold the family of cases into one table.
 - A test whose premise died is deleted whole in the commit that kills the premise, and the PR body names the deletion.

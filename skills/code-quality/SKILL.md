@@ -1,7 +1,7 @@
 ---
 name: code-quality
 description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
-summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, module structure, over-engineering limits, prove-your-guards, test architecture, comment rules."
+summary: "Code-authoring standards: failure semantics, resource ownership, shared decisions, evidence, test contracts, and stack-specific references."
 license: MIT
 user-invocable: true
 dependencies:
@@ -17,105 +17,83 @@ tags: [review]
 
 # Code Quality
 
-Repo-specific standards live in each repo's `## Project Instructions` section and add to these rules.
+Repo-specific standards live in each repo's `## Project Instructions` section and add to these rules. Before changing code, load the reference for each affected stack under § Language Discipline.
 
 ## Core Principle
 
-A loud failure beats a silent wrong answer. Handle every error, check invariants, and never continue in a state the code does not understand.
+Do not trade correctness for a smaller change. A failed check limits the evidence; it does not establish a product defect. Name the reachable failure before claiming user impact.
 
 ## Correctness
 
-- No workarounds or quick hacks. If the correct fix is larger than expected, say so.
-- **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable". An absent or unknown input is not a dependency failure: refusing on it disables a working path, which needs its own justification stated where the choice is made.
-- Make illegal states unrepresentable: a state with several cases is one tagged value each site matches exhaustively, never independent flags each site conjoins. § Language Discipline holds each language's spelling.
-- A gate, guard or scanner change adds no enumerated exemption list; a refusal is one rule at the point the code cannot judge.
-- A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable, with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
-- An error path must name the actual cause, not a neighbouring dependency.
-- A refusal or notice a script prints starts with a stable first line: a short key and the value acted on (a path, a count, an exit code). The English explanation follows on later lines, and the message text lives in one place per script.
-- Handle edge cases: empty input, boundary values, junk prefixes/suffixes, interrupted-then-retried flows.
+- Fix the cause in its existing owner. If the correct fix exceeds the scope, report that conflict instead of adding a workaround.
+- A dependency failure must not become a passing result or a default value. A required gate refuses when it cannot read or evaluate its evidence. An advisory check reports unavailable with the cause. An absent or unknown application input is a separate contract choice; state why refusing it is necessary where that choice is made.
+- When changing a state with mutually exclusive cases, use one tagged value with exhaustive handling. Do not start a refactor of untouched fields without a reachable invalid state.
+- A gate, guard or scanner adds no enumerated exemption list. State the rule at the point where the code cannot judge.
+- An unexpected branch asserts or returns the violated invariant. An error names the failed operation, not a neighbouring dependency.
+- An automated tool's refusal or notice starts with a stable key and the value acted on. Put the human explanation on later lines. Keep each diagnostic in one place.
 
 ## Structure
 
-- **One lifetime, one owner.** Resources that share a lifetime (connections, leases, sessions, caches) live in one owner whose teardown releases them all. Adding a resource changes its owner, never the call sites.
-- **Independent lifecycles split an owner; phases do not.** A component that holds resources with independent lifecycles gives each resource its own owner, and that owner keeps the resource's acquisition, recovery and release. Acquire, deliver, recover and tear-down phases alone never split an owner; private functions inside it may name them.
-- **Members serve the design, not packaging or tests.** An internal symbol re-exported so tests or vendors can reach it is API the next refactor owes compatibility to; generate that entry in the build instead. Setup and readback that only tests use stay out of shipped components, exported or not: put them in fixtures or a disposable runtime copy. An operational diagnostic stays when a named production consumer uses it, documented where its API is declared.
-- **Compatibility probing carries a floor.** Runtime detection across upstream versions states the minimum version it serves and the version that removes it. An undated shim is a workaround under § Correctness.
-- **Narrowing has one door.** A wire-format union read through repeated casts gets one guard module, and call sites match on the narrowed value. This applies in languages with sum types.
-- **Classification is a table.** Detecting an upstream failure kind from its message text is one pattern table with real examples pinned under test, never a regex at each call site.
+- **One lifetime, one owner.** Resources with a shared lifetime have one owner whose teardown releases them. Resources with independent lifetimes have separate owners, each responsible for acquisition, recovery and release. Phases of one lifetime are private functions, not separate owners.
+- Acquire ownership before registering cleanup. A pathname alone grants no right to replace or delete a file; acquire a scratch file by exclusive creation. A saved process number grants no right to signal a later process with that number. Keep a process handle or verify identity while the ownership mechanism prevents reuse.
+- A child launch defines its environment explicitly, in production and in tests. The launch owner selects inherited values it needs instead of passing the caller's whole environment.
+- Test access must not expand the shipped API or add fixture commands to a product executable. Keep fixtures in the stack's test boundary. A private readback alone is not a defect. Keep operational diagnostics with a named production consumer documented at their declaration.
+- Compatibility probing states the minimum upstream version it serves and the version that removes it. An undated shim is a workaround under § Correctness.
+- Narrow a wire-format union in one guard module. Call sites consume that result instead of repeating casts.
+- Classify upstream failures from message text in one pattern table, with real examples under test.
 
 ## Over-Engineering
 
-Build only what was asked. No speculative abstractions, no extension point for a caller that does not exist, no wrapper that only forwards, and no error handling for impossible scenarios. A new dependency needs a one-line justification in its commit message.
+Build only what the current callers need. Add no speculative abstraction, extension point, forwarding wrapper or error path for an impossible state. Justify a new dependency in the commit message.
 
-One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. When real consumers would each make the same decision, one shared owner makes it; caller count neither justifies nor removes that owner. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree. Before adding a script, watch, file, setting or rule, name the existing mechanism that owns the concern and extend it. Add a new mechanism only when no owner exists; state why in the commit message. Redo a fix that adds a second path beside an owner, or a rule beside another file's rule, as a change to that owner.
+One owner makes each decision: classification, validation, parsing and state detection. Compute it once and let callers consume the result. Before adding a script, watch, file, setting or rule, find and extend the existing owner. If none exists, state that in the commit message. A check that compares a declaration with its implementation checks consistency; it is not a second implementation of the decision. Keep its expected contract independent of the implementation.
 
-Integrate through the system's own interface. Before building on another system (a service, an API, a CLI, an agent harness), read its current documentation and use the interface it provides for the purpose. Check the system's documented extension points in this order: SDK, extension or plugin API, events or RPC, hooks, settings; name the one used and why. Deriving its state indirectly (reading a status line, parsing a file or screen text, scraping a pane, reading its internal files, or re-implementing a feature it already offers) is a last resort: the code names it as the fallback, the interface it stands in for, and why that interface cannot serve. Review holds the indirect-read case: the `reviewer-arch` agent and the `bot-instructions` review doctrine report as a blocking finding an indirect read of another system's state (a scraped screen or pane, a status line, output text the system does not document as an interface, or its internal files) that does not name the interface it stands in for and why that interface cannot serve. Reading a documented interface, text or JSON output included, is not this finding.
+Integrate through the system's documented interface. Read its current documentation before building on it. Check its extension points in order: SDK, extension or plugin API, events or RPC, hooks, settings. Name the interface used and why. An indirect read of screen text, internal files or undocumented output must name the interface it replaces and why that interface cannot serve. The architecture reviewer and review doctrine treat a missing explanation as a blocker. Documented text output is an interface.
 
 ## Prove Your Guards
 
-A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. § Tests states which controls are permanent. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A script's mutant control edits a copy of the script, never the tracked file. A control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
+A new or modified production guard ships with one must-fail control per independent rule. Plant a defect that reaches that rule and observe the guard reject it. Rows for the same rule share a control; a defect for one rule cannot prove another. Mutate a disposable copy, never the tracked source. Keep the matched text when removing behavior: deleting the code under test only proves the assertion runs. Reject assertions that also match skip notes, fixtures that never reach the guarded bound or claimed workload, and harness code that keeps alive what the implementation should.
 
-- **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
-- **A floor alone is not a control.** An inventory or coverage check derives the members it visits from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open. A behavior or contract test keeps its expected values independent of the implementation: never derive an expected API set, parser result or accepted input from the code that produces it.
+- An automated text edit asserts its match count and that the file changed, or uses an edit tool that refuses no match. Resolve or refuse symlinks before replacing a path.
+- An inventory check discovers members from the artifact under test, not a second list. A coverage floor detects a broken extractor. Under-inclusion also needs a required member; over-inclusion needs a forbidden member. State which direction remains unproved. Behavior tests keep expected values independent of the implementation.
+- Verify a benchmark's workload before timing. Bound or reset retained state outside the timed operation. A loop-cost estimate is not a latency percentile; a percentile requires a distribution of the events the claim names.
 
 ### Instruments you did not write
 
-- **A check narrower than the claim can only confirm it, never establish it.** Match the instrument's reach to the assertion's reach before running it, and prefer one that fails visibly on a planted counterexample. A grep over one directory supports no claim about the tree.
-- **Behaviour measured at an interactive prompt is not what scripts get.** `type <cmd>` names the shadow, which differs per shell. Resolve the command in the script's own shell and PATH, and name the shell and implementation it resolves to.
-- **A guard's failure message is an instrument.** It is what an author acts on. Unescaped backticks inside a double-quoted diagnostic execute their contents, so the intended text is altered or gone while the surrounding command still succeeds.
+- Match the evidence to the claim: source consistency, construction, executed behavior, model, rendered output or performance. A source check can prove source shape. It cannot prove runtime behavior or rendered output.
+- A copied model proves its own behavior. Exercise shared production operations when a small existing boundary permits it; otherwise label it a design demonstration or narrow the claim. Do not build a production abstraction solely to rescue a model's claim.
+- Match the instrument's reach to the claim before running it. Prefer an instrument that visibly rejects a planted counterexample. A scan of one directory establishes nothing about unscanned files.
 
 ## Tests
 
-- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards. A control that plants its defect in an input, a fixture or a copy of a source file it runs uncompiled is permanent: it stays in its surface's test file and runs whenever that test runs; a control that must edit compiled source is shown once and its result recorded in the commit message.
-- Where no production edit can redden a surface's test, the test states that, why, and what it holds, in place of its control. A test of the mechanism that implements a guarantee moves with the mechanism: assert the guarantee.
-- A test pins values a program parses: keys, codes, enums, exit status, flags, and a text protocol a named consumer reads, stated in the producer's header. A test that pins prose or the test harness's own configuration is deleted.
-- A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
-- A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
-- A change selects its checks, locally and in CI, from each suite's direct and indirect inputs: its sources, the dependencies it consumes, fixtures, generated-code inputs, configuration and build settings. Select through the suite's existing entry point and the dependency metadata the build already holds; a suite both run goes through the same entry point in both. Missing or unreadable selection evidence runs every check in the requested area. Selection needs no custom selector, cache, runner or workflow, and no dependency table outside the tests' own files.
-- Where the build holds no dependency graph, a change to the suite's entry point, the tree's assertion library or its shared fixtures runs the whole suite. Beyond those files, a test is selected by its path, named for its surface under the placement rule below, and by any note in its own file: it runs when it, its surface or a file its note names changes, if every repository file it or its surface uses is named one of those ways. A test where that does not plainly hold runs on every change, with no separate list; no test must carry a note, and no check judges the notes. The repository's full and release runs run every test.
-- Read a suite's wall time from what its entry point already prints. A repository may state a per-change validation budget, in minutes, in its Project Instructions; it bounds a change's selected run, never the full or release runs. A change whose selected run exceeds it reports the time; the slow suite or lane is split by input under the selection bullets above in its own work item, outside that change, never skipped or moved behind a flag.
-- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file.
-- A test reads time through an injectable clock; a real wait names its reason beside it.
-- A collection-driven check states its coverage floor and proves its discovery completed. It rejects an empty result when the floor requires members, and a failed or incomplete discovery never reports a valid empty set. An empty application input the contract permits passes, and a test covers it.
-- A shared fixture is a neutral world (a seeded repository, a fake SDK); a fixture that carries a planted defect is private to its case.
-- A test that spawns a real process passes the child's environment explicitly, never the developer's live environment.
-- Tests live beside the code where the runtime neither loads nor snapshots them, otherwise in a separate test tree; one file per surface, named for it. Every suite in a tree sources that tree's one assertion library, and a test helper lives in that library, never in a suite.
-- A test file past about 64 KB holds more than one surface; split it at a surface seam.
+- A surface is a coherent contract or state machine. The stack reference defines its test placement. Each changed surface with a test takes at least one must-fail control that turns that test red. The control belongs to the instrument, not to each row; production guards follow § Prove Your Guards. A control using input, a fixture or an uncompiled source copy stays in the test and runs with it. A control requiring a compiled-source edit is shown once and recorded in the commit message; its absence from the current test file proves no omission.
+- If no production edit can redden the test, state why and what the test establishes. Assert the guarantee, not the mechanism used to provide it.
+- No test asserts human-readable wording in messages, docs, help text or comments. Assert typed categories, error kinds or structured fields. The only exception is output another program parses: test its machine-read line or format and name that consumer. Delete pins on the test harness's own configuration.
+- Each row asserts the result specific to its guard. A neighbouring gate's output, a helper used to produce both actual and expected values, or a truthiness check cannot establish that result.
+- A dependency's own suite tests its behavior. The consumer tests its use of the dependency.
+- Select local and CI checks through the same existing suite entry point from direct and indirect inputs: source, dependencies, fixtures, generated inputs, configuration and build settings. That entry point may map build metadata to checks; add no parallel selector, cache, runner, workflow or hand-kept dependency table. Missing or unreadable selection evidence runs every check in the requested area.
+- With no build graph, an entry point, assertion library or shared-fixture change runs the whole suite. Otherwise select by the test's own path, its named surface and input notes in its file. This applies only when those identify every repository file the test or surface consumes. A test without that evidence runs on every change. No separate list or mandatory-note check is added. Full and release runs run every test.
+- Read wall time from the suite entry point's output; report it unavailable if absent. A project's per-change budget in its Project Instructions bounds selected runs, not full or release runs. Report an over-budget run. Split the slow suite by inputs in its own work item; never skip it or hide it behind a flag.
+- Put variations of one input contract in one visible table and run the same assertions for each row.
+- Inject time for clock-dependent logic. Use barriers or acknowledgements to prove concurrency order and producer progress. A sleep with a reason proves neither. Bound potentially blocking code with a parent-process deadline; an executor timeout cannot interrupt code that never yields. Real elapsed time is for timer-wiring or performance tests, with their limited claim stated.
+- A collection-driven check proves discovery completed and enforces its coverage floor. Failed or partial discovery never reports a valid empty set. Cover empty application input when its contract permits it.
+- Shared fixtures define a neutral world. Keep a planted defect private to its case.
+- Place tests beside code only where the runtime neither loads nor snapshots them. Otherwise use a separate test tree. Name tests for their contract. Split large files at contract boundaries; size alone does not establish that a boundary exists.
 
 ## Language Discipline
 
-- **Rust**: exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
-- **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. A test suite makes its `mktemp -d` root with these lines, `NAME` the suite's own name, and resolves it before any path derived from it is compared or printed: macOS answers `mktemp -d` under `/var`, a symlink to `/private/var`, so a path the code under test resolved never equals one built on the raw root.
+Load only the references for the code being changed:
 
-  ```bash
-  TMP_ROOT="$(mktemp -d)" || { echo "NAME: scratch=mktemp-failed" >&2; exit 1; }
-  [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "NAME: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
-  TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "NAME: scratch=resolve-failed" >&2; exit 1; }
-  trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-  ```
-
-  `mktemp -d` is assigned and checked alone, never nested inside the `cd`: there its failure hands `cd` an empty argument, which bash before 5.3 accepts as the current directory, so the root names the caller's directory and the EXIT trap removes it.
-
-- In any `pipefail` script, never pipe a shell writer into an early-closing reader (`head`, `grep -q`, `grep -m N`), which stops reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position reads as a plain false that drops the result with no error. Capture whole and window in-shell, or give the reader a here-string.
-- **TypeScript/JS**: discriminated unions switched with a `never` default over strings and booleans-with-meaning; distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
+- Rust, Cargo or Rust benchmarks: [references/rust.md](references/rust.md).
+- Bash or shell suites: [references/bash.md](references/bash.md).
+- TypeScript or JavaScript: [references/typescript.md](references/typescript.md).
 
 ## Comments and Prose
 
-Do:
+A comment states why, or a constraint the code cannot show. No history, review notes, code restatements or change logs. Delete a comment that adds nothing. Keep claims within what the adjacent code establishes. The optional audit is [commit-guards CHECKS.md § comments](../commit-guards/CHECKS.md#comments).
 
-- Document the constraint or invariant the code cannot show, not what the line does.
-- Document public functions, structs, enums, and variants.
-
-Don't:
-
-- Comments that repeat the code.
-- History: a temporal marker, a date, an issue id, a review round or a conversation. For an optional audit, see [commit-guards CHECKS.md § comments](../commit-guards/CHECKS.md#comments).
-- Claims broader than what the adjacent code or assertion actually enforces.
-
-Markdown is [`../docs-writing/SKILL.md`](../docs-writing/SKILL.md): the writing standard, and what each file type holds and excludes.
-
-Commit bodies explain intent, never narrate the diff.
+Markdown follows [docs-writing](../docs-writing/SKILL.md). Commit bodies explain intent, not the diff.
 
 ## Cleanup
 
-Remove unused code completely: no backwards-compatibility shims, no renamed `_vars`, no commented-out blocks, no `// removed` markers, no re-exports without callers. Breaking removals get a CHANGELOG note, not a compat layer.
+Remove unused code rather than leaving renamed variables, commented blocks, removal markers or re-exports without callers. A supported external API is a caller. Follow the repository's declared compatibility policy for removals; absent such a policy, remove the dead path and document a breaking change instead of inventing a compatibility layer.

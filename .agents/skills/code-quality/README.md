@@ -14,10 +14,10 @@ kendex also installs docs-writing, which supplies the markdown rules.
 
 - Define how agents handle errors and remove unused code.
 - Set structure rules for resource ownership and exports, abstraction rules for shared decisions, and a rule to build on another system through its own interface.
-- Keep test-only setup and readback out of shipped code.
+- Keep fixture interfaces out of shipped APIs while permitting private test access.
 - Require checks to fail on the defects they claim to catch, one control for each independent rule a guard enforces.
-- Set test rules: at least one control per tested surface, one assertion library per tree, no tests that pin prose, and checks selected from what a change affects.
-- Supply language rules for Rust, Bash and TypeScript.
+- Set test rules for defect controls, typed results, progress evidence and checks selected from what a change affects.
+- Load Rust, Bash and TypeScript rules only for the stack being changed.
 - Direct markdown work to the docs-writing skill.
 
 ## How it works

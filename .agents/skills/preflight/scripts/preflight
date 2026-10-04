@@ -109,6 +109,16 @@ Lanes:
                   that exists is a no-op. Nor is the literal as a value (a
                   config field, a fixture string, a path nothing creates), a
                   TMPDIR-derived path, or a commented-out call.
+  rust-test-env-mutation
+                  an added direct std::env::set_var/remove_var or
+                  env::set_var/remove_var call in a Rust test file, a
+                  #[cfg(test)] block or a #[test] function. Test files use
+                  the test-tree and test-name rules below. Strings and
+                  comments are ignored. This lexical check does not resolve
+                  names: aliases, wrappers, calls split across lines and
+                  other test attributes are unjudged. Pass configuration to
+                  the fixture owner, or parse environment in a child process
+                  with an explicit environment.
   docs-cited-paths
                   in a changed .md file, an added backticked path naming
                   nothing tracked or on disk, judged only inside a directory
@@ -148,7 +158,8 @@ Scope rules:
   In an installed-artifact subtree (.agents/ and the harness directories'
   skills, agents, hooks, rules, instructions, packages and kendex trees,
   Copilot's .github/agents, .github/skills and .github/hooks among them)
-  masked-returns, fail-open, early-close-pipe, unwired-suite, mktemp-trap and
+  masked-returns, fail-open, early-close-pipe, rust-test-env-mutation,
+  unwired-suite, mktemp-trap and
   the source-file direction of docs-cited-paths stand down. shell-syntax,
   shellcheck-errors, hardcoded-temp-path, applied-migration-edited and
   data-syntax stay on. A prompts/ or commands/ tree under a harness directory
@@ -1314,6 +1325,21 @@ while IFS= read -r f; do
   case "${f##*/}" in
     tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) is_testname=1 ;;
   esac
+  if [ "$vendored_mirror" = 0 ]; then
+    case "$f" in
+      *.rs)
+        rust_test=0
+        if [ "$own_rules" = 1 ] || [ "$is_testname" = 1 ]; then rust_test=1; fi
+        awk -v file_test="$rust_test" -f "$SCRIPT_DIR/lib/rust-env-mutation.awk" "$cpath" >"$TMP/rust-env.$IDX" \
+          || env_error rust-test-env-mutation "$f" "Rust test calls could not be read"
+        while IFS= read -r rust_line; do
+          if grep -qxF -- "$rust_line" "$(added_lines_of "$IDX")"; then
+            emit "$f" "$rust_line" rust-test-env-mutation "process environment mutation in Rust test code; pass configuration to the fixture owner or use a child with an explicit environment"
+          fi
+        done <"$TMP/rust-env.$IDX"
+        ;;
+    esac
+  fi
   cites_docs=0
   if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ] \
     && [ "$vendored_mirror" = 0 ]; then
