@@ -118,7 +118,7 @@ linear_mint_token() (
     # Environment values cannot contain NUL; it separates credentials on stdin.
     payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '
         split("\u0000") |
-        "grant_type=client_credentials&scope=read%2Cwrite%2Cinitiative%3Aread&client_id=" + (.[0] | @uri) +
+        "grant_type=client_credentials&scope=read%2Cwrite%2Cissues%3Acreate%2Ccomments%3Acreate%2CtimeSchedule%3Awrite%2Cinitiative%3Aread%2Cinitiative%3Awrite%2Ccustomer%3Aread%2Ccustomer%3Awrite&client_id=" + (.[0] | @uri) +
         "&client_secret=" + (.[1] | @uri)') || return 1
     payload_quote=$(curl_config_quote "$payload") || return 1
     raw=$(

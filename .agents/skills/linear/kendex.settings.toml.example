@@ -46,8 +46,9 @@ LINEAR_APP_TOKEN = ""
 
 # OAuth application credentials. Set both in the private env file, never here.
 # Together they win over the personal key when LINEAR_APP_TOKEN is unset.
-# Both mint paths use fixed scope read,write,initiative:read. Only the pair's
-# API path caches.
+# Both mint paths use the fixed scope read,write,issues:create,comments:create,
+# timeSchedule:write,initiative:read,initiative:write,customer:read,
+# customer:write. Only the pair's API path caches.
 LINEAR_CLIENT_ID = ""
 
 # The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only
