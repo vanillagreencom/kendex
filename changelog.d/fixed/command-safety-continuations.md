@@ -1,0 +1,1 @@
+- Command safety checks continued shell lines against the deny pattern. Memory caps split across continued lines are refused.

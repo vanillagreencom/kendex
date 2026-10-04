@@ -103,6 +103,29 @@ assert_first() { # WANT LABEL
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"\n' \
   >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core' 'the memory-cap refusal is the project pattern, not the hook'
+settings "$ROOT/kendex.settings.toml"
+# The fleet policy is input to the hook. Commands stay in JSON payloads;
+# this suite never runs the capped commands it asks the hook to judge.
+while IFS='|' read -r command_json label; do
+  command="$(jq -nr "$command_json")" || exit 1
+  check 2 "$command" "$label"
+  assert_first 'command-safety: refused=policy' "$label names the policy"
+done <<'CONTINUATIONS'
+"systemd-run --user --scope -p MemoryMax=64M cargo test"|single-line MemoryMax
+"systemd-run --user --scope -p MemoryHigh=64M cargo test"|single-line MemoryHigh
+"systemd-run --user --scope \\\n-p MemoryMax=64M cargo test"|continued-line MemoryMax
+"systemd-run --user --scope \\\n-p MemoryHigh=64M cargo test"|continued-line MemoryHigh
+"systemd-ru\\\nn --user --scope -p MemoryM\\\nax=64M cargo test"|continued tokens
+CONTINUATIONS
+check 0 $'systemd-run --user --scope \\\n-p CPUWeight=10 cargo test' 'an allowed continued command passes'
+# Single quotes keep this pair. Only the raw line ends in a backslash, so
+# this row fails if matching drops the raw text and uses only joined text.
+cat >"$repo/kendex.settings.toml" <<'RAW_POLICY'
+[env]
+COMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS.$"
+RAW_POLICY
+check 2 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
+assert_first 'command-safety: refused=policy' 'raw quoted continuation names the policy'
 settings
 
 printf '[env]\n' >"$repo/kendex.settings.toml"
@@ -267,5 +290,52 @@ check 2 'scripts/validate qml' 'a failed settings loader refuses with the blocki
 assert_first 'command-safety: exit=1' 'and the exit key carries the status the check left'
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 2 'scripts/validate qml' 'missing settings support refuses'
+
+# Each control removes one matching behavior from a copy and reruns these
+# assertions. The exact failure proves an allowed payload, not a bad policy
+# or loader, made the corresponding row red.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  while IFS='|' read -r defect label; do
+    mutant="$scratch/$defect.sh"
+    awk -v defect="$defect" '
+      defect == "no-join" && /^joined_command_text=/ {
+        $0 = "joined_command_text=\"$command_text\""; changed++
+      }
+      defect == "no-raw" && /^GREP_ERR=/ {
+        changed += sub(/"\$command_text" /, "")
+      }
+      { print }
+      END { if (changed != 1) exit 1 }
+    ' "$hook_source" >"$mutant" || exit 1
+    if cmp -s -- "$hook_source" "$mutant"; then
+      printf 'FAIL control %s changed no bytes\n' "$defect"
+      exit 1
+    fi
+    control_status=0
+    env -i HOME="$HOME" PATH="$PATH" HOOK_UNDER_TEST="$mutant" \
+      bash "${BASH_SOURCE[0]}" >"$scratch/$defect.log" 2>&1 || control_status=$?
+    if [ "$control_status" -eq 1 ] &&
+      grep -Fq -- "FAIL $label: exit 0, expected 2:" "$scratch/$defect.log"; then
+      printf 'PASS control %s turns its matching row red\n' "$defect"
+      passed=$((passed + 1))
+    else
+      printf 'FAIL control %s: exit %s; missing failure for %s\n' "$defect" "$control_status" "$label"
+      cat "$scratch/$defect.log"
+      failed=$((failed + 1))
+    fi
+    if [ "$defect" = no-join ]; then
+      if grep -Fq -- 'FAIL continued-line MemoryHigh: exit 0, expected 2:' "$scratch/$defect.log"; then
+        printf 'PASS control no-join also turns MemoryHigh red\n'
+        passed=$((passed + 1))
+      else
+        printf 'FAIL control no-join did not turn MemoryHigh red\n'
+        failed=$((failed + 1))
+      fi
+    fi
+  done <<'CONTROLS'
+no-join|continued-line MemoryMax
+no-raw|raw quoted continuation
+CONTROLS
+fi
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

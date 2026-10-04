@@ -145,10 +145,13 @@ pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>&1)" || refuse settings
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
 status=0
+# Shell line continuations can split a denied command or token. Keep the raw
+# text too: single quotes preserve backslash-newline pairs as literal text.
+joined_command_text="${command_text//$'\\\n'/}"
 # grep's words on a pattern it cannot read are captured: stderr becomes the
 # substitution's stdout and grep's own stdout is discarded, so the status still
 # decides and the cause reaches the refusal below its keyed line.
-GREP_ERR=$(printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
+GREP_ERR=$(printf '%s\n' "$command_text" "$joined_command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
 case "$status" in
   0) refuse refused policy ;;
   1) exit 0 ;;
