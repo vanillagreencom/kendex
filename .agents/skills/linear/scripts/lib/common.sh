@@ -238,8 +238,12 @@ graphql_query() {
         # This handles JSON with literal newlines in string values
         local delimiter="___HTTP_CODE___"
         local raw_output
-        if ! payload=$(jq -cn --arg query "$(echo "$query" | tr '\n' ' ')" --argjson variables "$variables" \
-            '{query: $query, variables: $variables}'); then
+        # Variables go in on stdin: one argv string is capped at 128 KiB
+        # (MAX_ARG_STRLEN), which a reconcile id filter or a long description
+        # passes. Slurped so a second or trailing value still refuses.
+        if ! payload=$(jq -cs --arg query "$(echo "$query" | tr '\n' ' ')" \
+            'if length == 1 then {query: $query, variables: .[0]} else error("not one JSON value") end' \
+            <<<"$variables"); then
             echo '{"error": "Invalid GraphQL variables JSON"}' >&2
             return 1
         fi

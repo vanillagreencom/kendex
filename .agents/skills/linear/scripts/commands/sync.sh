@@ -524,40 +524,38 @@ reconcile_issues() {
     fi
     cached_uuids="$valid_uuids"
 
-    # Build JSON array of UUIDs
-    local uuid_array
-    uuid_array=$(echo "$cached_uuids" | jq -R . | jq -s .)
-
-    # Batch query API (lightweight fields, large page size)
+    # One request per batch of at most one page of ids (Linear's page limit
+    # is 250), so every batch is answered whole and no id goes unchecked. An
+    # id the API never answered for would be pruned below as deleted, so a
+    # batch the API reports as paged fails the sync instead.
     local query='
-    query ReconcileIssues($filter: IssueFilter!, $first: Int, $includeArchived: Boolean, $after: String) {
-        issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
-            pageInfo { hasNextPage endCursor }
+    query ReconcileIssues($filter: IssueFilter!, $first: Int, $includeArchived: Boolean) {
+        issues(filter: $filter, first: $first, includeArchived: $includeArchived) {
+            pageInfo { hasNextPage }
             nodes { id identifier trashed archivedAt }
         }
     }'
 
+    local batch_size=250
+    local ids=()
+    mapfile -t ids <<<"$cached_uuids"
     local all_nodes="[]"
-    local cursor="null"
-    local page=0
+    local offset=0
 
-    while true; do
-        local variables="{\"filter\": {\"id\": {\"in\": $uuid_array}}, \"first\": 250, \"includeArchived\": true, \"after\": $cursor}"
-        local result
-        result=$(graphql_query "$query" "$variables")
-
-        local nodes
-        nodes=$(echo "$result" | jq '.issues.nodes')
-        all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
-
-        local has_next
-        has_next=$(echo "$result" | jq -r '.issues.pageInfo.hasNextPage')
-        page=$((page + 1))
-
-        if [[ "$has_next" != "true" ]] || (( page >= 10 )); then
-            break
+    while (( offset < ${#ids[@]} )); do
+        local variables result nodes has_next
+        variables=$(printf '%s\n' "${ids[@]:offset:batch_size}" \
+            | jq -R . | jq -sc --argjson first "$batch_size" \
+                '{filter: {id: {in: .}}, first: $first, includeArchived: true}') || return 1
+        result=$(graphql_query "$query" "$variables") || return 1
+        has_next=$(jq -r '.issues.pageInfo.hasNextPage' <<<"$result") || return 1
+        if [[ "$has_next" != "false" ]]; then
+            echo "Reconciliation error: batch at offset $offset of ${#ids[@]} cached ids came back with hasNextPage=$has_next; aborting so no unanswered id is pruned" >&2
+            return 1
         fi
-        cursor=$(echo "$result" | jq '.issues.pageInfo.endCursor')
+        nodes=$(jq '.issues.nodes' <<<"$result") || return 1
+        all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add') || return 1
+        offset=$((offset + batch_size))
     done
 
     # Build set of API-returned UUIDs
