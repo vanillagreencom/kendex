@@ -1383,10 +1383,10 @@ mail_check() {
   # turn after postToolUse, which an isolated probe against Copilot CLI 1.0.88
   # showed the model quoting, and says a sessionStart hook can inject it into
   # the session. For userPromptSubmitted the same reference documents only
-  # `modifiedPrompt` and says a config-file hook's output is dropped; what
-  # shows the context reaching the model there is the owner's own probe, a
-  # repository hook in a fresh `copilot -p` run against a negative control.
-  # A live-lane capture of each of the three is the proof still pending.
+  # `modifiedPrompt` and says a config-file hook's output is dropped.
+  # tools/harness-smoke's answer rows measured session-start and prompt
+  # context on Copilot CLI 1.0.91, including an interactive prompt, against
+  # silent-hook controls. The live postToolUse lane capture remains pending.
   # Acknowledged only once it is written, so a write that fails leaves the
   # lines unread for the next point that delivers them.
   if [ -n "$CONTEXT_EVENT" ]; then

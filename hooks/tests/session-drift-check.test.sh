@@ -102,12 +102,13 @@ fake_out() {
 # default startup). Extra VAR=value args are passed through the environment.
 # Captures stdout in $out and exit in $rc.
 run_hook() {
+  local payload=${DRIFT_PAYLOAD:-"{\"session_id\":\"s\",\"hook_event_name\":\"SessionStart\",\"source\":\"${HOOK_SOURCE:-startup}\"}"}
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
   env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" "$@" \
-    bash "$HOOK" <<<"{\"session_id\":\"s\",\"hook_event_name\":\"SessionStart\",\"source\":\"${HOOK_SOURCE:-startup}\"}" \
+    bash "$HOOK" <<<"$payload" \
     2>/dev/null
   rc=$?
   set -e
@@ -185,7 +186,8 @@ calls() {
 # One mapping row: the hook's exit, the fake's argv and the whole stdout,
 # trailing newlines kept.
 run_row() { # fake-rc fake-out-word
-  local rc=0 fake text
+  local rc=0 fake text payload
+  payload=${DRIFT_PAYLOAD:-'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}'}
   # A word fake_out refuses must end the run, not test the empty-output arm:
   # the substitution swallows its exit, so the status is carried out by hand.
   fake="$(fake_out "$2")" || { printf 'the fake output word could not be mapped: %s\n' "$2" >&2; return 1; }
@@ -194,7 +196,7 @@ run_row() { # fake-rc fake-out-word
   env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC="$1" FAKE_OUT="$fake" \
-    bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
+    bash "$HOOK" <<<"$payload" \
     >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || rc=$?
   # The keyed lines only: the context text under them is for a model, and a
   # row that pinned it would pin prose. stderr is a channel this hook does not
@@ -249,6 +251,17 @@ exit 3 with no output chooses the same arm|3|-|check=could-not-run;exit=3
 "
 run_row 1 unevaluated >/dev/null
 assert_eq "$(relayed_text)" "$(fake_out unevaluated)" "the final action line is relayed byte for byte"
+# Copilot consumes one JSON object. Its context must contain the same report
+# every other harness reads as plain text, including its keyed first line.
+run_row 1 report >/dev/null
+plain=$(cat "$TMP_ROOT/stdout")
+DRIFT_PAYLOAD='{"sessionId":"s","timestamp":1791073242000,"source":"startup"}'
+run_row 1 report >/dev/null
+context=$(jq -er 'select(keys == ["additionalContext"]) | .additionalContext' "$TMP_ROOT/stdout" 2>/dev/null) || context=invalid-json
+assert_eq "$context" "$plain" "Copilot sessionStart receives the complete report in additionalContext"
+run_row 0 - >/dev/null
+assert_eq "$(cat "$TMP_ROOT/stdout")" "" "Copilot receives no context for a clean install"
+unset DRIFT_PAYLOAD
 # The too-old notice runs nothing in the flag's place: one call, with the flag.
 run_row 2 too-old >/dev/null
 assert_eq "$(calls)" "check --quiet --report-only" "a kendex that refuses the flag is not asked again without it"
@@ -394,6 +407,13 @@ session-drift-check: count=lower-bound"
   fi
 done
 # A partial check can carry drift advice alongside an unreachable source.
+capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$WT_LINKED"
+plain=$(cat "$TMP_ROOT/stdout")
+DRIFT_PAYLOAD='{"sessionId":"s","timestamp":1791073242000,"source":"startup"}'
+capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$WT_LINKED"
+context=$(jq -ser 'if length == 1 then .[0].additionalContext else error("multiple answers") end' "$TMP_ROOT/stdout" 2>/dev/null) || context=invalid-json
+assert_eq "$context" "$plain" "Copilot receives lane guidance and drift in one context object"
+unset DRIFT_PAYLOAD
 capture FAKE_RC=2 FAKE_OUT="$LANE_REFRESH" CLAUDE_PROJECT_DIR="$WT_LINKED"
 assert_eq "$(sed '1,2d' "$TMP_ROOT/stdout" | sed '/^kendex check incomplete /d')" \
   $'session-drift-check: check=incomplete\nsession-drift-check: exit=2\nsession-drift-check: drift-items=1' "incomplete lane check withholds advice too"

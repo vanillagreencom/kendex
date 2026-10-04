@@ -2,7 +2,7 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Outside a lane, prints nothing when the install is current. The lane notice precedes drift details in linked worktrees and roots named by orch lane markers; a lane whose launch wrote orch lane-marker's refresh record into its git directory is told it is a refresh lane, where `kendex refresh` and `kendex apply` run only with `--lane-refresh`, in place of being told they never run there. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Outside a lane, prints nothing when the install is current. The lane notice precedes drift details in linked worktrees and roots named by orch lane markers; a lane whose launch wrote orch lane-marker's refresh record into its git directory is told it is a refresh lane, where `kendex refresh` and `kendex apply` run only with `--lane-refresh`, in place of being told they never run there. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. Copilot receives the complete notice as one `additionalContext` JSON object; every other harness receives plain text. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
 # summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.
 # safety: Installs nothing and removes nothing, never touches the project's git state, and writes no tracked file on any branch, the default branch included: it runs `kendex check --quiet --report-only`. Where a declaration in kendex.toml sits on files no install record accounts for, the check plans the scope inside the budget this hook allows and reports each copy that is its source's render byte for byte under `not in the install record`, with its path and its recorded and rendered hashes (a registration that wrote no file, with the settings file it sits in), leaving `.kendex-lock.json` as the checkout holds it; the default branch records it after the merge. A copy that differs is reported, never replaced. The one install record it may write is the global scope's, under kendex's own directory, which no repository tracks. The plan is paid for once per state and memoized under kendex's own cache directory; a plan past the budget is reported as not checked and finished by the detached background process. The check never waits on the network; the rest of what it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps, snapshots, that memo), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly outside lanes, in refresh lanes, and in other lanes when it carries no `fix: kendex` advice or direct refresh or remove suggestion; otherwise a drift-item count replaces the report; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
@@ -11,7 +11,7 @@
 
 # Strict, and a session must still start no matter what this hook hits: every
 # command that can legitimately fail is guarded so this always reaches exit 0.
-set -euo pipefail
+set -Eeuo pipefail
 
 # What the notice reads, each under its own name: kendex's report and the
 # status it left, and the line an unguarded failure reached. A positional
@@ -26,6 +26,7 @@ LANE=0
 # 1 in a lane whose launch wrote lane-marker's refresh record, 0 otherwise.
 LANE_REFRESH=0
 LANE_ERR=""
+CALL_HARNESS=""
 # The lane's root and its own git directory, which read_lane resolves and
 # read_lane_refresh reads the record under.
 LANE_ROOT=""
@@ -383,10 +384,16 @@ if ! command -v jq >/dev/null 2>&1; then
   notice missing-tools jq
   exit 0
 fi
-if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
+if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '[.source // "", (has("timestamp") or has("sessionId"))] | @tsv' 2>/dev/null); then
   notice payload invalid-json
   exit 0
 fi
+# Copilot's documented sessionStart payload uses timestamp and sessionId.
+# Collect all notices so lane guidance and drift form one valid hook answer.
+if [ "${SOURCE#*$'\t'}" = true ]; then
+  CALL_HARNESS=copilot
+fi
+SOURCE=${SOURCE%%$'\t'*}
 case "$SOURCE" in
   resume|compact)
     exit 0
@@ -394,6 +401,7 @@ case "$SOURCE" in
 esac
 
 # Claude Code exports the project root; other harnesses launch the hook in it.
+check_project() {
 # Enter it separately so only kendex's own exit code drives classification.
 # `--` so a directory whose name starts with a dash is a path, not an option.
 # Entered before the binary is looked for, because a missing binary is
@@ -466,3 +474,10 @@ case "$RC" in
 esac
 
 exit 0
+}
+
+if [ "$CALL_HARNESS" = copilot ]; then
+  check_project | jq -Rs 'select(length > 0) | {additionalContext: .}'
+else
+  check_project
+fi

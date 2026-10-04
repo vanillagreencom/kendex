@@ -69,6 +69,8 @@ On Copilot, `skill-load-check` judges an agent's calls against the skill loads t
 
 Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 
+`tools/harness-smoke --only copilot --copilot-interactive` measures hook answers through the CLI's exported transcript and recorded hook payloads. On Copilot CLI 1.0.91, `additionalContext` reaches the model at `sessionStart` and `userPromptSubmitted`, including an interactive prompt, while silent-hook controls carry no token. The prompt result differs from the hooks reference's statement that config-file output is dropped. An exit-0 `decision: block` at `agentStop` or `subagentStop` continues the session and carries its reason to the model. Manual `/compact` fires `preCompact` with `trigger: manual`. `session-drift-check` packages its complete notice as one `additionalContext` object on Copilot and keeps plain text on other harnesses; `hooks/tests/session-drift-check.test.sh` checks this format.
+
 ## Effective state
 
 Three reads decide whether an install is live, each a read of a file on disk that says how things are configured and never what a run will do (`crates/core/src/engine/copilot.rs`, `crates/core/src/harness/copilot/settings.rs`):

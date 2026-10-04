@@ -638,6 +638,7 @@ for a; do
   prev=$a
 done
 case "$1 ${2:-}" in
+  "--version ") printf 'GitHub Copilot CLI 1.0.91.\n'; exit 0 ;;
   "skill list")
     [ "$STANDIN_SETTINGS" != bad ] ||
       printf "Repository settings file '.claude/settings.json' could not be loaded:\nSettings config error: hooks.preToolUse[0].matcher: matcher cannot be empty\n"
@@ -660,6 +661,19 @@ case "$1 ${2:-}" in
     jq -R '{sourcePath: .}' standin-sources | jq -s .
     exit 0 ;;
 esac
+if [ -f smoke-events/answer ] && jq -e '[.hooks[][] | has("exec")] | any' .github/hooks/smoke-events.json >/dev/null; then
+  event=$(jq -r '.hooks | keys[0]' .github/hooks/smoke-events.json)
+  mode=$(jq -r '.hooks[][] | .args[1]' .github/hooks/smoke-events.json)
+  token=$(jq -r '.hooks[][] | .args[2]' .github/hooks/smoke-events.json)
+  answer=${STANDIN_ANSWER:-yes}
+  [ "$answer" = nohook ] || printf '{"sessionId":"lead-1"}\n' >>smoke-events/calls
+  case "$event:$answer" in agentStop:yes | subagentStop:yes) printf '{"sessionId":"lead-1"}\n' >>smoke-events/calls ;; esac
+  if [ "$answer" = leak ] || { [ "$mode" != none ] && [ "$answer" != silent ]; }; then reply=$token; else reply=NO-HOOK-TOKEN; fi
+  printf '%s\n' "$reply"
+  [ -z "$share" ] || printf '%s\n' "$reply" >"$share"
+  [ "$answer" != error ] || exit 1
+  exit 0
+fi
 case "$prompt" in
   "Reply exactly as your agent instructions say.")
     printf 'SessionStart %s/.github/hooks/smoke-session.sh\n' "$PWD" >>smoke-fired
@@ -811,8 +825,11 @@ package_table() { # ROWS — label|row|result|clause, each against the last run
 # No lane session runs on Copilot, so its two lane rows stay pending and hold a
 # run where every other row works at exit 3.
 package_run "$SMOKE"
+for answer_event in sessionStart userPromptSubmitted agentStop subagentStop; do
+  package_case "a live hook-only token and silent control pass $answer_event" "answer:$answer_event" pass "model repeated the hook-only token"
+done
 pkg_unanswered="$(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { print $2 }' "$TMP/pkg-out" | LC_ALL=C sort | tr '\n' ' ')"
-if [ "$PKG_RC" = 3 ] && [ "$pkg_unanswered" = "lane-mail lane-question " ]; then
+if [ "$PKG_RC" = 3 ] && [ "$pkg_unanswered" = "answer:userPromptSubmitted-interactive event:preCompact lane-mail lane-question " ]; then
   ok "a run where every other copilot row works exits 3 on the two pending lane rows"
 else
   bad "a run where every other copilot row works exits 3 on the two pending lane rows" "rc=$PKG_RC, rows not passing: ${pkg_unanswered:--}"
@@ -962,7 +979,7 @@ package_case "control: a trigger check that takes any record replays the helper 
 plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /'
 package_run "$STAND_SMOKE"
 package_case "control: a no-session row that ignores the enforced cell is unanswerable" lane-mail unanswerable "runs no lane session on copilot"
-plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /'
+plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot \(answer:userPromptSubmitted-interactive\|event:preCompact\) pending /    row copilot \1 skipped /'
 package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
 smoke-skill"
 package_case "control: an unmeasured enforced row read skipped" lane-mail skipped "runs no lane session on copilot"
@@ -991,6 +1008,19 @@ package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
 # Controls on the event rows and the package table's hook attribution: each
 # rule planted out passes the payload or the run its row fails.
+for answer_case in 'silent|sessionStart|grep -qxF "$token" "$transcript"|true' \
+  'leak|sessionStart|! grep -qF "$token" "$transcript"|true' \
+  'nohook|sessionStart|\[ "$count" -gt 0 \]|true' \
+  'error|sessionStart|\[ "$STATUS" -eq 0 \]|true' \
+  'once|agentStop|\[ "$count" -ge 2 \]|true'; do
+  IFS='|' read -r answer_mode answer_event answer_pattern answer_replacement <<<"$answer_case"
+  package_run "$SMOKE" "STANDIN_ANSWER=$answer_mode"
+  package_case "answer refuses $answer_mode" "answer:$answer_event" fail "positive="
+  cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+  plant "$STAND_SMOKE" "s/$answer_pattern/$answer_replacement/"
+  package_run "$STAND_SMOKE" "STANDIN_ANSWER=$answer_mode"
+  package_case "control: removed answer check passes $answer_mode" "answer:$answer_event" pass "model repeated the hook-only token"
+done
 EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-task lead-stop end"
 plant "$STAND_SMOKE" 's/^      if \[ -n "\$lead" \] \&\& \[ "\$ids" = "\$lead" \]; then$/      if [ -n "$lead" ]; then/'
 package_run "$STAND_SMOKE" "$EV_BAD"

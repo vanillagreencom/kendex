@@ -83,9 +83,9 @@
 # fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
-# antigravity, five on pi, one on gemini, seven on copilot (eight where the
+# antigravity, five on pi, one on gemini, fifteen on copilot (sixteen where the
 # skill-load-check copilot cell of hooks/README.md reads enforced), two on
-# cursor when logged in.
+# cursor when logged in. The interactive Copilot flag adds two turns.
 #
 # The report is the row table: one aligned line per row as it is decided, then
 # the same rows as a markdown table under `| harness | row | result |
@@ -106,9 +106,10 @@ set -euo pipefail
 BUILD_INPUTS=(crates/ Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
 
 usage() {
-  printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR] [--allow-stale]' \
+  printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR] [--allow-stale] [--copilot-interactive]' \
     '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot antigravity); the rest print skipped' \
     '  --keep    leave the scratch project and logs in place' \
+    '  --copilot-interactive  measure prompt context and manual /compact in a terminal' \
     '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)' \
     '  --allow-stale  run on a kendex that fails the build check below, and say so' \
     'The --dir, or with no --dir this checkout, must not sit under a .scratch folder or a temporary folder' \
@@ -198,6 +199,7 @@ refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 HARNESSES="claude codex opencode cursor pi gemini copilot antigravity"
 ONLY="$HARNESSES"
 KEEP=0
+COPILOT_INTERACTIVE=0
 ALLOW_STALE=0
 DIR=""
 while [ "$#" -gt 0 ]; do
@@ -210,6 +212,7 @@ while [ "$#" -gt 0 ]; do
       done
       shift 2 ;;
     --keep) KEEP=1; shift ;;
+    --copilot-interactive) COPILOT_INTERACTIVE=1; shift ;;
     --allow-stale) ALLOW_STALE=1; shift ;;
     --dir)
       [ "$#" -ge 2 ] || refuse argument --dir
@@ -1424,6 +1427,7 @@ copilot_rows() {
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
   mixed_copilot_row "$home"
   events_rows "$home"
+  answers_rows "$home"
   no_session copilot lane-mail
   no_session copilot lane-question
   copilot_packages live "$home"
@@ -1515,7 +1519,7 @@ COPILOT_EVENTS='sessionStart sessionEnd subagentStart subagentStop agentStop err
 events_questions() { # — the rows, in the order events_rows answers them
   local e out=""
   for e in $COPILOT_EVENTS; do out="$out event:$e"; done
-  printf '%s' "${out# }"
+  printf '%s' "${out# } answer:sessionStart answer:userPromptSubmitted answer:agentStop answer:subagentStop answer:userPromptSubmitted-interactive event:preCompact"
 }
 EVENTS_TASK='Run the smoke-child custom agent with your task tool, then reply with exactly the text it returned and nothing else.'
 EVENTS_CLOSED_PORT='http://127.0.0.1:9/v1'
@@ -1640,6 +1644,99 @@ events_rows() { # HOME — the isolated COPILOT_HOME
     *:none) row copilot event:errorOccurred fail "$label exited $status on its failed model call and fired no errorOccurred ($log)" ;;
     *) row copilot event:errorOccurred fail "$label fired it as: $(clip "$got") ($log)" ;;
   esac
+}
+
+# Hook answers are measured through the CLI's documented hooks and --share
+# transcript. The interactive rows use its terminal because -p cannot submit
+# the manual /compact command. No screen text decides a result.
+answers_rows() { # HOME
+  local home=$1 version event mode token task result positive negative count transcript
+  version=$(copilot --version | sed -n '1p')
+  events_world
+  local PROJECT="$EVENTS"
+  cat >"$EVENTS/smoke-events/answer" <<'ANSWER'
+#!/bin/sh
+set -eu
+cat >>"${0%/*}/calls"
+case "$1" in
+  sessionStart | userPromptSubmitted)
+    [ "$2" != context ] || jq -n --arg text "Reply with exactly $3 and nothing else." '{additionalContext: $text}' ;;
+  agentStop | subagentStop)
+    if [ "$2" = block ] && [ ! -d "${0%/*}/blocked" ]; then
+      mkdir "${0%/*}/blocked"
+      jq -n --arg text "Reply with exactly $3 and nothing else." '{decision: "block", reason: $text}'
+    fi ;;
+esac
+ANSWER
+  setup 'the answer hook' chmod +x "$EVENTS/smoke-events/answer"
+  for event in sessionStart userPromptSubmitted agentStop subagentStop; do
+    token="SMOKE-ANSWER-$(date +%s)-$RANDOM"
+    task='Reply with the exact token a hook tells you to repeat. If no hook gives you a token, reply with exactly NO-HOOK-TOKEN. Do not call tools.'
+    case "$event" in
+      agentStop) mode=block; task='Reply with exactly FIRST-REPLY. Do not call tools.' ;;
+      subagentStop) mode=block; task="$EVENTS_TASK" ;;
+      *) mode=context ;;
+    esac
+    positive=fail; negative=fail
+    for result in positive negative; do
+      rm -rf -- "$EVENTS/smoke-events/blocked"
+      : >"$EVENTS/smoke-events/calls"
+      answer_config "$event" "$([ "$result" = positive ] && printf '%s' "$mode" || printf none)" "$token"
+      transcript="$LOGS/copilot-answer-$event-$result.md"
+      run "copilot-answer-$event-$result" env COPILOT_HOME="$home" COPILOT_ALLOW_ALL=true \
+        copilot -p "$task" --allow-all-tools -s --share "$transcript"
+      count=$(jq -s 'length' "$EVENTS/smoke-events/calls")
+      cp -- "$EVENTS/smoke-events/calls" "$LOGS/copilot-answer-$event-$result.jsonl"
+      if [ "$STATUS" -eq 0 ] && [ "$count" -gt 0 ] && [ -f "$transcript" ]; then
+        if [ "$result" = positive ] && grep -qxF "$token" "$transcript" && { [ "$mode" != block ] || [ "$count" -ge 2 ]; }; then positive=pass; fi
+        if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi
+      fi
+    done
+    if [ "$positive:$negative" = pass:pass ]; then
+      row copilot "answer:$event" pass "$version: model repeated the hook-only token; silent-hook control did not ($transcript)"
+    else
+      row copilot "answer:$event" fail "$version: token=$token positive=$positive negative=$negative ($transcript)"
+    fi
+  done
+  if [ "$COPILOT_INTERACTIVE" = 0 ]; then
+    row copilot answer:userPromptSubmitted-interactive pending 'run --only copilot --copilot-interactive in a terminal'
+    row copilot event:preCompact pending 'manual /compact needs --copilot-interactive in a terminal'
+    return
+  fi
+  token="SMOKE-INTERACTIVE-$(date +%s)-$RANDOM"
+  positive=fail; negative=fail
+  for result in positive negative; do
+    : >"$EVENTS/smoke-events/calls"
+    answer_config userPromptSubmitted "$([ "$result" = positive ] && printf context || printf none)" "$token"
+    jq '.hooks.preCompact = [{type: "command", bash: "cat >> smoke-events/compact", timeoutSec: 10}]' \
+      "$EVENTS/.github/hooks/smoke-events.json" >"$EVENTS/.github/hooks/interactive.json"
+    rm -- "$EVENTS/.github/hooks/smoke-events.json"
+    transcript="$LOGS/copilot-answer-interactive-$result.md"
+    printf 'harness-smoke: interactive=%s\nSubmit: %s\nThen submit /share file %s, /compact and /exit.\n' "$result" \
+      'Reply with the exact token a hook tells you to repeat. If no hook gives you a token, reply with exactly NO-HOOK-TOKEN. Do not call tools.' "$transcript"
+    STATUS=0
+    (cd "$PROJECT" && env COPILOT_HOME="$home" COPILOT_ALLOW_ALL=true copilot --allow-all-tools </dev/tty) || STATUS=$?
+    if [ "$STATUS" -eq 0 ] && [ -s "$EVENTS/smoke-events/calls" ] && [ -f "$transcript" ]; then
+      if [ "$result" = positive ] && grep -qxF "$token" "$transcript"; then positive=pass; fi
+      if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi
+    fi
+    rm -- "$EVENTS/.github/hooks/interactive.json"
+  done
+  if [ "$positive:$negative" = pass:pass ]; then
+    row copilot answer:userPromptSubmitted-interactive pass "$version: hook-only token repeated in interactive session, absent with silent hook ($transcript)"
+  else
+    row copilot answer:userPromptSubmitted-interactive fail "$version: token=$token positive=$positive negative=$negative ($transcript)"
+  fi
+  if [ -f "$EVENTS/smoke-events/compact" ] && jq -se 'any(.[]; .trigger == "manual")' "$EVENTS/smoke-events/compact" >/dev/null; then
+    row copilot event:preCompact pass "$version: /compact fired preCompact with trigger manual ($EVENTS/smoke-events/compact)"
+  else
+    row copilot event:preCompact fail "$version: /compact recorded no preCompact payload with trigger manual"
+  fi
+}
+answer_config() { # EVENT MODE TOKEN
+  jq -n --arg event "$1" --arg mode "$2" --arg token "$3" --arg script "$EVENTS/smoke-events/answer" \
+    '{version: 1, hooks: {($event): [{type: "command", exec: $script, args: [$event, $mode, $token], timeoutSec: 10}]}}' \
+    >"$EVENTS/.github/hooks/smoke-events.json"
 }
 
 # ---- the Copilot package table ---------------------------------------------
