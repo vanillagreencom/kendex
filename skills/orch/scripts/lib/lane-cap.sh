@@ -195,8 +195,10 @@ OVERSEER_NAME=""
 # runs from, and nothing there binds that checkout to the fleet it records
 # into. The overseer's directory is the state's `.overseer.cwd`, else the
 # nearest existing directory of the state directory, which lives in the
-# overseer's checkout; a state that records no overseer directory and sits in
-# no checkout binds to nothing and refuses. A checkout sharing that
+# overseer's checkout. A state that records no overseer directory and sits in
+# no checkout names no overseer repository, so the launch binds to its own
+# checkout's and goes ahead: absent input never refuses the overseer's own
+# work. A recorded directory git cannot read refuses. A checkout sharing that
 # directory's git common root, as its worktrees do, or whose origin names the
 # same OWNER/REPO, as a second clone does, is own. Any other is connected
 # where ORCH_CONNECTED_REPOS lists its origin OWNER/REPO, compared
@@ -215,18 +217,19 @@ overseer_bind() {
       return 0
     fi
   fi
-  dir="$cwd"
-  if [[ -z "$dir" ]]; then
-    dir="$STATE_DIR"
-    while [[ ! -d "$dir" ]]; do dir="$(dirname -- "$dir")"; done
-  fi
-  if ! root="$("$SCRIPT_DIR/git-context" common-root "$dir")"; then
-    [[ -n "$cwd" ]] || { ot_message overseer-unjudged cause=overseer-unrecorded "path=$STATE_DIR" >&2; return 1; }
-    ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2
-    return 1
-  fi
   launch_root="$("$SCRIPT_DIR/git-context" common-root "$CLAIM_ROOT")" \
     || { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; return 1; }
+  if [[ -n "$cwd" ]]; then
+    dir="$cwd"
+    root="$("$SCRIPT_DIR/git-context" common-root "$dir")" \
+      || { ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2; return 1; }
+  else
+    dir="$STATE_DIR"
+    while [[ ! -d "$dir" ]]; do dir="$(dirname -- "$dir")"; done
+    # git answered for the launch checkout above, so a failure here reads as a
+    # state directory outside any checkout, and git's own line for it is noise.
+    root="$("$SCRIPT_DIR/git-context" common-root "$dir" 2>/dev/null)" || { root="$launch_root"; }
+  fi
   OVERSEER_BIND=own
   [[ "$root" != "$launch_root" ]] || return 0
   LAUNCH_NAME="$(kendex_github_origin_slug "$CLAIM_ROOT")" || LAUNCH_NAME=""

@@ -2,7 +2,8 @@
 # open-terminal's overseer binding, lib/lane-cap.sh's overseer_bind: a launch
 # under --state-dir runs in the overseer's repository, the one of the directory
 # the fleet state's overseer record names, else of the --state-dir itself, by
-# git common root or by origin OWNER/REPO, or in one that directory's
+# git common root or by origin OWNER/REPO, else, where neither names a
+# repository, of the launch checkout itself, or in one that directory's
 # ORCH_CONNECTED_REPOS lists by origin OWNER/REPO; any other is refused as
 # overseer-foreign before the state is touched, and one that cannot be judged
 # as overseer-unjudged. The lane record of a launch the list admits carries the
@@ -177,6 +178,9 @@ rows=(
   "none|absent|$TARGET||rc=1 record=none foreign=1|with no state yet another repository's clone refuses overseer-foreign"
   "bare|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no overseer directory recorded a worktree of the overseer's repository passes, bound by the --state-dir"
   "bare|absent|$TARGET||rc=1 record=none foreign=1|with no overseer directory recorded another repository's clone refuses overseer-foreign"
+  "bare-outside|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no overseer directory recorded and the --state-dir outside any checkout, the launch checkout's own repository passes"
+  "none-outside|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no state yet and the --state-dir outside any checkout, the launch checkout's own repository passes"
+  "none-outside|absent|$TARGET||rc=0 record=repo=null foreign=0|with no state yet and the --state-dir outside any checkout, the binding is the launch checkout's, so another clone passes too"
 )
 printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$TARGET/kendex.settings.toml"
 printf 'ORCH_CONNECTED_REPOS=acme/target\n' > "$OVERSEER_REPO/alt.env"
@@ -216,12 +220,6 @@ fleet cwd "$TMP_ROOT/gone-overseer"
 run_ot CWD="$TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-root path=$TMP_ROOT/gone-overseer" <<<"$ERR" || true)" \
   "rc=1 unjudged=1" "an overseer directory git cannot read is unjudged"
-for kind in bare-outside none-outside; do
-  fleet "$kind"
-  run_ot CWD="$OVERSEER_WT" CC-1
-  assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-unrecorded path=$TMP_ROOT/state" <<<"$ERR" || true) record=$(record CC-1)" \
-    "rc=1 unjudged=1 record=none" "$kind: a --state-dir outside any checkout whose state records no overseer directory is unjudged"
-done
 connected absent
 fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$NO_GIT" CC-1
@@ -255,16 +253,16 @@ connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$OVERSEER_CLONE" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
   "control: without the origin comparison a second clone of the overseer's repository is refused"
-MUT="$(control state-dir "$BIND" 'if [[ -z "$dir" ]]; then' 'if false && [[ -z "$dir" ]]; then')"
+MUT="$(control state-dir "$BIND" '    dir="$STATE_DIR"' '    dir=/')"
 connected absent; fleet bare
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
   "control: without the --state-dir binding a state with no overseer directory admits another repository's clone"
-MUT="$(control unrecorded "$BIND" '[[ -n "$cwd" ]] || { ot_message overseer-unjudged cause=overseer-unrecorded' '[[ -n "$cwd" ]] || true || { ot_message overseer-unjudged cause=overseer-unrecorded')"
-fleet bare-outside
+MUT="$(control checkout-fallback "$BIND" '|| { root="$launch_root"; }' '|| { false && root="$launch_root"; }')"
+connected absent; fleet none-outside
 run_ot SCRIPT="$MUT" CWD="$OVERSEER_WT" CC-1
-assert_eq "unrecorded=$(refused 'overseer-unjudged cause=overseer-unrecorded ')" "unrecorded=0" \
-  "control: without the unrecorded refusal no overseer-unrecorded line is printed"
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
+  "control: without the launch-checkout binding a --state-dir outside any checkout refuses the overseer's own repository"
 MUT="$(control checkout-root "$BIND" '|| { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; return 1; }' \
   '|| { false && ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; }')"
 connected absent; fleet cwd "$OVERSEER_REPO"
