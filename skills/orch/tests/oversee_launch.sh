@@ -52,6 +52,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
+# The work directory is the overseer's checkout, current with its origin, so a
+# launch's fast-forward has nothing to move or refuse until a row says so.
+# shellcheck source=lib/overseer-checkout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-checkout.sh"
+checkout_world "$TMP_ROOT/work" || { echo "fixture: the work checkout could not be made" >&2; exit 1; }
 cat > "$BIN/claude" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${CLAUDE_CONFIG_DIR:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.claude"
@@ -1102,6 +1107,57 @@ for row in \
     "control: $name turns the numeric launch assertion red"
   tm kill-window -t "$(recorded window)"
 done
+
+echo "=== the checkout a launch opens in ==="
+# A clean checkout of the base branch one commit behind its origin starts the
+# overseer at origin's head (lib/overseer-launch.sh § ol_checkout_sync).
+work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
+unsynced() { grep -c "^oversee: checkout-unsynced cause=$1 path=$WORK_REAL fix=[^ ]" <<<"$OUT" || true; }
+logged() { jq -r --arg key "oversee: checkout-unsynced cause=$1 " '[(.fleet_log // [])[] | select(.text | startswith($key))] | length' "$FLEET_STATE"; }
+WANT="$(checkout_advance)" || exit 1
+run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(work_head)|$(unsynced '[^ ]*')" "0|$WANT|0" \
+  "a first launch fast-forwards a clean checkout behind origin to origin's head before it opens"
+tm kill-window -t "$(recorded window)"
+# Its control: a launcher that opens without the sync leaves the checkout
+# behind.
+SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced' '  :'
+BEHIND="$(work_head)"
+checkout_advance >/dev/null || exit 1
+OVERSEE_BIN="$SYNCCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(work_head)" "0|$BEHIND" "control: a launch without the sync leaves the checkout behind"
+tm kill-window -t "$(recorded window)"
+# A checkout the fast-forward refuses: the launch goes on, on the tree as it
+# stands, with one keyed line naming the cause and its fix, and that line in
+# the fleet log for the overseer to read. Each row sets its tree up behind a
+# fresh origin commit and puts it back after.
+for row in \
+  $'dirty\tprintf "local\\n" >> "$TMP_ROOT/work/README"\tgit -C "$TMP_ROOT/work" checkout -q -- README' \
+  $'fast-forward-failed\tcheckout_commit "$TMP_ROOT/work" >/dev/null\tgit -C "$TMP_ROOT/work" reset -q --hard origin/main' \
+  $'off-base\tgit -C "$TMP_ROOT/work" switch -q -c side\tgit -C "$TMP_ROOT/work" switch -q main && git -C "$TMP_ROOT/work" branch -q -D side'; do
+  IFS=$'\t' read -r cause setup restore <<<"$row"
+  checkout_advance >/dev/null || exit 1
+  eval "$setup" || exit 1
+  BEFORE="$(work_head)"
+  run_oversee -- launch --wait-secs 20
+  assert_eq "$RC|$(work_head)|$(unsynced "$cause")|$(unsynced '[^ ]*')|$(logged "$cause")" "0|$BEFORE|1|1|1" \
+    "a checkout refused as $cause leaves the launch running and prints one keyed line naming the fix, also in the fleet log"
+  tm kill-window -t "$(recorded window)"
+  eval "$restore" || exit 1
+done
+# Its control: a sync that runs sync-base on another branch moves that
+# branch's ref and never this tree, and says nothing.
+OFFCTL="$(mutant_scripts offbasectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$OFFCTL/lib/overseer-launch.sh" '      0) [[ "$branch" == "$base" ]] || OL_SYNC_CAUSE=off-base ;;' '      0) ;;'
+git -C "$TMP_ROOT/work" switch -q -c side || exit 1
+checkout_advance >/dev/null || exit 1
+BEFORE="$(work_head)"
+OVERSEE_BIN="$OFFCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(work_head)|$(unsynced '[^ ]*')" "0|$BEFORE|0" \
+  "control: a sync without the base-branch check leaves an off-base checkout behind unreported"
+tm kill-window -t "$(recorded window)"
+git -C "$TMP_ROOT/work" switch -q main && git -C "$TMP_ROOT/work" branch -q -D side || exit 1
 
 echo "=== register asks kendex's inventory for other harnesses ==="
 # SessionStart is the producer of a harness other than the fallback's three.

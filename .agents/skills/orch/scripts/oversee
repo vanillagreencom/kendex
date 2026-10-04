@@ -86,7 +86,13 @@
 #     6. Open the session through the adapter's `create`, at its base index,
 #        also with --predecessor, once the command and its identity are written as the
 #        record's `pending` successor (a write that fails refuses
-#        `record-unwritten step=pending` with nothing opened), print
+#        `record-unwritten step=pending` with nothing opened) and the --cwd
+#        checkout is fast-forwarded to its base branch's origin head through
+#        `sync-base` (lib/overseer-launch.sh § ol_checkout_sync). A checkout
+#        that is dirty, diverged, off its base branch or otherwise refused is
+#        the notice `checkout-unsynced cause=<key> path=<checkout> fix=<what
+#        clears it>` on stderr and, its path left out, in the fleet log, and
+#        the session opens on the tree as it stands; print
 #        `overseer-launch` naming the form, lane, session and window, and
 #        write the session record before the first turn: runtime tmux, the
 #        server, the pane, its window, the launch identity (harness, account,
@@ -180,8 +186,10 @@
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
 # `overseer-launched`, `registered`, `watch-handover` and `watch-absent` are on
-# stdout; `overseer-lane-unobserved` and `watch-restart-failed` are notices on
-# stderr the run continues past.
+# stdout; `overseer-lane-unobserved`, `watch-restart-failed`,
+# `checkout-unsynced` and `fleet-log-unwritten`, the last naming a
+# `checkout-unsynced` row the fleet log could not take, are notices on stderr
+# the run continues past.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -233,6 +241,8 @@ message() { # KEY FIELD=VALUE...
     watch-absent) text='No watch runs on the fleet state, so none is restarted. The successor starts its own.' ;;
     watch-restart-failed) text='The fleet watch was not handed to the successor pane; the succession goes on and the step field names what failed, with the orch job runner error where it refused a launch. The old watch serves a pane about to close until the successor starts its own watch, which takes it over.' ;;
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
+    checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
+    fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
     identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback. No model or effort is read; a record proven to name this same pane keeps fields the fallback cannot read.' ;;
@@ -611,6 +621,12 @@ trap 'interrupted HUP' HUP
 ol_succession_hook() { # STEP
   case "$1" in
     pending-unrecorded | record-unwritten) return 1 ;;
+    checkout-unsynced)
+      message checkout-unsynced "cause=$OL_SYNC_CAUSE" "path=$OL_SYNC_PATH" "fix=$OL_SYNC_FIX" >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+      # The row leaves the path out: it is the checkout its reader starts in,
+      # and a row is bounded by ORCH_FLEET_LOG_ROW_BYTES.
+      ol_fleet_log_notice checkout-unsynced "cause=$OL_SYNC_CAUSE" "fix=$OL_SYNC_FIX" ;;
     opened)
       SESSION="$OL_SESSION"
       message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \

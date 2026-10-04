@@ -237,7 +237,14 @@
 #        pane: ORCH_OVERSEER_HOST naming another refuses `runtime-unsupported`
 #        before anything is printed, recorded or opened. On tmux the session
 #        is a window named `overseer` at the session's base index, the harness
-#        launched there with a brief naming the handoff file. The steps from
+#        launched there with a brief naming the handoff file, once the
+#        checkout it starts in is fast-forwarded to its base branch's origin
+#        head through `sync-base` (lib/overseer-launch.sh § ol_checkout_sync),
+#        in every mode that launches. A checkout that is dirty, diverged, off
+#        its base branch or otherwise refused is the notice
+#        `checkout-unsynced cause=<key> path=<checkout> fix=<what clears it>`
+#        on stderr and, its path left out, in the fleet log, and the successor
+#        opens on the tree as it stands. The steps from
 #        here to the close are
 #        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
 #        first launch or a --predecessor succession through, the succession
@@ -433,8 +440,11 @@
 #
 # `line-unrecorded` and `record-unwritten` are notices on stderr too: the
 # fleet state could not take this run's launch line or its session record,
-# and the succession stands. `record-unread` reports a failed caller-record
-# lookup in modes other than --dead-pane; --harness, the pane, its context
+# and the succession stands. So is `checkout-unsynced` (step 4), which every
+# launching mode also writes to the fleet log as one `close` row, its path
+# left out, with `fleet-log-unwritten` where that row could not be written.
+# `record-unread` reports a failed caller-record lookup in modes other than
+# --dead-pane; --harness, the pane, its context
 # reading and its environment answer for it. Live self-succession later
 # refuses `handoff-stale` if the fleet generation or handoff cannot be read
 # or does not match. Recovery continues after an unreadable state with
@@ -517,7 +527,8 @@ message() { # KEY FIELD=VALUE...
     successor-lane-spent) text='The pick named the very account this walled overseer is running on, which its successor may never open on: an inventory that has not caught up with the wall on that pane can still report room there. The entry is skipped, so a fleet whose only candidate is that account refuses rather than relaunching into the wall.' ;;
     successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
-    fleet-log-unwritten) text='The fleet log row for the refusal the key field names could not be written; that refusal stands and is printed next. The step field says what failed, and the writer words follow.' ;;
+    fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
+    checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     successor-wrong-lane) text='The successor is running on another account than the one picked, so a wrapper on PATH replaced the selection; the caller keeps running.' ;;
     successor-lane-unobserved) text='The account the successor runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
     successor-lane-unknown) text='The account check returned an outcome this script does not know; the successor was closed rather than trusted.' ;;
@@ -1499,24 +1510,11 @@ message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LAN
 # ol_session_abandon, the same one `oversee launch` runs; the words are this
 # script's.
 SUCC_PANE="" SUCC_WINDOW=""
-# A refusal the fleet log carries too (header, Output): its keyed line and its
-# text as one row, through lib/overseer-launch.sh § ol_fleet_log. DEP_ERR keeps
-# the detail the refusal relays, so the writer's words go to files of their own.
-fleet_log_refusal() { # KEY FIELD=VALUE...
-  local dir
-  if ! dir="$(mktemp -d)"; then
-    message fleet-log-unwritten "key=$1" step=mktemp >&2
-    return 0
-  fi
-  if ! message "$@" | paste -sd ' ' - > "$dir/notice" || ! ol_fleet_log "$dir/notice" "$dir/record" "$dir/err"; then
-    message fleet-log-unwritten "key=$1" step=append >&2
-    [[ ! -s "$dir/err" ]] || cat -- "$dir/err" >&2
-  fi
-  rm -rf -- "${dir:?}"
-}
+# A refusal the fleet log carries too (header, Output), through
+# lib/overseer-launch.sh § ol_fleet_log_notice.
 abandon() {
   ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
-  [[ "$MODE" != succeed ]] || fleet_log_refusal "$@"
+  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"
   die "$@"
 }
 # A shell tool that times out signals this script. The traps are set before
@@ -1543,6 +1541,15 @@ trap 'interrupted HUP' HUP
 # those ignores.
 ol_succession_hook() { # STEP
   case "$1" in
+    # A checkout the sync refused is a notice in every mode, on stderr and in
+    # the fleet log the successor reads, and the launch goes on (header,
+    # Output).
+    checkout-unsynced)
+      message checkout-unsynced "cause=$OL_SYNC_CAUSE" "path=$OL_SYNC_PATH" "fix=$OL_SYNC_FIX" >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+      # The row leaves the path out: it is the checkout its reader starts in,
+      # and a row is bounded by ORCH_FLEET_LOG_ROW_BYTES.
+      ol_fleet_log_notice checkout-unsynced "cause=$OL_SYNC_CAUSE" "fix=$OL_SYNC_FIX" ;;
     # A record write that fails is a notice, and 0 lets the succession go on
     # (header, Output).
     pending-unrecorded)

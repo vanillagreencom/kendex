@@ -124,7 +124,7 @@ new_caller() {
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
   rm -f -- "${TMP_ROOT:?}"/argv.*
-  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
+  spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   mkdir -p "$MAILBOX_DIR"
   if [[ "${1:-}" == codex ]]; then

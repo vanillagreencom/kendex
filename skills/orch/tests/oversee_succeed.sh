@@ -52,6 +52,11 @@ in_range() { # NAME VALUE LO HI
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
+# The work directory is the overseer's checkout, current with its origin, so a
+# launch's fast-forward has nothing to move or refuse until a row says so.
+# shellcheck source=lib/overseer-checkout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-checkout.sh"
+checkout_world "$TMP_ROOT/work" || { echo "fixture: the work checkout could not be made" >&2; exit 1; }
 # The claude stub asks the folder-trust question the real harness asks: with
 # no `hasTrustDialogAccepted` for its working directory in the .claude.json
 # of the config dir it runs under, it draws the dialog line and waits, which
@@ -201,7 +206,7 @@ new_caller() {
   printf '%s\n' "$1" > "$f"
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
-  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
+  spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   record_caller "$1" "$CALLER_PANE"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -460,6 +465,35 @@ SUCCEED_BIN="$WALKCTL/oversee-succeed" run_succeed walkctl 'claude:fable:high' -
 assert_eq "$RC|$(caller_open)|$(overseers)|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)" \
   "0|yes|0|oversee-succeed: context-below-mark" \
   "control: without the walk's context arm a caller past its context mark launches no successor"
+# The successor opens on its checkout fast-forwarded to origin's head, the
+# launcher's sync run for this script as for `oversee launch`
+# (oversee_launch.sh holds its refusal table). Its control opens without it
+# and leaves the checkout behind.
+work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
+unsynced() { grep -c "^oversee-succeed: checkout-unsynced cause=$1 path=$TMP_ROOT/work fix=[^ ]" <<<"$OUT" || true; }
+WANT="$(checkout_advance)" || exit 1
+new_caller "$MARK"
+run_succeed synced 'claude:fable:high'
+assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced '[^ ]*')" "0|no|$WANT|0" \
+  "a succession fast-forwards a clean checkout behind origin to origin's head before the successor opens"
+SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced' '  :'
+BEHIND="$(work_head)"
+checkout_advance >/dev/null || exit 1
+new_caller "$MARK"
+SUCCEED_BIN="$SYNCCTL/oversee-succeed" run_succeed syncctl 'claude:fable:high'
+assert_eq "$RC|$(caller_open)|$(work_head)" "0|no|$BEHIND" \
+  "control: a succession without the sync leaves the checkout behind"
+# A dirty checkout: the succession goes on, on the tree as it stands, with
+# this script's keyed line naming the fix, in the fleet log too.
+printf 'local\n' >> "$TMP_ROOT/work/README"
+fleet_state
+new_caller "$MARK"
+run_succeed unsynced 'claude:fable:high'
+assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced dirty)|$(jq -r '[(.fleet_log // [])[] | select(.text | startswith("oversee-succeed: checkout-unsynced cause=dirty "))] | length' "$FLEET_STATE")" \
+  "0|no|$BEHIND|1|1" \
+  "a dirty checkout leaves the succession running and prints one keyed line naming the fix, also in the fleet log"
+git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # A codex successor opens into the caller's own directory, which the account's
@@ -857,7 +891,7 @@ assert_eq "$(tm list-windows -t fleet -F '#{window_id} #{window_index}')" "$IDLE
 # Its control: an abandon that writes no fleet log row leaves the session that
 # reads the log next with no word that the succession failed.
 IDLECTL="$(mutant_scripts idlectl oversee-succeed)" || exit 1
-mutate_file "$IDLECTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || fleet_log_refusal "$@"' '  :'
+mutate_file "$IDLECTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"' '  :'
 new_caller "$MARK"
 fleet_state
 touch "$TMP_ROOT/idle"
@@ -1865,7 +1899,7 @@ done
 # landed in and whether the caller's own was touched.
 new_dead_pane() {
   local spec
-  spec="$(tm new-window -d -t fleet:5 -P -F '#{pane_id} #{window_id}' 'exec sleep 100000')"
+  spec="$(tm new-window -d -t fleet:5 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' 'exec sleep 100000')"
   read -r DEAD_PANE DEAD_WINDOW <<<"$spec"
 }
 dead_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$DEAD_WINDOW"* ]]; then echo yes; else echo no; fi; }
@@ -1903,7 +1937,7 @@ assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-
   "a dead-pane relaunch whose successor never works writes no fleet log row"
 # Its control: an abandon that logs in every mode writes the row here too.
 DEADLOGCTL="$(mutant_scripts deadlogctl oversee-succeed)" || exit 1
-mutate_file "$DEADLOGCTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || fleet_log_refusal "$@"' '  fleet_log_refusal "$@"'
+mutate_file "$DEADLOGCTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"' '  ol_fleet_log_notice "$@"'
 new_caller "$MARK"
 new_dead_pane
 fleet_state

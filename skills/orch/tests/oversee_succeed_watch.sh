@@ -71,7 +71,7 @@ new_caller() {
   printf '%s\n' "$MARK" > "$f"
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
-  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
+  spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   mkdir -p "$TMP_ROOT/work/tmp/lane-mail/overseer"
   lane_context_record "$TMP_ROOT/work/tmp/lane-mail/overseer" claude 950000 1000000 claude-fable-5-1 s1 \

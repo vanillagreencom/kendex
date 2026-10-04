@@ -109,7 +109,7 @@ new_caller() {
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
   rm -f -- "${MAILBOX_DIR:?}/$LANE_CONTEXT_RECORD"
-  CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "$cmd")"
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' "$cmd")"
 }
 # reading MODEL — the context reading the caller's own turn-end hook records in
 # the overseer mailbox for this pane, naming MODEL, well under the context mark.
@@ -518,7 +518,7 @@ cp "$(command -v sleep)" "$TMP_ROOT/pibin/pi"
 pi_reading_row() { # [SUCCEED_BIN]
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
-  CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "exec '$TMP_ROOT/pibin/pi' 100000")"
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' "exec '$TMP_ROOT/pibin/pi' 100000")"
   mkdir -p "$MAILBOX_DIR"
   lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-opus-5 "" "$SERVER_PID $CALLER_PANE"
   state none
@@ -599,7 +599,7 @@ dead_relaunch() {
   local dead
   new_caller claude
 reading "Fable 5.1"
-  dead="$(tm new-window -d -t fleet:5 -P -F '#{pane_id}' 'exec sleep 100000')"
+  dead="$(tm new-window -d -t fleet:5 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   DEAD_PANE_CWD="$(tm display-message -p -t "$dead" '#{pane_current_path}')"
   state "$(record "$dead" "$H/.eclaude" fable "$1")"
   SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --dead-pane "$dead" --line-file "$TMP_ROOT/line-file" --wait-secs 20

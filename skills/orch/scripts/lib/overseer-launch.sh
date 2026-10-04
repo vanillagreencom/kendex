@@ -35,6 +35,9 @@
 #   ol_identity            the launch identity the next record write stores
 #   ol_runtime_supported   the runtime resolved and held to the one these
 #                          launchers can verify a session on
+#   ol_checkout_sync       the checkout a session opens in fast-forwarded
+#                          to its base branch's origin head, through
+#                          sync-base, before the session opens there
 #   ol_session_open        the runtime's `create`, through overseer-host
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written before the first
@@ -52,18 +55,22 @@
 #   ol_session_abandon     the close-out every refusal after `create` takes:
 #                          the session stopped, the prior record put back
 #   ol_fleet_log           one `close` row about the overseer in the fleet log
+#   ol_fleet_log_notice    one keyed line of the caller's as that row
 #
 # Every function returns 0 for the answer its name promises and 1 for a
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
-# line except ol_preference_entries' deprecation warning, because the caller
-# owns its own refusal prefix and words. Every
+# line of its own, save ol_preference_entries' deprecation warning, because
+# the caller owns its own refusal prefix and words: ol_fleet_log_notice
+# prints its `fleet-log-unwritten` through the caller's `message`. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
 # keyed line.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
-# directory), DEP_ERR (a file), and lib/lane-launch.sh and lib/lane-state.sh
-# sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
+# directory), DEP_ERR (a file), lib/lane-launch.sh and lib/lane-state.sh
+# sourced by the caller, and, of a caller that opens a session or writes a
+# notice to the fleet log, ol_succession_hook and `message KEY FIELD=VALUE...`
+# defined. Sourcing it defines names and runs nothing. Sourced,
 # never run.
 
 # The file a session's own event rows land in, which the record names: its
@@ -652,14 +659,69 @@ ol_record_line_identity() { # LINE
       else null | ol_identity end' <<<"${OL_PRIOR:-null}" 2>"$DEP_ERR")"
 }
 
+# ol_checkout_sync CWD — the checkout CWD lies in fast-forwarded to the
+# origin head of its base branch through `sync-base`, the one owner of that
+# fast-forward, so a merged hook, render or orch script is what a session
+# opened there loads. The start is the moment to move it: the tree is never
+# moved under a running overseer, and a predecessor is past its handoff. The
+# checkout must have the base branch checked out, since `sync-base` moves
+# that branch wherever it is checked out, or its ref where it is checked out
+# nowhere, and would leave a tree on any other branch where it stands.
+# Returns 0 with the tree at that head, and 1 with OL_REASON=checkout-unsynced,
+# the tree left as it stood: OL_SYNC_CAUSE `not-worktree` for a directory in
+# no Git worktree, `base-unresolved` where resolve-base-branch named no base,
+# `off-base` for another branch or a detached head, `head-unread` where the
+# head could not be read, or the key `sync-base` refused under: `dirty`,
+# `fast-forward-failed` for a diverged base or an untracked file in the way,
+# `base-mismatch` for a base ahead of its origin, `fetch-failed` and the rest
+# of its keys. OL_SYNC_PATH is the checkout, OL_SYNC_FIX what clears the
+# cause, and the dependency's own lines are in DEP_ERR. The fix texts are this table's alone, so both launchers name one,
+# and name no path: the fleet log row that carries one is bounded by
+# ORCH_FLEET_LOG_ROW_BYTES, and the session reading it starts in that
+# checkout.
+OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
+ol_checkout_sync() { # CWD
+  local base="" branch="" rc=0 run='then run .agents/skills/orch/scripts/sync-base'
+  OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
+  if ! OL_SYNC_PATH="$(git -C "$1" rev-parse --show-toplevel 2>"$DEP_ERR")"; then
+    OL_SYNC_PATH="$1" OL_SYNC_CAUSE=not-worktree
+  elif ! base="$("$SCRIPT_DIR/resolve-base-branch" "$OL_SYNC_PATH" 2>"$DEP_ERR")"; then
+    OL_SYNC_CAUSE=base-unresolved
+  else
+    branch="$(git -C "$OL_SYNC_PATH" symbolic-ref --quiet --short HEAD 2>"$DEP_ERR")" || rc=$?
+    case "$rc" in
+      0) [[ "$branch" == "$base" ]] || OL_SYNC_CAUSE=off-base ;;
+      1) OL_SYNC_CAUSE=off-base branch="a detached head" ;;
+      *) OL_SYNC_CAUSE=head-unread ;;
+    esac
+  fi
+  if [[ -z "$OL_SYNC_CAUSE" ]] && ! "$SCRIPT_DIR/sync-base" "$OL_SYNC_PATH" >/dev/null 2>"$DEP_ERR"; then
+    # The key is the first word of `sync-base`'s stable first line.
+    OL_SYNC_CAUSE="$(sed -n '1s/^sync-base: \([^ ]*\).*/\1/p' "$DEP_ERR")" || OL_SYNC_CAUSE=""
+    OL_SYNC_CAUSE="${OL_SYNC_CAUSE:-sync-failed}"
+  fi
+  [[ -n "$OL_SYNC_CAUSE" ]] || return 0
+  case "$OL_SYNC_CAUSE" in
+    off-base) OL_SYNC_FIX="switch from $branch to $base, $run" ;;
+    dirty) OL_SYNC_FIX="commit or discard the tracked changes, $run" ;;
+    fast-forward-failed | base-mismatch) OL_SYNC_FIX="bring $base back onto origin/$base, $run" ;;
+    *) OL_SYNC_FIX="clear the cause sync-base names, $run" ;;
+  esac
+  OL_REASON=checkout-unsynced
+  return 1
+}
+
 # ol_session_open CWD NAME LINE PLACEMENT — the runtime's `create`: a session
 # named NAME with its shell in CWD running LINE under `overseer-run`, which
 # writes the harness's exit status into the session record once LINE returns
 # (ol_record_exit), placed by PLACEMENT, which is
 # `--after SESSION` for a successor in its predecessor's session or `--session
-# NAME` for a first launch into a tmux session. Into OL_SESSION, OL_WINDOW
-# and OL_SERVER. Returns 1 with OL_REASON=create-failed; the provider's own
-# line is in DEP_ERR.
+# NAME` for a first launch into a tmux session. The checkout is synced first
+# (ol_checkout_sync), whichever launcher opens it; a sync that refuses is the
+# caller's `ol_succession_hook checkout-unsynced`, with OL_SYNC_* set and the
+# dependency's lines in DEP_ERR, and the session opens on the tree as it
+# stands. Into OL_SESSION, OL_WINDOW and OL_SERVER. Returns 1 with
+# OL_REASON=create-failed; the provider's own line is in DEP_ERR.
 #
 # OL_OPEN_OUT holds the provider's raw answer from the moment the call
 # returns, before it is parsed: a signal that lands during `create` runs its
@@ -669,6 +731,7 @@ ol_record_line_identity() { # LINE
 OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
 ol_session_open() { # CWD NAME LINE PLACEMENT_FLAG PLACEMENT_VALUE
   OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
+  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced
   OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$1" --name "$2" "$4" "$5" \
     --line "$(lane_single_quote "$SCRIPT_DIR/overseer-run") $3" 2>"$DEP_ERR")" \
     || { OL_REASON=create-failed; return 1; }
@@ -840,6 +903,27 @@ ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
   jq -n --rawfile text "$notice" \
     '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf" || return 1
   "$@" append-file oversee fleet_log "$record" >/dev/null 2>"$errf"
+}
+
+# ol_fleet_log_notice KEY FIELD=VALUE... — the caller's keyed line and its
+# text, `message KEY FIELD=VALUE...` joined onto one line, as one
+# ol_fleet_log row, so the session that reads the log next learns what the
+# launch printed. A row that cannot be written is the caller's
+# `fleet-log-unwritten key=KEY step=mktemp|append` on stderr with the writer's
+# words under it; DEP_ERR is left as it was, holding the detail the caller
+# relays. Returns 0 either way: the line it records is printed whatever
+# becomes of its row.
+ol_fleet_log_notice() { # KEY FIELD=VALUE...
+  local dir
+  if ! dir="$(mktemp -d)"; then
+    message fleet-log-unwritten "key=$1" step=mktemp >&2
+    return 0
+  fi
+  if ! message "$@" | paste -sd ' ' - > "$dir/notice" || ! ol_fleet_log "$dir/notice" "$dir/record" "$dir/err"; then
+    message fleet-log-unwritten "key=$1" step=append >&2
+    [[ ! -s "$dir/err" ]] || cat -- "$dir/err" >&2
+  fi
+  rm -rf -- "${dir:?}"
 }
 
 # ol_record_read — the current object into OL_PRIOR as JSON, `null` where the
