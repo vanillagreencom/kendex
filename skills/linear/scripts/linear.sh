@@ -73,9 +73,11 @@ Environment:
                   differ). LINEAR_API_KEY_OVERRIDE overrides personal-key
                   sources for one invocation (inline/test channel). It does not
                   bypass app selection or refusal of an incomplete app pair.
-  LINEAR_TEAM     Required for writes; no default. Set it in kendex.settings.toml
-                  [env] (committed, non-secret). With no team, writes refuse and
-                  reads run without a team filter. Only issues/projects/cycles/
+  LINEAR_TEAM     Target for writes that need a configured team; no default.
+                  Set it in kendex.settings.toml [env] (committed, non-secret).
+                  Existing-issue writes use the issue team. With no team, other
+                  writes refuse and reads run without a team filter.
+                  Only issues/projects/cycles/
                   labels create, labels audit, cycles list and statuses
                   list/get take --team <key-or-name> as a per-call override.
 

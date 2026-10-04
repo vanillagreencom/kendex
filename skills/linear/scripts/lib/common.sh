@@ -613,9 +613,9 @@ linear_require_team_target() {
     return 1
 }
 
-# Dispatcher guard: refuse a write action before any API call when no team target
-# resolves. It never searches argv for a team - a `--team` token in unparsed
-# arguments is just as likely to be free text (a comment body, an issue title),
+# Dispatcher guard: refuse an action needing a configured team before any API
+# call when no target resolves. It never searches argv for a team - a `--team`
+# token in unparsed arguments can be free text (a comment body, an issue title),
 # and honoring it would let user content open the gate. Only the first remaining
 # argument is read, and only to let `<action> --help` through. The action list
 # therefore holds only the write actions with no --team parser of their own;

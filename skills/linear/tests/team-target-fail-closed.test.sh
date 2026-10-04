@@ -174,7 +174,7 @@ REFUSAL='{"error": "No Linear team configured for this project - refusing to wri
 REDIRECT='Error: Comments are a separate resource. Use:;  linear.sh comments create [ISSUE_ID] --body "Your comment";  linear.sh cache comments list [ISSUE_ID]'
 W_NOTEAM='No LINEAR_TEAM configured: writes that need a configured team are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.'
 W_ENVKEY='LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.'
-w_shadow() { printf 'LINEAR_TEAM from the process environment ("%s") overrides the project value ("%s"). Writes go to the environment value.' "$1" "$2"; }
+w_shadow() { printf 'LINEAR_TEAM from the process environment ("%s") overrides the project value ("%s"). Writes that need a configured team use the environment value.' "$1" "$2"; }
 w_empty() { printf 'LINEAR_TEAM is exported as an empty value, which overrides the project value ("%s"). Unset it in the environment to use project configuration.' "$1"; }
 
 # expected SPEC — the line a row expects, from its spec:

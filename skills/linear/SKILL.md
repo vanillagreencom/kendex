@@ -33,7 +33,7 @@ Reads go through `cache`; writes go through the live commands, which write throu
 | `cycles` | list, create, update |
 | `sync` | Refresh the local cache (`--full`, `--reconcile`, `--if-stale N`, `--stats`) |
 | `cache` | Cache-only reads: issues, projects, comments, labels, initiatives, cycles, attachments, status |
-| `auth-check` | Report the selected credential, actor, team and `writes_enabled` (`--strict` exits non-zero when writes would refuse) |
+| `auth-check` | Report the selected credential, actor, team and `writes_enabled` for writes that need a configured team (`--strict` exits non-zero when no team is configured) |
 | `auth-mint` | Mint application token JSON from the client pair without writing files |
 | `session-status` | Aggregated status for the `/start` workflow |
 

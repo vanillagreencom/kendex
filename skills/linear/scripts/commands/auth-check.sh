@@ -2,8 +2,8 @@
 # Auth + target preflight
 # Usage: ./linear.sh auth-check [--strict]
 # Returns: {"ok": true/false, "team": ..., "team_source": ..., "writes_enabled": ...}
-# Exit 0 when the selected credential works. With --strict, requires a team so
-# the check matches what a write would do.
+# Exit 0 when the selected credential works. With --strict, requires a target
+# for writes that need a configured team. Existing-issue writes use the issue team.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,12 +15,12 @@ Usage: auth-check [--strict]
 
 Reports credential validity, its actor, the resolved Linear team, and its source.
 Credential precedence: pre-minted app token, app pair, personal key.
-Reports where the team came
-from. Linear writes refuse when no team resolves, so run this before the first
-mutation in a new project.
+Run this before the first mutation that needs a configured team in a project.
+Existing-issue writes use the issue team without a configured target.
 
 Options:
-  --strict    Exit 1 when no team target is configured (writes would refuse)
+  --strict    Exit 1 when no target is configured for writes that need a
+              configured team
 
 Fields:
   ok                Selected credential is set and the API answered
@@ -30,7 +30,7 @@ Fields:
   team_source       environment | project-config | unset
   team_source_file  Project file that set the resolved team, or null
   api_key_source    override | project-config | environment | unset
-  writes_enabled    false when a mutation would be refused
+  writes_enabled    Whether writes that need a configured team have a target
   warnings          Configuration hazards found
 EOF
 }
@@ -103,7 +103,7 @@ if [[ -z "$LINEAR_TEAM_TARGET" ]]; then
 elif [[ "$LINEAR_TEAM_SOURCE" == "environment" ]]; then
   team_source_file=""
   if [[ -n "$project_declared_team" && "$project_declared_team" != "$LINEAR_TEAM_TARGET" ]]; then
-    warnings+=("LINEAR_TEAM from the process environment (\"$LINEAR_TEAM_TARGET\") overrides the project value (\"$project_declared_team\"). Writes go to the environment value.")
+    warnings+=("LINEAR_TEAM from the process environment (\"$LINEAR_TEAM_TARGET\") overrides the project value (\"$project_declared_team\"). Writes that need a configured team use the environment value.")
   fi
 fi
 
