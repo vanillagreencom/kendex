@@ -48,6 +48,11 @@ control_replace scripts/lib/auth.sh 1 \
     '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '\''' \
     '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg secret "$LINEAR_CLIENT_SECRET" '\'''
 
+control_expect 'mint sends fixed scope and encoded client credentials'
+control_replace scripts/lib/auth.sh 1 \
+    '        "grant_type=client_credentials&scope=read%2Cwrite%2Cinitiative%3Aread&client_id=" + (.[0] | @uri) +' \
+    '        "grant_type=client_credentials&scope=read%2Cwrite&client_id=" + (.[0] | @uri) +'
+
 control_expect 'attachment download keeps token out of curl arguments'
 control_expect 'app-renew: renewed token stays out of curl arguments'
 control_replace scripts/lib/attachments.sh 1 \
