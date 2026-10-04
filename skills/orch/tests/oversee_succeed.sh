@@ -73,6 +73,7 @@ for harness in claude codex copilot; do
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
+$(checkout_stub_line)
 $trust_gate
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE successor startup waiting'; else echo 'esc to interrupt'; fi
 [ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
@@ -473,8 +474,9 @@ work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
 unsynced() { grep -c "^oversee-succeed: checkout-unsynced cause=$1 path=$TMP_ROOT/work fix=[^ ]" <<<"$OUT" || true; }
 WANT="$(checkout_advance)" || exit 1
 new_caller "$MARK"
+checkout_started_clear
 run_succeed synced 'claude:fable:high'
-assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced '[^ ]*')" "0|no|$WANT|0" \
+assert_eq "$RC|$(caller_open)|$(work_head)|$(checkout_started)|$(unsynced '[^ ]*')" "0|no|$WANT|$WANT|0" \
   "a succession fast-forwards a clean checkout behind origin to origin's head before the successor opens"
 SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_checkout_notice' '  :'
@@ -494,6 +496,16 @@ assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced dirty)|$(jq -r '[(.fleet_l
   "0|no|$BEHIND|1|1" \
   "a dirty checkout leaves the succession running and prints one keyed line naming the fix, also in the fleet log"
 git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
+# The order's control: a launcher that syncs after the successor opens leaves
+# the checkout synced once it returns, and the successor started on the tree
+# behind it.
+LATECTL="$(checkout_late_sync latesyncctl)" || exit 1
+WANT="$(checkout_advance)" || exit 1
+new_caller "$MARK"
+checkout_started_clear
+SUCCEED_BIN="$LATECTL/oversee-succeed" run_succeed latesyncctl 'claude:fable:high'
+assert_eq "$RC|$(caller_open)|$(work_head)|$(checkout_started)" "0|no|$WANT|$BEHIND" \
+  "control: a succession that syncs after the successor opens starts it on the tree behind origin"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # A codex successor opens into the caller's own directory, which the account's

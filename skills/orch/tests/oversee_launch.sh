@@ -60,6 +60,7 @@ checkout_world "$TMP_ROOT/work" || { echo "fixture: the work checkout could not 
 cat > "$BIN/claude" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${CLAUDE_CONFIG_DIR:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.claude"
+$(checkout_stub_line)
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE overseer startup waiting'; else echo 'esc to interrupt'; fi
 # With the row flag, the SessionStart row its hook would write, in the rows
 # file for this pane under the directory it started in (lib/session-rows.sh).
@@ -1120,8 +1121,9 @@ logged() {
     '[(.fleet_log // [])[] | select((.text | startswith($key)) and (.text | contains(" path=") | not))] | length' "$FLEET_STATE"
 }
 WANT="$(checkout_advance)" || exit 1
+checkout_started_clear
 run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(work_head)|$(unsynced '[^ ]*')" "0|$WANT|0" \
+assert_eq "$RC|$(work_head)|$(checkout_started)|$(unsynced '[^ ]*')" "0|$WANT|$WANT|0" \
   "a first launch fast-forwards a clean checkout behind origin to origin's head before it opens"
 tm kill-window -t "$(recorded window)"
 # Its control: a launcher that opens without the sync leaves the checkout
@@ -1132,6 +1134,16 @@ BEHIND="$(work_head)"
 checkout_advance >/dev/null || exit 1
 OVERSEE_BIN="$SYNCCTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(work_head)" "0|$BEHIND" "control: a launch without the sync leaves the checkout behind"
+tm kill-window -t "$(recorded window)"
+# Its control for the order: a launcher that syncs after the session opens
+# leaves the checkout synced once it returns, and the harness started on the
+# tree behind it.
+LATECTL="$(checkout_late_sync latesyncctl)" || exit 1
+WANT="$(checkout_advance)" || exit 1
+checkout_started_clear
+OVERSEE_BIN="$LATECTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(work_head)|$(checkout_started)" "0|$WANT|$BEHIND" \
+  "control: a launch that syncs after it opens starts the harness on the tree behind origin"
 tm kill-window -t "$(recorded window)"
 # A checkout the fast-forward refuses: the launch goes on, on the tree as it
 # stands, with one keyed line naming the cause and its fix, and that line in
