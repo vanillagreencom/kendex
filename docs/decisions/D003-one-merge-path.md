@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Approval**: the owner, directive 1790300329, 2026-09-25; amended by owner directive 1790322161 and owner notes 1790324783, 1790333777, 1790339825 and 1790348336, 2026-09-25; environment provisioning, its job list and the ruleset scope of step 3 settled by the overseer's answer A(i) to lane ask 1790337466, open to owner override; consumer release selection approved by the owner's KEN-2281 Requirements, 2026-09-30; the major-tag mover set by owner decision 4 in KEN-2613
+**Approval**: the owner, directive 1790300329, 2026-09-25; amended by owner directive 1790322161 and owner notes 1790324783, 1790333777, 1790339825 and 1790348336, 2026-09-25; environment provisioning, its job list and the ruleset scope of step 3 settled by the overseer's answer A(i) to lane ask 1790337466, open to owner override; consumer release selection approved by the owner's KEN-2281 Requirements, 2026-09-30; the major-tag mover set by owner decision 4 in KEN-2613; the refresh caller's named secrets pending the owner's ruling on ask 1791104990-3321519-1790, 2026-10-04
 
 **Applies to**: every repository in the organization and every lane; [../architecture/merge-rail.md](../architecture/merge-rail.md), [../../skills/orch/workflows/merge-pr.md](../../skills/orch/workflows/merge-pr.md), `skills/review-gate/templates/kendex-refresh.yml` (the refresh workflow template KEN-1779 adds)
 
@@ -129,3 +129,9 @@ The 2026-10-01 outcome's route for the review-gate writer, `install-latest.sh` w
 ### Amendment (2026-10-04)
 
 Owner decision 4 in KEN-2613 replaces this outcome's major-tag mover. The master session moves `vX` under the organization-owner bypass of the major-tag ruleset when it receives `published v<version> at <SHA>`; the owner moves it only when no master runs. A lane moves no major tag: it stops after publishing and sends that notice. The ruleset still lets no other actor create, move or delete a major tag, and a missed move shows as `refresh-warning=behind-release` on every shared-workflow run on that major. [app-deploy](../../.agents/skills/app-deploy/SKILL.md) step 4 holds the procedure.
+
+### Amendment (2026-10-04): the caller's secrets
+
+Pending the owner's ruling on ask 1791104990-3321519-1790, this amendment replaces this outcome's "The caller passes no secret". The KEN-2703 Build A acceptance run disproved the no-secret route: in review-gate-sandbox run 37187198901, whose caller had no `secrets:` key, the called job read `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` empty and stopped at its token step. Run 37191124465 compared three callers in that sandbox, which holds no repository or organization secret and keeps the pair only in its `kendex` environment. With the called workflow declaring both names and the caller passing nothing, both read empty, as they did in the control. With the caller also mapping each name to its same-named secret expression, both read set.
+
+The called workflow therefore declares the two names under `on.workflow_call.secrets`, each `required: false`, and the caller maps each to `${{ secrets.<NAME> }}` (KEN-2734). The values come from the calling repository's `kendex` environment, so its default-branch-only deployment policy still keeps the private key from a branch workflow, and the called workflow receives those two secrets and no other. `secrets: inherit` is not used: it passes every repository and organization secret the consumer can read. The run proves this route for a caller in vanillagreencom whose `kendex` environment holds the pair; a consumer in another organization is not proven on it.
