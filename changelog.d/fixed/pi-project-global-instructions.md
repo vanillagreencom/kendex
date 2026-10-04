@@ -1,1 +1,1 @@
-- Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Removing the last local block restores it. Append-file directories and links conflict.
+- Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Append-file directories and links conflict.
