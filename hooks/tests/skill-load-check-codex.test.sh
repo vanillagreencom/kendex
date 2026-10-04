@@ -13,7 +13,11 @@
 # with no call_id, before one Script completed output. The truncated capture
 # prints a read between two long seq outputs: every event completed with exit
 # code 0, and the output Codex handed the model opens with its truncation
-# warning and lost the read's text. The unprinted capture is a lone read
+# warning and lost the read's text. The truncated-reads capture is one wrapper
+# of four reads printed through text(await ...), whose output Codex cut: the
+# cut took the end of the second read's text and the start of the third's,
+# while the first and fourth arrived whole, and every event carries its
+# command's whole aggregated_output. The unprinted capture is a lone read
 # whose script never calls text(): its event completed with exit code 0, and
 # Codex recorded the output as a bare Script completed string with nothing
 # under Output:, so the model never saw the skill. The fixture projections omit account
@@ -196,13 +200,25 @@ ROWS
 # The measured functions.exec wrappers run one literal shell read, or a batch
 # of printed statements, and print their output. These rows keep the authentic envelope and output; each defect
 # changes a private copy, never the captured fixtures.
-functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
+functions_exec_row() { # FIXTURE SCENARIO WANT LABEL [SKILL]
   local fixture="$1" scenario="$2" want="$3" label="$4" command skill
   cp -- "$HOOK" "$JUDGE"
-  jq -c --arg scenario "$scenario" '
-    if $scenario == "failed-status" and .payload.item.type? == "CommandExecution" then
+  # The raw scenarios give the truncated capture's read the body the batched
+  # capture's event recorded for the same skill file.
+  jq -c --arg scenario "$scenario" \
+    --slurpfile batched "$TEST_DIR/fixtures/skill-load-check-codex-0.160.0-batched.jsonl" '
+    first($batched[] | .payload.item | objects
+      | select(.command[-1]? == "cat .agents/skills/demo/SKILL.md") | .aggregated_output) as $demo
+    | if $scenario == "failed-status" and .payload.item.type? == "CommandExecution" then
       .payload.item.status = "failed" | .payload.item.exit_code = 1
     elif $scenario == "missing-event" then select(.type != "event_msg")
+    elif $scenario == "no-output" and .payload.item.type? == "CommandExecution" then
+      del(.payload.item.aggregated_output)
+    elif ($scenario == "cut-raw" or $scenario == "whole-raw")
+      and .payload.item.command[-1]? == "cat .agents/skills/demo/SKILL.md" then
+      .payload.item.aggregated_output = $demo
+    elif $scenario == "whole-raw" and .payload.type == "custom_tool_call_output" then
+      .payload.output[-1].text += $demo
     elif $scenario == "extra-event" and .type == "event_msg" then ., .
     elif $scenario == "wrong-command" and .type == "event_msg" then
       .payload.item.command[-1] = "cat other/SKILL.md"
@@ -230,6 +246,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
         else sub("[}][)][)]"; "}).slice(0, 0))") end
     else . end' "$TEST_DIR/fixtures/$fixture.jsonl" >"$TRANSCRIPT"
   case "$fixture:$scenario" in
+    *-truncated-reads:*) skill=$5; command=skill-capture-command ;;
     *-failed:*) skill=missing-KEN-2484; command=skill-capture-command ;;
     *-batched:failed-read) skill=missing; command=skill-capture-command ;;
     *-batched:* | *-truncated:* | *-unprinted:*) skill=demo; command=skill-capture-command ;;
@@ -287,6 +304,23 @@ batched-leading-js|skill-load-check-codex-0.160.0-batched|leading-js|rc=2 first=
 batched-interleaved-js|skill-load-check-codex-0.160.0-batched|interleaved-js|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched JavaScript between statements
 unprinted|skill-load-check-codex-0.160.0-unprinted|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec lone unprinted read
 truncated|skill-load-check-codex-0.160.0-truncated|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched read cut from a truncated output
+truncated-cut-raw|skill-load-check-codex-0.160.0-truncated|cut-raw|rc=2 first=skill-load-check: unloaded=demo|functions.exec truncated output cuts a raw read
+truncated-whole-raw|skill-load-check-codex-0.160.0-truncated|whole-raw|rc=0 first=-|functions.exec truncated output keeps a whole raw read
+ROWS
+}
+# One wrapper, one skill judged per row.
+truncated_reads_rows() { # optional row key for a planted-copy control
+  local key scenario skill want label
+  while IFS='|' read -r key scenario skill want label; do
+    [ -z "${1:-}" ] || [ "$key" = "$1" ] || continue
+    functions_exec_row skill-load-check-codex-0.160.0-truncated-reads "$scenario" "$want" "$label" "$skill"
+  done <<'ROWS'
+whole|original|linear|rc=0 first=-|functions.exec truncated output keeps a whole read
+whole-last|original|code-quality|rc=0 first=-|functions.exec truncated output keeps the last whole read
+cut-tail|original|github|rc=2 first=skill-load-check: unloaded=github|functions.exec truncated output cuts the tail of a read
+cut-head|original|worktree|rc=2 first=skill-load-check: unloaded=worktree|functions.exec truncated output cuts the head of a read
+whole-failed|failed-status|linear|rc=2 first=skill-load-check: unloaded=linear|functions.exec truncated output with a failed whole read
+no-output|no-output|linear|rc=2 first=skill-load-check: unloaded=linear|functions.exec truncated output with no event output
 ROWS
 }
 # The lone unprinted capture is refused by two rules at once: no statement
@@ -296,7 +330,9 @@ ROWS
 exec_success_row() { exec_rows success; }
 exec_captured_row() { exec_rows captured-success; }
 exec_field_row() { exec_rows field-success; }
-exec_failed_row() { exec_rows failed; exec_rows field-failed; exec_rows batched-failed; }
+exec_failed_row() {
+  exec_rows failed; exec_rows field-failed; exec_rows batched-failed; truncated_reads_rows whole-failed
+}
 exec_batched_row() { exec_rows batched; }
 exec_batched_failed_row() { exec_rows batched-failed; }
 exec_aligned_row() { exec_rows wrong-command; exec_rows batched-misaligned; }
@@ -304,7 +340,12 @@ exec_script_end_row() { exec_rows compound-js; }
 exec_output_position_row() { exec_rows extra-event; }
 exec_script_start_row() { exec_rows batched-leading-js; }
 exec_contiguous_row() { exec_rows batched-interleaved-js; }
-exec_truncated_row() { exec_rows truncated; }
+exec_cut_row() {
+  truncated_reads_rows cut-tail; truncated_reads_rows cut-head; exec_rows truncated-cut-raw; exec_rows truncated
+}
+exec_whole_row() { truncated_reads_rows whole; truncated_reads_rows whole-last; exec_rows truncated-whole-raw; }
+exec_print_form_row() { truncated_reads_rows whole; }
+exec_event_output_row() { truncated_reads_rows no-output; exec_rows truncated; }
 exec_remedy_row() { exec_rows batched-failed; exec_rows unprinted; }
 exec_compound_row() { exec_rows compound-js; exec_rows field-compound-js; }
 exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
@@ -312,6 +353,7 @@ exec_suffix_row() { exec_rows printed-suffix; exec_rows captured-printed-suffix;
 exec_output_row() { exec_rows failed-wrapper; }
 exec_id_row() { exec_rows other-id; }
 exec_rows
+truncated_reads_rows
 
 skill_load_control exec-direct-text "$HOOK" '      | .input | strings' \
   '      | select(startswith("const"))' HOOK exec_captured_row 'functions.exec captured direct text read'
@@ -321,7 +363,8 @@ skill_load_control exec-output-field "$HOOK" '      | .input | strings' \
   '      | select(startswith("text((") | not)' HOOK exec_field_row 'functions.exec output field read'
 skill_load_control exec-completion "$HOOK" '    | select($kind == "function_call"' \
   '      or true' HOOK exec_failed_row 'functions.exec authentic failed read' \
-  'functions.exec output field failed read' 'functions.exec batched failed read'
+  'functions.exec output field failed read' 'functions.exec batched failed read' \
+  'functions.exec truncated output with a failed whole read'
 skill_load_control exec-batched "$HOOK" '      | [match($statement; "g")] as $statements' \
   '      | select(($statements | length) == 1)' HOOK exec_batched_row 'functions.exec batched skill read'
 skill_load_control exec-own-event "$HOOK" '    | select($kind == "function_call"' \
@@ -337,8 +380,19 @@ skill_load_control exec-script-start "$HOOK" '      | select($statements[0].offs
   '        // true' HOOK exec_script_start_row 'functions.exec batched JavaScript before the first statement'
 skill_load_control exec-contiguous "$HOOK" '          $statements[.].offset == $statements[. - 1].offset + $statements[. - 1].length))' \
   '        // true' HOOK exec_contiguous_row 'functions.exec batched JavaScript between statements'
-skill_load_control exec-truncated "$HOOK" '        | select($result.output | all(.[]; .text | strings' \
-  '          | select(false)' HOOK exec_truncated_row 'functions.exec batched read cut from a truncated output'
+skill_load_control exec-cut "$HOOK" '    | ($texts | join("")) as $printed' \
+  '    | false as $truncated' HOOK exec_cut_row 'functions.exec truncated output cuts the tail of a read' \
+  'functions.exec truncated output cuts the head of a read' 'functions.exec truncated output cuts a raw read' \
+  'functions.exec batched read cut from a truncated output'
+skill_load_control exec-whole "$HOOK" '    | ($texts | join("")) as $printed' \
+  '    | select($truncated | not)' HOOK exec_whole_row 'functions.exec truncated output keeps a whole read' \
+  'functions.exec truncated output keeps the last whole read' 'functions.exec truncated output keeps a whole raw read'
+skill_load_control exec-print-form "$HOOK" '    | ($texts | join("")) as $printed' \
+  '    | ($statements | map(.json = false)) as $statements' HOOK exec_print_form_row \
+  'functions.exec truncated output keeps a whole read'
+skill_load_control exec-event-output "$HOOK" '        and (($truncated | not) or (.aggregated_output' \
+  '          | if type == "string" then . else "" end' HOOK exec_event_output_row \
+  'functions.exec truncated output with no event output' 'functions.exec batched read cut from a truncated output'
 skill_load_control exec-output-position "$HOOK" '          | .type == "custom_tool_call_output" and .call_id == $id)' \
   '        // true' HOOK exec_output_position_row 'functions.exec ambiguous shell completion'
 skill_load_control exec-remedy "$HOOK" '        codex)' \
@@ -353,7 +407,7 @@ skill_load_control exec-standalone-shell "$HOOK" '| ($skill | gsub("[.]"; "\\.")
 skill_load_control exec-printed-tail "$HOOK" '      | .input | strings' \
   '      | sub("[.]slice\\(0, 0\\)"; "")' HOOK exec_suffix_row 'functions.exec printed output suffix' \
   'functions.exec captured printed suffix' 'functions.exec output field printed suffix'
-skill_load_control exec-output "$HOOK" '| .text | strings' \
+skill_load_control exec-output "$HOOK" '| .[0] | objects | .text | strings' \
   '          | "Script completed\nOutput:\n"' HOOK exec_output_row 'functions.exec failed wrapper'
 skill_load_control exec-call-id "$HOOK" '    | (.call_id | strings | select(. != "")) as $id' \
   '    | "other" as $id' HOOK exec_id_row 'functions.exec another call output'

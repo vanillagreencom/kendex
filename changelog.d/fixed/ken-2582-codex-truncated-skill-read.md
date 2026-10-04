@@ -1,0 +1,1 @@
+- skill-load-check counts a Codex skill read whose text arrived whole in a `functions.exec` output that Codex truncated, and still refuses a read the cut reached.
