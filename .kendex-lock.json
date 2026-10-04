@@ -2567,8 +2567,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
-      "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
+      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
+      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2598,8 +2598,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
-      "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
+      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
+      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2629,8 +2629,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "72b4ca839299f5a9fb9fa98ad2662be59e85adf7570e099f3d0cce6f1d8ce15f",
-      "renderedHash": "f45f33b325caf71605e5075bee17d10bb9ea52d96ea49615d97c5fe3cddf8f4e",
+      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
+      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2780,8 +2780,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "703b8f0fef921de31705964a753f0c3063e2e73e5088bec916d0f8d7e72474ea",
-      "renderedHash": "1f58e971e1ba1e5022b16cd4a7a94a9d8c3ba6a32d1f6531f93c95a4f43b9817",
+      "sourceHash": "7fabe6435154b68998886d289077b91f4b162170141ed7d2b21b848943b689f8",
+      "renderedHash": "b39dee9fa8dbd29d698c815741ca190f27b3047835027afe939b7691571532fb",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2825,6 +2825,33 @@
             "name": "lane-mail-halt",
             "harness": "claude"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-end-row",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-start-row",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "stop-failure-row",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -2834,8 +2861,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "703b8f0fef921de31705964a753f0c3063e2e73e5088bec916d0f8d7e72474ea",
-      "renderedHash": "1f58e971e1ba1e5022b16cd4a7a94a9d8c3ba6a32d1f6531f93c95a4f43b9817",
+      "sourceHash": "7fabe6435154b68998886d289077b91f4b162170141ed7d2b21b848943b689f8",
+      "renderedHash": "b39dee9fa8dbd29d698c815741ca190f27b3047835027afe939b7691571532fb",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2870,6 +2897,15 @@
             "name": "lane-mail-halt",
             "harness": "codex"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-start-row",
+            "harness": "codex"
+          }
         }
       ]
     },
@@ -2879,8 +2915,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "703b8f0fef921de31705964a753f0c3063e2e73e5088bec916d0f8d7e72474ea",
-      "renderedHash": "1f58e971e1ba1e5022b16cd4a7a94a9d8c3ba6a32d1f6531f93c95a4f43b9817",
+      "sourceHash": "7fabe6435154b68998886d289077b91f4b162170141ed7d2b21b848943b689f8",
+      "renderedHash": "b39dee9fa8dbd29d698c815741ca190f27b3047835027afe939b7691571532fb",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2913,6 +2949,33 @@
             "source": ".",
             "kind": "hook",
             "name": "lane-mail-halt",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-end-row",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-start-row",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "stop-failure-row",
             "harness": "pi"
           }
         }
@@ -3296,8 +3359,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "405116e1eff90d4ab3451c2cf36c5b44c23a16a3c9f1803733f3225c40672dde",
-      "renderedHash": "aa720d7dc881bef050a8865aa1ac1dcebb889f0fd45f2171932547a7627cd1e7",
+      "sourceHash": "347ff2d2efbbbdcd44057a6f27cd32f7dff575da40193ff9c4e9255a41e58c92",
+      "renderedHash": "0de34894a07a612efce5bac7079891a07d9cbea953450b1cb0b62cd42c9e6b68",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3323,8 +3386,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "412e6662a883addacb2d4db881fd1b4207935629f88d265f302e100247d3326d",
-      "renderedHash": "e1e29ca10cc2f0c24e53e56b35c914f73f95ce9aeaa28991588fba8803af5ee2",
+      "sourceHash": "4edd7b91593ef0d09e23c600c4c6c4fea094204d145e1988f61d2941fc7d3be7",
+      "renderedHash": "7c196604ed79f86a7372a53123d7a36b75f743b6d0e99060cb02479c8b1b50d2",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3357,8 +3420,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "412e6662a883addacb2d4db881fd1b4207935629f88d265f302e100247d3326d",
-      "renderedHash": "e1e29ca10cc2f0c24e53e56b35c914f73f95ce9aeaa28991588fba8803af5ee2",
+      "sourceHash": "4edd7b91593ef0d09e23c600c4c6c4fea094204d145e1988f61d2941fc7d3be7",
+      "renderedHash": "7c196604ed79f86a7372a53123d7a36b75f743b6d0e99060cb02479c8b1b50d2",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3382,6 +3445,141 @@
             "source": ".",
             "name": "commit-guards"
           }
+        }
+      ]
+    },
+    "hook:session-end-row:claude": {
+      "name": "session-end-row",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e7e474fe5df94f384a341a47f550e64204254a4fb9e93bc3c7a8dc5e85f07b2c",
+      "renderedHash": "0abce071343fd5bd18314eec82f3d730af07aaf7a4818dc37f592048f84b55f1",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-end-row",
+        "paths": [
+          ".claude/hooks/session-end-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "SessionEnd",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-end-row.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:session-end-row:pi": {
+      "name": "session-end-row",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e7e474fe5df94f384a341a47f550e64204254a4fb9e93bc3c7a8dc5e85f07b2c",
+      "renderedHash": "0abce071343fd5bd18314eec82f3d730af07aaf7a4818dc37f592048f84b55f1",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-end-row",
+        "paths": [
+          ".pi/kendex/hooks/session-end-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "session_shutdown",
+        "command": "p='.pi/kendex/hooks/session-end-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:session-start-row:claude": {
+      "name": "session-start-row",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7497c179749374bc1aeba2fc73d6bbb72395d8d18e8a11f416860ec2ebfa31f5",
+      "renderedHash": "1009d534eea8b427732b906f0e17791f5cdd0d72c7c93c7a9a4ad9a1fe94e6b6",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-start-row",
+        "paths": [
+          ".claude/hooks/session-start-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "SessionStart",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-row.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:session-start-row:codex": {
+      "name": "session-start-row",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7497c179749374bc1aeba2fc73d6bbb72395d8d18e8a11f416860ec2ebfa31f5",
+      "renderedHash": "1009d534eea8b427732b906f0e17791f5cdd0d72c7c93c7a9a4ad9a1fe94e6b6",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-start-row",
+        "paths": [
+          ".codex/hooks/session-start-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "SessionStart",
+        "command": "p='.codex/hooks/session-start-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:session-start-row:pi": {
+      "name": "session-start-row",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7497c179749374bc1aeba2fc73d6bbb72395d8d18e8a11f416860ec2ebfa31f5",
+      "renderedHash": "1009d534eea8b427732b906f0e17791f5cdd0d72c7c93c7a9a4ad9a1fe94e6b6",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-start-row",
+        "paths": [
+          ".pi/kendex/hooks/session-start-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "session_start",
+        "command": "p='.pi/kendex/hooks/session-start-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
         }
       ]
     },
@@ -3639,6 +3837,60 @@
         "event": "tool_result",
         "command": "p='.pi/kendex/hooks/skill-load-record.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
         "matcher": "Skill|skill"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:stop-failure-row:claude": {
+      "name": "stop-failure-row",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c72db719452734513c528366deb59e30211989bfcbbe6f3d3cdbacf58806b009",
+      "renderedHash": "98f4aa5d6b742dd828d1f04eebb89b3bd67b68d6b258aa4a4e68d09a42fbf50f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "stop-failure-row",
+        "paths": [
+          ".claude/hooks/stop-failure-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "StopFailure",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-failure-row.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:stop-failure-row:pi": {
+      "name": "stop-failure-row",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c72db719452734513c528366deb59e30211989bfcbbe6f3d3cdbacf58806b009",
+      "renderedHash": "98f4aa5d6b742dd828d1f04eebb89b3bd67b68d6b258aa4a4e68d09a42fbf50f",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "stop-failure-row",
+        "paths": [
+          ".pi/kendex/hooks/stop-failure-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "agent_before_settle",
+        "command": "p='.pi/kendex/hooks/stop-failure-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
       },
       "reasons": [
         {
@@ -5401,8 +5653,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "db597fd8eddb3fdbc7f86ce9fac5973c6c7d1ec1bc13d6e5367a9fb3fe5d636f",
-      "renderedHash": "54b24fbe1470c613ea2a1119269e9da4c5b62a4011dd936c3a64168e3e528c83",
+      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
+      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5430,8 +5682,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "db597fd8eddb3fdbc7f86ce9fac5973c6c7d1ec1bc13d6e5367a9fb3fe5d636f",
-      "renderedHash": "54b24fbe1470c613ea2a1119269e9da4c5b62a4011dd936c3a64168e3e528c83",
+      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
+      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5458,8 +5710,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "db597fd8eddb3fdbc7f86ce9fac5973c6c7d1ec1bc13d6e5367a9fb3fe5d636f",
-      "renderedHash": "54b24fbe1470c613ea2a1119269e9da4c5b62a4011dd936c3a64168e3e528c83",
+      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
+      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5486,8 +5738,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "db597fd8eddb3fdbc7f86ce9fac5973c6c7d1ec1bc13d6e5367a9fb3fe5d636f",
-      "renderedHash": "54b24fbe1470c613ea2a1119269e9da4c5b62a4011dd936c3a64168e3e528c83",
+      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
+      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5681,8 +5933,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
-      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
+      "sourceHash": "4455719643475545a841283ad37237da85d29f4f310993a51287a61ebc15656f",
+      "renderedHash": "027538955f48b8dfce32133e240ae935ada22f8cc1231ca3f83e6f8326b03275",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5713,8 +5965,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
-      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
+      "sourceHash": "4455719643475545a841283ad37237da85d29f4f310993a51287a61ebc15656f",
+      "renderedHash": "027538955f48b8dfce32133e240ae935ada22f8cc1231ca3f83e6f8326b03275",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5744,8 +5996,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
-      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
+      "sourceHash": "4455719643475545a841283ad37237da85d29f4f310993a51287a61ebc15656f",
+      "renderedHash": "027538955f48b8dfce32133e240ae935ada22f8cc1231ca3f83e6f8326b03275",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5775,8 +6027,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "84d186af68d2ec471208ddaacdaadb81835e8ef57c8fe03e62e031a12aab12b8",
-      "renderedHash": "145f7f3c68a86b3524c23add935a9bf74e777e03638ec6568b09aeb47c51f0a8",
+      "sourceHash": "4455719643475545a841283ad37237da85d29f4f310993a51287a61ebc15656f",
+      "renderedHash": "027538955f48b8dfce32133e240ae935ada22f8cc1231ca3f83e6f8326b03275",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5806,8 +6058,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d6176aa50b29ff0c8e54235eb6ae02de1901d4cc6c7b8cf9cb543aa84ca4e6c4",
-      "renderedHash": "e2c35ca29aa36797a695358e4292f0d9c5b53c19666fc8322577b220238d0d5c",
+      "sourceHash": "eca0d85e6a6aade00c3550a6787729f584c74de81fc07cdc8b548ade1bc4d4bf",
+      "renderedHash": "844237bd03417cc361d83b00403bcd84afaadbc5d8fc33bf1b49b150c4c059d1",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5883,8 +6135,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d6176aa50b29ff0c8e54235eb6ae02de1901d4cc6c7b8cf9cb543aa84ca4e6c4",
-      "renderedHash": "e2c35ca29aa36797a695358e4292f0d9c5b53c19666fc8322577b220238d0d5c",
+      "sourceHash": "eca0d85e6a6aade00c3550a6787729f584c74de81fc07cdc8b548ade1bc4d4bf",
+      "renderedHash": "844237bd03417cc361d83b00403bcd84afaadbc5d8fc33bf1b49b150c4c059d1",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5959,8 +6211,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d6176aa50b29ff0c8e54235eb6ae02de1901d4cc6c7b8cf9cb543aa84ca4e6c4",
-      "renderedHash": "e2c35ca29aa36797a695358e4292f0d9c5b53c19666fc8322577b220238d0d5c",
+      "sourceHash": "eca0d85e6a6aade00c3550a6787729f584c74de81fc07cdc8b548ade1bc4d4bf",
+      "renderedHash": "844237bd03417cc361d83b00403bcd84afaadbc5d8fc33bf1b49b150c4c059d1",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6026,8 +6278,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d6176aa50b29ff0c8e54235eb6ae02de1901d4cc6c7b8cf9cb543aa84ca4e6c4",
-      "renderedHash": "e2c35ca29aa36797a695358e4292f0d9c5b53c19666fc8322577b220238d0d5c",
+      "sourceHash": "eca0d85e6a6aade00c3550a6787729f584c74de81fc07cdc8b548ade1bc4d4bf",
+      "renderedHash": "844237bd03417cc361d83b00403bcd84afaadbc5d8fc33bf1b49b150c4c059d1",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6504,8 +6756,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f40795d1c3fb4af4b1f2fda234933aee3e64a8d058d0c1309db1aac4f8f9051",
-      "renderedHash": "c50113f38705493fa85d33cfa290b50153a33ed82a6d0fc4d27cdd97b56c2516",
+      "sourceHash": "02f63f17c72784d296a045d11427db6e7d84ce4384a80c7afb8c31e4c0cd7f4b",
+      "renderedHash": "8eb4f6d8dae980124cffe38ead98db0872c621918b1c8ca9b83f140068d7b012",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6536,8 +6788,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f40795d1c3fb4af4b1f2fda234933aee3e64a8d058d0c1309db1aac4f8f9051",
-      "renderedHash": "c50113f38705493fa85d33cfa290b50153a33ed82a6d0fc4d27cdd97b56c2516",
+      "sourceHash": "02f63f17c72784d296a045d11427db6e7d84ce4384a80c7afb8c31e4c0cd7f4b",
+      "renderedHash": "8eb4f6d8dae980124cffe38ead98db0872c621918b1c8ca9b83f140068d7b012",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6567,8 +6819,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f40795d1c3fb4af4b1f2fda234933aee3e64a8d058d0c1309db1aac4f8f9051",
-      "renderedHash": "c50113f38705493fa85d33cfa290b50153a33ed82a6d0fc4d27cdd97b56c2516",
+      "sourceHash": "02f63f17c72784d296a045d11427db6e7d84ce4384a80c7afb8c31e4c0cd7f4b",
+      "renderedHash": "8eb4f6d8dae980124cffe38ead98db0872c621918b1c8ca9b83f140068d7b012",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6598,8 +6850,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f40795d1c3fb4af4b1f2fda234933aee3e64a8d058d0c1309db1aac4f8f9051",
-      "renderedHash": "c50113f38705493fa85d33cfa290b50153a33ed82a6d0fc4d27cdd97b56c2516",
+      "sourceHash": "02f63f17c72784d296a045d11427db6e7d84ce4384a80c7afb8c31e4c0cd7f4b",
+      "renderedHash": "8eb4f6d8dae980124cffe38ead98db0872c621918b1c8ca9b83f140068d7b012",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7144,7 +7396,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "79f3d85bac2c8fa47e1b9f2ef024ae878ab4651d"
+      "commit": "b2a644a96f08df8a21e5105c6033e369acac4605"
     }
   }
 }
