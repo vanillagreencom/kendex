@@ -12,6 +12,8 @@
 # Strict, and a session must still start no matter what this hook hits: every
 # command that can legitimately fail is guarded so this always reaches exit 0.
 set -Eeuo pipefail
+# Bash 3.2 inherits ERR into guarded command substitutions under errtrace.
+# Reset it inside each capture so the caller receives the command's status.
 
 # What the notice reads, each under its own name: kendex's report and the
 # status it left, and the line an unguarded failure reached. A positional
@@ -283,7 +285,7 @@ notice() { # KEY VALUE
 # make the base checkout a lane.
 read_lane() {
   local dirs common marker bound rc=0
-  dirs=$(git rev-parse --show-toplevel --absolute-git-dir --path-format=absolute --git-common-dir 2>&1) || rc=$?
+  dirs=$(trap - ERR; git rev-parse --show-toplevel --absolute-git-dir --path-format=absolute --git-common-dir 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     case "$dirs" in
       *'not a git repository'*) return 0 ;;
@@ -311,7 +313,7 @@ read_lane() {
       notice lane unknown
       return 1
     fi
-    bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+    bound=$(trap - ERR; cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
     [ "$bound" != "$LANE_ROOT" ] || { LANE=1; return 0; }
   done
 }
@@ -328,7 +330,7 @@ read_lane_refresh() {
     notice lane unknown
     return 1
   fi
-  bound=$(cat -- "$record" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+  bound=$(trap - ERR; cat -- "$record" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
   [ "$bound" != "$LANE_ROOT" ] || LANE_REFRESH=1
 }
 
@@ -362,7 +364,7 @@ trap 'rc=$?; FAILED_LINE=$LINENO; notice exit "$rc"; exit 0' ERR
 # cat's own words are captured, not left to reach a stream this hook does not
 # write: a session must start either way, so the read failure is reported under
 # its own key on stdout and the check runs on.
-INPUT=$(cat 2>&1) || { PAYLOAD_ERR="$INPUT"; INPUT=""; }
+INPUT=$(trap - ERR; cat 2>&1) || { PAYLOAD_ERR="$INPUT"; INPUT=""; }
 
 if [ "${KENDEX_DRIFT_HOOK:-}" = "off" ]; then
   exit 0
@@ -384,7 +386,7 @@ if ! command -v jq >/dev/null 2>&1; then
   notice missing-tools jq
   exit 0
 fi
-if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '[.source // "", (has("timestamp") or has("sessionId"))] | @tsv' 2>/dev/null); then
+if ! SOURCE=$(trap - ERR; printf '%s' "$INPUT" | jq -r '[.source // "", (has("timestamp") or has("sessionId"))] | @tsv' 2>/dev/null); then
   notice payload invalid-json
   exit 0
 fi
@@ -415,7 +417,7 @@ check_project() {
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 # The probe carries cd's words into the notice; a substitution cannot move
 # this shell, so the second cd is the move and the first is the cause.
-if ! PATH_ERR=$( (cd -- "$PROJECT_DIR") 2>&1 ); then
+if ! PATH_ERR=$(trap - ERR; (cd -- "$PROJECT_DIR") 2>&1 ); then
   notice path "$PROJECT_DIR"
   exit 0
 fi
@@ -444,7 +446,7 @@ fi
 # record: a hook run at agent spawn writes no tracked file on any branch. A
 # kendex too old to know the flag refuses it by name, which the exit-2 arm
 # below reports as kendex-too-old.
-OUTPUT=$(kendex check --quiet --report-only 2>&1) || RC=$?
+OUTPUT=$(trap - ERR; kendex check --quiet --report-only 2>&1) || RC=$?
 
 case "$RC" in
   0)
