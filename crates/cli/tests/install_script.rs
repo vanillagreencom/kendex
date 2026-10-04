@@ -159,13 +159,26 @@ fn run_script(
                     .map(|dir| format!("{dir}:"))
                     .collect::<String>(),
                 bindir.display(),
-                std::env::var("PATH").unwrap_or_default()
+                host_path_without_kendex()
             ),
         )
         .output()
         .unwrap();
     let urls = fs::read_to_string(home.join("urls.txt")).unwrap_or_default();
     (output, urls)
+}
+
+/// The host's `PATH` with every directory holding a `kendex` left out. The
+/// script's `--git` check asks the `kendex` it finds on `PATH`, so a
+/// command installed on the machine running these tests would answer in
+/// place of the fixture's, and a run meant to find none would find it.
+fn host_path_without_kendex() -> String {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|dir| !Path::new(dir).join("kendex").exists())
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 #[test]
@@ -287,85 +300,59 @@ fn git_channel_resolves_one_immutable_main_build() {
     );
 }
 
-/// A `kendex` command in `dir` that reports `version` and hands every other
-/// verb, `version-compare` included, to the real binary, so the ordering
-/// under test is the one an installed command answers with.
+/// What the `kendex` command already on `PATH` answers install.sh with.
+#[derive(Clone, Copy, Debug)]
+enum Installed {
+    /// Reports this version and hands `version-compare` to the real binary,
+    /// so the ordering under test is the one an installed command answers
+    /// with.
+    Reports(&'static str),
+    /// `--version` exits nonzero.
+    NoVersion,
+    /// Reports this version and has no `version-compare` verb, as the
+    /// published v5.0.1 command does not.
+    NoCompare(&'static str),
+}
+
+/// The refusals install.sh's `--git` check over an installed command can
+/// end a run with, by the stable key each prints.
+const CHECK_REFUSALS: [&str; 3] = [
+    "main-downgrade-refused",
+    "installed-version-unreadable",
+    "installed-version-unordered",
+];
+
+/// The installed command for `installed`, written as `dir/kendex`.
 #[allow(clippy::unwrap_used)]
-fn installed_command(dir: &Path, version: &str) {
+fn installed_command(dir: &Path, installed: Installed) {
+    let real = env!("CARGO_BIN_EXE_kendex");
+    let arms = match installed {
+        Installed::Reports(version) => format!("--version) echo 'kendex {version}' ;;"),
+        Installed::NoVersion => "--version) exit 1 ;;".to_owned(),
+        Installed::NoCompare(version) => format!(
+            "--version) echo 'kendex {version}' ;; version-compare) echo \"error: unrecognized subcommand 'version-compare'\" >&2; exit 2 ;;"
+        ),
+    };
     fs::create_dir_all(dir).unwrap();
     write_exe(
         &dir.join("kendex"),
-        &format!(
-            "#!/bin/sh\ncase \"$1\" in --version) echo 'kendex {version}' ;; *) exec '{}' \"$@\" ;; esac\n",
-            env!("CARGO_BIN_EXE_kendex")
-        ),
+        &format!("#!/bin/sh\ncase \"$1\" in {arms} *) exec '{real}' \"$@\" ;; esac\n"),
     );
 }
 
-/// `--git` over an installed command: the pointer's build, core 5.0.1, is
-/// refused before any download when the installed core is ahead of it, and
-/// installed when the cores are equal or the installed one is behind.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn git_channel_refuses_a_build_older_than_the_installed_command() {
-    let offered = "5.0.1+main.42.0123456789abcdef0123456789abcdef01234567";
-    for (installed, refused) in [
-        ("5.1.0", true),
-        ("5.0.2-rc.1", true),
-        ("5.0.1", false),
-        (
-            "5.0.1+main.50.89abcdef0123456789abcdef0123456789abcdef",
-            false,
-        ),
-        ("5.0.0", false),
-    ] {
-        let home = tempfile::tempdir().unwrap();
-        let root = rooted(&home);
-        let ahead = root.join("installed-bin");
-        installed_command(&ahead, installed);
-        let (output, urls) = run_install_in_args(
-            "Linux",
-            "x86_64",
-            None,
-            &root,
-            &[ahead.to_str().unwrap()],
-            SUDO_STUB,
-            &["--cli-only", "--git"],
-        );
-        let downgrade = value(&output.stderr, "main-downgrade-refused");
-        let downloaded = urls.contains("/main-build-42/kendex-x86_64-unknown-linux-gnu");
-        assert_eq!(
-            (output.status.success(), downgrade, downloaded),
-            match refused {
-                true => (false, Some(offered), false),
-                false => (true, None, true),
-            },
-            "installed {installed}:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
+/// How one `--git` run over an installed command ended: whether it exited
+/// zero, the value of each of `CHECK_REFUSALS` it printed, and whether it
+/// fetched the build's command.
+type GitOutcome = (bool, Vec<Option<String>>, bool);
 
-/// The control for the refusal above: a copy of `install.sh` whose
-/// comparison never reads `older` installs the build the real script
-/// refuses.
-#[test]
 #[allow(clippy::unwrap_used)]
-fn without_the_comparison_an_older_build_installs() {
+fn git_run_over(script: &Path, installed: Installed) -> (GitOutcome, PathBuf, String) {
     let home = tempfile::tempdir().unwrap();
     let root = rooted(&home);
-    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
-    let source = fs::read_to_string(real).unwrap();
-    let guard = "[ \"$order\" != older ]";
-    assert_eq!(source.matches(guard).count(), 1, "install.sh comparison");
-    let mutant = source.replace(guard, &format!("{guard} || [ \"$order\" = older ]"));
-    assert_ne!(mutant, source);
-    let script = root.join("install-mutant.sh");
-    fs::write(&script, mutant).unwrap();
     let ahead = root.join("installed-bin");
-    installed_command(&ahead, "5.1.0");
+    installed_command(&ahead, installed);
     let (output, urls) = run_script(
-        &script,
+        script,
         "Linux",
         "x86_64",
         None,
@@ -374,11 +361,108 @@ fn without_the_comparison_an_older_build_installs() {
         SUDO_STUB,
         &["--cli-only", "--git"],
     );
-    assert!(output.status.success(), "{output:?}");
-    assert!(
-        urls.contains("/main-build-42/kendex-x86_64-unknown-linux-gnu"),
-        "{urls}"
-    );
+    let refusals = CHECK_REFUSALS
+        .iter()
+        .map(|key| value(&output.stderr, key).map(str::to_owned))
+        .collect();
+    let downloaded = urls.contains("/main-build-42/kendex-x86_64-unknown-linux-gnu");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (
+        (output.status.success(), refusals, downloaded),
+        ahead.join("kendex"),
+        stderr,
+    )
+}
+
+/// What a run over `installed` must end as: refused by `refusal` alone,
+/// with the build's command never fetched, or installed with no refusal.
+fn expected_outcome(refusal: Option<&str>, command: &Path) -> GitOutcome {
+    let offered = "5.0.1+main.42.0123456789abcdef0123456789abcdef01234567";
+    let refusals = CHECK_REFUSALS
+        .iter()
+        .map(|key| match (refusal == Some(*key), *key) {
+            (false, _) => None,
+            (true, "main-downgrade-refused") => Some(offered.to_owned()),
+            (true, _) => Some(command.display().to_string()),
+        })
+        .collect();
+    (refusal.is_none(), refusals, refusal.is_none())
+}
+
+/// The installed command each refusal answers, and the rows that install.
+const GIT_OVER_INSTALLED: [(Installed, Option<&str>); 7] = [
+    (Installed::Reports("5.1.0"), Some("main-downgrade-refused")),
+    (
+        Installed::Reports("5.0.2-rc.1"),
+        Some("main-downgrade-refused"),
+    ),
+    (Installed::Reports("5.0.1"), None),
+    (
+        Installed::Reports("5.0.1+main.50.89abcdef0123456789abcdef0123456789abcdef"),
+        None,
+    ),
+    (Installed::Reports("5.0.0"), None),
+    (Installed::NoVersion, Some("installed-version-unreadable")),
+    (
+        Installed::NoCompare("5.0.1"),
+        Some("installed-version-unordered"),
+    ),
+];
+
+/// `--git` over an installed command: the pointer's build, core 5.0.1, is
+/// refused before the build downloads when the installed core is ahead of
+/// it or the installed command cannot report or order its version, and
+/// installed when the cores are equal or the installed one is behind.
+#[test]
+fn git_channel_refuses_a_build_older_than_the_installed_command() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    for (installed, refusal) in GIT_OVER_INSTALLED {
+        let (outcome, command, stderr) = git_run_over(&script, installed);
+        assert_eq!(
+            outcome,
+            expected_outcome(refusal, &command),
+            "installed {installed:?}:\n{stderr}"
+        );
+    }
+}
+
+/// The control for each refusal above: a copy of `install.sh` that prints
+/// the refusal and does not exit on it turns that refusal's row red.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn each_refusal_without_its_exit_turns_its_row_red() {
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let source = fs::read_to_string(real).unwrap();
+    for key in CHECK_REFUSALS {
+        let lines: Vec<&str> = source.lines().collect();
+        let printed: Vec<usize> = (0..lines.len())
+            .filter(|&at| {
+                lines[at]
+                    .trim_start()
+                    .starts_with(&format!("message {key} "))
+            })
+            .collect();
+        assert_eq!(printed.len(), 1, "install.sh prints {key} once");
+        let exit = printed[0] + 1;
+        assert_eq!(lines[exit].trim(), "exit 1", "{key} exits on the next line");
+        let mut mutant: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
+        mutant[exit] = mutant[exit].replace("exit 1", ": exit 1");
+        let mutant = mutant.join("\n") + "\n";
+        assert_ne!(mutant, source);
+        let dir = tempfile::tempdir().unwrap();
+        let script = rooted(&dir).join("install-mutant.sh");
+        fs::write(&script, mutant).unwrap();
+        let (installed, _) = GIT_OVER_INSTALLED
+            .into_iter()
+            .find(|(_, refusal)| *refusal == Some(key))
+            .unwrap();
+        let (outcome, command, stderr) = git_run_over(&script, installed);
+        assert_ne!(
+            outcome,
+            expected_outcome(Some(key), &command),
+            "{key} without its exit:\n{stderr}"
+        );
+    }
 }
 
 /// The matrix lanes and the feed.json keys are two lists in release.yml;
