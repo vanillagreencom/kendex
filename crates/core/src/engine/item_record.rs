@@ -301,36 +301,6 @@ fn named(edits: &[(PathBuf, ConfigEdit)]) -> Option<Named<'_>> {
 /// reads off `rendered_hash`, which is set exactly when kendex wrote a
 /// script.
 pub(super) fn registration(item: &Desired) -> Option<crate::lock::HookRegistration> {
-    registration_beside(item, &std::collections::BTreeSet::new())
-}
-
-/// Clear the recorded entry of each switched-off hook whose registry this
-/// pass retires, to what [`registration_beside`] reads without it.
-pub(super) fn unrecord_retired(
-    items: &[Desired],
-    retired: &std::collections::BTreeSet<PathBuf>,
-    lock: &mut crate::lock::Lock,
-) {
-    if retired.is_empty() {
-        return;
-    }
-    for item in items.iter().filter(|item| !item.enabled) {
-        if let Some(entry) = lock.entries.get_mut(&item.key)
-            && entry.registration.is_some()
-        {
-            entry.registration = registration_beside(item, retired);
-        }
-    }
-}
-
-/// [`registration`] read as if the `retired` files were already gone. A
-/// switched-off hook renders its reversed entry only into a registry that
-/// stands, so where this pass retires that registry the record keeps no
-/// entry, which is what the next pass reads too.
-fn registration_beside(
-    item: &Desired,
-    retired: &std::collections::BTreeSet<PathBuf>,
-) -> Option<crate::lock::HookRegistration> {
     use crate::configedit::ConfigEdit;
     let Artifact::Registration { edits, .. } = &item.artifact else {
         return None;
@@ -349,8 +319,7 @@ fn registration_beside(
             matcher: Some(crate::configedit::spelled(matcher.map(String::as_str)).to_owned()),
         })
     };
-    let mut standing = edits.iter().filter(|(path, _)| !retired.contains(path));
-    standing.find_map(|(_, edit)| match edit {
+    edits.iter().find_map(|(_, edit)| match edit {
         ConfigEdit::UpsertHook {
             event,
             matcher,

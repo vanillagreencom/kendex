@@ -617,6 +617,9 @@ fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
                 let user = format!(
                     "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\n{body}\n<!-- kendex:append-system output-style-STE end -->\n"
                 );
+                // Disabling the last style retires the append file, and in a
+                // project the emptied `.pi` directory goes with it.
+                fs::create_dir_all(append.parent().unwrap()).unwrap();
                 if obstacle == "directory" {
                     if append.exists() {
                         fs::remove_file(&append).unwrap();

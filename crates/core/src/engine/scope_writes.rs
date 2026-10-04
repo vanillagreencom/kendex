@@ -73,18 +73,16 @@ pub(super) fn plan_manifest_write(
 /// A project file the edits empty goes to the trash rather than staying as
 /// an empty document a harness's detection reads as configured. A personal
 /// one stays: a tool's own settings file can be what marks it installed.
-/// The record of each switched-off hook whose registry it retires keeps no
-/// entry, as the next pass reads it. Returns every file it edits or takes
-/// away.
+/// A Pi append file follows its own rule in either scope
+/// ([`crate::pi_ext::append_system_retires`]). Returns every file it edits
+/// or takes away.
 pub(super) fn plan_config_edits(
     scope: &Scope,
-    items: &[super::desired::Desired],
     config_edits: config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<BTreeSet<PathBuf>> {
     let project = matches!(scope, Scope::Project { .. });
-    let mut retired = BTreeSet::new();
     let mut edited = BTreeSet::new();
     for (path, (labels, mut edits)) in config_edits.by_file {
         // Config edits bind to the bytes reachable at planning. A link
@@ -116,14 +114,14 @@ pub(super) fn plan_config_edits(
         // A retired document goes whole, and an absent one stays absent.
         if remove_empty && !path.is_symlink() {
             if found.is_some() {
+                edited.insert(path.clone());
                 ops.push(super::removal::trash(
                     crate::apply::Description::around(
                         "Move ",
                         " to the trash, nothing of its own left",
                     ),
-                    path.clone(),
+                    path,
                 )?);
-                retired.insert(path);
             }
             continue;
         }
@@ -140,8 +138,6 @@ pub(super) fn plan_config_edits(
             op: Op::EditFile { pre, path, edits },
         });
     }
-    super::item_record::unrecord_retired(items, &retired, new_lock);
-    edited.extend(retired);
     Ok(edited)
 }
 
