@@ -7,6 +7,7 @@
 # path refuses before any API call.
 
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
@@ -17,6 +18,8 @@ assert_tmpdir TMP_ROOT
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
 git -C "$PROJECT" init -q -b main
+git -C "$PROJECT" config gc.auto 0
+git -C "$PROJECT" config maintenance.auto false
 cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
@@ -48,6 +51,17 @@ printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query="$(jq -r '.query' <<<"$payload")"
 
 case "$query" in
+*"query GetIssue("*)
+  issue="$(jq -r '.variables.id' <<<"$payload")"
+  case "$issue" in
+    TEAM-404|00000000-0000-0000-0000-000000000404)
+      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200' ;;
+    00000000-0000-0000-0000-000000000403)
+      printf '%s' '{"errors":[{"message":"Issue access denied","extensions":{"code":"FORBIDDEN"}}]}___HTTP_CODE___200' ;;
+    *)
+      printf '%s' '{"data":{"issue":{"id":"00000000-0000-0000-0000-000000000001","identifier":"TEAM-1"}}}___HTTP_CODE___200' ;;
+  esac
+  ;;
 *"fileUpload("*)
   filename="$(jq -r '.variables.filename' <<<"$payload")"
   printf '%s' "{\"data\":{\"fileUpload\":{\"success\":true,\"uploadFile\":{\"uploadUrl\":\"https://uploads.linear.app/put/$filename\",\"assetUrl\":\"https://uploads.linear.app/asset/$filename\",\"headers\":[{\"key\":\"x-linear-upload\",\"value\":\"signed-$filename\"}]}}}}___HTTP_CODE___200"
@@ -160,3 +174,30 @@ run_linear comments create TEAM-1 --body "See:" --attach "$TMP_ROOT/re]port.png"
 assert_eq "a bracket-named attach exits zero" "$RC" 0
 assert_log "the comment body escapes a bracket in the embed label" \
   'any(.[]; (.query? // "" | contains("commentCreate")) and (.variables.input.body | contains("![re\\]port.png](")))'
+
+echo "=== attachment destination lookup without a configured team ==="
+
+printf '[env]\n' >"$PROJECT/kendex.settings.toml"
+# The API returns null for missing issues and errors for inaccessible issues.
+# UUID input still requires that live read before files reach storage.
+while IFS='|' read -r name issue expected; do
+  run_linear comments create "$issue" --attach "$TMP_ROOT/shot.png"
+  if [[ "$expected" == valid ]]; then
+    assert_eq "$name: comment creation succeeds" "$RC" 0
+    assert_log "$name: lookup precedes uploads and comment uses the canonical issue ID" \
+      'length == 4 and (.[0].query | contains("query GetIssue("))
+        and (.[1].query | contains("fileUpload(")) and .[2].put != null
+        and (.[3].query | contains("commentCreate("))
+        and .[3].variables.input.issueId == "00000000-0000-0000-0000-000000000001"'
+  else
+    assert_ne "$name: issue lookup refuses the comment" "$RC" 0
+    assert_log "$name: lookup is the only request, with no upload or comment" \
+      'length == 1 and (.[0].query | contains("query GetIssue("))'
+  fi
+done <<'CASES'
+valid identifier|TEAM-1|valid
+valid UUID|00000000-0000-0000-0000-000000000001|valid
+missing identifier|TEAM-404|missing
+missing UUID|00000000-0000-0000-0000-000000000404|missing
+inaccessible UUID|00000000-0000-0000-0000-000000000403|inaccessible
+CASES

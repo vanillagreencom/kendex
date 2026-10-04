@@ -153,9 +153,16 @@ create_comment() {
         read_body_file "$body_file"
     fi
 
-    # --attach: refuse unreadable paths before any API call.
+    local comment_issue_id="$issue_id"
+    # An unresolved issue would strand uploaded files without a comment.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
+        local issue_result
+        if ! issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) ||
+            ! comment_issue_id=$(jq -er '.issue.id | strings | select(length > 0)' <<<"$issue_result"); then
+            jq -cn --arg issue "$issue_id" '{error: ("Attachment comment issue lookup failed: " + $issue)}' >&2
+            return 1
+        fi
     fi
 
     if [ -z "$body" ] && [ ${#attach_paths[@]} -eq 0 ]; then
@@ -187,7 +194,7 @@ create_comment() {
     local escaped_body
     escaped_body=$(echo "$body" | jq -Rs '.')
 
-    local input_parts=("\"issueId\": \"$issue_id\"" "\"body\": $escaped_body")
+    local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
     [ -n "$parent_id" ] && input_parts+=("\"parentId\": \"$parent_id\"")
 
