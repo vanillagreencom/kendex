@@ -129,7 +129,7 @@ A question answered in the overseer's chat shows in its Slack thread as "Answere
 
 ## Settings
 
-Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens in its private env file. Nothing is required, so the install writes nothing; [kendex.settings.toml.example](kendex.settings.toml.example) comments each key.
+Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens in its private env file. Nothing is required, so an arrival writes nothing; [kendex.settings.toml.example](kendex.settings.toml.example) comments each key.
 
 Other Slack settings are process-wide and use the launch checkout, the first `--root` for an installed unit. Caller exports take precedence.
 

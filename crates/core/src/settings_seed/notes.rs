@@ -65,8 +65,14 @@ impl Answered {
     /// Where one key stands, for a key some template declares. `None` is
     /// a key nothing declares, which no note asks about — every note here
     /// is built from the declarations themselves.
-    fn of(&self, key: &str) -> Option<&Current> {
+    pub(crate) fn of(&self, key: &str) -> Option<&Current> {
         self.reads.get(key)
+    }
+
+    /// Whether any assignment in the file takes this name — the wide view,
+    /// which is what keeps a value from being written over.
+    pub(crate) fn occupies(&self, key: &str) -> bool {
+        self.occupied.contains(key)
     }
 }
 

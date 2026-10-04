@@ -59,8 +59,8 @@ fn the_required_marker_marks_the_entry_and_never_reaches_the_bytes() {
     assert_eq!(inside[0].assignment, "A = \"x # required\"");
 }
 
-/// What an install writes: the marked keys of the skills arriving, and the
-/// keys a save names. Nothing else, on any pass.
+/// What seeding admits: the marked keys of the skills arriving, and the
+/// keys the pass edits. Nothing else, on any pass.
 #[test]
 fn seeding_admits_the_marked_keys_of_an_arriving_skill_and_the_edited_ones() {
     let entries = seeded(

@@ -17,6 +17,9 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
+        // No case here resolves a collection link: a run that tried would
+        // meet a closed local port rather than the share service.
+        .env("KENDEX_API", "http://127.0.0.1:9")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")
@@ -107,6 +110,41 @@ fn a_setting_without_an_equals_sign_is_refused_before_anything_is_written() {
         String::from_utf8_lossy(&output.stderr).contains("WORKTREE_SYMLINKS is not KEY=VALUE"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("kendex.toml")).unwrap(),
+        manifest
+    );
+    assert!(!project.join("kendex.settings.toml").exists());
+}
+
+/// A collection link installs the set it resolves to and takes no
+/// settings, so a value given beside one is refused before the link is
+/// resolved rather than dropped.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_setting_beside_a_collection_link_is_refused_before_the_link_is_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&home);
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+
+    let output = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            "https://kendex.ai/c/abcdefgh12345678",
+            "--setting",
+            "WORKTREE_SYMLINKS=.cache",
+            "-y",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("a collection link installs its own set"),
+        "{stderr}"
     );
     assert_eq!(
         fs::read_to_string(project.join("kendex.toml")).unwrap(),

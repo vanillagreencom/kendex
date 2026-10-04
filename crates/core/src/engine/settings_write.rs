@@ -5,8 +5,8 @@
 //! kendex's own records; this one is the
 //! consumer's, tracked in their repository, and a pass may put a line in
 //! it only when the skill the template comes from is arriving here, a
-//! save names the key, an install supplies a value for a key the file
-//! leaves unassigned, or the shared agent resolver replaces legacy labels.
+//! save names the key, `kendex add --setting` supplies a value for a key
+//! the file leaves unassigned, or the shared agent resolver replaces legacy labels.
 //! Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
 //! seeding rule lives in [`crate::settings_seed`]; compatibility lives in
@@ -42,8 +42,8 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 
 /// What this pass writes into the project's kendex.settings.toml. A skill
 /// arriving here writes the keys its template marks `# required`, a save
-/// writes the keys it names, and an install writes the values it supplies
-/// for keys the file assigns nowhere. Seeding never overwrites an assigned
+/// writes the keys it names, and `kendex add --setting` writes the values
+/// it supplies for keys the file assigns nowhere. Seeding never overwrites an assigned
 /// key, and neither does a supplied value.
 /// The shared agent resolver can replace legacy labels in an existing
 /// taxonomy even without an arrival or save.
@@ -137,11 +137,12 @@ pub(super) fn plan_settings_seed(
     if declared.is_empty() && edits.is_empty() && compatible == current {
         return Ok((notes, Vec::new()));
     }
-    // Where every declared key stands in the file the notes speak about.
-    // Both views at once, because the two questions the notes ask take
-    // different ones: whether a write can land on the name, and whether
-    // any script would read what is there.
-    let answered = crate::settings_seed::Answered::read(current.as_deref(), &declared);
+    // Where every declared key stands in the text this pass writes on,
+    // which is the file after the label rename: the notes and the values
+    // an install supplies are judged from that one reading. Both views at
+    // once, because the questions take different ones: whether a write can
+    // land on the name, and whether any script would read what is there.
+    let answered = crate::settings_seed::Answered::read(compatible.as_deref(), &declared);
     // A file that already declares env — as an array of tables, or in a
     // top-level assignment — has nowhere a setting can go, and writing
     // around it would leave a document that does not load. Said the way
@@ -164,7 +165,7 @@ pub(super) fn plan_settings_seed(
         ));
         return Ok((notes, vec![cannot_write(scope, file, problem)]));
     }
-    let (kept, said) = kept_values(compatible.as_deref(), &options.supplied_settings);
+    let (kept, said) = kept_values(&answered, &options.supplied_settings);
     notes.extend(said);
     let edits: Vec<_> = edits
         .into_iter()
@@ -379,23 +380,22 @@ fn supplied_edit(
 /// and one note for each whose value the supply would have changed. A key
 /// assigned anywhere in the file is the consumer's, by the same file-wide
 /// reading seeding takes; the note is owed where the value the loaders
-/// read differs from the one supplied, or where they read none.
+/// read differs from the one supplied, or where they read none. Both
+/// questions go to `answered`, the reading the notes take too.
 fn kept_values(
-    current: Option<&str>,
+    answered: &crate::settings_seed::Answered,
     supplied: &[crate::settings_file::SuppliedSetting],
 ) -> (Vec<String>, Vec<String>) {
-    use crate::settings_file::{Current, current_of, sites};
-    let Some(text) = current else {
-        return (Vec::new(), Vec::new());
-    };
-    let assigned = crate::settings_seed::assigned_keys(text);
-    let sites = sites(text);
+    use crate::settings_file::Current;
     let mut kept = Vec::new();
     let mut notes = Vec::new();
-    for one in supplied.iter().filter(|one| assigned.contains(&one.key)) {
-        let same = match current_of(&sites, &one.key) {
-            Current::Value { value, .. } => value == one.value,
-            Current::Absent | Current::Ambiguous { .. } => false,
+    for one in supplied.iter().filter(|one| answered.occupies(&one.key)) {
+        let same = match answered.of(&one.key) {
+            Some(Current::Value { value, .. }) => *value == one.value,
+            Some(Current::Absent | Current::Ambiguous { .. }) => false,
+            None => {
+                unreachable!("a supplied key is declared: supplied_edit refuses one that is not")
+            }
         };
         if !same {
             notes.push(format!(

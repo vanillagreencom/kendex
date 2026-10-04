@@ -28,7 +28,7 @@ Read paths omit the team filter when the target is empty; they never send an emp
 
 The guard proves a team is configured, not that a write lands in it. A mutation addressed by an existing entity ID or identifier routes by that ID inside the workspace the key reaches. Issue writes resolve states and labels under the issue's own team. Newly created team-scoped entities land in the named team. The guard does not check whether an existing identifier belongs to `LINEAR_TEAM`.
 
-`kendex.settings.toml.example` marks `LINEAR_TEAM` `# required`, so a project gets the key and its comment when this skill arrives and no other key in that file reaches their settings; what an arrival writes, and when, is kendex's `docs/authoring/settings.md`. The written `LINEAR_TEAM = ""` is inert: empty is exactly the unset case, so an unedited seed keeps writes that need a configured team refused.
+`kendex.settings.toml.example` marks `LINEAR_TEAM` `# required`, so a project gets the key and its comment when this skill arrives, and the arrival writes no other key in that file; what an arrival writes, and when, is kendex's `docs/authoring/settings.md`. The written `LINEAR_TEAM = ""` is inert: empty is exactly the unset case, so an unedited seed keeps writes that need a configured team refused.
 
 ## Authoring rules
 
