@@ -166,11 +166,29 @@ start_found() { # LIBRARY
 }
 assert_eq "$(start_found "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh")" "claude-fable-5-1" \
   "a SessionStart seventy Stop rows back is still read"
-new_checkout no_fleet
-rm -rf -- "${CHECKOUT:?}/tmp"
-run session-start-row "$START"
-assert_eq "RC=$RC first=$(first_line) made=$([ -e "$CHECKOUT/tmp" ] && echo yes || echo no)" "RC=0 first=- made=no" \
-  "a checkout with no overseer mailbox directory gets no row and no directory"
+# A consumer with orch installed and no overseer: the fleet never made the
+# mailbox directory, so each wrapper exits 0, says nothing on either stream and
+# adds no file anywhere in the checkout.
+tree_of() { (cd "$CHECKOUT" && find . -path ./.git -prune -o -print) | LC_ALL=C sort; }
+quiet_run() { # WRAPPER PAYLOAD — its status, both streams' bytes, the paths it added
+  local before after added
+  before="$(tree_of)" || return 1
+  run "$1" "$2"
+  after="$(tree_of)" || return 1
+  added="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | paste -s -d, -)" || return 1
+  printf 'RC=%s out=%s err=%s added=%s' "$RC" "$(wc -c < "$TMP_ROOT/stdout" | tr -d ' ')" \
+    "$(wc -c < "$ERR_FILE" | tr -d ' ')" "$added"
+}
+QUIET_ROWS="session-start-row|$START
+session-end-row|$END
+stop-failure-row|$WALL"
+while IFS='|' read -r wrapper payload; do
+  new_checkout "no_fleet_$wrapper"
+  rm -rf -- "${CHECKOUT:?}/tmp"
+  got="$(quiet_run "$wrapper" "$payload")" || { echo "session-rows: tree=unreadable value=[$CHECKOUT]" >&2; exit 1; }
+  assert_eq "$got" "RC=0 out=0 err=0 added=" \
+    "$wrapper with no overseer mailbox directory exits 0, silent, adding no file"
+done <<<"$QUIET_ROWS"
 new_checkout outside_tmux
 run session-start-row "$START" TMUX= TMUX_PANE=
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
@@ -307,6 +325,14 @@ assert_eq "$(sed -n 's/^copies=\([0-9]*\)$/\1/p' <<<"$BOUND" | awk '{ print ($1 
   "the copy extractor finds each writer's source"
 
 # --- control ------------------------------------------------------------------
+# The quiet runs again with the mailbox directory standing: each wrapper adds
+# its row file, so the no-file assertion above reaches what a write leaves.
+while IFS='|' read -r wrapper payload; do
+  new_checkout "fleet_control_$wrapper"
+  got="$(quiet_run "$wrapper" "$payload")" || { echo "session-rows: tree=unreadable value=[$CHECKOUT]" >&2; exit 1; }
+  assert_eq "$got" "RC=0 out=0 err=0 added=./tmp/lane-mail/overseer/session-7000-9.jsonl" \
+    "control: $wrapper with the mailbox directory standing adds its row file"
+done <<<"$QUIET_ROWS"
 # SESSION_ROWS_WAIT raised to session-end-row's own 3 s in a copy of the
 # library: its source copy is past the bound.
 WAIT_LIB="$TMP_ROOT/wait-session-rows.sh"

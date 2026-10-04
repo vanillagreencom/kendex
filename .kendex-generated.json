@@ -904,6 +904,7 @@
   ".codex/hooks/lane-mail-halt.sh",
   ".codex/hooks/pre-commit-check.sh",
   ".codex/hooks/session-drift-check.sh",
+  ".codex/hooks/session-end-row.sh",
   ".codex/hooks/session-start-row.sh",
   ".codex/hooks/skill-load-check.sh",
   ".codex/hooks/skill-load-record.sh",

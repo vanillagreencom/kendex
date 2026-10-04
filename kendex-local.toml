@@ -550,7 +550,7 @@ harnesses = ["claude", "codex", "pi"]
 
 [hooks.session-end-row]
 source = "."
-harnesses = ["claude", "pi"]
+harnesses = ["claude", "codex", "pi"]
 
 [hooks.stop-failure-row]
 source = "."
