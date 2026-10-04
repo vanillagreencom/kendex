@@ -50,6 +50,7 @@ mod marketplace_cli;
 mod missing_remedy;
 mod output_styles;
 mod packaging_recipes;
+mod pi_append_fallback;
 mod pi_declared_both_scopes;
 mod pi_extension_only_lock;
 mod pi_shadow_package;

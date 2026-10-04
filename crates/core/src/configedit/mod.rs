@@ -182,15 +182,35 @@ impl ConfigEdit {
         ) || matches!(self, Self::UpsertMarkerBlock { name, .. } | Self::RemoveMarkerBlock { name } if name.starts_with("output-style-"))
     }
 
-    /// Composed OpenCode cleanup may retire a document containing only our schema.
-    pub(crate) fn removes_empty_document(edits: &[Self], current: &str) -> Result<bool, String> {
+    /// Whether the composed edits retire the document `current` holds
+    /// (`None`: absent): OpenCode cleanup leaving only our schema, or a Pi
+    /// append file left with nothing of its own
+    /// ([`crate::pi_ext::append_system_retires`]).
+    pub(crate) fn removes_empty_document(
+        edits: &[Self],
+        current: Option<&str>,
+    ) -> Result<bool, String> {
+        let updated = || {
+            edits
+                .iter()
+                .try_fold(current.unwrap_or_default().to_owned(), |text, edit| {
+                    edit.apply(&text)
+                })
+        };
+        let marks = |edit: &Self| {
+            matches!(
+                edit,
+                Self::UpsertMarkerBlock { .. } | Self::RemoveMarkerBlock { .. }
+            )
+        };
+        if edits.iter().any(marks) {
+            return Ok(crate::pi_ext::append_system_retires(current, &updated()?));
+        }
         let prunes = |edit: &Self| matches!(edit, Self::OpencodePruneInstructions { .. });
         if !edits.iter().any(prunes) {
             return Ok(false);
         }
-        let updated = edits
-            .iter()
-            .try_fold(current.to_owned(), |text, edit| edit.apply(&text))?;
+        let updated = updated()?;
         let value: Value = serde_json::from_str(&updated).map_err(|e| e.to_string())?;
         let mut empty = Map::new();
         opencode_schema(&mut empty);

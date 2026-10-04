@@ -251,12 +251,12 @@ pub fn install(
     })
 }
 
-/// Unregister a package and move its installed copy to the trash.
+/// Unregister a package and move its installed copy to the trash. Its
+/// `APPEND_SYSTEM.md` block leaves through the plan's edit to that file,
+/// composed with the file's other edits.
 pub fn remove(env: &Env, scope_root: &Path, name: &str) -> Result<()> {
     let dest = package_path(scope_root, name)?;
-    append_system_target(env, scope_root)?;
     settings::remove_package(&settings_path(scope_root), name)?;
-    strip_append_system(&append_system_path(scope_root), name)?;
     unlink_bins(&bin_dir(scope_root), &dest)?;
     if dest.symlink_metadata().is_ok() {
         crate::trash::move_to_trash(env, &dest)?;
@@ -489,10 +489,11 @@ fn write_append_system(
     enabled: bool,
 ) -> Result<()> {
     let path = append_system_target(env, scope_root)?;
-    let current = read_if_exists(&path)?.unwrap_or_default();
+    let current = read_if_exists(&path)?;
+    let text = current.as_deref().unwrap_or_default();
     let mut next = match append_system_block(env, scope_root, package, dest, enabled)? {
-        Some(block) => upsert_marker_block(&current, &package.name, &block),
-        None => remove_marker_block(&current, &package.name),
+        Some(block) => upsert_marker_block(text, &package.name, &block),
+        None => remove_marker_block(text, &package.name),
     };
     if let Some(edit) = inherited_edit(env, scope_root, !next.trim().is_empty())? {
         next = edit.apply(&next).map_err(|message| CoreError::ConfigEdit {
@@ -500,17 +501,21 @@ fn write_append_system(
             message,
         })?;
     }
-    if !current.trim().is_empty() {
-        next = strip_inherited_only(&next);
+    if append_system_retires(current.as_deref(), &next) {
+        return match current {
+            Some(_) => std::fs::remove_file(&path).map_err(|e| CoreError::io(&path, e)),
+            None => Ok(()),
+        };
     }
-    if next == current {
+    if next == text {
         return Ok(());
-    }
-    if next.trim().is_empty() {
-        return std::fs::remove_file(&path).map_err(|e| CoreError::io(&path, e));
     }
     atomic_write(&path, &next)
 }
+
+/// The project append file's block holding the global instructions it
+/// inherits.
+const INHERITED: &str = "inherited-global";
 
 /// Pi reads only the trusted project's append file. Keep inherited content
 /// in one block so reapply can remove packages and styles that left globally.
@@ -546,7 +551,7 @@ pub(crate) fn inherited_edit(
             blocks.push(lines.join("\n"));
         }
     }
-    let name = "inherited-global".to_owned();
+    let name = INHERITED.to_owned();
     Ok(Some(if blocks.is_empty() {
         ConfigEdit::RemoveMarkerBlock { name }
     } else {
@@ -557,31 +562,15 @@ pub(crate) fn inherited_edit(
     }))
 }
 
-/// Inheritance belongs to the project's instructions, not to an otherwise
-/// empty file that would prevent Pi from reading the user's global file.
-fn strip_inherited_only(text: &str) -> String {
-    let local = remove_marker_block(text, "inherited-global");
-    if local.trim().is_empty() {
-        local
-    } else {
-        text.to_owned()
-    }
-}
-
-/// Drop the package's block; a file with nothing left in it is deleted
-/// rather than left behind empty.
-fn strip_append_system(path: &Path, name: &str) -> Result<()> {
-    let Some(current) = read_if_exists(path)? else {
-        return Ok(());
-    };
-    let next = strip_inherited_only(&remove_marker_block(&current, name));
-    if next == current {
-        return Ok(());
-    }
-    if next.trim().is_empty() {
-        return std::fs::remove_file(path).map_err(|e| CoreError::io(path, e));
-    }
-    atomic_write(path, &next)
+/// Whether a write leaving `next` in an `APPEND_SYSTEM.md` that held
+/// `current` (`None`: absent) retires the file instead. Inheritance belongs
+/// beside the project's own instructions, never alone in a file that keeps
+/// Pi from reading the user's global one. A file somebody left blank stays
+/// theirs. Every writer of the file, the package writer and the plan's
+/// composed edits alike, asks this.
+pub(crate) fn append_system_retires(current: Option<&str>, next: &str) -> bool {
+    remove_marker_block(next, INHERITED).trim().is_empty()
+        && current.is_none_or(|text| !text.trim().is_empty())
 }
 
 #[cfg(test)]

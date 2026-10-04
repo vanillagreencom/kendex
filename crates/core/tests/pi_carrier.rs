@@ -344,11 +344,22 @@ fn record_installed_packages(w: &World, scope: &Scope) {
 fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
     use kendex_core::{apply, engine, lock, manifest, pi_ext, scan, settings};
     use serde_json::json;
-    for global in [true, false] {
-        let w = world();
+    // The shared world's project walk starts where its global walk ended:
+    // the global registration enabled and inherited into the project file,
+    // which a project disable must leave to the global file again.
+    let shared = world();
+    for (global, carried) in [(true, false), (false, false), (true, true), (false, true)] {
+        let fresh;
+        let w = match carried {
+            true => &shared,
+            false => {
+                fresh = world();
+                &fresh
+            }
+        };
         let name = "pi-widgets";
-        let (catalog, source) = widgets_catalog(&w);
-        let scope = if global { Scope::Global } else { scope(&w) };
+        let (catalog, source) = widgets_catalog(w);
+        let scope = if global { Scope::Global } else { scope(w) };
         let path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
@@ -401,8 +412,12 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
             }
             assert_eq!(observed, expected);
             // A switch carries the package's instructions with it.
-            let append = fs::read_to_string(pi_ext::append_system_path(&root)).unwrap();
-            assert_eq!(append.contains("Use the widget tool."), enabled);
+            let append = fs::read_to_string(pi_ext::append_system_path(&root)).unwrap_or_default();
+            assert_eq!(
+                append.contains("Use the widget tool."),
+                enabled,
+                "global {global}, carried {carried}"
+            );
             assert_eq!(fs::read(dest.join("index.js")).unwrap(), WIDGETS_INDEX);
             let record = lock::load(&lock::lock_path(&w.env, &scope)).unwrap();
             let declared = engine::ops::manifest_for_reading(&w.env, &scope).unwrap();
@@ -554,6 +569,89 @@ fn a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing() {
     assert!(toggled.is_err(), "the toggle planned over an unread block");
     let after = [&manifest_path, &settings_path, &lock_path].map(|path| fs::read(path).unwrap());
     assert_eq!(after, before);
+}
+
+/// A package's block leaves through the plan's edit to the project's
+/// `APPEND_SYSTEM.md`, so a removal whose append file is a link or not a
+/// file plans none of the removal: the package, its registration and the
+/// file the link reaches stay as they were. WORKTREE_SYMLINKS links the
+/// prompt file this way.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
+    use kendex_core::apply::{self, Op};
+    use kendex_core::engine::{DriftState, PlanOptions, plan_apply};
+    use kendex_core::{manifest, pi_ext};
+    for target in ["directory", "file-link", "worktree-file-link"] {
+        let w = world();
+        let (catalog, source) = widgets_catalog(&w);
+        let scope = scope(&w);
+        let manifest_path = manifest::manifest_path(&w.env, &scope);
+        fs::write(&manifest_path, format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+        )).unwrap();
+        let root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        let dest = pi_ext::install(&w.env, &root, &source, true).unwrap().dest;
+        record_installed_packages(&w, &scope);
+        let global = pi_ext::append_system_path(&w.home.join(".pi/agent"));
+        fs::create_dir_all(global.parent().unwrap()).unwrap();
+        fs::write(&global, "Personal global instructions.\n").unwrap();
+        let append = pi_ext::append_system_path(&root);
+        let personal = w.project.join("personal.md");
+        fs::rename(&append, &personal).unwrap();
+        match target {
+            "directory" => fs::create_dir(&append).unwrap(),
+            "file-link" => std::os::unix::fs::symlink(&personal, &append).unwrap(),
+            "worktree-file-link" => std::os::unix::fs::symlink(&global, &append).unwrap(),
+            _ => unreachable!(),
+        }
+        fs::write(
+            &manifest_path,
+            format!(
+                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
+                source_path(&catalog)
+            ),
+        )
+        .unwrap();
+        let settings = fs::read(pi_ext::settings_path(&root)).unwrap();
+        let reached = [&personal, &global].map(|path| fs::read(path).unwrap());
+
+        let removal = plan_apply(
+            &w.env,
+            &scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            !removal
+                .plan
+                .ops
+                .iter()
+                .any(|op| matches!(&op.op, Op::PiRemove { .. })),
+            "{target}: {:?}",
+            removal.plan.ops
+        );
+        assert!(
+            removal
+                .drift
+                .iter()
+                .any(|row| row.name == "pi-widgets" && row.state == DriftState::Conflict),
+            "{target}: {} rows",
+            removal.drift.len()
+        );
+        apply::execute(&w.env, &removal.plan).unwrap();
+        assert_eq!(fs::read(dest.join("index.js")).unwrap(), WIDGETS_INDEX);
+        assert_eq!(fs::read(pi_ext::settings_path(&root)).unwrap(), settings);
+        assert_eq!(
+            [&personal, &global].map(|path| fs::read(path).unwrap()),
+            reached,
+            "{target}"
+        );
+        assert_eq!(append.is_dir(), target == "directory", "{target}");
+    }
 }
 
 /// A package installed after the scope's Pi output style puts its block

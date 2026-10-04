@@ -336,7 +336,7 @@ pub(super) fn orphans(
                 };
                 drift.push(row(entry, DriftState::Orphaned, detail.into(), None));
                 if entry.kind == ItemKind::PiExtension {
-                    match pi_removal(env, scope, entry) {
+                    match pi_removal(env, scope, entry, config_edits) {
                         Ok(planned) => guard.extend(ops, planned),
                         // A removal planned over what it could not read
                         // would be one nobody looked at; the record stays
@@ -528,11 +528,17 @@ fn keep_what_kept_records_require(
 
 /// One Pi package's removal: the op that takes its registrations and its
 /// payload together, bound to the package tree as it sits (a move binds to
-/// `TreeIs`, as every rename source does). `None` where nothing of it is on
-/// disk to take and only the record goes. An error is something the plan
-/// could not read — the scope's Pi root, its settings.json or the package's
-/// own entries.
-fn pi_removal(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<Option<PlannedOp>> {
+/// `TreeIs`, as every rename source does), and its `APPEND_SYSTEM.md` block
+/// as an edit composed with that file's others. `None` where nothing of it
+/// is on disk to take and only the record goes. An error is something the
+/// plan could not read — the scope's Pi root, its settings.json, its append
+/// file or the package's own entries — and plans no part of the removal.
+fn pi_removal(
+    env: &Env,
+    scope: &Scope,
+    entry: &LockEntry,
+    config_edits: &mut super::config_edits::ConfigEditPlan,
+) -> Result<Option<PlannedOp>> {
     let scope_root = crate::pi_ext::scope_root(env, scope)?;
     let registered = crate::pi_ext::registered(&scope_root, &entry.name)?;
     let package = crate::pi_ext::package_path(&scope_root, &entry.name)?;
@@ -542,6 +548,17 @@ fn pi_removal(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<Option<Plan
     };
     if !registered && pre.binds_nothing() {
         return Ok(None);
+    }
+    let append = crate::pi_ext::append_system_target(env, &scope_root)?;
+    let current = crate::fs::read_if_exists(&append)?.unwrap_or_default();
+    if crate::configedit::marker_block(&current, &entry.name).is_some() {
+        config_edits.push(
+            append,
+            format!("remove {} instructions", entry.name),
+            crate::configedit::ConfigEdit::RemoveMarkerBlock {
+                name: entry.name.clone(),
+            },
+        );
     }
     Ok(Some(PlannedOp {
         description: format!(

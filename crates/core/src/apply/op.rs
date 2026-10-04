@@ -53,12 +53,12 @@ pub enum Op {
         absent_is_done: bool,
     },
     /// One Pi package out of a scope, whole: its `packages` entry in
-    /// settings.json, its APPEND_SYSTEM.md block, the bin links into it
-    /// and the package directory, the mirror of the carrier's install.
-    /// One op rather than a Trash beside config edits because the
-    /// registrations are read back by the package they name — a bin link
-    /// is found by where it points — so the four land together or not at
-    /// all.
+    /// settings.json, the bin links into it and the package directory, the
+    /// mirror of the carrier's install. One op rather than a Trash beside
+    /// config edits because the registrations are read back by the package
+    /// they name — a bin link is found by where it points — so the three
+    /// land together or not at all. Its APPEND_SYSTEM.md block is a config
+    /// edit, composed with every other edit to that file.
     PiRemove {
         /// The Pi root the install spelled the registrations from; a bin
         /// link is matched by the target that spelling wrote.
@@ -292,7 +292,6 @@ impl Op {
                 ..
             } => vec![
                 crate::pi_ext::settings_path(scope_root),
-                crate::pi_ext::append_system_path(scope_root),
                 crate::pi_ext::bin_dir(scope_root),
                 package.clone(),
             ],

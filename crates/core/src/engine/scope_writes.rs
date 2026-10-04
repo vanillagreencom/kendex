@@ -89,27 +89,32 @@ pub(super) fn plan_config_edits(
         } else {
             crate::apply::Pre::observed(&path)?
         };
-        let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-        let written = config_edits::ConfigEditPlan::compose(&path, &current, &mut edits, new_lock)?;
-        let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(&edits, &current)
-            .map_err(|message| crate::error::CoreError::ConfigEdit {
-                path: path.clone(),
-                message,
-            })?;
-        if remove_empty && !path.is_symlink() && path.exists() {
-            ops.push(super::removal::trash(
-                "Move empty OpenCode settings to the trash".into(),
-                path,
-            )?);
+        let found = crate::fs::read_if_exists(&path)?;
+        let current = found.as_deref().unwrap_or_default();
+        let written = config_edits::ConfigEditPlan::compose(&path, current, &mut edits, new_lock)?;
+        let remove_empty =
+            crate::configedit::ConfigEdit::removes_empty_document(&edits, found.as_deref())
+                .map_err(|message| crate::error::CoreError::ConfigEdit {
+                    path: path.clone(),
+                    message,
+                })?;
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        // A retired document goes whole, and an absent one stays absent.
+        if remove_empty && !path.is_symlink() {
+            if found.is_some() {
+                ops.push(super::removal::trash(
+                    format!("Move {file} to the trash, nothing of its own left").into(),
+                    path,
+                )?);
+            }
             continue;
         }
         if written == current {
             continue;
         }
-        let file = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
         ops.push(PlannedOp {
             description: format!("Update {file} ({})", labels.join(", ")).into(),
             op: Op::EditFile { pre, path, edits },
