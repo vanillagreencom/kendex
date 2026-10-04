@@ -8,6 +8,7 @@ import { applyUpdateMetadata, buildInventory } from "../extensions/manager/inven
 import { npmCachePath } from "../extensions/manager/paths.ts";
 import { gitPackageDirCandidates } from "../extensions/manager/versions.ts";
 import { packageExtensions } from "../extensions/manager/filters.ts";
+import { mutantManager, writeCommand } from "./fixtures/commands.ts";
 
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-inventory-tests");
 const originalEnv = {
@@ -117,6 +118,33 @@ test("reads settings schemas from user-scoped Pi npm packages", async () => {
 	expect(item?.settingsSchema?.map((schema) => schema.key)).toEqual(["enabled"]);
 	expect(item?.packageDir).toBe(npmPackageDir);
 	expect(inv.items.some((entry) => entry.kind === "extension module" && entry.sourcePath === join(npmPackageDir, "extensions", "index.ts"))).toBe(true);
+});
+
+type InventoryModule = typeof import("../extensions/manager/inventory.ts");
+
+/** The broken reason of a user npm package no cheap root holds, while `npm root -g` exits 3. */
+async function unrootedReason(module: InventoryModule): Promise<string | undefined> {
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const bin = join(rootTmp, "bin");
+	writeCommand(join(bin, "npm"), "exit 3");
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/unrooted"] });
+	clearPackageConfigCache();
+	process.env.PATH = [bin, process.env.PATH].join(":");
+	// A fresh host object is a fresh session, so no earlier lookup is memoized.
+	const inv = await module.buildInventory({} as never, { cwd: project } as never);
+	return inv.packages.find((pkg) => pkg.packageName === "@scope/unrooted")?.stateReason;
+}
+
+test("a failed npm root lookup is named in the broken reason; control: dropping the lookup failures reads as not installed", async () => {
+	expect(await unrootedReason(await import("../extensions/manager/inventory.ts"))).toBe("package source not found: npm:@scope/unrooted; npm root -g: exit=3");
+	const mutant = mutantManager(join(rootTmp, "mutant-reason"), [{
+		file: "inventory.ts",
+		before: "[`package source not found: npm:${npmName}`, ...lookup.lookupFailures]",
+		after: "[`package source not found: npm:${npmName}`]",
+	}]);
+	expect(await unrootedReason(await import(join(mutant, "inventory.ts")))).toBe("package source not found: npm:@scope/unrooted");
 });
 
 test("reads settings schemas from legacy npm global prefix packages", async () => {

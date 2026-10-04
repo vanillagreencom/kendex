@@ -157,34 +157,131 @@ test("invalid npmCommand is surfaced in npm action plans", async () => {
 	}
 });
 
-// The strip has to precede `npm uninstall`: npm 7+ does not reliably run a
-// removed package's own preuninstall, and the script that owns the block is
-// deleted with the tree.
-test("npm uninstall strips the APPEND_SYSTEM.md block before npm runs", async () => {
-	const { buildInventory } = await import("../extensions/manager/inventory.ts");
-	const { planUninstall, runUninstall } = await import("../extensions/manager/actions.ts");
+interface BlockObservation { ok: boolean; firstLine: string; blockSeenByNpm: boolean; blockAfter: boolean }
+
+/**
+ * Uninstall an npm package that owns an APPEND_SYSTEM.md block, with an npm
+ * that records the block as it finds it and then runs `npmTail`. With
+ * `cancelAfterStart`, the uninstall is cancelled once npm writes that pid file.
+ */
+async function uninstallWithBlock(actions: ActionsModule, inventory: InventoryModule, npmTail: string, cancelAfterStart?: string): Promise<BlockObservation | "unsettled"> {
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const packageDir = join(userPi, "npm", "node_modules", "@scope", "appendpkg");
 	const target = join(userPi, "APPEND_SYSTEM.md");
-	const seenByNpm = join(rootTmp, "append-system-seen-by-npm");
-	// npm records the block as it finds it, then fails.
-	const npm = writeCommand(join(bin, "npm"), `cat "${target}" > "${seenByNpm}"; echo "npm ERR! network" >&2; exit 1`);
+	const seenByNpm = join(rootTmp, `append-system-seen-by-npm-${Math.random()}`);
+	const npm = writeCommand(join(bin, `npm-${Math.random()}`), `cat "${target}" > "${seenByNpm}"; ${npmTail}`);
 	mkdirSync(join(project, ".pi"), { recursive: true });
 	writeJson(join(userPi, "settings.json"), { npmCommand: [npm], packages: ["npm:@scope/appendpkg"] });
 	writeAppendSystemPackage(packageDir, "@scope/appendpkg");
-
-	// Real script, real block, so "the block is gone" is a filesystem fact.
+	clearPackageConfigCache();
+	// Real script, real block, so "the block is there" is a filesystem fact.
 	expect(runVendoredScript(packageDir, "install").status).toBe(0);
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 
-	const inv = await buildInventory({} as never, { cwd: project } as never);
+	const inv = await inventory.buildInventory({} as never, { cwd: project } as never);
 	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/appendpkg")!;
-	const outcome = await runUninstall(planUninstall(item, inv, { cwd: project } as never)!, inv, live());
+	const cancel = new AbortController();
+	const run = actions.runUninstall(actions.planUninstall(item, inv, { cwd: project } as never)!, inv, cancel.signal);
+	if (cancelAfterStart) {
+		leftovers.push(await startedPid(cancelAfterStart));
+		cancel.abort();
+	}
+	// A cancelled npm settles within the runner's SIGTERM grace, then the
+	// restore runs one short script.
+	const outcome = await settleWithin(run, 6_000);
+	if (outcome === "unsettled") return outcome;
+	return {
+		ok: outcome.ok,
+		firstLine: outcome.message.split("\n")[0]!.split("=")[0]!,
+		blockSeenByNpm: readFileSync(seenByNpm, "utf8").includes("Append pkg instructions"),
+		// The script deletes the file once its last block goes.
+		blockAfter: existsSync(target) && readFileSync(target, "utf8").includes("Append pkg instructions"),
+	};
+}
 
-	expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, "pi-extension-manager: npm-uninstall-exit=1"]);
-	expect(readFileSync(seenByNpm, "utf8")).not.toContain("Append pkg instructions");
-});
+// The strip has to precede `npm uninstall`: npm 7+ does not reliably run a
+// removed package's own preuninstall, and the script that owns the block is
+// deleted with the tree. An uninstall that then fails leaves the package
+// installed, so its block goes back.
+test("npm uninstall strips the block before npm runs and restores it when npm fails or is cancelled; control: no restore leaves it gone", async () => {
+	const real = [await import("../extensions/manager/actions.ts"), await import("../extensions/manager/inventory.ts")] as const;
+	const pidFile = join(rootTmp, "npm-pid");
+	const rows = [
+		{ npmTail: 'echo "npm ERR! network" >&2; exit 1', cancelAfterStart: undefined, firstLine: "pi-extension-manager: npm-uninstall-exit" },
+		{ npmTail: `echo $$ > "${pidFile}"; exec sleep 30`, cancelAfterStart: pidFile, firstLine: "pi-extension-manager: npm-uninstall-cancelled" },
+	];
+	for (const row of rows) {
+		expect(await uninstallWithBlock(...real, row.npmTail, row.cancelAfterStart)).toEqual({ ok: false, firstLine: row.firstLine, blockSeenByNpm: false, blockAfter: true });
+	}
+
+	const mutant = mutantManager(join(rootTmp, "mutant-restore"), [{
+		file: "actions.ts",
+		before: "const restore = await restoreAppendSystemBlockAfterUninstall(item);",
+		after: 'const restore = { kind: "ran" } as const;',
+	}]);
+	const planted = await uninstallWithBlock(await import(join(mutant, "actions.ts")), await import(join(mutant, "inventory.ts")), "exit 1");
+	expect(planted === "unsettled" ? planted : planted.blockAfter).toBe(false);
+}, CONTROL_CASE_MS);
+
+type RemovalObservation = { settled: "resolved"; ok: boolean; firstLine: string; settingsKept: boolean; npmRan: boolean; restored: boolean } | { settled: "rejected"; error: string } | "unsettled";
+
+/** An npm uninstall cancelled while the package's own removal script hangs. */
+async function cancelHungRemoval(actions: ActionsModule, inventory: InventoryModule): Promise<RemovalObservation> {
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const settingsPath = join(userPi, "settings.json");
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "hungscript");
+	const pidFile = join(rootTmp, `script-pid-${Math.random()}`);
+	const restoredMarker = join(rootTmp, `restored-${Math.random()}`);
+	const npmMarker = join(rootTmp, `npm-ran-${Math.random()}`);
+	writeAppendSystemPackage(packageDir, "@scope/hungscript");
+	writeFileSync(join(packageDir, "scripts", "append-system.mjs"), [
+		'import { writeFileSync } from "node:fs";',
+		`if (process.argv[2] === "remove") { writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000); }`,
+		`else writeFileSync(${JSON.stringify(restoredMarker)}, process.argv[2]);`,
+	].join("\n"));
+	const npm = writeCommand(join(bin, `npm-${Math.random()}`), `touch "${npmMarker}"`);
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(settingsPath, { npmCommand: [npm], packages: ["npm:@scope/hungscript"] });
+	clearPackageConfigCache();
+	const inv = await inventory.buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/hungscript")!;
+	const settingsBefore = readFileSync(settingsPath, "utf8");
+	const cancel = new AbortController();
+	const run = actions.runUninstall(actions.planUninstall(item, inv, { cwd: project } as never)!, inv, cancel.signal);
+	leftovers.push(await startedPid(pidFile));
+	cancel.abort();
+	// The script's own deadline is 10 s; a cancelled one ends inside the 2 s
+	// SIGTERM grace, so a run still going at this bound never saw the cancel.
+	const outcome = await settleWithin(run.then((value) => ({ value }), (error: unknown) => ({ error: String(error) })), 5_000);
+	if (outcome === "unsettled") return outcome;
+	if ("error" in outcome) return { settled: "rejected", error: outcome.error.split("\n")[0]! };
+	return {
+		settled: "resolved",
+		ok: outcome.value.ok,
+		firstLine: outcome.value.message.split("\n")[0]!,
+		settingsKept: readFileSync(settingsPath, "utf8") === settingsBefore,
+		npmRan: existsSync(npmMarker),
+		restored: existsSync(restoredMarker) && readFileSync(restoredMarker, "utf8") === "install",
+	};
+}
+
+test("cancelling during the block removal returns a cancelled notice and restores the block; controls: a fresh signal or a thrown cancel", async () => {
+	const real = await cancelHungRemoval(await import("../extensions/manager/actions.ts"), await import("../extensions/manager/inventory.ts"));
+	const script = join(process.env.PI_CODING_AGENT_DIR!, "npm", "node_modules", "@scope", "hungscript", "scripts", "append-system.mjs");
+	expect(real).toEqual({ settled: "resolved", ok: false, firstLine: `pi-extension-manager: append-system-cancelled=remove:${script}`, settingsKept: true, npmRan: false, restored: true });
+
+	const rows = [
+		{ file: "append-system.ts", before: 'runAppendSystemScript(item.packageDir, "remove", signal)', after: 'runAppendSystemScript(item.packageDir, "remove", new AbortController().signal)', expected: "unsettled" },
+		{ file: "actions.ts", before: 'if (removal.reason === "cancelled") return', after: 'if (removal.reason === "cancelled" && false) return', expected: "rejected" },
+	] as const;
+	for (const [index, row] of rows.entries()) {
+		const mutant = mutantManager(join(rootTmp, `mutant-removal-${index}`), [{ file: row.file, before: row.before, after: row.after }]);
+		const planted = await cancelHungRemoval(await import(join(mutant, "actions.ts")), await import(join(mutant, "inventory.ts")));
+		expect({ file: row.file, settled: planted === "unsettled" ? planted : planted.settled }).toEqual({ file: row.file, settled: row.expected });
+	}
+}, 30_000);
 
 test("toggling a package under the kendex packages/ layout writes and removes its block", async () => {
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
-import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
+import { removeAppendSystemBlockForUninstall, restoreAppendSystemBlockAfterUninstall, syncAppendSystemForPackage, type AppendSystemOutcome } from "./append-system.js";
 import { managerFailure, managerNotice, stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { normalizePackageEntry } from "./inventory.js";
@@ -126,8 +126,48 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 		|| normalized.source === item.packageSourceName;
 }
 
-/** An npm uninstall changes settings only after npm's confirmed exit 0, never on a signal, deadline, cancellation or launch failure. */
-export async function runUninstall(plan: UninstallPlan, inventory: Inventory, signal: AbortSignal): Promise<{ ok: boolean; message: string }> {
+type ActionResult = { ok: boolean; message: string };
+
+/**
+ * A failed uninstall's notice once the APPEND_SYSTEM.md block its removal
+ * step took is put back; the notice names the block when it cannot be.
+ */
+async function failedUninstall(item: InventoryItem, removal: AppendSystemOutcome, message: string): Promise<ActionResult> {
+	if (removal.kind === "absent") return { ok: false, message };
+	const restore = await restoreAppendSystemBlockAfterUninstall(item);
+	const lost = `The package's APPEND_SYSTEM.md instructions were removed and could not be restored`;
+	switch (restore.kind) {
+		case "ran":
+			return { ok: false, message };
+		case "absent":
+			return { ok: false, message: `${message}\n${lost}: its scripts/append-system.mjs is gone.` };
+		case "failed":
+			return { ok: false, message: `${message}\n${lost}:\n${restore.message}` };
+		default: {
+			const unreachable: never = restore;
+			throw new Error(`append-system: unknown outcome ${JSON.stringify(unreachable)}`);
+		}
+	}
+}
+
+/**
+ * The block removal an uninstall starts with. A cancelled removal ends the
+ * uninstall with its notice; any other script failure throws before settings
+ * change.
+ */
+async function removeBlockBeforeUninstall(item: InventoryItem, signal: AbortSignal): Promise<{ kind: "removed"; removal: AppendSystemOutcome } | { kind: "stopped"; result: ActionResult }> {
+	const removal = await removeAppendSystemBlockForUninstall(item, signal);
+	if (removal.kind !== "failed") return { kind: "removed", removal };
+	if (removal.reason === "cancelled") return { kind: "stopped", result: await failedUninstall(item, removal, removal.message) };
+	throw new Error(removal.message);
+}
+
+/**
+ * An npm uninstall changes settings only after npm's confirmed exit 0, never
+ * on a signal, deadline, cancellation or launch failure, and any such failure
+ * puts back the APPEND_SYSTEM.md block removed ahead of npm.
+ */
+export async function runUninstall(plan: UninstallPlan, inventory: Inventory, signal: AbortSignal): Promise<ActionResult> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("uninstall-unsupported", plan.item.id, "Package uninstall is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
@@ -144,14 +184,16 @@ export async function runUninstall(plan: UninstallPlan, inventory: Inventory, si
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
 		// APPEND_SYSTEM.md block goes with the tree.
-		await removeAppendSystemBlockForUninstall(plan.item, signal);
+		const block = await removeBlockBeforeUninstall(plan.item, signal);
+		if (block.kind === "stopped") return block.result;
 		const npmUninstallFailure = await runPackageCommand("npm-uninstall", plan.method.command, [...plan.method.argsPrefix, ...args], plan.method.cwd, signal);
-		if (npmUninstallFailure) return { ok: false, message: npmUninstallFailure };
+		if (npmUninstallFailure) return failedUninstall(plan.item, block.removal, npmUninstallFailure);
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		return { ok: true, message: managerNotice("npm-uninstalled", plan.method.npmName, `Uninstall succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}`) };
 	}
-	// A returned script failure must leave saved and in-memory settings intact.
-	await removeAppendSystemBlockForUninstall(plan.item, signal);
+	// A script failure must leave saved and in-memory settings intact.
+	const block = await removeBlockBeforeUninstall(plan.item, signal);
+	if (block.kind === "stopped") return block.result;
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	return stripped
 		? { ok: true, message: managerNotice("settings-entry-removed", plan.item.sourceName, `Removed the entry from ${plan.item.scope} settings.json.`) }
@@ -183,7 +225,7 @@ export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: Exten
 	return undefined;
 }
 
-export async function runUpdate(plan: UpdatePlan, signal: AbortSignal): Promise<{ ok: boolean; message: string }> {
+export async function runUpdate(plan: UpdatePlan, signal: AbortSignal): Promise<ActionResult> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("update-unsupported", plan.item.id, "Package update is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["add", plan.method.sourceRepo];

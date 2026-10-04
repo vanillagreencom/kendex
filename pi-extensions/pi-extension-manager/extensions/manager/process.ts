@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+import { needsWindowsShell, resolveWindowsCommand, taskkillPath } from "./windows-command.js";
 
 /*
  * The manager's one command runner: package updates and removals, package
@@ -20,12 +20,19 @@ export interface CommandOutput {
 	truncated: boolean;
 }
 
+/**
+ * How far a stop reached. `tree`: every process the command started that the
+ * runner could list was signalled. `partial`: only what `cause` leaves
+ * reachable was, so processes the command started may still run.
+ */
+export type StopReach = { kind: "tree" } | { kind: "partial"; cause: string };
+
 /** How a run ended. Only `exited` with code 0 is success; every other case is a failure. */
 export type CommandResult =
 	| { kind: "exited"; code: number; output: CommandOutput }
 	| { kind: "signaled"; signal: NodeJS.Signals; output: CommandOutput }
-	| { kind: "timed-out"; deadlineMs: number; output: CommandOutput }
-	| { kind: "cancelled"; output: CommandOutput }
+	| { kind: "timed-out"; deadlineMs: number; stop: StopReach; output: CommandOutput }
+	| { kind: "cancelled"; stop: StopReach; output: CommandOutput }
 	| { kind: "launch-failed"; error: Error };
 
 export interface CommandRequest {
@@ -45,53 +52,16 @@ export interface CommandFailure {
 }
 
 const OUTPUT_LIMIT_BYTES = 256 * 1024;
-/** POSIX: time between SIGTERM and SIGKILL to the process group. */
+/** POSIX: longest wait between SIGTERM and SIGKILL to the tree's process groups. */
 const STOP_GRACE_MS = 2_000;
+/** POSIX: how often the grace checks whether every group has exited. */
+const STOP_POLL_MS = 50;
 /** Time to wait for the streams to close after the final kill before settling anyway. */
 const SETTLE_AFTER_KILL_MS = 2_000;
-
-function envPath(env: NodeJS.ProcessEnv): string | undefined {
-	return env.PATH ?? env.Path ?? env.path;
-}
-
-function pathExts(env: NodeJS.ProcessEnv): string[] {
-	const raw = env.PATHEXT ?? env.PathExt ?? env.pathext ?? ".COM;.EXE;.BAT;.CMD";
-	return raw
-		.split(";")
-		.map((entry) => entry.trim())
-		.filter(Boolean)
-		.map((entry) => (entry.startsWith(".") ? entry : `.${entry}`));
-}
-
-function commandCandidates(command: string, env: NodeJS.ProcessEnv): string[] {
-	if (extname(command)) return [command];
-	return [command, ...pathExts(env).map((ext) => `${command}${ext}`)];
-}
-
-/** Windows process creation does no PATHEXT lookup, so `npm` must become the `npm.cmd` on PATH. */
-function resolveWindowsCommand(command: string, cwd: string | undefined, env: NodeJS.ProcessEnv): string {
-	if (process.platform !== "win32") return command;
-	if (command.includes("/") || command.includes("\\") || isAbsolute(command)) {
-		for (const candidate of commandCandidates(command, env)) {
-			const absolute = isAbsolute(candidate) ? candidate : join(cwd ?? process.cwd(), candidate);
-			if (existsSync(absolute)) return absolute;
-		}
-		return command;
-	}
-	for (const dir of (envPath(env)?.split(delimiter) ?? [])) {
-		if (!dir) continue;
-		for (const candidate of commandCandidates(command, env)) {
-			const full = join(dir, candidate);
-			if (existsSync(full)) return full;
-		}
-	}
-	return command;
-}
-
-/** A `.cmd` or `.bat` entrypoint runs only under cmd.exe. */
-function needsWindowsShell(command: string): boolean {
-	return process.platform === "win32" && /\.(?:bat|cmd)$/i.test(command);
-}
+/** By absolute path, like taskkill, so the open project cannot shadow it. */
+const PS_PATH = "/bin/ps";
+const PS_DEADLINE_MS = 2_000;
+const PS_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
 class TailBuffer {
 	private chunks: Buffer[] = [];
@@ -120,44 +90,140 @@ class TailBuffer {
 	}
 }
 
+interface ProcessRow { pid: number; ppid: number; pgid: number }
+type ProcessListing = { kind: "listed"; rows: ProcessRow[] } | { kind: "failed"; cause: string };
+
+/** Every process's pid, parent and process group, from POSIX `ps`. */
+function listProcesses(): Promise<ProcessListing> {
+	return new Promise((resolve) => {
+		execFile(PS_PATH, ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid="], {
+			env: { LC_ALL: "C" },
+			killSignal: "SIGKILL",
+			maxBuffer: PS_OUTPUT_LIMIT_BYTES,
+			timeout: PS_DEADLINE_MS,
+		}, (error, stdout) => {
+			if (error) return resolve({ kind: "failed", cause: `${PS_PATH} failed: ${error.message}` });
+			const rows: ProcessRow[] = [];
+			for (const line of stdout.split("\n")) {
+				const text = line.trim();
+				if (!text) continue;
+				const match = /^(\d+)\s+(\d+)\s+(\d+)$/.exec(text);
+				if (!match) return resolve({ kind: "failed", cause: `${PS_PATH} printed an unreadable line: ${JSON.stringify(text)}` });
+				rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]) });
+			}
+			resolve({ kind: "listed", rows });
+		});
+	});
+}
+
 /**
- * Stop the child's whole tree. A POSIX child leads its own process group, so
- * the signal reaches every descendant; Windows `taskkill /T` walks the tree
- * from cmd.exe down to the npm it started.
+ * The process groups of `root` and every listed descendant. A descendant that
+ * moved to a group or session of its own (kendex runs npm that way) is
+ * reached through that group.
  */
-function killTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
-	const pid = child.pid;
-	if (pid === undefined) return;
-	if (process.platform === "win32") {
-		const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-		// Without taskkill only the direct child is reachable.
-		killer.on("error", () => child.kill());
-		return;
+function treeGroups(root: number, rows: ProcessRow[]): { groups: number[]; cause?: string } {
+	const children = new Map<number, ProcessRow[]>();
+	for (const row of rows) {
+		const siblings = children.get(row.ppid);
+		if (siblings) siblings.push(row);
+		else children.set(row.ppid, [row]);
 	}
-	try {
-		process.kill(-pid, signal);
-	} catch (error) {
-		// ESRCH: the group has already exited. Any other refusal leaves the
-		// direct child as the only process this runner can still reach.
-		if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill(signal);
+	const groups = new Set([root]);
+	const seen = new Set([root]);
+	const queue = [root];
+	while (queue.length > 0) {
+		for (const child of children.get(queue.pop()!) ?? []) {
+			if (seen.has(child.pid)) continue;
+			seen.add(child.pid);
+			queue.push(child.pid);
+			// Signalling group 1 or 0 would reach every process this user owns or
+			// the manager's own group; a descendant of a new session never reports either.
+			if (child.pgid <= 1) return { groups: [root], cause: `${PS_PATH} reported process group ${child.pgid} for descendant ${child.pid}` };
+			groups.add(child.pgid);
+		}
 	}
+	return { groups: [...groups] };
+}
+
+/** Signal each group; the first refusal other than an exited group, if any. */
+function signalGroups(child: ChildProcess, groups: number[], signal: "SIGTERM" | "SIGKILL"): string | undefined {
+	let refusal: string | undefined;
+	for (const group of groups) {
+		try {
+			process.kill(-group, signal);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "ESRCH") continue;
+			// The command's own group refused: the direct child is all that is left in reach.
+			if (group === child.pid) child.kill(signal);
+			refusal ??= `${signal} to process group ${group} failed: ${code ?? String(error)}`;
+		}
+	}
+	return refusal;
+}
+
+function anyGroupAlive(groups: number[]): boolean {
+	return groups.some((group) => {
+		try {
+			process.kill(-group, 0);
+			return true;
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code !== "ESRCH";
+		}
+	});
+}
+
+/**
+ * POSIX: list the tree before the first signal, since a descendant whose
+ * parent dies is reparented out of it, then SIGTERM every group and SIGKILL
+ * whatever is still there after the grace. Resolves once the final kill is
+ * sent, whether or not the direct child has already closed.
+ */
+async function stopPosixTree(child: ChildProcess, pid: number): Promise<StopReach> {
+	const listing = await listProcesses();
+	const reach = listing.kind === "listed" ? treeGroups(pid, listing.rows) : { groups: [pid], cause: listing.cause };
+	const causes = [reach.cause, signalGroups(child, reach.groups, "SIGTERM")];
+	const until = Date.now() + STOP_GRACE_MS;
+	// A real wait: the groups exit on their own clock.
+	while (anyGroupAlive(reach.groups) && Date.now() < until) await sleep(STOP_POLL_MS);
+	if (anyGroupAlive(reach.groups)) causes.push(signalGroups(child, reach.groups, "SIGKILL"));
+	const cause = causes.filter((entry): entry is string => entry !== undefined).join("; ");
+	return cause ? { kind: "partial", cause } : { kind: "tree" };
+}
+
+/** Windows: `taskkill /T /F` walks the tree from cmd.exe down to the npm it started. */
+function stopWindowsTree(child: ChildProcess, pid: number): Promise<StopReach> {
+	return new Promise((resolve) => {
+		const killer = spawn(taskkillPath(process.env), ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		killer.on("error", (error) => {
+			child.kill();
+			resolve({ kind: "partial", cause: `taskkill could not start: ${error.message}` });
+		});
+		killer.on("close", (code) => {
+			resolve(code === 0 ? { kind: "tree" } : { kind: "partial", cause: `taskkill exited ${code ?? "without a code"}` });
+		});
+	});
 }
 
 /**
  * Run `command` with `args`. Resolves with how the run ended; rejects only
  * when the runtime reports a close with neither an exit code nor a signal.
+ * A stopped run settles only after its tree's final kill, never at the direct
+ * child's exit alone.
  */
 export function runCommand(command: string, args: string[], request: CommandRequest): Promise<CommandResult> {
 	const { cwd, deadlineMs, signal } = request;
-	if (signal.aborted) return Promise.resolve({ kind: "cancelled", output: { stdout: "", stderr: "", truncated: false } });
+	if (signal.aborted) return Promise.resolve({ kind: "cancelled", stop: { kind: "tree" }, output: { stdout: "", stderr: "", truncated: false } });
 	// The live environment, named explicitly: Bun's child_process otherwise
 	// hands a child the environment the process started with.
 	const env = process.env;
-	const resolved = resolveWindowsCommand(command, cwd, env);
+	const resolved = resolveWindowsCommand(command, cwd, env, process.platform);
 	return new Promise((resolve, reject) => {
 		const stdout = new TailBuffer();
 		const stderr = new TailBuffer();
 		let stopped: "timed-out" | "cancelled" | undefined;
+		let stopReach: StopReach | undefined;
+		let closed = false;
 		let settled = false;
 		const timers: ReturnType<typeof setTimeout>[] = [];
 		let child: ChildProcess;
@@ -166,7 +232,7 @@ export function runCommand(command: string, args: string[], request: CommandRequ
 				cwd,
 				env,
 				detached: process.platform !== "win32",
-				shell: needsWindowsShell(resolved),
+				shell: needsWindowsShell(resolved, process.platform),
 				stdio: ["ignore", "pipe", "pipe"],
 				windowsHide: true,
 			});
@@ -182,23 +248,21 @@ export function runCommand(command: string, args: string[], request: CommandRequ
 			signal.removeEventListener("abort", onAbort);
 			settle();
 		};
-		const stoppedResult = (kind: "timed-out" | "cancelled"): CommandResult => kind === "timed-out"
-			? { kind, deadlineMs, output: output() }
-			: { kind, output: output() };
+		const settleStopped = (kind: "timed-out" | "cancelled", stop: StopReach): void => finish(() => resolve(kind === "timed-out"
+			? { kind, deadlineMs, stop, output: output() }
+			: { kind, stop, output: output() }));
 		const stopTree = (kind: "timed-out" | "cancelled"): void => {
 			if (settled || stopped) return;
+			const pid = child.pid;
+			// No pid: the spawn failed, and its `error` event settles the run.
+			if (pid === undefined) return;
 			stopped = kind;
-			const settleStopped = () => finish(() => resolve(stoppedResult(kind)));
-			if (process.platform === "win32") {
-				killTree(child, "SIGKILL");
-				timers.push(setTimeout(settleStopped, SETTLE_AFTER_KILL_MS));
-				return;
-			}
-			killTree(child, "SIGTERM");
-			timers.push(setTimeout(() => {
-				killTree(child, "SIGKILL");
-				timers.push(setTimeout(settleStopped, SETTLE_AFTER_KILL_MS));
-			}, STOP_GRACE_MS));
+			const stop = process.platform === "win32" ? stopWindowsTree(child, pid) : stopPosixTree(child, pid);
+			stop.then((reach) => {
+				stopReach = reach;
+				if (closed) settleStopped(kind, reach);
+				else timers.push(setTimeout(() => settleStopped(kind, reach), SETTLE_AFTER_KILL_MS));
+			}, (error: unknown) => finish(() => reject(error)));
 		};
 		const onAbort = () => stopTree("cancelled");
 		child.stdout!.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -209,7 +273,12 @@ export function runCommand(command: string, args: string[], request: CommandRequ
 			if (child.pid === undefined) finish(() => resolve({ kind: "launch-failed", error }));
 		});
 		child.on("close", (code, exitSignal) => {
-			if (stopped) return finish(() => resolve(stoppedResult(stopped!)));
+			closed = true;
+			if (stopped) {
+				// A stop in progress settles once its final kill is sent.
+				if (stopReach) settleStopped(stopped, stopReach);
+				return;
+			}
 			if (exitSignal !== null) return finish(() => resolve({ kind: "signaled", signal: exitSignal, output: output() }));
 			if (code !== null) return finish(() => resolve({ kind: "exited", code, output: output() }));
 			finish(() => reject(new Error(`process-close: ${resolved} closed with neither an exit code nor a signal`)));
@@ -224,6 +293,19 @@ function outputText(output: CommandOutput): string {
 	return text && output.truncated ? `[earlier output dropped]\n${text}` : text;
 }
 
+function stopText(stop: StopReach): string {
+	switch (stop.kind) {
+		case "tree":
+			return "the process tree was stopped.";
+		case "partial":
+			return `the command was stopped, but ${stop.cause}; processes it started may still be running.`;
+		default: {
+			const unreachable: never = stop;
+			throw new Error(`process-stop: unknown reach ${JSON.stringify(unreachable)}`);
+		}
+	}
+}
+
 /** Classify a run; `undefined` only for a confirmed exit 0. */
 export function commandFailure(result: CommandResult): CommandFailure | undefined {
 	switch (result.kind) {
@@ -233,9 +315,9 @@ export function commandFailure(result: CommandResult): CommandFailure | undefine
 		case "signaled":
 			return { reason: "exit", termination: result.signal, detail: [`Terminated by ${result.signal}.`, outputText(result.output)].filter(Boolean).join("\n") };
 		case "timed-out":
-			return { reason: "timeout", termination: `${result.deadlineMs}ms`, detail: [`No exit within ${result.deadlineMs} ms; the process tree was stopped.`, outputText(result.output)].filter(Boolean).join("\n") };
+			return { reason: "timeout", termination: `${result.deadlineMs}ms`, detail: [`No exit within ${result.deadlineMs} ms; ${stopText(result.stop)}`, outputText(result.output)].filter(Boolean).join("\n") };
 		case "cancelled":
-			return { reason: "cancelled", termination: "cancelled", detail: "Cancelled before the command finished; the process tree was stopped." };
+			return { reason: "cancelled", termination: "cancelled", detail: `Cancelled before the command finished; ${stopText(result.stop)}` };
 		case "launch-failed":
 			return { reason: "launch", termination: (result.error as NodeJS.ErrnoException).code ?? "error", detail: `Could not start the command: ${result.error.name}: ${result.error.message}` };
 		default: {

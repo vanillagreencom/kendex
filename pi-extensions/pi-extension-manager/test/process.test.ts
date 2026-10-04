@@ -94,33 +94,59 @@ test("a run past its deadline stops its tree; control: an unarmed deadline never
 	cleanup.abort();
 }, CONTROL_CASE_MS);
 
-async function cancelledTree(module: ProcessModule): Promise<{ kind: string; grandchildAlive: boolean }> {
-	const pidFile = join(rootTmp, `grandchild-${Math.random()}`);
-	// The shell waits on a background grandchild, the shape of npm under cmd.exe or a lifecycle script under npm.
-	const command = writeCommand(join(rootTmp, "tree"), `sleep 30 & echo $! > "${pidFile}"; wait`);
+// Each shape starts one descendant that writes its own pid once it is set up.
+const treeShapes = {
+	// A shell waiting on a background grandchild in its group: npm under cmd.exe, or a lifecycle script under npm.
+	"same-group": (pidFile: string) => `sleep 30 & echo $! > "${pidFile}"; wait`,
+	// A lifecycle script that ignores SIGTERM and holds none of the runner's pipes, so the direct child closes first.
+	"ignores-sigterm": (pidFile: string) => `sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 30' sh "${pidFile}" </dev/null >/dev/null 2>&1 & wait`,
+	// kendex starts npm in a process group and session of its own.
+	"own-session": (pidFile: string) => `perl -MPOSIX -e 'POSIX::setsid() > 0 or die "setsid: $!"; open(my $f, ">", $ARGV[0]) or die "pid: $!"; print $f "$$\\n"; close $f; exec "sleep", "30"' "${pidFile}" </dev/null >/dev/null 2>&1 & wait`,
+} as const;
+
+type TreeShape = keyof typeof treeShapes;
+
+async function stoppedTree(module: ProcessModule, shape: TreeShape, trigger: "cancel" | "deadline"): Promise<{ kind: string; descendantAlive: boolean }> {
+	const pidFile = join(rootTmp, `descendant-${Math.random()}`);
+	const command = writeCommand(join(rootTmp, `tree-${shape}`), treeShapes[shape](pidFile));
 	const cancel = new AbortController();
-	const run = module.runCommand(command, [], { deadlineMs: 30_000, signal: cancel.signal });
-	const grandchild = await startedPid(pidFile);
-	leftovers.push(grandchild);
-	cancel.abort();
+	const run = module.runCommand(command, [], { deadlineMs: trigger === "deadline" ? 500 : 30_000, signal: cancel.signal });
+	const descendant = await startedPid(pidFile);
+	leftovers.push(descendant);
+	if (trigger === "cancel") cancel.abort();
+	// The stop takes at most the 2 s SIGTERM grace plus a process listing.
 	const result = await settleWithin(run, 6_000);
-	if (result === "unsettled") throw new Error("cancelled run did not settle");
-	// A killed sleep is reaped by its new parent asynchronously; give it the
-	// same bound a terminal user waits.
+	if (result === "unsettled") throw new Error(`${shape} run did not settle`);
+	// A killed descendant is reaped by its new parent asynchronously; give it
+	// the same bound a terminal user waits.
 	const until = Date.now() + 1_000;
-	while (processAlive(grandchild) && Date.now() < until) await Bun.sleep(20);
-	return { kind: result.kind, grandchildAlive: processAlive(grandchild) };
+	while (processAlive(descendant) && Date.now() < until) await Bun.sleep(20);
+	return { kind: result.kind, descendantAlive: processAlive(descendant) };
 }
 
-test("cancellation reaches the grandchild; control: signalling only the direct child leaves it running", async () => {
-	expect(await cancelledTree(await import("../extensions/manager/process.ts"))).toEqual({ kind: "cancelled", grandchildAlive: false });
-	const mutant = mutantManager(join(rootTmp, "mutant-tree"), [{
-		file: "process.ts",
-		before: "process.kill(-pid, signal);",
-		after: "process.kill(pid, signal);",
-	}]);
-	expect(await cancelledTree(await import(join(mutant, "process.ts")))).toEqual({ kind: "cancelled", grandchildAlive: true });
+test("a stop reaches every descendant before the run settles", async () => {
+	const module = await import("../extensions/manager/process.ts");
+	const rows = [
+		{ shape: "same-group", trigger: "cancel", expected: { kind: "cancelled", descendantAlive: false } },
+		{ shape: "ignores-sigterm", trigger: "cancel", expected: { kind: "cancelled", descendantAlive: false } },
+		{ shape: "ignores-sigterm", trigger: "deadline", expected: { kind: "timed-out", descendantAlive: false } },
+		{ shape: "own-session", trigger: "cancel", expected: { kind: "cancelled", descendantAlive: false } },
+	] as const;
+	for (const row of rows) expect({ ...row, observed: await stoppedTree(module, row.shape, row.trigger) }).toEqual({ ...row, observed: row.expected });
 }, CONTROL_CASE_MS);
+
+test("stop controls: each planted gap leaves its descendant running", async () => {
+	const rows = [
+		{ name: "signalling only each group's leader", shape: "same-group", before: "process.kill(-group, signal);", after: "process.kill(group, signal);" },
+		{ name: "settling at the direct child's exit with no SIGKILL", shape: "ignores-sigterm", before: 'if (anyGroupAlive(reach.groups)) causes.push(signalGroups(child, reach.groups, "SIGKILL"));', after: "" },
+		{ name: "signalling only the command's own group", shape: "own-session", before: "treeGroups(pid, listing.rows)", after: "{ groups: [pid] }" },
+	] as const;
+	for (const [index, row] of rows.entries()) {
+		const mutant = mutantManager(join(rootTmp, `mutant-stop-${index}`), [{ file: "process.ts", before: row.before, after: row.after }]);
+		const observed = await stoppedTree(await import(join(mutant, "process.ts")), row.shape, "cancel");
+		expect({ name: row.name, observed }).toEqual({ name: row.name, observed: { kind: "cancelled", descendantAlive: true } });
+	}
+}, 30_000);
 
 test("an already-aborted signal starts nothing", async () => {
 	const marker = join(rootTmp, "started");
