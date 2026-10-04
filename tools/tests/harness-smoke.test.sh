@@ -1000,7 +1000,7 @@ package_case "control: a trigger check that takes any record replays the helper 
 plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /'
 package_run "$STAND_SMOKE"
 package_case "control: a no-session row that ignores the enforced cell is unanswerable" lane-mail unanswerable "runs no lane session on copilot"
-plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot \(answer:userPromptSubmitted-interactive\|event:preCompact\) pending /    row copilot \1 skipped /'
+plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot answer:userPromptSubmitted-interactive pending /    row copilot answer:userPromptSubmitted-interactive skipped /; s/^    row copilot event:preCompact pending /    row copilot event:preCompact skipped /'
 package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
 smoke-skill"
 package_case "control: an unmeasured enforced row read skipped" lane-mail skipped "runs no lane session on copilot"
