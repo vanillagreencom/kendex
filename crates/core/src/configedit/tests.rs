@@ -1,5 +1,32 @@
 use super::*;
 
+/// A disabled catalog hook supplies a removal even before its registry exists.
+/// Control: serializing an unchanged empty JSON object creates a registry.
+#[test]
+fn hook_removals_preserve_an_absent_registry() {
+    let removals = [
+        ConfigEdit::RemoveHook {
+            event: Some("PreToolUse".into()),
+            matcher: Some("Bash".into()),
+            command: "guard".into(),
+        },
+        ConfigEdit::RemoveCopilotHook {
+            event: Some("preToolUse".into()),
+            matcher: Some("shell".into()),
+            command: "guard".into(),
+        },
+        ConfigEdit::RemoveAntigravityHook {
+            name: Some("guard".into()),
+            event: Some("preToolUse".into()),
+            matcher: Some("shell".into()),
+            command: "guard".into(),
+        },
+    ];
+    for edit in removals {
+        assert_eq!(edit.apply(""), Ok(String::new()), "{edit:?}");
+    }
+}
+
 #[test]
 fn copilot_hook_commands_are_reconciled_by_script_path() {
     use crate::engine::targets::{HookTarget, hook_target};

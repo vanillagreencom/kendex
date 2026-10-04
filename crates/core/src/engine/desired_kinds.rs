@@ -516,7 +516,10 @@ fn hook_artifact(target: &HookTarget, hook: &HookSpec, name: &str, enabled: bool
                 HookBody::Command(command) => (command.clone(), None),
             };
             let registration = registration_edit(*format, hook, name, enabled, registered_command);
-            let mut edits = registration_edits(registry, registration, enabled);
+            // Keep the identity even when a disabled hook's registry is
+            // absent: another hook can create it during this same apply.
+            // An empty registry's removal stays in sync without a write.
+            let mut edits = vec![(registry.clone(), registration)];
             if let Some(feature) = feature
                 && enabled
             {

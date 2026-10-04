@@ -225,6 +225,10 @@ impl ConfigEdit {
                 };
                 let selection = root.get("outputStyle").cloned();
                 json_edit.apply_json(&mut root)?;
+                // Removing an absent entry must not create a config file.
+                if current.trim().is_empty() && root == json!({}) {
+                    return Ok(current.to_owned());
+                }
                 if matches!(
                     json_edit,
                     Self::ClaudeOutputStyle { .. } | Self::RemoveClaudeOutputStyle { .. }

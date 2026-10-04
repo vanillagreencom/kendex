@@ -77,5 +77,6 @@ mod verify_at_record;
 mod verify_base_owned;
 mod verify_excluded_members;
 mod verify_hook_pins;
+mod verify_hook_switch;
 mod verify_records;
 mod verify_tracked_outputs;
