@@ -38,7 +38,7 @@ case "$query" in
   printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200"
   ;;
 *"issue(id:"*)
-  printf '%s' '{"data":{"issue":{"identifier":"PROJ-1","team":{"name":"Claude"}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issue":{"id":"issue-uuid","identifier":"PROJ-1","team":{"name":"Claude"}}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'

@@ -43,9 +43,9 @@ control_replace scripts/commands/issues.sh 1 \
 # Let a failed issue read through as an empty answer. Activation then goes on
 # with nothing read and reads the issue a second time on its way to the update.
 control_expect "issue-read-failed: nothing is requested after the failed issue read"
-control_replace scripts/commands/issues.sh 1 \
-    '    result=$(graphql_query "$query" "$variables") || return 1' \
-    '    result=$(graphql_query "$query" "$variables") || :'
+control_replace scripts/commands/issues.sh 2 \
+    '        issue_result=$(get_issue "$issue_id" --format=raw) || return 1' \
+    '        issue_result=$(get_issue "$issue_id" --format=raw) || :'
 
 # Say what happened to the assignee before the update is known to have
 # landed. A rejected update then still reports an outcome.
