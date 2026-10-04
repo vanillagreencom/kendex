@@ -77,7 +77,6 @@ change came from an outside contributor.
 - The github skill's `pr-merge` refuses, each time it runs, to merge or arm a pull request whose review replies track no issue, decline with no reason, or leave review-body findings unanswered.
 - commit-guards runs a default `secrets` lane: gitleaks refuses a credential a commit adds, by file, line and rule id, never the value. No gitleaks is a gap notice, except on a CI range or full scan.
 - `kendex verify --json --base REV` prints `base_owned`, the files and trees the base record owned whole, and a refresh whose only deletions are those renders classifies `render`.
-- `kendex verify` names each hook whose `harnesses` pin keeps it off a default tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.
 - On Codex, kendex now registers `SubagentStop` and `SessionEnd` hooks for every agent in `hooks.json`; before, a custom hook on these events was advisory prose and a package hook installed nothing.
 - Pi hooks: `SessionEnd` runs on session shutdown and `StopFailure` on a run that ends in error, through the pi-hooks carrier (0.18.0 or later).
 - On Copilot, the doc-drift-check, reviewer-stop-check, session-start-row and session-end-row hooks now install and run.
@@ -91,7 +90,6 @@ change came from an outside contributor.
 - doc-limits: only an `AGENTS.md` or `SKILL.md` over its limit fails; other documents warn. The growth margin is gone: `--against` warns and does nothing until 2.0.
 - orch: a fix round on an open pull request leaves validation to the pull request CI where the repository has a GitHub Actions workflow and CI checks the change, and runs it locally otherwise.
 - A Copilot overseer's SessionStart row now names its session: the watch ignores a predecessor's context record, and `oversee register` installs the context reader in that session's Copilot home.
-- orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
 - The kendex-refresh and harness-ci CI templates run on the `CI_RUNNER_2V` variable (organization or repository) when it is set, and on `ubuntu-latest` otherwise.
 - orch: an overseer's owner messages state a cost as its figure and source, report Claude, Codex and Copilot headroom side by side, and own a mistake in one line with its repair.
 
@@ -99,9 +97,7 @@ change came from an outside contributor.
 
 - Non-render consumer refresh pull requests name the overseer or a maintainer as the merger through the merge queue after review and CI pass.
 - Pi session manager refuses to delete a session another running Pi has open, such as another lane's, and names that Pi.
-- pi-web-tools ends a stalled provider request, PDF helper or browser cookie read at its deadline instead of holding the tool call, and YouTube understanding honors `browserCookieAccess`.
 - The orch skill reads a Claude account walled in `lanes list` and `lanes pick` once a lane's harness banner states a weekly wall, until the reset it names, even where usage shows room.
-- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and a local relaunch all read the handoff record in that `tmp`.
 - pi-agents-tmux 3.3.3: a parallel sub-agent that fails with a long error returns it within `resultMaxBytes` and `resultMaxLines`; the full error stays in the saved full-output file.
 - orch's Copilot head route holds its decline and fallback notices, and the overseer's app approval, while a review-body finding at the head stands unanswered.
 - github: `pr-timeline` reads the final head's gate pass from its first approval, so `oversee-cycle` names each merged pull request's longest stage again.
@@ -133,10 +129,12 @@ change came from an outside contributor.
 - Add a Linear page module that completes requested connection chains and handles large replies without passing response data as command arguments.
 - Release checks refuse, from 1.0, a patch version bump whose release holds an Added or Breaking entry and a minor bump whose release holds a Breaking entry, naming the first such entry.
 - orch: `overseer-approve` approves a pull request head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, and refuses when the live head has moved.
+- `kendex verify` names each hook whose `harnesses` pin keeps it off a default tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.
 
 ### Changed
 
 - orch: `REVIEW_MAX_CYCLES = "0"` now runs one blockers-only fix round, recorded in `review_fix_round` and accepted on its validation, with no re-review; before, it escalated nearly every blocker.
+- orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
 
 ### Deprecated
 
@@ -170,6 +168,8 @@ change came from an outside contributor.
 - `lane-mail` refuses an owner notice whose text matches one sent to the owner in the past 24 hours, whatever its attachment, naming the earlier notice as `owner-notice-repeated=overseer id=`.
 - pi-agents-tmux: background children and headless pane agents default to a 2-hour deadline, up from 30 minutes, so a dev round outlives its validation run; lower `bgTaskTimeoutMs` to shorten it.
 - `oversee-cycle` counts a ci_green miss toward `repeat-miss` only when the final head's checks caused it, so work rounds pushed after a pull request opened no longer raise a ci_green repeat miss.
+- pi-web-tools ends a stalled provider request, PDF helper or browser cookie read at its deadline instead of holding the tool call, and YouTube understanding honors `browserCookieAccess`.
+- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and a local relaunch all read the handoff record in that `tmp`.
 
 ### Security
 
