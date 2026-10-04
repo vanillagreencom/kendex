@@ -55,7 +55,8 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "session-drift-check: scratc
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # Keep ordinary fixtures outside the enclosing worktree's lane. The fixture
 # repositories below this ceiling still resolve their own git directories.
-export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
+# Git can climb from the ceiling itself, so use the scratch root's parent.
+export GIT_CEILING_DIRECTORIES="${TMP_ROOT%/*}"
 
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"

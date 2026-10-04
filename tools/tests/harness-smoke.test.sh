@@ -35,7 +35,8 @@ TMP="$(cd -- "$TMP" && pwd -P)" || { echo "harness-smoke.test: resolving the scr
 trap 'rm -rf -- "${TMP:?}"' EXIT
 # Scratch must not inherit the enclosing worktree's git repository. Fixture
 # repositories below this ceiling still use their own .git directories.
-export GIT_CEILING_DIRECTORIES="$TMP"
+# Git can climb from the ceiling itself, so use the scratch root's parent.
+export GIT_CEILING_DIRECTORIES="${TMP%/*}"
 REPO_HEAD="$(git -C "$REPO" rev-parse --verify HEAD)" ||
   { echo "harness-smoke.test: this checkout has no HEAD commit" >&2; exit 1; }
 
