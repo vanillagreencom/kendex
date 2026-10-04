@@ -221,6 +221,39 @@ excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
 
+# A refresh can add a package file to the inventory. The inventory is input,
+# not provenance: verify must pass and own the gained path and inventory.
+gain_rows=0
+while IFS='|' read -r label expected verifier gained; do
+  gain_rows=$((gain_rows + 1))
+  reset_case
+  set_verifier "$verifier"
+  write_lines "$repo" "$gained" 2
+  jq --arg path "$gained" '. + [$path] | sort' "$repo/.kendex-generated.json" >"$SANDBOX/gain-inventory"
+  mv "$SANDBOX/gain-inventory" "$repo/.kendex-generated.json"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  PATH="$stub_bin:$PATH" assert_class "$label" "$expected" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD
+  if [ "$expected" = render ]; then gain_head="$(git -C "$repo" rev-parse HEAD)"; fi
+done <<'GAINS'
+a refresh adding a verified package file|render|clean|.agents/skills/orch/scripts/added.sh
+a gained rendered file whose verify fails|standard|dirty|.agents/skills/orch/scripts/added.sh
+a gained file with no passing position|standard|clean|runtime/gained.ts
+a gain whose inventory has no passing position|standard|no-bookkeeping|.agents/skills/orch/scripts/added.sh
+GAINS
+require_rows change-class-gain "$gain_rows"
+
+# The same refresh fixture must turn red if the proof cannot read a gain.
+set_verifier clean
+gain_mutant="$(mutant gain-mutant change-class \
+  'if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then' \
+  'if [ "$harness_verdict" = "harness_only=true" ] || { false && [ "$harness_note" = "cause=generated-ownership-gain" ]; }; then')"
+gain_control="$(PATH="$stub_bin:$PATH" "$gain_mutant" --repo "$repo" \
+  --event pull_request --base "$base" --head "$gain_head" 2>/dev/null)"
+assert_eq "must-fail control: denying the gain the proof fails the refresh row" \
+  change_class=standard "$gain_control"
+
 # Refresh retires whole artifacts and shared registrations. Neither inventory
 # absence nor a surviving head tree can authorize a deletion: the base
 # record's whole positions, verify's `base_owned`, must name the path as a
@@ -750,9 +783,8 @@ assert_eq "the header spells the number of git call sites the script holds" \
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
-# file as generated. That refusal is why the render class is out of reach, and
-# nothing else in the log says so, so the cause is replayed as a note beside
-# whatever class the size then earns.
+# file as generated. The cause stays in the log beside the render proof's
+# verdict, so the operator can see why the proof had to judge gained paths.
 reset_case
 set_verifier clean
 printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md",".agents/skills/orch/added.md"]' \
@@ -762,7 +794,7 @@ git -C "$repo" add -A
 git -C "$repo" commit -q -m "a refresh that adds a rendered file"
 gain_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "an inventory gain says why render was out of reach" \
+assert_eq "an inventory gain stays in the log beside the render proof" \
   "harness-note: cause=generated-ownership-gain" \
   "$(printf '%s\n' "$gain_err" | grep '^harness-note: ')"
 
@@ -1756,6 +1788,7 @@ TOML
 
   # A newer source commit, and the refresh that brings it in.
   printf '\nA paragraph the catalog added later.\n' >>"$catalog/skills/demo/SKILL.md"
+  printf 'A file installed by the refreshed package.\n' >"$catalog/skills/demo/added.md"
   git -C "$catalog" add -A
   git -C "$catalog" commit -q -m "catalog at a newer source commit"
   git -C "$consumer" checkout -q -B refreshed "$consumer_base"
@@ -1776,6 +1809,9 @@ TOML
     "$(git -C "$consumer" status --porcelain)"
   refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
+  assert_eq "the refresh gains the package file in its inventory" true \
+    "$(git -C "$consumer" show "$consumer_base:.kendex-generated.json" | jq --slurpfile head "$consumer/.kendex-generated.json" \
+      'index(".claude/skills/demo/added.md") == null and ($head[0] | index(".claude/skills/demo/added.md") != null)')"
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
@@ -2014,6 +2050,18 @@ control_out="$(PATH="$stub_bin:$PATH" \
   "$mutant" --repo "$repo" --event pull_request --base "$base" --head HEAD \
   2>/dev/null)"
 assert_eq "a classifier trusting the manifest passes the hand-edit row" \
+  "change_class=render" "$control_out"
+
+reset_case
+set_verifier clean
+write_lines "$repo" runtime/gained.ts 2
+jq '. + ["runtime/gained.ts"] | sort' "$repo/.kendex-generated.json" >"$SANDBOX/gain-inventory"
+mv "$SANDBOX/gain-inventory" "$repo/.kendex-generated.json"
+git -C "$repo" add -A
+git -C "$repo" commit -q -m 'control: product path claimed by the head inventory'
+control_out="$(PATH="$stub_bin:$PATH" "$mutant" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>/dev/null)"
+assert_eq "must-fail control: skipping path coverage grants render to gained product code" \
   "change_class=render" "$control_out"
 
 # Must-fail control for the bookkeeping row: the grant KEN-1637 deleted, put

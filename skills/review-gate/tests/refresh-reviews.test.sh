@@ -163,6 +163,27 @@ unclassified_held() {
     && grep -q '^::warning::refresh-reviews=unclassified pr=1 cause=render-proof-failed ' <<<"$OUT"
 }
 
+# A measured non-render PR leaves findings untouched. The warning counts
+# unanswered live bot findings, including resolved ones the reporter would
+# file, and excludes human requests, outdated findings and durable answers.
+not_render_fixture() {
+  jq '.prs[0] += {class:"change_class=standard",cause:"excluded-path"}
+    | .prs[0].threads += [
+        {id:"resolved-live",root:12,resolved:true},
+        {id:"outdated",root:13,resolved:false,outdated:true},
+        {id:"answered",root:14,resolved:false}]
+    | .prs[0].comments[0] as $root
+    | .prs[0].comments += [($root | .id=12),($root | .id=13),($root | .id=14),
+        {id:500,in_reply_to_id:14,path:$root.path,user:.prs[0].user,
+          body:"Filed upstream as https://github.com/vanillagreencom/kendex/issues/7"}]' "$BASE" >"$FIXTURE"
+}
+not_render_warned() {
+  [ "$RC" -eq 0 ] && jq -e '([.writes[] | select(.pr == 1)] | length) == 0
+    and ([.writes[] | select(.pr == 2) | .kind] | sort) == ["reply","resolve"]
+    and ([.reports[].root] == [20])' "$FIXTURE" >/dev/null \
+    && grep -q '^::warning::refresh-reviews=not-render pr=1 cause=excluded-path unanswered=2 ' <<<"$OUT"
+}
+
 # A second run over answered threads files, writes and classifies nothing.
 idempotent() {
   [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4 and .proofs == [1,2] and (.reports | length) == 2' "$FIXTURE" >/dev/null
@@ -326,6 +347,27 @@ run_writer
 if unclassified_held; then
   ok 'an unmeasured classifier fallback is reported as unclassified and writes nothing'
 else bad 'unmeasured classifier fallback' "$OUT"; fi
+
+not_render_fixture
+run_writer
+if not_render_warned; then
+  ok 'a measured non-render PR warns with its cause and unanswered live bot count'
+else bad 'measured non-render warning' "$OUT"; fi
+
+while IFS= read -r mode; do
+  jq --arg mode "$mode" '.prs[0] += {class:"change_class=standard",cause:"excluded-path"}
+    | if $mode == "outdated" then .prs[0].threads[0].outdated=true
+      else .prs[0].comments += [{id:500,in_reply_to_id:10,path:".agents/skill.sh",user:.prs[0].user,
+        body:"Filed upstream as https://github.com/vanillagreencom/kendex/issues/7"}] end' "$BASE" >"$FIXTURE"
+  run_writer
+  if [ "$RC" -eq 0 ] && grep -q '^refresh-reviews=not-render pr=1 ' <<<"$OUT" \
+      && ! grep -q '^::warning::refresh-reviews=not-render pr=1 ' <<<"$OUT"; then
+    ok "a non-render PR with only $mode bot findings has no unanswered-live warning"
+  else bad "non-render $mode warning" "$OUT"; fi
+done <<'NO_LIVE'
+outdated
+answered
+NO_LIVE
 
 jq '.failure={kind:"resolve",mode:"error"}' "$BASE" >"$FIXTURE"
 run_writer
@@ -492,6 +534,22 @@ run_writer
 if ! unclassified_held; then
   ok 'must-fail control: reading a fallback as a verdict fails the unclassified case'
 else bad 'measured control did not detect the planted defect' "$OUT"; fi
+
+mutant warning-mutant "printf '::warning::refresh-reviews=not-render" \
+  ": '::warning::refresh-reviews=not-render"
+not_render_fixture
+run_writer
+if ! not_render_warned; then
+  ok 'must-fail control: a muted warning fails the measured non-render case'
+else bad 'warning control did not detect the planted defect' "$OUT"; fi
+mutant count-mutant 'select((.answered | not) and (.outdated | not))' \
+  'select(true or ((.answered | not) and (.outdated | not)))'
+not_render_fixture
+run_writer
+if ! not_render_warned; then
+  ok 'must-fail control: counting outdated and answered findings fails the non-render case'
+else bad 'count control did not detect the planted defect' "$OUT"; fi
+
 # Each reporter-hold rule has its own control: the reporter exit guard, each
 # clause of the output-shape guard, and the per-PR containment.
 report_control() { # NAME NEEDLE REPLACEMENT MODE KEY

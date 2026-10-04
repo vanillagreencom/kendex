@@ -162,7 +162,8 @@
 # verify-refused cause carries both, so a refusal reads as the verifier's age.
 #
 # Only the render class reads kendex state, after harness-only answers
-# harness_only=true. The caller prepares the judged checkout's sources.
+# harness_only=true or refuses only a generated ownership gain. The caller
+# prepares the judged checkout's sources.
 #
 # A measured class needs --event pull_request or --event merge_group and an
 # orch beside this package carrying the measurement contract below; any other
@@ -512,9 +513,9 @@ fi
 # lane", never "this is a product diff whose size may be measured". Only two
 # of its causes are raised AFTER it has read every changed path against an
 # inventory it could read: a path that inventory does not carry, and an
-# ownership gain. Those two are the readable product diffs, and the list below
-# is what may be measured — they keep the `harness-note:` line they have always
-# had and the class then comes from the size rules. Every other cause is a
+# ownership gain. The first reaches the size rules; the gain reaches the
+# render proof, which must establish ownership of every changed path.
+# They keep their `harness-note:` line. Every other cause is a
 # refusal to read something: the inventory at an endpoint, the inventory's
 # shape, a changed path, a path lookup, the diff, the endpoints, the event.
 # A refusal is not a product diff, so it answers standard here with the cause
@@ -806,10 +807,11 @@ render_refused_at() { # PATH
     }' "$work/render-named" >&2
 }
 
-# A diff of generated files alone is a render or it is nothing: falling through
-# to a measured class would hand the narrow classes exactly the diffs whose
-# proof did not come in.
-if [ "$harness_verdict" = "harness_only=true" ]; then
+# An ownership gain needs the same proof as existing generated files: the
+# head inventory cannot grant the render class. Every changed path, gained
+# paths included, must be owned by a passing verify row. A failed proof stays
+# standard rather than reaching a size class.
+if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then
   renders_match && render_paths_covered &&
     answer render "cause=renders-match-their-sources"
   answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"

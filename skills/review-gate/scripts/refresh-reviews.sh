@@ -30,6 +30,9 @@
 #   refresh-reviews=answered pr=N unfiled=COUNT
 # unclassified is the classifier's unmeasured fallback, not a verdict; it
 # writes nothing on that pull request and adds a ::warning:: line.
+# not-render also warns with the class cause and unanswered live bot count
+# when that count is nonzero. Resolved but unanswered live findings count:
+# the reporter would still file them on a render pull request.
 #
 # A held pull request, one whose reporter failed (refresh-reviews-error=report
 # or report-shape on stderr) or that has an open unfiled thread, gets an
@@ -165,6 +168,8 @@ while IFS= read -r pr; do
     printf 'refresh-reviews=already-answered pr=%s\n' "$PR_NUMBER"
     continue
   fi
+  # This is the reporter's unanswered live set, shared with the skip warning.
+  findings="$(jq -c '[.[] | select((.answered | not) and (.outdated | not)) | {root, path, body, url}]' <<<"$actions")" || exit 1
 
   # The classifier reads both endpoints from this checkout's object store. A
   # merged pull request's head survives only under its pull-request ref.
@@ -190,11 +195,17 @@ while IFS= read -r pr; do
     while IFS= read -r line; do
       case "$line" in 'class: class='*) class_line="$line" ;; esac
     done <"$class_log"
+    cause=unknown
+    [[ " $class_line " != *' cause='* ]] || { cause="${class_line#* cause=}"; cause="${cause%% *}"; }
     if [[ " $class_line " == *' measured=true '* ]]; then
       printf 'refresh-reviews=not-render pr=%s class=%q\n' "$PR_NUMBER" "$class"
+      unanswered="$(jq 'length' <<<"$findings")" \
+        || fail pending-actions "$PR_NUMBER" 'Could not count unanswered live bot findings.'
+      if [ "$unanswered" -gt 0 ]; then
+        printf '::warning::refresh-reviews=not-render pr=%s cause=%s unanswered=%s Live bot findings remain unanswered because this pull request is not a verified render.\n' \
+          "$PR_NUMBER" "$cause" "$unanswered"
+      fi
     else
-      cause=unknown
-      [[ " $class_line " != *' cause='* ]] || { cause="${class_line#* cause=}"; cause="${cause%% *}"; }
       printf 'refresh-reviews=unclassified pr=%s cause=%q\n' "$PR_NUMBER" "$cause"
       printf '::warning::refresh-reviews=unclassified pr=%s cause=%s The classifier could not measure this pull request; its findings wait for a later run.\n' "$PR_NUMBER" "$cause"
     fi
@@ -210,7 +221,6 @@ while IFS= read -r pr; do
 
   # Review prose remains data: each unanswered finding is a report for
   # upstream triage, not an executable fix or proof that a defect is true.
-  findings="$(jq -c '[.[] | select((.answered | not) and (.outdated | not)) | {root, path, body, url}]' <<<"$actions")" || exit 1
   results='[]'
   if [ "$findings" != '[]' ]; then
     if ! results="$(printf '%s\n' "$findings" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
