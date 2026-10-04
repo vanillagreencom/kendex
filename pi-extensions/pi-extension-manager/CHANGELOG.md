@@ -5,10 +5,11 @@
 ### 3.0.5
 
 - Package updates and uninstalls no longer freeze the terminal. They run under a progress window where Escape cancels them, and stop after 10 minutes. Cancelling, the deadline or ending the session stops npm or kendex and every process it started, including the npm kendex runs; the failure notice says when a process could not be reached.
-- npm directory lookups stop after 15 seconds, and ending the session stops one still running. Ending the session also stops the package instruction script a toggle or uninstall runs, and Escape stops the one an uninstall runs.
+- npm directory lookups stop after 15 seconds, and ending the session stops one still running. Ending the session also stops the package instruction script a toggle or uninstall runs, and Escape stops the one an uninstall runs. The script that puts back instructions after a failed uninstall is the exception: it runs to its own 10-second deadline.
 - Package command and instruction script failures add two notice keys beside `-exit` and `-launch`: `-timeout` for a command stopped at its deadline and `-cancelled` for one cancelled.
-- An npm uninstall that fails or is cancelled puts back the package's APPEND_SYSTEM.md instructions it removed before running npm; its notice says when they could not be restored.
+- An npm uninstall that fails or is cancelled puts back the package's APPEND_SYSTEM.md instructions it removed before running npm, unless the package is disabled; its notice says when they could not be restored.
 - A package's broken reason also names each npm directory lookup that failed, after the not-found text.
+- On Windows, npm, node and kendex run only from PATH, or from the path an `npmCommand` setting names, never from the open project; a command not found there fails with the directories searched. npm's `.cmd` entrypoint receives arguments holding spaces, `&` or `%` intact.
 
 ### 3.0.4
 

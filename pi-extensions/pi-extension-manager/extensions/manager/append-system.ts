@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { managerNotice } from "./format.js";
-import { commandFailure, runCommand, type CommandFailure } from "./process.js";
+import { commandFailure, runCommand, type CommandFailure, type CommandResult } from "./process.js";
 import type { InventoryItem } from "./types.js";
 
 const APPEND_SYSTEM_DEADLINE_MS = 10_000;
@@ -26,14 +26,28 @@ export type AppendSystemOutcome =
 	| { kind: "absent" }
 	| { kind: "failed"; reason: CommandFailure["reason"]; message: string };
 
-async function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove", signal: AbortSignal): Promise<AppendSystemOutcome> {
-	if (!packageDir) return { kind: "absent" };
+/** The package's script, or `undefined` when it ships none. */
+function appendSystemScript(packageDir: string | undefined): string | undefined {
+	if (!packageDir) return undefined;
 	const script = join(packageDir, "scripts", "append-system.mjs");
-	if (!existsSync(script)) return { kind: "absent" };
-	// A package-supplied script gates every toggle, so the wait is bounded.
-	const failure = commandFailure(await runCommand("node", [script, action], { cwd: packageDir, deadlineMs: APPEND_SYSTEM_DEADLINE_MS, signal }));
+	return existsSync(script) ? script : undefined;
+}
+
+/** A package-supplied script gates every toggle, so the wait is bounded. */
+async function runScript(script: string, action: "install" | "remove", signal: AbortSignal): Promise<CommandResult> {
+	return runCommand("node", [script, action], { cwd: dirname(dirname(script)), deadlineMs: APPEND_SYSTEM_DEADLINE_MS, signal });
+}
+
+function failedNotice(failure: CommandFailure, action: "install" | "remove", script: string): string {
+	return managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail);
+}
+
+async function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove", signal: AbortSignal): Promise<AppendSystemOutcome> {
+	const script = appendSystemScript(packageDir);
+	if (!script) return { kind: "absent" };
+	const failure = commandFailure(await runScript(script, action, signal));
 	if (!failure) return { kind: "ran" };
-	return { kind: "failed", reason: failure.reason, message: managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail) };
+	return { kind: "failed", reason: failure.reason, message: failedNotice(failure, action, script) };
 }
 
 export async function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean, signal: AbortSignal): Promise<void> {
@@ -53,12 +67,29 @@ export async function removeAppendSystemBlockForUninstall(item: InventoryItem, s
 	return runAppendSystemScript(item.packageDir, "remove", signal);
 }
 
+/** A restore wrote the package's block, or `cause` says why it did not. */
+export type RestoreOutcome = { kind: "restored" } | { kind: "not-restored"; cause: string };
+
 /**
  * Put back the block an uninstall removed before it failed or was cancelled.
  * It runs under its own signal, bounded by the script deadline alone: the
- * uninstall's signal is already aborted on the cancel path. The install
- * upsert is idempotent, so restoring a block a cancelled removal left is harmless.
+ * uninstall's signal may already be aborted, by Escape or by session end. The
+ * install upsert is idempotent, so restoring a block a failed removal left is
+ * harmless.
+ *
+ * The vendored script exits 0 after each `append-system: <key>=<value>`
+ * notice it prints, and prints one on every install path that writes no
+ * block, so exit 0 alone does not mean the block is there. The notice is the
+ * script's own result; reading APPEND_SYSTEM.md instead would need a second
+ * copy of its scope resolution.
  */
-export async function restoreAppendSystemBlockAfterUninstall(item: InventoryItem): Promise<AppendSystemOutcome> {
-	return runAppendSystemScript(item.packageDir, "install", new AbortController().signal);
+export async function restoreAppendSystemBlockAfterUninstall(item: InventoryItem): Promise<RestoreOutcome> {
+	const script = appendSystemScript(item.packageDir);
+	if (!script) return { kind: "not-restored", cause: "its scripts/append-system.mjs is gone." };
+	const result = await runScript(script, "install", new AbortController().signal);
+	const failure = commandFailure(result);
+	if (failure) return { kind: "not-restored", cause: failedNotice(failure, "install", script) };
+	if (result.kind !== "exited") throw new Error(`append-system: a run with no failure ended as ${result.kind}`);
+	if (result.output.stderr.split("\n").some((line) => line.startsWith("append-system: "))) return { kind: "not-restored", cause: result.output.stderr.trim() };
+	return { kind: "restored" };
 }

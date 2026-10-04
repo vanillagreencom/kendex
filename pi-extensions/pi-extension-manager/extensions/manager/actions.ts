@@ -128,44 +128,37 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 
 type ActionResult = { ok: boolean; message: string };
 
+/** Whether `item` is disabled: the one predicate toggling and a failed uninstall's restore both read. */
+function itemDisabled(item: InventoryItem, inventory: Inventory): boolean {
+	return item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
+}
+
 /**
- * A failed uninstall's notice once the APPEND_SYSTEM.md block its removal
- * step took is put back; the notice names the block when it cannot be.
+ * A failed uninstall's notice once the APPEND_SYSTEM.md block it may have
+ * removed is put back. Only a block that was live before the uninstall goes
+ * back: a disabled package's block went when it was disabled, and a package
+ * whose removal found no script has none. The notice says when the restore
+ * did not write the block.
  */
-async function failedUninstall(item: InventoryItem, removal: AppendSystemOutcome, message: string): Promise<ActionResult> {
-	if (removal.kind === "absent") return { ok: false, message };
+async function failedUninstall(item: InventoryItem, inventory: Inventory, removal: AppendSystemOutcome, message: string): Promise<ActionResult> {
+	if (removal.kind === "absent" || itemDisabled(item, inventory)) return { ok: false, message };
 	const restore = await restoreAppendSystemBlockAfterUninstall(item);
-	const lost = `The package's APPEND_SYSTEM.md instructions were removed and could not be restored`;
 	switch (restore.kind) {
-		case "ran":
+		case "restored":
 			return { ok: false, message };
-		case "absent":
-			return { ok: false, message: `${message}\n${lost}: its scripts/append-system.mjs is gone.` };
-		case "failed":
-			return { ok: false, message: `${message}\n${lost}:\n${restore.message}` };
+		case "not-restored":
+			return { ok: false, message: `${message}\nRestoring the package's APPEND_SYSTEM.md instructions failed, so they may be missing:\n${restore.cause}` };
 		default: {
 			const unreachable: never = restore;
-			throw new Error(`append-system: unknown outcome ${JSON.stringify(unreachable)}`);
+			throw new Error(`append-system: unknown restore ${JSON.stringify(unreachable)}`);
 		}
 	}
 }
 
 /**
- * The block removal an uninstall starts with. A cancelled removal ends the
- * uninstall with its notice; any other script failure throws before settings
- * change.
- */
-async function removeBlockBeforeUninstall(item: InventoryItem, signal: AbortSignal): Promise<{ kind: "removed"; removal: AppendSystemOutcome } | { kind: "stopped"; result: ActionResult }> {
-	const removal = await removeAppendSystemBlockForUninstall(item, signal);
-	if (removal.kind !== "failed") return { kind: "removed", removal };
-	if (removal.reason === "cancelled") return { kind: "stopped", result: await failedUninstall(item, removal, removal.message) };
-	throw new Error(removal.message);
-}
-
-/**
  * An npm uninstall changes settings only after npm's confirmed exit 0, never
- * on a signal, deadline, cancellation or launch failure, and any such failure
- * puts back the APPEND_SYSTEM.md block removed ahead of npm.
+ * on a signal, deadline, cancellation or launch failure. Any failure of the
+ * block removal or of npm ends the uninstall through `failedUninstall`.
  */
 export async function runUninstall(plan: UninstallPlan, inventory: Inventory, signal: AbortSignal): Promise<ActionResult> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("uninstall-unsupported", plan.item.id, "Package uninstall is unsupported on this host; use its native plugin manager.") };
@@ -184,16 +177,16 @@ export async function runUninstall(plan: UninstallPlan, inventory: Inventory, si
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
 		// APPEND_SYSTEM.md block goes with the tree.
-		const block = await removeBlockBeforeUninstall(plan.item, signal);
-		if (block.kind === "stopped") return block.result;
+		const removal = await removeAppendSystemBlockForUninstall(plan.item, signal);
+		if (removal.kind === "failed") return failedUninstall(plan.item, inventory, removal, removal.message);
 		const npmUninstallFailure = await runPackageCommand("npm-uninstall", plan.method.command, [...plan.method.argsPrefix, ...args], plan.method.cwd, signal);
-		if (npmUninstallFailure) return failedUninstall(plan.item, block.removal, npmUninstallFailure);
+		if (npmUninstallFailure) return failedUninstall(plan.item, inventory, removal, npmUninstallFailure);
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		return { ok: true, message: managerNotice("npm-uninstalled", plan.method.npmName, `Uninstall succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}`) };
 	}
 	// A script failure must leave saved and in-memory settings intact.
-	const block = await removeBlockBeforeUninstall(plan.item, signal);
-	if (block.kind === "stopped") return block.result;
+	const removal = await removeAppendSystemBlockForUninstall(plan.item, signal);
+	if (removal.kind === "failed") return failedUninstall(plan.item, inventory, removal, removal.message);
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	return stripped
 		? { ok: true, message: managerNotice("settings-entry-removed", plan.item.sourceName, `Removed the entry from ${plan.item.scope} settings.json.`) }
@@ -317,7 +310,7 @@ export async function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext
 	}
 	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);
 	const file = findSettingsFile(inventory.settingsFiles, scope);
-	const currentlyDisabled = item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
+	const currentlyDisabled = itemDisabled(item, inventory);
 	const willDisable = !currentlyDisabled;
 	if (item.kind === "package" && item.packageName) await syncAppendSystemForPackage(item, willDisable, signal);
 	updateManagerState(file, (state) => {

@@ -1,11 +1,28 @@
-import { existsSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join } from "node:path";
+import { win32 } from "node:path";
 
 /*
- * Windows executable lookup for the manager's command runner. Windows process
- * creation does no PATHEXT lookup and searches the current directory first,
- * so every executable the runner starts on Windows is resolved here.
+ * How the manager's command runner launches a command: the one owner of the
+ * Windows launch. Windows process creation does no PATHEXT lookup, and both
+ * it and libuv search the child's working directory, the open project, before
+ * PATH. So on Windows every command resolves here to an absolute file: a bare
+ * name through PATH alone, a name holding a path through that path alone. A
+ * miss is `not-found`, and the runner spawns nothing. A `.cmd` or `.bat` file
+ * runs under System32's cmd.exe by absolute path with a command line escaped
+ * here, never through Node's `shell` option, which joins the arguments
+ * unquoted.
  */
+
+/** What to spawn: the file, its arguments, and whether they are already escaped for cmd.exe. */
+export type CommandLaunch =
+	| { kind: "spawn"; file: string; args: string[]; verbatim: boolean }
+	| { kind: "not-found"; command: string; searched: string[] };
+
+/** The platform facts a launch resolves against; the runner passes the live ones. */
+export interface LaunchHost {
+	platform: NodeJS.Platform;
+	env: NodeJS.ProcessEnv;
+	exists: (path: string) => boolean;
+}
 
 function envPath(env: NodeJS.ProcessEnv): string | undefined {
 	return env.PATH ?? env.Path ?? env.path;
@@ -27,37 +44,63 @@ function pathExts(env: NodeJS.ProcessEnv): string[] {
  * lowercased to match the files npm and Node install; Windows matches either
  * case.
  */
-function commandCandidates(command: string, env: NodeJS.ProcessEnv): string[] {
-	if (extname(command)) return [command];
-	return pathExts(env).map((ext) => `${command}${ext.toLowerCase()}`);
+function commandCandidates(name: string, env: NodeJS.ProcessEnv): string[] {
+	if (win32.extname(name)) return [name];
+	return pathExts(env).map((ext) => `${name}${ext.toLowerCase()}`);
 }
 
-/** On `win32`, the file `command` names on PATH (or under `cwd` for a path); elsewhere `command` unchanged. */
-export function resolveWindowsCommand(command: string, cwd: string | undefined, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
-	if (platform !== "win32") return command;
-	if (command.includes("/") || command.includes("\\") || isAbsolute(command)) {
-		for (const candidate of commandCandidates(command, env)) {
-			const absolute = isAbsolute(candidate) ? candidate : join(cwd ?? process.cwd(), candidate);
-			if (existsSync(absolute)) return absolute;
-		}
-		return command;
-	}
-	for (const dir of (envPath(env)?.split(delimiter) ?? [])) {
-		if (!dir) continue;
-		for (const candidate of commandCandidates(command, env)) {
-			const full = join(dir, candidate);
-			if (existsSync(full)) return full;
-		}
-	}
-	return command;
+/** System32's `exe` by absolute path, so a same-named file in the open project is never the one run. */
+function system32(env: NodeJS.ProcessEnv, exe: string): string {
+	return win32.join(env.SystemRoot ?? "C:\\Windows", "System32", exe);
 }
 
-/** A `.cmd` or `.bat` entrypoint runs only under cmd.exe. */
-export function needsWindowsShell(command: string, platform: NodeJS.Platform): boolean {
-	return platform === "win32" && /\.(?:bat|cmd)$/i.test(command);
-}
-
-/** System32's taskkill by absolute path, so a `taskkill.exe` in the open project is never the one run. */
+/** System32's taskkill, by absolute path. */
 export function taskkillPath(env: NodeJS.ProcessEnv): string {
-	return join(env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+	return system32(env, "taskkill.exe");
+}
+
+/** The absolute file `command` names, or every directory searched for it. */
+function resolveWindowsCommand(command: string, cwd: string | undefined, host: LaunchHost): { kind: "found"; file: string } | { kind: "not-found"; searched: string[] } {
+	const searched = /[\\/]/.test(command) || win32.isAbsolute(command)
+		? [win32.dirname(win32.resolve(cwd ?? process.cwd(), command))]
+		: (envPath(host.env)?.split(";") ?? []).filter(Boolean);
+	for (const dir of searched) {
+		for (const candidate of commandCandidates(win32.basename(command), host.env)) {
+			const file = win32.join(dir, candidate);
+			if (host.exists(file)) return { kind: "found", file };
+		}
+	}
+	return { kind: "not-found", searched };
+}
+
+// cmd.exe metacharacters, each escaped with a caret: cross-spawn's set.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+/**
+ * One argument for `cmd /d /s /c`, by cross-spawn's rules: double each run of
+ * backslashes before a quote or the end, escape each quote, quote the whole
+ * argument, then caret-escape every metacharacter, the quotes included, so
+ * cmd.exe passes `&`, `|`, `%` and the rest through as text.
+ */
+function cmdArgument(arg: string): string {
+	const quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
+	return quoted.replace(CMD_META, "^$1");
+}
+
+/** The single `/c` argument that runs `file` with `args` under cmd.exe. */
+function cmdCommandLine(file: string, args: string[]): string {
+	return `"${[file.replace(CMD_META, "^$1"), ...args.map(cmdArgument)].join(" ")}"`;
+}
+
+/**
+ * How to spawn `command` with `args`. Off Windows, the command and arguments
+ * as given, since POSIX exec searches PATH alone. On Windows, see the module
+ * header.
+ */
+export function commandLaunch(command: string, args: string[], cwd: string | undefined, host: LaunchHost): CommandLaunch {
+	if (host.platform !== "win32") return { kind: "spawn", file: command, args, verbatim: false };
+	const resolved = resolveWindowsCommand(command, cwd, host);
+	if (resolved.kind === "not-found") return { kind: "not-found", command, searched: resolved.searched };
+	if (!/\.(?:bat|cmd)$/i.test(resolved.file)) return { kind: "spawn", file: resolved.file, args, verbatim: false };
+	return { kind: "spawn", file: system32(host.env, "cmd.exe"), args: ["/d", "/s", "/c", cmdCommandLine(resolved.file, args)], verbatim: true };
 }
