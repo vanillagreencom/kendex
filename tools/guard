@@ -152,11 +152,13 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
+    mapped-suites)
+      echo "mapped_suites returned a status its header comment defines no meaning for, so tools/guard is broken; its tree's whole suite set ran." ;;
     suites)
       case "$2" in
-        *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its skill's whole suite set ran." ;;
-        *" reason=unreadable "*) echo "a file the reference scan for that changed path reads could not be read, so its skill's whole suite set ran; grep's own error is above." ;;
-        *" reason=mapped "*) echo "the range ran that many of the skill's suites: those the reference scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
+        *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
+        *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; grep's own error is above." ;;
+        *" reason=mapped "*) echo "the range ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path or through another top-level script, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
@@ -272,9 +274,10 @@ case "${1:-}" in
       '        cargo clippy for the crates they touch, any non-Markdown file inside' \
       '        one included (the workspace for a shared input or a file compiled code includes),' \
       '        the UI checks and suite when they touch a non-Markdown file under ui/, the' \
-      '        suites of a touched skill its changed files map to (mapped_suites), and the' \
-      '        suites of the hook, tool and Pi-package trees they touch. A Markdown file' \
-      '        compiles nothing unless compiled code includes it, and runs no UI check.' \
+      '        suites of a touched skill or of hooks/ its changed files map to' \
+      '        (mapped_suites), and the suites of the tool and Pi-package trees they' \
+      '        touch. A Markdown file compiles nothing unless compiled code includes' \
+      '        it, and runs no UI check.' \
       '        None of what --full adds beyond that: the workspace test run, cross-target' \
       '        checks, the documentation build, the Bash 3.2 parse, the working-tree' \
       '        bot-instructions check, the decision-ID check, the cargo free-space floor' \
@@ -1273,8 +1276,8 @@ fi
 # pi-extensions/package-policy.test.mjs holds CI to). An untouched suite is
 # not evidence about this change and is not run here; CI also runs the
 # shards of the packages that read a touched one, as tools/ci-job-set selects.
-# A range narrows a skill's tests further, to the suites mapped_suites below
-# maps its changed files to.
+# A range narrows a skill's tests and hooks/tests further, to the suites
+# mapped_suites below maps its changed files to.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
 # CI installs them in the step before its suite, so a checkout without that
 # install names the missing peers beside the failing suite rather than in
@@ -1283,7 +1286,7 @@ pi_suite_failed() { # DIR
   [ -d "$1/node_modules" ] || say missing-peers "$1"
   say suite "$1"
 }
-# A skill's whole set: every tests/*.sh but the runner, and every
+# A tree's whole set: every tests/*.sh but the runner, and every
 # tests/*.test.mjs where no run-all.sh runs the set instead.
 skill_suites() { # DIR
   local t
@@ -1296,17 +1299,58 @@ skill_suites() { # DIR
     printf '%s\n' "$t"
   done
 }
-# Every file of a skill the reference scan reads: its scripts, one directory
-# below scripts/ included, its tests/lib files and its whole set.
+# Every file of a tree the reach scan reads, as `<role> <path>` lines. The
+# role is what a file naming it is taken to depend on:
+#   script  a top-level script, scripts/<file>
+#   lib     a file one directory below scripts/, which a script sources or
+#           dispatches to
+#   helper  a tests/lib/ file, which suites source
+#   suite   a member of the tree's whole set
+# hooks/ keeps its hooks at its root, which this list leaves out: a hook is
+# read as a script only as the changed path itself, by mapped_suites.
 skill_files() { # DIR
   local f
-  for f in "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/*; do
-    [ ! -f "$f" ] || printf '%s\n' "$f"
+  for f in "$1"/scripts/*; do
+    [ ! -f "$f" ] || printf 'script %s\n' "$f"
   done
-  skill_suites "$1"
+  for f in "$1"/scripts/*/*; do
+    [ ! -f "$f" ] || printf 'lib %s\n' "$f"
+  done
+  for f in "$1"/tests/lib/*; do
+    [ ! -f "$f" ] || printf 'helper %s\n' "$f"
+  done
+  while IFS= read -r f; do
+    [ -z "$f" ] || printf 'suite %s\n' "$f"
+  done <<<"$(skill_suites "$1")"
 }
-# The files of FILES that read the reference REL, one per line: each naming,
-# on a line that is no `#` comment,
+# What the scan holds of each file skill_files lists for the tree SCAN_DIR,
+# loaded once for all of the tree's changed paths, one index per file:
+# SCAN_PATH, SCAN_ROLE, SCAN_CODE, its lines that are no `#` comment, and
+# SCAN_NAMES, each `/<name>` that code spells, one per line between
+# newlines. A name is the whole run of letters, digits, `.`, `_` and `-`
+# after a slash, less any trailing dots, so `/lane-state` is no name in
+# `/lane-state.sh` and `/oversee` none in `/oversee-watch`. Status 2 is a
+# file it could not read.
+scan_load() { # DIR
+  local role f code names
+  SCAN_DIR=""
+  SCAN_PATH=()
+  SCAN_ROLE=()
+  SCAN_CODE=()
+  SCAN_NAMES=()
+  while IFS=' ' read -r role f; do
+    [ -n "$f" ] || continue
+    code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
+    names=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$code") || [ $? -eq 1 ] || return 2
+    SCAN_PATH+=("$f")
+    SCAN_ROLE+=("$role")
+    SCAN_CODE+=("$code")
+    SCAN_NAMES+=($'\n'"$names"$'\n')
+  done <<<"$(skill_files "$1")"
+  SCAN_DIR=$1
+}
+# The indexes of the scanned files that read the reference REL, one per line:
+# each whose code, its comment lines dropped, names
 #   - its path below a `/references/` segment, which prose citing
 #     `references/<file>` does not;
 #   - the references directory itself, as a glob, a find or a path built on
@@ -1315,117 +1359,150 @@ skill_files() { # DIR
 #     in /skills among the start paths of a find, a walk that meets every
 #     reference.
 # A comment citing a reference reads nothing, nor does a find from any other
-# start or a walk in another language. Status 2 is a file it could not read.
-reference_readers() { # REL FILES
-  local rel="$1" f code
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
+# start or a walk in another language.
+reference_readers() { # REL
+  local rel="$1" i code
+  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+    code=${SCAN_CODE[i]}
     if grep -qF -e "/$rel" <<<"$code" ||
       grep -qE -e '/references(/?$|/[^[:alnum:]._-]|[^/[:alnum:]._-])' <<<"$code" ||
       grep -qE -e '(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?(\$\{?[A-Z_]*SKILL[A-Z_]*\}?|[^[:space:]"]*/skills)"?([[:space:]]|\)|$)' <<<"$code"; then
-      printf '%s\n' "$f"
+      printf '%s\n' "$i"
     fi
-  done <<<"$2"
+  done
 }
-# The suites a range runs for one changed path of a skill, REL being the path
-# inside it; this comment, with reference_readers' for a reference, is the
-# one statement of the rule.
+# A file in the reach adds its name as a needle by its role, into the
+# caller's next_any, next_suite and reach_scripts.
+reach_join() { # ROLE PATH
+  case "$1" in
+    lib | helper) next_any+=("${2##*/}") ;;
+    script)
+      next_suite+=("${2##*/}")
+      reach_scripts+=("$2")
+      ;;
+    suite) ;;
+    *) return 3 ;;
+  esac
+}
+# The suites a range runs for one changed path of a tree, a skill or hooks/,
+# REL being the path inside it; this comment, with skill_files' roles and
+# reference_readers' for a reference, is the one statement of the rule.
 #   - A changed or deleted suite, top-level script, or shell file under
-#     scripts/<dir>/ or tests/lib/ starts a reference scan over skill_files:
-#     a file joins the reach when it names `/<file>` for the changed file or
-#     for a file already in the reach, at any depth.
+#     scripts/<dir>/ or tests/lib/ starts a scan over skill_files, its name
+#     the first needle. A file joins the reach when its code, comment lines
+#     dropped, names a needle as `/<name>`, the whole name. A lib or helper
+#     that joins adds its name as a needle any file may name. A top-level
+#     script, the changed one or one that joins, adds its name as a needle
+#     only a suite or a helper may name: the reach follows what sources a
+#     file, never the scripts that call a script. A suite adds none.
 #   - Each suite in the reach runs, and so does each suite named for a
 #     top-level script in the reach: the suite's name, `_` read as `-` and
 #     `.test` dropped, is the script's name without extension or starts with
 #     it and `-`.
-#   - A changed or deleted file under references/ starts the same scan from
-#     the files reference_readers names. A reference no file reads runs
-#     nothing.
+#   - A changed or deleted file under a skill's references/ starts the same
+#     scan from the files reference_readers names, each adding its needle by
+#     its role. A reference no file reads runs nothing.
 #   - A deleted suite whose reach holds no suite runs nothing.
 #   - Anything else maps to no suite: run-all.sh, any other file under a
 #     subdirectory (a Python module is reached by an import that spells no
-#     path), a file outside references/, scripts/ and tests/, and a path
-#     whose reach holds no suite.
+#     path), a skill's file outside references/, scripts/ and tests/, a file
+#     of hooks/ that is no hook, and a path whose reach holds no suite.
 # The reach is what the scan can see, not every caller: a script run through
-# a variable path is missed. CI's full run owns completeness.
-# No output with status 0 is a deleted suite or a reference no file reads;
-# status 1 is a path mapped to no suite, and status 2 a file the scan could
-# not read.
+# a variable path is missed, and so is a suite that runs a changed script
+# only through another top-level script. CI's full run owns completeness.
+# The suites land in MAPPED, one per line, rather than on stdout, so the
+# scan stays loaded for the tree's next path. None with status 0 is a
+# deleted suite or a reference no file reads; status 1 is a path mapped to no
+# suite, status 2 a file the scan could not read, and status 3 a role
+# reach_join does not know, a broken guard.
 mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" suites files reached f t name base found out="" needles readers
-  case "$rel" in
-    tests/run-all.sh) return 1 ;;
+  local dir="$1" rel="$2" role="" i n hit names readers f t name base out="" nl=$'\n'
+  MAPPED=""
+  local reached=() next_any=() next_suite=() any=() suite_only=() reach_scripts=()
+  case "$dir:$rel" in
+    *:tests/run-all.sh) return 1 ;;
     # A shell file is reached by its path; anything else in a subdirectory,
     # a Python module above all, can be reached by an import that spells none.
-    scripts/*/*.sh | tests/lib/*.sh) ;;
-    scripts/*/* | tests/*/*) return 1 ;;
-    scripts/* | tests/*.sh | tests/*.test.mjs | references/*) ;;
+    *:scripts/*/*.sh) role=lib ;;
+    *:tests/lib/*.sh) role=helper ;;
+    *:scripts/*/* | *:tests/*/*) return 1 ;;
+    *:tests/*.sh | *:tests/*.test.mjs) role=suite ;;
+    hooks:*/*) return 1 ;;
+    hooks:*.sh) role=script ;;
+    hooks:*) return 1 ;;
+    *:scripts/*) role=script ;;
+    *:references/*) role=reference ;;
     *) return 1 ;;
   esac
-  suites=$(skill_suites "$dir")
-  files=$(skill_files "$dir")
-  # What the changed file reaches: every file of the skill naming /<file>, or
-  # naming a file already reached, at any depth.
-  reached="$dir/$rel"
-  needles=(-e "/${rel##*/}")
-  case "$rel" in
-    references/*)
-      # The scan starts from the reference's readers instead.
-      readers=$(reference_readers "$rel" "$files") || return 2
-      [ -n "$readers" ] || return 0
-      reached="$reached
-$readers"
-      needles=()
-      while IFS= read -r f; do
-        needles+=(-e "/${f##*/}")
-      done <<<"$readers"
-      ;;
-  esac
-  found=1
-  while [ "$found" -eq 1 ]; do
-    found=0
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      ! grep -Fxq -- "$f" <<<"$reached" || continue
-      grep -qF "${needles[@]}" -- "$f"
-      case $? in
-        0)
-          needles+=(-e "/${f##*/}")
-          reached="$reached
-$f"
-          found=1
-          ;;
-        1) ;;
-        *) return 2 ;;
-      esac
-    done <<<"$files"
+  [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
+  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+    [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
   done
-  # Each suite reached runs, and so does each suite named for a top-level
-  # script reached.
-  while IFS= read -r f; do
-    if grep -Fxq -- "$f" <<<"$suites"; then
-      out="$out$f
+  if [ "$role" = reference ]; then
+    readers=$(reference_readers "$rel")
+    [ -n "$readers" ] || return 0
+    while IFS= read -r i; do
+      reached[i]=1
+      reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
+    done <<<"$readers"
+  else
+    reach_join "$role" "$dir/$rel" || return 3
+  fi
+  # Each pass offers the files still outside the reach only the needles the
+  # last pass added: every older needle has already missed them.
+  while [ "${#next_any[@]}" -gt 0 ] || [ "${#next_suite[@]}" -gt 0 ]; do
+    any=(${next_any[@]+"${next_any[@]}"})
+    suite_only=(${next_suite[@]+"${next_suite[@]}"})
+    next_any=()
+    next_suite=()
+    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+      [ -z "${reached[i]-}" ] || continue
+      names=${SCAN_NAMES[i]}
+      hit=0
+      for n in ${any[@]+"${any[@]}"}; do
+        if [[ $names == *"$nl/$n$nl"* ]]; then
+          hit=1
+          break
+        fi
+      done
+      case "$hit:${SCAN_ROLE[i]}" in
+        0:suite | 0:helper)
+          for n in ${suite_only[@]+"${suite_only[@]}"}; do
+            if [[ $names == *"$nl/$n$nl"* ]]; then
+              hit=1
+              break
+            fi
+          done
+          ;;
+      esac
+      [ "$hit" -eq 1 ] || continue
+      reached[i]=1
+      reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
+    done
+  done
+  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+    if [ -n "${reached[i]-}" ] && [ "${SCAN_ROLE[i]}" = suite ]; then
+      out="$out${SCAN_PATH[i]}
 "
     fi
-    case "${f#"$dir"/}" in
-      scripts/*/*) ;;
-      scripts/*)
-        name="${f##*/}"
-        name="${name%.*}"
-        name="${name//_/-}"
-        while IFS= read -r t; do
-          base="${t##*/}"
-          base="${base%.sh}"
-          base="${base%.mjs}"
-          base="${base%.test}"
-          base="${base//_/-}"
-          case "$base" in "$name" | "$name"-*) out="$out$t
+  done
+  # Each suite named for a top-level script in the reach runs too.
+  for f in ${reach_scripts[@]+"${reach_scripts[@]}"}; do
+    name="${f##*/}"
+    name="${name%.*}"
+    name="${name//_/-}"
+    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+      [ "${SCAN_ROLE[i]}" = suite ] || continue
+      t=${SCAN_PATH[i]}
+      base="${t##*/}"
+      base="${base%.sh}"
+      base="${base%.mjs}"
+      base="${base%.test}"
+      base="${base//_/-}"
+      case "$base" in "$name" | "$name"-*) out="$out$t
 " ;; esac
-        done <<<"$suites"
-        ;;
-    esac
-  done <<<"$reached"
+    done
+  done
   if [ -z "$out" ]; then
     case "$rel" in
       tests/*/*) ;;
@@ -1433,27 +1510,40 @@ $f"
     esac
     return 1
   fi
-  printf '%s' "$out"
+  MAPPED=$out
 }
 if [ "$MODE" != default ] && lane_on shell_shards; then
-  suite_dirs=""
+  # Each touched path of a tree with suites, as `<tree> TAB <path inside
+  # it> TAB <path>`: a render reads as the source it renders.
+  tree_paths=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
       skills/*/* | .agents/skills/*/*)
         x="${f#.agents/}"
         x="${x#skills/}"
-        suite_dirs="$suite_dirs skills/${x%%/*}"
+        tree="skills/${x%%/*}"
+        rel="${x#*/}"
         ;;
-      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) suite_dirs="$suite_dirs hooks" ;;
-      tools/*) suite_dirs="$suite_dirs tools" ;;
+      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*)
+        tree=hooks
+        rel="${f#*hooks/}"
+        ;;
+      tools/*)
+        tree=tools
+        rel="${f#tools/}"
+        ;;
       pi-extensions/*/*)
         x="${f#pi-extensions/}"
-        suite_dirs="$suite_dirs pi-extensions/${x%%/*}"
+        tree="pi-extensions/${x%%/*}"
+        rel="${x#*/}"
         ;;
+      *) continue ;;
     esac
+    tree_paths="$tree_paths$tree	$rel	$f
+"
   done <<<"$touched"
-  for d in $(printf '%s\n' $suite_dirs | sort -u); do
+  for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
@@ -1469,35 +1559,33 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         ;;
       *)
         [ -d "$d/tests" ] || continue
-        # A range runs, of a skill, the suites its changed paths map to, and
-        # the whole set once one path maps to none; --full, and every other
-        # tree, runs the whole set.
+        # A range runs, of a skill or hooks/, the suites its changed paths
+        # map to, and the whole set once one path maps to none; --full, and
+        # every other tree, runs the whole set.
         run=all
-        if [ "$MODE" = range ] && [ "${d#skills/}" != "$d" ]; then
-          run=""
-          while IFS= read -r f; do
-            case "$f" in
-              "$d"/*) rel="${f#"$d"/}" ;;
-              .agents/"$d"/*) rel="${f#.agents/"$d"/}" ;;
-              *) continue ;;
-            esac
+        case "$MODE:$d" in range:skills/* | range:hooks) run="" ;; esac
+        if [ "$run" != all ]; then
+          while IFS='	' read -r tree rel f; do
+            [ "$tree" = "$d" ] || continue
             map_status=0
-            sel=$(mapped_suites "$d" "$rel") || map_status=$?
+            mapped_suites "$d" "$rel" || map_status=$?
+            sel=$MAPPED
             case "$map_status" in
               0) ;;
               1) note suites "all reason=unmapped path=$f"; run=all; break ;;
-              *) note suites "all reason=unreadable path=$f"; run=all; break ;;
+              2) note suites "all reason=unreadable path=$f"; run=all; break ;;
+              *) say mapped-suites "$map_status path=$f"; run=all; break ;;
             esac
             run="$run$sel
 "
-          done <<<"$touched"
+          done <<<"$tree_paths"
           [ "$run" = all ] || run=$(sort -u <<<"$run") || run=all
         fi
         filters=()
         if [ "$run" = all ]; then
           run=$(skill_suites "$d")
         else
-          note suites "$(count_lines "$run")/$(count_lines "$(skill_suites "$d")") reason=mapped skill=$d"
+          note suites "$(count_lines "$run")/$(count_lines "$(skill_suites "$d")") reason=mapped tree=$d"
           [ -n "$run" ] || continue
           while IFS= read -r t; do
             [ -n "$t" ] || continue
