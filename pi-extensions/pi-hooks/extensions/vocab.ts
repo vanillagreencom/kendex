@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentBeforeSettleEvent, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
 /**
@@ -163,6 +163,20 @@ export function claudeSessionFields(ctx: ExtensionContext): Record<string, strin
 export function piContextFields(ctx: ExtensionContext): Record<string, number> {
 	const window = ctx.getContextUsage?.()?.contextWindow;
 	return typeof window === "number" && Number.isInteger(window) && window > 0 ? { context_window: window } : {};
+}
+
+/**
+ * Claude Code's `last_assistant_message` on a `StopFailure` payload, the
+ * harness's own text of the failure: for a usage limit, the limit and its
+ * reset, which orch's session rows keep as `message`. Pi keeps a failed
+ * response's text as the `errorMessage` of its assistant message
+ * (`AssistantMessage`, @earendil-works/pi-ai), so the field is that of the
+ * last assistant message in the context the settle hands over, and absent
+ * where that message carries none.
+ */
+export function claudeFailureFields(messages: AgentBeforeSettleEvent["context"]["contextMessages"]): Record<string, string> {
+	const last = messages.findLast((message) => message.role === "assistant");
+	return last !== undefined && "errorMessage" in last && typeof last.errorMessage === "string" ? { last_assistant_message: last.errorMessage } : {};
 }
 
 /** The agent name a pi-agents-tmux subagent process is started with, or

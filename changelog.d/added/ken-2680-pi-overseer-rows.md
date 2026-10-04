@@ -1,0 +1,1 @@
+- On Pi, the session-end-row and stop-failure-row hooks now install and run, and oversee-watch judges a Pi overseer's exit and usage limit from those rows instead of its pane.

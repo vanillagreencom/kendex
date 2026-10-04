@@ -24,7 +24,7 @@
 # holds the overseer's context record against. The readers are oversee-watch's
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
 #
-# The verdict answers for Claude Code alone: a session whose last row names
+# The verdict answers for Claude Code and Pi: a session whose last row names
 # another harness reads `unsupported` and its reader takes the pane, the named
 # fallback, reported as fallback.
 #
@@ -47,7 +47,7 @@
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
 # lib/lane-context.sh and lib/lane-state.sh sourced by its caller, and the lane
 # writer the first two; the overseer readers need jq and tail alone, and the
-# lane verdict lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
+# overseer and lane verdicts lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
 # like its callers.
 
 # Seconds an append waits for the file's lock before it gives up.
@@ -128,13 +128,17 @@ session_rows_last() { # FILE [EVENT]
 # session_rows_verdict FILE — what the last row says of the session, into
 # SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
 #   none         no row, so nothing the harness said can be read
-#   unsupported  the row names any harness but Claude Code, the one whose
-#                rows this verdict answers for, so its silence settles nothing
+#   unsupported  the row names any harness but Claude Code and Pi, the two
+#                whose rows this verdict answers for, so its silence settles
+#                nothing
 #   ended        SessionEnd for any reason but `clear` and `resume`, the two a
-#                SessionStart follows in the same harness
-#   walled       StopFailure with `rate_limit`, the harness's own word for a
-#                usage limit; its `message` carries the harness's text with the
-#                reset in it
+#                SessionStart follows in the same harness; Pi's carrier says
+#                its own reasons in these words
+#   walled       StopFailure with `rate_limit`, Claude Code's own word for a
+#                usage limit, or on Pi, which names no error kind, one whose
+#                `message` lib/lane-state.sh § lane_limit_banner reads as the
+#                account's limit, the judge a Pi lane's rows take; its
+#                `message` carries the harness's text with the reset in it
 #   wedged       StopFailure whose `message` or `error_details` names a
 #                request refused for its prompt's length, a phrase
 #                SESSION_ROWS_PROMPT_TOO_LONG lists: the session's context
@@ -152,19 +156,28 @@ session_rows_last() { # FILE [EVENT]
 SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
 SESSION_ROWS_VERDICT=none
 session_rows_verdict() { # FILE
+  local verdict banner
   SESSION_ROWS_VERDICT=none
   session_rows_last "$1" || return 2
   [ -n "$SESSION_ROW" ] || return 0
-  SESSION_ROWS_VERDICT="$(jq -r --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
-    if .harness != "claude" then "unsupported"
+  # `limit-text` is a Pi StopFailure the limit judge below settles.
+  verdict="$(jq -r --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
+    if .harness != "claude" and .harness != "pi" then "unsupported"
     elif .event == "SessionEnd" then
       (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
-    elif .event == "StopFailure" and .error == "rate_limit" then "walled"
+    elif .event == "StopFailure" and .harness == "claude" and .error == "rate_limit" then "walled"
     elif .event == "StopFailure"
       and ((((.message // "") + "\n" + (.error_details // "")) | ascii_downcase) as $text
         | any($too_long[]; . as $p | $text | contains($p)))
     then "wedged"
-    else "live" end' <<<"$SESSION_ROW")" || { SESSION_ROWS_VERDICT=none; return 2; }
+    elif .event == "StopFailure" and .harness == "pi" then "limit-text"
+    else "live" end' <<<"$SESSION_ROW")" || return 2
+  if [ "$verdict" = limit-text ]; then
+    banner="$(lane_limit_banner "$(jq -r '.message // ""' <<<"$SESSION_ROW")")" || return 2
+    verdict=live
+    [ -z "$banner" ] || verdict=walled
+  fi
+  SESSION_ROWS_VERDICT="$verdict"
 }
 
 # session_rows_start FILE [SINCE] — the last SessionStart row of FILE, at or

@@ -2,7 +2,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSION_END_LISTENER, SESSION_START_LISTENER, STOP_FAILURE_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "../extensions/registry.ts";
-import { initRustRepo, installCarrier, readLog, projectCommand, registerRendered, renderedHookPath, runGit, SESSION_ID, sessionManager, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installCarrier, mutatedCarrier, readLog, projectCommand, registerRendered, renderedHookPath, runGit, SESSION_ID, sessionManager, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 import { useSettledSessions } from "./session-fixture.ts";
 
 import * as dispatch from "../extensions/dispatch.ts";
@@ -20,10 +20,26 @@ const settle = useSettledSessions();
 const SETTLE_LISTENER = "agent_before_settle";
 
 /** An `agent_before_settle` event as Pi hands it to a handler: what earlier
- * handlers proposed, nothing by default. */
-function boundary(entries: unknown[] = [], proceed = false): Record<string, unknown> {
-	return { type: SETTLE_LISTENER, entries, continue: proceed, outcome: "completed" };
+ * handlers proposed, nothing by default, and the session's context, whose
+ * messages are `messages`. */
+function boundary(entries: unknown[] = [], proceed = false, messages: unknown[] = []): Record<string, unknown> {
+	return {
+		type: SETTLE_LISTENER, entries, continue: proceed, outcome: "completed",
+		context: { contextEntries: [], contextMessages: messages, llmMessages: [], pendingMessages: [], canContinue: false },
+	};
 }
+
+/** The usage-limit text a provider's refusal leaves as Pi's `errorMessage`. */
+const LIMIT_TEXT = "You've hit your limit · resets 9:50am (America/Los_Angeles)";
+
+/** A context whose run ended on that refusal: Pi's `AssistantMessage` records
+ * (@earendil-works/pi-ai), an earlier answered turn before the failed one. */
+const FAILED_RUN = [
+	{ role: "user", content: "first", timestamp: 1 },
+	{ role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", timestamp: 2 },
+	{ role: "user", content: "second", timestamp: 3 },
+	{ role: "assistant", content: [], stopReason: "error", errorMessage: LIMIT_TEXT, timestamp: 4 },
+];
 
 /** A ctx whose UI records each notification as `<level> <content>`. */
 function notifying(project: string, notified: string[]): Record<string, unknown> {
@@ -56,8 +72,13 @@ function stopPayload(stopHookActive: boolean): string {
 	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, session_id: SESSION_ID });
 }
 
-/** The `StopFailure` payload an errored settle writes to a hook's stdin. */
+/** The `StopFailure` payload an errored settle writes to a hook's stdin, over
+ * a context whose last assistant message carries no error text. */
 const failurePayload = JSON.stringify({ hook_event_name: "StopFailure", session_id: SESSION_ID });
+
+/** The same payload over `FAILED_RUN`: that message's error text as Claude
+ * Code's `last_assistant_message`. */
+const failedRunPayload = JSON.stringify({ hook_event_name: "StopFailure", session_id: SESSION_ID, last_assistant_message: LIMIT_TEXT });
 
 /** Every write to the process's stderr while it is held, which is where the
  * person-facing listeners speak when no UI will show a notification. */
@@ -250,11 +271,13 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * the shared log holds the order. Claude Code reads nothing a
 	 * `StopFailure` hook says, so its word is the person's — a notification,
 	 * or stderr where the session has no UI, a hook's stderr beside a clean
-	 * exit included — and the boundary carries the `Stop` answer alone.
+	 * exit included — and the boundary carries the `Stop` answer alone. Every
+	 * row settles over `FAILED_RUN`, so the failed response's error text is in
+	 * the context whatever the outcome, and only an errored run hands it on.
 	 */
 	for (const row of [
-		{ outcome: "error", ui: true, logged: stopPayload(false) + failurePayload + failurePayload, notified: ["warning audit=stop", "warning failure=noted", "warning failure=recorded"], stderr: [] },
-		{ outcome: "error", ui: false, logged: stopPayload(false) + failurePayload + failurePayload, notified: [], stderr: ["failure=noted\n", "failure=recorded\n"] },
+		{ outcome: "error", ui: true, logged: stopPayload(false) + failedRunPayload + failedRunPayload, notified: ["warning audit=stop", "warning failure=noted", "warning failure=recorded"], stderr: [] },
+		{ outcome: "error", ui: false, logged: stopPayload(false) + failedRunPayload + failedRunPayload, notified: [], stderr: ["failure=noted\n", "failure=recorded\n"] },
 		{ outcome: "completed", ui: true, logged: stopPayload(false), notified: ["warning audit=stop"], stderr: [] },
 		{ outcome: "aborted", ui: true, logged: stopPayload(false), notified: ["warning audit=stop"], stderr: [] },
 	]) {
@@ -269,7 +292,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				const notified: string[] = [];
 				const carrier = installCarrier();
 				const ctx = row.ui ? notifying(project, notified) : trusted(project);
-				expect(await carrier.handler(SETTLE_LISTENER)({ ...boundary(), outcome: row.outcome }, ctx))
+				expect(await carrier.handler(SETTLE_LISTENER)({ ...boundary([], false, FAILED_RUN), outcome: row.outcome }, ctx))
 					.toEqual({ entries: [stopEntry("audit=stop")], continue: true });
 				expect(readLog(log)).toBe(row.logged);
 				expect(notified).toEqual(row.notified);
@@ -277,6 +300,36 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				expect(carrier.sent).toHaveLength(0);
 			} finally {
 				stderr.restore();
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	}
+
+	/**
+	 * The failure text is the last assistant message's `errorMessage`, and
+	 * nothing where that message carries none: a context with no assistant
+	 * message, and one whose last answered without error after an earlier
+	 * failure. The control runs the failed-run row on a carrier copy whose
+	 * field is dropped, and that row's payload then misses its text.
+	 */
+	for (const row of [
+		{ name: "the failed response's text", messages: FAILED_RUN, logged: failedRunPayload, extension: undefined },
+		{ name: "no assistant message", messages: [{ role: "user", content: "first", timestamp: 1 }], logged: failurePayload, extension: undefined },
+		{ name: "a later answer over an earlier failure", messages: [...FAILED_RUN, { role: "assistant", content: [], stopReason: "stop", timestamp: 5 }], logged: failurePayload, extension: undefined },
+		{ name: "control: the field dropped", messages: FAILED_RUN, logged: failurePayload, extension: "vocab.ts" },
+	]) {
+		test(`the StopFailure payload's last_assistant_message: ${row.name}`, async () => {
+			const project = initCleanRustRepo("pi-hooks-stop-failure-text-");
+			const log = join(project, "failure.log");
+			try {
+				registerRendered(join(project, ".pi"), STOP_FAILURE_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
+				const extension = row.extension === undefined ? undefined
+					: (await import(mutatedCarrier(project, "failure-text", row.extension,
+						"? { last_assistant_message: last.errorMessage } : {}", "? {} : {}"))).default;
+				const carrier = installCarrier(undefined, extension);
+				await carrier.handler(SETTLE_LISTENER)({ ...boundary([], false, row.messages), outcome: "error" }, trusted(project));
+				expect(readLog(log)).toBe(row.logged);
+			} finally {
 				rmSync(project, { recursive: true, force: true });
 			}
 		});

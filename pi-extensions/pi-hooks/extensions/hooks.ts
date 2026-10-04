@@ -13,7 +13,7 @@ import { agentLine, boundForAgent, deliver, type HookResult, type ListenerRun, p
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_END_LISTENER, SESSION_START_LISTENER, STOP_FAILURE_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
-import { claudeSessionEndReason, claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
+import { claudeFailureFields, claudeSessionEndReason, claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -396,12 +396,13 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// word goes to the person, never into the session as a continuation
 		// the error would refuse again. It judges the lead alone, as `Stop`
 		// does: the payload carries no `agent_id`, the field such a hook tells
-		// a subagent's failure by.
+		// a subagent's failure by. Its `last_assistant_message` is the failed
+		// response's error text (`vocab.ts::claudeFailureFields`).
 		if (event.outcome === "error") {
 			const failed = await runListener(
 				STOP_FAILURE_LISTENER,
 				undefined,
-				() => JSON.stringify({ hook_event_name: "StopFailure", ...claudeSessionFields(ctx) }),
+				() => JSON.stringify({ hook_event_name: "StopFailure", ...claudeSessionFields(ctx), ...claudeFailureFields(event.context.contextMessages) }),
 				ctx,
 				cfg,
 				project,

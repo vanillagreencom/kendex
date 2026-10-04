@@ -139,8 +139,9 @@ export interface Carrier {
 
 /** `onSend` runs after the call is recorded, for a case whose subject is a
  * channel that fails: Pi's session-bound `pi` throws once the session it was
- * captured from has been replaced. */
-export function installCarrier(onSend?: (message: SentMessage) => void): Carrier {
+ * captured from has been replaced. `extension` is the carrier's entry, a
+ * `mutatedCarrier` copy's for a must-fail control. */
+export function installCarrier(onSend?: (message: SentMessage) => void, extension: (pi: never) => void = piHooks): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
 	const pi = {
@@ -152,7 +153,7 @@ export function installCarrier(onSend?: (message: SentMessage) => void): Carrier
 			onSend?.(message);
 		},
 	};
-	piHooks(pi as never);
+	extension(pi as never);
 	return {
 		sent,
 		handler(event: string): ListenerHandler {

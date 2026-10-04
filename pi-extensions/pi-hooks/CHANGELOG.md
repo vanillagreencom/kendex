@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.19.0
+
+- A `StopFailure` payload carries `last_assistant_message`, the error text Pi recorded on the failed response, such as a usage limit and its reset, where Pi recorded one. orch's session rows keep it as the row's `message`, from which `oversee-watch` judges a Pi overseer walled or wedged. `extensions/vocab.ts` adds `claudeFailureFields`.
+
 ### 0.18.0
 
 - A `SessionEnd` hook runs when a Pi session ends, on Pi's `session_shutdown`, with Pi's reason said in Claude Code's `SessionEnd` words: `prompt_input_exit` for `quit`, `clear` for `new` and `fork`, and `resume` for `resume` and `reload`. A `StopFailure` hook runs when a run ends on an error, on `agent_before_settle` with `outcome: "error"`, after that settle's `Stop` and `TaskCompleted` hooks, which still run; a run that completed or was aborted runs none. What either says is shown to the person as a notification, or written to stderr in a session without a UI and at a `quit` the person asks for, whose UI Pi has already stopped; it is never added to the session. `extensions/vocab.ts` adds `claudeSessionEndReason`. kendex installs these hooks on Pi once a kendex release maps the two events.
