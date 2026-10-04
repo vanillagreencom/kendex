@@ -26,11 +26,17 @@ on:
 permissions:
   contents: write
 
+# Hold the whole main run through publication: a pending matrix target can
+# otherwise be replaced even when another target of that run is building.
+# Tag runs get unique workflow groups and retain their job-level groups.
+concurrency:
+  group: release-workflow-${{ github.ref == 'refs/heads/main' && github.ref || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   build:
     concurrency:
       group: release-build-${{ github.ref }}-${{ matrix.target }}
-      # Replacing pending builds keeps main current without starving publication.
       cancel-in-progress: false
     strategy:
       fail-fast: false

@@ -134,16 +134,18 @@ fn job_declaring<'a>(workflow: &'a str, marker: &str) -> &'a str {
     found.remove(0)
 }
 
-/// One property of the job-level concurrency block in GitHub's workflow.
+/// One property of a concurrency block at the supplied indentation.
 /// Step bodies can contain the same text without configuring concurrency.
-fn concurrency_value<'a>(job_lines: &[&'a str], key: &str) -> Option<&'a str> {
+fn concurrency_value<'a>(lines: &[&'a str], key: &str, indent: usize) -> Option<&'a str> {
+    let head = format!("{}concurrency:", " ".repeat(indent));
+    let child_indent = " ".repeat(indent + 2);
     let property = format!("{key}: ");
-    job_lines
+    lines
         .iter()
-        .skip_while(|line| **line != "    concurrency:")
+        .skip_while(|line| **line != head)
         .skip(1)
-        .take_while(|line| line.trim().is_empty() || line.starts_with("      "))
-        .find_map(|line| line.strip_prefix("      ")?.strip_prefix(&property))
+        .take_while(|line| line.trim().is_empty() || line.starts_with(&child_indent))
+        .find_map(|line| line.strip_prefix(&child_indent)?.strip_prefix(&property))
 }
 
 /// The body of a step's `run: |` block, dedented so bash can run it.

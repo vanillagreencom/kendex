@@ -1,0 +1,1 @@
+- Main builds keep all platform targets until publication finishes, so later pushes cannot cancel a pending target in the active build.

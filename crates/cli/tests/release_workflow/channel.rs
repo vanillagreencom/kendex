@@ -483,7 +483,7 @@ fn burst(group: Option<&str>, tags: usize) -> Vec<bool> {
 fn overlapping_tags_each_publish_their_release() {
     let workflow = workflow();
     let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
-    let group = concurrency_value(&job(&workflow, publishing), "group");
+    let group = concurrency_value(&job(&workflow, publishing), "group", 4);
     assert!(
         group.is_some_and(|value| value.contains("github.run_id")),
         "tag publications do not get unique groups: {group:?}"
@@ -504,9 +504,9 @@ fn overlapping_tags_each_publish_their_release() {
     }
 }
 
-/// Later pushes leave running builds and publication to finish. GitHub keeps
-/// only the newest pending job per group. The channel pointer waits for an
-/// active replacement and cannot be interrupted by a later build.
+/// Job groups preserve active builds and publication. The workflow group
+/// below prevents main pushes from replacing a still-pending matrix target.
+/// The channel pointer cannot be interrupted by a later build.
 #[test]
 fn later_pushes_never_cancel_running_builds_or_publication() {
     let workflow = workflow();
@@ -516,11 +516,11 @@ fn later_pushes_never_cancel_running_builds_or_publication() {
         for name in ["build", publishing, channel] {
             let lines = job(workflow, name);
             assert!(
-                concurrency_value(&lines, "group").is_some(),
+                concurrency_value(&lines, "group", 4).is_some(),
                 "{name} has no group"
             );
             assert_eq!(
-                concurrency_value(&lines, "cancel-in-progress"),
+                concurrency_value(&lines, "cancel-in-progress", 4),
                 Some("false"),
                 "{name} can cancel a running job"
             );
@@ -551,6 +551,78 @@ fn later_pushes_never_cancel_running_builds_or_publication() {
         assert!(
             std::panic::catch_unwind(|| check(&mutant)).is_err(),
             "{name}"
+        );
+    }
+}
+
+/// GitHub may start only part of a matrix while other targets wait for their
+/// job groups. Job-level cancellation:false cannot keep a later main push
+/// from replacing those pending targets and making publication impossible.
+/// The real workflow must hold one main group across all jobs, including
+/// publication and the channel update. Tag runs must keep separate groups.
+#[test]
+fn a_main_run_holds_its_pending_targets_until_publication() {
+    let workflow = workflow();
+    let group =
+        "release-workflow-${{ github.ref == 'refs/heads/main' && github.ref || github.run_id }}";
+    let check = |workflow: &str| {
+        let lines: Vec<&str> = workflow.lines().collect();
+        assert_eq!(
+            concurrency_value(&lines, "group", 0),
+            Some(group),
+            "main runs can overlap their pending targets, or tags share a workflow group"
+        );
+        assert_eq!(
+            concurrency_value(&lines, "cancel-in-progress", 0),
+            Some("false"),
+            "a main push can cancel the active workflow"
+        );
+    };
+    check(&workflow);
+
+    let block = format!("concurrency:\n  group: {group}\n  cancel-in-progress: false\n");
+    assert_eq!(workflow.matches(&block).count(), 1);
+    // Preserve every matched line in a shell no-op. Removing just the outer
+    // block recreates the live mixed running/pending case: all job groups
+    // still exist and disable running-job cancellation, but cannot hold a
+    // pending target. The other rows remove each independent group rule.
+    let decoy = format!(
+        "    steps:\n      - name: Unused workflow concurrency text\n        run: |\n          : <<'UNUSED'\n{}\n          UNUSED",
+        block
+            .trim_end()
+            .lines()
+            .map(|line| format!("          {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let build = job(&workflow, "build").join("\n");
+    assert_eq!(build.matches("    steps:").count(), 1);
+    assert_eq!(workflow.matches(&build).count(), 1);
+    let with_decoy = workflow.replacen(&build, &build.replace("    steps:", &decoy), 1);
+    assert_ne!(with_decoy, workflow);
+    for (rule, replacement) in [
+        ("pending matrix target", String::new()),
+        (
+            "shared main group",
+            "concurrency:\n  group: release-workflow-${{ github.run_id }}\n  cancel-in-progress: false\n".to_owned(),
+        ),
+        (
+            "isolated tags",
+            "concurrency:\n  group: release-workflow-${{ github.ref }}\n  cancel-in-progress: false\n".to_owned(),
+        ),
+        (
+            "active workflow",
+            block.replace("cancel-in-progress: false", "cancel-in-progress: true"),
+        ),
+    ] {
+        assert_eq!(with_decoy.matches(&block).count(), 1);
+        let mutant = with_decoy.replacen(&block, &replacement, 1);
+        assert_ne!(with_decoy, mutant);
+        assert!(mutant.contains(group), "{rule} lost the matched text");
+        assert!(mutant.contains("cancel-in-progress: false"));
+        assert!(
+            std::panic::catch_unwind(|| check(&mutant)).is_err(),
+            "{rule}"
         );
     }
 }
