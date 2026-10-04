@@ -431,10 +431,11 @@ export function npmCandidatesFromInventory(inventory: Inventory): { name: string
 }
 
 /**
- * Longest shutdown waits for the session's work: a stopped command's grace and
- * settle, then the script a failed uninstall runs to put its block back.
+ * Longest shutdown waits for the session's work: the stop of the command the
+ * abort reached, then the script a failed uninstall runs to put its block
+ * back, which the abort does not stop, up to its deadline and its own stop.
  */
-const SHUTDOWN_WAIT_MS = STOP_SETTLE_MS + APPEND_SYSTEM_DEADLINE_MS;
+const SHUTDOWN_WAIT_MS = STOP_SETTLE_MS + APPEND_SYSTEM_DEADLINE_MS + STOP_SETTLE_MS;
 
 interface InventorySession {
 	controller: AbortController;

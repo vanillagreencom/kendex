@@ -59,12 +59,23 @@ export async function settleWithin<T>(promise: Promise<T>, ms: number): Promise<
 
 export interface SourceEdit { file: string; before: string; after: string }
 
+const extensionsSource = join(import.meta.dir, "..", "..", "extensions");
+
 /**
  * Copy `extensions/manager` into `dir` with each edit applied to exactly one
  * occurrence, for a must-fail control that runs the planted defect.
  */
 export function mutantManager(dir: string, edits: SourceEdit[]): string {
-	cpSync(join(import.meta.dir, "..", "..", "extensions", "manager"), dir, { recursive: true });
+	return copyWithEdits(join(extensionsSource, "manager"), dir, edits);
+}
+
+/** As `mutantManager`, for all of `extensions`: the entry and `manager/`. */
+export function mutantExtensions(dir: string, edits: SourceEdit[]): string {
+	return copyWithEdits(extensionsSource, dir, edits);
+}
+
+function copyWithEdits(source: string, dir: string, edits: SourceEdit[]): string {
+	cpSync(source, dir, { recursive: true });
 	for (const edit of edits) {
 		const path = join(dir, edit.file);
 		const source = readFileSync(path, "utf8");

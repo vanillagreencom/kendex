@@ -59,13 +59,17 @@ const STOP_GRACE_MS = 2_000;
 const STOP_POLL_MS = 50;
 /** Time to wait for the streams to close after the final kill before settling anyway. */
 const SETTLE_AFTER_KILL_MS = 2_000;
-/** POSIX: longest a stopped run takes to settle once its tree has had SIGTERM: the grace, then the settle wait. */
-export const STOP_SETTLE_MS = STOP_GRACE_MS + SETTLE_AFTER_KILL_MS;
 /** By absolute path, like taskkill, so the open project cannot shadow it. */
 const PS_PATH = "/bin/ps";
 const PS_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 /** Bound on each stop tool run: one `ps` listing, or taskkill. */
 const STOP_TOOL_DEADLINE_MS = 2_000;
+/**
+ * Longest a stopped run takes to settle once its stop has signalled the tree,
+ * on either platform: the POSIX grace before SIGKILL or the Windows taskkill
+ * bound, whichever is longer, then the settle wait.
+ */
+export const STOP_SETTLE_MS = Math.max(STOP_GRACE_MS, STOP_TOOL_DEADLINE_MS) + SETTLE_AFTER_KILL_MS;
 /**
  * POSIX: most listings one stop makes. Each listing past the first follows a
  * newly frozen group, and a frozen group cannot fork, so only a group that

@@ -164,8 +164,11 @@ interface BlockScenario {
 	cancelAfterStart?: string;
 	/** The package is disabled, so it has no block. */
 	disabled?: boolean;
-	/** The restore's install: `exits` ends with code 1, `source-missing` finds no instructions. */
-	restore?: "exits" | "source-missing";
+	/**
+	 * The restore's install: `exits` ends with code 1, `source-missing` finds no
+	 * instructions, `hangs` writes its pid to `pidFile`, ignores SIGTERM and never exits.
+	 */
+	restore?: "exits" | "source-missing" | { kind: "hangs"; pidFile: string };
 	/** Once npm writes its pid here, end the session through a host that then exits, as Pi's quit does. */
 	quitAfterStart?: string;
 }
@@ -201,9 +204,13 @@ async function uninstallWithBlock(managerDir: string, scenario: BlockScenario): 
 		expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 	}
 	const scripts = join(packageDir, "scripts");
-	if (scenario.restore === "exits") {
+	const restore = scenario.restore;
+	if (restore === "exits" || typeof restore === "object") {
+		const install = restore === "exits"
+			? "process.exit(1);"
+			: `process.on("SIGTERM", () => {}); (await import("node:fs")).writeFileSync(${JSON.stringify(restore.pidFile)}, String(process.pid)); setInterval(() => {}, 1_000);`;
 		renameSync(join(scripts, "append-system.mjs"), join(scripts, "vendored.mjs"));
-		writeFileSync(join(scripts, "append-system.mjs"), 'if (process.argv[2] === "install") process.exit(1);\nawait import("./vendored.mjs");\n');
+		writeFileSync(join(scripts, "append-system.mjs"), `if (process.argv[2] === "install") { ${install} }\nelse await import("./vendored.mjs");\n`);
 	}
 	if (scenario.restore === "source-missing") rmSync(join(packageDir, "instructions.md"));
 
@@ -312,6 +319,27 @@ test("restore controls: each planted gap changes what its row observes", async (
 		expect({ name: control.name, differs: !Bun.deepEquals(observed, row.expected) }).toEqual({ name: control.name, differs: true });
 	}
 }, 30_000);
+
+test("quitting during an uninstall whose npm and restore ignore SIGTERM ends the restore before exit; control: a bound without the restore's stop", async () => {
+	const quit = async (managerDir: string) => {
+		const npmPid = join(rootTmp, `npm-pid-${Math.random()}`);
+		const restorePid = join(rootTmp, `restore-pid-${Math.random()}`);
+		const observed = await uninstallWithBlock(managerDir, { npmTail: `trap "" TERM; ${npmHangs(npmPid)}`, quitAfterStart: npmPid, restore: { kind: "hangs", pidFile: restorePid } });
+		const pid = await startedPid(restorePid);
+		leftovers.push(pid);
+		// A killed restore is reaped by its new parent asynchronously; one that
+		// never got SIGKILL is still running at this bound.
+		const until = Date.now() + 1_000;
+		while (processAlive(pid) && Date.now() < until) await Bun.sleep(20);
+		return { observed, restoreAlive: processAlive(pid) };
+	};
+	expect(await quit(managerSource)).toEqual({
+		observed: { ok: false, firstLine: "pi-extension-manager: npm-uninstall-cancelled", blockSeenByNpm: false, blockAfter: false, restoreNotice: "pi-extension-manager: append-system-timeout" },
+		restoreAlive: false,
+	});
+	const mutant = mutantManager(join(rootTmp, "mutant-shutdown-bound"), [{ file: "inventory.ts", before: "const SHUTDOWN_WAIT_MS = STOP_SETTLE_MS + APPEND_SYSTEM_DEADLINE_MS + STOP_SETTLE_MS;", after: "const SHUTDOWN_WAIT_MS = STOP_SETTLE_MS + APPEND_SYSTEM_DEADLINE_MS;" }]);
+	expect((await quit(mutant)).restoreAlive).toBe(true);
+}, 45_000);
 
 type RemovalObservation = { settled: "resolved"; ok: boolean; firstLine: string; settingsKept: boolean; npmRan: boolean; restored: boolean } | { settled: "rejected"; error: string } | "unsettled";
 

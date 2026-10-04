@@ -11,7 +11,7 @@ for (const dir of [join(root, "agent"), join(cwd, ".pi")]) {
 	writeFileSync(join(dir, "settings.json"), "{}");
 }
 const { default: extensionManager } = await import(join(source, "extension-manager.ts"));
-const { inventorySession } = await import(join(source, "manager/inventory.ts"));
+const { inventorySession, sessionWork } = await import(join(source, "manager/inventory.ts"));
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<void>;
 const events = new Map<string, Handler[]>();
 const api = {
@@ -29,7 +29,16 @@ for (const handler of events.get("session_start")!) await handler({}, ctx);
 assert(inventorySession(api).inventory, "lifecycle-ui: inventory");
 const session = inventorySession(api);
 assert.equal(session.controller.signal.aborted, false);
-for (const handler of events.get("session_shutdown")!) await handler({}, ctx);
+// Pi's dispose awaits each handler in turn before it exits, so the shutdown
+// must stay pending while the session's work runs.
+let finishWork!: () => void;
+void sessionWork(api, () => new Promise<void>((resolve) => { finishWork = resolve; }));
+let shutdownSettled = false;
+const shutdown = (async () => { for (const handler of events.get("session_shutdown")!) await handler({}, ctx); })().then(() => { shutdownSettled = true; });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(shutdownSettled, false, "lifecycle-shutdown-wait: settled before the session's work");
+finishWork();
+await shutdown;
 assert.equal(session.controller.signal.aborted, true, "lifecycle-shutdown: signal");
 assert.equal(inventorySession(api).inventory, undefined, "lifecycle-shutdown: inventory");
 for (const handler of events.get("session_shutdown")!) await handler({}, ctx);
