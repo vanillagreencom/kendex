@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::apply::{Op, PlannedOp, Pre};
+use crate::env::Env;
 use crate::error::Result;
 use crate::model::Scope;
 
@@ -67,6 +68,14 @@ pub struct GeneratedPaths {
     /// may be in them, so neither the edit nor the deletion is kendex's
     /// alone.
     pub edited: BTreeSet<PathBuf>,
+    /// Shared configuration files the install record at `HEAD` has kendex
+    /// writing keys in ([`recorded`]). Adds nothing to the inventory. A
+    /// removal left uncommitted has taken its entry out of the record on
+    /// disk and may have taken an emptied file away with it, and the
+    /// inventory at `HEAD` still names that file: this is what keeps it a
+    /// file kendex writes into rather than one it owns, for a reading made
+    /// after the action as for the action's own.
+    pub recorded: BTreeSet<PathBuf>,
     /// Sections a renderer owns inside files whose other bytes belong to
     /// the project. Commit and restore can only change the named section.
     pub regions: BTreeSet<crate::commit_offer::OwnedRegion>,
@@ -153,15 +162,22 @@ impl GeneratedPaths {
     }
 
     /// These paths, with `edited` as the shared configuration files the
-    /// pass edits or takes away ([`GeneratedPaths::edited`]).
-    pub(super) fn editing(self, edited: BTreeSet<PathBuf>) -> Self {
-        Self { edited, ..self }
+    /// pass edits or takes away ([`GeneratedPaths::edited`]) and `recorded`
+    /// as the ones the record at `HEAD` writes keys in
+    /// ([`GeneratedPaths::recorded`]).
+    pub(super) fn editing(self, edited: BTreeSet<PathBuf>, recorded: BTreeSet<PathBuf>) -> Self {
+        Self {
+            edited,
+            recorded,
+            ..self
+        }
     }
 
     /// Every file an action can write into beside its renders without
     /// owning it whole: the project's manifest, its settings file,
     /// `.gitignore`, and the shared configuration files in
-    /// [`GeneratedPaths::shared`] and [`GeneratedPaths::edited`]. What a
+    /// [`GeneratedPaths::shared`], [`GeneratedPaths::edited`] and
+    /// [`GeneratedPaths::recorded`]. What a
     /// reading before an action records as the action's writes where the
     /// caller holds no plan to name them
     /// ([`crate::commit_offer::Before::read`]): the app reads before a write
@@ -171,6 +187,7 @@ impl GeneratedPaths {
         self.shared
             .iter()
             .chain(&self.edited)
+            .chain(&self.recorded)
             .cloned()
             .chain([
                 crate::manifest::project_manifest_path(root),
@@ -261,6 +278,50 @@ fn collect(
             .map(|shim| shim.path.clone()),
     );
     generated
+}
+
+/// The shared configuration files the install record at `HEAD` has kendex
+/// writing keys in: the file each registration it records is reversed in
+/// ([`super::owned::installed`]), the one answer to what an installation
+/// wrote. Read at `HEAD` and not off the record on disk, which an
+/// uncommitted removal has already taken the entry out of.
+///
+/// A scope that is not a project, a project outside git, an unborn `HEAD`
+/// and one holding no record name none. So does a record at `HEAD` this
+/// build will not read: the plan reads the record on disk, and refusing
+/// here would fail every plan over a copy only the commit offer's
+/// deletion rule consults, which then judges by the inventory alone.
+pub(super) fn recorded(env: &Env, scope: &Scope) -> Result<BTreeSet<PathBuf>> {
+    let Scope::Project { root } = scope else {
+        return Ok(BTreeSet::new());
+    };
+    if !root.join(".git").exists() {
+        return Ok(BTreeSet::new());
+    }
+    let committed =
+        crate::commit_offer::committed(root, crate::lock::LOCK_FILE).map_err(|error| {
+            crate::error::CoreError::GitFailed {
+                command: "read committed install record".to_owned(),
+                stderr: if error.timed_out() {
+                    "install record read timed out".to_owned()
+                } else {
+                    error.said().join("\n")
+                },
+            }
+        })?;
+    let Some(bytes) = committed else {
+        return Ok(BTreeSet::new());
+    };
+    let path = crate::lock::lock_path(env, scope);
+    let Ok(lock) = crate::lock::parse_text(&path, &String::from_utf8_lossy(&bytes)) else {
+        return Ok(BTreeSet::new());
+    };
+    let mut recorded = BTreeSet::new();
+    for entry in lock.entries.values() {
+        let edits = super::owned::installed(env, scope, entry).edits?;
+        recorded.extend(edits.into_iter().map(|(path, _)| path));
+    }
+    Ok(recorded)
 }
 
 /// Collect what this pass renders and plan the inventory write for it.

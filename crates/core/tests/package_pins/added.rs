@@ -143,6 +143,44 @@ fn a_dependency_shared_with_a_held_package_at_another_commit_is_named_and_stays(
     assert_eq!(locked_commit(&w, "z"), first);
 }
 
+/// A skill installed only as what another requires is added in its own
+/// right after the source moved. The add declares it and nothing else: the
+/// package that required it is not what the person named and stays at the
+/// commit its record names, its files with it. That package still wants
+/// the skill where it is, so the plan names the skill and leaves it there,
+/// as it does for a dependency an added package shares.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn adding_a_required_skill_leaves_the_package_that_required_it_held() {
+    let w = world();
+    let requires_z = "dependencies:\n  required: [z]\n";
+    write_skill(&w.upstream, "a", requires_z, "a version one.");
+    write_skill(&w.upstream, "z", "", "z version one.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert_eq!(locked_commit(&w, "z"), first);
+
+    write_skill(&w.upstream, "a", requires_z, "a version two.");
+    write_skill(&w.upstream, "z", "", "z version two.");
+    commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = add_skills(&w, &["z"]);
+    let named: Vec<&str> = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.message.contains(&first[..7]))
+        .map(|warning| warning.name.as_str())
+        .collect();
+    assert_eq!(named, ["z"], "{:?}", messages(&report));
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    assert!(installed_body(&w, "a").contains("a version one."));
+    assert_eq!(locked_commit(&w, "a"), first);
+    assert_eq!(locked_commit(&w, "z"), first);
+}
+
 /// A set already installed is added again after its source moved: the set
 /// the request names comes current, its new member with it, and a package
 /// outside it stays at the commit its record names.

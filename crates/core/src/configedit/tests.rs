@@ -650,14 +650,17 @@ fn a_document_a_removal_empties_is_retired() {
 
 /// The same retirement for a TOML document: Codex's config left with no
 /// key or table. The `[features] hooks = true` kendex turns on stays, since
-/// nothing tells it from the person's own setting.
+/// nothing tells it from the person's own setting, and so does a file left
+/// holding the person's comments, which the table does not show.
 #[test]
 fn a_toml_document_a_removal_empties_is_retired() {
     let codex = ConfigEdit::RemoveCodexMcpServer { name: "gh".into() };
     let codex_ours = "[mcp_servers.gh]\ncommand = \"gh\"\n";
     let codex_mine = "model = \"o3\"\n\n[mcp_servers.gh]\ncommand = \"gh\"\n";
     let codex_hooks = "[features]\nhooks = true\n\n[mcp_servers.gh]\ncommand = \"gh\"\n";
-    let rows: [(&str, Vec<ConfigEdit>, &str, bool, bool); 5] = [
+    let codex_notes = "[mcp_servers.gh]\ncommand = \"gh\"\n\n# my notes\n";
+    assert_eq!(codex.apply(codex_notes).unwrap().trim(), "# my notes");
+    let rows: [(&str, Vec<ConfigEdit>, &str, bool, bool); 6] = [
         (
             "TOML emptied in a project",
             vec![codex.clone()],
@@ -683,6 +686,13 @@ fn a_toml_document_a_removal_empties_is_retired() {
             "TOML keeping the hooks feature",
             vec![codex.clone()],
             codex_hooks,
+            true,
+            false,
+        ),
+        (
+            "TOML keeping the person's comment",
+            vec![codex.clone()],
+            codex_notes,
             true,
             false,
         ),

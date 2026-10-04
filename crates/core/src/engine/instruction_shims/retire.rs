@@ -1,8 +1,11 @@
 //! Taking the shims back from a project that no longer installs to their
-//! harness. Nothing records a shim, so what proves one is kendex's is what
-//! it holds: the exact bytes, or the exact value the shim's edit wrote.
-//! Anything else at the position may be the person's, and stays.
+//! harness. The lock records no shim, so what proves one is kendex's is
+//! the inventory on disk listing its position, which an earlier pass wrote
+//! there, and what the position holds: the exact bytes, or the exact value
+//! the shim's edit wrote. Either alone is something a person writes by
+//! hand, and stays.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::observe::{agents_files, gemini_retirement, relative_name, uncomparable};
@@ -29,12 +32,17 @@ pub(super) fn retire(
     let Scope::Project { root } = scope else {
         return Ok(Vec::new());
     };
+    // An inventory that will not parse lists nothing; the attestation
+    // reports it.
+    let listed = crate::fs::read_if_exists(&root.join(INVENTORY))?
+        .and_then(|text| inventory_paths(text.as_bytes()).ok())
+        .unwrap_or_default();
     let mut drift = Vec::new();
     if !harnesses.contains(&HarnessId::Claude) {
-        drift.extend(claude(scope, root, ops)?);
+        drift.extend(claude(scope, root, &listed, ops)?);
     }
     if !harnesses.contains(&HarnessId::Gemini) {
-        drift.extend(gemini(env, scope, root, config_edits));
+        drift.extend(gemini(env, scope, root, &listed, config_edits));
     }
     Ok(drift)
 }
@@ -42,12 +50,13 @@ pub(super) fn retire(
 /// Each `CLAUDE.md` beside a tracked `AGENTS.md` that holds exactly the
 /// shim and that the inventory on disk lists, so an earlier pass wrote it.
 /// The bytes alone are not proof: one import line is also what a person
-/// writes by hand to point Claude Code at their `AGENTS.md`. An inventory
-/// that will not parse lists nothing; the attestation reports it.
-fn claude(scope: &Scope, root: &Path, ops: &mut Vec<PlannedOp>) -> Result<Vec<DriftRow>> {
-    let listed = crate::fs::read_if_exists(&root.join(INVENTORY))?
-        .and_then(|text| inventory_paths(text.as_bytes()).ok())
-        .unwrap_or_default();
+/// writes by hand to point Claude Code at their `AGENTS.md`.
+fn claude(
+    scope: &Scope,
+    root: &Path,
+    listed: &BTreeSet<String>,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<Vec<DriftRow>> {
     let mut drift = Vec::new();
     for agents in agents_files(root)? {
         let path = agents.parent().unwrap_or(root).join(CLAUDE_SHIM_FILE);
@@ -90,21 +99,25 @@ fn claude(scope: &Scope, root: &Path, ops: &mut Vec<PlannedOp>) -> Result<Vec<Dr
     Ok(drift)
 }
 
-/// The Gemini settings file where it still holds exactly what the shim's
-/// edit wrote. A file that will not read or parse proves nothing either
-/// way, so it is left as it is and named as a conflict in the words the
-/// shim's own standing uses.
+/// The Gemini settings file where the inventory on disk lists it, so an
+/// earlier pass wrote into it, and it still holds exactly what the shim's
+/// edit wrote. The value alone is not proof: Gemini's default file and
+/// `AGENTS.md` is also what a person sets by hand to have Gemini read it.
+/// A file that will not read or parse proves nothing either way, so it is
+/// left as it is and named as a conflict in the words the shim's own
+/// standing uses.
 fn gemini(
     env: &Env,
     scope: &Scope,
     root: &Path,
+    listed: &BTreeSet<String>,
     config_edits: &mut ConfigEditPlan,
 ) -> Option<DriftRow> {
     let path = crate::harness::gemini::settings::settings_file(env, scope);
-    if !path.is_file() {
+    let name = relative_name(root, &path);
+    if !listed.contains(&name) || !path.is_file() {
         return None;
     }
-    let name = relative_name(root, &path);
     let refused = |detail: String| {
         Some(row(
             scope,

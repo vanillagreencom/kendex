@@ -488,23 +488,30 @@ fn gemini_settings_are_edited_around_what_they_already_hold() {
 }
 
 /// A settings file kendex cannot parse is refused, never rewritten: where
-/// Gemini is declared and the shim would be written, and where it is not
-/// and the shim would be taken back.
+/// Gemini is declared and the shim would be written, and where kendex
+/// wrote the shim and Gemini has since left the list, so the shim would be
+/// taken back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unparseable_gemini_settings_are_refused_not_rewritten() {
     for (harnesses, declared) in [("\"gemini\"", true), ("\"codex\"", false)] {
-        let f = fixture(harnesses, true);
+        let f = fixture("\"gemini\"", true);
+        if !declared {
+            apply_now(&f);
+            commit(&f.project);
+            fs::write(
+                f.project.join("kendex.toml"),
+                format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+            )
+            .unwrap();
+        }
         let settings = f.project.join(".gemini/settings.json");
         fs::create_dir_all(settings.parent().unwrap()).unwrap();
         fs::write(&settings, "{ \"context\": { \"fileName\": ").unwrap();
 
         let report = apply_now(&f);
-        assert!(
-            report.plan.is_empty(),
-            "{harnesses}: {:?}",
-            touched(&f, &report)
-        );
+        let touched = touched(&f, &report);
+        assert!(touched.is_empty(), "{harnesses}: {touched:?}");
         let row = report
             .drift
             .iter()
@@ -548,21 +555,29 @@ fn a_claude_shim_goes_with_claude_only_where_kendex_wrote_it() {
     assert!(plan(&f).plan.is_empty(), "the next pass plans again");
 }
 
-/// Gemini off the list: a settings file still naming `AGENTS.md` the way
-/// the shim's edit wrote it loses that entry once and keeps the person's
-/// own keys, and no pass after it names the file again. One holding only
-/// the person's keys is a row of
+/// Gemini off the list: a settings file kendex named `AGENTS.md` in, which
+/// its inventory names, and that still names it the way the shim's edit
+/// wrote it, loses that entry once and keeps the person's own keys, and no
+/// pass after it names the file again. The same value where kendex never
+/// installed Gemini, and a file holding only the person's keys, are rows of
 /// `every_retirement_leaves_a_file_holding_the_persons_content`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
-    let ours = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  },\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\"]\n  }\n}\n";
-    let f = fixture("\"codex\"", true);
+    let f = fixture("\"gemini\"", true);
     let settings = f.project.join(".gemini/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(&settings, ours).unwrap();
+    fs::write(&settings, theirs).unwrap();
     commit(&f.project);
+    apply_now(&f);
+    commit(&f.project);
+    assert!(shim_bytes(&settings).contains("AGENTS.md"));
+    fs::write(
+        f.project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+    )
+    .unwrap();
 
     let report = apply_now(&f);
     let named = |report: &EngineReport| {
@@ -599,12 +614,12 @@ enum Left {
 /// lets kendex write the file where the row installs for the tool, gives it
 /// content of the person's, then drops the tool. The file stays holding
 /// that content, no orphaned row names it, and the next pass plans nothing.
-/// Two rows are a file of the person's in a project kendex never installed
-/// the tool for.
+/// Three rows are a file of the person's in a project kendex never
+/// installed the tool for, two of them holding exactly what the shim would.
 ///
 /// Each guard turns its own row red: the shim's bytes check, the context
-/// entry's exact-value check, and the emptied-document check for each
-/// document kind.
+/// entry's exact-value check, the inventory check for each shim, and the
+/// emptied-document check for each document kind.
 #[test]
 #[allow(
     clippy::unwrap_used,
@@ -652,6 +667,18 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
             target: ".gemini/settings.json",
             theirs: |_| {
                 "{\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\", \"NOTES.md\"]\n  }\n}\n"
+                    .to_owned()
+            },
+            left: Left::Bytes,
+        },
+        Row {
+            what: "Gemini settings naming AGENTS.md as the shim does where Gemini was never installed",
+            first: "\"codex\"",
+            then: "\"codex\"",
+            mcp: false,
+            target: ".gemini/settings.json",
+            theirs: |_| {
+                "{\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\"]\n  }\n}\n"
                     .to_owned()
             },
             left: Left::Bytes,

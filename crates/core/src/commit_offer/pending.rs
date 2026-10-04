@@ -93,11 +93,9 @@ impl Before {
     /// Read `scope` before an action that renders `generated` and writes
     /// `writes` beside its renders: every path the action's plan touches
     /// where the caller holds the plan, and otherwise every file such an
-    /// action can write into ([`GeneratedPaths::beside`]). The renders the
-    /// inventory at `HEAD` names are kept out of `writes`
-    /// ([`super::paths::beside_renders`]): kendex owns them whole. A scope
-    /// that is not a project, or a project that is not a checkout, has
-    /// nothing to read.
+    /// action can write into ([`GeneratedPaths::beside`]). A scope that is
+    /// not a project, or a project that is not a checkout, has nothing to
+    /// read.
     pub fn read(
         scope: &Scope,
         generated: &GeneratedPaths,
@@ -113,10 +111,6 @@ impl Before {
             .into_iter()
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
             .collect();
-        let writes = match super::paths::beside_renders(root, generated, writes.clone()) {
-            Ok(beside) => beside,
-            Err(failed) => return Before::Unread { failed, writes },
-        };
         let sorted = match super::paths::sort(root, generated, Some(&writes)) {
             Ok(sorted) => sorted,
             Err(failed) => return Before::Unread { failed, writes },

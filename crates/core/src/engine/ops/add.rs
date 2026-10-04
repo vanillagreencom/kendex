@@ -197,7 +197,7 @@ pub fn add_seeded(
     let options = PlanOptions {
         arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,
-        ..PlanOptions::for_declarations(declaring.iter().cloned())
+        ..PlanOptions::for_additions(declaring.iter().cloned())
     };
     let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     report.notes.extend(notes);

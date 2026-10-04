@@ -308,9 +308,15 @@ pub fn head_short(root: &Path) -> Result<String, Failed> {
 /// that will not parse all contribute nothing: none of them is a repository
 /// this offer cannot read, and none names a path to add.
 pub fn committed_inventory(root: &Path) -> Result<std::collections::BTreeSet<String>, Failed> {
-    let spec = format!("HEAD:{}", crate::engine::generated_paths::INVENTORY);
-    let Some(bytes) = read(root, &["show", &spec])? else {
+    let Some(bytes) = committed(root, crate::engine::generated_paths::INVENTORY)? else {
         return Ok(std::collections::BTreeSet::new());
     };
     Ok(crate::engine::generated_paths::committable_paths(&bytes).unwrap_or_default())
+}
+
+/// The bytes the last commit holds at `relative`, a path under the root
+/// spelled as git spells it: `None` where `HEAD` is unborn or holds
+/// nothing there.
+pub(crate) fn committed(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, Failed> {
+    read(root, &["show", &format!("HEAD:./{relative}")])
 }

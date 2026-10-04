@@ -28,14 +28,19 @@ fn manifest_with(items: &[(&str, Option<&str>)], bundles: &[&str]) -> Manifest {
     manifest
 }
 
-/// [`held_manifest`] for one target, which is what every case below
-/// names. A set of them is covered end to end in `package_pins`.
+/// [`held_manifest`] for one targeted update, which is what every case
+/// below names. A set of them, and an add's narrower reach, are covered
+/// end to end in `package_pins`.
 fn held_for(manifest: &Manifest, lock: &Lock, kind: ItemKind, name: &str) -> (Manifest, HeldPins) {
     let target = Held::Item {
         kind,
         name: name.to_owned(),
     };
-    held_manifest(manifest, lock, &BTreeSet::from([target]))
+    let targets = Targets {
+        declarations: BTreeSet::from([target]),
+        reach: Reach::Carriers,
+    };
+    held_manifest(manifest, lock, &targets)
 }
 
 fn entry_from(

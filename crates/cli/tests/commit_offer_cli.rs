@@ -466,10 +466,10 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
 
 /// `remove --commit` commits the deletion of a render the person edited
 /// after the add committed it. The removal's plan names that render among
-/// the paths it touches, and the reading before it keeps every render the
-/// committed inventory names out of the files it writes beside them, so
-/// the render is kendex's whole and the commit carries its deletion beside
-/// the manifest, the lock and the inventory, and nothing is left pending.
+/// the paths it touches, and a deleted render the committed inventory
+/// names is kendex's whole whatever touched it, so the commit carries its
+/// deletion beside the manifest, the lock and the inventory, and nothing is
+/// left pending.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_remove_commits_the_deletion_of_a_render_the_person_edited() {
@@ -590,6 +590,53 @@ fn a_remove_commits_a_shared_file_it_edits_and_leaves_out_one_the_person_emptied
         };
         assert_eq!(git(&project, &["status", "--porcelain"]), left, "{text}");
     }
+}
+
+/// A remove left uncommitted takes away the shared settings file the
+/// committed hook was the last key in. The passive reading after it, which
+/// no action reads for, still finds the file in the committed inventory,
+/// but a shared file's deletion is never kendex's whole: it is not among
+/// the files a commit or a restore takes whole.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_passive_reading_keeps_a_deleted_shared_file_out_of_the_renders() {
+    const SETTINGS: &str = ".claude/settings.json";
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let source = scout_and_guard(&home).to_string_lossy().into_owned();
+    let add = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            &source,
+            "--hook",
+            "guard",
+        ],
+    );
+    assert!(add.status.success(), "{}", said(&add));
+    let committed = git(
+        &project,
+        &["show", &format!("HEAD:{}", ".kendex-generated.json")],
+    );
+    assert!(committed.contains(SETTINGS), "{committed}");
+
+    let remove = kendex(&home, &project, &["remove", "--no-sweep", "guard"]);
+    assert!(remove.status.success(), "{}", said(&remove));
+    assert!(!project.join(SETTINGS).exists(), "{}", said(&remove));
+
+    let passive = kendex(&home, &project, &["generated-paths"]);
+    let owned: Vec<String> = serde_json::from_slice(&passive.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", said(&passive)));
+    assert!(
+        !owned.is_empty(),
+        "the removed script is a render: {owned:?}"
+    );
+    assert!(!owned.iter().any(|path| path == SETTINGS), "{owned:?}");
 }
 
 /// A project whose root `AGENTS.md` carries a managed region the installed

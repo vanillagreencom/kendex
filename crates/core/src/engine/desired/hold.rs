@@ -30,7 +30,7 @@ use crate::manifest::Manifest;
 use crate::model::ItemKind;
 
 use super::super::expansion::PLANNED_KINDS;
-use super::super::report_types::{Held, HeldPin};
+use super::super::report_types::{Held, HeldPin, Reach, Targets};
 
 /// What a declaration in the manifest answers for, and therefore what
 /// pinning it decides. A bundle is not an installation and has no lock
@@ -197,9 +197,10 @@ pub(crate) fn planning_manifest<'a>(
 }
 
 /// The manifest a single-package update plans from: the targets read
-/// fresh, and so does whatever carries their revisions — the parent of a
-/// dependency always, and the sets that carry a target itself only where
-/// it has no declaration of its own to read. Every other unpinned
+/// fresh, and under [`Reach::Carriers`] so does whatever carries their
+/// revisions — the parent of a dependency always, and the sets that carry a
+/// target itself only where it has no declaration of its own to read. Under
+/// [`Reach::Declared`] the targets alone read fresh. Every other unpinned
 /// declaration is pinned at the commit its lock entries agree on, and
 /// every unpinned set at the commit the record says it came out as.
 ///
@@ -215,14 +216,10 @@ pub(crate) fn planning_manifest<'a>(
 /// source this declaration does not read from — is left to resolve
 /// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
 /// is what a whole-scope apply gives it anyway.
-fn held_manifest(
-    manifest: &Manifest,
-    lock: &Lock,
-    targets: &BTreeSet<Held>,
-) -> (Manifest, HeldPins) {
+fn held_manifest(manifest: &Manifest, lock: &Lock, targets: &Targets) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
-    for target in targets {
-        exempt.extend(exempted_by(manifest, lock, target));
+    for target in &targets.declarations {
+        exempt.extend(exempted_by(manifest, lock, target, targets.reach));
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins { pins: Vec::new() };
@@ -281,9 +278,10 @@ fn held_manifest(
     (held, pins)
 }
 
-/// The declarations one target leaves unpinned: its own, and, for an item,
-/// the ones that carry its revision. A set carries its members' revisions
-/// itself, so a set target leaves only its own declaration unpinned.
+/// The declarations one target leaves unpinned: its own, and, for an item
+/// under [`Reach::Carriers`], the ones that carry its revision. A set
+/// carries its members' revisions itself, so a set target leaves only its
+/// own declaration unpinned.
 ///
 /// Asked per target, because the answer is the target's own. Whether the
 /// sets that carry it own it turns on whether this package has a
@@ -291,7 +289,7 @@ fn held_manifest(
 /// that differently — a declared one keeps its sets held while a derived
 /// one beside it cannot move at all unless they read fresh. Asked once
 /// for the pass, one target's answer would decide for the other.
-fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held) -> BTreeSet<Owner> {
+fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held, reach: Reach) -> BTreeSet<Owner> {
     let target = match target {
         Held::Item { kind, name } => (*kind, name.clone()),
         Held::Set { name } => {
@@ -323,6 +321,10 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held) -> BTreeSet<Owne
             name: target.1.clone(),
             source: source.clone(),
         });
+    }
+    match reach {
+        Reach::Declared => return exempt,
+        Reach::Carriers => {}
     }
     // Its installations under that source, and the declarations they came
     // in under. An entry a rebind left behind is an installation of a

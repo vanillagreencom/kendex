@@ -567,8 +567,9 @@ pub struct PlanOptions {
     /// five.
     ///
     /// A set named here comes current itself, its members with it, where an
-    /// add names a set the scope already installs.
-    pub update_only: Option<BTreeSet<Held>>,
+    /// add names a set the scope already installs. How far a named item's
+    /// exemption reaches is [`Targets::reach`].
+    pub update_only: Option<Targets>,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file
@@ -606,6 +607,27 @@ pub struct PlanOptions {
     pub judge_pins: bool,
 }
 
+/// The declarations a plan scoped to some packages brings current, and how
+/// far that reaches past them: [`PlanOptions::update_only`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Targets {
+    pub declarations: BTreeSet<Held>,
+    pub reach: Reach,
+}
+
+/// What reads fresh with a named item beside its own declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// A targeted update: whatever carries the item's revision too, the
+    /// declaration that required it and the sets that carry it, since a
+    /// dependency cannot move while what it reads its bytes through holds.
+    Carriers,
+    /// An add: the declarations it writes and nothing else. A package that
+    /// required the item before the add is not what the person named, and
+    /// stays at the commit its record names.
+    Declared,
+}
+
 impl PlanOptions {
     /// A plan scoped to one package: it resolves at its source's tip while
     /// every other follower in the scope holds at the commit its lock
@@ -620,18 +642,26 @@ impl PlanOptions {
     /// in one reconcile and one apply. What `Update all` asks a place for,
     /// having grouped its rows by the scope they live in.
     pub fn for_packages(targets: impl IntoIterator<Item = (ItemKind, String)>) -> Self {
-        PlanOptions::for_declarations(
-            targets
-                .into_iter()
-                .map(|(kind, name)| Held::Item { kind, name }),
-        )
+        PlanOptions {
+            update_only: Some(Targets {
+                declarations: targets
+                    .into_iter()
+                    .map(|(kind, name)| Held::Item { kind, name })
+                    .collect(),
+                reach: Reach::Carriers,
+            }),
+            ..PlanOptions::default()
+        }
     }
 
-    /// [`PlanOptions::for_packages`] over declarations of either kind: the
-    /// items and the sets an add declares.
-    pub fn for_declarations(targets: impl IntoIterator<Item = Held>) -> Self {
+    /// The plan an add makes: the items and the sets it declares come
+    /// current, and nothing else moves ([`Reach::Declared`]).
+    pub fn for_additions(declarations: impl IntoIterator<Item = Held>) -> Self {
         PlanOptions {
-            update_only: Some(targets.into_iter().collect()),
+            update_only: Some(Targets {
+                declarations: declarations.into_iter().collect(),
+                reach: Reach::Declared,
+            }),
             ..PlanOptions::default()
         }
     }

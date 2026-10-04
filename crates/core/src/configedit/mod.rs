@@ -204,11 +204,12 @@ impl ConfigEdit {
     /// Pi append file, retired when nothing of its own is left
     /// ([`crate::pi_ext::append_system_retires`]). A JSON file goes when
     /// left an empty object or the lone `$schema` OpenCode's upsert writes,
-    /// and a TOML file when left with no key or table. A composed OpenCode
-    /// cleanup retires one holding only the schema whatever it held before.
-    /// Any other JSON or TOML edit retires it only where `emptied` allows
-    /// and the edits took something out of the document, so a file the
-    /// person left empty stays.
+    /// and a TOML file when left with no key or table and no text but
+    /// whitespace, since the edit keeps the person's comments and a table
+    /// does not hold them. A composed OpenCode cleanup retires one holding
+    /// only the schema whatever it held before. Any other JSON or TOML edit
+    /// retires it only where `emptied` allows and the edits took something
+    /// out of the document, so a file the person left empty stays.
     pub(crate) fn removes_empty_document(
         edits: &[Self],
         current: Option<&str>,
@@ -250,7 +251,10 @@ impl ConfigEdit {
                     text.parse::<toml::Table>().map_err(|e| e.to_string())
                 };
                 let value = parse(&updated)?;
-                Ok(value.is_empty() && emptied && parse(current)? != value)
+                Ok(value.is_empty()
+                    && updated.trim().is_empty()
+                    && emptied
+                    && parse(current)? != value)
             }
         }
     }

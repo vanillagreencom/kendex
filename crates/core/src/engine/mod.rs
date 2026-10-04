@@ -140,8 +140,8 @@ pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_de
 mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ForkEdit,
-    Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions, Registrations, StoodIn,
-    StoodInRecord,
+    Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions, Reach, Registrations,
+    StoodIn, StoodInRecord, Targets,
 };
 
 pub(super) struct PlanOwnership {
@@ -285,7 +285,7 @@ pub fn plan_scope(
         fork_edits,
         resolved_sources,
         recorded_gone,
-        generated: generated.editing(edited),
+        generated: generated.editing(edited, generated_paths::recorded(env, scope)?),
         installations,
         stood_in: readings.stood_in(lock),
         record: new_lock,
