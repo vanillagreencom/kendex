@@ -62,10 +62,10 @@ if [ -n "$old" ]; then
 fi
 # GitHub owns the queue and may merge the rolling pull request and delete its
 # branch at any moment. The read at run start skips a run whose pull request
-# the queue already holds; only a read after GitHub refuses a write can
-# establish the lifecycle at that write. Sets reason to merged, closed,
-# queued, armed, branch-gone or active for the pull request in pr; a failed
-# or malformed read exits.
+# the queue already holds; only a read after GitHub refuses a write, or the
+# refusal itself, can establish the lifecycle at that write. Sets reason to
+# merged, closed, queued, armed, branch-gone or active for the pull request
+# in pr; a failed or malformed read exits.
 refresh_lifecycle() {
   local has_pr=false push_state
   if [ -n "$pr" ]; then has_pr=true; fi
@@ -328,7 +328,8 @@ if [ -n "$settings_report" ]; then
 fi
 if [ "$state" = pushed ]; then
   push_status=0
-  git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh || push_status=$?
+  git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh 2>"$TMP/push-stderr" || push_status=$?
+  cat -- "$TMP/push-stderr" >&2
   if [ "$push_status" -ne 0 ]; then
     if [ "$pr" = "" ]; then
       if ! pr="$(gh api "repos/$GH_REPO/pulls?state=open&head=${GH_REPO%%/*}:kendex/refresh&sort=created&direction=desc&per_page=1" --jq '.[0].number // empty')"; then
@@ -337,6 +338,17 @@ if [ "$state" = pushed ]; then
       fi
     fi
     refresh_lifecycle
+    # GitHub's GH006 refusal for a queued branch, as git relays it. The read
+    # can still answer active after that refusal, so the refusal decides.
+    # GitHub wraps the message, so the lines are joined before matching.
+    if ! refusal="$(sed 's/^remote://' "$TMP/push-stderr" | tr -s ' \t\r\n' ' ')"; then
+      printf 'refresh-error=read value=push-stderr\n' >&2
+      exit 1
+    fi
+    case "$refusal" in
+      *'GH006: Protected branch update failed'*'has been added to a merge queue. Branches that are queued for merging cannot be updated.'*)
+        [ "$reason" != active ] || reason=queued ;;
+    esac
     if [ "$reason" != active ]; then
       printf 'refresh-state=deferred reason=%s\n' "$reason"
       exit 0

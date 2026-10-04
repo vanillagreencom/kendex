@@ -1,0 +1,1 @@
+- A consumer refresh run whose push GitHub refuses because the merge queue holds the rolling branch ends as deferred, not as a push error.

@@ -126,8 +126,18 @@ if [ "${1:-}" = push ]; then
   printf 'git push\n' >>"$TEST_STATE/calls"
   case "${TEST_PUSH_MODE:-normal}" in
     queued)
+      # GitHub's refusal as git relayed it in vg run 37061917953, line
+      # padding included.
       : >"$TEST_STATE/push-refused"
-      printf 'remote: error: GH006: Protected branch update failed for refs/heads/kendex/refresh\n' >&2
+      printf '%s\n' \
+        'remote: error: GH006: Protected branch update failed for refs/heads/kendex/refresh.        ' \
+        'remote: ' \
+        'remote: - A pull request for this branch has been added to a merge queue. Branches that        ' \
+        'remote:   are queued for merging cannot be updated. To modify this branch, dequeue the        ' \
+        'remote:   associated pull request.        ' \
+        'To https://github.com/acme/test' \
+        ' ! [remote rejected] HEAD -> kendex/refresh (protected branch hook declined)' \
+        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
       exit 1 ;;
     deleted)
       "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" update-ref -d refs/heads/kendex/refresh ;;
@@ -582,10 +592,12 @@ LEASE_CONTROL
 done
 # GitHub can own the rolling branch after fetch, even with serialized runs.
 # Every state fixture is consumed only after the Git push refusal.
+# A GH006 merge-queue refusal defers queued even when the read answers active.
 cp "$runner" "$TMP/push-runner"
 push_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 for row in \
   'queued|queued|OPEN|true|false|present|0|queued' \
+  'queue-refusal-active|queued|OPEN|false|false|present|0|queued' \
   'armed|queued|OPEN|false|true|present|0|armed' \
   'merged-deleted|deleted|MERGED|false|false|gone|0|merged' \
   'closed|queued|CLOSED|false|false|present|0|closed' \
@@ -627,6 +639,7 @@ for row in \
   mutations=""
   case "$name" in
     queued) mutations='defer ordering queue-field' ;;
+    queue-refusal-active) mutations=refusal-text ;;
     merged-deleted) mutations=defer ;;
     genuine-failure) mutations=fail-open ;;
     new-branch-failure) mutations=no-old ;;
@@ -648,6 +661,7 @@ mutations = {
     'ordering': ('  push_status=0', "  gh api graphql -f query='query { viewer { login } }'\n  push_status=0"),
     'queue-field': ('{ state isInMergeQueue autoMergeRequest { enabledAt } }', '{ state autoMergeRequest { enabledAt } }'),
     'no-old': ('elif .ref == null and $old != "" then "branch-gone"', 'elif .ref == null then "branch-gone"'),
+    'refusal-text': ('        [ "$reason" != active ] || reason=queued ;;', '        : ;;'),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1
