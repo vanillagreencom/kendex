@@ -10,8 +10,12 @@
 # read and whose agent printed text((await ...).output). The batched capture
 # is one wrapper of three printed statements, a skill read, a failed read and
 # an echo: each wrote its own CommandExecution event, in statement order and
-# with no call_id, before one Script completed output. The fixture
-# projections omit account metadata and repeated command output, not status.
+# with no call_id, before one Script completed output. The truncated capture
+# prints a read between two long seq outputs: every event completed with exit
+# code 0, and the output Codex handed the model opens with its truncation
+# warning and lost the read's text. The fixture projections omit account
+# metadata, not status; the truncated one also drops the events' output fields
+# and keeps only the head, the cut marker and the tail of the long text.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
@@ -186,8 +190,8 @@ done <<'ROWS'
 relocated|ok|rc=0 first=-
 ROWS
 
-# The measured functions.exec wrapper runs one literal shell read and prints
-# its output. These rows keep the authentic envelope and output; each defect
+# The measured functions.exec wrappers run one literal shell read, or a batch
+# of printed statements, and print their output. These rows keep the authentic envelope and output; each defect
 # changes a private copy, never the captured fixtures.
 functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
   local fixture="$1" scenario="$2" want="$3" label="$4" command skill
@@ -214,6 +218,10 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
     elif $scenario == "unprinted" and .payload.type == "custom_tool_call" then
       .payload.input |= sub("text[(][(](?<call>await tools[.]exec_command[(][{]cmd:\"echo done\"[}][)])[)][.]output[)]"; "\(.call)")
     elif $scenario == "in-script" then select(.payload.type != "custom_tool_call_output")
+    elif $scenario == "leading-js" and .payload.type == "custom_tool_call" then
+      .payload.input |= "text = () => {};\n" + .
+    elif $scenario == "interleaved-js" and .payload.type == "custom_tool_call" then
+      .payload.input |= sub("\n"; "\ntext = () => {};\n")
     elif $scenario == "printed-suffix" and .payload.type == "custom_tool_call" then
       .payload.input |= if test("[.]output[)]") then sub("[.]output[)]"; ".output.slice(0, 0))")
         else sub("[}][)][)]"; "}).slice(0, 0))") end
@@ -221,7 +229,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
   case "$fixture:$scenario" in
     *-failed:*) skill=missing-KEN-2484; command=skill-capture-command ;;
     *-batched:failed-read) skill=missing; command=skill-capture-command ;;
-    *-batched:*) skill=demo; command=skill-capture-command ;;
+    *-batched:* | *-truncated:*) skill=demo; command=skill-capture-command ;;
     *) skill=linear; command=.agents/skills/linear/scripts/linear.sh ;;
   esac
   payload=$(jq -n -c --arg t "$TRANSCRIPT" --arg c "$command" \
@@ -231,7 +239,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
     "$BASH_BIN" "$JUDGE" >"$OUT_FILE" 2>"$ERR_FILE" <<<"$payload"
   rc=$?
   set -e
-  # Every Codex refusal names the read that always passes.
+  # Every Codex unloaded refusal names the read that always passes.
   case "$want" in
     rc=2*) remedy=standalone-read ;;
     *) remedy="" ;;
@@ -272,6 +280,9 @@ batched-failed|skill-load-check-codex-0.160.0-batched|failed-read|rc=2 first=ski
 batched-misaligned|skill-load-check-codex-0.160.0-batched|misaligned|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched events out of step
 batched-unprinted|skill-load-check-codex-0.160.0-batched|unprinted|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched unprinted statement
 batched-in-script|skill-load-check-codex-0.160.0-batched|in-script|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched read before its output
+batched-leading-js|skill-load-check-codex-0.160.0-batched|leading-js|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched JavaScript before the first statement
+batched-interleaved-js|skill-load-check-codex-0.160.0-batched|interleaved-js|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched JavaScript between statements
+truncated|skill-load-check-codex-0.160.0-truncated|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched read cut from a truncated output
 ROWS
 }
 exec_success_row() { exec_rows success; }
@@ -283,6 +294,9 @@ exec_batched_failed_row() { exec_rows batched-failed; }
 exec_aligned_row() { exec_rows wrong-command; exec_rows batched-misaligned; }
 exec_script_end_row() { exec_rows compound-js; }
 exec_output_position_row() { exec_rows extra-event; }
+exec_script_start_row() { exec_rows batched-leading-js; }
+exec_contiguous_row() { exec_rows batched-interleaved-js; }
+exec_truncated_row() { exec_rows truncated; }
 exec_compound_row() { exec_rows compound-js; exec_rows field-compound-js; }
 exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
 exec_suffix_row() { exec_rows printed-suffix; exec_rows captured-printed-suffix; exec_rows field-printed-suffix; }
@@ -310,6 +324,12 @@ skill_load_control exec-alignment "$HOOK" '            else null end] == $cmds)'
 skill_load_control exec-script-end "$HOOK" '      | [match($statement; "g")] as $statements' \
   '      | ($statements[-1] | .offset + .length) as $end' HOOK exec_script_end_row \
   'functions.exec compound JavaScript'
+skill_load_control exec-script-start "$HOOK" '      | select($statements[0].offset == 0)' \
+  '        // true' HOOK exec_script_start_row 'functions.exec batched JavaScript before the first statement'
+skill_load_control exec-contiguous "$HOOK" '          $statements[.].offset == $statements[. - 1].offset + $statements[. - 1].length))' \
+  '        // true' HOOK exec_contiguous_row 'functions.exec batched JavaScript between statements'
+skill_load_control exec-truncated "$HOOK" '        | select($result.output | all(.[]; .text | strings' \
+  '          | select(false)' HOOK exec_truncated_row 'functions.exec batched read cut from a truncated output'
 skill_load_control exec-output-position "$HOOK" '          | .type == "custom_tool_call_output" and .call_id == $id)' \
   '        // true' HOOK exec_output_position_row 'functions.exec ambiguous shell completion'
 skill_load_control exec-remedy "$HOOK" '        codex)' \
