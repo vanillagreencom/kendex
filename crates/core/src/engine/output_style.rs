@@ -269,7 +269,7 @@ pub(super) fn changed(record: &OutputStyleRecord) -> Result<bool> {
 }
 
 /// The regular-file policy for shared response-style documents.
-pub(super) fn file_problem(path: &Path) -> Option<String> {
+pub(crate) fn file_problem(path: &Path) -> Option<String> {
     (path.is_symlink() || (path.exists() && !path.is_file()))
         .then(|| format!("{} is not a regular file", path.display()))
 }

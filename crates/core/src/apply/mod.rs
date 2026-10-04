@@ -5,7 +5,7 @@ use crate::error::{CoreError, Result};
 use crate::model::Scope;
 
 pub mod journal;
-mod landing;
+pub(crate) mod landing;
 mod op;
 mod plan;
 mod pre;

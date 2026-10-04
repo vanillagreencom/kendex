@@ -23,7 +23,7 @@ use super::{Op, PlannedOp};
 
 /// What a target that reads as outside the root is taken to be.
 #[derive(Clone, Copy)]
-enum Outside {
+pub(crate) enum Outside {
     /// Its builder's business. A plan arrives whole from something that
     /// knows why a target of its own sits outside the scope: an adoption
     /// captures the folder a link of the person's own points at, and that
@@ -104,7 +104,7 @@ fn respell(root: Option<&Path>, was: &Path, destination: &Path, op: &mut Op) {
 /// the extended-length prefix can hold a target long enough to keep it.
 /// That pair does not compare and the write is refused, which is the side
 /// to be wrong on.
-fn landed_within(root: Option<&Path>, outside: Outside, path: &Path) -> Result<PathBuf> {
+pub(crate) fn landed_within(root: Option<&Path>, outside: Outside, path: &Path) -> Result<PathBuf> {
     let landed = landing(path);
     let Some(root) = root else {
         return Ok(landed);

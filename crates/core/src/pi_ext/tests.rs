@@ -479,6 +479,100 @@ fn a_project_without_package_instructions_keeps_the_global_append_fallback() {
 }
 
 #[test]
+fn append_writers_refuse_linked_and_nonregular_targets_before_package_effects() {
+    let targets = std::iter::once("directory");
+    #[cfg(unix)]
+    let targets = targets.chain(["file-link", "worktree-file-link", "worktree-directory-link"]);
+    // WORKTREE_SYMLINKS can link either the prompt file or its Pi directory.
+    for target in targets {
+        for remove in [false, true] {
+            let f = scope();
+            let global = scope_root(&f.env, &crate::model::Scope::Global).unwrap();
+            let other = fixture(&f.root, "global", "Global tools.");
+            install(&f.env, &global, &other, true).unwrap();
+            let source = fixture(&f.root, "local", "Local tools.");
+            if remove {
+                install(&f.env, &f.scope, &source, true).unwrap();
+            } else {
+                // pi-qol is the shipped producer of a blockless package.
+                let mut package: Value = serde_json::from_str(include_str!(
+                    "../../../../pi-extensions/pi-qol/package.json"
+                ))
+                .unwrap();
+                package["name"] = Value::from("local");
+                package["bin"] = Value::from("./cli.js");
+                write(&source.join("package.json"), &package.to_string());
+                write(
+                    &append_system_path(&f.scope),
+                    "Personal project instructions.",
+                );
+            }
+            let append = append_system_path(&f.scope);
+            let personal = f.scope.parent().unwrap().join("personal.md");
+            std::fs::rename(&append, &personal).unwrap();
+            match target {
+                "directory" => std::fs::create_dir(&append).unwrap(),
+                "file-link" => make_symlink(&personal, &append).unwrap(),
+                "worktree-file-link" => {
+                    make_symlink(&append_system_path(&global), &append).unwrap()
+                }
+                "worktree-directory-link" => {
+                    std::fs::rename(&f.scope, f.scope.with_file_name("original-pi")).unwrap();
+                    make_symlink(&global, &f.scope).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let name = if remove && target == "worktree-directory-link" {
+                "global"
+            } else {
+                "local"
+            };
+            let package = package_path(&f.scope, name).unwrap();
+            let bin = bin_dir(&f.scope).join(name);
+            let before = (
+                owned_package_exact_hash(&package).unwrap(),
+                std::fs::read(settings_path(&f.scope)).ok(),
+                std::fs::read_link(&bin).ok(),
+            );
+            let global_before = std::fs::read(append_system_path(&global)).unwrap();
+            let personal_before = std::fs::read(&personal).unwrap();
+            let result = if remove {
+                super::remove(&f.env, &f.scope, name)
+            } else {
+                install(&f.env, &f.scope, &source, true).map(|_| ())
+            };
+            let after = (
+                owned_package_exact_hash(&package).unwrap(),
+                std::fs::read(settings_path(&f.scope)).ok(),
+                std::fs::read_link(&bin).ok(),
+            );
+            assert_eq!(
+                after, before,
+                "{target}: remove={remove}: package effects landed"
+            );
+            assert_eq!(
+                std::fs::read(append_system_path(&global)).unwrap(),
+                global_before
+            );
+            assert_eq!(std::fs::read(&personal).unwrap(), personal_before);
+            if target == "worktree-directory-link" {
+                assert!(
+                    matches!(result, Err(CoreError::ScopeEscape { .. })),
+                    "{target}: remove={remove}"
+                );
+                assert!(f.scope.is_symlink());
+            } else {
+                assert!(
+                    matches!(result, Err(CoreError::ConfigEdit { path, .. }) if path == append),
+                    "{target}: remove={remove}"
+                );
+                assert_eq!(append.is_dir(), target == "directory");
+            }
+        }
+    }
+}
+
+#[test]
 fn removing_or_disabling_the_last_project_block_restores_global_fallback() {
     for (remove, personal) in [(true, false), (false, false), (true, true)] {
         let f = scope();

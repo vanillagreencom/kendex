@@ -62,6 +62,22 @@ pub fn append_system_path(scope_root: &Path) -> PathBuf {
     scope_root.join("APPEND_SYSTEM.md")
 }
 
+/// Shared prompts reject final links and project directory links that leave
+/// the project. Global roots follow the user's layout, as planned writes do.
+pub(crate) fn append_system_target(env: &Env, root: &Path) -> Result<PathBuf> {
+    let path = append_system_path(root);
+    if let Some(message) = crate::engine::output_style::file_problem(&path) {
+        return Err(CoreError::ConfigEdit { path, message });
+    }
+    let project = (root != scope_root(env, &crate::model::Scope::Global)?)
+        .then(|| crate::paths::absolute(root.parent().unwrap_or(root)));
+    crate::apply::landing::landed_within(
+        project.as_deref(),
+        crate::apply::landing::Outside::Refused,
+        &path,
+    )
+}
+
 /// The `package.json` fields kendex acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PiPackage {
@@ -216,6 +232,7 @@ pub fn install(
     enabled: bool,
 ) -> Result<InstallOutcome> {
     let package = read(source_pkg_dir)?;
+    append_system_target(env, scope_root)?;
     let dest = package_path(scope_root, &package.name)?;
     if dest.symlink_metadata().is_ok() {
         crate::trash::move_to_trash(env, &dest)?;
@@ -237,6 +254,7 @@ pub fn install(
 /// Unregister a package and move its installed copy to the trash.
 pub fn remove(env: &Env, scope_root: &Path, name: &str) -> Result<()> {
     let dest = package_path(scope_root, name)?;
+    append_system_target(env, scope_root)?;
     settings::remove_package(&settings_path(scope_root), name)?;
     strip_append_system(&append_system_path(scope_root), name)?;
     unlink_bins(&bin_dir(scope_root), &dest)?;
@@ -458,7 +476,7 @@ pub(crate) fn append_system_edit(
         },
         None => ConfigEdit::RemoveMarkerBlock { name: package.name },
     };
-    Ok((append_system_path(scope_root), edit))
+    Ok((append_system_target(env, scope_root)?, edit))
 }
 
 /// Mirror the package's [`append_system_block`] into the scope's
@@ -470,7 +488,7 @@ fn write_append_system(
     dest: &Path,
     enabled: bool,
 ) -> Result<()> {
-    let path = append_system_path(scope_root);
+    let path = append_system_target(env, scope_root)?;
     let current = read_if_exists(&path)?.unwrap_or_default();
     let mut next = match append_system_block(env, scope_root, package, dest, enabled)? {
         Some(block) => upsert_marker_block(&current, &package.name, &block),
@@ -504,6 +522,11 @@ pub(crate) fn inherited_edit(
     let global = scope_root(env, &crate::model::Scope::Global)?;
     if root == global || (!append_system_path(root).exists() && !contributes) {
         return Ok(None);
+    }
+    match append_system_target(env, root) {
+        Err(CoreError::ConfigEdit { .. } | CoreError::ScopeEscape { .. }) => return Ok(None),
+        Err(error) => return Err(error),
+        Ok(_) => (),
     }
     let mut blocks = Vec::new();
     for name in list_installed(&global)? {
