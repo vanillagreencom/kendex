@@ -943,6 +943,18 @@ fn linked_directories_land_once_and_linked_settings_refuse() {
         let f = fixture(global, &[HarnessId::Pi]);
         install(&f);
         let (_, _, append) = paths(&f);
+        if !global {
+            let root = kendex_core::harness::pi::scope_root(&f.env, &Scope::Global);
+            fs::write(
+                root.join("APPEND_SYSTEM.md"),
+                kendex_core::configedit::upsert_marker_block(
+                    "",
+                    "output-style-global",
+                    "Global style.",
+                ),
+            )
+            .unwrap();
+        }
         let outside = f.env.home.join("personal-append.md");
         fs::rename(&append, &outside).unwrap();
         symlink(&outside, &append).unwrap();

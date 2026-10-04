@@ -1,1 +1,1 @@
-- Pi projects retain global package instructions and output styles when they have their own append file. Project package settings control inherited instructions.
+- Pi projects retain global package instructions and output styles in their append file. Project package settings control inheritance. Directories and links remain conflicts.

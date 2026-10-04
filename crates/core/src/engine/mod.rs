@@ -322,7 +322,8 @@ fn plan_pi_switches(
     if let Scope::Project { root } = scope {
         let pi_root = root.join(".pi");
         let path = crate::pi_ext::append_system_path(&pi_root);
-        if (path.exists() || config_edits.by_file.contains_key(&path))
+        if output_style::file_problem(&path).is_none()
+            && (path.exists() || config_edits.by_file.contains_key(&path))
             && let Some(edit) = crate::pi_ext::inherited_edit(env, &pi_root)?
         {
             config_edits.push(path, "global Pi instructions".into(), edit);
