@@ -521,6 +521,7 @@ impl Repo {
         GeneratedPaths {
             whole: whole.iter().map(|p| self.root.join(p)).collect(),
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
+            edited: BTreeSet::new(),
             regions: BTreeSet::new(),
             held: BTreeSet::new(),
             adopted: Default::default(),
@@ -2097,7 +2098,13 @@ fn the_manifest_is_a_file_kendex_writes_into_and_never_one_it_owns() {
         };
         let repo = Repo::new(&[
             (OWNED[0], "one\n"),
-            ("kendex.toml", "# a note the person wrote\n"),
+            (
+                "kendex.toml",
+                match catalog {
+                    true => "is_source_catalog = true\n# a note the person wrote\n",
+                    false => "# a note the person wrote\n",
+                },
+            ),
             ("kendex-local.toml", "schema = 6\n"),
         ]);
         let generated = repo.generated(&[OWNED[0]], &[]);
@@ -2319,15 +2326,22 @@ fn what_a_commit_carries_beside_the_renders_is_one_answer_every_reader_takes() {
         if let Some(earlier) = row.earlier {
             repo.write(row.target, earlier);
         }
-        let named = [row.target];
+        let named: &[&str] = match row.named {
+            true => &[row.target],
+            false => &[],
+        };
+        // The plan the reading is taken for reports the settings file it
+        // edits, as the engine does.
+        let reported = GeneratedPaths {
+            edited: named
+                .iter()
+                .filter(|path| **path == SETTINGS)
+                .map(|path| repo.root.join(path))
+                .collect(),
+            ..repo.generated(&[OWNED[0], OWNED[1]], &[])
+        };
         let before = match row.read {
-            true => repo.before(
-                &repo.generated(&[OWNED[0], OWNED[1]], &[]),
-                match row.named {
-                    true => &named,
-                    false => &[],
-                },
-            ),
+            true => repo.before(&reported, named),
             false => Before::Untaken,
         };
 

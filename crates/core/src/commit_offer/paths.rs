@@ -170,6 +170,10 @@ pub(super) fn sort(
             sorted.owned.push(row.owned(path));
             continue;
         }
+        if beside.contains(&path) {
+            sorted.beside.push(row.owned(path));
+            continue;
+        }
         if row.deleted() {
             let inventory = match &committed {
                 Some(read) => read,
@@ -187,13 +191,6 @@ pub(super) fn sort(
                 continue;
             }
         }
-        // After the deletion rule: a render the committed inventory holds
-        // stays kendex's whole however the plan reached it, and a removal's
-        // plan names the render it takes away among its writes.
-        if beside.contains(&path) {
-            sorted.beside.push(row.owned(path));
-            continue;
-        }
         sorted.others.push(path);
     }
     for list in [&mut sorted.owned, &mut sorted.beside] {
@@ -201,6 +198,28 @@ pub(super) fn sort(
         list.dedup_by(|a, b| a.path == b.path);
     }
     Ok(sorted)
+}
+
+/// The paths among `writes` an action writes beside its renders: every one
+/// but a render the inventory at `HEAD` names, which kendex owns whole. A
+/// removal's plan names the render it takes away among the paths it
+/// touches, and that deletion is kendex's alone however the person edited
+/// the file. A file [`GeneratedPaths::beside`] names stays whatever the
+/// inventory says, a shared edit target the plan edits or takes away and
+/// no longer names ([`GeneratedPaths::edited`]) among them: the person's
+/// own keys sit in it, so its change is judged as every other file kendex
+/// writes into is.
+pub(super) fn beside_renders(
+    root: &Path,
+    generated: &GeneratedPaths,
+    writes: BTreeSet<String>,
+) -> Result<BTreeSet<String>, Failed> {
+    let committed = git::committed_inventory(root)?;
+    let beside = relative(root, &generated.beside(root));
+    Ok(writes
+        .into_iter()
+        .filter(|path| !committed.contains(path) || beside.contains(path))
+        .collect())
 }
 
 /// Where this project declares what it asks kendex for, spelled the way

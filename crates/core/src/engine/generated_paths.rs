@@ -59,6 +59,14 @@ pub struct GeneratedPaths {
     /// `Registration` edit targets. `desired.rs` states why kendex edits
     /// rather than renders them: every unrelated key in them stays intact.
     pub shared: BTreeSet<PathBuf>,
+    /// Shared configuration files this pass edits keys in or, where its
+    /// edits leave nothing in one, takes away. A removal reverses a
+    /// registration in a file no item names after it, so
+    /// [`GeneratedPaths::shared`] does not hold every one. Adds nothing to
+    /// the inventory. Files kendex does not own whole: the person's own keys
+    /// may be in them, so neither the edit nor the deletion is kendex's
+    /// alone.
+    pub edited: BTreeSet<PathBuf>,
     /// Sections a renderer owns inside files whose other bytes belong to
     /// the project. Commit and restore can only change the named section.
     pub regions: BTreeSet<crate::commit_offer::OwnedRegion>,
@@ -144,17 +152,25 @@ impl GeneratedPaths {
             .collect()
     }
 
+    /// These paths, with `edited` as the shared configuration files the
+    /// pass edits or takes away ([`GeneratedPaths::edited`]).
+    pub(super) fn editing(self, edited: BTreeSet<PathBuf>) -> Self {
+        Self { edited, ..self }
+    }
+
     /// Every file an action can write into beside its renders without
     /// owning it whole: the project's manifest, its settings file,
     /// `.gitignore`, and the shared configuration files in
-    /// [`GeneratedPaths::shared`]. What a reading before an action records
-    /// as the action's writes where the caller holds no plan to name them
+    /// [`GeneratedPaths::shared`] and [`GeneratedPaths::edited`]. What a
+    /// reading before an action records as the action's writes where the
+    /// caller holds no plan to name them
     /// ([`crate::commit_offer::Before::read`]): the app reads before a write
     /// it cannot see the plan of. A file among them the action left as it
     /// found it is the person's.
     pub fn beside(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.shared
             .iter()
+            .chain(&self.edited)
             .cloned()
             .chain([
                 crate::manifest::project_manifest_path(root),

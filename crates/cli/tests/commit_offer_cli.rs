@@ -466,8 +466,9 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
 
 /// `remove --commit` commits the deletion of a render the person edited
 /// after the add committed it. The removal's plan names that render among
-/// its writes, and a render the committed inventory holds is kendex's whole
-/// however the plan reached it, so the commit carries its deletion beside
+/// the paths it touches, and the reading before it keeps every render the
+/// committed inventory names out of the files it writes beside them, so
+/// the render is kendex's whole and the commit carries its deletion beside
 /// the manifest, the lock and the inventory, and nothing is left pending.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -512,6 +513,83 @@ fn a_remove_commits_the_deletion_of_a_render_the_person_edited() {
         );
     }
     assert_eq!(git(&project, &["status", "--porcelain"]), "", "{text}");
+}
+
+/// `remove --commit` over the shared settings file a committed hook added
+/// its key to beside the person's own. Where the person's key stays, the
+/// removal edits the file from a clean state and the commit carries it.
+/// Where the person took their key out, removing the last hook empties
+/// the file and the removal deletes it: that deletion carries the person's
+/// change, though the committed inventory names the file, so the commit
+/// leaves it out and names it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_remove_commits_a_shared_file_it_edits_and_leaves_out_one_the_person_emptied() {
+    const SETTINGS: &str = ".claude/settings.json";
+    for took_key_out in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        fs::write(project.join(SETTINGS), "{\"mine\": 1}\n").unwrap();
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-q", "-m", "mine"]);
+        let source = scout_and_guard(&home).to_string_lossy().into_owned();
+        let args = [
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            &source,
+            "--hook",
+            "guard",
+        ];
+        let add = kendex(&home, &project, &args);
+        assert!(add.status.success(), "{}", said(&add));
+        assert_eq!(
+            git(&project, &["status", "--porcelain"]),
+            "",
+            "{}",
+            said(&add)
+        );
+        let settings = project.join(SETTINGS);
+        if took_key_out {
+            let mut held: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+            assert!(
+                held.as_object_mut().unwrap().remove("mine").is_some(),
+                "{held}"
+            );
+            fs::write(&settings, serde_json::to_string_pretty(&held).unwrap()).unwrap();
+        }
+
+        let output = kendex(
+            &home,
+            &project,
+            &["remove", "--commit", "--no-sweep", "guard"],
+        );
+        let text = said(&output);
+
+        assert!(output.status.success(), "{took_key_out}: {text}");
+        assert_eq!(settings.exists(), !took_key_out, "{took_key_out}: {text}");
+        let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+        assert_eq!(
+            files.lines().any(|line| line == SETTINGS),
+            !took_key_out,
+            "{took_key_out}: {files}\n{text}"
+        );
+        assert_eq!(
+            text.contains(&format!(
+                "{SETTINGS} held changes before this run, so the commit leaves it out"
+            )),
+            took_key_out,
+            "{text}"
+        );
+        let left = match took_key_out {
+            true => format!(" D {SETTINGS}\n"),
+            false => String::new(),
+        };
+        assert_eq!(git(&project, &["status", "--porcelain"]), left, "{text}");
+    }
 }
 
 /// A project whose root `AGENTS.md` carries a managed region the installed

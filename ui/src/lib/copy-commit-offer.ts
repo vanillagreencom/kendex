@@ -47,10 +47,12 @@ export const carriesEarlier = (path: string) =>
   `${path} was already changed before this action. git commits whole files, so committing it commits that earlier change too.`;
 export const declaresWhatChanged = (path: string) =>
   `${path} records what kendex installs here and was already changed before this action. This action adds or removes a file, so the commit cannot leave it out.`;
-/** The file this action declared what it wrote in. kendex folds keys into
- *  that document and owns none of its bytes, so no commit it makes can
- *  include it, and the reader is told which file to commit rather than
- *  finding out later. Stated at its real size: this is about somebody else
+/** The file this action declared what it wrote in, where the action
+ *  changed it while it held the person's own changes: a commit of the whole
+ *  file would carry those too, so kendex leaves it out, and the reader is
+ *  told which file to commit rather than finding out later. A manifest the
+ *  action changed from a clean state rides the commit and draws no such
+ *  section. Stated at its real size: this is about somebody else
  *  reproducing the install, not about anything breaking. */
 export const MANIFEST_LEFT_LABEL = "This commit leaves out your package list";
 export const manifestLeft = (path: string) =>

@@ -3,7 +3,7 @@
 //! compatibility updates, and the project's settings.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::base::Base;
@@ -74,16 +74,18 @@ pub(super) fn plan_manifest_write(
 /// an empty document a harness's detection reads as configured. A personal
 /// one stays: a tool's own settings file can be what marks it installed.
 /// The record of each switched-off hook whose registry it retires keeps no
-/// entry, as the next pass reads it.
+/// entry, as the next pass reads it. Returns every file it edits or takes
+/// away.
 pub(super) fn plan_config_edits(
     scope: &Scope,
     items: &[super::desired::Desired],
     config_edits: config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
+) -> Result<BTreeSet<PathBuf>> {
     let project = matches!(scope, Scope::Project { .. });
     let mut retired = BTreeSet::new();
+    let mut edited = BTreeSet::new();
     for (path, (labels, mut edits)) in config_edits.by_file {
         // Config edits bind to the bytes reachable at planning. A link
         // already there is kept and its target updated; a same-byte link
@@ -132,13 +134,15 @@ pub(super) fn plan_config_edits(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
+        edited.insert(path.clone());
         ops.push(PlannedOp {
             description: format!("Update {file} ({})", labels.join(", ")).into(),
             op: Op::EditFile { pre, path, edits },
         });
     }
     super::item_record::unrecord_retired(items, &retired, new_lock);
-    Ok(())
+    edited.extend(retired);
+    Ok(edited)
 }
 
 /// What the record can say of one source or set this pass.
