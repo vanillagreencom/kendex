@@ -266,7 +266,7 @@ prepare_one() {
 	local suite="$1" stem="$2"
 	local control="$CONTROLS_DIR/$stem.control.sh"
 	local root="$WORK/$stem/linear"
-	local mutations k shared trailing snapshot="$WORK/$stem/staged"
+	local mutations k shared trailing out snapshot="$WORK/$stem/staged"
 
 	if [[ ! -f "$control" ]]; then
 		printf 'MISSING  %-52s no controls/%s.control.sh\n' "$suite" "$stem"
@@ -277,8 +277,11 @@ prepare_one() {
 
 	# The suite must be green from the staged copy, or its redness under
 	# mutation proves nothing about the mutation.
-	if ! timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" >/dev/null 2>&1; then
+	# Its output's tail goes under the verdict, so the failed assertion is
+	# read here rather than found by a second run.
+	if ! out="$(timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" 2>&1)"; then
 		printf 'UNSTAGED %-52s suite fails from an unmutated copy\n' "$suite"
+		printf '%s\n' "$out" | tail -n 40 | sed 's/^/         | /'
 		return 1
 	fi
 
