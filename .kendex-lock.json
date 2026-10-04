@@ -3589,8 +3589,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
-      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "sourceHash": "0591c981faa86b19965a3b6c45c7bf9f6672d14786496a46d31dff7fed5d8305",
+      "renderedHash": "f6a80975fd70583d99140a250cd95b90d914bc19c9d1d48abd58ee6af33342cf",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3625,8 +3625,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
-      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "sourceHash": "0591c981faa86b19965a3b6c45c7bf9f6672d14786496a46d31dff7fed5d8305",
+      "renderedHash": "f6a80975fd70583d99140a250cd95b90d914bc19c9d1d48abd58ee6af33342cf",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3661,8 +3661,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
-      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "sourceHash": "0591c981faa86b19965a3b6c45c7bf9f6672d14786496a46d31dff7fed5d8305",
+      "renderedHash": "f6a80975fd70583d99140a250cd95b90d914bc19c9d1d48abd58ee6af33342cf",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3697,8 +3697,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9ef69fbcabcd85e8f6413952765cb9e861afa0cd5af2af30e37804b1cf995194",
-      "renderedHash": "4ade0861a8ba7bea2db4e009046ca0a3a60b91ea22a2d002c712e1e9350f1ba9",
+      "sourceHash": "0591c981faa86b19965a3b6c45c7bf9f6672d14786496a46d31dff7fed5d8305",
+      "renderedHash": "f6a80975fd70583d99140a250cd95b90d914bc19c9d1d48abd58ee6af33342cf",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -7396,7 +7396,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "73f40e9ec6309e44435b4a793d01c36f234534a6"
+      "commit": "ca61b94dd0249b728259c7479ea9c4598ea4f408"
     }
   }
 }
