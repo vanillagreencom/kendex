@@ -97,8 +97,9 @@ refresh_lifecycle() {
     exit 1
   fi
 }
-# GitHub refuses every write to a pull request the queue holds. The run ends
-# before any refresh, push, body update or auto-merge change.
+# GitHub refuses a push to a branch the queue holds. A queued, merged or
+# closed pull request ends the run before any refresh, push, body update or
+# auto-merge change.
 if [ -n "$pr" ]; then
   refresh_lifecycle
   case "$reason" in
@@ -176,7 +177,8 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 settings_report=""
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
-# Only the preserved default-branch code consumes its output or publishes.
+# Only the running copy of this script, the preserved default-branch copy or
+# the kendex release tree, consumes its output or publishes.
 if [ -e "$ROOT/.agents/skills/orch" ] || [ -L "$ROOT/.agents/skills/orch" ]; then
   if ! env -i PATH="$PATH" HOME="$HOME" bash -s -- "$SCRIPT_DIR" "$ROOT" >"$TMP/settings.json" <<'SETTINGS_PARSE'
 set -euo pipefail

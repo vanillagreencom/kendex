@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Holds .github/workflows/refresh-consumer.yml, the shared workflow each
 # consumer's caller runs: its job and token boundaries, the rule that every
-# script runs from the kendex checkout, and its install step's actual shell
-# body against a recorded tag list and installer.
+# step body runs its scripts from the kendex checkout, and its install step's
+# actual shell body against a recorded tag list and installer. What
+# refresh-consumer.sh itself sources is refresh-consumer.test.sh's.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKFLOW="$TEST_DIR/../../../.github/workflows/refresh-consumer.yml"
@@ -25,7 +26,7 @@ import copy, json, re, sys
 # Read the literal job keys, step inputs and run bodies. Full YAML syntax
 # belongs to preflight; this contract uses only block mappings.
 text = open(sys.argv[1]).read()
-job = dict(re.findall(r'^    (if|environment|runs-on): (.+)$', text, re.M))
+job = dict(re.findall(r'^    (environment|runs-on): (.+)$', text, re.M))
 steps = []
 for block in re.split(r'^      - ', text, flags=re.M)[1:]:
     step = {}; current = None
@@ -53,8 +54,6 @@ def check(job):
     steps = job['steps']
     assert job['environment'] == 'kendex'
     assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
-    assert "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" in job['if']
-    assert "github.repository != 'vanillagreencom/kendex'" in job['if']
     checkouts = [s for s in steps if s.get('uses', '').startswith('actions/checkout@')]
     assert len(checkouts) == 2
     consumer, kendex = checkouts
@@ -62,7 +61,8 @@ def check(job):
     assert consumer['with']['path'] == 'consumer' and 'repository' not in consumer['with']
     assert kendex['with'] == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
                               'path': 'kendex', 'persist-credentials': 'false'}
-    # Every script runs from the kendex checkout at the workflow's commit.
+    # Every step body runs its scripts from the kendex checkout at the
+    # workflow's commit. The .agents/ assertion reads step bodies only.
     runs = [s for s in steps if 'run' in s]
     assert runs and not any('.agents/' in s['run'] for s in runs)
     for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
@@ -91,7 +91,7 @@ def check(job):
     assert not any('steps.token.outputs.token' in json.dumps(s) for s in steps[:steps.index(repository)])
 
 check(job)
-for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'branch', 'self', 'exposure', 'repository', 'early-token'):
+for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -99,8 +99,6 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     elif mutation == 'consumer-cwd': refresh['working-directory'] = 'kendex'
     elif mutation == 'kendex-ref': steps[1]['with']['ref'] = '${{ github.sha }}'
     elif mutation == 'credentials': steps[1]['with']['persist-credentials'] = 'true'
-    elif mutation == 'branch': j['if'] = 'true'
-    elif mutation == 'self': j['if'] = j['if'].split(' && ')[1]
     elif mutation == 'exposure': refresh['env']['TOKEN'] = '${{ steps.issues-token.outputs.token }}'
     elif mutation == 'repository': next(s for s in steps if s.get('id') == 'issues-token')['with']['repositories'] = 'kendex,consumer'
     elif mutation == 'early-token':
@@ -110,13 +108,14 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     except AssertionError: pass
     else: raise AssertionError('must-fail control missed ' + mutation)
 PY
-then ok 'scripts run from the kendex checkout under the job and token boundaries; mutation controls'
+then ok 'step bodies run their scripts from the kendex checkout under the job and token boundaries; mutation controls'
 else bad 'shared workflow structure'; fi
 
 # A caller on a branch other than its default gets no secret: the one job,
 # whose steps alone read secrets and mint tokens, does not start. The row
-# evaluates the job's own condition for each caller context; the control
-# drops the branch clause from a copy.
+# evaluates the job's own condition for each caller context, and is the one
+# owner of the default-branch and self-exclusion rules; each control drops
+# one clause from a copy.
 guard_matches() { # WORKFLOW
   python3 - "$1" <<'GUARD'
 import re, sys
@@ -146,10 +145,15 @@ GUARD
 }
 if guard_matches "$WORKFLOW"; then ok 'a caller off its default branch, or kendex itself, starts no secret-reading job'
 else bad 'default-branch guard'; fi
-sed "s/ && github.ref == format('refs\/heads\/{0}', github.event.repository.default_branch)//" "$WORKFLOW" >"$TMP/unguarded.yml"
-if ! cmp -s "$WORKFLOW" "$TMP/unguarded.yml" && ! guard_matches "$TMP/unguarded.yml" 2>/dev/null; then
-  ok 'control: a dropped branch clause turns the guard row red'
-else bad 'default-branch guard control'; fi
+while IFS='|' read -r rule expression; do
+  sed "$expression" "$WORKFLOW" >"$TMP/unguarded.yml"
+  if ! cmp -s "$WORKFLOW" "$TMP/unguarded.yml" && ! guard_matches "$TMP/unguarded.yml" 2>/dev/null; then
+    ok "control: a dropped $rule clause turns the guard row red"
+  else bad "$rule guard control"; fi
+done <<'ROWS'
+branch|s/ \&\& github.ref == format('refs\/heads\/{0}', github.event.repository.default_branch)//
+self-exclusion|s/github.repository != 'vanillagreencom\/kendex' \&\& //
+ROWS
 
 # The install step's own body, extracted from the workflow.
 python3 - "$WORKFLOW" "$TMP/install-body" <<'PY'
@@ -244,7 +248,7 @@ ROWS
 
 # Each rule keeps its matched text in a disposable copy of the body and
 # loses its behavior; the row it governs then turns red.
-while IFS='~' read -r rule pattern replacement ref tags installed expected; do
+while IFS='~' read -r rule pattern replacement ref tags installed expected tags_exit install_exit; do
   python3 - "$TMP/install-body" "$TMP/mutant" "$pattern" "$replacement" <<'PY'
 import sys
 body = open(sys.argv[1]).read()
@@ -253,7 +257,7 @@ changed = body.replace(sys.argv[3], sys.argv[4] + ' # ' + sys.argv[3].replace('\
 assert changed != body
 open(sys.argv[2], 'w').write(changed)
 PY
-  run_install "$TMP/mutant" "$ref" "$tags" "$installed"
+  run_install "$TMP/mutant" "$ref" "$tags" "$installed" "${tags_exit:-0}" "${install_exit:-0}"
   IFS=: read -r kind first second third <<<"$expected"
   if [ "$kind" = ok ]; then
     if ! install_matches "$first" "$second"; then ok "control: $rule"; else bad "control missed: $rule" "$OUT"; fi
@@ -264,7 +268,10 @@ engine version~[ "\$installed" = "kendex \${tag#v}" ] ||~true ||~refs/tags/v1~$A
 no stable tag~[ "\$count" -eq 1 ] ||~true ||~refs/tags/v1~$B\trefs/tags/v1.6.0\n~1.6.0~refused:release-tags:0:0
 two stable tags~[ "\$count" -eq 1 ] ||~true ||~refs/tags/v1~$A\trefs/tags/v1.7.0\n$A\trefs/tags/v1.7.1\n~1.7.1~refused:release-tags:2:0
 behind-release~if [ "\$newest" != "\$tag" ]; then~if false; then~refs/tags/v1~$A\trefs/tags/v1.6.0\n$B\trefs/tags/v1.7.0\n~1.6.0~ok:v1.6.0:v1.7.0
-peeled commit~if (peeled || !(name in commit))~if (!(name in commit))~refs/tags/v1~$O\trefs/tags/v1.7.0\n$A\trefs/tags/v1.7.0^{}\n~1.7.0~ok:v1.7.0:
+peeled commit~if (peeled || !(name in commit)) commit[name] = \$1 }~if (!(name in commit)) commit[name] = \$1 }~refs/tags/v1~$O\trefs/tags/v1.7.0\n$A\trefs/tags/v1.7.0^{}\n~1.7.0~ok:v1.7.0:
+workflow ref~@refs/tags/v([0-9]+)\$ ]] ||~@refs/(tags/v|heads/)([0-9]+|main)\$ ]] ||~refs/heads/main~$A\trefs/tags/v1.7.0\n~1.7.0~refused:workflow-ref:vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@refs/heads/main:0
+tags read~git ls-remote --tags origin)" ||~git ls-remote --tags origin || true)" ||~refs/tags/v1~$A\trefs/tags/v1.7.0\n~1.7.0~refused:tags-read:origin:0~1~0
+installer run~--cli-only ||~--cli-only || true ||~refs/tags/v1~$A\trefs/tags/v1.7.0\n~1.7.0~refused:installer-run:v1.7.0:1~0~1
 ROWS
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

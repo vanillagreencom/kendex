@@ -1,4 +1,6 @@
-# Copy verbatim into .github/workflows/. The shared workflow it calls reads
+# Adopted into .github/workflows/ by scripts/adopt-refresh.sh, which checks
+# the kendex environment and its secrets first; copy it verbatim only through
+# that script. The shared workflow it calls reads
 # the app secrets from this repository's kendex environment and runs the
 # refresh from the kendex release the major tag names. Opening a pull
 # request needs that repository's app token.

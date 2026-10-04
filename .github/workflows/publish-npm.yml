@@ -14,7 +14,7 @@ run-name: publish-npm ${{ inputs.tag || github.ref_name }}
 on:
   push:
     # Per-package release tags, `<unscoped-name>-v<version>` (pi-qol-v2.1.0).
-    # release.yml takes `v*`, which none of these match.
+    # release.yml takes `v*.*.*`, which none of these match.
     tags:
       - "*-v[0-9]*"
   # The publish itself, on main: the tag push dispatches it, and a failed

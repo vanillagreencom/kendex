@@ -4,11 +4,14 @@
 # called workflow the github context is the caller's, so every github.*
 # value below names the consumer.
 #
-# The workflow file, the scripts and the engine come from one kendex commit,
-# the one job.workflow_sha names. The run installs the one stable vN.Y.Z
-# release tagged on that commit, where vN is the tag the caller named, and
-# stops before any install when the commit carries no such tag or more than
-# one. Every script runs from that checkout, never from the consumer's.
+# The workflow file, the refresh scripts and the engine come from one kendex
+# commit, the one job.workflow_sha names. The run installs the one stable
+# vN.Y.Z release tagged on that commit, where vN is the tag the caller named,
+# and stops before any install when the commit carries no such tag or more
+# than one. Every step runs its scripts from that checkout. The one consumer
+# code a run executes is the settings report in refresh-consumer.sh, which
+# sources the consumer's refreshed orch libraries under env -i with no
+# credential.
 #
 # Report lines, one per line: kendex-install: version=TAG commit=SHA on
 # success, kendex-install: cause=KEY value=VALUE on a refusal, and
