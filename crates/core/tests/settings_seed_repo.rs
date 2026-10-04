@@ -7,9 +7,8 @@
 //! byte-identical and a key the consumer deleted stays deleted.
 //!
 //! Arrival is the manifest gaining the declaration, which only `add`
-//! does, so the merge is the whole of what reaches this file. A block
-//! already in it is never revisited — nothing follows a template revision
-//! in — so there is no second write to model here.
+//! does. A block already in the file is never revisited — nothing follows
+//! a template revision in — so there is no second write to model here.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

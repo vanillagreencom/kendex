@@ -387,9 +387,8 @@ fn rejected_edits_name_the_offending_key() {
     assert!(error.contains("skills.github"), "{error}");
 }
 
-/// A key the skill's own code already defaults, which an install never
-/// writes. The app is what puts it in the file, and only when someone
-/// changes it.
+/// A key the skill's own code already defaults, which an arrival never
+/// writes.
 const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\"\n";
 
 /// A project whose one installed skill ships settings, so a save has both
@@ -436,7 +435,7 @@ fn a_manifest_and_a_settings_draft_land_in_one_save() {
     let (tmp, env, scope) = scope_with_settings_skill();
     let settings = tmp.path().join("dev/app/kendex.settings.toml");
     let manifest_path = manifest::manifest_path(&env, &scope);
-    // An install writes none of this template, so the save is the first
+    // An arrival writes none of this template, so the save is the first
     // thing to reach the file: it holds no bytes, and the write makes it.
     write_customize(&env, scope.clone(), None, None, None).unwrap();
     assert!(!settings.exists(), "an install wrote nothing here");

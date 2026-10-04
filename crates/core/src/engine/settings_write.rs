@@ -3,10 +3,8 @@
 //! Split from the rest of a scope's writes because what goes in this file
 //! is decided by a different question. The manifest and the lock are
 //! kendex's own records; this one is the
-//! consumer's, tracked in their repository, and a pass may put a line in
-//! it only when the skill the template comes from is arriving here, a
-//! save names the key, `kendex add --setting` supplies a value for a key
-//! the file leaves unassigned, or the shared agent resolver replaces legacy labels.
+//! consumer's, tracked in their repository, and a pass puts a line in it
+//! only for an operation `docs/authoring/settings.md` lists.
 //! Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
 //! seeding rule lives in [`crate::settings_seed`]; compatibility lives in
@@ -40,19 +38,15 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
     }
 }
 
-/// What this pass writes into the project's kendex.settings.toml. A skill
-/// arriving here writes the keys its template marks `# required`, a save
-/// writes the keys it names, and `kendex add --setting` writes the values
-/// it supplies for keys the file assigns nowhere. Seeding never overwrites an assigned
-/// key, and neither does a supplied value.
-/// The shared agent resolver can replace legacy labels in an existing
-/// taxonomy even without an arrival or save.
+/// What this pass writes into the project's kendex.settings.toml: the
+/// keys [`crate::settings_seed::Seeding`] admits, and the legacy labels
+/// the shared agent resolver replaces. Seeding never overwrites an
+/// assigned key, and neither does a supplied value.
 ///
-/// A person's own edits are the other thing that reaches this file, and
-/// they compose here rather than following as a second write: the keys a
-/// save names are inserted by this same pass, so a second write would bind
-/// to bytes the first one replaced. Inserts and edits become one
-/// `WriteFile` under one precondition.
+/// The keys edited compose here rather than following as a second write:
+/// they are inserted by this same pass, so a second write would bind to
+/// bytes the first one replaced. Inserts and edits become one `WriteFile`
+/// under one precondition.
 ///
 /// The notes ride out either way: a key several packages give different
 /// defaults, and a required key this file still does not answer, are worth

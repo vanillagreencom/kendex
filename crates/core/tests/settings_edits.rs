@@ -21,8 +21,8 @@ use kendex_core::settings_file::{
 };
 use kendex_core::settings_view::{ScopeSettings, SkillTemplate, scope_settings};
 
-/// One key the consumer must decide, which an install writes, and one
-/// that ships a working default, which only a save ever puts in the file.
+/// One key the consumer must decide, which an arrival writes, and one
+/// that ships a working default, which no arrival writes.
 const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\" # required\n\n# How deep.\nDEPTH = \"2\"\n";
 
 struct Fixture {
@@ -220,8 +220,8 @@ fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
     let read = scope_settings(&f.env, &f.scope, None).unwrap();
     assert!(read.applies);
     assert_eq!(read.base, base_now(&f));
-    // Both states a declared key can be in: one the install wrote and the
-    // person then changed, and one no install writes, which the page
+    // Both states a declared key can be in: one the arrival wrote and the
+    // person then changed, and one no arrival writes, which the page
     // shows against its default until somebody sets it.
     assert_eq!(
         rows_of(&read, "review"),
@@ -258,8 +258,7 @@ fn an_edit_rewrites_only_its_value_span_leaving_comments_and_crlf_intact() {
 }
 
 /// One write, not two: the key is missing from the file, so the same plan
-/// seeds it and sets it. Most keys reach a consumer's file only this way,
-/// since an arrival writes the marked ones alone.
+/// seeds it and sets it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {

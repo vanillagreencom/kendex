@@ -16,7 +16,7 @@ use kendex_core::model::Scope;
 use crate::test_util::{rooted, source_path};
 
 /// One key the consumer has to decide and one that ships a working
-/// default: what an install writes, and what it leaves in the template.
+/// default: what an arrival writes, and what it leaves in the template.
 pub(crate) const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\" # required\n\nDEPTH = \"2\"\n";
 
 pub(crate) struct Fixture {

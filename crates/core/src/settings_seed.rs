@@ -31,8 +31,8 @@
 //! hands the consumer a different string from the one it declared.
 //!
 //! Nothing here ever revisits a block it wrote. A comment a consumer
-//! carries is theirs from the moment it lands, whether an arrival or a
-//! save put it there, and a later template revision does not follow it in:
+//! carries is theirs from the moment it lands, and a later template
+//! revision does not follow it in:
 //! that would be a write into a tracked file on a pass nobody asked to
 //! write. Every write is byte-faithful — the inserted block is the only
 //! change — so CRLF files and missing-terminator state survive untouched.
@@ -97,10 +97,10 @@ pub struct EnvEntry {
     /// walk's answer, not a count off one end of a list of both.
     pub assignment: String,
     /// Whether the template marks this key as one the consumer has to
-    /// decide, which is the only reason an install writes a key into
-    /// their file. Every other key ships a value its own code already
-    /// reads, so writing it would put a line in a tracked file that
-    /// changes nothing.
+    /// decide, which is what an arrival writes. Every other key ships a
+    /// value its own code already reads, so an arrival writing it would
+    /// put a line in a tracked file that changes nothing. Every write to
+    /// that file is listed in `docs/authoring/settings.md`.
     pub required: bool,
 }
 
@@ -302,9 +302,8 @@ pub fn writable_all<'a>(
 /// over the same scope writes none of it, so a refresh leaves the file as
 /// it found it and a key the consumer deleted stays deleted.
 ///
-/// A key this pass sets a value on is the other reason: a save from the
-/// app, or a value `kendex add --setting` supplies. Either can name a key
-/// no seed ever wrote, and a value needs an assignment to land on, so the
+/// A key this pass sets a value on is the other reason. It may be one no
+/// seed ever wrote, and a value needs an assignment to land on, so the
 /// keys edited are inserted by the same pass that then sets them.
 #[derive(Debug, Default, Clone)]
 pub struct Seeding {

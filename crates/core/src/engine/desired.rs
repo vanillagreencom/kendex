@@ -312,11 +312,8 @@ pub struct DesiredState {
     /// order — each with the skill that ships it, incomplete values
     /// included, because a key nothing can supply is reported by name.
     ///
-    /// The one list everything that speaks about these keys reads: an
-    /// arrival writes its marked keys from here, a save writes and
-    /// resolves defaults from here, a value `kendex add --setting`
-    /// supplies takes its owner from here, and the plan's notes are built
-    /// from here. Where several skills declare one key, what lands is the
+    /// The one list every write of these keys and every note about them
+    /// reads. Where several skills declare one key, what lands is the
     /// first declaration the pass admits, which is not always the first
     /// declaration.
     pub settings_env: Vec<crate::settings_seed::SeededEnv>,
