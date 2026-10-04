@@ -1,1 +1,0 @@
-- The `critical-path-deny` hook denies Claude Code's critical-path rm prompt at once inside a launched orch lane, with the rewrite that passes, so an unattended lane no longer waits on it.

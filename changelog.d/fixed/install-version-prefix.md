@@ -1,1 +1,0 @@
-- The installer accepts pinned versions with or without the leading v.

@@ -8,6 +8,35 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-04
+
+### Added
+
+- Consumer lane setups can install pinned gitleaks from commit-guards. The shared CI template installs it and scans every pull request for credentials.
+- The `critical-path-deny` hook denies Claude Code's critical-path rm prompt at once inside a launched orch lane, with the rewrite that passes, so an unattended lane no longer waits on it.
+- Linear label writes reject undeclared labels when a repository declares a taxonomy. The new `labels audit` command reports undeclared issue labels and duplicate team and workspace names.
+
+### Changed
+
+- pi-background-tasks 2.2.0: tasks run at lower priority by default (CPU and disk on Linux, CPU only on macOS), and output wakes settle for 2 s with at most 10 per task.
+- pi-qol 2.4.0: the working indicator is a static dot by default, and session auto-rename allows 128 output tokens so a reasoning model returns a title.
+- code-quality: repositories without a build dependency graph can select tests by their paths and input notes. Tests with unclear inputs run on every change; full and release runs run every test.
+- code-quality: controls that plant defects in inputs, fixtures or uncompiled source copies stay with their tests and run each time. Controls that edit compiled source remain recorded one-time checks.
+- code-quality: a repository can set a per-change validation budget. Runs over budget report their time and need a separate item to split slow checks. Full and release runs have no budget.
+
+### Fixed
+
+- The installer accepts pinned versions with or without the leading v.
+- Adoption leaves no `harnesses` list it writes or grows to exactly the default tools (Antigravity keeps a hook's), and `kendex verify` judges custom, switched-off and chained hook pins.
+- A Pi package that is off, through its declaration or its own `enabled` setting, no longer adds its instructions to `APPEND_SYSTEM.md`.
+- kendex reads a project-installed Pi package's `enabled` setting from your user settings, then the project's, so a user-level off writes no `APPEND_SYSTEM.md` block there.
+- Main-channel builds finish during frequent merges, so machines that follow main can receive completed builds.
+- Named Claude cloud account choices use available cloud credit when plan usage is spent, including launch projections.
+- Named Claude cloud lanes now require repository access, as automatic account selection does, so a launch refuses an account that has no entry for the repository.
+- Overseer triage assigns a missing project and agent label before it records a kept issue, so kept issues can reach their work lanes.
+- GitHub review replies match paths with zero-width spaces after skill installation, so display-only characters no longer leave a finding impossible to answer.
+- `oversee-cycle` detects fixes made after an earlier approval, including an approval a later push dismissed, instead of reporting an unknown result from the retired review status.
+
 ## [1.7.0] - 2026-10-03
 
 ### Added
@@ -1436,7 +1465,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.8.0
 [1.7.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.7.0
 [1.6.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.6.0
 [1.5.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.1

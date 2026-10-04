@@ -1,1 +1,0 @@
-- Adoption leaves no `harnesses` list it writes or grows to exactly the default tools (Antigravity keeps a hook's), and `kendex verify` judges custom, switched-off and chained hook pins.

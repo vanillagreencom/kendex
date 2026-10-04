@@ -1,1 +1,0 @@
-- pi-qol 2.4.0: the working indicator is a static dot by default, and session auto-rename allows 128 output tokens so a reasoning model returns a title.

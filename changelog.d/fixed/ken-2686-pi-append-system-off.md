@@ -1,1 +1,0 @@
-- A Pi package that is off, through its declaration or its own `enabled` setting, no longer adds its instructions to `APPEND_SYSTEM.md`.
