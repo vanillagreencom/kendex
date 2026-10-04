@@ -36945,6 +36945,28 @@ function currentRequestLaneId() {
 }
 
 // src/query-state.ts
+function emptyTurnOutput(model) {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "stop",
+    timestamp: Date.now()
+  };
+}
+function failedTurnOutput(model, stopReason, errorMessage) {
+  return { ...emptyTurnOutput(model), stopReason, errorMessage };
+}
 function summarizeDroppedUserMessages(site, dropped) {
   return {
     site,
@@ -37237,23 +37259,7 @@ var QueryContext = class {
     return this.turnOutput.content;
   }
   resetTurnState(model) {
-    this.turnOutput = {
-      role: "assistant",
-      content: [],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      stopReason: "stop",
-      timestamp: Date.now()
-    };
+    this.turnOutput = emptyTurnOutput(model);
     this.turnStarted = false;
     this.turnSawStreamEvent = false;
     this.turnSawToolCall = false;
@@ -55593,15 +55599,21 @@ function applyProviderRegistration(trigger) {
   }
 }
 var HISTORY_REPLACED_PROMPT = "Pi rewrote the conversation history before this message (compaction or history navigation). That history is complete, including the results of every tool call that has already run. The request above was still being answered when it was rewritten: continue it from where the history ends, and do not repeat a tool call whose result is already in the history.";
+function isSameUserMessage(a, b2) {
+  return a.role === "user" && b2.role === "user" && a.timestamp === b2.timestamp && JSON.stringify(a.content) === JSON.stringify(b2.content);
+}
 function historyRestartCall(restart, pending) {
   const piMessages = restart.context.messages;
-  if (piMessages[piMessages.length - 1]?.role === "user") return { context: restart.context, options: restart.options };
+  const runStart = trailingUserRunStart(piMessages);
+  const trailingRun = piMessages.slice(runStart);
+  const heldByPi = (message) => trailingRun.some((held) => isSameUserMessage(held, message));
+  const request = [...pending.filter((message) => !heldByPi(message)), ...trailingRun];
   return {
     context: {
       ...restart.context,
-      messages: [...piMessages, ...pending, { role: "user", content: HISTORY_REPLACED_PROMPT, timestamp: Date.now() }]
+      messages: [...piMessages.slice(0, runStart), ...request, { role: "user", content: HISTORY_REPLACED_PROMPT, timestamp: Date.now() }]
     },
-    options: { ...restart.options, [HISTORY_RESTART_KEY]: { request: pending, piMessageCount: piMessages.length } }
+    options: { ...restart.options, [HISTORY_RESTART_KEY]: { request, piMessageCount: piMessages.length } }
   };
 }
 function onPiHistoryReplaced(event) {
@@ -55648,10 +55660,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         stream.end();
       }).catch((error51) => {
         debug("provider: call after abort teardown failed:", error51);
-        queryCtx.resetTurnState(model);
-        queryCtx.turnOutput.stopReason = "error";
-        queryCtx.turnOutput.errorMessage = error51 instanceof Error ? error51.message : String(error51);
-        stream.push({ type: "error", reason: "error", error: queryCtx.turnOutput });
+        stream.push({ type: "error", reason: "error", error: failedTurnOutput(model, "error", error51 instanceof Error ? error51.message : String(error51)) });
         stream.end();
       });
       return stream;
@@ -55775,24 +55784,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     }
     const message = "Claude account not connected \u2014 connect an account (or run `claude login`) and retry.";
     debug(`provider: pre-spawn credential check failed; failing fast: ${message}`);
-    const errorOutput = {
-      role: "assistant",
-      content: [],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      stopReason: "error",
-      timestamp: Date.now(),
-      errorMessage: message
-    };
+    const errorOutput = failedTurnOutput(model, "error", message);
     queueMicrotask(() => {
       stream.push({ type: "error", reason: "error", error: errorOutput });
       stream.end();
@@ -56252,16 +56244,13 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       reentryStream = restart.stream;
       if (wasAborted || options?.signal?.aborted || restart.options?.signal?.aborted) {
         debug("provider: abort before the history restart \u2014 terminating the stream without restarting");
-        abortCtx.resetTurnState(restart.model);
-        abortCtx.turnOutput.stopReason = "aborted";
-        abortCtx.turnOutput.errorMessage = "Operation aborted";
-        reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput });
+        reentryStream.push({ type: "error", reason: "aborted", error: failedTurnOutput(restart.model, "aborted", "Operation aborted") });
         reentryStream.end();
         return;
       }
       const pending = [...unansweredRequest, ...abortCtx.deferredUserMessages.flatMap((steer) => steer.messages)];
       const replacement = historyRestartCall(restart, pending);
-      debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s), ${replacement.context.messages.length - restart.context.messages.length} appended`);
+      debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s), ${replacement.context.messages.length - restart.context.messages.length} added`);
       for await (const event of streamClaudeAgentSdk(restart.model, replacement.context, replacement.options)) reentryStream.push(event);
       reentryStream.end();
       return;
@@ -56269,11 +56258,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (!retryRequested) return;
     if (wasAborted || options?.signal?.aborted) {
       debug("provider: abort after queued account retry \u2014 terminating stream without retrying");
-      if (abortCtx.turnOutput) {
-        abortCtx.turnOutput.stopReason = "aborted";
-        abortCtx.turnOutput.errorMessage = "Operation aborted";
-      }
-      reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput });
+      reentryStream.push({ type: "error", reason: "aborted", error: failedTurnOutput(model, "aborted", "Operation aborted") });
       reentryStream.end();
       return;
     }
@@ -56290,13 +56275,8 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (restart) {
       abortCtx.restartRequest = null;
       reentryStream = restart.stream;
-      abortCtx.resetTurnState(restart.model);
     }
-    if (abortCtx.turnOutput) {
-      abortCtx.turnOutput.stopReason = "error";
-      abortCtx.turnOutput.errorMessage = error51 instanceof Error ? error51.message : String(error51);
-    }
-    reentryStream.push({ type: "error", reason: "error", error: abortCtx.turnOutput });
+    reentryStream.push({ type: "error", reason: "error", error: failedTurnOutput(restart?.model ?? model, "error", error51 instanceof Error ? error51.message : String(error51)) });
     reentryStream.end();
   }).finally(releaseEphemeralLane);
   return stream;

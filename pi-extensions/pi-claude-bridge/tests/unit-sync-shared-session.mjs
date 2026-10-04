@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { conversationFingerprint, syncSharedSession } from "../src/session-persistence.js";
 import { __testGetBridgeIntegrityState, setSharedSession } from "../src/bridge-state.js";
+import { assertSourceControl } from "./lib/source-control.mjs";
 
 const user = (text) => ({ role: "user", content: text });
 // Since Pi 0.86 every provider call opens with a `system` entry carrying the
@@ -88,15 +89,20 @@ describe("syncSharedSession REUSE path", () => {
 });
 
 describe("syncSharedSession clean start", () => {
-	it("returns no resume id and prompts the sole user message", () => {
-		const messages = [user("hello")];
+	// Pi's convertToLlm turns a compaction summary and a bash execution into
+	// user messages, so a context can be a run of user messages and no record.
+	for (const { why, messages } of [
+		{ why: "the sole user message", messages: [user("hello")] },
+		{ why: "a whole run of user messages", messages: [user("[summary]"), user("hello")] },
+	]) {
+		it(`returns no resume id and prompts ${why}`, () => {
+			const result = syncSharedSession(messages, CWD);
 
-		const result = syncSharedSession(messages, CWD);
-
-		assert.equal(result.sessionId, null);
-		assert.equal(result.promptStart, 0);
-		assert.deepEqual(promptContents(messages, result.promptStart), ["hello"]);
-	});
+			assert.equal(result.sessionId, null);
+			assert.equal(result.promptStart, 0, "the prompt starts at the run's first message");
+			assert.deepEqual(promptContents(messages, result.promptStart), messages.map((message) => message.content));
+		});
+	}
 });
 
 describe("syncSharedSession clean start on priors that carry no Claude record", () => {
@@ -399,4 +405,15 @@ describe("syncSharedSession foreign-conversation guard (#1001)", () => {
 			conversationFingerprint(messages),
 		);
 	});
+});
+
+describe("source control: the clean start's prompt", () => {
+	it("a clean start prompts only the last user message", { timeout: 60_000 }, () => assertSourceControl({
+		source: "src/session-persistence.ts",
+		before: "return { sessionId: null, promptStart: priorMessages.length };",
+		after: "return { sessionId: null, promptStart: messages.length - 1 };",
+		suite: "unit-sync-shared-session.mjs",
+		pattern: "prompts a whole run of user messages",
+		failure: /the prompt starts at the run's first message/,
+	}));
 });

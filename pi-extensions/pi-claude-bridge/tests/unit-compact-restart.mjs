@@ -41,6 +41,7 @@ import { piContext } from "./lib/transcript.mjs";
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const tool = { name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } };
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const FAILED_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const TOOL_OUTPUT = "tool output t0";
 const SUMMARY = "[summary] the earlier turns, condensed";
 const OLD_TRANSCRIPT = "what the killed child had already written";
@@ -119,6 +120,18 @@ function closeThrowingQuery(record) {
 		},
 		close() { record.closed = true; gate.resolve(); throw new Error("fixture-close-throws=sdk"); },
 		async interrupt() { record.closed = true; gate.resolve(); },
+	};
+}
+
+/** A replacement whose child reports `sessionId`, then fails with no output. */
+function failingQuery(sessionId) {
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "system", subtype: "init", session_id: sessionId };
+			yield { type: "result", subtype: "error_during_execution", errors: ["fixture-failure=replacement"] };
+		},
+		close() {},
+		async interrupt() {},
 	};
 }
 
@@ -237,7 +250,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		});
 	});
 
-	it("sends a user batch the restart callback carries as the live prompt, not as history", { timeout: 10_000 }, async () => {
+	it("sends the request the summary replaced, then the user batch the restart callback carries, as the live prompt", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls }) => {
 			onPiHistoryReplaced("session_compact");
 
@@ -248,7 +261,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			}), { cwd: root }));
 
 			assert.equal(calls.length, 2, "the callback opened the replacement");
-			assert.equal(calls[1].prompt, "first follow-up\n\nsecond follow-up", "the whole batch is the live prompt");
+			assert.equal(calls[1].prompt, carried("run the tool", "first follow-up", "second follow-up"), "the request, then the whole batch, is the live prompt");
 			const imported = importedMessages(root, calls[1].options.resume);
 			assert.deepEqual(imported.filter((message) => typeof message.content === "string").map((message) => message.content), [SUMMARY], "no follow-up is imported as history");
 			assert.deepEqual(blocksOfType(imported, "tool_result").map((block) => block.content), [TOOL_OUTPUT], "and the tool result once");
@@ -269,23 +282,32 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		}, toolCallQuery, { request: [{ type: "text", text: "look at this" }, image] });
 	});
 
-	it("stores pi's own message count as the cursor, so the next turn resumes the replacement", { timeout: 10_000 }, async () => {
-		await withBridge(async ({ root, calls }) => {
-			onPiHistoryReplaced("session_compact");
-			const delivery = toolResultDelivery();
+	// The replacement stores its record as it completes, or as it fails
+	// terminally; either record is what the next turn reads.
+	for (const { outcome, replacement, ending } of [
+		{ outcome: "completes", replacement: undefined, ending: "done" },
+		{ outcome: "fails", replacement: () => failingQuery(FAILED_SESSION_ID), ending: "error" },
+	]) {
+		it(`stores pi's own message count as the cursor when the replacement ${outcome}, so the next turn resumes it`, { timeout: 10_000 }, async () => {
+			await withBridge(async ({ root, calls, queued }) => {
+				if (replacement) queued.push(replacement);
+				onPiHistoryReplaced("session_compact");
+				const delivery = toolResultDelivery();
 
-			await collect(streamClaudeAgentSdk(model, delivery, { cwd: root }));
-			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the replacement settled");
-			const record = __testGetBridgeIntegrityState().sharedSession;
-			assert.equal(record?.cursor, delivery.messages.length, "the appended request and notice are not pi's messages");
+				const events = await collect(streamClaudeAgentSdk(model, delivery, { cwd: root }));
+				assert.deepEqual(events.filter((event) => event.type === "done" || event.type === "error").map((event) => event.type), [ending], "the replacement ended as the row says");
+				assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the replacement settled");
+				const record = __testGetBridgeIntegrityState().sharedSession;
+				assert.equal(record?.cursor, delivery.messages.length, "the appended request and notice are not pi's messages");
 
-			const next = piContext({ messages: [...delivery.messages.slice(1), assistantText("restarted"), user("the next prompt")], tools: [tool] });
-			await collect(streamClaudeAgentSdk(model, next, { cwd: root }));
-			assert.equal(calls.length, 3);
-			assert.equal(calls[2].options.resume, record.sessionId, "the next turn resumes the replacement's session");
-			assert.equal(calls[2].prompt, "the next prompt", "with only the new message");
+				const next = piContext({ messages: [...delivery.messages.slice(1), assistantText("restarted"), user("the next prompt")], tools: [tool] });
+				await collect(streamClaudeAgentSdk(model, next, { cwd: root }));
+				assert.equal(calls.length, 3);
+				assert.equal(calls[2].options.resume, record.sessionId, "the next turn resumes the replacement's session");
+				assert.equal(calls[2].prompt, "the next prompt", "with only the new message");
+			});
 		});
-	});
+	}
 
 	it("carries the request once through a second restart", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls, queued }) => {
@@ -409,19 +431,22 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			queued.push(() => throwingQuery(continuation));
 
 			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
+			const steerTwo = user("steer two");
 			streamClaudeAgentSdk(model, piContext({ messages: steered, tools: [tool] }), { cwd: root });
-			streamClaudeAgentSdk(model, piContext({ messages: [...steered, user("steer two")], tools: [tool] }), { cwd: root });
+			streamClaudeAgentSdk(model, piContext({ messages: [...steered, steerTwo], tools: [tool] }), { cwd: root });
 			firstQuery.release();
 			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
 
+			// The compaction summarized "steer one" away; pi's context still ends in
+			// "steer two", which the bridge also holds queued.
 			onPiHistoryReplaced("session_compact");
 			await collect(streamClaudeAgentSdk(model, piContext({
-				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), user("steer two")],
+				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), steerTwo],
 				tools: [tool],
 			}), { cwd: root }));
 
 			assert.equal(calls.length, 3, "the replacement still runs after the child throws");
-			assert.equal(calls[2].prompt, "steer two", "the callback's own user input is the replacement's prompt");
+			assert.equal(calls[2].prompt, carried("steer one", "steer two"), "the steer being answered, then the queued one Pi's run holds, sent once");
 			assert.notEqual(calls[2].options.resume, SESSION_ID, "on a session rotated away from the killed child");
 			assert.equal(
 				readFileSync(diagPath, "utf8").includes("deferred_user_messages_dropped"),
@@ -502,16 +527,32 @@ describe("source controls: the history restart's live prompt and cursor", () => 
 		{
 			why: "the replacement drops the request it was answering",
 			source: "src/index.ts",
-			before: "messages: [...piMessages, ...pending, {",
-			after: "messages: [...piMessages, {",
+			before: "const request = [...pending.filter((message) => !heldByPi(message)), ...trailingRun];",
+			after: "const request = [...trailingRun];",
 			pattern: "carrying each tool result once and the request the summary replaced",
 			failure: /the replacement is still answering the request/,
 		},
 		{
-			why: "the replacement drops the request's images",
+			why: "a restart callback ending in user input drops the request it was answering",
 			source: "src/index.ts",
-			before: "messages: [...piMessages, ...pending, {",
-			after: "messages: [...piMessages, {",
+			before: "const request = [...pending.filter((message) => !heldByPi(message)), ...trailingRun];",
+			after: "const request = trailingRun.length > 0 ? trailingRun : pending;",
+			pattern: "sends the request the summary replaced, then the user batch",
+			failure: /the request, then the whole batch, is the live prompt/,
+		},
+		{
+			why: "a captured steer pi's trailing run holds is sent twice",
+			source: "src/index.ts",
+			before: "const heldByPi = (message: Context[\"messages\"][number]) => trailingRun.some((held) => isSameUserMessage(held, message));",
+			after: "const heldByPi = (_message: Context[\"messages\"][number]) => false;",
+			pattern: "records no failure for a continuation whose child throws",
+			failure: /the steer being answered, then the queued one Pi's run holds, sent once/,
+		},
+		{
+			why: "the replacement carries the request's text without its images",
+			source: "src/index.ts",
+			before: "messages: [...piMessages.slice(0, runStart), ...request, {",
+			after: "messages: [...piMessages.slice(0, runStart), ...request.map((message) => ({ ...message, content: messageContentToText(message.content) })), {",
 			pattern: "keeps the images of the request it carries",
 			failure: /a prompt carrying images is sent as blocks/,
 		},
@@ -536,15 +577,23 @@ describe("source controls: the history restart's live prompt and cursor", () => 
 			source: "src/session-persistence.ts",
 			before: "const priorMessages = messages.slice(0, trailingUserRunStart(messages));",
 			after: "const priorMessages = messages.slice(0, -1);",
-			pattern: "sends a user batch the restart callback carries",
-			failure: /the whole batch is the live prompt/,
+			pattern: "sends the request the summary replaced, then the user batch",
+			failure: /the request, then the whole batch, is the live prompt/,
 		},
 		{
 			why: "the appended request and notice advance the cursor",
 			source: "src/index.ts",
 			before: "const piMessageCount = historyRestart?.piMessageCount ?? context.messages.length;",
 			after: "const piMessageCount = context.messages.length;",
-			pattern: "stores pi's own message count as the cursor",
+			pattern: "stores pi's own message count as the cursor when the replacement completes",
+			failure: /the appended request and notice are not pi's messages/,
+		},
+		{
+			why: "a terminal failure of the replacement stores a cursor past pi's messages",
+			source: "src/index.ts",
+			before: "const cursor = Math.max(piMessageCount, abortCtx.latestCursor, activeSession?.cursor ?? 0);\n\t\t\t\t\tdebug(`provider: terminal failure",
+			after: "const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession?.cursor ?? 0);\n\t\t\t\t\tdebug(`provider: terminal failure",
+			pattern: "stores pi's own message count as the cursor when the replacement fails",
 			failure: /the appended request and notice are not pi's messages/,
 		},
 		{
