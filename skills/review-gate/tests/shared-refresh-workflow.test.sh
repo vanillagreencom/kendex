@@ -113,6 +113,44 @@ PY
 then ok 'scripts run from the kendex checkout under the job and token boundaries; mutation controls'
 else bad 'shared workflow structure'; fi
 
+# A caller on a branch other than its default gets no secret: the one job,
+# whose steps alone read secrets and mint tokens, does not start. The row
+# evaluates the job's own condition for each caller context; the control
+# drops the branch clause from a copy.
+guard_matches() { # WORKFLOW
+  python3 - "$1" <<'GUARD'
+import re, sys
+job = open(sys.argv[1]).read().split('\njobs:\n', 1)[1]
+jobs = re.findall(r'^  ([A-Za-z0-9_-]+):$', job, re.M)
+assert jobs == ['refresh'], jobs
+condition = re.search(r'^    if: (.+)$', job, re.M).group(1)
+assert job.index('    if: ') < min(job.index(m) for m in ('secrets.', 'create-github-app-token'))
+# Each clause is one of the two forms the guard uses; any other refuses.
+def runs_for(repository, ref, default_branch):
+    result = True
+    for clause in condition.split(' && '):
+        own = re.fullmatch(r"github\.repository != '([^']+)'", clause)
+        branch = clause == "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+        assert own or branch, clause
+        result = result and (repository != own.group(1) if own else ref == 'refs/heads/' + default_branch)
+    return result
+for repository, ref, default_branch, runs in (
+    ('acme/widgets', 'refs/heads/main', 'main', True),
+    ('acme/widgets', 'refs/heads/feature', 'main', False),
+    ('acme/widgets', 'refs/heads/main', 'trunk', False),
+    ('acme/widgets', 'refs/tags/v1', 'main', False),
+    ('vanillagreencom/kendex', 'refs/heads/main', 'main', False),
+):
+    assert runs_for(repository, ref, default_branch) is runs, (repository, ref)
+GUARD
+}
+if guard_matches "$WORKFLOW"; then ok 'a caller off its default branch, or kendex itself, starts no secret-reading job'
+else bad 'default-branch guard'; fi
+sed "s/ && github.ref == format('refs\/heads\/{0}', github.event.repository.default_branch)//" "$WORKFLOW" >"$TMP/unguarded.yml"
+if ! cmp -s "$WORKFLOW" "$TMP/unguarded.yml" && ! guard_matches "$TMP/unguarded.yml" 2>/dev/null; then
+  ok 'control: a dropped branch clause turns the guard row red'
+else bad 'default-branch guard control'; fi
+
 # The install step's own body, extracted from the workflow.
 python3 - "$WORKFLOW" "$TMP/install-body" <<'PY'
 import re, sys, textwrap
