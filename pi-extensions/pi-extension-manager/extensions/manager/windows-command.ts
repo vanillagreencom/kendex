@@ -5,7 +5,8 @@ import { win32 } from "node:path";
  * Windows launch. Windows process creation does no PATHEXT lookup, and both
  * it and libuv search the child's working directory, the open project, before
  * PATH. So on Windows every command resolves here to an absolute file: a bare
- * name through PATH alone, a name holding a path through that path alone. A
+ * name through PATH's absolute directories alone, a name holding a path
+ * through that path alone. A
  * miss is `not-found`, and the runner spawns nothing. A `.cmd` or `.bat` file
  * runs under System32's cmd.exe by absolute path with a command line escaped
  * here, never through Node's `shell` option, which joins the arguments
@@ -24,8 +25,17 @@ export interface LaunchHost {
 	exists: (path: string) => boolean;
 }
 
-function envPath(env: NodeJS.ProcessEnv): string | undefined {
-	return env.PATH ?? env.Path ?? env.path;
+/**
+ * PATH's directories as Windows searches them, each with one pair of
+ * surrounding double quotes stripped as libuv and cmd.exe do. An entry with no
+ * drive or UNC root is skipped: it names a directory relative to the child's
+ * working directory, the open project.
+ */
+function pathDirs(env: NodeJS.ProcessEnv): string[] {
+	const entries = (env.PATH ?? env.Path ?? env.path)?.split(";") ?? [];
+	return entries
+		.map((entry) => (entry.length > 1 && entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry))
+		.filter((dir) => win32.isAbsolute(dir) && win32.parse(dir).root.length > 1);
 }
 
 function pathExts(env: NodeJS.ProcessEnv): string[] {
@@ -63,7 +73,7 @@ export function taskkillPath(env: NodeJS.ProcessEnv): string {
 function resolveWindowsCommand(command: string, cwd: string | undefined, host: LaunchHost): { kind: "found"; file: string } | { kind: "not-found"; searched: string[] } {
 	const searched = /[\\/]/.test(command) || win32.isAbsolute(command)
 		? [win32.dirname(win32.resolve(cwd ?? process.cwd(), command))]
-		: (envPath(host.env)?.split(";") ?? []).filter(Boolean);
+		: pathDirs(host.env);
 	for (const dir of searched) {
 		for (const candidate of commandCandidates(win32.basename(command), host.env)) {
 			const file = win32.join(dir, candidate);

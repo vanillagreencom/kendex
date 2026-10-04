@@ -65,6 +65,19 @@ const launchRows = [
 		},
 	},
 	{
+		// libuv strips the quotes a PATH entry holding a space often carries.
+		name: "a quoted PATH directory is searched without its quotes",
+		command: "node", args: [], cwd: undefined, path: String.raw`"C:\Program Files\nodejs";C:\bin`,
+		files: [String.raw`C:\Program Files\nodejs\node.exe`],
+		expected: { kind: "spawn", file: String.raw`C:\Program Files\nodejs\node.exe`, args: [], verbatim: false },
+	},
+	{
+		name: "a relative PATH entry, which names a directory in the project, is never searched",
+		command: "node", args: [], cwd: String.raw`C:\project`, path: String.raw`.;bin;\tools;C:\nodejs`,
+		files: ["node.exe", String.raw`bin\node.exe`, String.raw`\tools\node.exe`],
+		expected: { kind: "not-found", command: "node", searched: [String.raw`C:\nodejs`] },
+	},
+	{
 		name: "off Windows, the command and arguments are spawned as given",
 		command: "npm", args: ["root"], cwd: undefined, path: "/usr/bin", platform: "linux",
 		files: [],
@@ -116,6 +129,18 @@ test("launch controls: each planted gap changes what its row observes", async ()
 			row: "a cmd entrypoint runs under System32's cmd.exe with each argument escaped",
 			before: '...args.map(cmdArgument)].join(" ")',
 			after: '...args].join(" ")',
+		},
+		{
+			name: "searching a quoted PATH entry as written",
+			row: "a quoted PATH directory is searched without its quotes",
+			before: `.map((entry) => (entry.length > 1 && entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry))`,
+			after: ".map((entry) => entry)",
+		},
+		{
+			name: "keeping a relative PATH entry, which yields a project-relative file",
+			row: "a relative PATH entry, which names a directory in the project, is never searched",
+			before: ".filter((dir) => win32.isAbsolute(dir) && win32.parse(dir).root.length > 1);",
+			after: ".filter(Boolean);",
 		},
 		{
 			name: "a bare taskkill, which Windows searches for in the project",

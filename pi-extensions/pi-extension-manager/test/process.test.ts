@@ -118,6 +118,10 @@ const treeShapes = {
 	// kendex starts each git and npm child in a new process group, one after another,
 	// so a child can be moving to its own group at the moment the stop lists the tree.
 	"forking-sessions": (pidFile: string) => `while :; do ${perlSession(pidFile)} & sleep 0.002; done`,
+	// A grandchild in a session of its own, out of the first freeze's reach, that
+	// starts a child in a further session once the first listing has been read,
+	// so only a second listing finds it.
+	"forks-after-listing": (pidFile: string) => `perl -MPOSIX -e 'sub record { open(my $f, ">>", $ARGV[0]) or die "pid: $!"; print $f "$$\\n"; close $f } POSIX::setsid() > 0 or die "setsid: $!"; record(); select(undef, undef, undef, 0.01) until -e $ARGV[1]; my $pid = fork() // die "fork: $!"; if ($pid == 0) { POSIX::setsid() > 0 or die "setsid: $!"; record(); exec "sleep", "30" } exec "sleep", "30"' "${pidFile}" "${listedMarker}" </dev/null >/dev/null 2>&1 & wait`,
 	// A child that moves to a session of its own once the stop's listing has read it.
 	"regroups-after-listing": (pidFile: string) => `perl -MPOSIX -e 'open(my $f, ">>", $ARGV[0]) or die "pid: $!"; print $f "$$\\n"; close $f; select(undef, undef, undef, 0.01) until -e $ARGV[1]; POSIX::setsid() > 0 or die "setsid: $!"; exec "sleep", "30"' "${pidFile}" "${listedMarker}" </dev/null >/dev/null 2>&1 & wait`,
 } as const;
@@ -128,7 +132,7 @@ type TreeShape = keyof typeof treeShapes;
 async function stoppedTree(module: ProcessModule, shape: TreeShape, trigger: "cancel" | "deadline"): Promise<unknown> {
 	const pidFile = join(rootTmp, `descendants-${Math.random()}`);
 	const command = writeCommand(join(rootTmp, `tree-${shape}`), treeShapes[shape](pidFile));
-	if (shape === "regroups-after-listing") writeSlowListing();
+	if (shape === "regroups-after-listing" || shape === "forks-after-listing") writeSlowListing();
 	const cancel = new AbortController();
 	const run = module.runCommand(command, [], { deadlineMs: trigger === "deadline" ? 500 : 30_000, signal: cancel.signal });
 	await waitFor(`pid file ${pidFile}`, () => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim().length > 0);
@@ -166,6 +170,7 @@ const stopRows = [
 	{ name: "own-session", shape: "own-session", trigger: "cancel", edits: [], expected: { kind: "cancelled", stop: "tree", causeInNotice: null, descendantsAlive: false } },
 	{ name: "forking-sessions", shape: "forking-sessions", trigger: "cancel", edits: [], expected: { kind: "cancelled", stop: "tree", causeInNotice: null, descendantsAlive: false } },
 	{ name: "regroups-after-listing", shape: "regroups-after-listing", trigger: "cancel", edits: [listingReadEarly], expected: { kind: "cancelled", stop: "tree", causeInNotice: null, descendantsAlive: false } },
+	{ name: "forks-after-listing", shape: "forks-after-listing", trigger: "cancel", edits: [listingReadEarly], expected: { kind: "cancelled", stop: "tree", causeInNotice: null, descendantsAlive: false } },
 	{ name: "no process listing", shape: "same-group", trigger: "cancel", edits: [psMissing], expected: { kind: "cancelled", stop: "partial", causeInNotice: true, descendantsAlive: false } },
 ] as const satisfies readonly { name: string; shape: TreeShape; trigger: "cancel" | "deadline"; edits: readonly SourceEdit[]; expected: unknown }[];
 
@@ -187,6 +192,7 @@ test("stop controls: each planted gap changes what its row observes", async () =
 		{ name: "no SIGKILL after the grace", row: "ignores-sigterm", before: 'if (anyGroupAlive(groups)) causes.push(signalGroups(child, groups, "SIGKILL"));', after: "" },
 		{ name: "settling at the direct child's close", row: "ignores-sigterm", before: "const stop = await first.reach;", after: 'const stop = await Promise.race([first.reach, closed.then(() => ({ kind: "tree" }))]);' },
 		{ name: "signalling only the command's own group", row: "own-session", before: "treeGroups(pid, listing.rows)", after: '{ kind: "listed", groups: [pid] }' },
+		{ name: "no listing after the first freeze", row: "forks-after-listing", before: "groups.push(...found);", after: "groups.push(...found);\n\t\tbreak;" },
 		{ name: "listing before freezing the command's group", row: "regroups-after-listing", before: 'const causes = [signalGroups(child, groups, "SIGSTOP")];', after: "const causes: (string | undefined)[] = [];" },
 		{ name: "reporting a failed listing as the whole tree", row: "no process listing", before: 'return cause ? { kind: "partial", cause } : { kind: "tree" };', after: 'return { kind: "tree" };' },
 	] as const;
@@ -198,45 +204,62 @@ test("stop controls: each planted gap changes what its row observes", async () =
 	}
 }, 40_000);
 
+const managerSource = join(import.meta.dir, "..", "extensions", "manager");
+
 /**
- * Pi quits by aborting at session_shutdown and calling process.exit with no
- * event-loop turn between. A Bun process here does the same to a running
- * command; the pid of that command once the process has exited.
+ * Pi quits by awaiting its session_shutdown handlers, the manager's returning
+ * `closeInventorySession`, then calling process.exit. A Bun process here runs
+ * `shape` as session work, closes the session, awaiting it or not, and exits.
+ * Whether any descendant the shape recorded lives once the process has exited.
  */
-async function quitDuringRun(modulePath: string): Promise<number> {
-	const pidFile = join(rootTmp, `quit-pid-${Math.random()}`);
-	const command = writeCommand(join(rootTmp, "quit-command"), `echo $$ > "${pidFile}"; exec sleep 30`);
+async function quitDuringRun(managerDir: string, shape: TreeShape, awaitShutdown: boolean): Promise<boolean> {
+	const pidFile = join(rootTmp, `quit-pids-${Math.random()}`);
+	const command = writeCommand(join(rootTmp, `quit-${shape}`), treeShapes[shape](pidFile));
 	const host = join(rootTmp, `quit-host-${Math.random()}.ts`);
 	writeFileSync(host, [
-		'import { existsSync } from "node:fs";',
-		"const [modulePath, command, pidFile] = process.argv.slice(2);",
-		"const { runCommand } = await import(modulePath);",
-		"const cancel = new AbortController();",
-		"void runCommand(command, [], { deadlineMs: 30_000, signal: cancel.signal });",
-		"while (!existsSync(pidFile)) await Bun.sleep(10);",
-		"cancel.abort();",
+		'import { existsSync, readFileSync } from "node:fs";',
+		'import { join } from "node:path";',
+		"const [managerDir, command, pidFile, mode] = process.argv.slice(2);",
+		'const { runCommand } = await import(join(managerDir, "process.ts"));',
+		'const { closeInventorySession, sessionWork } = await import(join(managerDir, "inventory.ts"));',
+		"const pi = {};",
+		"void sessionWork(pi, (signal) => runCommand(command, [], { deadlineMs: 30_000, signal }));",
+		'while (!existsSync(pidFile) || !readFileSync(pidFile, "utf8").trim()) await Bun.sleep(10);',
+		'if (mode === "await") await closeInventorySession(pi);',
+		"else void closeInventorySession(pi);",
 		"process.exit(0);",
 	].join("\n"));
-	const quit = spawnSync(process.execPath, ["--no-install", host, modulePath, command, pidFile], { encoding: "utf8", env: { PATH: process.env.PATH }, timeout: 10_000 });
+	const quit = spawnSync(process.execPath, ["--no-install", host, managerDir, command, pidFile, awaitShutdown ? "await" : "exit"], { encoding: "utf8", env: { PATH: process.env.PATH }, timeout: 10_000 });
 	if (quit.status !== 0) throw new Error(`quit host exited ${quit.status ?? quit.signal}: ${quit.stderr}`);
-	const pid = await startedPid(pidFile);
-	leftovers.push(pid);
-	return pid;
+	const descendants = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
+	leftovers.push(...descendants);
+	// A signalled descendant is reaped by its new parent asynchronously; one
+	// that ignored SIGTERM and never got SIGKILL is still running at this bound.
+	const until = Date.now() + 1_000;
+	while (descendants.some(processAlive) && Date.now() < until) await Bun.sleep(20);
+	return descendants.some(processAlive);
 }
 
-test("a host that exits right after aborting leaves no command running; control: a stop that starts after the listener returns", async () => {
-	const real = await quitDuringRun(join(import.meta.dir, "..", "extensions", "manager", "process.ts"));
-	// SIGTERM was sent before the host exited; the orphan's reaper takes it asynchronously.
-	await waitFor(`command ${real} gone`, () => !processAlive(real), 1_000);
+const quitRows = [
+	// The SIGKILL past the grace runs only because shutdown waits for it.
+	{ name: "a descendant ignoring SIGTERM, shutdown awaited", shape: "ignores-sigterm", awaitShutdown: true },
+	// Everything up to SIGTERM runs inside the abort listener.
+	{ name: "a host that exits right after aborting", shape: "same-group", awaitShutdown: false },
+] as const;
 
-	const mutant = mutantManager(join(rootTmp, "mutant-quit"), [{
-		file: "process.ts",
-		before: 'startStop({ kind, reach: process.platform === "win32" ? stopWindowsTree(child, pid) : stopPosixTree(child, pid) });',
-		after: 'setImmediate(() => startStop({ kind, reach: process.platform === "win32" ? stopWindowsTree(child, pid) : stopPosixTree(child, pid) }));',
-	}]);
-	const planted = await quitDuringRun(join(mutant, "process.ts"));
-	await Bun.sleep(1_000);
-	expect(processAlive(planted)).toBe(true);
+test("quitting leaves no descendant running; controls: a shutdown that does not wait, a stop that starts after the listener returns", async () => {
+	for (const row of quitRows) {
+		expect({ name: row.name, alive: await quitDuringRun(managerSource, row.shape, row.awaitShutdown) }).toEqual({ name: row.name, alive: false });
+	}
+	const controls = [
+		{ row: 0, file: "inventory.ts", before: "await Promise.race([Promise.all(session.running), new Promise<void>((resolve) => { bound = setTimeout(resolve, SHUTDOWN_WAIT_MS); })]);", after: "" },
+		{ row: 1, file: "process.ts", before: 'startStop({ kind, reach: process.platform === "win32" ? stopWindowsTree(child, pid) : stopPosixTree(child, pid) });', after: 'setImmediate(() => startStop({ kind, reach: process.platform === "win32" ? stopWindowsTree(child, pid) : stopPosixTree(child, pid) }));' },
+	] as const;
+	for (const [index, control] of controls.entries()) {
+		const row = quitRows[control.row];
+		const mutant = mutantManager(join(rootTmp, `mutant-quit-${index}`), [{ file: control.file, before: control.before, after: control.after }]);
+		expect({ name: row.name, edit: control.file, alive: await quitDuringRun(mutant, row.shape, row.awaitShutdown) }).toEqual({ name: row.name, edit: control.file, alive: true });
+	}
 }, CONTROL_CASE_MS);
 
 test("an already-aborted signal starts nothing", async () => {

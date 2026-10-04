@@ -55,12 +55,15 @@ interface CancelObservation { notices: string[]; settingsKept: boolean; npmAlive
 type Trigger = "escape" | "session-end";
 
 /**
- * Confirm an uninstall whose npm hangs, then cancel it by `trigger` once npm
- * has started: escape on the progress overlay, or the session ending.
+ * Confirm an uninstall whose npm hangs and ignores SIGTERM, then cancel it by
+ * `trigger` once npm has started: escape on the progress overlay, or the
+ * session ending. For the session ending, `npmAlive` is read as soon as the
+ * shutdown promise resolves, since Pi exits then.
  */
 async function cancelHungUninstall(ui: ManagerUiModule, inventory: InventoryModule, trigger: Trigger): Promise<CancelObservation | { unsettled: true; npmAlive: boolean }> {
 	const pidFile = join(rootTmp, `npm-pid-${Math.random()}`);
-	const npm = writeCommand(join(rootTmp, "bin", `npm-${Math.random()}`), `echo $$ > "${pidFile}"; exec sleep 30`);
+	// The ignored SIGTERM is inherited by sleep, so only the SIGKILL past the grace ends it.
+	const npm = writeCommand(join(rootTmp, "bin", `npm-${Math.random()}`), `trap "" TERM; echo $$ > "${pidFile}"; exec sleep 30`);
 	const settingsPath = join(agent, "settings.json");
 	writeJson(settingsPath, { npmCommand: [npm], packages: ["npm:@example/hang"] });
 	writeJson(join(agent, "npm", "node_modules", "@example", "hang", "package.json"), { name: "@example/hang", version: "1.0.0" });
@@ -91,41 +94,43 @@ async function cancelHungUninstall(ui: ManagerUiModule, inventory: InventoryModu
 	const npmPid = await startedPid(pidFile);
 	leftovers.push(npmPid);
 	await waitFor("progress overlay", () => overlay !== undefined);
+	let npmAliveAtShutdown: boolean | undefined;
 	if (trigger === "escape") overlay!.handleInput("escape");
-	else inventory.closeInventorySession(pi);
-	// A working overlay closes inside the runner's SIGTERM grace; one still
-	// open at this bound never passed the cancel to the command.
+	else {
+		await inventory.closeInventorySession(pi);
+		npmAliveAtShutdown = processAlive(npmPid);
+	}
+	// A working overlay closes once the runner's SIGTERM grace has passed; one
+	// still open at this bound never passed the cancel to the command.
 	const outcome = await settleWithin(opened, 4_000);
 	if (outcome === "unsettled") {
 		const npmAlive = processAlive(npmPid);
-		inventory.closeInventorySession(pi);
+		void inventory.closeInventorySession(pi);
 		return { unsettled: true, npmAlive };
 	}
-	return { notices, settingsKept: readFileSync(settingsPath, "utf8") === settingsBefore, npmAlive: processAlive(npmPid) };
+	return { notices, settingsKept: readFileSync(settingsPath, "utf8") === settingsBefore, npmAlive: npmAliveAtShutdown ?? processAlive(npmPid) };
 }
 
 const pi = {} as never;
 
-test("escape or session end cancels a running uninstall; controls: an ignored escape or an action blind to the session keeps npm running", async () => {
+test("escape or session end cancels a running uninstall; controls: an ignored escape, an action blind to the session, or one shutdown does not wait for", async () => {
 	const { selectHost } = await import("../extensions/manager/host.ts");
 	await selectHost({ getAgentDir: () => agent, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	const real = [await import("../extensions/manager/manager-ui.ts"), await import("../extensions/manager/inventory.ts")] as const;
+	const expected = { notices: ["pi-extension-manager: npm-uninstall-cancelled"], settingsKept: true, npmAlive: false };
+	const summary = (observed: Awaited<ReturnType<typeof cancelHungUninstall>>) => "unsettled" in observed ? observed : { ...observed, notices: observed.notices.map((line) => line.split("=")[0]) };
 	for (const trigger of ["escape", "session-end"] as const) {
-		const observed = await cancelHungUninstall(...real, trigger);
-		expect({ trigger, observed: "unsettled" in observed ? observed : { ...observed, notices: observed.notices.map((line) => line.split("=")[0]) } }).toEqual({ trigger, observed: {
-			notices: ["pi-extension-manager: npm-uninstall-cancelled"],
-			settingsKept: true,
-			npmAlive: false,
-		} });
+		expect({ trigger, observed: summary(await cancelHungUninstall(...real, trigger)) }).toEqual({ trigger, observed: expected });
 	}
 
 	const rows = [
 		{ trigger: "escape", before: "cancel.abort();", after: "void cancel;" },
-		{ trigger: "session-end", before: "AbortSignal.any([cancel.signal, inventorySession(pi).controller.signal])", after: "cancel.signal" },
+		{ trigger: "session-end", before: "sessionWork(pi, (session) => action(AbortSignal.any([cancel.signal, session])))", after: "action(cancel.signal)" },
+		{ trigger: "session-end", before: "sessionWork(pi, (session) => action(AbortSignal.any([cancel.signal, session])))", after: "action(AbortSignal.any([cancel.signal, inventorySession(pi).controller.signal]))" },
 	] as const;
 	for (const [index, row] of rows.entries()) {
 		const mutant = mutantManager(join(rootTmp, `mutant-cancel-${index}`), [{ file: "manager-ui.ts", before: row.before, after: row.after }]);
-		const planted = await cancelHungUninstall(await import(join(mutant, "manager-ui.ts")), await import(join(mutant, "inventory.ts")), row.trigger);
-		expect({ trigger: row.trigger, planted }).toEqual({ trigger: row.trigger, planted: { unsettled: true, npmAlive: true } });
+		const planted = summary(await cancelHungUninstall(await import(join(mutant, "manager-ui.ts")), await import(join(mutant, "inventory.ts")), row.trigger));
+		expect({ edit: row.after, differs: !Bun.deepEquals(planted, expected) }).toEqual({ edit: row.after, differs: true });
 	}
 }, 40_000);

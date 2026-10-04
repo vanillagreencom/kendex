@@ -59,6 +59,8 @@ const STOP_GRACE_MS = 2_000;
 const STOP_POLL_MS = 50;
 /** Time to wait for the streams to close after the final kill before settling anyway. */
 const SETTLE_AFTER_KILL_MS = 2_000;
+/** POSIX: longest a stopped run takes to settle once its tree has had SIGTERM: the grace, then the settle wait. */
+export const STOP_SETTLE_MS = STOP_GRACE_MS + SETTLE_AFTER_KILL_MS;
 /** By absolute path, like taskkill, so the open project cannot shadow it. */
 const PS_PATH = "/bin/ps";
 const PS_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -189,7 +191,8 @@ function anyGroupAlive(groups: number[]): boolean {
  * SIGCONT every frozen group. A frozen process cannot fork, so no descendant
  * can move to a new group between the listing and the SIGTERM. A failed
  * listing still releases and signals every group frozen so far. Only the
- * grace and the SIGKILL to whatever outlives it are asynchronous.
+ * grace and the SIGKILL to whatever outlives it are asynchronous; at quit they
+ * run because session shutdown waits for the session's work (`inventory.ts`).
  */
 function stopPosixTree(child: ChildProcess, pid: number): Promise<StopReach> {
 	const groups = [pid];

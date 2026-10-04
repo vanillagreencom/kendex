@@ -3,7 +3,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
 import { host } from "./host.js";
+import { APPEND_SYSTEM_DEADLINE_MS } from "./append-system.js";
 import { expandHome } from "./package-config.js";
+import { STOP_SETTLE_MS } from "./process.js";
 import { asRecord, getOrCreateRecord, loadSettingsFiles, managerStateFrom, mergedManagerState } from "./settings.js";
 import {
 	gitPackageDirCandidates,
@@ -428,40 +430,74 @@ export function npmCandidatesFromInventory(inventory: Inventory): { name: string
 	return out;
 }
 
+/**
+ * Longest shutdown waits for the session's work: a stopped command's grace and
+ * settle, then the script a failed uninstall runs to put its block back.
+ */
+const SHUTDOWN_WAIT_MS = STOP_SETTLE_MS + APPEND_SYSTEM_DEADLINE_MS;
+
 interface InventorySession {
 	controller: AbortController;
 	inventory?: Inventory;
+	/** Work started by `sessionWork`, each settled to undefined, until it settles. */
+	running: Set<Promise<void>>;
 }
 const sessions = new WeakMap<ExtensionAPI, InventorySession>();
+
+function newSession(): InventorySession {
+	return { controller: new AbortController(), running: new Set() };
+}
 
 /** The current session owns commands, root memoization, and one inventory snapshot. */
 export function inventorySession(pi: ExtensionAPI): InventorySession {
 	let session = sessions.get(pi);
 	if (!session) {
-		session = { controller: new AbortController() };
+		session = newSession();
 		sessions.set(pi, session);
 	}
 	return session;
+}
+
+/**
+ * Run `work` under the session's signal. Shutdown aborts that signal and waits
+ * for the work to settle, so what a stop or a failed uninstall does after the
+ * abort (the SIGKILL past the grace, the block restore) runs before Pi exits.
+ */
+export function sessionWork<T>(pi: ExtensionAPI, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+	const session = inventorySession(pi);
+	const running = work(session.controller.signal);
+	const settled = running.then(() => undefined, () => undefined);
+	session.running.add(settled);
+	void settled.then(() => session.running.delete(settled));
+	return running;
 }
 
 /** Refresh only at session, popup-open, or mutation boundaries. */
 export async function refreshInventory(pi: ExtensionAPI, ctx: ExtensionContext): Promise<Inventory> {
 	const session = inventorySession(pi);
 	await host.prepare(ctx.cwd);
-	const inventory = await buildInventory(pi, ctx);
+	const inventory = await sessionWork(pi, () => buildInventory(pi, ctx));
 	if (!session.controller.signal.aborted) session.inventory = inventory;
 	return inventory;
 }
 
-/** Release every session resource on shutdown or replacement. */
-export function closeInventorySession(pi: ExtensionAPI): void {
+/**
+ * Release every session resource on shutdown or replacement: abort the
+ * session's work, then wait for it to settle, at most `SHUTDOWN_WAIT_MS`.
+ */
+export async function closeInventorySession(pi: ExtensionAPI): Promise<void> {
 	const session = sessions.get(pi);
-	session?.controller.abort();
-	if (session) session.inventory = undefined;
+	if (!session) return;
+	session.controller.abort();
+	session.inventory = undefined;
+	let bound: ReturnType<typeof setTimeout> | undefined;
+	await Promise.race([Promise.all(session.running), new Promise<void>((resolve) => { bound = setTimeout(resolve, SHUTDOWN_WAIT_MS); })]);
+	clearTimeout(bound);
 }
 
 /** Replace the closed session owner at the host's session-start boundary. */
 export function startInventorySession(pi: ExtensionAPI): void {
-	closeInventorySession(pi);
-	sessions.set(pi, { controller: new AbortController() });
+	// The replaced session's work stops on its own; the new session does not wait for it.
+	void closeInventorySession(pi);
+	sessions.set(pi, newSession());
 }

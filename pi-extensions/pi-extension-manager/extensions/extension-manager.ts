@@ -112,7 +112,8 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 	});
 
 	installSettingsCacheRefresh(pi);
-	pi.on("session_shutdown", async () => closeInventorySession(pi));
+	// Pi's dispose awaits this before it exits, so the session's work settles first.
+	pi.on("session_shutdown", () => closeInventorySession(pi));
 	pi.on("session_start", async (_event, ctx) => {
 		startInventorySession(pi);
 		recordProjectTrust(ctx);

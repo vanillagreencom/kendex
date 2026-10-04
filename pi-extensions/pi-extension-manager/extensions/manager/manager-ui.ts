@@ -3,7 +3,7 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "./actions.js";
 import { filteredItems, packageExtensions } from "./filters.js";
 import { ansiGreen, ansiRed, ansiYellow, isPlainSearchInput, kindLabel, managerNotice, scopeFilterLabel } from "./format.js";
-import { applyUpdateMetadata, inventorySession, refreshInventory, npmCandidatesFromInventory } from "./inventory.js";
+import { applyUpdateMetadata, inventorySession, refreshInventory, npmCandidatesFromInventory, sessionWork } from "./inventory.js";
 import { compactPath } from "./paths.js";
 import { glyphs } from "./glyphs.js";
 import { host } from "./host.js";
@@ -398,12 +398,12 @@ function createManagerComponent(
 
 /**
  * Run a confirmed package action under an overlay whose escape cancels it;
- * ending the session cancels it too. The overlay closes when the action
- * settles, so the terminal stays live for the whole run.
+ * ending the session cancels it too and waits for it to settle. The overlay
+ * closes when the action settles, so the terminal stays live for the whole run.
  */
 async function runCancellableAction<T>(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, title: string, command: string, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
 	const cancel = new AbortController();
-	const running = action(AbortSignal.any([cancel.signal, inventorySession(pi).controller.signal]));
+	const running = sessionWork(pi, (session) => action(AbortSignal.any([cancel.signal, session])));
 	const settled = running.then(() => undefined, () => undefined);
 	await ctx.ui.custom<void>(
 		(tui, theme, _keybindings, done) => {
@@ -450,7 +450,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 			if (!action || action.type === "close") return;
 			if (action.type === "toggle-item") {
 				const item = inventory.items.find((candidate) => candidate.id === action.itemId);
-				if (item) await toggleItem(pi, ctx, inventory, item, inventorySession(pi).controller.signal);
+				if (item) await sessionWork(pi, (signal) => toggleItem(pi, ctx, inventory, item, signal));
 				continue;
 			}
 			if (action.type === "update-package") {

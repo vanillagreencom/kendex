@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { managerNotice } from "./format.js";
-import { commandFailure, runCommand, type CommandFailure, type CommandResult } from "./process.js";
+import { commandFailure, runCommand } from "./process.js";
 import type { InventoryItem } from "./types.js";
 
-const APPEND_SYSTEM_DEADLINE_MS = 10_000;
+/** A package-supplied script gates every toggle, so the wait is bounded. */
+export const APPEND_SYSTEM_DEADLINE_MS = 10_000;
 
 /**
  * Pi extension packages can declare `pi.appendSystem` in their package.json,
@@ -18,13 +19,13 @@ const APPEND_SYSTEM_DEADLINE_MS = 10_000;
  * script declares no `pi.appendSystem` and gets no block.
  */
 /**
- * A script run: `ran` exit 0, `absent` the package ships no script, `failed`
- * any other end, with its notice.
+ * A script run: `ran` exit 0 with no notice, `absent` the package ships no
+ * script, `failed` any other end, with its notice.
  */
 export type AppendSystemOutcome =
 	| { kind: "ran" }
 	| { kind: "absent" }
-	| { kind: "failed"; reason: CommandFailure["reason"]; message: string };
+	| { kind: "failed"; message: string };
 
 /** The package's script, or `undefined` when it ships none. */
 function appendSystemScript(packageDir: string | undefined): string | undefined {
@@ -33,21 +34,24 @@ function appendSystemScript(packageDir: string | undefined): string | undefined 
 	return existsSync(script) ? script : undefined;
 }
 
-/** A package-supplied script gates every toggle, so the wait is bounded. */
-async function runScript(script: string, action: "install" | "remove", signal: AbortSignal): Promise<CommandResult> {
-	return runCommand("node", [script, action], { cwd: dirname(dirname(script)), deadlineMs: APPEND_SYSTEM_DEADLINE_MS, signal });
-}
-
-function failedNotice(failure: CommandFailure, action: "install" | "remove", script: string): string {
-	return managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail);
-}
-
+/**
+ * The one reader of the script's result. For the install and remove actions
+ * passed here, the vendored script exits 0 after each `append-system:
+ * <key>=<value>` notice it prints, and prints one on every path that could
+ * not write or remove the block, so an exit 0 with a notice is a failure. The
+ * notice is the script's own result; reading APPEND_SYSTEM.md instead would
+ * need a second copy of its scope resolution.
+ */
 async function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove", signal: AbortSignal): Promise<AppendSystemOutcome> {
 	const script = appendSystemScript(packageDir);
 	if (!script) return { kind: "absent" };
-	const failure = commandFailure(await runScript(script, action, signal));
-	if (!failure) return { kind: "ran" };
-	return { kind: "failed", reason: failure.reason, message: failedNotice(failure, action, script) };
+	const result = await runCommand("node", [script, action], { cwd: dirname(dirname(script)), deadlineMs: APPEND_SYSTEM_DEADLINE_MS, signal });
+	const failure = commandFailure(result);
+	if (failure) return { kind: "failed", message: managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail) };
+	if (result.kind !== "exited") throw new Error(`append-system: a run with no failure ended as ${result.kind}`);
+	const notices = result.output.stderr.trim();
+	if (notices.split("\n").some((line) => line.startsWith("append-system: "))) return { kind: "failed", message: managerNotice("append-system-notice", `${action}:${script}`, notices) };
+	return { kind: "ran" };
 }
 
 export async function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean, signal: AbortSignal): Promise<void> {
@@ -76,20 +80,19 @@ export type RestoreOutcome = { kind: "restored" } | { kind: "not-restored"; caus
  * uninstall's signal may already be aborted, by Escape or by session end. The
  * install upsert is idempotent, so restoring a block a failed removal left is
  * harmless.
- *
- * The vendored script exits 0 after each `append-system: <key>=<value>`
- * notice it prints, and prints one on every install path that writes no
- * block, so exit 0 alone does not mean the block is there. The notice is the
- * script's own result; reading APPEND_SYSTEM.md instead would need a second
- * copy of its scope resolution.
  */
 export async function restoreAppendSystemBlockAfterUninstall(item: InventoryItem): Promise<RestoreOutcome> {
-	const script = appendSystemScript(item.packageDir);
-	if (!script) return { kind: "not-restored", cause: "its scripts/append-system.mjs is gone." };
-	const result = await runScript(script, "install", new AbortController().signal);
-	const failure = commandFailure(result);
-	if (failure) return { kind: "not-restored", cause: failedNotice(failure, "install", script) };
-	if (result.kind !== "exited") throw new Error(`append-system: a run with no failure ended as ${result.kind}`);
-	if (result.output.stderr.split("\n").some((line) => line.startsWith("append-system: "))) return { kind: "not-restored", cause: result.output.stderr.trim() };
-	return { kind: "restored" };
+	const outcome = await runAppendSystemScript(item.packageDir, "install", new AbortController().signal);
+	switch (outcome.kind) {
+		case "ran":
+			return { kind: "restored" };
+		case "absent":
+			return { kind: "not-restored", cause: managerNotice("append-system-gone", item.packageDir ?? item.id, "The package's scripts/append-system.mjs is gone.") };
+		case "failed":
+			return { kind: "not-restored", cause: outcome.message };
+		default: {
+			const unreachable: never = outcome;
+			throw new Error(`append-system: unknown outcome ${JSON.stringify(unreachable)}`);
+		}
+	}
 }
