@@ -388,11 +388,17 @@ if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '[.source // "", (has("timestamp") or
   notice payload invalid-json
   exit 0
 fi
-# Copilot's documented sessionStart payload uses timestamp and sessionId.
-# Collect all notices so lane guidance and drift form one valid hook answer.
-if [ "${SOURCE#*$'\t'}" = true ]; then
-  CALL_HARNESS=copilot
-fi
+# Gemini also sends timestamp. Its project and global hooks both live under
+# .gemini/hooks (engine::targets::dotted_script_hook). Keep the payload fallback
+# elsewhere for Copilot's session_id/ISO input through Claude registration.
+case "${BASH_SOURCE[0]%/*}" in
+  */.gemini/hooks | .gemini/hooks) CALL_HARNESS=gemini ;;
+  *)
+    if [ "${SOURCE#*$'\t'}" = true ]; then
+      CALL_HARNESS=copilot
+    fi
+    ;;
+esac
 SOURCE=${SOURCE%%$'\t'*}
 case "$SOURCE" in
   resume|compact)

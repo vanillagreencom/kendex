@@ -48,10 +48,14 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/session-drift-check.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)" || { echo "session-drift-check: scratch=mktemp-failed" >&2; exit 1; }
+mkdir -p "$TEST_DIR/../../tmp"
+TMP_ROOT="$(mktemp -d "$TEST_DIR/../../tmp/session-drift-check.XXXXXX")" || { echo "session-drift-check: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "session-drift-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "session-drift-check: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+# Keep ordinary fixtures outside the enclosing worktree's lane. The fixture
+# repositories below this ceiling still resolve their own git directories.
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
@@ -261,6 +265,21 @@ context=$(jq -er 'select(keys == ["additionalContext"]) | .additionalContext' "$
 assert_eq "$context" "$plain" "Copilot sessionStart receives the complete report in additionalContext"
 run_row 0 - >/dev/null
 assert_eq "$(cat "$TMP_ROOT/stdout")" "" "Copilot receives no context for a clean install"
+original_hook=$HOOK
+mkdir -p "$TMP_ROOT/.claude/hooks" "$TMP_ROOT/.gemini/hooks"
+cp "$HOOK" "$TMP_ROOT/.claude/hooks/session-drift-check.sh"
+cp "$HOOK" "$TMP_ROOT/.gemini/hooks/session-drift-check.sh"
+# Copilot can invoke the Claude registration with session_id and an ISO
+# timestamp. Gemini emits the same fields from its own installed hook path.
+DRIFT_PAYLOAD='{"session_id":"s","hook_event_name":"SessionStart","timestamp":"2026-10-04T00:00:00.000Z","source":"startup"}'
+HOOK="$TMP_ROOT/.claude/hooks/session-drift-check.sh"
+run_row 1 report >/dev/null
+context=$(jq -er 'select(keys == ["additionalContext"]) | .additionalContext' "$TMP_ROOT/stdout" 2>/dev/null) || context=invalid-json
+assert_eq "$context" "$plain" "Copilot ISO compatibility input through Claude receives additionalContext"
+HOOK="$TMP_ROOT/.gemini/hooks/session-drift-check.sh"
+run_row 1 report >/dev/null
+assert_eq "$(cat "$TMP_ROOT/stdout")" "$plain" "Gemini installed-path SessionStart keeps the complete plain report"
+HOOK=$original_hook
 unset DRIFT_PAYLOAD
 # The too-old notice runs nothing in the flag's place: one call, with the flag.
 run_row 2 too-old >/dev/null

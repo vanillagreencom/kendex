@@ -29,9 +29,13 @@ SMOKE="$REPO/tools/harness-smoke"
 # row pins the path it then prints. macOS hands mktemp a /var path that is a
 # symlink to /private/var, so an unresolved TMP makes every such row want a
 # path the script will never say.
-TMP="$(mktemp -d)" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
+mkdir -p "$REPO/tmp"
+TMP="$(mktemp -d "$REPO/tmp/harness-smoke-test.XXXXXX")" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "harness-smoke.test: resolving the scratch directory failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
+# Scratch must not inherit the enclosing worktree's git repository. Fixture
+# repositories below this ceiling still use their own .git directories.
+export GIT_CEILING_DIRECTORIES="$TMP"
 REPO_HEAD="$(git -C "$REPO" rev-parse --verify HEAD)" ||
   { echo "harness-smoke.test: this checkout has no HEAD commit" >&2; exit 1; }
 
@@ -665,7 +669,10 @@ if [ -f .github/hooks/interactive.json ]; then
   mode=$(jq -r '.hooks.userPromptSubmitted[0].args[1]' .github/hooks/interactive.json)
   token=$(jq -r '.hooks.userPromptSubmitted[0].args[2]' .github/hooks/interactive.json)
   result=positive reply=$token
-  [ "$mode" != none ] || { result=negative; reply=NO-HOOK-TOKEN; }
+  if [ "$mode" = none ]; then
+    result=negative reply=NO-HOOK-TOKEN
+    [ "${STANDIN_INTERACTIVE_ANSWER:-yes}" != leak ] || reply=$token
+  fi
   printf '{"sessionId":"lead-1"}\n' >>smoke-events/calls
   printf '%s\n' "$reply" >"../../logs/copilot-answer-interactive-$result.md"
   [ "${STANDIN_COMPACT:-manual}" != manual ] || printf '{"trigger":"manual"}\n' >>smoke-events/compact
@@ -1067,7 +1074,21 @@ package_case "control: no subagent token check accepts the lead token alone" ins
 # interactive commands and every verdict check remain in the smoke runner.
 plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
 package_run "$STAND_SMOKE"
+package_case "interactive prompt context passes with a silent control" answer:userPromptSubmitted-interactive pass "hook-only token repeated in interactive session, absent with silent hook"
 package_case "manual compaction capture passes its dedicated row" event:preCompact pass "/compact fired preCompact with trigger manual"
+package_run "$STAND_SMOKE" STANDIN_INTERACTIVE_ANSWER=leak
+package_case "interactive silent-control token leak fails" answer:userPromptSubmitted-interactive fail "positive=pass negative=fail"
+# Pin the one interactive negative check before planting it out. Enabling the
+# terminal fixture alone would change the copy even if this edit missed.
+interactive_negative='if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi'
+if [ "$(sed -n '/token="SMOKE-INTERACTIVE-/,/^answer_config()/p' "$STAND_SMOKE.intact" | grep -Fc "$interactive_negative")" -ne 1 ]; then
+  printf 'interactive negative check: expected one match\n' >&2
+  exit 2
+fi
+plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@; /token="SMOKE-INTERACTIVE-/,/^answer_config()/s/&& ! grep -qF "\$token" "\$transcript"/\&\& { true || ! grep -qF "$token" "$transcript"; }/'
+package_run "$STAND_SMOKE" STANDIN_INTERACTIVE_ANSWER=leak
+package_case "control: disabled interactive negative check passes the same leak" answer:userPromptSubmitted-interactive pass "hook-only token repeated in interactive session, absent with silent hook"
+plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
 package_run "$STAND_SMOKE" STANDIN_COMPACT=none
 package_case "no manual compaction capture fails its dedicated row" event:preCompact fail "/compact recorded no preCompact payload with trigger manual"
 plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@; s/^  if \(.*smoke-events\/compact.*\); then$/  if true || { \1; }; then/'
