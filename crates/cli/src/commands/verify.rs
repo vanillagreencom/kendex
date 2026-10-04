@@ -6,8 +6,8 @@ use kendex_core::attest::{
     self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
 };
 use kendex_core::engine::{
-    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Pin, Position, ShimStanding,
-    planned_closure,
+    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Pin, PlanOptions, Position,
+    ShimStanding, planned_closure_held,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
@@ -335,11 +335,9 @@ fn check_scope(
         tally.recordless = true;
         return Ok(());
     }
-    let audited = kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options());
-    let declared = match (&audited, manifest) {
-        (Ok(audited), Some(manifest)) => declared_packages(env, &scope, manifest, &audited.report),
-        (Err(_), _) | (Ok(_), None) => Declared::unread(),
-    };
+    let options = reading.plan_options();
+    let audited = kendex_core::ownership::audit(env, &scope, &records, &options);
+    let declared = declared_packages(env, &scope, &records, &options, &audited);
     if absent && !declared.owes_record_nothing() {
         report_record_problem(style, &scope, &path, None);
         tally.recordless = true;
@@ -843,7 +841,7 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize
 
 /// What a scope asks to have installed, by kind and name.
 ///
-/// [`planned_closure`] is the engine's own answer to that question, with
+/// [`planned_closure_held`] is the engine's own answer to that question, with
 /// whether its expansion reached every declaration, so a bundle counts as the members it brings in rather than as a name
 /// the manifest happens to hold, and a scope whose only declaration is a
 /// bundle is not read as asking for nothing. It costs one expansion pass,
@@ -871,13 +869,24 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize
 /// nothing for it, so it goes to `left_out` and never to the gap. The
 /// engine's report answers which those are
 /// ([`EngineReport::left_out_by_own_line`]).
+///
+/// The closure is read with the `options` and the record the audit
+/// rendered through, so under `--at-record` a package held at its recorded
+/// commit asks for what that commit required, not for a dependency its
+/// catalog added since. A failed audit or a scope with no manifest has
+/// read no declarations: [`Declared::unread`].
 fn declared_packages(
     env: &Env,
     scope: &Scope,
-    manifest: &Manifest,
-    report: &EngineReport,
+    records: &kendex_core::ownership::Records,
+    options: &PlanOptions,
+    audited: &kendex_core::error::Result<kendex_core::engine::RecordlessAudit>,
 ) -> Declared {
-    let (planned, status) = planned_closure(env, scope, manifest);
+    let (report, manifest) = match (audited, records.manifest.as_deref()) {
+        (Ok(audited), Some(manifest)) => (&audited.report, manifest),
+        (Err(_), _) | (Ok(_), None) => return Declared::unread(),
+    };
+    let (planned, status) = planned_closure_held(env, scope, manifest, &records.lock, options);
     let (left_out, wanted): (Vec<_>, Vec<_>) = planned.into_iter().partition(|declared| {
         report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
     });

@@ -5,12 +5,15 @@
 //!
 //! The fixture is `verify_records`'s consumer. The must-fail controls are
 //! the history and floor checks in `attest::record`: each off-history and
-//! rollback row passes with its check removed.
+//! rollback row passes with its check removed. The declaration row's
+//! control is its own plain verify, which still reads the current
+//! closure; reading that closure under `--at-record` too turns the row
+//! red.
 #![cfg(unix)]
 
 use std::fs;
 
-use kendex_core::attest::Document;
+use kendex_core::attest::{Document, State};
 
 use super::verify_records::{
     INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, world, write,
@@ -156,6 +159,96 @@ fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
         let detail = record_detail(&document);
         assert!(detail.contains(&problem), "{label}: {detail}");
     }
+}
+
+/// Sets the `dependencies.required` line of the catalog's `second` skill.
+fn requires(world: &World, required: &str) {
+    write(
+        &world.catalog.join("skills/second/SKILL.md"),
+        &format!(
+            "---\nname: second\ndescription: a second skill\ndependencies:\n  required: [{required}]\n---\n# Second\n\nBody.\n"
+        ),
+    );
+}
+
+/// The states every row naming `name` holds.
+fn states<'a>(document: &'a Document, name: &str) -> Vec<&'a State> {
+    document
+        .rows
+        .iter()
+        .filter(|row| row.name == name)
+        .map(|row| &row.state)
+        .collect()
+}
+
+/// A refresh whose skill required one dependency, `first`, and whose
+/// catalog later required a second, `third`, of that skill: the closure
+/// verify declares is read at the commit the record holds the skill at, as
+/// the render is, so the new dependency is not owed a record entry and
+/// every checked row is OK. The plain verify reads the catalog now and still owes
+/// `third` an entry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn at_record_declares_the_dependencies_the_recorded_commit_required() {
+    let world = world();
+    write(
+        &world.catalog.join("skills/first/SKILL.md"),
+        "---\nname: first\ndescription: a first skill\n---\n# First\n",
+    );
+    requires(&world, "first");
+    commit(&world.catalog, "second requires first");
+    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
+        let output = kendex(&world.home, &world.project, args);
+        assert!(
+            output.status.success(),
+            "kendex {args:?}: {}",
+            said(&output)
+        );
+    }
+    commit(&world.project, "refreshed");
+    let (refreshed, document) = at_record(&world, None);
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    let installed = states(&document, "first");
+    assert!(
+        !installed.is_empty() && installed.iter().all(|state| **state == State::Ok),
+        "{document:?}"
+    );
+
+    write(
+        &world.catalog.join("skills/third/SKILL.md"),
+        "---\nname: third\ndescription: a third skill\n---\n# Third\n",
+    );
+    requires(&world, "first, third");
+    commit(&world.catalog, "second requires third too");
+    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(fetched.status.success(), "{}", said(&fetched));
+
+    let (plain, document) = verify(&world, None);
+    assert!(!plain.status.success(), "{}", said(&plain));
+    let owed = states(&document, "third");
+    assert!(
+        !owed.is_empty() && owed.iter().all(|state| **state == State::Unrecorded),
+        "{document:?}"
+    );
+
+    let (held, document) = at_record(&world, None);
+    assert!(held.status.success(), "{}", said(&held));
+    assert_eq!(
+        states(&document, "third"),
+        Vec::<&State>::new(),
+        "{document:?}"
+    );
+    // The fixture's hook pin notices stand under either reading and never
+    // fail a run; every other row is a checked one.
+    assert!(
+        document.clean
+            && document.failed == 0
+            && document
+                .rows
+                .iter()
+                .all(|row| matches!(row.state, State::Ok | State::Notice)),
+        "{document:?}"
+    );
 }
 
 /// A change that puts back an older install, record and renders together,

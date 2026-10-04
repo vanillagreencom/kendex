@@ -1,0 +1,1 @@
+- `kendex verify --at-record` asks the install record for the dependencies each held package required at its recorded commit, not for ones its catalog added since.

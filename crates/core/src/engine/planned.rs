@@ -102,9 +102,41 @@ pub fn planned_closure(
     scope: &Scope,
     manifest: &Manifest,
 ) -> (Vec<PlannedDeclaration>, super::DeclarationStatus) {
+    closure(env, scope, manifest, None)
+}
+
+/// [`planned_closure`] as a plan run with `options` against `lock` reads
+/// it: under a hold ([`super::PlanOptions::update_only`]), each follower
+/// the record can place expands at the commit `lock` records, so what it
+/// carries and requires is what that commit's catalog said, and each
+/// declaration's `decl` carries that commit as its revision. Without a
+/// hold this is [`planned_closure`].
+///
+/// The pins come from [`desired::hold::planning_manifest`], the one rule
+/// `plan_scope` holds a scope still by, so a caller that rendered a scope
+/// with `options` asks the closure the same question it rendered.
+pub fn planned_closure_held(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &crate::lock::Lock,
+    options: &super::PlanOptions,
+) -> (Vec<PlannedDeclaration>, super::DeclarationStatus) {
+    let (planning, held) = desired::hold::planning_manifest(manifest, lock, options);
+    closure(env, scope, planning.as_ref(), held.as_ref())
+}
+
+/// The closure `manifest` expands to, `held` naming the declarations a
+/// hold pinned in it.
+fn closure(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    held: Option<&desired::hold::HeldPins>,
+) -> (Vec<PlannedDeclaration>, super::DeclarationStatus) {
     let scope = scope.canonical();
     let mut state = desired::DesiredState::default();
-    let expanded = expansion::expand(env, &scope, manifest, None, &mut state);
+    let expanded = expansion::expand(env, &scope, manifest, held, &mut state);
     let mut out = Vec::new();
     for kind in expansion::PLANNED_KINDS {
         for (name, planned) in expanded.of(kind) {
