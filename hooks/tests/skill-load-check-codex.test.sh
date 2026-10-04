@@ -13,7 +13,10 @@
 # with no call_id, before one Script completed output. The truncated capture
 # prints a read between two long seq outputs: every event completed with exit
 # code 0, and the output Codex handed the model opens with its truncation
-# warning and lost the read's text. The fixture projections omit account
+# warning and lost the read's text. The unprinted capture is a lone read
+# whose script never calls text(): its event completed with exit code 0, and
+# Codex recorded the output as a bare Script completed string with nothing
+# under Output:, so the model never saw the skill. The fixture projections omit account
 # metadata, not status; the truncated one also drops the events' output fields
 # and keeps only the head, the cut marker and the tail of the long text.
 # The child thread already has its own transcript_path, not Claude's layout.
@@ -229,7 +232,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
   case "$fixture:$scenario" in
     *-failed:*) skill=missing-KEN-2484; command=skill-capture-command ;;
     *-batched:failed-read) skill=missing; command=skill-capture-command ;;
-    *-batched:* | *-truncated:*) skill=demo; command=skill-capture-command ;;
+    *-batched:* | *-truncated:* | *-unprinted:*) skill=demo; command=skill-capture-command ;;
     *) skill=linear; command=.agents/skills/linear/scripts/linear.sh ;;
   esac
   payload=$(jq -n -c --arg t "$TRANSCRIPT" --arg c "$command" \
@@ -282,9 +285,14 @@ batched-unprinted|skill-load-check-codex-0.160.0-batched|unprinted|rc=2 first=sk
 batched-in-script|skill-load-check-codex-0.160.0-batched|in-script|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched read before its output
 batched-leading-js|skill-load-check-codex-0.160.0-batched|leading-js|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched JavaScript before the first statement
 batched-interleaved-js|skill-load-check-codex-0.160.0-batched|interleaved-js|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched JavaScript between statements
+unprinted|skill-load-check-codex-0.160.0-unprinted|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec lone unprinted read
 truncated|skill-load-check-codex-0.160.0-truncated|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec batched read cut from a truncated output
 ROWS
 }
+# The lone unprinted capture is refused by two rules at once: no statement
+# prints the read, and its output is a bare string with no printed text. No
+# single defect in those rules turns that row red; it pins that the refusal
+# names the read that passes, and exec-remedy is its control.
 exec_success_row() { exec_rows success; }
 exec_captured_row() { exec_rows captured-success; }
 exec_field_row() { exec_rows field-success; }
@@ -297,6 +305,7 @@ exec_output_position_row() { exec_rows extra-event; }
 exec_script_start_row() { exec_rows batched-leading-js; }
 exec_contiguous_row() { exec_rows batched-interleaved-js; }
 exec_truncated_row() { exec_rows truncated; }
+exec_remedy_row() { exec_rows batched-failed; exec_rows unprinted; }
 exec_compound_row() { exec_rows compound-js; exec_rows field-compound-js; }
 exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
 exec_suffix_row() { exec_rows printed-suffix; exec_rows captured-printed-suffix; exec_rows field-printed-suffix; }
@@ -333,7 +342,8 @@ skill_load_control exec-truncated "$HOOK" '        | select($result.output | all
 skill_load_control exec-output-position "$HOOK" '          | .type == "custom_tool_call_output" and .call_id == $id)' \
   '        // true' HOOK exec_output_position_row 'functions.exec ambiguous shell completion'
 skill_load_control exec-remedy "$HOOK" '        codex)' \
-  '          return 0' HOOK exec_batched_failed_row 'functions.exec batched failed read'
+  '          return 0' HOOK exec_remedy_row 'functions.exec batched failed read' \
+  'functions.exec lone unprinted read'
 skill_load_control exec-standalone-js "$HOOK" '      | .input | strings' \
   '      | split("\n")[0]' HOOK exec_compound_row 'functions.exec compound JavaScript' \
   'functions.exec output field compound JavaScript'
