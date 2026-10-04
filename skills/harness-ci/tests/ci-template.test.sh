@@ -384,7 +384,10 @@ git -C "$CREDENTIAL_REPO" add -A
 git -C "$CREDENTIAL_REPO" commit -qm 'disable scanner and add credential'
 git -C "$CREDENTIAL_REPO" checkout -qb pr-merge main
 git -C "$CREDENTIAL_REPO" merge -q --no-ff evil -m merge
-GITLEAKS_BIN="$(command -v gitleaks)" || { echo "ci-template: gitleaks=missing" >&2; exit 2; }
+if ! GITLEAKS_BIN="$(command -v gitleaks)"; then
+  "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" "$SANDBOX/gitleaks"
+  GITLEAKS_BIN="$SANDBOX/gitleaks/gitleaks"
+fi
 
 credential_scan() { # TEMPLATE NAME -> exit and credential finding, never its value
   local wf="$1" root="$SANDBOX/$2" path ref depth branch work body status=0
