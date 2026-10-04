@@ -86,7 +86,8 @@ case "$1" in
   list)
     [ "${FIXTURE_HOOK_STATE:-enabled}" != fail ] || { echo 'fixture inventory unread' >&2; exit 3; }
     [ "${FIXTURE_HOOK_STATE:-enabled}" != missing ] || exit 0
-    printf 'hook lane-mail-check %s project' "$3" >&2
+    # kendex's current name column: event, matcher and the hook's own name.
+    printf 'hook Stop:*:lane-mail-check %s project' "$3" >&2
     [ "${FIXTURE_HOOK_STATE:-enabled}" != disabled ] || printf ' switched off' >&2
     printf '\n' >&2
     ;;
@@ -1247,6 +1248,11 @@ mutate_file "$INVENTORYCTL/oversee" '    if [[ "$inventory_rc" != 0 ]] || ! awk 
 OVERSEE_BIN="$INVENTORYCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_STATE=missing -- register
 assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing ' <<<"$OUT" || true)" '0|0' \
   "control: without the inventory check a missing hook goes unreported"
+NAMECTL="$(mutant_scripts namectl oversee)" || exit 1
+mutate_file "$NAMECTL/oversee" 'n = $2; sub(/.*:/, "", n);' 'n = $2;'
+OVERSEE_BIN="$NAMECTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_STATE=enabled -- register
+assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing ' <<<"$OUT" || true)" '0|1' \
+  "control: matching the whole name column misses the installed hook kendex lists as event:matcher:name"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

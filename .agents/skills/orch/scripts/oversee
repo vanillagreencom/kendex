@@ -468,11 +468,12 @@ if [[ "$COMMAND" == register ]]; then
     fi
   elif [[ -n "$harness" ]]; then
     # kendex owns the inventory for every non-Copilot harness. Its list table
-    # is on stderr, with columns kind, name, harness, scope and optional state.
+    # is on stderr, with columns kind, name, harness, scope and optional state;
+    # a hook's name column reads event:matcher:name, its own name after the last colon.
     inventory_rc=0
     inventory="$(cd -- "$cwd" && kendex list --harness "$harness" 2>&1)" || inventory_rc=$?
     if [[ "$inventory_rc" != 0 ]] || ! awk -v h="$harness" \
-        '$1 == "hook" && $2 == "lane-mail-check" && $3 == h && NF == 4 { found=1 }
+        '$1 == "hook" && $3 == h && NF == 4 { n = $2; sub(/.*:/, "", n); if (n == "lane-mail-check") found=1 }
          END { exit !found }' <<<"$inventory"; then
       message turn-end-hook=missing "harness=$harness" "exit=$inventory_rc" \
         "fix=add $harness to [install] harnesses in kendex.toml and run kendex apply" >&2
