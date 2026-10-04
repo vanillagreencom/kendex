@@ -35,6 +35,147 @@ fn said(output: &Output) -> String {
     text
 }
 
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps combined apply changes and refusals in one table"
+)]
+fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
+    use kendex_core::{apply, engine, env::Env, manifest, model::Scope};
+
+    for change in [
+        "style-update",
+        "style-remove",
+        "package-off",
+        "project-conflict",
+        "project-invalid",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let home = rooted(&temp);
+        let env = Env::host_rooted(&home);
+        let project = home.join("project");
+        fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        fs::create_dir_all(project.join(".pi")).unwrap();
+        let source = home.join("catalog");
+        let style = source.join("output-styles/STE.md");
+        write(&source.join("kendex.toml"), "is_source_catalog = true\n");
+        write(
+            &style,
+            "---\nname: STE\ndescription: Fixture style\nkeep-coding-instructions: true\n---\nOld global style.\n",
+        );
+        write(
+            &source.join("pi-extensions/global/package.json"),
+            r#"{"name":"global","pi":{"appendSystem":"system.md"}}"#,
+        );
+        write(
+            &source.join("pi-extensions/global/system.md"),
+            "Global tools.",
+        );
+        let declaration = format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\nmethod = \"copy\"\n[output-styles.STE]\nsource = \"cat\"\n[pi-extensions.global]\nsource = \"cat\"\n",
+            test_util::source_path(&source)
+        );
+        let global_manifest = manifest::manifest_path(&env, &Scope::Global);
+        write(&global_manifest, &declaration);
+        let global_root = kendex_core::pi_ext::scope_root(&env, &Scope::Global).unwrap();
+        kendex_core::pi_ext::install(
+            &env,
+            &global_root,
+            &source.join("pi-extensions/global"),
+            true,
+        )
+        .unwrap();
+        let mut record = kendex_core::lock::Lock::default();
+        assert!(
+            kendex_core::pi_ext::record_matching_manifest(
+                &env,
+                &Scope::Global,
+                &manifest::load_current(&global_manifest).unwrap().unwrap(),
+                &mut record,
+                kendex_core::pi_ext::RecordBasis::MatchedBytes,
+                None
+            )
+            .unwrap()
+            .is_empty()
+        );
+        kendex_core::lock::save(&kendex_core::lock::lock_path(&env, &Scope::Global), &record)
+            .unwrap();
+        let project_manifest = project.join("kendex.toml");
+        write(
+            &project_manifest,
+            &declaration.replace("[pi-extensions.global]\nsource = \"cat\"\n", ""),
+        );
+        for scope in [
+            Scope::Global,
+            Scope::Project {
+                root: project.clone(),
+            },
+        ] {
+            let report = engine::plan_apply(&env, &scope, &engine::PlanOptions::default()).unwrap();
+            apply::execute(&env, &report.plan).unwrap();
+        }
+        let global_append = kendex_core::pi_ext::append_system_path(
+            &kendex_core::pi_ext::scope_root(&env, &Scope::Global).unwrap(),
+        );
+        let before_global = fs::read(&global_append).unwrap();
+        let project_append = project.join(".pi/APPEND_SYSTEM.md");
+        match change {
+            "style-remove" => write(
+                &global_manifest,
+                &declaration.replace("[output-styles.STE]\nsource = \"cat\"\n", ""),
+            ),
+            "package-off" => write(&global_manifest, &format!("{declaration}enabled = false\n")),
+            "project-invalid" => write(
+                &project_manifest,
+                "schema = 6\n[output-styles.a]\n[output-styles.b]\n",
+            ),
+            "style-update" | "project-conflict" => write(
+                &style,
+                &fs::read_to_string(&style)
+                    .unwrap()
+                    .replace("Old global style.", "New global style."),
+            ),
+            _ => unreachable!(),
+        }
+        if change == "project-conflict" {
+            let text = fs::read_to_string(&project_append).unwrap();
+            let local = kendex_core::configedit::upsert_marker_block(
+                &text,
+                "output-style-STE",
+                "Personal project style.",
+            );
+            write(&project_append, &local);
+        }
+        let output = kendex(&home, &project, &["apply", "--scope", "all", "--yes"]);
+        if change == "project-invalid" {
+            assert!(!output.status.success());
+            assert_eq!(fs::read(&global_append).unwrap(), before_global);
+            continue;
+        }
+        assert!(output.status.success(), "{change}: {}", said(&output));
+        let text = fs::read_to_string(&project_append).unwrap();
+        let inherited = kendex_core::configedit::marker_block(&text, "inherited-global").unwrap();
+        assert_eq!(
+            inherited.contains("Global tools."),
+            change != "package-off",
+            "{change}: {}",
+            said(&output)
+        );
+        assert_eq!(
+            inherited.contains("Old global style."),
+            change == "package-off"
+        );
+        assert_eq!(
+            inherited.contains("New global style."),
+            matches!(change, "style-update" | "project-conflict")
+        );
+        if change == "project-conflict" {
+            assert!(text.contains("Personal project style."));
+        }
+    }
+}
+
 #[allow(clippy::expect_used)]
 fn run(home: &Path, cwd: &Path, args: &[&str]) -> String {
     let output = kendex(home, cwd, args);

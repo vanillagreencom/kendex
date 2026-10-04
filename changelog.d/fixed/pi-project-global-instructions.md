@@ -1,1 +1,1 @@
-- Pi projects retain global package instructions and output styles in their append file. Project package settings control inheritance. Directories and links remain conflicts.
+- Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Removing the last local block restores it. Append-file directories and links conflict.

@@ -1,6 +1,7 @@
 use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::manifest::{self, ManifestFile};
+use kendex_core::model::Scope;
 
 use super::advisory::Listing;
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
@@ -75,6 +76,13 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     if !args.plan {
         super::project::target_registrable(env, &args.target, &scopes)?;
     }
+    let options = PlanOptions {
+        remove_orphans: true,
+        removal_filter: None,
+        overwrite_edited: args.discard_edits,
+        replace_unmanaged: args.replace_unmanaged,
+        ..PlanOptions::default()
+    };
     for scope in scopes {
         // Read the manifest as it sits on disk, through the same loader
         // the audit uses, so this verb refuses exactly what the audit
@@ -91,13 +99,6 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             }
             Err(error) => return Err(error.into()),
         }
-        let options = PlanOptions {
-            remove_orphans: true,
-            removal_filter: None,
-            overwrite_edited: args.discard_edits,
-            replace_unmanaged: args.replace_unmanaged,
-            ..PlanOptions::default()
-        };
         let report = {
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             match args.record_existing {
@@ -107,8 +108,19 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         };
         planned.push((scope.clone(), report));
     }
+    // A project inherits global Pi instructions. All initial refusal checks
+    // run before writes; refresh its plan after the global transaction lands.
+    let combined = !args.plan
+        && !args.record_existing
+        && planned.iter().any(|(scope, _)| *scope == Scope::Global);
+    if combined {
+        planned.sort_by_key(|(scope, _)| matches!(scope, Scope::Project { .. }));
+    }
     let scopes = planned.len();
-    for (index, (scope, report)) in planned.into_iter().enumerate() {
+    for (index, (scope, mut report)) in planned.into_iter().enumerate() {
+        if combined && matches!(scope, Scope::Project { .. }) {
+            report = plan_apply(env, &scope, &options)?;
+        }
         let blocked = print_report(env, &report, Listing::Attention);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were

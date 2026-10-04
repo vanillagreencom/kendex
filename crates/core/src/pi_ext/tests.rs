@@ -439,6 +439,79 @@ fn a_package_without_an_append_system_file_writes_no_block() {
     assert!(!append_system_path(&f.scope).exists());
 }
 
+#[test]
+fn a_project_without_package_instructions_keeps_the_global_append_fallback() {
+    for (declared, setting, no_append) in [
+        (true, None, true),
+        (false, None, false),
+        (true, Some(false), false),
+    ] {
+        let f = scope();
+        let global = scope_root(&f.env, &crate::model::Scope::Global).unwrap();
+        let other = fixture(&f.root, "global", "Global tools.");
+        install(&f.env, &global, &other, true).unwrap();
+        let path = append_system_path(&global);
+        let current = std::fs::read_to_string(&path).unwrap();
+        write(&path, &format!("Personal global instructions.\n{current}"));
+        let before = std::fs::read(&path).unwrap();
+        let source = fixture(&f.root, "local", "Local tools.");
+        if no_append {
+            // The catalog's pi-qol manifest is a real producer of this shape.
+            let package: Value = serde_json::from_str(include_str!(
+                "../../../../pi-extensions/pi-qol/package.json"
+            ))
+            .unwrap();
+            write(&source.join("package.json"), &package.to_string());
+        }
+        if let Some(enabled) = setting {
+            write(
+                &settings_path(&f.scope),
+                &serde_json::json!({"kendex": {
+                    "extensionManager": {"config": {"local": {"enabled": enabled}}}
+                }})
+                .to_string(),
+            );
+        }
+        install(&f.env, &f.scope, &source, declared).unwrap();
+        assert!(!append_system_path(&f.scope).exists());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn removing_or_disabling_the_last_project_block_restores_global_fallback() {
+    for (remove, personal) in [(true, false), (false, false), (true, true)] {
+        let f = scope();
+        let global = scope_root(&f.env, &crate::model::Scope::Global).unwrap();
+        let other = fixture(&f.root, "global", "Global tools.");
+        install(&f.env, &global, &other, true).unwrap();
+        let source = fixture(&f.root, "local", "Local tools.");
+        install(&f.env, &f.scope, &source, true).unwrap();
+        let path = append_system_path(&f.scope);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Global tools.")
+        );
+        if personal {
+            let current = std::fs::read_to_string(&path).unwrap();
+            write(&path, &format!("Personal project instructions.\n{current}"));
+        }
+        if remove {
+            super::remove(&f.env, &f.scope, "local").unwrap();
+        } else {
+            install(&f.env, &f.scope, &source, false).unwrap();
+        }
+        assert_eq!(path.exists(), personal);
+        if personal {
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains("Personal project instructions."));
+            assert!(text.contains("Global tools."));
+            assert!(!text.contains("Local tools."));
+        }
+    }
+}
+
 /// What a lookup by package name answers.
 #[derive(Debug)]
 #[cfg_attr(

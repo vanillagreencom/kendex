@@ -20,6 +20,7 @@ Planning derives a scope's desired set, compares scanner observations and produc
 
 - Inventory, adoption equality and commit ownership follow [generated-paths.md](generated-paths.md).
 - Output styles reuse registration artifacts. Their lock records shared content separately from whole files. Only an enabled record owns a Pi block. Disable releases its position; later upserts and removals protect user blocks even on discard. The shared-file planner records Claude selection ownership after composing removals before insertions. A style without a selection record may acquire an absent selection on enable; an unowned record keeps the user's choice. Missing owned selections are drift, never restored. Named discard repairs live-owned Pi edits. Enforced at both scopes by `crates/core/tests/output_styles.rs`.
+- Combined CLI apply plans every scope before writes. It then applies global changes and replans projects with the same refusal options. Pi inherits the updated global instructions. Enforced by `crates/cli/tests/project_path_target.rs::combined_apply_refreshes_global_instructions_and_keeps_project_refusals`.
 
 ## Invariants
 

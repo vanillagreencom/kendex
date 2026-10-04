@@ -476,11 +476,14 @@ fn write_append_system(
         Some(block) => upsert_marker_block(&current, &package.name, &block),
         None => remove_marker_block(&current, &package.name),
     };
-    if let Some(edit) = inherited_edit(env, scope_root)? {
+    if let Some(edit) = inherited_edit(env, scope_root, !next.trim().is_empty())? {
         next = edit.apply(&next).map_err(|message| CoreError::ConfigEdit {
             path: path.clone(),
             message,
         })?;
+    }
+    if !current.trim().is_empty() {
+        next = strip_inherited_only(&next);
     }
     if next == current {
         return Ok(());
@@ -493,9 +496,13 @@ fn write_append_system(
 
 /// Pi reads only the trusted project's append file. Keep inherited content
 /// in one block so reapply can remove packages and styles that left globally.
-pub(crate) fn inherited_edit(env: &Env, root: &Path) -> Result<Option<ConfigEdit>> {
+pub(crate) fn inherited_edit(
+    env: &Env,
+    root: &Path,
+    contributes: bool,
+) -> Result<Option<ConfigEdit>> {
     let global = scope_root(env, &crate::model::Scope::Global)?;
-    if root == global {
+    if root == global || (!append_system_path(root).exists() && !contributes) {
         return Ok(None);
     }
     let mut blocks = Vec::new();
@@ -527,13 +534,24 @@ pub(crate) fn inherited_edit(env: &Env, root: &Path) -> Result<Option<ConfigEdit
     }))
 }
 
+/// Inheritance belongs to the project's instructions, not to an otherwise
+/// empty file that would prevent Pi from reading the user's global file.
+fn strip_inherited_only(text: &str) -> String {
+    let local = remove_marker_block(text, "inherited-global");
+    if local.trim().is_empty() {
+        local
+    } else {
+        text.to_owned()
+    }
+}
+
 /// Drop the package's block; a file with nothing left in it is deleted
 /// rather than left behind empty.
 fn strip_append_system(path: &Path, name: &str) -> Result<()> {
     let Some(current) = read_if_exists(path)? else {
         return Ok(());
     };
-    let next = remove_marker_block(&current, name);
+    let next = strip_inherited_only(&remove_marker_block(&current, name));
     if next == current {
         return Ok(());
     }
