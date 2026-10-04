@@ -1578,13 +1578,14 @@ for row in '--park|missing-value option=--park requires=--pr' '--pr 7|missing-va
 done
 
 echo '=== a stop=none kind closes its record and worktree and keeps the session ==='
-cloud_state() {
-  jq -n --arg root "$TMP_ROOT/cloud-wt" '{lanes:[{item:"KEN-1",tracker:"linear",repo:null,harness:"claude",window:null,account:"/lane",
+cloud_state() { # [WINDOW]
+  jq -n --arg root "$TMP_ROOT/cloud-wt" --arg window "${1:-}" '{lanes:[{item:"KEN-1",tracker:"linear",repo:null,harness:"claude",
+    window:(if $window == "" then null else $window end),account:"/lane",
     host:"claude-cloud",kind:"claude-cloud",mail_root:$root,session_id:"session_01CLOUD",launched_at:"2026-09-20T00:00:00Z",status:"running"}]}' >"$STATE"
 }
-cloud_close() { # SCRIPT [ARGS...]
+cloud_close() { # SCRIPT [ARGS...] — CLOUD_WINDOW names the record's window
   : >"$LANE_CLOSE_WORKTREE_CALLS"
-  cloud_state
+  cloud_state "${CLOUD_WINDOW:-}"
   LANE_CLOSE_WORKTREE_MERGED=0 run_close "$@"
 }
 cloud_observed() {
@@ -1598,9 +1599,9 @@ assert_eq "$(cloud_observed)" "$CLOUD_CLOSED" \
   'a cloud lane closes its record and local worktree, stops nothing and names the session it keeps'
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 MUTANT="$(mutant cloud-stop '    [[ "$PARK" != true ]] || park_judge
-    remove_item_files' '    [[ "$PARK" != true ]] || park_judge
+    [[ -z "$window_name" ]] || resolve_window' '    [[ "$PARK" != true ]] || park_judge
     ORCH_LANE_HOST="$host" "$LANE_HOST" stop --item "$ITEM" --harness claude >/dev/null
-    remove_item_files')"
+    [[ -z "$window_name" ]] || resolve_window')"
 cloud_close "$MUTANT"
 assert_eq "$(cloud_observed)" "rc=0 kept=1 host=1 tmux=0 worktree=remove $TMP_ROOT/cloud-wt status=done" \
   'control: a stop=none arm that calls a stop verb fails the host=0 pin'
@@ -1609,6 +1610,17 @@ MUTANT="$(mutant cloud-kept '    message host-kept "kind=$host_kind" "session=$(
 cloud_close "$MUTANT"
 assert_eq "$(cloud_observed)" "rc=0 kept=0 host=0 tmux=0 worktree=remove $TMP_ROOT/cloud-wt status=done" \
   'control: without its host-kept line the close fails the kept=1 pin alone'
+# The window the launch recorded holds the session's local client and its
+# lane claim, which the close ends with the record.
+write_panes claude
+CLOUD_WINDOW=kendex:KEN-1 cloud_close "$SCRIPT"
+assert_eq "rc=$RC kill=$(grep -cx 'kill-window -t %7' "$CALLS" || true) kept=$(grep -cxF 'lane-close: host-kept kind=claude-cloud session=session_01CLOUD' <<<"$OUT" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 kill=1 kept=1 status=done' 'a cloud lane whose record names a window closes that window with the record' "$TMP_ROOT/err"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-window '      tmux kill-window -t "$RESOLVED_PANE" \' '      : \')"
+CLOUD_WINDOW=kendex:KEN-1 cloud_close "$MUTANT"
+assert_eq "kill=$(grep -cx 'kill-window -t %7' "$CALLS" || true)" 'kill=0' \
+  'control: a stop=none close that leaves the window fails the kill=1 pin'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"

@@ -1197,12 +1197,12 @@ fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
 # lane's config dir and the host protocol names four harnesses, so each gap is
 # refused before any host is created.
-# A cloud session needs the resolved lane alone: it opens no pane.
+# A cloud session needs the resolved lane and tmux: its client runs in a pane.
 host_launch_ready=true
 case "$HOST_LAUNCH" in
   window | cloud-task) ;;
   ssh) [[ "$TERMINAL_MODE" == tmux && -n "$LANE_ENV" && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ]] || host_launch_ready=false ;;
-  cloud-session) [[ -n "$LANE_ENV" ]] || host_launch_ready=false ;;
+  cloud-session) [[ "$TERMINAL_MODE" == tmux && -n "$LANE_ENV" ]] || host_launch_ready=false ;;
 esac
 if [[ "$host_launch_ready" != true ]]; then
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
@@ -2820,20 +2820,49 @@ cloud_bundle_risk() { # ACCOUNT
     || { ot_message cloud-bundle-risk "item=$item" cause=remote >&2; return 1; }
 }
 
+# The session id an interactive cloud session prints, inside the claude.ai
+# session URL; the capture is the id. Read off the pane as the named fallback
+# for the CLI's own answer: `claude -p --cloud --output-format json` carried
+# the session_id, and Claude Code 2.1.288 refuses --cloud with --print
+# (interactive only). `claude agents --json`, 2.1.289's one machine-readable
+# session list, names a session by its local UUID and documents no cloud id.
+CLOUD_SESSION_RE='https://claude\.ai/code/(session_[[:alnum:]_-]+)'
+
+# The cloud session id the pane's scrollback shows, into CLOUD_SESSION, read
+# once a second for up to TMUX_VERIFY_SECS. Status 1 for none inside that
+# bound, 2 for a capture that failed.
+CLOUD_SESSION=""
+cloud_session_read() { # PANE
+  local screen waited=0
+  while :; do
+    screen="$(tmux capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2
+    if [[ "$screen" =~ $CLOUD_SESSION_RE ]]; then
+      CLOUD_SESSION="${BASH_REMATCH[1]}"
+      return 0
+    fi
+    (( waited < TMUX_VERIFY_SECS )) || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 # One launch=cloud-session item. The session clones this repository's
 # github.com remote at the item branch, so the item's worktree is made and its
-# branch pushed from the base tip first, and `claude -p --cloud` runs in that
-# worktree under the lane's account and model, its task the brief file closed
-# by the session words. --ref names the pushed branch, so the CLI clones it or
-# refuses, and a refusal is a failed launch. Its session id is the launch
-# record: a launch that prints none stops here, since no pane or listing
-# stands in for it. The record carries the kind, the account and that id, the
-# local worktree as mail_root, and no window. A failure after the create
-# leaves the tree standing as the item's claim, and one after the push its
-# branch on origin. Status 75 is an item another session owns; 1 a failure,
-# its keyed line printed.
+# branch pushed from the base tip first. The item's window then opens in that
+# worktree and runs `claude --cloud` interactively under the lane's account
+# and model, --ref naming the pushed branch, so the CLI clones it or refuses,
+# and a refusal is a failed launch. Its first prompt is the brief file closed
+# by the session words, sent as a local lane's brief is resent, once the
+# composer is up. Its session id is the launch record: a launch whose pane
+# shows none stops there. The record carries the kind, the account, that id,
+# the window and the local worktree as mail_root. The repository card the
+# session may show is the operator's or the master's to answer. A failure
+# after the create leaves the tree standing as the item's claim, one after the
+# push its branch on origin, and one after the window opened that window, with
+# whatever the CLI printed in it. Status 75 is an item another session owns; 1
+# a failure, its keyed line printed.
 cloud_session_launch() {
-  local wt branch model out session rc=0 launched_at record_rc=0
+  local wt branch model line pane session rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
@@ -2842,19 +2871,40 @@ cloud_session_launch() {
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
   model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" || return 1
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  tmux_window_open "$wt" "$title" || return 1
+  pane="$LAUNCH_PANE"
   # On an account whose GitHub App check reads an installed App as missing
   # (anthropics/claude-code#81776), the CLI bundles the checkout or refuses
   # --ref; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set it clones. The
   # variable goes once that bug is fixed, KEN-2741 being its removal point.
-  out="$(cd -- "$wt" && env "$LANE_ENV" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --cloud "$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT" --output-format json \
-    --model "$model" --ref "$branch")" || rc=$?
-  [[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed "item=$item" "exit=$rc" >&2; return 1; }
-  session="$(jq -er 'select(.ok == true) | .session_id | strings | select(length > 0)' <<<"$out" 2>/dev/null)" \
-    || { ot_message cloud-session-unread "item=$item" >&2; return 1; }
+  line="clear; env ${LANE_ENV%%=*}=$(lane_single_quote "${LANE_ENV#*=}") CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
+  line+=" claude --cloud --model $(lane_single_quote "$model") --ref $(lane_single_quote "$branch")"
+  launch_write paste "$title" "$pane" shell text "$line" || return 1
+  rc=0
+  tmux_wait_composer "$pane" "$title" "$BRIEF_TEXT" claude || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    # The CLI's own refusal, a --ref it cannot honor among them, ends it and
+    # hands the pane back to the window's shell.
+    if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then
+      ot_message cloud-launch-failed "item=$item" >&2
+    elif [[ "$rc" -ne 3 ]]; then
+      ot_message cloud-composer-stuck "item=$item" >&2
+    fi
+    return 1
+  fi
+  launch_write brief-send "$title" "$pane" claude text "$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT" || return 1
+  rc=0
+  cloud_session_read "$pane" || rc=$?
+  case "$rc" in
+    0) session="$CLOUD_SESSION" ;;
+    1) ot_message cloud-session-unread "item=$item" >&2; return 1 ;;
+    *) ot_message tmux-failed "operation=capture-pane" "item=$item" >&2; return 1 ;;
+  esac
   ot_message cloud-session-started "item=$item" "session=$session"
+  ot_message cloud-card-owed "item=$item" "session=$session" >&2
   [[ "$FLEET" == true ]] || return 0
-  LAUNCH_PANE="" LAUNCH_PREPARE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" LAUNCH_ALLOW_ALL=null
-  lane_record_write "$RECORD_MODE" "$wt_id" "" "$wt" "$session" "$launched_at" || record_rc=$?
+  LAUNCH_PREPARE="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" LAUNCH_ALLOW_ALL=null
+  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$wt" "$session" "$launched_at" || record_rc=$?
   [[ "$record_rc" -eq 0 ]] || { ot_message cloud-record-failed "item=$item" "session=$session" >&2; return 1; }
 }
 

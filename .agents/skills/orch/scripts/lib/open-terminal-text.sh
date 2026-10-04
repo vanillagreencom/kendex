@@ -122,7 +122,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     resume-lineless) text='The host selected a matching Codex session and resumed it without a continuation line. Paste its continuation into the pane per oversee-lanes.md section Talking to a lane, Pane paste. A fresh start carries its brief and needs no paste.' ;;
     relaunch-selection-failed) text='The hosted Codex selection result could not be reset, read or recognized. The operation names the failed step. The lane is not counted as launched. Repair the host file access or selection command, then relaunch.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
-    host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex, pi or copilot, and a cloud-session launch a resolved lane. Nothing was created.' ;;
+    host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex, pi or copilot, and a cloud-session launch tmux mode and a resolved lane. Nothing was created.' ;;
     host-capabilities-failed) text='lane-host could not declare the host kind'"'"'s capability line, or declared a launch this launcher has no arm for, so nothing says how to launch on it; its own words are above this line. Nothing was launched.' ;;
     kind-unbuilt) text='The host kind declares a launch this build does not make. Nothing was launched. Launch the item on another host kind.' ;;
     cloud-session-invalid) text='A cloud-session launch runs Claude Code'"'"'s own cloud, so it takes --harness claude and no --cmd, and its relaunch is a fresh session this build does not make. It takes one item: its --brief-file is one item'"'"'s whole task, which a second item'"'"'s session would do on its own branch. Nothing was launched.' ;;
@@ -130,10 +130,12 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     cloud-bundle-risk) text='Claude Code would send this checkout to the cloud as a bundle with no git remote, so the session could push nothing. cause=shell is CCR_FORCE_BUNDLE set in this shell; cause=settings is CCR_FORCE_BUNDLE=1 in the env block of the settings file path= names, or a file that could not be read; cause=remote is an origin that is no github.com URL. Nothing was created.' ;;
     cloud-branch-unread) text='The item worktree names no branch git could read, so the cloud session would have no --ref to clone; git'"'"'s own words are above this line. Nothing was pushed or launched. The worktree stands as the item'"'"'s claim; remove it with worktree remove ID before a second launch.' ;;
     cloud-push-failed) text='The item branch could not be pushed from the base tip, so the cloud session would clone no branch for it; worktree push names the cause above this line. Nothing was launched. The worktree stands as the item'"'"'s claim; remove it with worktree remove ID before a second launch.' ;;
-    cloud-launch-failed) text='claude -p --cloud failed under the lane'"'"'s account, its own words above this line; a --ref that cannot be honored is the CLI refusing to clone the item branch rather than bundle the checkout. Nothing was recorded. The worktree stands as the item'"'"'s claim and its branch is on origin, which worktree remove keeps; before a second launch run worktree remove ID, then git push origin --delete BRANCH, the item branch.' ;;
-    cloud-session-unread) text='claude -p --cloud --output-format json printed no ok answer carrying a session id, so no lane record can name the session and nothing would watch it. Nothing was recorded; no pane or session list stands in for the id. The worktree stands as the item'"'"'s claim and its branch is on origin, which worktree remove keeps. Ask the owner whether a session began, then before a second launch run worktree remove ID, then git push origin --delete BRANCH, the item branch.' ;;
-    cloud-record-failed) text='The cloud session started, session= names it, but its lane record could not be written to the oversee workflow state, so the watch cannot carry it; workflow-state names the cause above this line. Record the lane by hand per oversee.md § 3 Lane record with that session id, host and kind claude-cloud and no window, or, before a second launch, archive the session from the claude.ai sidebar, then run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
+    cloud-launch-failed) text='claude --cloud exited under the lane'"'"'s account before its composer came up, its own words in the item'"'"'s window; a --ref that cannot be honored is the CLI refusing to clone the item branch rather than bundle the checkout. No brief was sent and nothing was recorded. The worktree stands as the item'"'"'s claim and its branch is on origin, which worktree remove keeps; before a second launch close the window, run worktree remove ID, then git push origin --delete BRANCH, the item branch.' ;;
+    cloud-composer-stuck) text='claude --cloud is running in the item'"'"'s window, but its composer did not come up empty within ORCH_TMUX_VERIFY_SECS, so no brief was sent and nothing was recorded. Read the window: a dialog still up is answered there. Before a second launch close the window, run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
+    cloud-session-unread) text='The brief went to claude --cloud as its first prompt, but within ORCH_TMUX_VERIFY_SECS the item'"'"'s window showed no claude.ai session URL carrying a session id, so no lane record can name the session and nothing would watch it. Nothing was recorded. Read the window: a session it shows is archived from the claude.ai sidebar. Then before a second launch close the window, run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
+    cloud-record-failed) text='The cloud session started, session= names it, but its lane record could not be written to the oversee workflow state, so the watch cannot carry it; workflow-state names the cause above this line. Record the lane by hand per oversee.md § 3 Lane record with that session id, host and kind claude-cloud and the item'"'"'s window, or, before a second launch, archive the session from the claude.ai sidebar, close the window, then run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
     cloud-session-started) text='The cloud session started on the pushed item branch.' ;;
+    cloud-card-owed) text='The session may ask in the item'"'"'s window for access to the repository; open-terminal does not answer that card. The operator answers it there, or the master'"'"'s cloud-approve does.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
     host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
@@ -333,25 +335,31 @@ Options:
                     the `launch` that `lane-host capabilities` declares for it;
                     a kind whose launch this build does not make refuses as
                     kind-unbuilt. A cloud-session launch (`claude-cloud`)
-                    takes --harness claude, a resolved --lane, one item, a
-                    --brief-file holding that item's whole task (refused as
-                    cloud-brief-missing without one) and no --cmd or
-                    --relaunch, and opens no window: it refuses as
+                    takes tmux mode, --harness claude, a resolved --lane, one
+                    item, a --brief-file holding that item's whole task
+                    (refused as cloud-brief-missing without one) and no --cmd
+                    or --relaunch: it refuses as
                     cloud-bundle-risk on CCR_FORCE_BUNDLE in this shell,
                     CCR_FORCE_BUNDLE=1 in the env block of the account's
                     settings.json or of .claude/settings.json, or an origin
                     that is no github.com URL; creates the item's worktree,
-                    pushes its branch from the base tip, runs
-                    `claude -p --cloud BRIEF --output-format json --model
-                    MODEL --ref BRANCH` there under the account with
-                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, BRIEF the
-                    file's text closed by the session words of
-                    lib/lane-launch.sh, MODEL the --launch-flags model
-                    written as the tmux launch writes it, a sonnet or haiku
-                    alias as its model id, and BRANCH the pushed item branch, and records the session id
-                    it prints, refusing as cloud-launch-failed where the CLI
-                    fails, a --ref it cannot honor included, and as
-                    cloud-session-unread where it prints none. A hosted launch needs tmux mode, a resolved --lane
+                    pushes its branch from the base tip, opens the item's
+                    window there and runs `claude --cloud --model MODEL --ref
+                    BRANCH` in it, interactive, under the account with
+                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, MODEL the
+                    --launch-flags model written as the tmux launch writes it,
+                    a sonnet or haiku alias as its model id, and BRANCH the
+                    pushed item branch; once the composer is up it sends the
+                    brief file's text closed by the session words of
+                    lib/lane-launch.sh as the first prompt, and records the
+                    window and the session id the claude.ai session URL in
+                    the pane carries, refusing as cloud-launch-failed where
+                    the CLI exits first, a --ref it cannot honor included, as
+                    cloud-composer-stuck where the composer does not come up,
+                    and as cloud-session-unread where no URL shows within
+                    ORCH_TMUX_VERIFY_SECS. The session's repository card is
+                    left to the operator or the master's cloud-approve
+                    (cloud-card-owed). A hosted launch needs tmux mode, a resolved --lane
                     and --harness claude, codex, pi or copilot. It creates no local worktree: `lane-host create`
                     receives the lane's config dir as --account, the window
                     types `ssh` to the returned target, waits for the remote

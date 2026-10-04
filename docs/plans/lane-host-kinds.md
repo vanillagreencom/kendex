@@ -260,7 +260,7 @@ The first build spends Claude cloud credit through this design before the 2claud
 | File | Change | Lines |
 |---|---|---|
 | `skills/orch/scripts/lane-host`, `lane-host-ssh` | `capabilities` verb: built-in lines for `local` and `claude-cloud`, the provider pass-through, the compatibility arm, `host-kind-verb`, and the static line in `lane-host-ssh`. `lane-close --park` and `lanes` keep their probes until FLT item 2 | 40 |
-| `skills/orch/scripts/open-terminal` | `launch=cloud-session` arm: `cloud-bundle-risk` check, `worktree create`, push of the item branch, `claude -p --cloud` under the account in that worktree, session id read, record write with `kind` for every kind, and `host`, `session_id` and no window for a cloud lane | 90 |
+| `skills/orch/scripts/open-terminal` | `launch=cloud-session` arm: `cloud-bundle-risk` check, `worktree create`, push of the item branch, the item's tmux window running `claude --cloud` interactively under the account in that worktree, the brief sent as its first prompt, session id read from the pane, record write with `kind` for every kind, and `host`, `session_id` and the window for a cloud lane | 90 |
 | `skills/orch/scripts/lib/lane-launch.sh` | The `session` brief constant, with the commit-chain arming step before the first commit | 15 |
 | `skills/orch/scripts/lane-mail` | `send --directive` reads the record and matches `channel`: `session` sends through `claude -p --cloud`; `--re` and `--halt` refuse there | 45 |
 | `skills/orch/scripts/oversee-watch` | Rows carry the record's `host`; the mail pass reads only `channel=mailbox`; start-stall reads the pull request for `files=none`; `lane-stalled` for `status=none` with `ORCH_WATCH_LANE_STALL_SECS` | 45 |
@@ -276,7 +276,7 @@ That is about 320 production lines, 45 doc lines and 190 test lines, with a chan
 Acceptance test:
 
 1. The operator's one-time setup for 2claude, then the [research acceptance test](claude-cloud-launch-research.md#acceptance-test), steps 1 to 5, on vsys and on vgs only. Both take the token route of § [The GitHub App](#the-github-app), Commit identity. Its pass in step 4 proves that access: a push from an account that has it, with no card shown.
-2. `open-terminal --host claude-cloud --state-dir STATE ITEM` for one small item picks 2claude through the tier key while `ORCH_LANE_RETIRE` names it. The record shows `host=claude-cloud`, `kind`, `session_id` and no window.
+2. `open-terminal --host claude-cloud --state-dir STATE ITEM` for one small item picks 2claude through the tier key while `ORCH_LANE_RETIRE` names it. The record shows `host=claude-cloud`, `kind`, `session_id` and the item's window.
 3. One directive: `lane-mail send --directive` answers `{ok: true}`, and the session's next push or `## Lane status` shows that it acted on it.
 4. One pull request landed through the normal route: the session opens it, Copilot reviews it, a landing lane merges it under `merge-pr.md` § 5, `oversee-watch` reports `merged`, and `lane-close` closes the record.
 5. 2claude's `used_dollars` rises across the run. The run records its minutes and the session's tokens, which answers the token question in § [Open questions](#open-questions). Each approval the session asked for is recorded as an allow rule or a step the kind never takes. The session ran on a cloud machine with no kendex before its setup script. The `## Lane status` body quotes the arming command's report, and the session's first commit passed through the armed pre-commit and commit-msg chain.
@@ -286,7 +286,7 @@ Acceptance test:
 
 | Question | Source that left it open | Who answers |
 |---|---|---|
-| Does `claude -p --cloud "task" --output-format json` create a session and print its id? The docs show JSON only for a follow-up. If it does not, the build stops at that step and asks the owner; no pane read stands in. | [claude-code-on-the-web § Send follow-ups from the CLI](https://code.claude.com/docs/en/claude-code-on-the-web#send-follow-ups-from-the-cli) | The build lane, in acceptance step 2 |
+| Does `claude -p --cloud "task" --output-format json` create a session and print its id? Answered: no. Claude CLI 2.1.288 refuses `--cloud` with `--print` as interactive only. Owner ruling 1791151144: the session starts interactively in the item's window, the brief goes in as its first prompt, and its id is read from the session URL the pane shows. | [claude-code-on-the-web § Send follow-ups from the CLI](https://code.claude.com/docs/en/claude-code-on-the-web#send-follow-ups-from-the-cli) | Answered on vsys, 2026-10-04 |
 | Does a follow-up reach a session whose VM was reclaimed but which is not archived? | [claude-code-on-the-web § Environment expired](https://code.claude.com/docs/en/claude-code-on-the-web#environment-expired) | The build lane, in the acceptance run |
 | Which permission mode does a `claude --cloud` session start in, and does it carry local flags such as `--disallowedTools`? | [research § Add-repo and push pre-approval](claude-cloud-launch-research.md#add-repo-and-push-pre-approval) | The build lane, in the acceptance run |
 | Does the cloud credit apply while the 5-hour window is walled? The probe covered the weekly window only. | [research § Cost after the plan week](claude-cloud-launch-research.md#cost-after-the-plan-week) | The owner, from claude.ai Settings > Usage during the run |

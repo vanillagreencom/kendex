@@ -167,8 +167,9 @@ A full close of a hosted record whose window no pane carries, on an item its
 tracker answers terminal, closes with no lane state read and no exit wait:
 the harness is stopped through lane-host stop and the host closed.
 A record whose host kind declares stop=none (lane-host capabilities), a Claude
-cloud session, has no harness, pane or sandbox this machine can stop: the
-close removes the item's files as below, removes its worktree on this machine,
+cloud session, has no harness or sandbox this machine can stop: the close
+kills the record's window where a pane carries it, the session's local
+client, removes the item's files as below, removes its worktree on this machine,
 the record's mail_root, through worktree remove, records it done and prints
 host-kept kind=KIND session=ID, the session the operator archives from the
 claude.ai sidebar. --park refuses on its stop-sandbox --check read. A
@@ -763,18 +764,41 @@ finish_close() {
   exit 0
 }
 
+# The recorded window resolves through the shared owner, which accepts the
+# bare and SESSION:WINDOW forms alike and reports which silence it met. A read
+# that fails and a name two panes carry refuse; RESOLVED_PANE is the one pane,
+# empty where no pane carries the name.
+RESOLVED_PANE=""
+resolve_window() {
+  local rc=0
+  lane_pane_resolve "$window_name" || rc=$?
+  [[ "$rc" -ne 2 ]] \
+    || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }
+  case "$LANE_PANE_COUNT" in
+    0) ;;
+    1) RESOLVED_PANE="$LANE_PANE_ID" ;;
+    *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;
+  esac
+}
+
 # The record's host kind declares whether this machine can stop its lane. A
-# stop=none kind, a Claude cloud session, has no harness, pane or sandbox to
-# reach and no mailbox to ask: the close removes the item's files and its
-# worktree on this machine and closes the record, and the session stays the
-# operator's to archive. A park keeps its stop-sandbox --check read, which the
-# kind refuses.
+# stop=none kind, a Claude cloud session, has no harness or sandbox to reach
+# and no mailbox to ask: the close closes the window its launch opened, where
+# a pane still carries it, which ends the session's local client and retires
+# its lane claim, removes the item's files and its worktree on this machine
+# and closes the record, and the session stays the operator's to archive. A
+# park keeps its stop-sandbox --check read, which the kind refuses.
 lane_capabilities_read "$LANE_HOST" "${host:-local}" || { message host-capabilities-unread "item=$ITEM" "host=${host:-local}" >&2; exit 1; }
 lane_capability host_stop stop
 case "$host_stop" in
   window | verb) ;;
   none)
     [[ "$PARK" != true ]] || park_judge
+    [[ -z "$window_name" ]] || resolve_window
+    if [[ -n "$RESOLVED_PANE" ]]; then
+      tmux kill-window -t "$RESOLVED_PANE" \
+        || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$RESOLVED_PANE" >&2; exit 1; }
+    fi
     remove_item_files
     [[ -x "$WORKTREE" ]] || { message helper-missing "item=$ITEM" "path=$WORKTREE" >&2; exit 1; }
     "$WORKTREE" remove "$mail_root" >&2 || { message worktree-remove-failed "item=$ITEM" "path=$mail_root" >&2; exit 1; }
@@ -813,23 +837,6 @@ if [[ "$status" == parked ]]; then
   fi
   finish_close
 fi
-
-# The recorded window resolves through the shared owner, which accepts the
-# bare and SESSION:WINDOW forms alike and reports which silence it met. A read
-# that fails and a name two panes carry refuse; RESOLVED_PANE is the one pane,
-# empty where no pane carries the name.
-RESOLVED_PANE=""
-resolve_window() {
-  local rc=0
-  lane_pane_resolve "$window_name" || rc=$?
-  [[ "$rc" -ne 2 ]] \
-    || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }
-  case "$LANE_PANE_COUNT" in
-    0) ;;
-    1) RESOLVED_PANE="$LANE_PANE_ID" ;;
-    *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;
-  esac
-}
 
 # A preparing record is a hosted launch open-terminal handed to a background
 # job that has written no outcome, so no session was started and no harness is
