@@ -501,7 +501,7 @@ fn write_append_system(
             message,
         })?;
     }
-    if append_system_retires(current.as_deref(), &next) {
+    if append_system_retires(&next) {
         return match current {
             Some(_) => std::fs::remove_file(&path).map_err(|e| CoreError::io(&path, e)),
             None => Ok(()),
@@ -562,15 +562,13 @@ pub(crate) fn inherited_edit(
     }))
 }
 
-/// Whether a write leaving `next` in an `APPEND_SYSTEM.md` that held
-/// `current` (`None`: absent) retires the file instead. Inheritance belongs
-/// beside the project's own instructions, never alone in a file that keeps
-/// Pi from reading the user's global one. A file somebody left blank stays
-/// theirs. Every writer of the file, the package writer and the plan's
-/// composed edits alike, asks this.
-pub(crate) fn append_system_retires(current: Option<&str>, next: &str) -> bool {
+/// Whether a write leaving `next` in an `APPEND_SYSTEM.md` retires the file
+/// instead. Inheritance belongs beside the project's own instructions, never
+/// alone in a file that keeps Pi from reading the user's global one, and a
+/// blank file keeps Pi from reading it too. Every writer of the file, the
+/// package writer and the plan's composed edits alike, asks this.
+pub(crate) fn append_system_retires(next: &str) -> bool {
     remove_marker_block(next, INHERITED).trim().is_empty()
-        && current.is_none_or(|text| !text.trim().is_empty())
 }
 
 #[cfg(test)]

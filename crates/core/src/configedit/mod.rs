@@ -204,7 +204,7 @@ impl ConfigEdit {
             )
         };
         if edits.iter().any(marks) {
-            return Ok(crate::pi_ext::append_system_retires(current, &updated()?));
+            return Ok(crate::pi_ext::append_system_retires(&updated()?));
         }
         let prunes = |edit: &Self| matches!(edit, Self::OpencodePruneInstructions { .. });
         if !edits.iter().any(prunes) {

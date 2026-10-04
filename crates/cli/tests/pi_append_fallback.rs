@@ -45,6 +45,14 @@ enum Declares {
     Nothing,
 }
 
+/// What the project's append file holds of its own before the change.
+#[derive(Clone, Copy, Debug)]
+enum Own {
+    Nothing,
+    Blank,
+    Personal,
+}
+
 struct World {
     _temp: tempfile::TempDir,
     home: PathBuf,
@@ -108,9 +116,9 @@ fn style(catalog: &Path, name: &str, body: &str) {
 
 /// A home whose global scope carries a package and a style, and a project
 /// whose apply has written its own instructions beside the inherited ones,
-/// with the user's own line on top where `personal`.
+/// then left as `own` says.
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
-fn world(declares: &Declares, personal: bool) -> World {
+fn world(declares: &Declares, own: Own) -> World {
     let temp = tempfile::tempdir().unwrap();
     let home = rooted(&temp);
     let project = home.join("project");
@@ -163,19 +171,37 @@ fn world(declares: &Declares, personal: bool) -> World {
     for wanted in ["Local", "Global tools.", "Global style."] {
         assert!(text.contains(wanted), "{wanted}: {text}");
     }
-    if personal {
-        write(
+    match own {
+        Own::Nothing => (),
+        Own::Blank => write(&world.project_append, ""),
+        Own::Personal => write(
             &world.project_append,
             &format!("Personal project instructions.\n{text}"),
-        );
+        ),
     }
     world
 }
 
-/// The project's own text survives, and inherited text stays only beside it.
-fn assert_fallback(world: &World, personal: bool, row: &str) {
+/// The project's own text survives, inherited text stays only beside it,
+/// and one apply settles the file.
+fn assert_fallback(world: &World, own: Own, row: &str) {
     let text = world.project_text();
-    assert_eq!(text.is_some(), personal, "{row}: {text:?}");
+    assert_eq!(
+        text.is_some(),
+        matches!(own, Own::Personal),
+        "{row}: {text:?}"
+    );
+    let again = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "--plan", "--scope", "project"],
+    );
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(said.contains("nothing to do"), "{row}: {said}");
     if let Some(text) = text {
         assert!(
             text.starts_with("Personal project instructions.\n"),
@@ -189,25 +215,28 @@ fn assert_fallback(world: &World, personal: bool, row: &str) {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture inspection")]
 fn project_apply_leaves_no_project_file_holding_only_inherited_text() {
-    for (declares, after, personal) in [
+    for (declares, after, own) in [
         (
             Declares::Package { enabled: true },
             Declares::Package { enabled: false },
-            false,
+            Own::Nothing,
         ),
         (
             Declares::Package { enabled: true },
             Declares::Package { enabled: false },
-            true,
+            Own::Blank,
         ),
-        (Declares::Style, Declares::Nothing, false),
-        (Declares::Style, Declares::Nothing, true),
+        (
+            Declares::Package { enabled: true },
+            Declares::Package { enabled: false },
+            Own::Personal,
+        ),
+        (Declares::Style, Declares::Nothing, Own::Nothing),
+        (Declares::Style, Declares::Nothing, Own::Blank),
+        (Declares::Style, Declares::Nothing, Own::Personal),
     ] {
-        let row = format!(
-            "style {}, personal {personal}",
-            matches!(declares, Declares::Style)
-        );
-        let world = world(&declares, personal);
+        let row = format!("style {}, {own:?}", matches!(declares, Declares::Style));
+        let world = world(&declares, own);
         let global = fs::read(&world.global_append).unwrap();
         world.declare(&after);
         ran(
@@ -215,7 +244,7 @@ fn project_apply_leaves_no_project_file_holding_only_inherited_text() {
             &world.project,
             &["apply", "--scope", "project", "--yes"],
         );
-        assert_fallback(&world, personal, &row);
+        assert_fallback(&world, own, &row);
         assert_eq!(fs::read(&world.global_append).unwrap(), global, "{row}");
         let check = kendex(
             &world.home,
@@ -229,8 +258,8 @@ fn project_apply_leaves_no_project_file_holding_only_inherited_text() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture inspection")]
 fn a_global_style_change_lands_with_the_last_project_package_removal() {
-    for personal in [false, true] {
-        let world = world(&Declares::Package { enabled: true }, personal);
+    for own in [Own::Nothing, Own::Personal] {
+        let world = world(&Declares::Package { enabled: true }, own);
         style(&world.catalog, "Global", "Changed global style.");
         world.declare(&Declares::Nothing);
         ran(
@@ -238,7 +267,7 @@ fn a_global_style_change_lands_with_the_last_project_package_removal() {
             &world.project,
             &["apply", "--scope", "all", "--yes"],
         );
-        assert_fallback(&world, personal, &format!("personal {personal}"));
+        assert_fallback(&world, own, &format!("{own:?}"));
         let global = fs::read_to_string(&world.global_append).unwrap();
         assert!(
             global.starts_with("Personal global instructions.\n"),

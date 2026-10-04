@@ -440,10 +440,11 @@ fn a_package_without_an_append_system_file_writes_no_block() {
 
 #[test]
 fn a_project_without_package_instructions_keeps_the_global_append_fallback() {
-    for (declared, setting, no_append) in [
-        (true, None, true),
-        (false, None, false),
-        (true, Some(false), false),
+    for (declared, setting, no_append, blank) in [
+        (true, None, true, false),
+        (false, None, false, false),
+        (false, None, false, true),
+        (true, Some(false), false, false),
     ] {
         let f = scope();
         let global = scope_root(&f.env, &crate::model::Scope::Global).unwrap();
@@ -470,6 +471,9 @@ fn a_project_without_package_instructions_keeps_the_global_append_fallback() {
                 }})
                 .to_string(),
             );
+        }
+        if blank {
+            write(&append_system_path(&f.scope), "");
         }
         install(&f.env, &f.scope, &source, declared).unwrap();
         assert!(!append_system_path(&f.scope).exists());
