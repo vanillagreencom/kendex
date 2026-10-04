@@ -54,7 +54,6 @@ parse_argv() {
   WAKE=false
   WAIT_SLOT=false
   OVER_CAP=false
-  CROSS_REPO=""
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -86,8 +85,6 @@ parse_argv() {
       --wake) WAKE=true; shift ;;
       --wait-slot) WAIT_SLOT=true; shift ;;
       --over-cap) OVER_CAP=true; shift ;;
-      --cross-repo) need_val "$@"; CROSS_REPO="$2"; shift 2 ;;
-      --cross-repo=*) CROSS_REPO="${1#--cross-repo=}"; need_val --cross-repo "$CROSS_REPO"; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -1346,17 +1343,20 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # the option alone leaves a resolved launch's record null, and lane-close
   # then has no repository to read the item's state with. Every other tracker
   # records the option and nothing else, the resolver's answer there being the
-  # caller's own checkout rather than anything this lane's item lives in.
+  # caller's own checkout rather than anything this lane's item lives in. A
+  # launch ORCH_CONNECTED_REPOS admitted records the listed repository where
+  # neither named one, so lane-close reads its pull request there.
   record_repo="$REPO"
   [[ "$TRACKER" != github ]] || record_repo="$repo"
+  [[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    --arg over_cap "$CAP_PASSED" --arg cross_repo "$CROSS_REPO_RECORD" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
+    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap, cross_repo: $cross_repo}
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)
@@ -3003,24 +3003,43 @@ elif [[ -n "${LINEAR_TEAM:-}" ]]; then
   checkout_repo="$(jq -er '.team.key | strings | select(length > 0)' <<<"$team_record")" \
     || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
 fi
-# A fleet launch runs in its overseer's repository: the item check above reads
-# the checkout this launch runs from, and nothing there binds that checkout to
-# the fleet it records into. The state's `.overseer.cwd` names the overseer's
-# directory, and the worktrees of one repository share a common root, so a
-# lane's own worktree is the overseer's repository and another repository's
-# clone is not. No state yet, or one with no overseer directory recorded,
-# binds nothing. --cross-repo admits an owner-sanctioned
-# exception, which every lane record of the batch carries as cross_repo.
-OVERSEER_FOREIGN=false overseer_root="" launch_root="" CROSS_REPO_RECORD=""
+# A fleet launch runs in its overseer's repository, or in one the overseer's
+# checkout lists in ORCH_CONNECTED_REPOS: the item check above reads the
+# checkout this launch runs from, and nothing there binds that checkout to the
+# fleet it records into. The state's `.overseer.cwd` names the overseer's
+# directory, whose worktrees share its common root. The list is read there,
+# with the value this launcher loaded dropped: that is the settings of the
+# checkout it is installed in, which can be the target's. The target is named
+# by its origin remote. No state, or no overseer directory recorded, binds
+# nothing. A state that does not parse is the cap count's cap-unreadable on the
+# first item; a wake, which the cap does not count, refuses on it here.
+OVERSEER_BIND=none CONNECTED_REPO="" overseer_name="" launch_name=""
 if [[ "$FLEET" == true ]] && "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
-  overseer_cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')" \
-    || { ot_message overseer-unjudged cause=state-read state=oversee >&2; exit 1; }
+  if ! overseer_cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')"; then
+    [[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read state=oversee >&2; exit 1; }
+    OVERSEER_BIND=unread overseer_cwd=""
+  fi
   if [[ -n "$overseer_cwd" ]]; then
     overseer_root="$("$SCRIPT_DIR/git-context" common-root "$overseer_cwd")" \
       || { ot_message overseer-unjudged cause=overseer-root "path=$overseer_cwd" >&2; exit 1; }
     launch_root="$("$SCRIPT_DIR/git-context" common-root "$CLAIM_ROOT")" \
       || { ot_message overseer-unjudged cause=checkout-root "path=$CLAIM_ROOT" >&2; exit 1; }
-    [[ "$overseer_root" == "$launch_root" ]] || { OVERSEER_FOREIGN=true; CROSS_REPO_RECORD="$CROSS_REPO"; }
+    OVERSEER_BIND=own
+    if [[ "$overseer_root" != "$launch_root" ]]; then
+      OVERSEER_BIND=foreign
+      connected="$(cd -- "$overseer_cwd" && env -u ORCH_CONNECTED_REPOS "$SCRIPT_DIR/orch-env" ORCH_CONNECTED_REPOS "")" \
+        || { ot_message overseer-unjudged cause=setting "path=$overseer_cwd" >&2; exit 1; }
+      launch_name="$(kendex_github_origin_slug "$CLAIM_ROOT")" || launch_name=""
+      if [[ -n "${connected//[[:space:]]/}" ]]; then
+        [[ -n "$launch_name" ]] || { ot_message overseer-unjudged cause=origin "path=$CLAIM_ROOT" >&2; exit 1; }
+        listed="$(jq -n --arg repo "$launch_name" --arg list "$connected" \
+          '($repo | ascii_downcase) as $r | any($list | ascii_downcase | splits("\\s+"); . == $r)')" \
+          || { ot_message overseer-unjudged cause=setting "path=$overseer_cwd" >&2; exit 1; }
+        [[ "$listed" != true ]] || { OVERSEER_BIND=connected; CONNECTED_REPO="$launch_name"; }
+      fi
+      overseer_name="$(kendex_github_origin_slug "$overseer_cwd")" || overseer_name="$overseer_root"
+      launch_name="${launch_name:-$launch_root}"
+    fi
   fi
 fi
 launched=0
@@ -3082,10 +3101,8 @@ for raw in "${ITEMS[@]}"; do
       exit 1
     fi
   fi
-  if [[ "$OVERSEER_FOREIGN" == true ]]; then
-    [[ -n "$CROSS_REPO" ]] || { ot_message overseer-foreign "item=$item" "repo=$overseer_root" "checkout=$launch_root" route=peer-mail >&2; exit 1; }
-    ot_message cross-repo-admitted "item=$item" "repo=$overseer_root" "reason=$CROSS_REPO"
-  fi
+  [[ "$OVERSEER_BIND" != foreign ]] \
+    || { ot_message overseer-foreign "item=$item" "repo=$launch_name" "overseer=$overseer_name" route=connected-repos,peer-mail >&2; exit 1; }
   if [[ "$FLEET" == true && "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
       if [[ "$WAKE" == true ]]; then
@@ -3124,6 +3141,12 @@ for raw in "${ITEMS[@]}"; do
   # refusal stops the batch: the count it refused on stands for every later
   # item.
   if [[ "$CAP_GATED" == true ]] && ! cap_gate "$item" "$wt_id" "$title"; then
+    failed=$((failed + 1))
+    break
+  fi
+  # A state the count read where the binding could not is never launched unjudged.
+  if [[ "$OVERSEER_BIND" == unread ]]; then
+    ot_message overseer-unjudged cause=state-read state=oversee >&2
     failed=$((failed + 1))
     break
   fi

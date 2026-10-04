@@ -1,1 +1,1 @@
-- `open-terminal` refuses a fleet launch run from a checkout outside the overseer's repository as `overseer-foreign`; `--cross-repo REASON` admits a sanctioned one and records it.
+- `open-terminal` refuses a fleet launch from a repository other than the overseer's as `overseer-foreign`, unless the overseer's `ORCH_CONNECTED_REPOS` setting lists it.
