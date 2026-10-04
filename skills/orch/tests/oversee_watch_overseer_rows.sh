@@ -51,9 +51,9 @@ CODEX_START="$(row SessionStart codex source=startup)"
 # `quit` said as Claude Code's `prompt_input_exit` (pi-hooks vocab.ts).
 PI_START="$(row SessionStart pi source=startup)"
 PI_END="$(row SessionEnd pi reason=prompt_input_exit)"
-# A Pi StopFailure as every pi-hooks carrier before 0.19.0 writes it: no
-# `message`, so nothing tells its wall from any other failure.
-PI_BARE_FAILURE="$(row StopFailure pi)"
+# A Pi turn end: no end and no failure, which is all a Pi session whose
+# carrier dispatches no StopFailure writes at a wall.
+PI_STOP="$(row Stop pi)"
 
 # rows_case NAME PANE_STATE ROW... — overseer_case's sandbox with the fleet
 # state naming the rows file for this pane and ROW... written to it, one per
@@ -105,13 +105,14 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_not
       codex) row_args+=("$CODEX_START") ;;
       pistart) row_args+=("$PI_START") ;;
       piend) row_args+=("$PI_END") ;;
-      pibarefailure) row_args+=("$PI_BARE_FAILURE") ;;
+      pistop) row_args+=("$PI_STOP") ;;
       -) ;;
       *) echo "unknown row $r" >&2; exit 1 ;;
     esac
   done
   rows_case "$name" "$pane" ${row_args[@]+"${row_args[@]}"}
   [[ "$name" != wall_rows ]] || no_room
+  [[ "$name" != pi_stop_walled_pane ]] || wall_confirmed
   run TMUX_PANE="$PANE" -- --max-loops 2
   event="$(grep '^EVENT overseer-' <<<"$OUT" | head -n 1 || true)"
   note=none
@@ -136,18 +137,21 @@ killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 su
 no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=none
 codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
 pi_dead_rows|exited|pistart piend|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|none
-pi_bare_failure_fallback|exited|pistart pibarefailure|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
+pi_stop_walled_pane|walled|pistart pistop|EVENT overseer-walled $PANE window=$WINDOW passes=2 succession=on source=pane|--walled-pane|overseer-fallback pane=$PANE cause=unsupported
 ROWS
 
-# The verdict over a Pi row, read from the library itself. Pi names no error
-# kind, so a Pi StopFailure row carries no `error` and its `message`, the
-# failed response's text, alone tells a wall from a wedge. The same rows
-# under Copilot, whose rows the verdict does not answer for, read
-# unsupported, and with the Claude-only harness test restored every Pi row
-# reads unsupported too: the control.
-verdict_of() { # LIB_DIR ROW
+# The verdict over a Pi session, SessionStart then one row, read from the
+# library itself. A Pi row is judged only from the evidence it carries: a
+# SessionEnd, or a StopFailure whose `message`, the failed response's text,
+# alone tells a wall from a wedge, since Pi names no error kind. Every other
+# Pi last row reads unsupported, so the pane judges it. The same rows under
+# Copilot, whose rows the verdict does not answer for, read unsupported. Two
+# controls, one per rule: with the Claude-only harness test restored every Pi
+# row reads unsupported, and with the evidence rule taken out each row it
+# holds reads live.
+verdict_of() { # LIB_DIR HARNESS EVENT [FIELD]
   local file="$TMP_ROOT/verdict-rows.jsonl"
-  printf '%s\n' "$2" > "$file"
+  { row SessionStart "$2" source=startup; row "$3" "$2" ${4:+"$4"}; } > "$file"
   "$BASH" -euo pipefail -c '. "$1/lane-state.sh" && . "$1/session-rows.sh"
     session_rows_verdict "$2" && printf "%s\n" "$SESSION_ROWS_VERDICT"' _ "$1" "$file" 2>&1 || echo "rc=$?"
 }
@@ -155,27 +159,29 @@ LIB_DIR="$REPO_ROOT/skills/orch/scripts/lib"
 CLAUDE_ONLY_CTL="$(mutant_scripts claude-only-ctl/orch lib/session-rows.sh)" || exit 1
 mutate_file "$CLAUDE_ONLY_CTL/lib/session-rows.sh" \
   'if .harness != "claude" and .harness != "pi" then "unsupported"' 'if .harness != "claude" then "unsupported"'
-while IFS='|' read -r name event field expected; do
-  pi="$(verdict_of "$LIB_DIR" "$(row "$event" pi "$field")")"
-  copilot="$(verdict_of "$LIB_DIR" "$(row "$event" copilot "$field")")"
-  mutant="$(verdict_of "$CLAUDE_ONLY_CTL/lib" "$(row "$event" pi "$field")")"
+EVIDENCE_CTL="$(mutant_scripts evidence-ctl/orch lib/session-rows.sh)" || exit 1
+mutate_file "$EVIDENCE_CTL/lib/session-rows.sh" \
+  'elif .harness == "pi" and (.event != "StopFailure" or (.message // "") == "") then "unsupported"' \
+  'elif false then "unsupported"'
+while IFS='|' read -r name event field expected without_rule; do
+  [[ "$field" != - ]] || field=""
+  pi="$(verdict_of "$LIB_DIR" pi "$event" "$field")"
+  copilot="$(verdict_of "$LIB_DIR" copilot "$event" "$field")"
+  claude_only="$(verdict_of "$CLAUDE_ONLY_CTL/lib" pi "$event" "$field")"
+  evidence="$(verdict_of "$EVIDENCE_CTL/lib" pi "$event" "$field")"
   assert_eq "pi=$pi copilot=$copilot" "pi=$expected copilot=unsupported" "pi row $name"
-  assert_eq "$mutant" unsupported "control: pi row $name with the claude-only test restored"
+  assert_eq "$claude_only" unsupported "control: pi row $name with the claude-only test restored"
+  assert_eq "$evidence" "$without_rule" "control: pi row $name with the evidence rule taken out"
 done <<PI_ROWS
-quit|SessionEnd|reason=prompt_input_exit|ended
-clear|SessionEnd|reason=clear|live
-usage_limit|StopFailure|message=$WALL_MESSAGE|walled
-prompt_too_long|StopFailure|message=prompt is too long: 212011 tokens > 200000 maximum|wedged
-other_failure|StopFailure|message=overloaded_error: Overloaded|live
+quit|SessionEnd|reason=prompt_input_exit|ended|ended
+clear|SessionEnd|reason=clear|live|live
+usage_limit|StopFailure|message=$WALL_MESSAGE|walled|walled
+prompt_too_long|StopFailure|message=prompt is too long: 212011 tokens > 200000 maximum|wedged|wedged
+other_failure|StopFailure|message=overloaded_error: Overloaded|live|live
+turn_end|Stop|-|unsupported|live
+start_only|SessionStart|source=startup|unsupported|live
+no_message|StopFailure|-|unsupported|live
 PI_ROWS
-
-# A Pi StopFailure with no `message` reads unsupported, so the pane judges
-# the wall; with that branch taken out it reads live: the control.
-NO_MESSAGE_CTL="$(mutant_scripts no-message-ctl/orch lib/session-rows.sh)" || exit 1
-mutate_file "$NO_MESSAGE_CTL/lib/session-rows.sh" \
-  'and .harness == "pi" and (.message // "") == "" then "unsupported"' 'and false then "unsupported"'
-assert_eq "$(verdict_of "$LIB_DIR" "$PI_BARE_FAILURE")" unsupported "pi row with no message"
-assert_eq "$(verdict_of "$NO_MESSAGE_CTL/lib" "$PI_BARE_FAILURE")" live "control: pi row with no message, its branch taken out"
 
 # A rows wall carries the harness's own words, the limit and its reset, under
 # its line, and `message=unrecorded` where its row holds none.

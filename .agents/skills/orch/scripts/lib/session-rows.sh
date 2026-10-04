@@ -24,10 +24,8 @@
 # holds the overseer's context record against. The readers are oversee-watch's
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
 #
-# The verdict answers for Claude Code and Pi: a session whose last row names
-# another harness, or is a Pi StopFailure with no `message`, reads
-# `unsupported` and its reader takes the pane, the named fallback, reported as
-# fallback.
+# A last row session_rows_verdict cannot judge reads `unsupported`, and its
+# reader takes the pane, the named fallback, reported as fallback.
 #
 # ONE OWNER, THE WRITER, for "whose facts are these": only the pane's own
 # top-level harness writes a row, so a harness that session starts in its own
@@ -132,11 +130,12 @@ session_rows_last() { # FILE [EVENT]
 # session_rows_verdict FILE — what the last row says of the session, into
 # SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
 #   none         no row, so nothing the harness said can be read
-#   unsupported  the row names any harness but Claude Code and Pi, the two
-#                whose rows this verdict answers for, so its silence settles
-#                nothing; or a Pi StopFailure with no `message`, which a
-#                pi-hooks carrier before 0.19.0 writes, so no text tells its
-#                wall from any other failure
+#   unsupported  the row carries no evidence this verdict reads: it names
+#                any harness but Claude Code and Pi, or it is a Pi row that is
+#                neither a SessionEnd nor a StopFailure with a `message`. A Pi
+#                session writes a StopFailure only where its carrier dispatches
+#                one, so its SessionStart or Stop says nothing of a wall, and a
+#                StopFailure with no text tells no wall from another failure
 #   ended        SessionEnd for any reason but `clear` and `resume`, the two a
 #                SessionStart follows in the same harness; Pi's carrier says
 #                its own reasons in these words
@@ -150,7 +149,8 @@ session_rows_last() { # FILE [EVENT]
 #                SESSION_ROWS_PROMPT_TOO_LONG lists: the session's context
 #                filled its window, so every turn it starts fails the same way
 #                while its harness stays up
-#   live         any other row
+#   live         any other Claude Code row, or a Pi StopFailure whose
+#                `message` names neither a limit nor a prompt too long
 # Exit 2 where the file could not be read, jq could not read its last row, or
 # lane_limit_banner could not scan a Pi StopFailure's `message`; the verdict is
 # then `none` and says nothing.
@@ -173,12 +173,12 @@ session_rows_verdict() { # FILE
     elif .event == "SessionEnd" then
       (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
     elif .event == "StopFailure" and .harness == "claude" and .error == "rate_limit" then "walled"
-    elif .event == "StopFailure" and .harness == "pi" and (.message // "") == "" then "unsupported"
+    elif .harness == "pi" and (.event != "StopFailure" or (.message // "") == "") then "unsupported"
     elif .event == "StopFailure"
       and ((((.message // "") + "\n" + (.error_details // "")) | ascii_downcase) as $text
         | any($too_long[]; . as $p | $text | contains($p)))
     then "wedged"
-    elif .event == "StopFailure" and .harness == "pi" then "limit-text"
+    elif .harness == "pi" then "limit-text"
     else "live" end' <<<"$SESSION_ROW")" || return 2
   if [ "$verdict" = limit-text ]; then
     banner="$(lane_limit_banner "$(jq -r '.message // ""' <<<"$SESSION_ROW")")" || return 2
