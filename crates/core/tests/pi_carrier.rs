@@ -631,16 +631,14 @@ fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
                 .ops
                 .iter()
                 .any(|op| matches!(&op.op, Op::PiRemove { .. })),
-            "{target}: {:?}",
-            removal.plan.ops
+            "{target}"
         );
         assert!(
             removal
                 .drift
                 .iter()
                 .any(|row| row.name == "pi-widgets" && row.state == DriftState::Conflict),
-            "{target}: {} rows",
-            removal.drift.len()
+            "{target}"
         );
         apply::execute(&w.env, &removal.plan).unwrap();
         assert_eq!(fs::read(dest.join("index.js")).unwrap(), WIDGETS_INDEX);

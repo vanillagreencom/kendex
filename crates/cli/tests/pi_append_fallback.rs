@@ -3,6 +3,8 @@
 //! global one, so an ordinary apply that leaves it nothing of its own takes
 //! it away, and the user's global file applies again.
 
+#![cfg(unix)]
+
 use crate::test_util::{fixture_env, rooted, source_path};
 use kendex_core::env::Env;
 use std::fs;
