@@ -544,6 +544,18 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.session-start-row]
+source = "."
+harnesses = ["claude", "codex", "pi"]
+
+[hooks.session-end-row]
+source = "."
+harnesses = ["claude"]
+
+[hooks.stop-failure-row]
+source = "."
+harnesses = ["claude"]
+
 [hooks.task-completed-check]
 source = "."
 harnesses = ["claude"]
