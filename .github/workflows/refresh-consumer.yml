@@ -20,7 +20,15 @@
 name: refresh-consumer
 
 "on":
-  workflow_call: {}
+  workflow_call:
+    # The caller maps each to its same-named secret, and the job reads the
+    # value from the calling repository's kendex environment. Undeclared,
+    # both read empty (review-gate-sandbox run 37191124465).
+    secrets:
+      FLEET_GH_APP_ID:
+        required: false
+      FLEET_GH_APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   refresh:

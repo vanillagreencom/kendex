@@ -1,9 +1,9 @@
 # Adopted into .github/workflows/ by scripts/adopt-refresh.sh, which checks
 # the kendex environment and its secrets first; copy it verbatim only through
-# that script. The shared workflow it calls reads
-# the app secrets from this repository's kendex environment and runs the
-# refresh from the kendex release the major tag names. Opening a pull
-# request needs that repository's app token.
+# that script. The job maps the two app secrets the shared workflow declares;
+# their values come from this repository's kendex environment. The shared
+# workflow runs the refresh from the kendex release the major tag names.
+# Opening a pull request needs that repository's app token.
 # Only render arms auto-merge. After review and CI gates pass for a non-render
 # refresh, the repository overseer arms it on the merge queue, or a maintainer
 # merges it through the queue where no overseer runs.
@@ -27,4 +27,6 @@ jobs:
     permissions:
       contents: read
     uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1
-    secrets: inherit
+    secrets:
+      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
+      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}

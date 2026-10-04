@@ -458,20 +458,24 @@ retired-symlink|^    if copied.is_symlink|s/^    if \(.*\):$/    if False and (\
 unrecorded|^if.*unrecorded.exists|s/^if \(.*\):$/if False and (\1):/
 CONTROLS
 
-# A caller of the shared workflow declares no environment and no secret. The
-# adopter judges it by the names the shared workflow declares, which this row
-# holds equal; the control renames one secret in a copy of the adopter.
+# A caller of the shared workflow declares no environment and maps the
+# secrets the shared workflow declares. The adopter judges it by that
+# environment and those secrets, which this row holds equal; the control
+# renames one secret in a copy of the adopter. shared-refresh-workflow.test.sh
+# holds the declared secrets equal to those its steps read.
 caller_names_match() { # ADOPTER
   python3 - "$1" "$SKILL_DIR/../../.github/workflows/refresh-consumer.yml" <<'NAMES'
 import re, sys
 adopter, shared = (open(path).read() for path in sys.argv[1:])
-branch = re.search(r"^  inherit\)\n    template_environment=(\S+)\n    template_secrets='([^']*)' ;;$", adopter, re.M)
-assert branch, 'caller branch not found in the adopter'
+names = re.search(r"^shared_environment=(\S+)\nshared_secrets='([^']*)'$", adopter, re.M)
+assert names, 'shared names not found in the adopter'
 environments = re.findall(r'^    environment: (\S+)$', shared, re.M)
-secrets = sorted(set(re.findall(r'\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}', shared)))
-assert environments and secrets, 'shared workflow names not found'
-assert [branch.group(1)] == environments, (branch.group(1), environments)
-assert branch.group(2) == ';'.join(secrets), (branch.group(2), secrets)
+block = re.search(r'^  workflow_call:\n(?:    #.*\n)*    secrets:\n((?:      .*\n)+)', shared, re.M)
+assert environments and block, 'shared workflow declarations not found'
+secrets = re.findall(r'^      ([A-Za-z0-9_]+):$', block.group(1), re.M)
+assert secrets, 'shared workflow declares no secret'
+assert [names.group(1)] == environments, (names.group(1), environments)
+assert names.group(2) == ';'.join(secrets), (names.group(2), secrets)
 NAMES
 }
 if caller_names_match "$SKILL_DIR/scripts/adopt-refresh.sh"; then ok 'caller environment and secret names equal the shared workflow declarations'
@@ -567,38 +571,49 @@ if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
     jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
   ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
 else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
-# A release tree whose caller lacks secrets: inherit on the line under its
-# uses: line is refused before the environment check. The v1.8.0 caller ends
-# at uses:, which the END rule judges; the named-secrets caller puts a
-# secrets: mapping there, which the next-line rule judges. Each rule's control
-# edits it in a copy of the adopter.
-{ cat "$TMP/caller-no-secrets"
-  printf '%s\n' '    secrets:' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}' \
-    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'
-} >"$TMP/caller-named-secrets"
-for fixture in no-secrets named-secrets; do
+# A release tree whose caller does not map exactly the shared workflow's
+# secrets, each to its same-named secret, on the line under uses: is refused
+# before the environment check, with the cause the judge found. Each rule's
+# control disables it in a copy of the adopter: the END rule judges the
+# v1.8.0 caller, which ends at uses:; the next-line rule an inherit caller;
+# the names rule a mapping missing or misnaming a secret; the same-name rule
+# an entry mapping another secret.
+mapping_head() { cat "$TMP/caller-no-secrets"; printf '%s\n' '    secrets:'; }
+{ cat "$TMP/caller-no-secrets"; printf '%s\n' '    secrets: inherit'; } >"$TMP/caller-inherit"
+{ mapping_head; printf '%s\n' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}'; } >"$TMP/caller-missing"
+{ mapping_head; printf '%s\n' '      FLEET_APP_ID: ${{ secrets.FLEET_APP_ID }}' \
+    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'; } >"$TMP/caller-misnamed"
+{ mapping_head; printf '%s\n' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_APP_ID }}' \
+    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'; } >"$TMP/caller-cross-mapped"
+for fixture in no-secrets inherit missing misnamed cross-mapped; do
   mkdir -p "$TMP/release-$fixture"
   cp "$TMP/caller-$fixture" "$TMP/release-$fixture/kendex-refresh.yml"
 done
-while IFS='|' read -r fixture mutation pattern replacement; do
+# fixture ~ mutation ~ cause ~ control pattern ~ control edit
+while IFS='~' read -r fixture mutation cause pattern replacement; do
   sandbox
   cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
   commit "$DIR"
   [ "$mutation" = none ] || file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement"
   run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$TMP/release-$fixture"
   matched=no
-  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$TMP/release-$fixture/kendex-refresh.yml" <<<"$OUT" &&
+  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$TMP/release-$fixture/kendex-refresh.yml cause=$cause" <<<"$OUT" &&
       cmp -s "$DIR/$REFRESH" "$TMP/caller-no-secrets" && ! grep -q '^ok check=' <<<"$OUT"; then matched=yes; fi
   case "$mutation:$matched" in
-    none:yes) ok "a $fixture caller template is refused and the workflow kept" ;;
-    end-rule:no | next-line:no) ok "control: $mutation turns the $fixture caller refusal row red" ;;
+    none:yes) ok "a $fixture caller template is refused with cause=$cause and the workflow kept" ;;
+    end-rule:no | next-line:no | names:no | same-name:no) ok "control: $mutation turns the $fixture caller refusal row red" ;;
     *) bad "caller secrets refusal fixture=$fixture mutation=$mutation (rc=$RC)" "$OUT" ;;
   esac
 done <<'ROWS'
-no-secrets|none||
-no-secrets|end-rule|^  END \{ if \(!judged\) print \(call \? "no-inherit"|s/(call ? "no-inherit"/(call ? "inherit"/
-named-secrets|none||
-named-secrets|next-line|^  call \{ print \(\$0 == "    secrets: inherit"|s/(\$0 == "    secrets: inherit"/(1/
+no-secrets~none~none~~
+no-secrets~end-rule~none~print \(call \? "none" : "inline"\)~s/print (call ? "none" : "inline")/print "inline"/
+inherit~none~not-mapping~~
+inherit~next-line~not-mapping~^  call \{ if \(\$0 != "    secrets:"\)~s/if (\$0 != "    secrets:")/if (0)/
+missing~none~names~~
+misnamed~none~names~~
+missing~names~names~^  "mapped \$shared_secrets"\)$~s/^  "mapped \$shared_secrets")$/  mapped\\ *)/
+cross-mapped~none~not-same-name~~
+cross-mapped~same-name~not-same-name~\|\| \$3 != "secrets\." name \|\|~s/ || \$3 != "secrets\." name//
 ROWS
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

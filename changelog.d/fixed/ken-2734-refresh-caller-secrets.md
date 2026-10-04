@@ -1,1 +1,1 @@
-- The shared refresh caller passes `secrets: inherit`, so the refresh mints its app token. A v1.8.0 caller stops at that step, before adoption: add the line or run the adopter by hand.
+- The shared refresh caller maps `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` to its same-named secrets. A v1.8.0 caller stops at the token step: fix it by hand or run the adopter by hand.

@@ -155,6 +155,36 @@ branch|s/ \&\& github.ref == format('refs\/heads\/{0}', github.event.repository.
 self-exclusion|s/github.repository != 'vanillagreencom\/kendex' \&\& //
 ROWS
 
+# The called job reads a secret only when the workflow declares it and the
+# caller maps it; an undeclared one reads empty. The declarations under
+# on.workflow_call equal the secrets the steps read, each optional; each
+# control edits one in a copy.
+declared_matches() { # WORKFLOW
+  python3 - "$1" <<'DECLARED'
+import re, sys
+on, job = open(sys.argv[1]).read().split('\njobs:\n', 1)
+block = re.search(r'^  workflow_call:\n(?:    #.*\n)*    secrets:\n((?:      .*\n)+)', on, re.M)
+assert block, 'no declared secrets'
+declared = re.findall(r'^      ([A-Za-z0-9_]+):\n        required: (\S+)$', block.group(1), re.M)
+assert len(declared) * 2 == len(block.group(1).splitlines()), block.group(1)
+read = sorted(set(re.findall(r'\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}', job)))
+assert read, 'the steps read no secret'
+assert [name for name, _ in declared] == read, (declared, read)
+assert all(required == 'false' for _, required in declared), declared
+DECLARED
+}
+if declared_matches "$WORKFLOW"; then ok 'the workflow declares, each optional, exactly the secrets its steps read'
+else bad 'declared secrets'; fi
+while IFS='|' read -r rule expression; do
+  sed "$expression" "$WORKFLOW" >"$TMP/undeclared.yml"
+  if ! cmp -s "$WORKFLOW" "$TMP/undeclared.yml" && ! declared_matches "$TMP/undeclared.yml" 2>/dev/null; then
+    ok "control: $rule turns the declared secrets row red"
+  else bad "$rule declared secrets control"; fi
+done <<'ROWS'
+a renamed declaration|s/^      FLEET_GH_APP_PRIVATE_KEY:$/      FLEET_GH_APP_KEY:/
+a required declaration|0,/^        required: false$/s//        required: true/
+ROWS
+
 # The install step's own body, extracted from the workflow.
 python3 - "$WORKFLOW" "$TMP/install-body" <<'PY'
 import re, sys, textwrap

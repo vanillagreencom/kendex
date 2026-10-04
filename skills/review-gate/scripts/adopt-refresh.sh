@@ -34,24 +34,40 @@ fi
 # the selected workflow reads, not a different consumer settings value.
 refresh_template="$templates/kendex-refresh.yml"
 # A caller of the shared workflow declares neither; the called job reads
-# these names from the caller's environment. adopt-refresh.test.sh holds them
-# equal to the names .github/workflows/refresh-consumer.yml declares. The
-# called job reads them only when the caller passes `secrets: inherit`;
-# without it they read empty and the token step fails. This judge accepts the
-# key only on the line under `uses:`, where the shipped template carries it.
+# these from the caller's environment. adopt-refresh.test.sh holds them equal
+# to the environment and secrets .github/workflows/refresh-consumer.yml
+# declares. The job reads a secret only when the caller maps it, on the line
+# under uses:, to its same-named secret; otherwise the token step reads empty.
+shared_environment=kendex
+shared_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY'
+# Forms: inline (no shared-workflow call), mapped NAMES (each entry of the
+# secrets: mapping maps NAME to its same-named secret; NAMES ;-joined in
+# order), none (nothing under uses:, the v1.8.0 caller), not-mapping (the
+# line under uses: is not a secrets: key, such as secrets: inherit) and
+# not-same-name (an entry maps another secret or is not one expression).
 caller="$(awk '
-  call { print ($0 == "    secrets: inherit" ? "inherit" : "no-inherit"); judged = 1; exit }
+  function judge(form) { print form; judged = 1; exit }
+  mapping && /^      [^ ]/ {
+    name = $1; sub(/:$/, "", name)
+    if (NF != 4 || $1 != name ":" || $2 != "${{" || $3 != "secrets." name || $4 != "}}") judge("not-same-name")
+    names = names (names == "" ? "" : ";") name; next
+  }
+  mapping { judge("mapped " names) }
+  call { if ($0 != "    secrets:") judge("not-mapping"); mapping = 1; call = 0; next }
   /^    uses: vanillagreencom\/kendex\/\.github\/workflows\/refresh-consumer\.yml@/ { call = 1 }
-  END { if (!judged) print (call ? "no-inherit" : "inline") }' "$refresh_template")" ||
+  END { if (judged) exit; if (mapping) print "mapped " names; else print (call ? "none" : "inline") }' "$refresh_template")" ||
   { printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2; }
+refuse_caller() { # CAUSE
+  printf 'refresh-error=caller-secrets value=%s cause=%s\n%s\n' "$refresh_template" "$1" \
+    "Under its uses: line the caller needs a secrets: key mapping each of $shared_secrets to its same-named secret." >&2
+  exit 2
+}
 case "$caller" in
-  inherit)
-    template_environment=kendex
-    template_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY' ;;
-  no-inherit)
-    printf 'refresh-error=caller-secrets value=%s\n%s\n' "$refresh_template" \
-      'The caller does not pass secrets: inherit: put it on the line under its uses: line.' >&2
-    exit 2 ;;
+  "mapped $shared_secrets")
+    template_environment="$shared_environment"
+    template_secrets="$shared_secrets" ;;
+  mapped\ *) refuse_caller names ;;
+  none | not-mapping | not-same-name) refuse_caller "$caller" ;;
   inline)
     template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
     template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2 ;;
