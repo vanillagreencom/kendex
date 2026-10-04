@@ -239,12 +239,16 @@
 #        is a window named `overseer` at the session's base index, the harness
 #        launched there with a brief naming the handoff file, once the
 #        checkout it starts in is fast-forwarded to its base branch's origin
-#        head through `sync-base` (lib/overseer-launch.sh § ol_checkout_sync),
-#        in every mode that launches. A checkout that is dirty, diverged, off
-#        its base branch or otherwise refused is the notice
+#        head through `sync-base` (lib/overseer-launch.sh § ol_checkout_sync)
+#        inside ORCH_OVERSEER_SYNC_TIMEOUT_S seconds, in every mode that
+#        launches. A checkout that is dirty, diverged, off its base branch,
+#        not synced inside that bound or otherwise refused is the notice
 #        `checkout-unsynced cause=<key> path=<checkout> fix=<what clears it>`
 #        on stderr and, its path left out, in the fleet log, and the successor
-#        opens on the tree as it stands. The steps from
+#        opens on the tree as it stands. The caller, or the dead or walled
+#        predecessor, still runs in that checkout: a succession abandoned
+#        after the sync leaves it on the fast-forwarded tree, and this script
+#        calls the moved helpers for the rest of its run. The steps from
 #        here to the close are
 #        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
 #        first launch or a --predecessor succession through, the succession
@@ -1541,15 +1545,6 @@ trap 'interrupted HUP' HUP
 # those ignores.
 ol_succession_hook() { # STEP
   case "$1" in
-    # A checkout the sync refused is a notice in every mode, on stderr and in
-    # the fleet log the successor reads, and the launch goes on (header,
-    # Output).
-    checkout-unsynced)
-      message checkout-unsynced "cause=$OL_SYNC_CAUSE" "path=$OL_SYNC_PATH" "fix=$OL_SYNC_FIX" >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-      # The row leaves the path out: it is the checkout its reader starts in,
-      # and a row is bounded by ORCH_FLEET_LOG_ROW_BYTES.
-      ol_fleet_log_notice checkout-unsynced "cause=$OL_SYNC_CAUSE" "fix=$OL_SYNC_FIX" ;;
     # A record write that fails is a notice, and 0 lets the succession go on
     # (header, Output).
     pending-unrecorded)

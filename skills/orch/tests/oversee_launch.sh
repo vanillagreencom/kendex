@@ -1113,7 +1113,12 @@ echo "=== the checkout a launch opens in ==="
 # overseer at origin's head (lib/overseer-launch.sh § ol_checkout_sync).
 work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
 unsynced() { grep -c "^oversee: checkout-unsynced cause=$1 path=$WORK_REAL fix=[^ ]" <<<"$OUT" || true; }
-logged() { jq -r --arg key "oversee: checkout-unsynced cause=$1 " '[(.fleet_log // [])[] | select(.text | startswith($key))] | length' "$FLEET_STATE"; }
+# The fleet log rows naming CAUSE, each without the path the stderr line
+# carries.
+logged() {
+  jq -r --arg key "oversee: checkout-unsynced cause=$1 " \
+    '[(.fleet_log // [])[] | select((.text | startswith($key)) and (.text | contains(" path=") | not))] | length' "$FLEET_STATE"
+}
 WANT="$(checkout_advance)" || exit 1
 run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(work_head)|$(unsynced '[^ ]*')" "0|$WANT|0" \
@@ -1122,7 +1127,7 @@ tm kill-window -t "$(recorded window)"
 # Its control: a launcher that opens without the sync leaves the checkout
 # behind.
 SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced' '  :'
+mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_checkout_notice' '  :'
 BEHIND="$(work_head)"
 checkout_advance >/dev/null || exit 1
 OVERSEE_BIN="$SYNCCTL/oversee" run_oversee -- launch --wait-secs 20
@@ -1130,24 +1135,29 @@ assert_eq "$RC|$(work_head)" "0|$BEHIND" "control: a launch without the sync lea
 tm kill-window -t "$(recorded window)"
 # A checkout the fast-forward refuses: the launch goes on, on the tree as it
 # stands, with one keyed line naming the cause and its fix, and that line in
-# the fleet log for the overseer to read. Each row sets its tree up behind a
-# fresh origin commit and puts it back after.
+# the fleet log for the overseer to read. Each row sets its tree up, behind a
+# fresh origin commit where it advances one, and puts it back after.
+# base-mismatch is a local commit on a base origin has not moved: git's merge
+# answers `Already up to date.` on stderr before sync-base's keyed line.
 for row in \
-  $'dirty\tprintf "local\\n" >> "$TMP_ROOT/work/README"\tgit -C "$TMP_ROOT/work" checkout -q -- README' \
-  $'fast-forward-failed\tcheckout_commit "$TMP_ROOT/work" >/dev/null\tgit -C "$TMP_ROOT/work" reset -q --hard origin/main' \
-  $'off-base\tgit -C "$TMP_ROOT/work" switch -q -c side\tgit -C "$TMP_ROOT/work" switch -q main && git -C "$TMP_ROOT/work" branch -q -D side'; do
+  $'dirty\tcheckout_advance >/dev/null && printf "local\\n" >> "$TMP_ROOT/work/README"\tgit -C "$TMP_ROOT/work" checkout -q -- README' \
+  $'fast-forward-failed\tcheckout_advance >/dev/null && checkout_commit "$TMP_ROOT/work" >/dev/null\tgit -C "$TMP_ROOT/work" reset -q --hard origin/main' \
+  $'base-mismatch\tcheckout_commit "$TMP_ROOT/work" >/dev/null\tgit -C "$TMP_ROOT/work" reset -q --hard origin/main' \
+  $'off-base\tcheckout_advance >/dev/null && git -C "$TMP_ROOT/work" switch -q -c side\tgit -C "$TMP_ROOT/work" switch -q main && git -C "$TMP_ROOT/work" branch -q -D side' \
+  $'off-base\tcheckout_advance >/dev/null && git -C "$TMP_ROOT/work" switch -q --detach\tgit -C "$TMP_ROOT/work" switch -q main'; do
   IFS=$'\t' read -r cause setup restore <<<"$row"
-  checkout_advance >/dev/null || exit 1
   eval "$setup" || exit 1
   BEFORE="$(work_head)"
+  LOGGED="$(logged "$cause")"
   run_oversee -- launch --wait-secs 20
-  assert_eq "$RC|$(work_head)|$(unsynced "$cause")|$(unsynced '[^ ]*')|$(logged "$cause")" "0|$BEFORE|1|1|1" \
-    "a checkout refused as $cause leaves the launch running and prints one keyed line naming the fix, also in the fleet log"
+  assert_eq "$RC|$(work_head)|$(unsynced "$cause")|$(unsynced '[^ ]*')|$(($(logged "$cause") - LOGGED))" "0|$BEFORE|1|1|1" \
+    "a checkout refused as $cause ($setup) leaves the launch running and prints one keyed line naming the fix, also in the fleet log"
   tm kill-window -t "$(recorded window)"
   eval "$restore" || exit 1
 done
-# Its control: a sync that runs sync-base on another branch moves that
-# branch's ref and never this tree, and says nothing.
+# Its control: a sync that runs sync-base on another branch moves the base
+# branch's ref, not the checked-out side branch or its tree, and says
+# nothing.
 OFFCTL="$(mutant_scripts offbasectl lib/overseer-launch.sh)" || exit 1
 mutate_file "$OFFCTL/lib/overseer-launch.sh" '      0) [[ "$branch" == "$base" ]] || OL_SYNC_CAUSE=off-base ;;' '      0) ;;'
 git -C "$TMP_ROOT/work" switch -q -c side || exit 1
@@ -1158,6 +1168,55 @@ assert_eq "$RC|$(work_head)|$(unsynced '[^ ]*')" "0|$BEFORE|0" \
   "control: a sync without the base-branch check leaves an off-base checkout behind unreported"
 tm kill-window -t "$(recorded window)"
 git -C "$TMP_ROOT/work" switch -q main && git -C "$TMP_ROOT/work" branch -q -D side || exit 1
+# Its control for a detached head: a sync that lets one through moves the
+# base branch's ref to origin's head and leaves the detached tree behind,
+# unreported.
+DETACHCTL="$(mutant_scripts detachctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$DETACHCTL/lib/overseer-launch.sh" '      1) OL_SYNC_CAUSE=off-base branch="a detached head" ;;' '      1) ;;'
+WANT="$(checkout_advance)" || exit 1
+git -C "$TMP_ROOT/work" switch -q --detach || exit 1
+BEFORE="$(work_head)"
+OVERSEE_BIN="$DETACHCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(work_head)|$(git -C "$TMP_ROOT/work" rev-parse main)|$(unsynced '[^ ]*')" "0|$BEFORE|$WANT|0" \
+  "control: a sync without the detached-head check leaves a detached checkout behind unreported"
+tm kill-window -t "$(recorded window)"
+git -C "$TMP_ROOT/work" switch -q main || exit 1
+# Its control for the relay of sync-base's key: a parse that finds no key
+# reports a dirty checkout as sync-failed, so the dirty row's pin turns red.
+KEYCTL="$(mutant_scripts keyctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$KEYCTL/lib/overseer-launch.sh" 'sub(/ .*/, ""); print; exit }' 'sub(/ .*/, ""); exit }'
+checkout_advance >/dev/null || exit 1
+printf 'local\n' >> "$TMP_ROOT/work/README"
+OVERSEE_BIN="$KEYCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(unsynced dirty)|$(unsynced sync-failed)" "0|0|1" \
+  "control: a sync that drops sync-base's key reports a dirty checkout as sync-failed"
+tm kill-window -t "$(recorded window)"
+git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
+# A sync-base that stalls past the bound, as one fetching from an origin that
+# accepts the connection and never answers: the launch goes on, on the tree
+# as it stands, with one keyed line naming the timeout. The stub sleeps 5
+# seconds, the stall itself, which a 1 second bound cuts off.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  STALL="$(mutant_scripts stall sync-base)" || exit 1
+  printf '#!/bin/sh\nsleep 5\n' > "$STALL/sync-base" || exit 1
+  BEFORE="$(work_head)"
+  LOGGED="$(logged sync-timeout)"
+  OVERSEE_BIN="$STALL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
+  assert_eq "$RC|$(overseers)|$(work_head)|$(unsynced sync-timeout)|$(unsynced '[^ ]*')|$(($(logged sync-timeout) - LOGGED))" \
+    "0|1|$BEFORE|1|1|1" \
+    "a sync-base that outlasts its bound leaves the launch running and prints one keyed line naming the timeout, also in the fleet log"
+  tm kill-window -t "$(recorded window)"
+  # Its control: a sync with no bound waits the stall out, and the stub's
+  # success reports nothing.
+  STALLCTL="$(mutant_scripts stallctl lib/overseer-launch.sh)" || exit 1
+  mutate_file "$STALLCTL/lib/overseer-launch.sh" 'for candidate in timeout gtimeout; do' 'for candidate in; do'
+  rm -- "$STALLCTL/sync-base" && printf '#!/bin/sh\nsleep 5\n' > "$STALLCTL/sync-base" && chmod +x "$STALLCTL/sync-base" || exit 1
+  OVERSEE_BIN="$STALLCTL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
+  assert_eq "$RC|$(unsynced '[^ ]*')" "0|0" "control: a sync with no bound waits out a stalled sync-base and reports no timeout"
+  tm kill-window -t "$(recorded window)"
+else
+  echo "  skip  neither timeout nor gtimeout is installed; the sync bound rows did not run"
+fi
 
 echo "=== register asks kendex's inventory for other harnesses ==="
 # SessionStart is the producer of a harness other than the fallback's three.

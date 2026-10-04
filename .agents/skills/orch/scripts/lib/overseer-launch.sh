@@ -38,6 +38,8 @@
 #   ol_checkout_sync       the checkout a session opens in fast-forwarded
 #                          to its base branch's origin head, through
 #                          sync-base, before the session opens there
+#   ol_checkout_notice     a sync's refusal as the caller's keyed line, on
+#                          stderr and in the fleet log
 #   ol_session_open        the runtime's `create`, through overseer-host
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written before the first
@@ -61,17 +63,17 @@
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
 # line of its own, save ol_preference_entries' deprecation warning, because
-# the caller owns its own refusal prefix and words: ol_fleet_log_notice
-# prints its `fleet-log-unwritten` through the caller's `message`. Every
+# the caller owns its own refusal prefix and words: ol_checkout_notice and
+# ol_fleet_log_notice print theirs through the caller's `message`. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
 # keyed line.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
 # directory), DEP_ERR (a file), lib/lane-launch.sh and lib/lane-state.sh
 # sourced by the caller, and, of a caller that opens a session or writes a
-# notice to the fleet log, ol_succession_hook and `message KEY FIELD=VALUE...`
-# defined. Sourcing it defines names and runs nothing. Sourced,
-# never run.
+# notice to the fleet log, `message KEY FIELD=VALUE...` defined, with a
+# `checkout-unsynced` text of its own where it opens a session. Sourcing it
+# defines names and runs nothing. Sourced, never run.
 
 # The file a session's own event rows land in, which the record names: its
 # path is lib/session-rows.sh's, named by expansion as lib/lane-context.sh
@@ -662,26 +664,44 @@ ol_record_line_identity() { # LINE
 # ol_checkout_sync CWD — the checkout CWD lies in fast-forwarded to the
 # origin head of its base branch through `sync-base`, the one owner of that
 # fast-forward, so a merged hook, render or orch script is what a session
-# opened there loads. The start is the moment to move it: the tree is never
-# moved under a running overseer, and a predecessor is past its handoff. The
+# opened there loads. It runs at the handoff, just before `create`: in a
+# succession the predecessor still runs in that checkout, waiting on its
+# succession call, or is dead or walled. A succession abandoned after the
+# sync leaves the predecessor on the fast-forwarded tree, as a `sync-base`
+# run there after a merge does, and the launcher that called it, its own
+# source already loaded, calls the moved helpers for the rest of its run. The
 # checkout must have the base branch checked out, since `sync-base` moves
 # that branch wherever it is checked out, or its ref where it is checked out
 # nowhere, and would leave a tree on any other branch where it stands.
+#
+# `sync-base` runs under ORCH_OVERSEER_SYNC_TIMEOUT_S seconds, 60 by
+# default, which `timeout` or `gtimeout` holds where either is installed; a
+# host with neither, stock macOS, runs it unbounded. Its fetch never prompts
+# for a credential and gives up on an HTTP transfer slower than 1000 bytes a
+# second for 30 seconds. An origin that stalls is then one more refusal, and
+# the watch's dead-pane and walled-pane recovery, which runs a launch with no
+# bound of its own, still opens a successor.
+#
 # Returns 0 with the tree at that head, and 1 with OL_REASON=checkout-unsynced,
-# the tree left as it stood: OL_SYNC_CAUSE `not-worktree` for a directory in
-# no Git worktree, `base-unresolved` where resolve-base-branch named no base,
-# `off-base` for another branch or a detached head, `head-unread` where the
-# head could not be read, or the key `sync-base` refused under: `dirty`,
-# `fast-forward-failed` for a diverged base or an untracked file in the way,
-# `base-mismatch` for a base ahead of its origin, `fetch-failed` and the rest
-# of its keys. OL_SYNC_PATH is the checkout, OL_SYNC_FIX what clears the
-# cause, and the dependency's own lines are in DEP_ERR. The fix texts are this table's alone, so both launchers name one,
-# and name no path: the fleet log row that carries one is bounded by
-# ORCH_FLEET_LOG_ROW_BYTES, and the session reading it starts in that
-# checkout.
+# the tree left as it stood. OL_SYNC_CAUSE is `not-worktree` for a directory
+# in no Git worktree, `base-unresolved` where resolve-base-branch named no
+# base, `off-base` for another branch or a detached head and `head-unread`
+# where the head could not be read, all found before `sync-base` runs;
+# `sync-timeout` where the bound cut `sync-base` off; the key of the first
+# line of its stderr that starts `sync-base: `, which may follow Git's own
+# lines, such as a merge's `Already up to date.`: `dirty`,
+# `fast-forward-failed` for a diverged base or an untracked or ignored file
+# in the way, `base-mismatch` for a base ahead of its origin, `fetch-failed`
+# and the rest of its keys; or `sync-failed` where it exited nonzero with no
+# such line. OL_SYNC_PATH is the checkout, OL_SYNC_FIX what clears the cause,
+# and the dependency's own lines are in DEP_ERR. The fix texts are this
+# table's alone, so both launchers name one, and name no path: the fleet log
+# row that carries one is bounded by ORCH_FLEET_LOG_ROW_BYTES, and the session
+# reading it starts in that checkout.
 OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
 ol_checkout_sync() { # CWD
-  local base="" branch="" rc=0 run='then run .agents/skills/orch/scripts/sync-base'
+  local base="" branch="" rc=0 candidate bound=() seconds="${ORCH_OVERSEER_SYNC_TIMEOUT_S:-60}"
+  local run='then run .agents/skills/orch/scripts/sync-base'
   OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
   if ! OL_SYNC_PATH="$(git -C "$1" rev-parse --show-toplevel 2>"$DEP_ERR")"; then
     OL_SYNC_PATH="$1" OL_SYNC_CAUSE=not-worktree
@@ -695,20 +715,54 @@ ol_checkout_sync() { # CWD
       *) OL_SYNC_CAUSE=head-unread ;;
     esac
   fi
-  if [[ -z "$OL_SYNC_CAUSE" ]] && ! "$SCRIPT_DIR/sync-base" "$OL_SYNC_PATH" >/dev/null 2>"$DEP_ERR"; then
-    # The key is the first word of `sync-base`'s stable first line.
-    OL_SYNC_CAUSE="$(sed -n '1s/^sync-base: \([^ ]*\).*/\1/p' "$DEP_ERR")" || OL_SYNC_CAUSE=""
-    OL_SYNC_CAUSE="${OL_SYNC_CAUSE:-sync-failed}"
+  if [[ -z "$OL_SYNC_CAUSE" ]]; then
+    # `gtimeout` is the name a Homebrew coreutils install gives `timeout`.
+    # Only the bound answers 124: neither sync-base nor git exits so.
+    for candidate in timeout gtimeout; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        bound=("$candidate" "$seconds")
+        break
+      fi
+    done
+    rc=0
+    env GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30 \
+      ${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/sync-base" "$OL_SYNC_PATH" >/dev/null 2>"$DEP_ERR" || rc=$?
+    if ((rc == 124 && ${#bound[@]} > 0)); then
+      OL_SYNC_CAUSE=sync-timeout
+    elif ((rc != 0)); then
+      OL_SYNC_CAUSE="$(awk 'index($0, "sync-base: ") == 1 { $0 = substr($0, 12); sub(/ .*/, ""); print; exit }' "$DEP_ERR")" \
+        || OL_SYNC_CAUSE=""
+      OL_SYNC_CAUSE="${OL_SYNC_CAUSE:-sync-failed}"
+    fi
   fi
   [[ -n "$OL_SYNC_CAUSE" ]] || return 0
   case "$OL_SYNC_CAUSE" in
+    not-worktree) OL_SYNC_FIX="open the overseer in a Git checkout of its repository's base branch" ;;
+    base-unresolved) OL_SYNC_FIX="clear what resolve-base-branch refused for this checkout, $run" ;;
     off-base) OL_SYNC_FIX="switch from $branch to $base, $run" ;;
+    head-unread) OL_SYNC_FIX="repair the checkout's HEAD so git can read it, $run" ;;
+    sync-timeout) OL_SYNC_FIX="check that origin answers a fetch inside ${seconds}s, $run" ;;
     dirty) OL_SYNC_FIX="commit or discard the tracked changes, $run" ;;
-    fast-forward-failed | base-mismatch) OL_SYNC_FIX="bring $base back onto origin/$base, $run" ;;
+    fast-forward-failed) OL_SYNC_FIX="bring $base back onto origin/$base or move the untracked or ignored file the merge would overwrite, $run" ;;
+    base-mismatch) OL_SYNC_FIX="bring $base back onto origin/$base, $run" ;;
+    sync-failed) OL_SYNC_FIX="clear the failure sync-base printed, $run" ;;
     *) OL_SYNC_FIX="clear the cause sync-base names, $run" ;;
   esac
   OL_REASON=checkout-unsynced
   return 1
+}
+
+# ol_checkout_notice — ol_checkout_sync's refusal as the caller's
+# `checkout-unsynced cause= path= fix=` line on stderr, the dependency's lines
+# relayed under it, and that line without its path as one fleet log row
+# (ol_fleet_log_notice), which the next overseer reads at takeover. The row
+# leaves the path out: it is the checkout its reader starts in, and a row is
+# bounded by ORCH_FLEET_LOG_ROW_BYTES. The launch goes on whatever becomes of
+# the row.
+ol_checkout_notice() {
+  message checkout-unsynced "cause=$OL_SYNC_CAUSE" "path=$OL_SYNC_PATH" "fix=$OL_SYNC_FIX" >&2
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  ol_fleet_log_notice checkout-unsynced "cause=$OL_SYNC_CAUSE" "fix=$OL_SYNC_FIX"
 }
 
 # ol_session_open CWD NAME LINE PLACEMENT — the runtime's `create`: a session
@@ -717,11 +771,10 @@ ol_checkout_sync() { # CWD
 # (ol_record_exit), placed by PLACEMENT, which is
 # `--after SESSION` for a successor in its predecessor's session or `--session
 # NAME` for a first launch into a tmux session. The checkout is synced first
-# (ol_checkout_sync), whichever launcher opens it; a sync that refuses is the
-# caller's `ol_succession_hook checkout-unsynced`, with OL_SYNC_* set and the
-# dependency's lines in DEP_ERR, and the session opens on the tree as it
-# stands. Into OL_SESSION, OL_WINDOW and OL_SERVER. Returns 1 with
-# OL_REASON=create-failed; the provider's own line is in DEP_ERR.
+# (ol_checkout_sync), whichever launcher opens it; a sync that refuses is
+# ol_checkout_notice, and the session opens on the tree as it stands. Into
+# OL_SESSION, OL_WINDOW and OL_SERVER. Returns 1 with OL_REASON=create-failed;
+# the provider's own line is in DEP_ERR.
 #
 # OL_OPEN_OUT holds the provider's raw answer from the moment the call
 # returns, before it is parsed: a signal that lands during `create` runs its
@@ -731,7 +784,7 @@ ol_checkout_sync() { # CWD
 OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
 ol_session_open() { # CWD NAME LINE PLACEMENT_FLAG PLACEMENT_VALUE
   OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
-  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced
+  ol_checkout_sync "$1" || ol_checkout_notice
   OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$1" --name "$2" "$4" "$5" \
     --line "$(lane_single_quote "$SCRIPT_DIR/overseer-run") $3" 2>"$DEP_ERR")" \
     || { OL_REASON=create-failed; return 1; }
@@ -832,7 +885,10 @@ ol_session_abandon() {
 #   1. With PENDING `pending`, LINE and IDENTITY become the record's pending
 #      successor (ol_record_pending); `replay`, a relaunch of the line the
 #      record already holds, writes none.
-#   2. The runtime's `create` opens LINE in CWD at the session's base index.
+#   2. The checkout CWD lies in is fast-forwarded (ol_checkout_sync); one it
+#      refuses is the caller's `checkout-unsynced` line on stderr and in the
+#      fleet log (ol_checkout_notice), and the launch goes on. The runtime's
+#      `create` then opens LINE in CWD at the session's base index.
 #   3. The record names the successor (ol_record_write over OL_PRIOR), where
 #      the caller's ol_record_read could read one.
 #   4. The session is verified (ol_session_verify, LANE_VAR to WAIT_SECS).
@@ -894,8 +950,8 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # the fleet log's time from its own clock, so the record written here and the
 # one an overseer writes by hand are dated by one reader. Every overseer notice
 # the fleet log carries goes through here: the watch's, at its start and from
-# its passes, and oversee-succeed's refusal of a self-succession once its
-# successor launch began.
+# its passes, oversee-succeed's refusal of a self-succession once its
+# successor launch began, and either launcher's `checkout-unsynced`.
 ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
   local notice="$1" record="$2" errf="$3"
   shift 3

@@ -11,7 +11,7 @@
 #                        sync-base reads them from, so a mutant launch syncs
 #                        as a real one.
 #   checkout_advance     one more commit on origin's main, its sha printed:
-#                        every checkout of it is then one commit behind.
+#                        origin's main one commit further ahead.
 #   checkout_commit DIR  one local commit on DIR's branch, its sha printed.
 
 checkout_git() { git -c user.name=fixture -c user.email=fixture@example.com -c commit.gpgsign=false "$@"; }

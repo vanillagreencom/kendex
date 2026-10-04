@@ -477,7 +477,7 @@ run_succeed synced 'claude:fable:high'
 assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced '[^ ]*')" "0|no|$WANT|0" \
   "a succession fast-forwards a clean checkout behind origin to origin's head before the successor opens"
 SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_succession_hook checkout-unsynced' '  :'
+mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_checkout_notice' '  :'
 BEHIND="$(work_head)"
 checkout_advance >/dev/null || exit 1
 new_caller "$MARK"
@@ -490,7 +490,7 @@ printf 'local\n' >> "$TMP_ROOT/work/README"
 fleet_state
 new_caller "$MARK"
 run_succeed unsynced 'claude:fable:high'
-assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced dirty)|$(jq -r '[(.fleet_log // [])[] | select(.text | startswith("oversee-succeed: checkout-unsynced cause=dirty "))] | length' "$FLEET_STATE")" \
+assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced dirty)|$(jq -r '[(.fleet_log // [])[] | select((.text | startswith("oversee-succeed: checkout-unsynced cause=dirty ")) and (.text | contains(" path=") | not))] | length' "$FLEET_STATE")" \
   "0|no|$BEHIND|1|1" \
   "a dirty checkout leaves the succession running and prints one keyed line naming the fix, also in the fleet log"
 git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
