@@ -1,1 +1,0 @@
-- Pi Claude keeps the pending request as live input after compaction or history navigation, and answers a prompt sent right after an abort. Reported by Janque (#3623).

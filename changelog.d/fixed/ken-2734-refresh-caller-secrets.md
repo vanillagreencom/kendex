@@ -1,1 +1,0 @@
-- The shared refresh caller maps `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` to its same-named secrets. A v1.8.0 caller stops at the token step: fix it by hand or run the adopter by hand.

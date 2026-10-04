@@ -8,6 +8,39 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-04
+
+### Added
+
+- On Codex, the reviewer-stop-check and session-end-row hooks now install and run; session-end-row times out after 3 seconds instead of 30 on every harness, the longest Codex runs a session-end hook.
+- On Pi, the session-end-row and stop-failure-row hooks now install and run, and oversee-watch judges a Pi overseer's exit and usage limit from those rows instead of its pane.
+- Consumers can call the shared workflow `refresh-consumer.yml@v1`, which runs the refresh from the release that tag names.
+
+### Changed
+
+- The linear skill's app token requests every non-admin Linear data scope, initiatives and customers included. The first mint revokes every older app token; reissue the fleet token.
+- A consumer refresh run whose push GitHub refuses because the merge queue holds the rolling branch ends as deferred, not as a push error.
+- A consumer refresh run ends as deferred, before it refreshes, when its open rolling pull request is already queued, merged or closed.
+
+### Fixed
+
+- Command safety checks continued shell lines against the deny pattern. Memory caps split across continued lines are refused.
+- `kendex add` and the app picker keep declared tools and packages, `--commit` commits every file the run wrote unless it held your edits, and dropping a tool retires its shims and emptied files.
+- Disabling a Pi package Pi already turned off removes its `APPEND_SYSTEM.md` instructions, and the next `apply` or `refresh` follows the package's own `enabled` setting.
+- A Pi output style no longer reads as stale after a Pi package update.
+- `kendex update --git` and `install.sh --git` refuse a main build older than the installed release instead of moving a stable install back a version.
+- The shared refresh caller maps `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` to its same-named secrets. A v1.8.0 caller stops at the token step: fix it by hand or run the adopter by hand.
+- Pi Claude keeps the pending request as live input after compaction or history navigation, and answers a prompt sent right after an abort. Reported by Janque (#3623).
+- Main builds keep all platform targets until publication finishes, so later pushes cannot cancel a pending target in the active build.
+- Pi apply now removes a project `APPEND_SYSTEM.md` that is blank or holds only inherited global text, and a global style change no longer fails beside the last project package removal.
+- Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Prompt links, non-files, and Pi directory links outside the project block package changes.
+- `kendex verify --at-record` asks the install record for the dependencies each held package required at its recorded commit, not for ones its catalog added since.
+- Disabled hooks with declared companions pass strict verification after apply.
+
+### Security
+
+- The CI template runs credential scans with default-branch scripts, so a pull request cannot disable the scan by changing its scanner or installer.
+
 ## [1.8.0] - 2026-10-04
 
 ### Added

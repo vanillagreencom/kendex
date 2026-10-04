@@ -1,1 +1,0 @@
-- Pi apply now removes a project `APPEND_SYSTEM.md` that is blank or holds only inherited global text, and a global style change no longer fails beside the last project package removal.

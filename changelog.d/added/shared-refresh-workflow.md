@@ -1,1 +1,0 @@
-- Consumers can call the shared workflow `refresh-consumer.yml@v1`, which runs the refresh from the release that tag names.

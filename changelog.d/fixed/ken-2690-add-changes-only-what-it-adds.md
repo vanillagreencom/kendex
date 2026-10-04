@@ -1,1 +1,0 @@
-- `kendex add` and the app picker keep declared tools and packages, `--commit` commits every file the run wrote unless it held your edits, and dropping a tool retires its shims and emptied files.
