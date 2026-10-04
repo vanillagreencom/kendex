@@ -592,9 +592,11 @@ function applyProviderRegistration(trigger: string): void {
  *  already ran. */
 export const HISTORY_REPLACED_PROMPT = "Pi rewrote the conversation history before this message (compaction or history navigation). That history is complete, including the results of every tool call that has already run. The request above was still being answered when it was rewritten: continue it from where the history ends, and do not repeat a tool call whose result is already in the history.";
 
-/** Whether `a` and `b` are one user message Pi handed over twice. Pi passes
- *  its user messages to the provider unchanged, so a run captured from one
- *  callback keeps its timestamp and content in the next. */
+/** Whether `a` and `b` are one user message Pi handed over twice. Pi deep-copies
+ *  its context for every provider call (its extension context transform), so
+ *  the same message never arrives as the same object, only as a copy with the
+ *  same timestamp and content. The timestamp keeps apart two messages the user
+ *  sent with the same text. */
 function isSameUserMessage(a: Context["messages"][number], b: Context["messages"][number]): boolean {
 	return a.role === "user" && b.role === "user" && a.timestamp === b.timestamp && JSON.stringify(a.content) === JSON.stringify(b.content);
 }

@@ -46,7 +46,7 @@ const TOOL_OUTPUT = "tool output t0";
 const SUMMARY = "[summary] the earlier turns, condensed";
 const OLD_TRANSCRIPT = "what the killed child had already written";
 
-const user = (content) => ({ role: "user", content, timestamp: Date.now() });
+const user = (content, timestamp = Date.now()) => ({ role: "user", content, timestamp });
 const assistantText = (text) => ({ role: "assistant", content: [{ type: "text", text }], timestamp: Date.now() });
 const assistantToolCall = (id) => ({ role: "assistant", content: [{ type: "toolCall", id, name: "echo", arguments: { id } }], timestamp: Date.now() });
 const toolResult = (id, text) => ({ role: "toolResult", toolCallId: id, content: [{ type: "text", text }], timestamp: Date.now() });
@@ -425,41 +425,60 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		});
 	}
 
-	it("records no failure for a continuation whose child throws as the restart kills it", { timeout: 10_000 }, async () => {
-		await withBridge(async ({ root, calls, queued, firstQuery, diagPath }) => {
-			const continuation = {};
-			queued.push(() => throwingQuery(continuation));
+	// Pi deep-copies its context for every provider call, so the steer its run
+	// still holds is a copy of the captured one; a message the user sends again
+	// with the same text has its own timestamp.
+	const STEER_AT = 1_700_000_000_000;
+	for (const { held, trailing, prompt, sent } of [
+		{
+			held: "a copy of the queued steer",
+			trailing: (steer) => structuredClone(steer),
+			prompt: carried("steer one", "continue"),
+			sent: "the steer being answered, then the queued one Pi's run holds, sent once",
+		},
+		{
+			held: "a new message with the queued steer's text",
+			trailing: () => user("continue", STEER_AT + 1),
+			prompt: carried("steer one", "continue", "continue"),
+			sent: "the steer being answered, the queued one, then the new one with its text",
+		},
+	]) {
+		it(`records no failure for a continuation whose child throws as the restart kills it, when Pi's run holds ${held}`, { timeout: 10_000 }, async () => {
+			await withBridge(async ({ root, calls, queued, firstQuery, diagPath }) => {
+				const continuation = {};
+				queued.push(() => throwingQuery(continuation));
 
-			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
-			const steerTwo = user("steer two");
-			streamClaudeAgentSdk(model, piContext({ messages: steered, tools: [tool] }), { cwd: root });
-			streamClaudeAgentSdk(model, piContext({ messages: [...steered, steerTwo], tools: [tool] }), { cwd: root });
-			firstQuery.release();
-			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
+				const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
+				const steerTwo = user("continue", STEER_AT);
+				streamClaudeAgentSdk(model, piContext({ messages: steered, tools: [tool] }), { cwd: root });
+				streamClaudeAgentSdk(model, piContext({ messages: [...steered, steerTwo], tools: [tool] }), { cwd: root });
+				firstQuery.release();
+				assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
 
-			// The compaction summarized "steer one" away; pi's context still ends in
-			// "steer two", which the bridge also holds queued.
-			onPiHistoryReplaced("session_compact");
-			await collect(streamClaudeAgentSdk(model, piContext({
-				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), steerTwo],
-				tools: [tool],
-			}), { cwd: root }));
+				// The compaction summarized "steer one" away; pi's context ends in a
+				// user run the bridge's queued steer may or may not be part of.
+				onPiHistoryReplaced("session_compact");
+				await collect(streamClaudeAgentSdk(model, piContext({
+					messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), trailing(steerTwo)],
+					tools: [tool],
+				}), { cwd: root }));
 
-			assert.equal(calls.length, 3, "the replacement still runs after the child throws");
-			assert.equal(calls[2].prompt, carried("steer one", "steer two"), "the steer being answered, then the queued one Pi's run holds, sent once");
-			assert.notEqual(calls[2].options.resume, SESSION_ID, "on a session rotated away from the killed child");
-			assert.equal(
-				readFileSync(diagPath, "utf8").includes("deferred_user_messages_dropped"),
-				false,
-				"the kill is this restart's own doing, so it drops no input and diagnoses none",
-			);
-			assert.deepEqual(
-				importedMessages(root, calls[2].options.resume).filter((message) => typeof message.content === "string").map((message) => message.content),
-				[SUMMARY],
-				"and is not imported as history Claude would read as handled",
-			);
+				assert.equal(calls.length, 3, "the replacement still runs after the child throws");
+				assert.equal(calls[2].prompt, prompt, sent);
+				assert.notEqual(calls[2].options.resume, SESSION_ID, "on a session rotated away from the killed child");
+				assert.equal(
+					readFileSync(diagPath, "utf8").includes("deferred_user_messages_dropped"),
+					false,
+					"the kill is this restart's own doing, so it drops no input and diagnoses none",
+				);
+				assert.deepEqual(
+					importedMessages(root, calls[2].options.resume).filter((message) => typeof message.content === "string").map((message) => message.content),
+					[SUMMARY],
+					"and is not imported as history Claude would read as handled",
+				);
+			});
 		});
-	});
+	}
 
 	it("completes the handover when closing the stale query throws", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls }) => {
@@ -545,8 +564,16 @@ describe("source controls: the history restart's live prompt and cursor", () => 
 			source: "src/index.ts",
 			before: "const heldByPi = (message: Context[\"messages\"][number]) => trailingRun.some((held) => isSameUserMessage(held, message));",
 			after: "const heldByPi = (_message: Context[\"messages\"][number]) => false;",
-			pattern: "records no failure for a continuation whose child throws",
+			pattern: "when Pi's run holds a copy of the queued steer",
 			failure: /the steer being answered, then the queued one Pi's run holds, sent once/,
+		},
+		{
+			why: "a new message with a captured steer's text is taken for that steer",
+			source: "src/index.ts",
+			before: "a.timestamp === b.timestamp && ",
+			after: "",
+			pattern: "when Pi's run holds a new message with the queued steer's text",
+			failure: /the steer being answered, the queued one, then the new one with its text/,
 		},
 		{
 			why: "the replacement carries the request's text without its images",
