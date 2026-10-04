@@ -159,7 +159,7 @@ fn run_script(
                     .map(|dir| format!("{dir}:"))
                     .collect::<String>(),
                 bindir.display(),
-                host_path_without_kendex()
+                host_path_without_kendex(&std::env::var("PATH").unwrap_or_default(), home)
             ),
         )
         .output()
@@ -168,17 +168,66 @@ fn run_script(
     (output, urls)
 }
 
-/// The host's `PATH` with every directory holding a `kendex` left out. The
-/// script's `--git` check asks the `kendex` it finds on `PATH`, so a
-/// command installed on the machine running these tests would answer in
-/// place of the fixture's, and a run meant to find none would find it.
-fn host_path_without_kendex() -> String {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|dir| !Path::new(dir).join("kendex").exists())
+/// `host`, a `PATH` value, with every directory that holds a `kendex`
+/// replaced by a mirror under `home` that links each of its other entries.
+/// A run meant to find no installed `kendex` would otherwise find the
+/// machine's, while the tools beside it, `/usr/bin` holding a packaged
+/// `kendex` among them, still have to resolve.
+#[allow(clippy::unwrap_used)]
+fn host_path_without_kendex(host: &str, home: &Path) -> String {
+    host.split(':')
+        .enumerate()
+        .map(|(at, dir)| {
+            if !Path::new(dir).join("kendex").exists() {
+                return dir.to_owned();
+            }
+            let mirror = home.join(format!("host-path/{at}"));
+            fs::create_dir_all(&mirror).unwrap();
+            for entry in fs::read_dir(dir).unwrap() {
+                let name = entry.unwrap().file_name();
+                if name != "kendex" {
+                    std::os::unix::fs::symlink(Path::new(dir).join(&name), mirror.join(&name))
+                        .unwrap();
+                }
+            }
+            mirror.display().to_string()
+        })
         .collect::<Vec<_>>()
         .join(":")
+}
+
+/// A host directory holding both `kendex` and a tool the script runs
+/// leaves the tool on the child's `PATH` and the `kendex` off it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_host_path_keeps_every_tool_but_kendex() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = rooted(&dir);
+    let packaged = root.join("usr-bin");
+    fs::create_dir_all(&packaged).unwrap();
+    write_exe(
+        &packaged.join("kendex"),
+        "#!/bin/sh
+echo host kendex
+",
+    );
+    let bash = Command::new("/bin/sh")
+        .args(["-c", "command -v bash"])
+        .output()
+        .unwrap();
+    let bash = String::from_utf8(bash.stdout).unwrap();
+    std::os::unix::fs::symlink(bash.trim(), packaged.join("bash")).unwrap();
+    let path = host_path_without_kendex(&packaged.display().to_string(), &root.join("home"));
+    let resolved = Command::new("/bin/sh")
+        .args(["-c", "command -v bash; command -v kendex || echo no-kendex"])
+        .env_clear()
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(resolved.stdout).unwrap(),
+        format!("{}/home/host-path/0/bash\nno-kendex\n", root.display())
+    );
 }
 
 #[test]
@@ -314,8 +363,8 @@ enum Installed {
     NoCompare(&'static str),
 }
 
-/// The refusals install.sh's `--git` check over an installed command can
-/// end a run with, by the stable key each prints.
+/// The refusals the installed command's answers can end a `--git` run
+/// with, by the stable key each prints.
 const CHECK_REFUSALS: [&str; 3] = [
     "main-downgrade-refused",
     "installed-version-unreadable",
