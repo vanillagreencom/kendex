@@ -3,8 +3,9 @@
 # from either that checkout's preserved copy or the kendex release tree the
 # shared workflow checked out. It rebuilds the rolling branch from the
 # checkout, never executes the remote rolling branch, and pushes only after
-# the shared classifier measures the complete diff. Only render arms.
-# Overseers and maintainers read the pull request body's merge instructions.
+# the shared classifier measures the complete diff. Every class arms native
+# auto-merge on the head it published; the merge queue holds the merge until
+# the required approval, thread resolution and checks pass.
 # --templates-dir names the directory holding the refresh workflow template
 # to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
@@ -299,29 +300,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-if [ "$class" = render ]; then
-  merge_note='Render equality is verified. The refresh workflow arms auto-merge.'
-else
-  merge_note='Auto-merge stays disabled until review and CI gates pass, then the repository overseer arms this pull request on the merge queue, or a maintainer merges it through the queue where no overseer runs.'
-  if [ -n "$pr" ]; then
-    disable_status=0
-    gh pr merge "$pr" --repo "$GH_REPO" --disable-auto || disable_status=$?
-    if [ "$disable_status" -ne 0 ]; then
-      # GitHub refuses the disable once the pull request is queued, merged or
-      # closed.
-      # The read follows the refusal, because the pull request can enter the
-      # queue between any earlier read and this call.
-      refresh_lifecycle
-      case "$reason" in
-        queued | merged | closed)
-          printf 'refresh-state=deferred reason=%s\n' "$reason"
-          exit 0 ;;
-      esac
-      printf 'refresh-error=disable value=%s\n' "$disable_status" >&2
-      exit 1
-    fi
-  fi
-fi
+merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
@@ -362,7 +341,5 @@ if [ -z "$pr" ]; then
 else
   gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" >/dev/null
 fi
-if [ "$class" = render ]; then
-  gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
-fi
+gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
 printf 'refresh-state=%s pr=%s class=%s\n' "$state" "$pr" "$class"

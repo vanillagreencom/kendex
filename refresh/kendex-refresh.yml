@@ -4,9 +4,8 @@
 # their values come from this repository's kendex environment. The shared
 # workflow runs the refresh from the kendex release the major tag names.
 # Opening a pull request needs that repository's app token.
-# Only render arms auto-merge. After review and CI gates pass for a non-render
-# refresh, the repository overseer arms it on the merge queue, or a maintainer
-# merges it through the queue where no overseer runs.
+# Every class arms auto-merge. The merge queue merges the refresh once the
+# required approval, thread resolution and checks pass.
 # The instant repository_dispatch signal needs the organization's lanes app
 # and the catalog's dispatch workflow; it is organization wiring.
 name: Refresh kendex

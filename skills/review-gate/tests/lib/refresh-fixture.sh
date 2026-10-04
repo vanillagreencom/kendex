@@ -85,9 +85,9 @@ run_refresh_command() {
 # RUNNER_ARGS, an array, holds the runner's own arguments.
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
-  rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/disable-refused" "$TMP/state/refreshed"
+  rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/refreshed"
   : >"$TMP/state/summary"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISABLE_MODE="${DISABLE_MODE:-normal}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
 }
 
@@ -113,29 +113,6 @@ refresh_push_matches() { # EXIT REASON STARTS
     /^git push$/ { pushes++; pushed = 1 }
     /^api graphql / { if (pushed) queries++; else before++ }
     END { if (pushes != 1 || queries != 1 || before != starts) exit 1 }
-  ' "$TMP/state/calls" || return 1
-  ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"
-}
-
-# A refused disable reads the lifecycle once at run start and once after the
-# refusal, and leaves the branch and the pull request alone.
-refresh_disable_matches() { # EXIT REASON
-  local deferred_count
-  [ "$RC" -eq "$1" ] || return 1
-  if [ "$1" -eq 0 ]; then
-    deferred_count="$(grep -c '^refresh-state=deferred ' <<<"$OUT")" || return 1
-    [ "$deferred_count" -eq 1 ] || return 1
-    grep -qxF "refresh-state=deferred reason=$2" <<<"$OUT" || return 1
-  else
-    case "$2" in queued | merged | closed) return 1 ;; esac
-    grep -qxF 'refresh-error=disable value=1' <<<"$OUT" || return 1
-    if grep -q '^refresh-state=deferred ' <<<"$OUT"; then return 1; fi
-  fi
-  awk '
-    /^pr merge .* --disable-auto$/ { disables++; disabled = 1 }
-    /^api graphql / { if (disabled) queries++; else before++ }
-    /^git push$/ { exit 1 }
-    END { if (disables != 1 || queries != 1 || before != 1) exit 1 }
   ' "$TMP/state/calls" || return 1
   ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"
 }
@@ -166,13 +143,18 @@ reset_default() {
   git -C "$repo" checkout -q main
 }
 
-# Assert the runner's publication record, body data and arm decision together.
-refresh_class_matches() { # CLASS STATE ARM REASON METHOD
+# Assert the runner's publication record, body data and arm together. The arm
+# names the rolling head the remote holds, and no disable follows it.
+refresh_class_matches() { # CLASS STATE REASON METHOD
+  local head
+  head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
   [ "$RC" -eq 0 ] &&
     grep -qxF -- "refresh-state=$2 pr=1 class=$1" <<<"$OUT" &&
-    grep -qxF -- "class: class=$1 measured=true $4" "$TMP/state/body" &&
-    grep -qF -- "api --method $5 repos/acme/test/pulls" "$TMP/state/calls" &&
-    if [ "$3" = yes ]; then [ -f "$TMP/state/armed" ]; else [ ! -f "$TMP/state/armed" ]; fi
+    grep -qxF -- "class: class=$1 measured=true $3" "$TMP/state/body" &&
+    grep -qF -- "api --method $4 repos/acme/test/pulls" "$TMP/state/calls" &&
+    grep -qxF -- "pr merge 1 --repo acme/test --auto --squash --match-head-commit $head" "$TMP/state/calls" &&
+    ! grep -qF -- '--disable-auto' "$TMP/state/calls" &&
+    [ -f "$TMP/state/armed" ]
 }
 
 refresh_stopped_at_class() { # REMOTE_HEAD

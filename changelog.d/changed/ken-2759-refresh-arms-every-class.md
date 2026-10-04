@@ -1,0 +1,1 @@
+- A consumer refresh pull request of any change class now arms auto-merge and merges once its required approval, thread resolution and checks pass. Before, only `render` armed.
