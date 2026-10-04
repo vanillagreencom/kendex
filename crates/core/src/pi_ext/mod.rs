@@ -471,15 +471,60 @@ fn write_append_system(
     enabled: bool,
 ) -> Result<()> {
     let path = append_system_path(scope_root);
-    let Some(block) = append_system_block(env, scope_root, package, dest, enabled)? else {
-        return strip_append_system(&path, &package.name);
-    };
     let current = read_if_exists(&path)?.unwrap_or_default();
-    let next = upsert_marker_block(&current, &package.name, &block);
+    let mut next = match append_system_block(env, scope_root, package, dest, enabled)? {
+        Some(block) => upsert_marker_block(&current, &package.name, &block),
+        None => remove_marker_block(&current, &package.name),
+    };
+    if let Some(edit) = inherited_edit(env, scope_root)? {
+        next = edit.apply(&next).map_err(|message| CoreError::ConfigEdit {
+            path: path.clone(),
+            message,
+        })?;
+    }
     if next == current {
         return Ok(());
     }
+    if next.trim().is_empty() {
+        return std::fs::remove_file(&path).map_err(|e| CoreError::io(&path, e));
+    }
     atomic_write(&path, &next)
+}
+
+/// Pi reads only the trusted project's append file. Keep inherited content
+/// in one block so reapply can remove packages and styles that left globally.
+pub(crate) fn inherited_edit(env: &Env, root: &Path) -> Result<Option<ConfigEdit>> {
+    let global = scope_root(env, &crate::model::Scope::Global)?;
+    if root == global {
+        return Ok(None);
+    }
+    let mut blocks = Vec::new();
+    for name in list_installed(&global)? {
+        let enabled = package_enabled(&settings_path(&global), &name)? == Some(true);
+        let dest = package_path(&global, &name)?;
+        if let Some(block) = append_system_block(env, root, &read(&dest)?, &dest, enabled)? {
+            blocks.push(block);
+        }
+    }
+    let global_text = read_if_exists(&append_system_path(&global))?.unwrap_or_default();
+    for name in crate::configedit::style_blocks(&global_text) {
+        if let Some(block) =
+            crate::configedit::marker_block(&global_text, &format!("output-style-{name}"))
+        {
+            let mut lines: Vec<_> = block.lines().skip(1).collect();
+            lines.pop();
+            blocks.push(lines.join("\n"));
+        }
+    }
+    let name = "inherited-global".to_owned();
+    Ok(Some(if blocks.is_empty() {
+        ConfigEdit::RemoveMarkerBlock { name }
+    } else {
+        ConfigEdit::UpsertMarkerBlock {
+            name,
+            block: blocks.join("\n\n"),
+        }
+    }))
 }
 
 /// Drop the package's block; a file with nothing left in it is deleted

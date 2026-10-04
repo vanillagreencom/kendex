@@ -294,8 +294,8 @@ pub fn plan_scope(
 }
 
 /// Finalize the kept Pi records and plan the native switches a declaration
-/// changed; each package's `APPEND_SYSTEM.md` edit joins that file's other
-/// config edits.
+/// changed and the project's inherited instructions. Each append-file edit
+/// joins that file's other config edits.
 fn plan_pi_switches(
     env: &Env,
     scope: &Scope,
@@ -318,6 +318,15 @@ fn plan_pi_switches(
     )?;
     for (path, label, edit) in edits {
         config_edits.push(path, label, edit);
+    }
+    if let Scope::Project { root } = scope {
+        let pi_root = root.join(".pi");
+        let path = crate::pi_ext::append_system_path(&pi_root);
+        if (path.exists() || config_edits.by_file.contains_key(&path))
+            && let Some(edit) = crate::pi_ext::inherited_edit(env, &pi_root)?
+        {
+            config_edits.push(path, "global Pi instructions".into(), edit);
+        }
     }
     Ok(drift)
 }

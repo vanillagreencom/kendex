@@ -79,6 +79,124 @@ fn install(f: &Fixture) {
 
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+fn project_append_keeps_global_instructions_under_merged_settings() {
+    use kendex_core::configedit::{marker_block, upsert_marker_block};
+    use kendex_core::pi_ext;
+    use serde_json::json;
+
+    for (global_setting, project_setting, included) in [
+        (None, None, true),
+        (Some(json!(false)), None, false),
+        (Some(json!(true)), Some(json!(false)), false),
+        (Some(json!(false)), Some(json!(true)), true),
+        (Some(json!(false)), Some(json!(null)), true),
+    ] {
+        let f = fixture(false, &[HarnessId::Pi]);
+        let global = pi_ext::scope_root(&f.env, &Scope::Global).unwrap();
+        let project = f.project.join(".pi");
+        for (name, text, root, enabled) in [
+            ("always", "Global tools.", &global, true),
+            ("configured", "Configured tools.", &global, true),
+            ("native-off", "Disabled tools.", &global, false),
+            ("local", "Project tools.", &project, true),
+        ] {
+            let source = f.source.join("pi-extensions").join(name);
+            fs::create_dir_all(&source).unwrap();
+            fs::write(
+                source.join("package.json"),
+                json!({"name": name, "pi": {"appendSystem": "system.md"}}).to_string(),
+            )
+            .unwrap();
+            fs::write(source.join("system.md"), text).unwrap();
+            pi_ext::install(&f.env, root, &source, enabled).unwrap();
+        }
+        assert!(
+            fs::read_to_string(pi_ext::append_system_path(&project))
+                .unwrap()
+                .contains("Global tools.")
+        );
+        for (root, setting) in [(&global, global_setting), (&project, project_setting)] {
+            let path = pi_ext::settings_path(root);
+            let mut value: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            if let Some(setting) = setting {
+                value["kendex"] =
+                    json!({"extensionManager": {"config": {"configured": {"enabled": setting}}}});
+            }
+            fs::write(path, value.to_string()).unwrap();
+        }
+        let global_append = pi_ext::append_system_path(&global);
+        let global_text = fs::read_to_string(&global_append).unwrap();
+        fs::write(
+            &global_append,
+            upsert_marker_block(&global_text, "output-style-global", "Global style."),
+        )
+        .unwrap();
+        let (_, _, append) = paths(&f);
+        let local = fs::read_to_string(&append).unwrap();
+        fs::write(&append, format!("Personal instructions.\n{local}")).unwrap();
+        let global_before = fs::read(&global_append).unwrap();
+        install(&f);
+        let text = fs::read_to_string(&append).unwrap();
+        assert!(text.starts_with("Personal instructions.\n"));
+        assert!(text.contains("Global tools."));
+        assert_eq!(text.contains("Configured tools."), included);
+        assert!(!text.contains("Disabled tools."));
+        assert!(text.contains("Project tools."));
+        assert!(text.contains("Global style."));
+        assert!(
+            marker_block(&text, "output-style-STE")
+                .unwrap()
+                .contains("Write short sentences.")
+        );
+        assert_eq!(fs::read(&global_append).unwrap(), global_before);
+        install(&f);
+        assert_eq!(fs::read_to_string(&append).unwrap(), text);
+        // A project without a local output style still needs inheritance.
+        let path = manifest::manifest_path(&f.env, &f.scope);
+        let mut declared = manifest::load_current(&path).unwrap().unwrap();
+        declared.output_styles.clear();
+        fs::write(&path, toml::to_string(&declared).unwrap()).unwrap();
+        install(&f);
+        assert!(
+            fs::read_to_string(&append)
+                .unwrap()
+                .contains("Global tools.")
+        );
+        pi_ext::remove(&f.env, &global, "always").unwrap();
+        fs::write(&global_append, "").unwrap();
+        install(&f);
+        let text = fs::read_to_string(&append).unwrap();
+        assert!(!text.contains("Global tools."));
+        assert!(!text.contains("Global style."));
+        assert!(text.contains("Project tools."));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+fn a_new_project_output_style_keeps_global_instructions() {
+    let f = fixture(false, &[HarnessId::Pi]);
+    let global = kendex_core::pi_ext::scope_root(&f.env, &Scope::Global).unwrap();
+    let source = f.source.join("pi-extensions/global");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("package.json"),
+        r#"{"name":"global","pi":{"appendSystem":"system.md"}}"#,
+    )
+    .unwrap();
+    fs::write(source.join("system.md"), "Global tools.").unwrap();
+    kendex_core::pi_ext::install(&f.env, &global, &source, true).unwrap();
+    let (_, _, append) = paths(&f);
+    assert!(!append.exists());
+    install(&f);
+    let text = fs::read_to_string(&append).unwrap();
+    assert!(text.contains("Global tools."));
+    assert!(text.contains("Write short sentences."));
+}
+
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn routes_reapply_and_record_only_owned_content() {
     for global in [false, true] {
         let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);

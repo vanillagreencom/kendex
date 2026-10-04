@@ -1,0 +1,1 @@
+- Pi projects retain global package instructions and output styles when they have their own append file. Project package settings control inherited instructions.
