@@ -34,7 +34,7 @@ Run `scripts/pr-watch.sh` through the harness's wake-up mechanism. Read its atte
 
 ## Organization standard
 
-Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provision-environment.sh --org ORG` from the organization owner's machine to provision app-secret environments. Settings and repository wiring: [references/adoption.md](references/adoption.md).
+Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provision-environment.sh --org ORG` from the organization owner's machine to provision app-secret environments, adding `--repo ORG/NAME` to provision one repository. Settings and repository wiring: [references/adoption.md](references/adoption.md).
 
 ## Consumer refresh
 

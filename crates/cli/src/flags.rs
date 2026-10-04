@@ -71,6 +71,9 @@ pub struct AddFlags {
     /// Say yes to the repository changes a package declares
     #[arg(long)]
     allow_repo_effects: bool,
+    /// Write a project setting a package here declares, as KEY=VALUE; a key kendex.settings.toml already assigns keeps its value
+    #[arg(long, value_name = "KEY=VALUE", value_parser = commands::add::parse_setting)]
+    setting: Vec<kendex_core::settings_file::SuppliedSetting>,
     #[command(flatten)]
     throwaway: commands::project::ThrowawayFlag,
 }
@@ -99,6 +102,7 @@ impl AddFlags {
             no_auto_skills: self.no_auto_skills,
             hold: self.hold,
             allow_repo_effects: self.allow_repo_effects,
+            setting: self.setting,
             throwaway: self.throwaway,
             subscription: None,
         }

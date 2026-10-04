@@ -20,6 +20,7 @@ mod width;
 
 mod add_kinds;
 mod add_picker_terminal;
+mod add_setting;
 mod bookmark_cli;
 mod bundles_cli;
 mod catalog_check;

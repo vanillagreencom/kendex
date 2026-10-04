@@ -34,6 +34,8 @@ pub struct AddArgs {
     pub no_auto_skills: bool,
     pub hold: bool,
     pub allow_repo_effects: bool,
+    /// Project settings to write, each for a declared key.
+    pub setting: Vec<kendex_core::settings_file::SuppliedSetting>,
     pub throwaway: super::project::ThrowawayFlag,
     /// The subscription to install from, where the verb has already
     /// resolved which one carries what it installs. It is read in the
@@ -84,6 +86,19 @@ fn settle_targets(
     Ok(())
 }
 
+/// One `--setting` value: the key, then the first `=`, then the value,
+/// which may hold further `=` signs. Whether the key is declared and the
+/// value one the loaders read is the plan's to judge.
+pub fn parse_setting(text: &str) -> Result<kendex_core::settings_file::SuppliedSetting, String> {
+    let (key, value) = text
+        .split_once('=')
+        .ok_or_else(|| format!("{text} is not KEY=VALUE"))?;
+    Ok(kendex_core::settings_file::SuppliedSetting {
+        key: key.to_owned(),
+        value: value.to_owned(),
+    })
+}
+
 fn split(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -122,6 +137,12 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         && let Ok(kendex_core::source_ref::SourceRef::Collection { id }) =
             kendex_core::source_ref::parse_typed(reference)
     {
+        if !args.setting.is_empty() {
+            return Err(
+                "a collection link installs its own set; give --setting to an add that names its packages"
+                    .into(),
+            );
+        }
         return super::add_collection::run(env, &scope, &id, args.yes, args.allow_repo_effects);
     }
 
@@ -178,6 +199,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         optional: split(&args.optional),
         bundles,
         hold: args.hold,
+        settings: std::mem::take(&mut args.setting),
     };
     settle_targets(env, &scope, &mut request, &args)?;
     let planned = {

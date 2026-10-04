@@ -42,6 +42,11 @@ pub enum SettingsRefusal {
     #[error("{key} is not a setting '{skill}' declares, so nothing here writes it")]
     Undeclared { skill: String, key: String },
 
+    #[error(
+        "{key} is not a setting any package installed in this project declares, so nothing here writes it"
+    )]
+    NotDeclaredHere { key: String },
+
     #[error("{key} cannot be set here — {problem}")]
     Value { key: String, problem: String },
 
@@ -149,6 +154,16 @@ pub enum SettingsEditValue {
     },
     /// Write the template default of the skill this edit names.
     Reset,
+}
+
+/// A value an install supplies for a declared key, named by the key
+/// alone: which package declares it is the plan's to resolve. It lands
+/// only where the file assigns the key nowhere, so a value the consumer
+/// already assigned stays as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppliedSetting {
+    pub key: String,
+    pub value: String,
 }
 
 /// A scope plan's settings half: the edits, and what the file was when

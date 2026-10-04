@@ -3,7 +3,8 @@
 # repository, one unprovisioned repository and one archived repository: a
 # dry run plans secret writes in both and writes nothing, each
 # drift is converged and both repositories get the supplied secret values,
-# and a run that cannot enumerate every repository or has no secret value
+# --repo provisions the one repository it names and touches no other, and
+# a run that cannot enumerate every repository or has no secret value
 # writes nothing.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -259,6 +260,38 @@ else
   bad "a repository after a failed one still gets both secret writes (rc=$RC)" "$RAW"
 fi
 
+echo "=== --repo provisions that repository alone ==="
+# The organization reads still run; acme/done is neither read nor written.
+dir="$TMP/one-repository"
+world "$dir" "" "" ""
+# The copy carries the reads earlier runs logged against BASE.
+rm -f -- "${dir:?}/.urls.log"
+run "$dir" "" yes --org acme --repo acme/fresh
+want='provision repo=acme/fresh result=created
+  step=create-environment value=kendex
+  step=add-policy value=branch:trunk
+  step=secret value=APP_ID result=updated
+  step=secret value=APP_KEY result=updated
+provision-total repositories=1 changed=1 current=0 failed=0'
+want_writes='PUT repos/acme/fresh/environments/kendex
+POST repos/acme/fresh/environments/kendex/deployment-branch-policies
+secret-set repo=acme/fresh env=kendex name=APP_ID
+secret-set repo=acme/fresh env=kendex name=APP_KEY'
+one_repository() { # whether the last run is the --repo result above
+  [ "$RC" -eq 0 ] && [ "$REPORT" = "$want" ] && [ "$(write_shapes)" = "$want_writes" ] &&
+    grep -qx 'orgs/acme/installations' "$dir/.urls.log" && grep -qx 'orgs/acme' "$dir/.urls.log" &&
+    ! grep -q 'repos/acme/done' "$dir/.urls.log"
+}
+if one_repository; then
+  ok "only acme/fresh is read and provisioned, after the organization's installation and count reads"
+else
+  bad "--repo acme/fresh (rc=$RC)" "$RAW
+writes:
+$WRITES
+reads:
+$(cat "$dir/.urls.log" 2>/dev/null || true)"
+fi
+
 echo "=== nothing is attempted ==="
 # A PATH that holds bash and dirname and no jq.
 NOJQ="$TMP/nojq"
@@ -293,7 +326,12 @@ while IFS='~' read -r name fail files edits values path args key consumer value;
   fi
 done <<ROWS
 no organization~~~~yes~~--dry-run~review-gate-error=org-missing
-an unknown argument~~~~yes~~--org acme --repo acme/done~review-gate-error=unknown-argument
+an unknown argument~~~~yes~~--org acme --repository acme/done~review-gate-error=unknown-argument
+--repo without a repository~~~~yes~~--org acme --repo~review-gate-error=repo-missing
+--repo naming another organization's repository~~~~yes~~--org acme --repo other/done~review-gate-error=repository-unlisted~~other/done
+--repo naming an archived repository~~~~yes~~--org acme --repo acme/old~review-gate-error=repository-unlisted~~acme/old
+--repo with the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~yes~~--org acme --repo acme/fresh~review-gate-error=app-selection
+--repo with a repository the credential cannot see~~organization.json~.total_private_repos = 2~yes~~--org acme --repo acme/fresh~review-gate-error=repositories-partial
 a secret value unset~~~~no~~--org acme~review-gate-error=secret-value-missing
 a secret value exported empty~~~~empty-id~~--org acme~review-gate-error=secret-value-missing~~APP_ID
 a secret named for a shell variable the environment lacks~~~~yes~~--org acme~review-gate-error=secret-value-missing~shell~BASH_VERSION
@@ -379,6 +417,23 @@ else
   bad "control: contexts scope (rc=$RC)" "$RAW"
 fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
+# The selector's control: a copy whose listing ignores --repo provisions
+# acme/done beside acme/fresh.
+cp "$SKILL/scripts/provision-environment.sh" "$TMP/provision.keep"
+file_edit "$SKILL" scripts/provision-environment.sh 1 '^  \[ -z "\$REPO" \] \|\| \[ "\$full" = "\$REPO" \] \|\| continue$' 's/^  \[ -z "\$REPO" \] || \[ "\$full" = "\$REPO" \] || continue$/  true/'
+dir="$TMP/control-one-repository"
+world "$dir" "" "" ""
+rm -f -- "${dir:?}/.urls.log"
+run "$dir" "" yes --org acme --repo acme/fresh
+if ! one_repository && grep -q '^secret-set repo=acme/done ' <<<"$WRITES"; then
+  ok 'control: a listing that ignores --repo writes acme/done too'
+else
+  bad "control: --repo selection (rc=$RC)" "$RAW
+writes: $WRITES"
+fi
+cp "$TMP/provision.keep" "$SKILL/scripts/provision-environment.sh"
+chmod +x "$SKILL/scripts/provision-environment.sh"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

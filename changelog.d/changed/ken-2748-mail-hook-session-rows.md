@@ -1,0 +1,1 @@
+- Installing `lane-mail-check` also installs `session-start-row`, `session-end-row` and `stop-failure-row`, so the fleet overseer reads session rows.

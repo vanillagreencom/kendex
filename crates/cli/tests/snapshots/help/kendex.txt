@@ -111,6 +111,10 @@ Options:
       --allow-repo-effects
           Say yes to the repository changes a package declares
 
+      --setting <KEY=VALUE>
+          Write a project setting a package here declares, as KEY=VALUE; a key
+          kendex.settings.toml already assigns keeps its value
+
       --throwaway
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused

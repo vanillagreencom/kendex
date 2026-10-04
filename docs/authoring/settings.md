@@ -10,10 +10,11 @@ A skill may declare credentials and no settings. A template with a `[secrets]` t
 
 Seeding is a skill's alone: the same file under an agent, hook, command or MCP server installs normally and seeds nothing. It runs at project scope for an enabled skill at least one harness there targets; a global install writes nothing. A rendering the pass refuses does not take the settings write with it.
 
-Two operations add keys to a consumer's `kendex.settings.toml`:
+Three operations add keys to a consumer's `kendex.settings.toml`:
 
 - An arrival writes the keys the template marks `# required`, once. Arrival is the consumer's `kendex.toml` gaining the declaration, read expanded: a bundle arrives its members, a skill arrives the dependencies it pulls in. Only `add` gains a declaration. Seeding on refresh writes nothing and keeps deleted keys absent. A declaration written by hand has spent the arrival; removing and re-adding the skill is the way back.
 - A save from the app writes the key it names, marked or not, inserting the assignment when there is none.
+- `kendex add --setting KEY=VALUE` writes a key a package installed in the project declares, marked or not, in the same write as the arrival's seeds and under the declaration a save would use. It writes only where the file assigns the key nowhere: an assigned key keeps its value, and the plan names it where the two differ. A key no package there declares, and a value the loaders would refuse, stop the add before it writes.
 
 Compatibility is a separate write: the [source-aware agent resolver](../architecture/sources.md) replaces complete legacy `agent:` tokens in an existing `[env].LINEAR_AGENT_LABELS` value, including on refresh without an arriving skill. It preserves comments and unrelated settings and emits one warning per old name with the affected setting. It does not restore deleted keys. The owner is `crates/core/src/source/config/agent_names.rs`; `crates/core/tests/agent_aliases.rs` proves the alias-only write.
 

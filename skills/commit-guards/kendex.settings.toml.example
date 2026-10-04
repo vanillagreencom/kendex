@@ -90,3 +90,9 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""
 # one of them, and a skipped check prints `pre-commit: local-entry=skipped`.
 # Empty runs it on every commit.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = ""
+
+# Command text the command-safety hook refuses before a shell runs it, as
+# a POSIX extended regular expression. The hook reads it through this
+# skill's settings loader where the command-safety bundle installs it. The
+# default matches only empty command text, so it refuses nothing.
+COMMAND_SAFETY_DENY_PATTERN = "^$"

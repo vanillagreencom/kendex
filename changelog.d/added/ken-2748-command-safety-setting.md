@@ -1,0 +1,1 @@
+- commit-guards declares `COMMAND_SAFETY_DENY_PATTERN`, so the Customize tab and `kendex add --setting` can set the command-safety hook's pattern.

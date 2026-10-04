@@ -4,10 +4,11 @@
 # .agents/skills/review-gate/scripts/.
 #
 # It converges the standard's environment in every repository of one
-# organization: the environment exists, deploys from the repository's
-# default branch only, and holds each secret the standard names. Its name
-# and secret names are the REVIEW_GATE_STANDARD_ENVIRONMENT and
-# REVIEW_GATE_STANDARD_SECRETS settings, read through lib/standard.sh.
+# organization, or in the one --repo names: the environment exists,
+# deploys from the repository's default branch only, and holds each secret
+# the standard names. Its name and secret names are the
+# REVIEW_GATE_STANDARD_ENVIRONMENT and REVIEW_GATE_STANDARD_SECRETS
+# settings, read through lib/standard.sh.
 # Creating an environment needs Administration write and setting an
 # environment secret needs Environments write, which no lane credential may
 # hold, so this runs from the organization owner's own machine under the
@@ -41,13 +42,13 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: provision-environment.sh --org ORG [--dry-run]
+Usage: provision-environment.sh --org ORG [--repo ORG/NAME] [--dry-run]
        provision-environment.sh --help
 
 Creates or corrects the organization standard's environment in every
-repository of ORG that is not archived. Three review-gate settings, resolved
-from the current directory like every other, name the standard; each must
-be set and non-empty:
+repository of ORG that is not archived, or in the one --repo names. Three
+review-gate settings, resolved from the current directory like every other,
+name the standard; each must be set and non-empty:
   REVIEW_GATE_STANDARD_APP          the app installed on every repository
   REVIEW_GATE_STANDARD_ENVIRONMENT  the environment's name
   REVIEW_GATE_STANDARD_SECRETS      its secret names, `;`-separated
@@ -85,6 +86,10 @@ with REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_PRIVATE_KEY",
 A run that is not --dry-run refuses before any write when one is unset or
 empty.
 
+--repo     provisions that one repository of ORG alone, named as the
+           organization's repository list spells it; no other repository's
+           environment is read or written. The installation and
+           repository-count checks still run over the whole organization.
 --dry-run  reads everything and writes nothing: each repository's record
            names the steps a run would take, including would-update for
            every secret. No secret value is needed.
@@ -122,7 +127,8 @@ Exit codes:
      unset or empty, a malformed bypass entry, the installation, the organization or the
      repositories could not be read, the app not installed on all
      repositories, a repository list shorter than the organization's
-     count, or no repository that is not archived)
+     count, no repository that is not archived, or a --repo that is not
+     one of them)
 USAGE
 }
 
@@ -132,6 +138,7 @@ die() { # CODE VALUE MESSAGE
 }
 
 ORG=""
+REPO=""
 DRY_RUN=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -142,6 +149,11 @@ while [ "$#" -gt 0 ]; do
     --org)
       [ "$#" -ge 2 ] && [ -n "$2" ] || die org-missing "" "--org needs the organization's login"
       ORG="$2"
+      shift
+      ;;
+    --repo)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || die repo-missing "" "--repo needs the repository as ORG/NAME"
+      REPO="$2"
       shift
       ;;
     --dry-run) DRY_RUN=1 ;;
@@ -212,13 +224,19 @@ REPOS=""
 while IFS='	' read -r full branch archived; do
   [ -n "$full" ] || continue
   LISTED=$((LISTED + 1))
-  [ "$archived" = true ] || REPOS="${REPOS:+$REPOS
+  [ "$archived" != true ] || continue
+  # The selector narrows the writes, never the count above it.
+  [ -z "$REPO" ] || [ "$full" = "$REPO" ] || continue
+  REPOS="${REPOS:+$REPOS
 }$full	$branch"
 done <<EOF_LISTED
 $GH_OUT
 EOF_LISTED
 [ "$LISTED" -ge "$OWNED" ] ||
   die repositories-partial "$LISTED/$OWNED" "the credential lists $LISTED of the $OWNED repositories $ORG owns; a token limited to some repositories hides the rest, so run this under the owner's credential over all of them"
+if [ -z "$REPOS" ] && [ -n "$REPO" ]; then
+  die repository-unlisted "$REPO" "$REPO is not a repository of $ORG that is not archived; name it as the organization's repository list spells it"
+fi
 [ -n "$REPOS" ] || die repositories-none "$ORG" "$ORG has no repository that is not archived, so there is nothing to provision"
 
 # ------------------------------------------------------------- steps ---

@@ -584,6 +584,10 @@ pub struct PlanOptions {
     /// plan rather than a second write after it: one `WriteFile` carries
     /// the seeds and these edits together, under one precondition.
     pub settings_draft: Option<crate::settings_file::SettingsDraft>,
+    /// Values an install supplies for declared keys, by key. Planned with
+    /// the seeds and edits as the same one write, and only for a key the
+    /// file assigns nowhere: an assigned value is the consumer's.
+    pub supplied_settings: Vec<crate::settings_file::SuppliedSetting>,
     /// Credentials a person typed, the private file they are destined
     /// for, and the base of the copy that file was read as. A separate
     /// draft from the settings one because the two write different files

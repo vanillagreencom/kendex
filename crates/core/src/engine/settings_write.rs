@@ -5,7 +5,8 @@
 //! kendex's own records; this one is the
 //! consumer's, tracked in their repository, and a pass may put a line in
 //! it only when the skill the template comes from is arriving here, a
-//! save names the key, or the shared agent resolver replaces legacy labels.
+//! save names the key, an install supplies a value for a key the file
+//! leaves unassigned, or the shared agent resolver replaces legacy labels.
 //! Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
 //! seeding rule lives in [`crate::settings_seed`]; compatibility lives in
@@ -40,8 +41,10 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 }
 
 /// What this pass writes into the project's kendex.settings.toml. A skill
-/// arriving here writes the keys its template marks `# required`, and a
-/// save writes the keys it names. Seeding never overwrites an assigned key.
+/// arriving here writes the keys its template marks `# required`, a save
+/// writes the keys it names, and an install writes the values it supplies
+/// for keys the file assigns nowhere. Seeding never overwrites an assigned
+/// key, and neither does a supplied value.
 /// The shared agent resolver can replace legacy labels in an existing
 /// taxonomy even without an arrival or save.
 ///
@@ -73,19 +76,20 @@ pub(super) fn plan_settings_seed(
             }
             .into());
         }
+        if let Some(supplied) = options.supplied_settings.first() {
+            return Err(crate::settings_file::SettingsRefusal::NotDeclaredHere {
+                key: supplied.key.clone(),
+            }
+            .into());
+        }
         return Ok((Vec::new(), Vec::new()));
     };
-    let (declared, edits, mut notes) = declarations(state, options, edits)?;
-    let edits = edits.as_slice();
-
-    // What this pass may put in the file: a template's required keys where
-    // its skill is arriving, plus the keys a save names — a value has to
-    // have an assignment to land on, and most keys never get one from an
-    // install at all.
-    let seeding = crate::settings_seed::Seeding::new(
-        options.arriving_skills.iter().cloned(),
-        edits.iter().map(|edit| edit.key.clone()),
-    );
+    let Declarations {
+        declared,
+        edits,
+        supplied,
+        mut notes,
+    } = declarations(state, options, edits)?;
     // A file this pass cannot read is one that answers no key, which is
     // what the notes below are then told. Nothing is written there either
     // way, so the required keys are reported as unanswered, which is the
@@ -110,8 +114,9 @@ pub(super) fn plan_settings_seed(
             return Ok((notes, Vec::new()));
         }
         // Seeding reports this and carries on with the rest of the scope.
-        // An edit cannot: the person asked for exactly this file.
-        if !edits.is_empty() {
+        // An edit or a supplied value cannot: the person asked for exactly
+        // this file.
+        if !edits.is_empty() || !supplied.is_empty() {
             return Err(crate::settings_file::SettingsRefusal::NotRegularFile { path }.into());
         }
         let row = cannot_write(
@@ -146,7 +151,7 @@ pub(super) fn plan_settings_seed(
         .as_deref()
         .and_then(crate::settings_seed::env_blocked)
     {
-        if !edits.is_empty() {
+        if !edits.is_empty() || !supplied.is_empty() {
             return Err(crate::settings_file::SettingsRefusal::EnvNotSeedable { path, env }.into());
         }
         let problem = format!(
@@ -159,10 +164,28 @@ pub(super) fn plan_settings_seed(
         ));
         return Ok((notes, vec![cannot_write(scope, file, problem)]));
     }
+    let (kept, said) = kept_values(compatible.as_deref(), &options.supplied_settings);
+    notes.extend(said);
+    let edits: Vec<_> = edits
+        .into_iter()
+        .chain(
+            supplied
+                .into_iter()
+                .filter(|edit| !kept.contains(&edit.key)),
+        )
+        .collect();
+    // What this pass may put in the file: a template's required keys where
+    // its skill is arriving, plus the keys a save names or an install
+    // supplies — a value has to have an assignment to land on, and most
+    // keys never get one from an install at all.
+    let seeding = crate::settings_seed::Seeding::new(
+        options.arriving_skills.iter().cloned(),
+        edits.iter().map(|edit| edit.key.clone()),
+    );
     notes.extend(crate::settings_seed::seed_notes(
         &declared, &answered, &seeding,
     ));
-    let settled = settle(compatible.as_deref(), &declared, &seeding, edits, &path)?;
+    let settled = settle(compatible.as_deref(), &declared, &seeding, &edits, &path)?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
     match &current {
@@ -251,13 +274,23 @@ fn settle(
     })
 }
 
+/// What [`declarations`] hands the pass: the keys it may write, the
+/// edits a save asks for, the values an install supplies as edits of
+/// their owning declaration, and the notes either way.
+struct Declarations {
+    declared: Vec<crate::settings_seed::SeededEnv>,
+    edits: Vec<crate::settings_file::SettingsEdit>,
+    supplied: Vec<crate::settings_file::SettingsEdit>,
+    notes: Vec<String>,
+}
+
 /// What this pass may write, and what it may not.
 ///
 /// A key one installed package declares a setting and another declares a
 /// credential has no destination anything here can choose: writing it as
 /// a setting could put a credential in a tracked file, and refusing it as
 /// a secret would leave the package unable to read it. So it is seeded by
-/// nothing, refused as an edit, and named in a note.
+/// nothing, refused as an edit or a supplied value, and named in a note.
 ///
 /// The private file a save names comes back as an edit of kendex's own
 /// key, on kendex's own declaration, so recording the choice is the same
@@ -266,16 +299,15 @@ fn declarations(
     state: &DesiredState,
     options: &crate::engine::PlanOptions,
     edits: &[crate::settings_file::SettingsEdit],
-) -> Result<(
-    Vec<crate::settings_seed::SeededEnv>,
-    Vec<crate::settings_file::SettingsEdit>,
-    Vec<String>,
-)> {
+) -> Result<Declarations> {
     let contested = crate::settings_secret::contested(&state.settings_templates);
-    if let Some(against) = contested
-        .iter()
-        .find(|against| edits.iter().any(|edit| edit.key == against.key))
-    {
+    if let Some(against) = contested.iter().find(|against| {
+        edits.iter().any(|edit| edit.key == against.key)
+            || options
+                .supplied_settings
+                .iter()
+                .any(|supplied| supplied.key == against.key)
+    }) {
         return Err(crate::settings_secret::SecretRefusal::Sensitivity {
             contested: Box::new(against.clone()),
         }
@@ -296,11 +328,84 @@ fn declarations(
             value: crate::settings_file::SettingsEditValue::Set { value: file },
         });
     }
+    let supplied = options
+        .supplied_settings
+        .iter()
+        .map(|supplied| supplied_edit(&declared, supplied))
+        .collect::<Result<_>>()?;
     let notes = contested
         .iter()
         .map(|against| against.problem.clone())
         .collect();
-    Ok((declared, edits, notes))
+    Ok(Declarations {
+        declared,
+        edits,
+        supplied,
+        notes,
+    })
+}
+
+/// The edit a supplied value becomes: bound to the first declaration of
+/// its key in package-name order, the owner a save writes under too. Its
+/// value is checked here, before the file is read, so a value the loaders
+/// would refuse is refused whether or not the file keeps its own.
+fn supplied_edit(
+    declared: &[crate::settings_seed::SeededEnv],
+    supplied: &crate::settings_file::SuppliedSetting,
+) -> Result<crate::settings_file::SettingsEdit> {
+    use crate::settings_file::SettingsRefusal;
+    let owner = declared
+        .iter()
+        .find(|seeded| seeded.entry.key == supplied.key)
+        .ok_or_else(|| SettingsRefusal::NotDeclaredHere {
+            key: supplied.key.clone(),
+        })?;
+    crate::settings_file::check_value(&supplied.value).map_err(|problem| {
+        SettingsRefusal::Value {
+            key: supplied.key.clone(),
+            problem,
+        }
+    })?;
+    Ok(crate::settings_file::SettingsEdit {
+        skill: owner.owner.clone(),
+        key: supplied.key.clone(),
+        value: crate::settings_file::SettingsEditValue::Set {
+            value: supplied.value.clone(),
+        },
+    })
+}
+
+/// The supplied keys the file already assigns, which keep their value,
+/// and one note for each whose value the supply would have changed. A key
+/// assigned anywhere in the file is the consumer's, by the same file-wide
+/// reading seeding takes; the note is owed where the value the loaders
+/// read differs from the one supplied, or where they read none.
+fn kept_values(
+    current: Option<&str>,
+    supplied: &[crate::settings_file::SuppliedSetting],
+) -> (Vec<String>, Vec<String>) {
+    use crate::settings_file::{Current, current_of, sites};
+    let Some(text) = current else {
+        return (Vec::new(), Vec::new());
+    };
+    let assigned = crate::settings_seed::assigned_keys(text);
+    let sites = sites(text);
+    let mut kept = Vec::new();
+    let mut notes = Vec::new();
+    for one in supplied.iter().filter(|one| assigned.contains(&one.key)) {
+        let same = match current_of(&sites, &one.key) {
+            Current::Value { value, .. } => value == one.value,
+            Current::Absent | Current::Ambiguous { .. } => false,
+        };
+        if !same {
+            notes.push(format!(
+                "{} keeps the value kendex.settings.toml already assigns it; the value this install supplied was not written",
+                one.key
+            ));
+        }
+        kept.push(one.key.clone());
+    }
+    (kept, notes)
 }
 
 /// Both halves of what a save writes into a project's own configuration:

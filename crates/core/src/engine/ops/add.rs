@@ -52,6 +52,10 @@ pub struct AddRequest {
     /// hold on a source without revisions (a path, local) is refused before
     /// anything is written.
     pub hold: bool,
+    /// Project settings to write into `kendex.settings.toml`, each for a
+    /// key a package installed here declares. A key the file already
+    /// assigns keeps its value.
+    pub settings: Vec<crate::settings_file::SuppliedSetting>,
 }
 
 /// Declare items (and their auto-expanded skills), then plan the scope.
@@ -197,6 +201,7 @@ pub fn add_seeded(
     let options = PlanOptions {
         arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,
+        supplied_settings: request.settings.clone(),
         ..PlanOptions::for_additions(declaring.iter().cloned())
     };
     let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;

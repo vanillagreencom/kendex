@@ -127,6 +127,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `COMMIT_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 | `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` | *(empty)* | Space-separated globs naming the paths the repo-local entry reads, matched against the full repo-relative path (`*` crosses `/`). The entry runs only for a commit that touches a matching path; empty runs it on every commit. |
+| `COMMAND_SAFETY_DENY_PATTERN` | `^$` | Command text the `command-safety` hook refuses, a POSIX extended regular expression the hook reads through this skill's loader where the `command-safety` bundle installs it; the default refuses nothing. |
 
 Settings follow [README.md § Settings](README.md#settings). `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `COMMIT_GUARDS_CHANGELOG_COLLATE=1` is environment-only, authorizes `--collate` on a clean index and working tree, and lets `commit-msg` count a record change as the release changelog entry.
 

@@ -1,0 +1,1 @@
+- `kendex add --setting KEY=VALUE` writes a declared project setting into `kendex.settings.toml`; a key the file already assigns keeps its value.

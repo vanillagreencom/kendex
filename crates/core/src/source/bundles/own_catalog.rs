@@ -144,3 +144,22 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
         );
     }
 }
+
+/// orch's mail hook requires the session row hooks, so every install that
+/// takes the mail hook, a lone `add` of it or an orch install's dependency
+/// walk, also writes the rows the fleet overseer reads instead of the pane.
+#[test]
+fn the_mail_hook_requires_the_session_row_hooks() {
+    let (sealed, config) = open();
+    let hook = find_item(&sealed, &config, ItemKind::Hook, "lane-mail-check")
+        .unwrap_or_else(|| panic!("the catalog offers hook 'lane-mail-check'"));
+    let declared = crate::engine::deps::declared_dependencies(&sealed, ItemKind::Hook, &hook)
+        .expect("the mail hook's header reads");
+    for row in ["session-start-row", "session-end-row", "stop-failure-row"] {
+        assert!(
+            declared.required.iter().any(|name| name == row),
+            "hook 'lane-mail-check' does not require '{row}': its `requires:` line reads {:?}",
+            declared.required
+        );
+    }
+}
