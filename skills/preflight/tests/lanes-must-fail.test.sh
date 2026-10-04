@@ -197,9 +197,6 @@ pf_world() {
     strict) printf '#!/usr/bin/env bash\necho fresh\n' >"$R/scripts/fresh.sh" ;;
     swallow) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\ngrep -q x -- "$1" || true\n' >"$R/scripts/existing.sh" ;;
     swallowsubst) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\nn="$(git rev-list --count HEAD || true)"\necho "$n"\n' >"$R/scripts/existing.sh" ;;
-    # Written from the shell, never with cat reading a file: a cat-fed
-    # fixture pushes several hundred KB before it blocks, so it passes
-    # either way.
     rustenv)
       mkdir -p "$R/tests"
       printf 'fn fixture() {\n    unsafe { std::env::set_var("KEY", "value"); }\n}\n' >"$R/tests/env.rs"
@@ -210,6 +207,9 @@ pf_world() {
     rusttestfn)
       printf '#[test]\nfn case() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/src/lib.rs"
       ;;
+    # Written from the shell, never with cat reading a file: a cat-fed
+    # fixture pushes several hundred KB before it blocks, so it passes
+    # either way.
     earlyclose) printf '#!/usr/bin/env bash\nset -euo pipefail\nif echo "$1" | grep -q x; then echo hit; fi\n' >"$R/scripts/existing.sh" ;;
     # The same lane inside the test tree, on the mid-pipeline shape: the
     # reader is two stages down and another stage runs after it, and the

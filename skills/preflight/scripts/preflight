@@ -588,10 +588,12 @@ pf_dep git ls-files >"$TMP/tracked.list" || env_error git-failed ls-files "listi
 { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' | LC_ALL=C sort -u >"$TMP/trackeddirs"
 
 # --- shared helpers ----------------------------------------------------------
-added_lines_of() { # IDX -> path to that file's added line numbers
-  local out="$TMP/lines.$1"
-  [ -f "$out" ] || cut -f1 -- "$TMP/rec.$1" >"$out"
-  printf '%s' "$out"
+added_lines_of() { # IDX PATH -> ADDED_LINES, in the caller's shell
+  ADDED_LINES="$TMP/lines.$1"
+  if [ ! -f "$ADDED_LINES" ]; then
+    pf_dep cut -f1 -- "$TMP/rec.$1" >"$ADDED_LINES" \
+      || env_error added-lines "$2" "changed line numbers could not be read"
+  fi
 }
 
 has_shebang() { head -n 1 -- "$1" 2>/dev/null | grep -q '^#!'; }
@@ -1332,8 +1334,9 @@ while IFS= read -r f; do
         if [ "$own_rules" = 1 ] || [ "$is_testname" = 1 ]; then rust_test=1; fi
         awk -v file_test="$rust_test" -f "$SCRIPT_DIR/lib/rust-env-mutation.awk" "$cpath" >"$TMP/rust-env.$IDX" \
           || env_error rust-test-env-mutation "$f" "Rust test calls could not be read"
+        added_lines_of "$IDX" "$f"
         while IFS= read -r rust_line; do
-          if grep -qxF -- "$rust_line" "$(added_lines_of "$IDX")"; then
+          if grep -qxF -- "$rust_line" "$ADDED_LINES"; then
             emit "$f" "$rust_line" rust-test-env-mutation "process environment mutation in Rust test code; pass configuration to the fixture owner or use a child with an explicit environment"
           fi
         done <"$TMP/rust-env.$IDX"
@@ -1377,7 +1380,8 @@ while IFS= read -r f; do
         if [ "$GCC_SEV" = "error" ]; then
           emit "$f" "$GCC_LINE" shellcheck-errors "$GCC_MSG"
         elif [ "$GCC_LINE" != 0 ] && [ "$vendored_mirror" = 0 ] && is_masked_code "$GCC_CODE"; then
-          if [ "$MODE" = "all" ] || grep -qxF -- "$GCC_LINE" "$(added_lines_of "$IDX")"; then
+          added_lines_of "$IDX" "$f"
+          if [ "$MODE" = "all" ] || grep -qxF -- "$GCC_LINE" "$ADDED_LINES"; then
             emit "$f" "$GCC_LINE" masked-returns "$GCC_MSG"
           fi
         fi
@@ -1427,9 +1431,10 @@ while IFS= read -r f; do
   if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ]; then
     substitution_statements "$cpath" >"$TMP/statements.$IDX" \
       || env_error fail-open "$f" "shell statements could not be read"
+    added_lines_of "$IDX" "$f"
     awk -F '\t' 'FILENAME == ARGV[1] { added[$1] = 1; next }
       { for (n = $1; n <= $2; n++) if (added[n]) { print; break } }' \
-      "$(added_lines_of "$IDX")" "$TMP/statements.$IDX" >"$TMP/substitutions.$IDX" \
+      "$ADDED_LINES" "$TMP/statements.$IDX" >"$TMP/substitutions.$IDX" \
       || env_error fail-open "$f" "changed shell statements could not be selected"
     while IFS="$TAB" read -r n statement_end content; do
       if [ "$has_ee" = 0 ] \

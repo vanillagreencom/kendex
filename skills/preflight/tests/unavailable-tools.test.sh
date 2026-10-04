@@ -122,5 +122,24 @@ run_pf
 [ "$RC" -eq 0 ] && has 'TOML: taplo or python3 with tomllib is unavailable' \
   && ok 'Python without tomllib preserves the optional-parser status' || bad 'missing tomllib reporting'
 
+git -C "$R" reset -q HEAD
+mkdir -p "$R/tests"
+printf 'fn fixture() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/tests/env.rs"
+git -C "$R" add tests/env.rs
+run_pf
+[ "$RC" -eq 1 ] && has '[rust-test-env-mutation]' \
+  && ok 'Rust control reaches the added-line filter' || bad 'Rust control reaches the added-line filter'
+rm "$BIN/cut"
+for cut_state in missing failing; do
+  if [ "$cut_state" = failing ]; then
+    printf '#!/usr/bin/env bash\nexit 7\n' >"$BIN/cut"
+    chmod +x "$BIN/cut"
+  fi
+  run_pf
+  [ "$RC" -eq 2 ] && [ "${OUT%%$'\n'*}" = 'preflight: added-lines=tests/env.rs' ] \
+    && ! has 'preflight: clean=' \
+    && ok "$cut_state cut refuses Rust line selection" || bad "$cut_state cut refuses Rust line selection"
+done
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
