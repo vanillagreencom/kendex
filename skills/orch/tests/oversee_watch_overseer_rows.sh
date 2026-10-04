@@ -51,6 +51,9 @@ CODEX_START="$(row SessionStart codex source=startup)"
 # `quit` said as Claude Code's `prompt_input_exit` (pi-hooks vocab.ts).
 PI_START="$(row SessionStart pi source=startup)"
 PI_END="$(row SessionEnd pi reason=prompt_input_exit)"
+# A Pi StopFailure as every pi-hooks carrier before 0.19.0 writes it: no
+# `message`, so nothing tells its wall from any other failure.
+PI_BARE_FAILURE="$(row StopFailure pi)"
 
 # rows_case NAME PANE_STATE ROW... — overseer_case's sandbox with the fleet
 # state naming the rows file for this pane and ROW... written to it, one per
@@ -102,6 +105,7 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_not
       codex) row_args+=("$CODEX_START") ;;
       pistart) row_args+=("$PI_START") ;;
       piend) row_args+=("$PI_END") ;;
+      pibarefailure) row_args+=("$PI_BARE_FAILURE") ;;
       -) ;;
       *) echo "unknown row $r" >&2; exit 1 ;;
     esac
@@ -132,6 +136,7 @@ killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 su
 no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=none
 codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
 pi_dead_rows|exited|pistart piend|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|none
+pi_bare_failure_fallback|exited|pistart pibarefailure|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
 ROWS
 
 # The verdict over a Pi row, read from the library itself. Pi names no error
@@ -163,6 +168,14 @@ usage_limit|StopFailure|message=$WALL_MESSAGE|walled
 prompt_too_long|StopFailure|message=prompt is too long: 212011 tokens > 200000 maximum|wedged
 other_failure|StopFailure|message=overloaded_error: Overloaded|live
 PI_ROWS
+
+# A Pi StopFailure with no `message` reads unsupported, so the pane judges
+# the wall; with that branch taken out it reads live: the control.
+NO_MESSAGE_CTL="$(mutant_scripts no-message-ctl/orch lib/session-rows.sh)" || exit 1
+mutate_file "$NO_MESSAGE_CTL/lib/session-rows.sh" \
+  'and .harness == "pi" and (.message // "") == "" then "unsupported"' 'and false then "unsupported"'
+assert_eq "$(verdict_of "$LIB_DIR" "$PI_BARE_FAILURE")" unsupported "pi row with no message"
+assert_eq "$(verdict_of "$NO_MESSAGE_CTL/lib" "$PI_BARE_FAILURE")" live "control: pi row with no message, its branch taken out"
 
 # A rows wall carries the harness's own words, the limit and its reset, under
 # its line, and `message=unrecorded` where its row holds none.

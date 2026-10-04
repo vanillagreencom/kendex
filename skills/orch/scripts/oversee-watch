@@ -2763,9 +2763,8 @@ overseer_context_wedged() { # PANE IDENTITY
 # fact, read as lib/lane-state.sh's own rung reads it, never the screen.
 #
 # THE NAMED FALLBACK: where the rows cannot judge, because the record names no
-# rows file for this pane, the file holds no row yet, its last row names a
-# harness whose rows session_rows_verdict does not answer for (Codex,
-# Copilot) or it cannot be read, the
+# rows file for this pane, the file holds no row yet, its last row reads
+# `unsupported` (session_rows_verdict) or it cannot be read, the
 # state `inspect` gives the pane, lib/lane-state.sh's rungs over its capture,
 # stands as it did before the rows existed, OV_SOURCE `pane`, and the pass
 # says so once under overseer-fallback with the cause. OV_SCREEN holds that

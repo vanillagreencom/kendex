@@ -25,8 +25,9 @@
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
 #
 # The verdict answers for Claude Code and Pi: a session whose last row names
-# another harness reads `unsupported` and its reader takes the pane, the named
-# fallback, reported as fallback.
+# another harness, or is a Pi StopFailure with no `message`, reads
+# `unsupported` and its reader takes the pane, the named fallback, reported as
+# fallback.
 #
 # ONE OWNER, THE WRITER, for "whose facts are these": only the pane's own
 # top-level harness writes a row, so a harness that session starts in its own
@@ -133,7 +134,9 @@ session_rows_last() { # FILE [EVENT]
 #   none         no row, so nothing the harness said can be read
 #   unsupported  the row names any harness but Claude Code and Pi, the two
 #                whose rows this verdict answers for, so its silence settles
-#                nothing
+#                nothing; or a Pi StopFailure with no `message`, which a
+#                pi-hooks carrier before 0.19.0 writes, so no text tells its
+#                wall from any other failure
 #   ended        SessionEnd for any reason but `clear` and `resume`, the two a
 #                SessionStart follows in the same harness; Pi's carrier says
 #                its own reasons in these words
@@ -148,8 +151,9 @@ session_rows_last() { # FILE [EVENT]
 #                filled its window, so every turn it starts fails the same way
 #                while its harness stays up
 #   live         any other row
-# Exit 2 where the file could not be read; the verdict is then `none` and says
-# nothing.
+# Exit 2 where the file could not be read, jq could not read its last row, or
+# lane_limit_banner could not scan a Pi StopFailure's `message`; the verdict is
+# then `none` and says nothing.
 #
 # The phrases are the harness's own text, lowercased and matched as a
 # substring, one table read by this judge alone. Claude Code writes
@@ -169,6 +173,7 @@ session_rows_verdict() { # FILE
     elif .event == "SessionEnd" then
       (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
     elif .event == "StopFailure" and .harness == "claude" and .error == "rate_limit" then "walled"
+    elif .event == "StopFailure" and .harness == "pi" and (.message // "") == "" then "unsupported"
     elif .event == "StopFailure"
       and ((((.message // "") + "\n" + (.error_details // "")) | ascii_downcase) as $text
         | any($too_long[]; . as $p | $text | contains($p)))
