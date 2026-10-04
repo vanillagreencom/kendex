@@ -161,7 +161,7 @@ fn each_package_carries_its_unsupported_and_advisory_tools() {
         root.join("hooks/guard.sh"),
         "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n\
          # description: Guard. Not run on pi: its payload is unmeasured. \
-         Not run on codex: a watcher reads its pane instead.\n\
+         On codex: a watcher reads its pane instead.\n\
          # harnesses: [claude, codex, opencode, gemini, copilot]\n# ---\nexit 0\n",
     )
     .unwrap();

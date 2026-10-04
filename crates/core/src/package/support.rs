@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::harness::{Enforcement, capabilities};
-use crate::hook::{HookSpec, NotRun, by_name_only, never_fires, not_run_reason, parse_hook};
+use crate::hook::{
+    HookSpec, Stated, ToolSentence, by_name_only, never_fires, parse_hook, stated_reason,
+};
 use crate::model::{HarnessId, ItemKind};
 
 /// One tool the package does not run on.
@@ -32,8 +34,8 @@ pub struct UnsupportedTool {
 #[serde(rename_all = "camelCase")]
 pub struct FallbackTool {
     pub tool: HarnessId,
-    /// The hook's own `Not run on <id>: <reason>.` sentence naming the
-    /// fallback, control characters shown rather than acted on.
+    /// The hook's own `On <id>: <reason>.` sentence naming the fallback,
+    /// control characters shown rather than acted on.
     pub reason: String,
 }
 
@@ -62,7 +64,7 @@ pub struct ToolSupport {
 /// for a hook, when its `harnesses:` line leaves the tool out, the tool
 /// never fires the hook's event, or the tool is reached only by a hook that
 /// names it and this one does not. A tool that runs the hook while the hook
-/// states `Not run on <id>: <reason>.` for it is a fallback.
+/// states `On <id>: <reason>.` for it is a fallback.
 pub fn tool_support(kind: ItemKind, header: Option<&str>) -> ToolSupport {
     let hook = match kind {
         ItemKind::Hook => Some(match header.map(parse_hook) {
@@ -109,17 +111,17 @@ enum Gap {
 
 /// One hook on one tool that takes hooks, judged in the order
 /// [`crate::hook::delivery`] judges an installation: the tool's own
-/// enforcement answers before the event and the by-name rule. The hook's
-/// own `Not run on <id>: <reason>.` sentence is the reason wherever it does
-/// not run, and on a tool where it does, names the fallback doing its job
-/// there (`hooks/AGENTS.md`).
+/// enforcement answers before the event and the by-name rule. Where the
+/// hook does not run, its own `Not run on <id>: <reason>.` sentence is the
+/// reason; where it runs, its `On <id>: <reason>.` sentence names the
+/// fallback doing its job there (`hooks/AGENTS.md`).
 fn hook_gap(spec: &HookSpec, tool: HarnessId, enforcement: Enforcement) -> Gap {
-    let stated = match not_run_reason(&spec.description, tool) {
-        NotRun::Stated(reason) => Some(reason.to_owned()),
-        NotRun::Absent | NotRun::Unterminated => None,
+    let stated = |form| match stated_reason(&spec.description, form, tool) {
+        Stated::Reason(reason) => Some(reason.to_owned()),
+        Stated::Absent | Stated::Unterminated => None,
     };
     if !spec.applies_to(tool) {
-        return Gap::Unsupported(stated);
+        return Gap::Unsupported(stated(ToolSentence::NotRun));
     }
     match enforcement {
         Enforcement::Advisory => return Gap::Advisory,
@@ -129,12 +131,14 @@ fn hook_gap(spec: &HookSpec, tool: HarnessId, enforcement: Enforcement) -> Gap {
         }
     }
     if !crate::hook::delivery::event_fires(tool, &spec.event) {
-        return Gap::Unsupported(stated.or_else(|| Some(never_fires(tool, &spec.event))));
+        return Gap::Unsupported(
+            stated(ToolSentence::NotRun).or_else(|| Some(never_fires(tool, &spec.event))),
+        );
     }
     if tool.hooks_by_name_only() && spec.harnesses.is_none() {
-        return Gap::Unsupported(stated.or_else(|| Some(by_name_only(tool))));
+        return Gap::Unsupported(stated(ToolSentence::NotRun).or_else(|| Some(by_name_only(tool))));
     }
-    match stated {
+    match stated(ToolSentence::On) {
         Some(reason) => Gap::Fallback(reason),
         None => Gap::Runs,
     }

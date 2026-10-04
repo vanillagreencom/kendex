@@ -37,12 +37,12 @@ fn each_hook_declaration_answers_its_own_tools() {
         "# event: StopFailure\n# description: Rows. Not run on gemini: it has no StopFailure event.\n",
     );
     let fallback = hook(
-        "# event: SessionEnd\n# harnesses: [claude, codex, pi]\n# description: Rows. Not run on codex: a watcher reads its pane instead.\n",
+        "# event: SessionEnd\n# harnesses: [claude, codex, pi]\n# description: Rows. On codex: a watcher reads its pane instead. Not run on claude: never read. On gemini: never read.\n",
     );
     let broken = "#!/usr/bin/env bash\nexit 0\n";
     let rows: [(&str, ItemKind, Option<&str>, ToolSupport); 5] = [
         (
-            "a stated reason on a tool the hook runs on names the fallback there",
+            "an On sentence on a listed tool is its fallback, and neither form crosses the list",
             ItemKind::Hook,
             Some(&fallback),
             support(vec![

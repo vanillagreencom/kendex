@@ -129,34 +129,57 @@ fn prose(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
-/// What a hook's `description` says about one harness in its
-/// `Not run on <id>: <reason>.` sentence, the one place a hook header
-/// states why it does not run on a harness (`hooks/AGENTS.md`).
+/// The two sentences a hook's `description` states about one harness, each
+/// spelled with the harness's [`HarnessId::name`] id (`hooks/AGENTS.md`).
+/// Where the hook runs decides which one is read: a harness the hook does
+/// not run on, because its `harnesses:` line leaves it out or it never fires
+/// the event, reads the first; a harness it runs on reads the second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotRun<'a> {
+pub enum ToolSentence {
+    /// `Not run on <id>: <reason>.`: why the hook does not run there.
+    NotRun,
+    /// `On <id>: <reason>.`: the fallback that does the hook's job on a
+    /// harness the hook runs on.
+    On,
+}
+
+impl ToolSentence {
+    fn marker(self, harness: HarnessId) -> String {
+        match self {
+            ToolSentence::NotRun => format!("Not run on {}: ", harness.name()),
+            ToolSentence::On => format!("On {}: ", harness.name()),
+        }
+    }
+}
+
+/// What a hook's `description` holds in one [`ToolSentence`] for one
+/// harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stated<'a> {
     /// The reason: the text up to the first period followed by a space,
     /// or up to the period that ends the description.
-    Stated(&'a str),
-    /// No sentence names this harness.
+    Reason(&'a str),
+    /// No such sentence names this harness.
     Absent,
     /// The sentence ends in no period followed by a space and is not
     /// ended by the description's own final period.
     Unterminated,
 }
 
-/// The `Not run on <id>: <reason>.` sentence for `harness` in a hook's
-/// `description`, spelled with the harness's [`HarnessId::name`] id.
-pub fn not_run_reason(description: &str, harness: HarnessId) -> NotRun<'_> {
-    let marker = format!("Not run on {}: ", harness.name());
+/// The `form` sentence for `harness` in a hook's `description`: the one
+/// reader of both sentences, for the supported-tools row and the catalog's
+/// own README test alike.
+pub fn stated_reason(description: &str, form: ToolSentence, harness: HarnessId) -> Stated<'_> {
+    let marker = form.marker(harness);
     let Some(start) = description.find(&marker) else {
-        return NotRun::Absent;
+        return Stated::Absent;
     };
     let rest = &description[start + marker.len()..];
     match rest.find(". ") {
-        Some(end) => NotRun::Stated(&rest[..end]),
+        Some(end) => Stated::Reason(&rest[..end]),
         None => rest
             .strip_suffix('.')
-            .map_or(NotRun::Unterminated, NotRun::Stated),
+            .map_or(Stated::Unterminated, Stated::Reason),
     }
 }
 
