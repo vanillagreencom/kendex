@@ -391,4 +391,20 @@ for row in 'token-failure|token-http=400' 'token-transport|token=transport-faile
     assert_eq "mint-$mode: no stdout" "$OUT" ''
 done
 
+# A token cached before a scope change, under the pair-only key, is never reused.
+if command -v sha256sum >/dev/null 2>&1; then
+    old_key=$(printf '%s' 'app/id:app&secret' | sha256sum | cut -c1-12) || { echo 'oauth-auth: digest=failed' >&2; exit 1; }
+else
+    old_key=$(printf '%s' 'app/id:app&secret' | shasum -a 256 | cut -c1-12) || { echo 'oauth-auth: digest=failed' >&2; exit 1; }
+fi
+printf 'LINEAR_CLIENT_ID="app/id"\nLINEAR_CLIENT_SECRET="app&secret"\n' >"$PROJECT/.env.local"
+mkdir -p -- "$PROJECT/.cache/linear/oauth"
+rm -f -- "${PROJECT:?}/.cache/linear/oauth/"*.json
+printf '{"access_token":"old-scope-token","expires_at":99999999}\n' >"$PROJECT/.cache/linear/oauth/$old_key.json"
+before=$(wc -l <"$LOG/mints")
+run_oauth_request request
+assert_eq 'old-scope cache: request succeeds' "$RC" 0
+after=$(wc -l <"$LOG/mints")
+assert_eq 'old-scope cache: scope change mints a new token' "$((after - before))" 1
+
 run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"

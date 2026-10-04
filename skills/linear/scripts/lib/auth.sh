@@ -16,6 +16,11 @@ else
     LINEAR_AUTH_KIND="unset"
 fi
 
+# One fixed set for every minter: Linear revokes every app token when an app
+# requests a different set. The token cache key hashes it, so a cached token
+# minted under another set is never reused.
+_LINEAR_APP_SCOPE="read,write,issues:create,comments:create,timeSchedule:write,initiative:read,initiative:write,customer:read,customer:write"
+
 # Resolve only the selected credential: an unused personal key cannot block an app.
 linear_resolve_credentials() {
     local name value
@@ -76,7 +81,7 @@ linear_authorization() (
     # Reuse the cache library's root resolution, including LINEAR_CACHE_ROOT.
     source "$_LIB_DIR/cache.sh" || return 1
     local identity now token_file cached token staged
-    identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET") || return 1
+    identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE") || return 1
     token_file="$CACHE_DIR/oauth/$identity.json"
     now=$(date +%s) || return 1
     if [[ "${1:-}" != "renew" && -f "$token_file" ]]; then
@@ -114,11 +119,10 @@ linear_mint_token() (
     linear_resolve_credentials || return 1
     local now raw http_code response payload payload_quote cached
     now=$(date +%s) || return 1
-    # Scope is fixed: Linear revokes every app token when scopes change.
     # Environment values cannot contain NUL; it separates credentials on stdin.
-    payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '
+    payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg scope "$_LINEAR_APP_SCOPE" '
         split("\u0000") |
-        "grant_type=client_credentials&scope=read%2Cwrite%2Cissues%3Acreate%2Ccomments%3Acreate%2CtimeSchedule%3Awrite%2Cinitiative%3Aread%2Cinitiative%3Awrite%2Ccustomer%3Aread%2Ccustomer%3Awrite&client_id=" + (.[0] | @uri) +
+        "grant_type=client_credentials&scope=" + ($scope | @uri) + "&client_id=" + (.[0] | @uri) +
         "&client_secret=" + (.[1] | @uri)') || return 1
     payload_quote=$(curl_config_quote "$payload") || return 1
     raw=$(

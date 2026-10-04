@@ -45,13 +45,18 @@ control_replace scripts/lib/attachments.sh 1 \
 
 control_expect 'mint keeps client credentials out of jq arguments'
 control_replace scripts/lib/auth.sh 1 \
-    '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '\''' \
-    '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg secret "$LINEAR_CLIENT_SECRET" '\'''
+    '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg scope "$_LINEAR_APP_SCOPE" '\''' \
+    '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg scope "$_LINEAR_APP_SCOPE" --arg secret "$LINEAR_CLIENT_SECRET" '\'''
 
 control_expect 'mint sends fixed scope and encoded client credentials'
 control_replace scripts/lib/auth.sh 1 \
-    '        "grant_type=client_credentials&scope=read%2Cwrite%2Cissues%3Acreate%2Ccomments%3Acreate%2CtimeSchedule%3Awrite%2Cinitiative%3Aread%2Cinitiative%3Awrite%2Ccustomer%3Aread%2Ccustomer%3Awrite&client_id=" + (.[0] | @uri) +' \
-    '        "grant_type=client_credentials&scope=read%2Cwrite%2Cinitiative%3Aread&client_id=" + (.[0] | @uri) +'
+    '_LINEAR_APP_SCOPE="read,write,issues:create,comments:create,timeSchedule:write,initiative:read,initiative:write,customer:read,customer:write"' \
+    '_LINEAR_APP_SCOPE="read,write,initiative:read"'
+
+control_expect 'old-scope cache: scope change mints a new token'
+control_replace scripts/lib/auth.sh 1 \
+    '    identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE") || return 1' \
+    '    identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET") || return 1'
 
 control_expect 'attachment download keeps token out of curl arguments'
 control_expect 'app-renew: renewed token stays out of curl arguments'
