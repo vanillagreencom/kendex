@@ -70,10 +70,11 @@
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
 # directory), DEP_ERR (a file), lib/lane-launch.sh and lib/lane-state.sh
-# sourced by the caller, and, of a caller that opens a session or writes a
-# notice to the fleet log, `message KEY FIELD=VALUE...` defined, with a
-# `checkout-unsynced` text of its own where it opens a session. Sourcing it
-# defines names and runs nothing. Sourced, never run.
+# sourced by the caller, the github skill installed beside orch, whose
+# lib/bounded.sh ol_checkout_sync sources, and, of a caller that opens a
+# session or writes a notice to the fleet log, `message KEY FIELD=VALUE...`
+# defined, with a `checkout-unsynced` text of its own where it opens a
+# session. Sourcing it defines names and runs nothing. Sourced, never run.
 
 # The file a session's own event rows land in, which the record names: its
 # path is lib/session-rows.sh's, named by expansion as lib/lane-context.sh
@@ -675,12 +676,11 @@ ol_record_line_identity() { # LINE
 # nowhere, and would leave a tree on any other branch where it stands.
 #
 # `sync-base` runs under ORCH_OVERSEER_SYNC_TIMEOUT_S seconds, 60 by
-# default, which `timeout` or `gtimeout` holds where either is installed; a
-# host with neither, stock macOS, runs it unbounded. Its fetch never prompts
-# for a credential and gives up on an HTTP transfer slower than 1000 bytes a
-# second for 30 seconds. An origin that stalls is then one more refusal, and
-# the watch's dead-pane and walled-pane recovery, which runs a launch with no
-# bound of its own, still opens a successor.
+# default, which the github skill's kendex_github_run_bounded holds. Its
+# fetch never prompts for a credential and gives up on an HTTP transfer
+# slower than 1000 bytes a second for 30 seconds. An origin that stalls is
+# then one more refusal, and the watch's dead-pane and walled-pane recovery,
+# which runs a launch with no bound of its own, still opens a successor.
 #
 # Returns 0 with the tree at that head, and 1 with OL_REASON=checkout-unsynced,
 # the tree left as it stood. OL_SYNC_CAUSE is `not-worktree` for a directory
@@ -700,7 +700,7 @@ ol_record_line_identity() { # LINE
 # reading it starts in that checkout.
 OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
 ol_checkout_sync() { # CWD
-  local base="" branch="" rc=0 candidate bound=() seconds="${ORCH_OVERSEER_SYNC_TIMEOUT_S:-60}"
+  local base="" branch="" rc=0 seconds="${ORCH_OVERSEER_SYNC_TIMEOUT_S:-60}"
   local run='then run .agents/skills/orch/scripts/sync-base'
   OL_SYNC_CAUSE="" OL_SYNC_PATH="" OL_SYNC_FIX=""
   if ! OL_SYNC_PATH="$(git -C "$1" rev-parse --show-toplevel 2>"$DEP_ERR")"; then
@@ -716,18 +716,17 @@ ol_checkout_sync() { # CWD
     esac
   fi
   if [[ -z "$OL_SYNC_CAUSE" ]]; then
-    # `gtimeout` is the name a Homebrew coreutils install gives `timeout`.
-    # Only the bound answers 124: neither sync-base nor git exits so.
-    for candidate in timeout gtimeout; do
-      if command -v "$candidate" >/dev/null 2>&1; then
-        bound=("$candidate" "$seconds")
-        break
-      fi
-    done
+    # Sourced on its one consumer's path, through the path lib/gh-auth.sh
+    # reaches the github skill by: lanes, open-terminal and lane-mail source
+    # this file for its other functions. Only the bound answers 124: neither
+    # sync-base nor git exits so.
+    # shellcheck source=../../../github/scripts/lib/bounded.sh
+    source "${BASH_SOURCE[0]%/*}/../../../github/scripts/lib/bounded.sh"
     rc=0
-    env GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30 \
-      ${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/sync-base" "$OL_SYNC_PATH" >/dev/null 2>"$DEP_ERR" || rc=$?
-    if ((rc == 124 && ${#bound[@]} > 0)); then
+    kendex_github_run_bounded "$seconds" \
+      env GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30 \
+      "$SCRIPT_DIR/sync-base" "$OL_SYNC_PATH" >/dev/null 2>"$DEP_ERR" || rc=$?
+    if ((rc == 124)); then
       OL_SYNC_CAUSE=sync-timeout
     elif ((rc != 0)); then
       OL_SYNC_CAUSE="$(awk 'index($0, "sync-base: ") == 1 { $0 = substr($0, 12); sub(/ .*/, ""); print; exit }' "$DEP_ERR")" \

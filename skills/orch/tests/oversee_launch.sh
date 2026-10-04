@@ -1196,27 +1196,24 @@ git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
 # accepts the connection and never answers: the launch goes on, on the tree
 # as it stands, with one keyed line naming the timeout. The stub sleeps 5
 # seconds, the stall itself, which a 1 second bound cuts off.
-if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-  STALL="$(mutant_scripts stall sync-base)" || exit 1
-  printf '#!/bin/sh\nsleep 5\n' > "$STALL/sync-base" || exit 1
-  BEFORE="$(work_head)"
-  LOGGED="$(logged sync-timeout)"
-  OVERSEE_BIN="$STALL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
-  assert_eq "$RC|$(overseers)|$(work_head)|$(unsynced sync-timeout)|$(unsynced '[^ ]*')|$(($(logged sync-timeout) - LOGGED))" \
-    "0|1|$BEFORE|1|1|1" \
-    "a sync-base that outlasts its bound leaves the launch running and prints one keyed line naming the timeout, also in the fleet log"
-  tm kill-window -t "$(recorded window)"
-  # Its control: a sync with no bound waits the stall out, and the stub's
-  # success reports nothing.
-  STALLCTL="$(mutant_scripts stallctl lib/overseer-launch.sh)" || exit 1
-  mutate_file "$STALLCTL/lib/overseer-launch.sh" 'for candidate in timeout gtimeout; do' 'for candidate in; do'
-  rm -- "$STALLCTL/sync-base" && printf '#!/bin/sh\nsleep 5\n' > "$STALLCTL/sync-base" && chmod +x "$STALLCTL/sync-base" || exit 1
-  OVERSEE_BIN="$STALLCTL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
-  assert_eq "$RC|$(unsynced '[^ ]*')" "0|0" "control: a sync with no bound waits out a stalled sync-base and reports no timeout"
-  tm kill-window -t "$(recorded window)"
-else
-  echo "  skip  neither timeout nor gtimeout is installed; the sync bound rows did not run"
-fi
+STALL="$(mutant_scripts stall sync-base)" || exit 1
+printf '#!/bin/sh\nsleep 5\n' > "$STALL/sync-base" || exit 1
+BEFORE="$(work_head)"
+LOGGED="$(logged sync-timeout)"
+OVERSEE_BIN="$STALL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)|$(work_head)|$(unsynced sync-timeout)|$(unsynced '[^ ]*')|$(($(logged sync-timeout) - LOGGED))" \
+  "0|1|$BEFORE|1|1|1" \
+  "a sync-base that outlasts its bound leaves the launch running and prints one keyed line naming the timeout, also in the fleet log"
+tm kill-window -t "$(recorded window)"
+# Its control: a sync whose bounded call takes 0 seconds, which the runner
+# reads as no bound, waits the stall out, and the stub's success reports
+# nothing.
+STALLCTL="$(mutant_scripts stallctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$STALLCTL/lib/overseer-launch.sh" 'kendex_github_run_bounded "$seconds" \' 'kendex_github_run_bounded 0 \'
+rm -- "$STALLCTL/sync-base" && printf '#!/bin/sh\nsleep 5\n' > "$STALLCTL/sync-base" && chmod +x "$STALLCTL/sync-base" || exit 1
+OVERSEE_BIN="$STALLCTL/oversee" run_oversee ORCH_OVERSEER_SYNC_TIMEOUT_S=1 -- launch --wait-secs 20
+assert_eq "$RC|$(unsynced '[^ ]*')" "0|0" "control: a sync with no bound waits out a stalled sync-base and reports no timeout"
+tm kill-window -t "$(recorded window)"
 
 echo "=== register asks kendex's inventory for other harnesses ==="
 # SessionStart is the producer of a harness other than the fallback's three.
