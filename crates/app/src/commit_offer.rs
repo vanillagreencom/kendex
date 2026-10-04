@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 
 use kendex_core::commit_offer::{
-    self, Attribution, Baseline, Branch, Changes, Committed, Failed, Held, Offer, Pending, Probe,
-    RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
+    self, Attribution, Baseline, Before, Branch, Changes, Committed, Failed, Held, Offer, Pending,
+    Probe, RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
 };
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -123,10 +123,11 @@ pub struct ProjectOffer {
     pub root: String,
     /// The project's folder name, which the title names.
     pub name: String,
-    /// The files kendex owns whole that changed, and the files it wrote
-    /// into that this action changed from a clean state, printed whole: an
-    /// abbreviation guesses at a directory and names a different file from
-    /// the one being committed.
+    /// What a commit of every pending change carries,
+    /// `commit_offer::Scan::carried`: the files kendex owns whole that
+    /// changed, and the files this action wrote from a clean state, printed
+    /// whole: an abbreviation guesses at a directory and names a different
+    /// file from the one being committed.
     pub files: Vec<ChangedFile>,
     /// The paths a commit of only this action's work would carry. Empty
     /// where the offer was opened by a person rather than by an action, in
@@ -138,10 +139,10 @@ pub struct ProjectOffer {
     pub choice: bool,
     /// What stops the action's work from being committed on its own.
     pub tangled: Vec<TangledFile>,
-    /// The changed files kendex writes into and does not own whole that no
-    /// commit on offer carries — the manifest named in `manifest` aside.
-    /// Every such file where a person opened the offer: with no action to
-    /// read against, none is shown to hold the action's change alone.
+    /// The files this action wrote that no commit on offer carries, because
+    /// each held a change before it — the manifest named in `manifest`
+    /// aside. Empty where a person opened the offer: with no action to read
+    /// against, no file beside the ones kendex owns whole is its.
     pub shared: Vec<String>,
     /// The project's manifest, where this action wrote it and the commit
     /// does not carry it because it held a change before the action.
@@ -165,6 +166,11 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
+    /// The reading the offer was drawn against, which every step after it
+    /// hands back: the commit and the file viewer carry what this offer
+    /// listed, and nothing a later reading would. `null` where a person
+    /// opened the offer.
+    pub since: Option<ProjectBaseline>,
     /// Packages whose files in this repository a commit of every pending
     /// change would carry out of date. Where the commit on offer is that
     /// one and any is listed, it is not offered: the dialog offers their
@@ -236,17 +242,25 @@ impl From<Stale> for StalePackage {
 }
 
 /// Who opened the offer, which decides whether one is made at all.
-#[derive(Clone, Copy)]
-enum Opened<'a> {
-    /// A write reached this project, with the reading taken before it
-    /// where there was one. An offer is made only where [`Pending::acted`]
-    /// holds of the reading, and none where no reading was taken,
+enum Opened {
+    /// A write reached this project, with the reading taken before it. An
+    /// offer is made only where [`Pending::acted`] holds of the reading,
     /// and that is settled before `gh` is asked anything, so a project the
     /// write left alone costs no network call.
-    ByWrite(Option<&'a Baseline>),
+    ByWrite(ProjectBaseline),
     /// A person asked for this project's offer. Nothing is attributed to
     /// an action, since there is none.
     ByPerson,
+}
+
+impl Opened {
+    /// What a commit after this opening is judged against.
+    fn before(&self) -> Before {
+        match self {
+            Opened::ByWrite(since) => Before::Read(since.clone().into_core()),
+            Opened::ByPerson => Before::Untaken,
+        }
+    }
 }
 
 /// A project where kendex owns changed files and the offer cannot be made.
@@ -417,7 +431,7 @@ fn read(
         root: root.to_owned(),
     };
     let generated = generated(env, &scope)?;
-    let scan = match commit_offer::scan(&scope, &generated) {
+    let scan = match commit_offer::scan(&scope, &generated, &opened.before()) {
         Ok(None) => return Ok(None),
         Ok(Some(scan)) => scan,
         Err(failed) => {
@@ -443,17 +457,12 @@ fn read(
         }
         Branch::On(_) => {}
     }
-    // Read against the state the action found, where an action opened this.
+    // A write that cannot be shown to have done anything here says nothing.
     // A person who opened the review themselves has no action to scope to,
     // and every pending change is theirs to choose from.
-    let pending = match opened {
-        Opened::ByWrite(since) => {
-            let pending = since.map(|since| commit_offer::pending(&scan, since));
-            if !pending.as_ref().is_some_and(Pending::acted) {
-                return Ok(None);
-            }
-            pending
-        }
+    let since = match opened {
+        Opened::ByWrite(since) if scan.carry.pending().is_some_and(Pending::acted) => Some(since),
+        Opened::ByWrite(_) => return Ok(None),
         Opened::ByPerson => None,
     };
     // Asked before the commit is offered, the same reading the terminal
@@ -461,11 +470,11 @@ fn read(
     // whose check says its files are stale over the working tree or over
     // that commit, holds the commit rather than offer one kendex can
     // already see the repository's check refusing.
-    let held = held_by_scope(env, &scope, &scan, &generated, pending.as_ref())?;
+    let held = held_by_scope(env, &scope, &scan, &generated)?;
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref(), held)))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, since, held)))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
@@ -493,24 +502,17 @@ fn held_by_scope(
     scope: &Scope,
     scan: &commit_offer::Scan,
     generated: &kendex_core::engine::GeneratedPaths,
-    pending: Option<&Pending>,
 ) -> Result<HeldBy, String> {
-    let read = |carried: commit_offer::Carried| -> Result<Vec<StalePackage>, String> {
+    let read = |carried: &BTreeSet<String>| -> Result<Vec<StalePackage>, String> {
         Ok(commit_offer::stale(env, scope, scan, generated, carried)
             .map_err(|error| error.to_string())?
             .into_iter()
             .map(StalePackage::from)
             .collect())
     };
-    let every = pending.map(Pending::every_path);
-    let all = match &every {
-        Some(every) => read(commit_offer::Carried::Only(every))?,
-        None => read(commit_offer::Carried::Everything)?,
-    };
-    let action = match pending {
-        Some(pending) if !pending.same() => {
-            read(commit_offer::Carried::Only(&pending.action_set()))?
-        }
+    let all = read(&scan.carried())?;
+    let action = match scan.carry.pending() {
+        Some(pending) if !pending.same() => read(&pending.action_set())?,
         Some(_) | None => all.clone(),
     };
     Ok(HeldBy { all, action })
@@ -531,9 +533,11 @@ fn drawn(
     root: &Path,
     key: &str,
     offer: Offer,
-    pending: Option<&Pending>,
+    since: Option<ProjectBaseline>,
     held: HeldBy,
 ) -> ProjectOffer {
+    let scan = &offer.scan;
+    let pending = scan.carry.pending();
     let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
         .map(|pending| {
             pending
@@ -544,22 +548,16 @@ fn drawn(
                 .collect()
         })
         .unwrap_or_default();
-    let carried = pending.map(Pending::carried).unwrap_or_default();
+    let carried = scan.carried();
     let manifest = pending.and_then(|pending| pending.manifest_not_carried().map(str::to_owned));
     ProjectOffer {
         root: key.to_owned(),
         name: named(root),
-        files: offer
-            .scan
+        files: scan
             .owned
             .iter()
-            .chain(
-                offer
-                    .scan
-                    .beside
-                    .iter()
-                    .filter(|beside| carried.contains(&beside.path)),
-            )
+            .chain(&scan.beside)
+            .filter(|owned| carried.contains(&owned.path))
             .map(|owned| match did.get(owned.path.as_str()) {
                 // No action opened this offer, so nothing is attributed to
                 // one: every pending change stands on its own.
@@ -596,15 +594,14 @@ fn drawn(
                     .collect()
             })
             .unwrap_or_default(),
-        shared: offer
-            .scan
-            .beside
-            .iter()
-            .map(|beside| beside.path.clone())
-            .filter(|path| !carried.contains(path) && manifest.as_ref() != Some(path))
+        shared: scan
+            .left_out()
+            .into_iter()
+            .filter(|path| manifest.as_deref() != Some(*path))
+            .map(str::to_owned)
             .collect(),
         manifest,
-        others: counted(offer.scan.others),
+        others: counted(scan.others),
         push: offer.push.as_ref().err().map(Why::from),
         pull_request: offer.pull_request.as_ref().err().map(Why::from),
         open_number: offer.open.as_ref().map(|open| whole(open.number)),
@@ -614,6 +611,7 @@ fn drawn(
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
+        since,
         stale: held.all,
         stale_action: held.action,
     }
@@ -663,6 +661,9 @@ fn named(root: &Path) -> String {
 pub struct ProjectBaseline {
     pub root: String,
     pub held: Vec<HeldPath>,
+    /// The files the write may change beside the ones kendex owns whole,
+    /// `commit_offer::Baseline::writes`.
+    pub writes: Vec<String>,
 }
 
 /// One path that already carried a pending change, and what stood there.
@@ -692,6 +693,7 @@ impl ProjectBaseline {
                     (held.path, state)
                 })
                 .collect(),
+            writes: self.writes.into_iter().collect(),
         }
     }
 }
@@ -711,6 +713,7 @@ fn baseline_of(key: &str, baseline: &Baseline) -> ProjectBaseline {
                 unreadable: *state == Held::Unreadable,
             })
             .collect(),
+        writes: baseline.writes.iter().cloned().collect(),
     }
 }
 
@@ -718,10 +721,12 @@ fn baseline_of(key: &str, baseline: &Baseline) -> ProjectBaseline {
 /// offer after that write can say what the write itself did.
 ///
 /// Taken before the action runs and handed back to [`commit_offer_scan`]
-/// afterwards. A project this cannot read contributes nothing: the reading
-/// after the action then finds no baseline for it and treats every pending
-/// change there as the action's, which over-reports rather than claiming a
-/// change is somebody else's.
+/// afterwards. The window cannot see the plan of the write it is about to
+/// make, so the files the write may change beside its renders are every
+/// file such a write can change (`GeneratedPaths::beside`), and the
+/// reading after it keeps only the ones whose content moved. A project
+/// this cannot read contributes nothing, and the write that follows makes
+/// no offer about it.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn commit_offer_baseline(roots: Vec<String>) -> Result<Vec<ProjectBaseline>, String> {
@@ -734,7 +739,8 @@ pub fn commit_offer_baseline(roots: Vec<String>) -> Result<Vec<ProjectBaseline>,
         let Ok(generated) = generated(&env, &scope) else {
             continue;
         };
-        if let Ok(baseline) = commit_offer::baseline(&scope, &generated) {
+        let writes = generated.beside(&PathBuf::from(&key));
+        if let Before::Read(baseline) = Before::read(&scope, &generated, writes) {
             taken.push(baseline_of(&key, &baseline));
         }
     }
@@ -763,9 +769,9 @@ pub fn commit_offer_scan(
     if !commit_offer::asking(&env) {
         return Ok(Vec::new());
     }
-    let mut taken: BTreeMap<String, Baseline> = since
+    let mut taken: BTreeMap<String, ProjectBaseline> = since
         .into_iter()
-        .map(|one| (one.root.clone(), one.into_core()))
+        .map(|one| (one.root.clone(), one))
         .collect();
     let mut offers = Vec::new();
     for root in roots {
@@ -778,18 +784,14 @@ pub fn commit_offer_scan(
         // plan would not derive then either — an empty baseline would
         // report every pending change as this action's, putting somebody
         // else's work in a dialog headed by this write and committing it
-        // under that label. Passed on as `None`, nothing is attributed to
-        // an action, and `read` then makes no offer at all: a
-        // write that cannot be shown to have done anything here says
-        // nothing. What is waiting still reaches the person through
-        // `project_changes_scan` and the review page.
-        let before = taken.remove(&root);
-        match read(
-            &env,
-            &PathBuf::from(&root),
-            &root,
-            Opened::ByWrite(before.as_ref()),
-        ) {
+        // under that label. So no offer is made at all: a write that cannot
+        // be shown to have done anything here says nothing. What is
+        // waiting still reaches the person through `project_changes_scan`
+        // and the review page.
+        let Some(before) = taken.remove(&root) else {
+            continue;
+        };
+        match read(&env, &PathBuf::from(&root), &root, Opened::ByWrite(before)) {
             // An offer is made about what the write did. A project where it
             // did nothing reads as `None` and is left alone: its pending
             // changes are on the project's card and in its own review,
@@ -825,9 +827,8 @@ pub fn commit_offer_open(
     since: Option<ProjectBaseline>,
 ) -> Result<OpenOffer, String> {
     let env = env()?;
-    let since = since.map(ProjectBaseline::into_core);
-    let opened = match &since {
-        Some(since) => Opened::ByWrite(Some(since)),
+    let opened = match since {
+        Some(since) => Opened::ByWrite(since),
         None => Opened::ByPerson,
     };
     Ok(match read(&env, &PathBuf::from(&root), &root, opened)? {
@@ -862,14 +863,21 @@ pub enum OpenOffer {
 /// sends: the scan is what decides which files kendex may show, and a
 /// window that has been open a while is answering about a project that has
 /// moved on. A path the fresh scan does not cover is `Nothing`, whatever
-/// it names.
+/// it names. `since` is the reading the offer listing the file was drawn
+/// against, so a file the action wrote beside its renders opens as the
+/// offer listed it; `null` where none was.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn commit_offer_file_changes(root: String, path: String) -> Result<FileChanges, String> {
+pub fn commit_offer_file_changes(
+    root: String,
+    path: String,
+    since: Option<ProjectBaseline>,
+) -> Result<FileChanges, String> {
     let env = env()?;
     let root = PathBuf::from(root);
     let scope = Scope::Project { root: root.clone() };
-    let scan = match commit_offer::scan(&scope, &generated(&env, &scope)?) {
+    let before = since.map_or(Before::Untaken, |since| Before::Read(since.into_core()));
+    let scan = match commit_offer::scan(&scope, &generated(&env, &scope)?, &before) {
         Ok(Some(scan)) => scan,
         // Nothing kendex owns changed here any more, so no path in this
         // project has a change this viewer may show.
@@ -920,7 +928,7 @@ impl ChangeSelection {
 }
 
 /// Commit one project's selection. `since` is the reading the offer was
-/// scoped to, where an action opened it: the files kendex writes into and
+/// drawn against, `ProjectOffer::since`: the files kendex writes into and
 /// does not own whole ride the commit only through it, and only where the
 /// action changed them from a clean state.
 #[tauri::command(async)]
@@ -936,9 +944,9 @@ pub fn commit_offer_commit(
     let scope = Scope::Project { root: root.clone() };
     let generated = generated(&env, &scope)?;
     let selection = selection.into_core();
-    let since = since.map(ProjectBaseline::into_core);
+    let before = since.map_or(Before::Untaken, |since| Before::Read(since.into_core()));
     Ok(
-        match commit_offer::commit(&root, &generated, &message, &selection, since.as_ref()) {
+        match commit_offer::commit(&root, &generated, &message, &selection, &before) {
             Ok(Committed::Nothing { dropped }) => CommitStep::Nothing { dropped },
             Ok(Committed::Made {
                 sha,
@@ -983,11 +991,8 @@ pub enum ChangesState {
     Pending {
         /// The files kendex owns whole that changed.
         files: Vec<String>,
-        /// The changed files kendex writes into and does not own whole:
-        /// the manifest, the settings file, `.gitignore`, and the shared
-        /// configuration files it writes one key in.
-        shared: Vec<String>,
-        /// How many of the person's own files changed.
+        /// How many of the person's own files changed. With no action to
+        /// read against, a file kendex writes one key in is among them.
         others: u32,
         /// The branch a commit would land on, or `null` where none would.
         branch: Option<String>,
@@ -1026,11 +1031,10 @@ pub fn project_changes_scan(roots: Vec<String>) -> Result<Vec<ProjectChanges>, S
         found.push(ProjectChanges {
             root: key,
             name: named(&root),
-            state: match commit_offer::scan(&scope, &generated) {
+            state: match commit_offer::scan(&scope, &generated, &Before::Untaken) {
                 Ok(None) => ChangesState::Clean,
                 Ok(Some(scan)) => ChangesState::Pending {
-                    files: scan.owned.iter().map(|owned| owned.path.clone()).collect(),
-                    shared: scan.beside.iter().map(|one| one.path.clone()).collect(),
+                    files: scan.carried().into_iter().collect(),
                     others: counted(scan.others),
                     branch: scan.on_branch().map(str::to_owned),
                     operation: match &scan.branch {
@@ -1297,11 +1301,10 @@ mod tests {
     /// "Only this action" would commit somebody else's work under this
     /// write's label.
     ///
-    /// What this pins is the attribution; `read` making no offer from it is
-    /// `a_write_is_offered_only_where_it_acted`. The line joining the two,
-    /// `taken.remove(&root)` passed on as it is rather than defaulted, is
-    /// not covered: `commit_offer_scan` reads the machine through
-    /// `Env::detect`, and no test in this crate can hand it one.
+    /// What this pins is the attribution. `commit_offer_scan` skipping a
+    /// project with no reading, rather than defaulting one, is not covered:
+    /// it reads the machine through `Env::detect`, and no test in this
+    /// crate can hand it one.
     #[test]
     fn a_write_no_reading_was_taken_for_is_credited_with_nothing() {
         let root = PathBuf::from("/home/method/dev/site");
@@ -1317,6 +1320,7 @@ mod tests {
                         added: false,
                     }],
                     beside: Vec::new(),
+                    carry: kendex_core::commit_offer::Carry::Untaken,
                     others: 0,
                     branch: Branch::On("main".to_owned()),
                 },
@@ -1343,6 +1347,114 @@ mod tests {
                 .all(|file| file.did == DidWhat::Older),
             "pending changes were attributed to a write nothing was read for"
         );
+    }
+
+    /// The window draws what the scan's one answer carries: the files it
+    /// lists are [`commit_offer::Scan::carried`], a manifest the write
+    /// wrote from a clean state among them, and one it wrote over the
+    /// person's own edit is named apart and never listed. The reading it
+    /// was drawn against travels with the offer, and the file viewer handed
+    /// it back opens the carried manifest.
+    #[test]
+    fn the_window_lists_what_the_commit_carries_and_names_what_it_leaves() {
+        for (what, edited, listed, named) in [
+            (
+                "a clean manifest the write changed",
+                false,
+                &[".claude/agents/scout.md", "kendex.toml"][..],
+                None,
+            ),
+            (
+                "a manifest holding the person's edit",
+                true,
+                &[".claude/agents/scout.md"][..],
+                Some("kendex.toml"),
+            ),
+        ] {
+            let tmp = tempfile::tempdir().expect("a fixture directory");
+            let root = tmp.path().canonicalize().expect("the root resolves");
+            let home = root.join("home");
+            let project = root.join("project");
+            std::fs::create_dir_all(&home).expect("the fixture home is made");
+            std::fs::create_dir_all(&project).expect("the project is made");
+            bot_fixture_git(&project, &home, &["init", "--quiet", "-b", "main"]);
+            std::fs::write(project.join("kendex.toml"), "schema = 6\n").expect("written");
+            bot_fixture_git(&project, &home, &["add", "-A"]);
+            bot_fixture_git(&project, &home, &["commit", "--quiet", "-m", "one"]);
+            if edited {
+                std::fs::write(project.join("kendex.toml"), "# mine\nschema = 6\n")
+                    .expect("the person edits the manifest");
+            }
+            let scope = Scope::Project {
+                root: project.clone(),
+            };
+            let render = project.join(".claude/agents/scout.md");
+            let generated = kendex_core::engine::GeneratedPaths {
+                whole: [render.clone()].into(),
+                ..Default::default()
+            };
+            let key = project.to_string_lossy().into_owned();
+            let Before::Read(baseline) =
+                Before::read(&scope, &generated, generated.beside(&project))
+            else {
+                panic!("{what}: the reading did not run");
+            };
+            let since = baseline_of(&key, &baseline);
+            std::fs::create_dir_all(render.parent().expect("a parent")).expect("made");
+            std::fs::write(&render, "scout\n").expect("the write renders");
+            let manifest = std::fs::read_to_string(project.join("kendex.toml")).expect("reads");
+            std::fs::write(project.join("kendex.toml"), format!("{manifest}[agents]\n"))
+                .expect("the write declares");
+            let before = Before::Read(since.clone().into_core());
+            let scan = commit_offer::scan(&scope, &generated, &before)
+                .expect("the project reads")
+                .expect("the commit carries something");
+
+            let offer = drawn(
+                &project,
+                &key,
+                Offer {
+                    scan: scan.clone(),
+                    branch: "main".to_owned(),
+                    remote: None,
+                    push: Ok(()),
+                    pull_request: Ok(()),
+                    open: None,
+                    message: "chore: kendex app".to_owned(),
+                    new_branch: "kendex/renders".to_owned(),
+                },
+                Some(since),
+                HeldBy {
+                    all: Vec::new(),
+                    action: Vec::new(),
+                },
+            );
+
+            let files: Vec<&str> = offer.files.iter().map(|file| file.path.as_str()).collect();
+            assert_eq!(files, listed, "{what}: the listed files");
+            assert_eq!(
+                offer.manifest.as_deref(),
+                named,
+                "{what}: the manifest named"
+            );
+            assert!(offer.shared.is_empty(), "{what}: {:?}", offer.shared);
+            assert_eq!(offer.others, 0, "{what}: the person's own count");
+            let opened = offer
+                .since
+                .map(ProjectBaseline::into_core)
+                .map(Before::Read);
+            let viewed = commit_offer::scan(&scope, &generated, &opened.expect("the reading"))
+                .expect("the project reads")
+                .expect("the commit carries something");
+            assert_eq!(
+                matches!(
+                    commit_offer::file_changes(&viewed, "kendex.toml").expect("the file reads"),
+                    Changes::Shown(_)
+                ),
+                named.is_none(),
+                "{what}: the file viewer"
+            );
+        }
     }
 
     /// Every way a step can fail travels whole, or the bound it ran past
@@ -1616,7 +1728,7 @@ mod tests {
             &generated,
             "chore: kendex apply",
             &Selection::All,
-            None,
+            &Before::Untaken,
         )
         .expect("the app commit route succeeds");
         assert!(matches!(committed, Committed::Made { .. }));
@@ -1703,9 +1815,9 @@ mod tests {
 
     /// A write is offered about only where it can be shown to have acted,
     /// and that is settled in `read` before `gh` is asked anything. With a
-    /// render pending, a write with no reading behind it gets no offer,
-    /// one with a reading taken before the render gets one, and a person
-    /// who asks gets one whatever was read.
+    /// render pending, a write read before the render gets an offer, one
+    /// read after it, which changed nothing, gets none, and a person who
+    /// asks gets one whatever was read.
     #[test]
     #[cfg(unix)]
     fn a_write_is_offered_only_where_it_acted() {
@@ -1721,20 +1833,24 @@ mod tests {
         let scope = Scope::Project { root: root.clone() };
         let env = Env::fake(&home, FakeOs::Linux);
         record_bot_package(&env, &scope, &root, true);
-        let before = commit_offer::baseline(
-            &scope,
-            &generated(&env, &scope).expect("the commit set before the write"),
-        )
-        .expect("the reading before the write");
-        crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
-
         let key = root.to_string_lossy().into_owned();
+        let reading = || {
+            let generated = generated(&env, &scope).expect("the commit set");
+            match Before::read(&scope, &generated, generated.beside(&root)) {
+                Before::Read(baseline) => baseline_of(&key, &baseline),
+                other => panic!("the reading did not run: {other:?}"),
+            }
+        };
+        let before = reading();
+        crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
+        let after = reading();
+
         let rows = [
-            ("a write with no reading", Opened::ByWrite(None), false),
+            ("a write that rendered", Opened::ByWrite(before), true),
             (
-                "a write that rendered",
-                Opened::ByWrite(Some(&before)),
-                true,
+                "a write that changed nothing",
+                Opened::ByWrite(after),
+                false,
             ),
             ("a person asking", Opened::ByPerson, true),
         ];
@@ -1845,15 +1961,13 @@ mod tests {
             whole: std::collections::BTreeSet::from([doctrine, shim.clone()]),
             ..kendex_core::engine::GeneratedPaths::default()
         };
-        let since = commit_offer::baseline(&scope, &generated).expect("the reading before");
+        let since = Before::read(&scope, &generated, []);
         std::fs::write(&shim, "@AGENTS.md\n").expect("the action writes its file");
-        let scan = commit_offer::scan(&scope, &generated)
+        let scan = commit_offer::scan(&scope, &generated, &since)
             .expect("the project reads")
             .expect("kendex owns changed files");
-        let pending = commit_offer::pending(&scan, &since);
 
-        let held = held_by_scope(&env, &scope, &scan, &generated, Some(&pending))
-            .expect("the packages are asked");
+        let held = held_by_scope(&env, &scope, &scan, &generated).expect("the packages are asked");
 
         let named = |held: &[StalePackage]| -> Vec<(String, StaleWhy, bool)> {
             held.iter()
@@ -1866,8 +1980,11 @@ mod tests {
             vec![("bot-instructions".to_owned(), StaleWhy::NotSetUp, true)],
             "every pending change"
         );
+        let unread = commit_offer::scan(&scope, &generated, &Before::Untaken)
+            .expect("the project reads")
+            .expect("kendex owns changed files");
         let whole =
-            held_by_scope(&env, &scope, &scan, &generated, None).expect("the packages are asked");
+            held_by_scope(&env, &scope, &unread, &generated).expect("the packages are asked");
         assert_eq!(
             named(&whole.action),
             named(&whole.all),
@@ -1906,15 +2023,13 @@ mod tests {
             whole: std::collections::BTreeSet::from([doctrine, rendered]),
             ..kendex_core::engine::GeneratedPaths::default()
         };
-        let since = commit_offer::baseline(&scope, &generated).expect("the reading before");
+        let since = Before::read(&scope, &generated, []);
         crate::audit::apply_scope(&env, &scope, false).expect("the action re-renders");
-        let scan = commit_offer::scan(&scope, &generated)
+        let scan = commit_offer::scan(&scope, &generated, &since)
             .expect("the project reads")
             .expect("kendex owns changed files");
-        let pending = commit_offer::pending(&scan, &since);
 
-        let held = held_by_scope(&env, &scope, &scan, &generated, Some(&pending))
-            .expect("the packages are asked");
+        let held = held_by_scope(&env, &scope, &scan, &generated).expect("the packages are asked");
 
         let named = |held: &[StalePackage]| -> Vec<(StaleWhy, Vec<String>, bool)> {
             held.iter()
@@ -2014,7 +2129,7 @@ mod tests {
             &selected,
             "chore: kendex apply",
             &Selection::All,
-            None,
+            &Before::Untaken,
         )
         .expect("the commit selection is evaluated");
         assert!(matches!(committed, Committed::Nothing { .. }));

@@ -28,7 +28,6 @@ const row = (over: Partial<ProjectChanges> = {}): ProjectChanges => ({
   state: {
     kind: "pending",
     files: [".claude/CLAUDE.md"],
-    shared: [],
     others: 0,
     branch: "main",
     operation: null,
@@ -149,7 +148,6 @@ describe("what each project has waiting", () => {
           state: {
             kind: "pending",
             files: ["a"],
-            shared: [],
             others: 0,
             branch: null,
             operation: null,
@@ -163,7 +161,6 @@ describe("what each project has waiting", () => {
           state: {
             kind: "pending",
             files: ["a"],
-            shared: [],
             others: 0,
             branch: "main",
             operation: "a rebase",

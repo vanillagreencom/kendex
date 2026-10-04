@@ -337,7 +337,7 @@ describe("the questions a write leaves behind", () => {
           ],
         },
       ],
-      baselines: { "/work/acme": { root: "/work/acme", held: [] } },
+      baselines: { "/work/acme": { root: "/work/acme", held: [], writes: [] } },
     });
     const host = mount(<CommitOfferDialog />);
     await settle();

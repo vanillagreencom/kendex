@@ -39,6 +39,7 @@ const offer: ProjectOffer = {
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  since: null,
   stale: [],
   staleAction: [],
 };

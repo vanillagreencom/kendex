@@ -339,9 +339,14 @@ fn scout_and_guard(home: &Path) -> PathBuf {
 /// before it: the manifest, the ignore file, and the shared settings file a
 /// hook registers in, written where none stood. A file the run wrote into
 /// that already held a change of the person's is left out, since git
-/// commits whole files, stays pending, and the offer names it.
+/// commits whole files, stays pending, and the offer names it. The same add
+/// with nobody to ask prints the count of that same commit in its head.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one table: each row an add with nobody to ask and an add that commits, in projects of their own"
+)]
 fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
     const MANIFEST: &str = "kendex.toml";
     const SETTINGS: &str = ".claude/settings.json";
@@ -393,27 +398,44 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
         },
     ];
     for row in rows {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = rooted(&tmp);
-        let project = project(&tmp);
-        let catalog = scout_and_guard(&home);
-        if let Some((path, committed, edit)) = row.edited {
-            fs::write(project.join(path), committed).unwrap();
-            git(&project, &["add", "-A"]);
-            git(&project, &["commit", "-q", "--allow-empty", "-m", "mine"]);
-            fs::write(project.join(path), edit).unwrap();
-        }
-
-        let mut args = vec!["add", "--yes", "--commit", "--throwaway"];
-        let source = catalog.to_string_lossy().into_owned();
-        args.push(&source);
-        args.extend(row.add);
-        let output = kendex(&home, &project, &args);
-        let text = said(&output);
         let what = row.what;
-        assert!(output.status.success(), "{what}: {text}");
+        // The add, run in a project of its own with `answer` added.
+        let add = |answer: Option<&str>| {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let project = project(&tmp);
+            let catalog = scout_and_guard(&home);
+            if let Some((path, committed, edit)) = row.edited {
+                fs::write(project.join(path), committed).unwrap();
+                git(&project, &["add", "-A"]);
+                git(&project, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+                fs::write(project.join(path), edit).unwrap();
+            }
+            let mut args = vec!["add", "--yes", "--throwaway"];
+            args.extend(answer);
+            let source = catalog.to_string_lossy().into_owned();
+            args.push(&source);
+            args.extend(row.add);
+            let output = kendex(&home, &project, &args);
+            let text = said(&output);
+            assert!(output.status.success(), "{what}: {text}");
+            (tmp, project, text)
+        };
+        let (_unasked, _, asked) = add(None);
+        let (_tmp, project, text) = add(Some("--commit"));
         let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
         let status = git(&project, &["status", "--porcelain"]);
+        let count = files.lines().count();
+        assert!(
+            asked.contains(&format!(
+                ": {count} files kendex wrote are not committed; run again"
+            )),
+            "{what}: the head did not count the {count} files committed:\n{asked}"
+        );
+        assert!(
+            text.contains(&format!("committed {count} files as ")),
+            "{what}: {text}"
+        );
         for carried in row.carried {
             assert!(
                 files.lines().any(|line| line == *carried),

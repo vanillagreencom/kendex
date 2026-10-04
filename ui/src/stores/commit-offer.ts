@@ -676,13 +676,15 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
           return;
         }
       }
-      // The reading the offer was scoped to: the files kendex writes into
-      // and does not own whole ride the commit only through it.
+      // The reading the offer was drawn against: the files kendex writes
+      // into and does not own whole ride the commit only through it, so the
+      // commit carries what the offer listed and nothing a later reading
+      // of this project would.
       const committed = await commands.commitOfferCommit(
         offer.root,
         message,
         selection,
-        get().baselines[offer.root] ?? null,
+        offer.since,
       );
       if (committed.status === "error") return transport(committed.error);
       if (committed.data.kind === "nothing") {
@@ -820,10 +822,10 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       const offer = head();
       const held = heldBy(get());
       if (!offer || held.length === 0 || !canSetUp(held)) return;
-      // Taken before the write: the write's own reading of the projects
-      // records one for an offer a person opened, which has none and reads
-      // as they opened it.
-      const since = get().baselines[offer.root] ?? null;
+      // The reading the offer was drawn against. The setup's own write
+      // records a fresh one for an offer a person opened, which has none
+      // and reads again as they opened it.
+      const since = offer.since;
       // The setup reaches `repo_effects`, so it runs inside the one write
       // lifecycle and the machine is read again behind it, landed or
       // refused. The offer that lifecycle asks for reads this project

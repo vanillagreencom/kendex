@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { FileChanges, FileMode, PackageDiff, Refused } from "@/bindings";
+import type {
+  FileChanges,
+  FileMode,
+  PackageDiff,
+  ProjectBaseline,
+  Refused,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
@@ -29,7 +35,7 @@ type Read =
   | { at: "nothing" }
   | { at: "refused"; said: string[] };
 
-/** The changed files kendex owns in one project, as the app's file tree,
+/** The files a commit carries in one project, as the app's file tree,
  *  with each one opening what changed in it.
  *
  *  A list of paths asks a person to answer for a change they cannot see.
@@ -41,15 +47,20 @@ type Read =
  *
  *  Only what the offer covers reaches this. The read behind each row asks
  *  core for one path and core answers `Nothing` for any path its own fresh
- *  scan does not cover, so a shared configuration file — which kendex
- *  writes one key in and never commits whole — has no route to a diff here,
- *  and neither has anything else in the repository. */
+ *  scan does not carry, so a shared configuration file holding the person's
+ *  own keys — which kendex never commits whole — has no route to a diff
+ *  here, and neither has anything else in the repository. */
 export function ChangedFiles({
   root,
+  since,
   entries,
   onOpen,
 }: {
   root: string;
+  /** The reading the offer listing these files was drawn against, which
+   *  the read behind each row hands back so a file the action wrote beside
+   *  its renders opens as listed. `null` on the review a person opened. */
+  since: ProjectBaseline | null;
   /** The rows this tree lists, with whatever the surface says about each —
    *  what the action did to it, whether it is new or gone. */
   entries: FileEntry[];
@@ -86,7 +97,7 @@ export function ChangedFiles({
     setOpen(path);
     onOpen?.(path);
     setRead({ at: "reading" });
-    void commands.commitOfferFileChanges(root, path).then((response) => {
+    void commands.commitOfferFileChanges(root, path, since).then((response) => {
       if (!order.current.lands(ticket)) return;
       setRead(answerOf(response));
     });

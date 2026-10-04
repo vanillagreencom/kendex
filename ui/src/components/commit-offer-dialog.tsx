@@ -57,6 +57,8 @@ import {
   FILES_LABEL,
   LEAVE_IT_HERE_LABEL,
   LEAVE_LABEL,
+  LEFT_OUT_LABEL,
+  LEFT_OUT_NOTE,
   MANIFEST_LEFT_LABEL,
   MESSAGE_LABEL,
   manifestLeft,
@@ -87,8 +89,6 @@ import {
   SCAN_FAILED_TITLE,
   SET_UP_FAILED_TITLE,
   SETTING_UP_LABEL,
-  SHARED_LABEL,
-  SHARED_NOTE,
   STALE_LABEL,
   STALE_NOTE,
   STILL_HELD_NOTE,
@@ -249,8 +249,9 @@ function Section({
   );
 }
 
-/** Paths kendex names but does not offer to open: the shared files it
- *  writes one key in, which it leaves to the person. Printed whole — an
+/** Paths kendex names but does not offer to open: the files this action
+ *  changed over the person's own edits, which it leaves to them. Printed
+ *  whole — an
  *  abbreviation guesses at a directory and names a different file from the
  *  one being committed. */
 function Paths({ paths }: { paths: string[] }) {
@@ -325,7 +326,11 @@ function OfferState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={FILES_LABEL}>
-          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
+          <ChangedFiles
+            root={offer.root}
+            since={offer.since}
+            entries={offerEntries(offer)}
+          />
         </Section>
         <Scope offer={offer} busy={busy} />
         {offer.manifest === null ? null : (
@@ -336,9 +341,9 @@ function OfferState({
           </Section>
         )}
         {offer.shared.length > 0 ? (
-          <Section title={SHARED_LABEL}>
+          <Section title={LEFT_OUT_LABEL}>
             <Paths paths={offer.shared} />
-            <p className="text-muted-foreground">{SHARED_NOTE}</p>
+            <p className="text-muted-foreground">{LEFT_OUT_NOTE}</p>
           </Section>
         ) : null}
         {offer.others > 0 ? (
@@ -422,7 +427,11 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
           ))}
         </Section>
         <Section title={FILES_LABEL}>
-          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
+          <ChangedFiles
+            root={offer.root}
+            since={offer.since}
+            entries={offerEntries(offer)}
+          />
         </Section>
         {/* The hold is on the commit picked here: a commit of only this
             action's work can be clean where every pending change is not,
@@ -733,7 +742,11 @@ function CommitRefusedState({
         {/* The files the commit covers stay on screen, so the person can
             still see what they are answering about. */}
         <Section title={FILES_LABEL}>
-          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
+          <ChangedFiles
+            root={offer.root}
+            since={offer.since}
+            entries={offerEntries(offer)}
+          />
         </Section>
         {offer.others > 0 ? (
           <Section title={OTHER_LABEL}>

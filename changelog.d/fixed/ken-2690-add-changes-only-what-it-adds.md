@@ -1,1 +1,1 @@
-- `kendex add` and the app picker keep a project's tools and packages as declared, `--commit` commits `kendex.toml` unless it held your edits, and dropping a tool retires its shims and emptied files.
+- `kendex add` and the app picker keep declared tools and packages, `--commit` commits every file the run wrote unless it held your edits, and dropping a tool retires its shims and emptied files.

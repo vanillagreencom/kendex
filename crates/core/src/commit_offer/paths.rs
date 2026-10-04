@@ -10,7 +10,8 @@ use std::path::Path;
 
 use crate::engine::GeneratedPaths;
 
-use super::{Branch, Failed, Operation, Owned, Rebase, Scan, git};
+use super::pending::{Before, Pending};
+use super::{Branch, Carry, Failed, Operation, Owned, Rebase, Scan, git};
 
 /// One `git status` row: the two status letters and the path.
 struct Row<'a> {
@@ -46,21 +47,48 @@ impl Row<'_> {
     }
 }
 
-/// Read the project: what changed, and where the checkout stands.
+/// Read the project: what changed, where the checkout stands, and what a
+/// commit after the action `before` was read for carries. `None` where
+/// that commit would carry nothing.
 ///
 /// A read the offer is built from that would not run leaves the offer
 /// unbuildable, and its words reach the person as that step's failure, the
 /// way every other step's do.
-pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Failed> {
-    let sorted = sort(root, generated)?;
-    if sorted.owned.is_empty() {
+pub fn scan(
+    root: &Path,
+    generated: &GeneratedPaths,
+    before: &Before,
+) -> Result<Option<Scan>, Failed> {
+    let sorted = sort(root, generated, before.writes())?;
+    let mut others = sorted.others.len() + sorted.unnamed;
+    let (beside, carry) = match before {
+        Before::Read(baseline) => {
+            let pending = Pending::read(root, &sorted.owned, &sorted.beside, baseline);
+            // A file the action left as it found it is the person's.
+            let (written, untouched): (Vec<Owned>, Vec<Owned>) = sorted
+                .beside
+                .into_iter()
+                .partition(|one| pending.beside.iter().any(|file| file.path == one.path));
+            others += untouched.len();
+            (written, Carry::Read(pending))
+        }
+        Before::Unread { failed, .. } => (sorted.beside, Carry::Unread(failed.clone())),
+        // Nothing was read, so nothing was sorted apart from the person's
+        // own files.
+        Before::Untaken => (sorted.beside, Carry::Untaken),
+    };
+    let carries = carry
+        .pending()
+        .is_some_and(|pending| !pending.carried().is_empty());
+    if sorted.owned.is_empty() && !carries {
         return Ok(None);
     }
     Ok(Some(Scan {
         root: root.to_owned(),
         owned: sorted.owned,
-        beside: sorted.beside,
-        others: sorted.others.len() + sorted.unnamed,
+        beside,
+        carry,
+        others,
         branch: branch(root)?,
     }))
 }
@@ -69,8 +97,8 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
 pub(super) struct Sorted {
     /// Changed files kendex owns whole, sorted: [`Scan::owned`].
     pub owned: Vec<Owned>,
-    /// Changed files kendex writes into and does not own whole, sorted:
-    /// [`Scan::beside`].
+    /// Changed files the action may have written beside them, sorted: what
+    /// [`Scan::beside`] is drawn from.
     pub beside: Vec<Owned>,
     /// Every other changed path, by name.
     pub others: Vec<String>,
@@ -83,10 +111,24 @@ pub(super) struct Sorted {
 }
 
 /// Sort what git reports changed. The read every other one here is made
-/// from, and the one [`super::baseline`] records before an action.
-pub(super) fn sort(root: &Path, generated: &GeneratedPaths) -> Result<Sorted, Failed> {
+/// from, and the one [`Before::read`] records before an action. A file the
+/// action may write is one of `writes` or a shared edit target of
+/// `generated`; with no `writes`, where nothing was read before the action,
+/// none is set apart from the person's own files.
+pub(super) fn sort(
+    root: &Path,
+    generated: &GeneratedPaths,
+    writes: Option<&BTreeSet<String>>,
+) -> Result<Sorted, Failed> {
     let owned = relative(root, &generated.owned(root));
-    let beside = relative(root, &generated.beside(root));
+    let beside: BTreeSet<String> = match writes {
+        None => BTreeSet::new(),
+        Some(writes) => writes
+            .iter()
+            .cloned()
+            .chain(relative(root, &generated.shared))
+            .collect(),
+    };
     let status = git::read_required(
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],

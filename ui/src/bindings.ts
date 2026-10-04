@@ -371,10 +371,12 @@ export const commands = {
 	 *  offer after that write can say what the write itself did.
 	 * 
 	 *  Taken before the action runs and handed back to [`commit_offer_scan`]
-	 *  afterwards. A project this cannot read contributes nothing: the reading
-	 *  after the action then finds no baseline for it and treats every pending
-	 *  change there as the action's, which over-reports rather than claiming a
-	 *  change is somebody else's.
+	 *  afterwards. The window cannot see the plan of the write it is about to
+	 *  make, so the files the write may change beside its renders are every
+	 *  file such a write can change (`GeneratedPaths::beside`), and the
+	 *  reading after it keeps only the ones whose content moved. A project
+	 *  this cannot read contributes nothing, and the write that follows makes
+	 *  no offer about it.
 	 */
 	commitOfferBaseline: (roots: string[]) => typedError<ProjectBaseline[], string>(__TAURI_INVOKE("commit_offer_baseline", { roots })),
 	/**
@@ -403,6 +405,11 @@ export const commands = {
 	commitOfferOpen: (root: string, since: {
 	root: string,
 	held: HeldPath[],
+	/**
+	 *  The files the write may change beside the ones kendex owns whole,
+	 *  `commit_offer::Baseline::writes`.
+	 */
+	writes: string[],
 } | null) => typedError<OpenOffer, string>(__TAURI_INVOKE("commit_offer_open", { root, since })),
 	/**
 	 *  What changed in one file the offer covers, for the viewer the window
@@ -412,9 +419,19 @@ export const commands = {
 	 *  sends: the scan is what decides which files kendex may show, and a
 	 *  window that has been open a while is answering about a project that has
 	 *  moved on. A path the fresh scan does not cover is `Nothing`, whatever
-	 *  it names.
+	 *  it names. `since` is the reading the offer listing the file was drawn
+	 *  against, so a file the action wrote beside its renders opens as the
+	 *  offer listed it; `null` where none was.
 	 */
-	commitOfferFileChanges: (root: string, path: string) => typedError<FileChanges, string>(__TAURI_INVOKE("commit_offer_file_changes", { root, path })),
+	commitOfferFileChanges: (root: string, path: string, since: {
+	root: string,
+	held: HeldPath[],
+	/**
+	 *  The files the write may change beside the ones kendex owns whole,
+	 *  `commit_offer::Baseline::writes`.
+	 */
+	writes: string[],
+} | null) => typedError<FileChanges, string>(__TAURI_INVOKE("commit_offer_file_changes", { root, path, since })),
 	projectChangesScan: (roots: string[]) => typedError<ProjectChanges[], string>(__TAURI_INVOKE("project_changes_scan", { roots })),
 	/**
 	 *  The exact effect of putting these paths back, without putting any of
@@ -431,13 +448,18 @@ export const commands = {
 	projectChangesRestore: (root: string, paths: string[]) => typedError<RestoreResult, string>(__TAURI_INVOKE("project_changes_restore", { root, paths })),
 	/**
 	 *  Commit one project's selection. `since` is the reading the offer was
-	 *  scoped to, where an action opened it: the files kendex writes into and
+	 *  drawn against, `ProjectOffer::since`: the files kendex writes into and
 	 *  does not own whole ride the commit only through it, and only where the
 	 *  action changed them from a clean state.
 	 */
 	commitOfferCommit: (root: string, message: string, selection: ChangeSelection, since: {
 	root: string,
 	held: HeldPath[],
+	/**
+	 *  The files the write may change beside the ones kendex owns whole,
+	 *  `commit_offer::Baseline::writes`.
+	 */
+	writes: string[],
 } | null) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message, selection, since })),
 	commitOfferPush: (root: string, remote: string, branch: string, tracked: boolean) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push", { root, remote, branch, tracked })),
 	/**
@@ -1301,12 +1323,9 @@ export type ChangesState =
 /**  The files kendex owns whole that changed. */
 files: string[]; 
 /**
- *  The changed files kendex writes into and does not own whole:
- *  the manifest, the settings file, `.gitignore`, and the shared
- *  configuration files it writes one key in.
+ *  How many of the person's own files changed. With no action to
+ *  read against, a file kendex writes one key in is among them.
  */
-shared: string[]; 
-/**  How many of the person's own files changed. */
 others: number; 
 /**  The branch a commit would land on, or `null` where none would. */
 branch: string | null; 
@@ -3998,6 +4017,11 @@ export type PreflightCheck = {
 export type ProjectBaseline = {
 	root: string,
 	held: HeldPath[],
+	/**
+	 *  The files the write may change beside the ones kendex owns whole,
+	 *  `commit_offer::Baseline::writes`.
+	 */
+	writes: string[],
 };
 
 /**
@@ -4033,10 +4057,11 @@ export type ProjectOffer = {
 	/**  The project's folder name, which the title names. */
 	name: string,
 	/**
-	 *  The files kendex owns whole that changed, and the files it wrote
-	 *  into that this action changed from a clean state, printed whole: an
-	 *  abbreviation guesses at a directory and names a different file from
-	 *  the one being committed.
+	 *  What a commit of every pending change carries,
+	 *  `commit_offer::Scan::carried`: the files kendex owns whole that
+	 *  changed, and the files this action wrote from a clean state, printed
+	 *  whole: an abbreviation guesses at a directory and names a different
+	 *  file from the one being committed.
 	 */
 	files: ChangedFile[],
 	/**
@@ -4054,10 +4079,10 @@ export type ProjectOffer = {
 	/**  What stops the action's work from being committed on its own. */
 	tangled: TangledFile[],
 	/**
-	 *  The changed files kendex writes into and does not own whole that no
-	 *  commit on offer carries — the manifest named in `manifest` aside.
-	 *  Every such file where a person opened the offer: with no action to
-	 *  read against, none is shown to hold the action's change alone.
+	 *  The files this action wrote that no commit on offer carries, because
+	 *  each held a change before it — the manifest named in `manifest`
+	 *  aside. Empty where a person opened the offer: with no action to read
+	 *  against, no file beside the ones kendex owns whole is its.
 	 */
 	shared: string[],
 	/**
@@ -4086,6 +4111,13 @@ export type ProjectOffer = {
 	 *  `--set-upstream`.
 	 */
 	tracked: boolean,
+	/**
+	 *  The reading the offer was drawn against, which every step after it
+	 *  hands back: the commit and the file viewer carry what this offer
+	 *  listed, and nothing a later reading would. `null` where a person
+	 *  opened the offer.
+	 */
+	since: ProjectBaseline | null,
 	/**
 	 *  Packages whose files in this repository a commit of every pending
 	 *  change would carry out of date. Where the commit on offer is that

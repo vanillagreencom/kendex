@@ -19,7 +19,7 @@ use crate::engine::GeneratedPaths;
 use crate::process::Hardened;
 
 use super::pathspec::Spec;
-use super::pending::{Baseline, Selection};
+use super::pending::{Before, Selection};
 use super::{Failed, Refusal, Step, git};
 
 /// What the commit did.
@@ -75,9 +75,9 @@ pub struct Opened {
 /// carries both the action's change and an earlier one, both go in, and
 /// [`super::Pending::tangled`] is what names that before a person chooses.
 ///
-/// `since` is the reading taken before the action. The files kendex writes
-/// into and does not own whole join the set only through it, and only
-/// where [`super::Pending::carried`] names them; without one none does.
+/// `before` is what was read before the action, and the set is the one
+/// [`super::Scan::carried`] names against it: a file the action wrote and
+/// kendex does not own whole joins it only where it was clean before.
 ///
 /// The one mark a refusal leaves is the `git add`: a path that was
 /// untracked stays staged. kendex unstages exactly the paths it staged, so
@@ -90,21 +90,21 @@ pub fn commit(
     generated: &GeneratedPaths,
     message: &str,
     selection: &Selection,
-    since: Option<&Baseline>,
+    before: &Before,
 ) -> Result<Committed, CommitFailure> {
-    let Some(scan) = super::paths::scan(root, generated).map_err(CommitFailure::from)? else {
+    let Some(scan) = super::paths::scan(root, generated, before).map_err(CommitFailure::from)?
+    else {
         // The read covers nothing at all, so every path the selection named
         // is one it no longer covers. `over` decides that, here as below.
         let (_, dropped) = selection.over(&[]);
         return Ok(Committed::Nothing { dropped });
     };
-    let carried = since
-        .map(|since| super::pending(&scan, since).carried())
-        .unwrap_or_default();
+    let carried = scan.carried();
     let covered: Vec<super::Owned> = scan
         .owned
         .iter()
-        .chain(scan.beside.iter().filter(|one| carried.contains(&one.path)))
+        .chain(&scan.beside)
+        .filter(|one| carried.contains(&one.path))
         .cloned()
         .collect();
     let (taken, dropped) = selection.over(&covered);

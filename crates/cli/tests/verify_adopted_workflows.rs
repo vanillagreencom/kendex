@@ -7,6 +7,7 @@ use std::path::Path;
 
 use kendex_core::apply;
 use kendex_core::attest::{Document, Row, State};
+use kendex_core::commit_offer::{self, Before};
 use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
@@ -93,7 +94,7 @@ fn adopted_workflow_equality_uses_declared_templates_without_writing_yaml() {
             assert_eq!(fs::read_to_string(&inventory).unwrap(), "1\n");
         }
         assert!(
-            kendex_core::commit_offer::scan(&scope, &plan.generated)
+            commit_offer::scan(&scope, &plan.generated, &Before::Untaken)
                 .unwrap()
                 .is_none_or(|scan| scan.owned.iter().all(|owned| owned.path != WORKFLOW)),
             "{case}: adoption is not commit or deletion ownership"

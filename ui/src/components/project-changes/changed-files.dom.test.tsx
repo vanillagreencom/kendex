@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FileChanges, FileMode } from "@/bindings";
+import type { FileChanges, FileMode, ProjectBaseline } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   CHANGES_READ_FAILED_TITLE,
@@ -81,8 +81,17 @@ const answersInTurn = () => {
   return waiting;
 };
 
+/** The reading the offer listing these files was drawn against. */
+const SINCE: ProjectBaseline = {
+  root: ROOT,
+  held: [],
+  writes: ["kendex.toml"],
+};
+
 const render = () =>
-  mount(<ChangedFiles root={ROOT} entries={pathEntries(paths)} />);
+  mount(
+    <ChangedFiles root={ROOT} since={SINCE} entries={pathEntries(paths)} />,
+  );
 
 /** A tree row by the path it names, read off the document: the panel this
  *  component opens is portalled out of the tree it mounted into. */
@@ -116,13 +125,13 @@ describe("the files a commit would carry", () => {
     expect(rowFor(".claude/skills/gh/SKILL.md")).toBeDefined();
   });
 
-  it("opens the picked file's diff, asking about that file in this project", async () => {
+  it("opens the picked file's diff, asking about that file in this project against the offer's reading", async () => {
     answers(shown("A-LINE-KENDEX-WROTE"));
     render();
     await open(".claude/CLAUDE.md");
 
     expect(vi.mocked(commands.commitOfferFileChanges).mock.calls).toEqual([
-      [ROOT, ".claude/CLAUDE.md"],
+      [ROOT, ".claude/CLAUDE.md", SINCE],
     ]);
     expect(panel()).toContain("A-LINE-KENDEX-WROTE");
   });
@@ -157,6 +166,7 @@ describe("the files a commit would carry", () => {
       return (
         <ChangedFiles
           root={ROOT}
+          since={null}
           entries={pathEntries(listed)}
           onOpen={(path) => {
             opened = path;

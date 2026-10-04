@@ -84,7 +84,7 @@ pub fn restore_plan(
     generated: &GeneratedPaths,
     chosen: &BTreeSet<String>,
 ) -> Result<RestorePlan, Failed> {
-    let Some(scan) = super::scan(scope, generated)? else {
+    let Some(scan) = super::scan(scope, generated, &super::Before::Untaken)? else {
         return Ok(RestorePlan {
             dropped: chosen.iter().cloned().collect(),
             ..RestorePlan::default()

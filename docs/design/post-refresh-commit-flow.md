@@ -13,7 +13,7 @@ The offer runs after the write, never before it, and never as part of it.
 - The offer is explicit. kendex commits, pushes or opens a pull request only after a person chose that in this run. There is no setting, flag or state that makes any of the three happen without a choice.
 - Leaving the files as diffs is a choice of the same standing as the other three. It is the default answer on both surfaces, and taking it is a success, not a refusal.
 - kendex commits only what it wrote. A file the person wrote is never staged and never committed.
-- On every surface, kendex commits a file it writes into and does not own whole (`GeneratedPaths::beside`: the manifest, `kendex.settings.toml`, `.gitignore`, shared configuration files) only where it held no change before the action. One that did stays out and is named, since git commits whole files. § The manifest and the shared files ride only from a clean state says how.
+- On every surface, a file the action wrote and kendex does not own whole rides a commit only where it held no change before the action; § The manifest and the shared files ride only from a clean state says how.
 - The commit runs through `git commit`, so the repository's own hooks run on it.
 - A refusal from git, from a hook, or from `gh` reaches the person in that program's own words, whole.
 - kendex never undoes a commit. It does not revert one, does not move a branch ref backwards, does not reset, and does not stash. KEN-1297 adds one working-tree write, `commit_offer::restore`, which puts named paths back to what the last commit holds; it touches no ref and no index.
@@ -27,7 +27,7 @@ The offer covers the files kendex owns whole in this project that git reports as
 
 `GeneratedPaths` separates whole-file ownership, shared edit targets, and held positions. The inventory writer and its check use one set: whole-file paths, shared targets, and held positions already listed in the inventory at `HEAD`. A newly declared conflict contributes no inventory entry. The offer uses whole-file ownership for existing files and inventory history for deletions. Retaining a held entry grants no permission to replace that file's bytes. A never-recorded conflict cannot become deletion ownership through a later inventory commit.
 
-- Keep every `Artifact::Registration` `edits` target apart from the owned set. Those are shared configuration files kendex writes one key in, and `crates/core/src/engine/desired.rs` states the reason it edits rather than renders them: every unrelated key in them stays intact. `.claude/settings.json`, `.codex/config.toml` and `.codex/hooks.json` are edit targets in this repository, and `.claude/settings.json` also holds the person's own `permissions.allow`. git has no way to commit one key of a file, so committing such a path that held the person's edits would commit them with kendex's. One the action changed from a clean state joins the commit; every other one gets the block **Shared files** below.
+- Keep every `Artifact::Registration` `edits` target apart from the owned set. Those are shared configuration files kendex writes one key in, and `crates/core/src/engine/desired.rs` states the reason it edits rather than renders them: every unrelated key in them stays intact. `.claude/settings.json`, `.codex/config.toml` and `.codex/hooks.json` are edit targets in this repository, and `.claude/settings.json` also holds the person's own `permissions.allow`. git has no way to commit one key of a file, so committing such a path that held the person's edits would commit them with kendex's. Which of them a commit takes is § The manifest and the shared files ride only from a clean state.
 - An unborn `HEAD`, in a repository with no commit yet, contributes nothing here.
 
 git decides what changed, in one call over the whole checkout: `git status --porcelain=v1 -z --untracked-files=all`. `git status` takes no `--pathspec-from-file`, and a pathspec argument per path would not fit a Windows command line, so the call is unscoped and kendex matches its rows against the set itself. `-z` because a path may hold any byte but NUL. `--untracked-files=all` because a first install writes into directories git has not seen.
@@ -37,7 +37,7 @@ That one call answers three questions at once.
 | Rows | Meaning |
 | --- | --- |
 | In the set | The offer's paths |
-| A file kendex writes into | Carried where the action changed it from a clean state; the **Shared files** block otherwise |
+| A file kendex writes into | Carried where the action changed it from a clean state; otherwise named or the person's, as § The manifest and the shared files ride only from a clean state says |
 | Everything else | The person's own changes, which the offer counts and never touches |
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
@@ -235,9 +235,7 @@ The block is drawn from the CLI's components; [`crates/cli/OUTPUT.md`](../../cra
   .codex/skills/reviewer/SKILL.md
   .kendex-generated.json
   … and 2 more
-  kendex also changed 2 shared files; it writes one key in each, so committing them would commit your own changes to them too
-    .claude/settings.json
-    .codex/config.toml
+  .claude/settings.json held changes before this run, so the commit leaves it out; commit it yourself
   4 other files in this repository changed; kendex leaves those alone
   [c] commit them · [p] commit them and push to origin/main · [r] commit them on a new branch and open a pull request · [Enter] leave them as diffs
   › commit them
@@ -501,8 +499,8 @@ Every value in the copy below is of the moment. `12`, `4`, `site`, `origin`, `ma
 | Title | `12 files kendex wrote in site are not committed` |
 | Description | `These are the files kendex writes in this repository. Nothing is committed yet.` |
 | Section heading | `Files` |
-| Section heading, only where kendex changed a shared file | `Shared files` |
-| Under that heading | `kendex writes one key in each of these. Committing them would commit your own changes to them too, so kendex leaves them to you.` |
+| Section heading, where the action changed a file holding the person's edits | `Left out of this commit` |
+| Under that heading | `This action changed each of these, and each already held changes of yours. Committing the whole file would commit those too, so kendex leaves them out. Commit them yourself.` |
 | Section heading, only where the person's files changed | `Other changes` |
 | Under that heading | `4 other files in this repository changed. kendex does not commit these.` |
 | Section heading | `What to do` |
@@ -515,7 +513,7 @@ Every value in the copy below is of the moment. `12`, `4`, `site`, `origin`, `ma
 | Footer, outline | `Leave as diffs` |
 | Footer, primary | `Commit`, `Commit and push`, `Open pull request` |
 
-The `Files` list is monospace, one path per row, in a scroll area, showing every path. `Shared files` and `Other changes` are the same list at `text-muted-foreground`. Paths are printed whole: an abbreviation guesses at a directory and names a different file from the one being committed.
+The `Files` list is monospace, one path per row, in a scroll area, showing every path. `Left out of this commit` and `Other changes` are the same list at `text-muted-foreground`. Paths are printed whole: an abbreviation guesses at a directory and names a different file from the one being committed.
 
 `Message` is a single-line input prefilled with the default message. It is never emptied by a refusal.
 
@@ -678,7 +676,7 @@ Every state, its detection, and where its words are.
 | Offer turned off | `commit-offer` is `off` | nothing | nothing |
 | Render-only dirty | Path set non-empty, no other path changed | The offer block, without the `4 other files` line | The offer state, without `Other changes` |
 | Mixed dirty | Path set non-empty, other paths changed | The offer block with the `other files` line | The offer state with `Other changes` |
-| kendex changed a shared file | A changed path is an `edits` target | The offer block with the shared-files lines | The offer state with `Shared files` |
+| kendex changed a file over the person's edit | A file the action wrote held a change before | A `held changes before this run` line per file | `Left out of this commit` |
 | No remote | `git remote` empty | Offer, `no push` and `no pull request` reasons | Offer, `Push` and `Pull request` rows |
 | Remote not decidable | Several remotes, no upstream, no `origin` | Offer, `no push` and `no pull request` reasons | Offer, `Push` and `Pull request` rows |
 | `gh` missing | The probe fails to spawn | Offer, `no pull request: gh is not installed` | Offer, `Pull request` row |
@@ -713,7 +711,7 @@ The KEN-1027 design above holds, with the changes below. Each names the code tha
 
 ### The offer follows the action, not the run
 
-The app reads every tracked project before a write (`ui/src/lib/rescan.ts::beforeWriting`, `commit_offer::baseline`) and compares that reading with the one taken after it (`commit_offer::pending`). The comparison is of content, not of path names. Each changed path kendex owns reads as one of three things: the action's own change, an earlier change the action did not touch, or a file carrying both.
+The app reads every tracked project before a write (`ui/src/lib/rescan.ts::beforeWriting`, `commit_offer::Before::read`) and compares that reading with the one taken after it (`commit_offer::scan`). The comparison is of content, not of path names. Each changed path kendex owns reads as one of three things: the action's own change, an earlier change the action did not touch, or a file carrying both.
 
 - A project the action changed nothing in gets no offer, whatever else is pending there. Editing one project cannot prompt about another.
 - A no-op or failed write changes nothing, so it makes no offer and claims nothing.
@@ -739,9 +737,9 @@ kendex owns the manifest's FORMAT and not its bytes: `manifest::fold` edits the 
 
 A commit of renders without their declaration costs reproducibility, and on a teammate's next apply the renders themselves: the lock rides the commit and names them, both sweeps judge by the written lock (`crates/core/src/engine/removal.rs::orphans`), and an entry the committed manifest does not ask for is an orphan the next apply moves to the trash. That is what the warning below exists for.
 
-kendex cannot stage part of a file. The reading before the action (`commit_offer::baseline`) records every path git reports changed then; a path with no row matched the last commit. A file kendex writes into that had no row and changed now holds the action's change alone, and every commit after the action carries it (`Pending::carried`), the window's through the reading it passes to `commit_offer_commit`. A path recorded by name only, such as a shared file a new hook first registers in, is never taken for clean. Without a reading none is carried, and the terminal names a failed reading as such.
+kendex cannot stage part of a file. `commit_offer::Before::read` records every path git reports changed before the action, and the files the action may write: its plan's paths in the terminal, `GeneratedPaths::beside` in the window. A path with no row matched the last commit. `commit_offer::scan` reads against it once; every count, list, viewer and commit takes its `Scan::carry`. Such a file, or a shared edit target the plan after names, that had no row and changed now holds the action's change alone, and every commit after carries it (`Pending::carried`), the window's through `ProjectOffer::since`. One the action left alone is the person's. Without a reading none is carried, and the terminal names a failed one.
 
-One that held a change before and that the action changed again stays out and is named; `Pending::manifest_not_carried` reports the manifest so, and the dialog draws it as **This commit leaves out your declaration**. An action that left the file alone, and a file back at what the last commit holds, are both silence. No restore writes over any of these files.
+One that held a change before and that the action changed again stays out and is named; `Pending::manifest_not_carried` reports the manifest so, and the dialog draws it as **This commit leaves out your package list**. An action that left the file alone, and a file back at what the last commit holds, are both silence. No restore writes over any of these files.
 
 ### Pending changes have a place in the project UI
 

@@ -37,7 +37,6 @@ const pending = (files: string[]): ProjectChanges => ({
   state: {
     kind: "pending",
     files,
-    shared: [],
     others: 0,
     branch: "main",
     operation: null,

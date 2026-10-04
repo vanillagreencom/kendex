@@ -57,17 +57,16 @@ pub enum Changes {
 
 /// The change in one file the offer covers.
 ///
-/// Only the files kendex owns whole. The scan's `beside` set is the other
-/// half of what it reports: files of the person's own that kendex writes
-/// into — `.mcp.json`, a harness `settings.json`, the manifest — and the
-/// rest of such a file is theirs, environment values and credentials
-/// included. A commit carries one only where the action changed it from a
-/// clean state, and this reads none of one: a path outside `owned` is not
-/// offered, whoever asks. The check is exact equality against paths
-/// git itself reported, so nothing outside the project can be named at
-/// all.
+/// Only a file a commit carries whole: [`Scan::carried`], each changed file
+/// kendex owns whole and each file the action wrote from a clean state, so
+/// that the whole file holds nothing but the action's change. A file kendex
+/// writes into that holds anything else — `.mcp.json`, a harness
+/// `settings.json`, the manifest, with the person's own keys, environment
+/// values and credentials in it — is not offered, whoever asks. The check
+/// is exact equality against paths git itself reported, so nothing outside
+/// the project can be named at all.
 pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
-    if !scan.owned.iter().any(|owned| owned.path == path) {
+    if !scan.carried().contains(path) {
         return Ok(Changes::NotOffered);
     }
     // Read once, and every call that names `HEAD` asks it first: in a

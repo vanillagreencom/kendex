@@ -141,7 +141,7 @@ beforeEach(() => {
   // itself did. Nothing pending here, which is what a clean project answers.
   vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
     status: "ok",
-    data: [{ root: "/home/me/tracked", held: [] }],
+    data: [{ root: "/home/me/tracked", held: [], writes: [] }],
   });
   vi.mocked(commands.projectChangesScan).mockResolvedValue({
     status: "ok",
@@ -182,7 +182,7 @@ const readAgain = () => {
   // project's root, so the scope alone would miss it.
   expect(commands.commitOfferScan).toHaveBeenCalledWith(
     useSettingsStore.getState().settings?.projects,
-    [{ root: "/home/me/tracked", held: [] }],
+    [{ root: "/home/me/tracked", held: [], writes: [] }],
   );
   // And that reading was taken BEFORE the write. An offer scoped against a
   // reading from after it would report the write's own files as work that
@@ -406,6 +406,7 @@ describe("the setup of a package holding the commit", () => {
     newBranch: "kendex/renders",
     repo: null,
     tracked: false,
+    since: { root, held: [], writes: [] },
     stale: [
       {
         name: "guards",
@@ -446,7 +447,7 @@ describe("the setup of a package holding the commit", () => {
     useCommitOfferStore.setState({
       queue: [held],
       stage: { at: "offer" },
-      baselines: { [root]: { root, held: [] } },
+      baselines: { [root]: { root, held: [], writes: [] } },
       asked: null,
     });
 

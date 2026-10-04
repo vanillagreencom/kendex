@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::test_util::rooted;
 use kendex_core::bot_instructions;
-use kendex_core::commit_offer::{self, Carried, Staleness};
+use kendex_core::commit_offer::{self, Before, Staleness};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{EmittedArtifact, Lock, LockEntry, Reason};
@@ -298,7 +298,7 @@ fn change_doctrine(root: &Path) -> PathBuf {
 /// wrote.
 #[allow(clippy::expect_used)]
 fn offer_scan(fixture: &Fixture, generated: &GeneratedPaths) -> commit_offer::Scan {
-    commit_offer::scan(&fixture.scope, generated)
+    commit_offer::scan(&fixture.scope, generated, &Before::Untaken)
         .expect("the offer reads the project")
         .expect("the project has changes kendex owns")
 }
@@ -804,12 +804,13 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
                 .add_to(&mut generated);
         }
 
+        let scan = offer_scan(&fixture, &generated);
         let stale = commit_offer::stale(
             &fixture.env,
             &fixture.scope,
-            &offer_scan(&fixture, &generated),
+            &scan,
             &generated,
-            Carried::Everything,
+            &scan.carried(),
         )
         .expect("the packages are asked");
 
@@ -868,7 +869,7 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
         &fixture.scope,
         &scan,
         &generated,
-        Carried::Everything,
+        &scan.carried(),
     )
     .expect("the packages are asked");
     assert_eq!(
@@ -891,7 +892,7 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
         &fixture.scope,
         &scan,
         &generated,
-        Carried::Everything,
+        &scan.carried(),
     )
     .expect("the packages are asked again");
     assert!(stale.is_empty(), "still held after the setup: {stale:?}");
@@ -1021,84 +1022,90 @@ fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_off
 /// root holds a tracked tree, a manifest key the render does not read, the
 /// manifest deleted, which fails the working-tree check and passes the one
 /// over the commit, and the inventory dropping a skill tree. The manifest
-/// is never carried; the inventory is carried in one row and left out in
-/// another. Every row leaves the repository's own index as it found it and
+/// a harness joined is left out in one row, where no reading shows the
+/// action wrote it, so only the check's own words name it, and carried in
+/// another; the inventory is carried in one row and left out in another,
+/// where it is named. Every row leaves the repository's own index as it found it and
 /// no candidate index behind.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_commit_is_held_only_where_the_check_over_it_fails() {
+    /// Which changed paths the commit carries.
+    enum Carries<'a> {
+        /// Every changed path kendex owns whole.
+        Owned,
+        /// Those, but for this one.
+        AllBut(&'a str),
+        /// Those and the manifest.
+        AndTheManifest,
+    }
     let doctrine = format!("{CODEX_PACKAGE}/SKILL.md");
     let inventory = ".kendex-generated.json";
     let rows = [
         (
             "the doctrine left out of the commit",
             Edit::Nothing,
-            Some(doctrine.as_str()),
+            Carries::AllBut(doctrine.as_str()),
             OverCommit::Split(&[".agents/skills/bot-instructions/SKILL.md"]),
         ),
         (
             "every pending change, the doctrine included",
             Edit::Nothing,
-            None,
+            Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "harnesses gains codex over a tracked .codex/skills tree",
             Edit::GainCodex,
-            None,
-            OverCommit::Split(&["kendex.toml"]),
+            Carries::Owned,
+            OverCommit::Split(&[]),
+        ),
+        (
+            "harnesses gains codex, the manifest carried",
+            Edit::GainCodex,
+            Carries::AndTheManifest,
+            OverCommit::Nothing,
         ),
         (
             "a manifest key the render does not read",
             Edit::UnreadKey,
-            None,
+            Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "the manifest deleted",
             Edit::DeleteManifest,
-            None,
+            Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "the inventory drops a skill tree, left out of the commit",
             Edit::DropSkillTree,
-            Some(inventory),
+            Carries::AllBut(inventory),
             OverCommit::Split(&[".kendex-generated.json"]),
         ),
         (
             "the inventory drops a skill tree, carried",
             Edit::DropSkillTree,
-            None,
+            Carries::Owned,
             OverCommit::Nothing,
         ),
     ];
-    for (what, edit, leave, holds) in rows {
+    for (what, edit, carries, holds) in rows {
         let (fixture, generated, scan) = edited_offer(what, &edit);
-        let carried_paths: BTreeSet<String> = scan
-            .owned
-            .iter()
-            .map(|owned| owned.path.clone())
-            .filter(|path| Some(path.as_str()) != leave)
-            .collect();
-        assert!(
-            carried_paths.len() > 1,
-            "{what}: the render changed nothing"
-        );
-        let carried = match leave {
-            Some(left) => {
-                assert!(
-                    scan.owned.iter().any(|owned| owned.path == left),
-                    "{what}: {left} did not change"
-                );
-                Carried::Only(&carried_paths)
+        let mut carried = scan.carried();
+        assert!(carried.len() > 1, "{what}: the render changed nothing");
+        match carries {
+            Carries::Owned => {}
+            Carries::AllBut(left) => assert!(carried.remove(left), "{what}: {left} did not change"),
+            Carries::AndTheManifest => {
+                carried.insert("kendex.toml".to_owned());
             }
-            None => Carried::Everything,
-        };
+        }
         let git_dir = fixture.root.join(".git");
         let index_before = fs::read(git_dir.join("index")).unwrap();
 
-        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, &generated, carried)
+        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, &generated, &carried)
             .expect("the packages are asked");
 
         assert!(

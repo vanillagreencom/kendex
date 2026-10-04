@@ -32,10 +32,10 @@ pub(crate) use adopted::{committable_paths, inventory_paths};
 /// The manifest is deliberately not here. kendex writes keys in it and folds
 /// them into the document the person wrote — `crate::manifest::fold` keeps
 /// their comments, key order and every value it did not touch — so kendex
-/// does not own its bytes and never restores it whole. It is one of the
-/// files [`GeneratedPaths::beside`] names: a commit carries it only where it
-/// held no change before the action, and otherwise the offer names it to
-/// the person ([`crate::commit_offer::Pending::manifest_not_carried`]). A
+/// does not own its bytes and never restores it whole. A commit carries it
+/// only where the action wrote it and it held no change before, and
+/// otherwise the offer names it to the person
+/// ([`crate::commit_offer::Pending::manifest_not_carried`]). A
 /// source catalog moves the declaration to a sibling file
 /// (`crate::manifest::project_manifest_path`), so a fixed name here would
 /// name the wrong file in this very repository.
@@ -144,14 +144,14 @@ impl GeneratedPaths {
             .collect()
     }
 
-    /// The files kendex writes into beside its renders and does not own
-    /// whole: the project's manifest, its settings file, `.gitignore`, and
-    /// the shared configuration files in [`GeneratedPaths::shared`]. A
-    /// commit carries one only where a reading taken before the action
-    /// shows it held no change of its own
-    /// ([`crate::commit_offer::Pending::carried`]), and no restore writes
-    /// over one, since the bytes kendex did not write in it are the
-    /// person's.
+    /// Every file an action can write into beside its renders without
+    /// owning it whole: the project's manifest, its settings file,
+    /// `.gitignore`, and the shared configuration files in
+    /// [`GeneratedPaths::shared`]. What a reading before an action records
+    /// as the action's writes where the caller holds no plan to name them
+    /// ([`crate::commit_offer::Before::read`]): the app reads before a write
+    /// it cannot see the plan of. A file among them the action left as it
+    /// found it is the person's.
     pub fn beside(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.shared
             .iter()

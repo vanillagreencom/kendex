@@ -6,7 +6,7 @@
 //! and never summarised: the step's own words are printed, then the way on
 //! that step's state allows.
 
-use kendex_core::commit_offer::{self, Baseline, Committed, Offer, Selection};
+use kendex_core::commit_offer::{self, Before, Committed, Offer, Selection};
 use kendex_core::engine::GeneratedPaths;
 
 use super::block::{self, AfterRefusal, Recover, Retry};
@@ -17,12 +17,12 @@ type Taken = Result<Outcome, Box<dyn std::error::Error>>;
 
 /// Take one choice. `asking` is whether a person is at the prompt: a flag
 /// answers once and reports, where a person is offered the way on that the
-/// state allows. `since` is the reading taken before the write, through
+/// state allows. `since` is what was read before the write, through
 /// which alone the commit carries a file kendex writes into.
 pub fn take(
     offer: &Offer,
     generated: &GeneratedPaths,
-    since: Option<&Baseline>,
+    since: &Before,
     choice: Choice,
     given: Option<String>,
     asking: Asking,
@@ -59,7 +59,7 @@ fn message(offer: &Offer, given: Option<String>, asking: Asking) -> std::io::Res
 fn straight(
     offer: &Offer,
     generated: &GeneratedPaths,
-    since: Option<&Baseline>,
+    since: &Before,
     given: Option<String>,
     asking: Asking,
     then: Push,
@@ -232,7 +232,7 @@ fn recover(offer: &Offer, files: usize, message: &str, before: Option<&str>) -> 
 fn pull_request(
     offer: &Offer,
     generated: &GeneratedPaths,
-    since: Option<&Baseline>,
+    since: &Before,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
@@ -324,7 +324,7 @@ fn pull_request(
 fn abandoned(
     offer: &Offer,
     generated: &GeneratedPaths,
-    since: Option<&Baseline>,
+    since: &Before,
     refused: commit_offer::CommitFailure,
     message: String,
     asking: Asking,
@@ -360,7 +360,7 @@ fn abandoned(
 fn without_pull_request(
     offer: &Offer,
     generated: &GeneratedPaths,
-    since: Option<&Baseline>,
+    since: &Before,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {

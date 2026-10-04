@@ -14,16 +14,16 @@
 //! three.
 //!
 //! **kendex commits only what it wrote.** A file the person wrote is never
-//! staged and never committed. A file kendex writes into and does not own
-//! whole — the manifest, the settings file, `.gitignore`, a shared
+//! staged and never committed. A file the action wrote into and kendex does
+//! not own whole — the manifest, the settings file, `.gitignore`, a shared
 //! configuration file it writes one key in — is committed only where a
 //! reading taken before the action shows it held no change then, so the
 //! action's change is all it holds: git has no way to commit one key, and a
 //! file that held one of the person's edits stays out and is named.
-//! [`crate::engine::GeneratedPaths`] is where the split between the files
-//! kendex owns whole and the ones it writes into is made, once, for the
-//! inventory and for this; [`Pending`] decides which of the second kind
-//! one action's commit carries.
+//! [`crate::engine::GeneratedPaths`] says which files kendex owns whole,
+//! once, for the inventory and for this; [`Before`] says which the action
+//! may write beside them, and [`Scan::carry`] which of those one action's
+//! commit carries.
 //!
 //! **kendex never undoes a commit.** It does not revert one, does not move
 //! a branch ref backwards, does not reset, and does not stash. The two
@@ -60,8 +60,7 @@ pub(crate) use git::committed_inventory;
 pub use git::previous_head;
 pub use message::default_message;
 pub use pending::{
-    Attribution, Baseline, Held, Pending, PendingFile, Selection, Tangle, Tangled, baseline,
-    pending,
+    Attribution, Baseline, Before, Held, Pending, PendingFile, Selection, Tangle, Tangled,
 };
 pub use regions::OwnedRegion;
 pub use restore::{RestoreFailure, RestorePlan, restore, restore_plan};
@@ -69,7 +68,7 @@ pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, by_hand, commit,
     open_pull_request, push, push_head, start_branch,
 };
-pub use stale::{Carried, Stale, Staleness, stale};
+pub use stale::{Stale, Staleness, stale};
 
 #[cfg(test)]
 mod tests;
@@ -345,8 +344,9 @@ impl Operation {
     }
 }
 
-/// What one read of the project found: the paths the offer covers, and the
-/// state of the checkout it would commit in.
+/// What one read of the project found: the paths the offer covers, what a
+/// commit of them carries, and the state of the checkout it would commit
+/// in.
 ///
 /// The cheap half of the offer. It runs one `git status` over the whole
 /// checkout and reads the branch, and nothing else — no remote, no network
@@ -357,21 +357,70 @@ pub struct Scan {
     pub root: PathBuf,
     /// The files kendex owns whole that git reports as changed, sorted.
     pub owned: Vec<Owned>,
-    /// The files kendex writes into and does not own whole that git
-    /// reports as changed, sorted: [`crate::engine::GeneratedPaths::beside`].
-    /// A commit carries one only where [`Pending::carried`] says the action
-    /// changed it from a clean state; every other one is named to the
-    /// person and left alone, and no restore writes over any of them.
+    /// The changed files the action wrote beside them, which kendex does
+    /// not own whole, sorted. Which a commit carries is [`Scan::carry`]'s
+    /// answer; no restore writes over any of them. Empty where nothing was
+    /// read before the action, since then none is known to be its.
     pub beside: Vec<Owned>,
+    /// What a commit after the action carries beside [`Scan::owned`].
+    pub carry: Carry,
     /// How many other paths in this repository changed. The person's own
-    /// changes, which the offer counts and never touches.
+    /// changes, which the offer counts and never touches: a file the
+    /// action could have written and did not is among them.
     pub others: usize,
     pub branch: Branch,
 }
 
+/// What a commit after the action carries beside the files kendex owns
+/// whole, from the reading taken before it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Carry {
+    /// Read against the reading before the action: [`Pending::carried`]
+    /// rides the commit and [`Pending::left_out`] is named.
+    Read(Pending),
+    /// The reading before the action would not run: every file in
+    /// [`Scan::beside`] stays out, named with this refusal.
+    Unread(Failed),
+    /// No reading was taken: nothing beside the files kendex owns whole is
+    /// carried or named.
+    Untaken,
+}
+
+impl Carry {
+    /// The reading against the one before the action, where one was taken.
+    pub fn pending(&self) -> Option<&Pending> {
+        match self {
+            Carry::Read(pending) => Some(pending),
+            Carry::Unread(_) | Carry::Untaken => None,
+        }
+    }
+}
+
 impl Scan {
+    /// The paths a commit of every pending change carries: each changed
+    /// file kendex owns whole, and each file the action wrote from a clean
+    /// state. The one set every surface lists, counts and commits.
+    pub fn carried(&self) -> std::collections::BTreeSet<String> {
+        match self.carry.pending() {
+            Some(pending) => pending.every_path(),
+            None => self.owned.iter().map(|owned| owned.path.clone()).collect(),
+        }
+    }
+
+    /// How many files [`Scan::carried`] holds: the count every head line
+    /// and flag prints.
     pub fn count(&self) -> usize {
-        self.owned.len()
+        self.carried().len()
+    }
+
+    /// The files the action wrote that the commit leaves out: each held a
+    /// change before it, or no reading says it did not.
+    pub fn left_out(&self) -> Vec<&str> {
+        match &self.carry {
+            Carry::Read(pending) => pending.left_out(),
+            Carry::Unread(_) => self.beside.iter().map(|one| one.path.as_str()).collect(),
+            Carry::Untaken => Vec::new(),
+        }
     }
 
     /// The branch a commit would land on, or `None` in a state where the
@@ -384,9 +433,9 @@ impl Scan {
     }
 }
 
-/// Read the project. `None` where there is nothing to offer about: the
-/// scope is not a project, the project is not a checkout, or nothing
-/// kendex owns changed.
+/// Read the project against what `before` read of it. `None` where there
+/// is nothing to offer about: the scope is not a project, the project is
+/// not a checkout, or a commit would carry nothing.
 ///
 /// The offer setting is deliberately not read here. It turns off the
 /// asking, not the choices, so a flag that names a choice still runs one —
@@ -394,6 +443,7 @@ impl Scan {
 pub fn scan(
     scope: &Scope,
     generated: &crate::engine::GeneratedPaths,
+    before: &Before,
 ) -> std::result::Result<Option<Scan>, Failed> {
     let Scope::Project { root } = scope else {
         return Ok(None);
@@ -401,7 +451,7 @@ pub fn scan(
     if !root.join(".git").exists() {
         return Ok(None);
     }
-    paths::scan(root, generated)
+    paths::scan(root, generated, before)
 }
 
 /// Whether this machine wants to be asked. Machine-local, like every other

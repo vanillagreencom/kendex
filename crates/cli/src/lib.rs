@@ -463,20 +463,24 @@ fn generated_paths(env: &Env) -> Result<(), Box<dyn std::error::Error>> {
     let scope = kendex_core::model::Scope::Project { root };
     let report =
         kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::default())?;
-    let paths: Vec<String> = kendex_core::commit_offer::scan(&scope, &report.generated)
-        .map_err(|failed| {
-            let cause = match failed.timed_out() {
-                true => format!(
-                    "{} did not finish within {} seconds",
-                    failed.step.name(),
-                    failed.step.seconds()
-                ),
-                false => failed.said().join("; "),
-            };
-            format!("generated paths could not be read: {cause}")
-        })?
-        .map(|scan| scan.owned.into_iter().map(|owned| owned.path).collect())
-        .unwrap_or_default();
+    let paths: Vec<String> = kendex_core::commit_offer::scan(
+        &scope,
+        &report.generated,
+        &kendex_core::commit_offer::Before::Untaken,
+    )
+    .map_err(|failed| {
+        let cause = match failed.timed_out() {
+            true => format!(
+                "{} did not finish within {} seconds",
+                failed.step.name(),
+                failed.step.seconds()
+            ),
+            false => failed.said().join("; "),
+        };
+        format!("generated paths could not be read: {cause}")
+    })?
+    .map(|scan| scan.owned.into_iter().map(|owned| owned.path).collect())
+    .unwrap_or_default();
     ui::answer(&serde_json::to_string(&paths)?);
     Ok(())
 }

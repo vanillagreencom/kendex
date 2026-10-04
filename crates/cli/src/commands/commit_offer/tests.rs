@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use kendex_core::commit_offer::{
-    Branch, Failed, Offer, OpenPullRequest, Operation, Owned, Rebase, Refusal, Remote, Scan, Step,
-    Unavailable,
+    Branch, Carry, Failed, Offer, OpenPullRequest, Operation, Owned, Rebase, Refusal, Remote, Scan,
+    Step, Unavailable,
 };
 
 use super::block;
@@ -25,11 +25,8 @@ fn scan() -> Scan {
                 added: false,
             })
             .collect(),
-        beside: vec![Owned {
-            path: ".claude/settings.json".to_owned(),
-            untracked: false,
-            added: false,
-        }],
+        beside: Vec::new(),
+        carry: Carry::Untaken,
         others: 4,
         branch: Branch::On("main".to_owned()),
     }
@@ -355,7 +352,7 @@ fn each_choice_is_taken_by_its_key() {
     );
 }
 
-/// A small offer: two paths, a shared file, one other file, and no `gh`.
+/// A small offer: two paths, one other file, and no `gh`.
 fn small() -> Offer {
     let mut small = offer();
     small.scan.owned.truncate(2);
@@ -375,9 +372,6 @@ fn the_offer_draws_accept_and_decline() {
         "<33>!</> <1>/home/method/dev/site: 2 files kendex wrote are not committed</>",
         "  <36>•</> .claude/skills/1/SKILL.md",
         "  <36>•</> .claude/skills/2/SKILL.md",
-        "  <33>!</> kendex also changed 1 shared file; it writes one key in each, so committing them would commit",
-        "    your own changes to them too",
-        "    <90>.claude/settings.json</>",
         "  <36>•</> 1 other file in this repository changed; kendex leaves those alone",
         "  <36>•</> no pull request: gh is not installed",
         "  <34>[c]</> <90>commit them</><90> · </><34>[p]</> <90>commit them and push to origin/main</><90> · </><1;34>[Enter]</> <1>leave them as diffs</>",
@@ -386,8 +380,6 @@ fn the_offer_draws_accept_and_decline() {
         "! /home/method/dev/site: 2 files kendex wrote are not committed",
         "  .claude/skills/1/SKILL.md",
         "  .claude/skills/2/SKILL.md",
-        "  kendex also changed 1 shared file; it writes one key in each, so committing them would commit your own changes to them too",
-        "    .claude/settings.json",
         "  1 other file in this repository changed; kendex leaves those alone",
         "  no pull request: gh is not installed",
         "  [c] commit them · [p] commit them and push to origin/main · [Enter] leave them as diffs",
@@ -421,13 +413,7 @@ fn the_offer_draws_accept_and_decline() {
             (rich(100), &rich_offer[..], rich_tail),
             (plain(), &plain_offer[..], plain_tail),
         ] {
-            let beside = block::Beside {
-                carried: Vec::new(),
-                held: Vec::new(),
-                unread: None,
-                rest: vec![".claude/settings.json"],
-            };
-            let mut drawn = block::offer(&style, &offered, &beside);
+            let mut drawn = block::offer(&style, &offered);
             let (lines, answer) = asked(
                 &style,
                 &block::keyed(&block::choices(&offered)),
@@ -670,15 +656,16 @@ fn a_reading_before_the_write_that_failed_is_named_and_carries_nothing() {
         untracked: false,
         added: false,
     }];
-    let before = super::Before::Unread(Failed {
+    read.carry = Carry::Unread(Failed {
         step: Step::Read,
         refusal: Refusal::Said(vec!["fatal: index file corrupt".to_owned()]),
     });
-    let beside = super::beside(&read, None, &before);
-    assert!(beside.carried.is_empty());
-    assert!(beside.held.is_empty());
-    assert!(beside.rest.is_empty());
-    let drawn = block::left_out(&plain(), &beside);
+    assert_eq!(
+        read.count(),
+        read.owned.len(),
+        "a file kendex writes into rode"
+    );
+    let drawn = block::left_out(&plain(), &read);
     assert_eq!(
         drawn,
         [
@@ -687,5 +674,83 @@ fn a_reading_before_the_write_that_failed_is_named_and_carries_nothing() {
             "  git said:",
             "    fatal: index file corrupt",
         ]
+    );
+}
+
+/// git in a fixture checkout, with an identity of its own.
+fn fixture_git(root: &Path, args: &[&str]) {
+    let output = kendex_core::process::Hardened::git(args, Some(root))
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .run()
+        .expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Every head the terminal draws prints the one count the scan gives, and
+/// the offer lists the one set behind it, a file kendex does not own whole
+/// included where the action wrote it from a clean state. Read from a real
+/// checkout against a real reading, because a scan carrying a file kendex
+/// writes into exists only as that reading's answer.
+#[test]
+fn every_head_prints_the_count_of_what_the_commit_carries() {
+    let tmp = tempfile::tempdir().expect("a fixture directory");
+    let root = kendex_core::paths::canonical(tmp.path()).expect("the fixture resolves");
+    fixture_git(&root, &["init", "--quiet", "-b", "main"]);
+    std::fs::write(root.join("kendex.toml"), "schema = 6\n").expect("the manifest is written");
+    fixture_git(&root, &["add", "-A"]);
+    fixture_git(&root, &["commit", "--quiet", "-m", "one"]);
+    let scope = kendex_core::model::Scope::Project { root: root.clone() };
+    let render = root.join(".claude/agents/scout.md");
+    let generated = kendex_core::engine::GeneratedPaths {
+        whole: [render.clone()].into(),
+        ..Default::default()
+    };
+    let before =
+        kendex_core::commit_offer::Before::read(&scope, &generated, [root.join("kendex.toml")]);
+    std::fs::create_dir_all(render.parent().expect("a parent")).expect("the folder is made");
+    std::fs::write(&render, "scout\n").expect("the render is written");
+    std::fs::write(
+        root.join("kendex.toml"),
+        "schema = 6\n[agents]\nscout = \"cat\"\n",
+    )
+    .expect("the manifest is written");
+    let carried = kendex_core::commit_offer::scan(&scope, &generated, &before)
+        .expect("the project reads")
+        .expect("the commit carries something");
+    assert_eq!(carried.count(), 2, "the manifest did not ride");
+    let mut offered = offer();
+    offered.scan = carried.clone();
+    offered.pull_request = Err(Unavailable::GhMissing);
+
+    let head = block::head(&root, 2);
+    let heads = [
+        ("no branch", block::no_branch(&plain(), &carried)),
+        (
+            "in progress",
+            block::in_progress(&plain(), &carried, Operation::Merge),
+        ),
+        ("no terminal", block::no_terminal(&plain(), &carried)),
+        ("held", block::stale(&plain(), &carried, &[])),
+        (
+            "a flag refused",
+            block::flag_refused(&plain(), &offered, Choice::Pr, "gh is not installed"),
+        ),
+        ("the offer", block::offer(&plain(), &offered)),
+    ];
+    for (what, lines) in heads {
+        assert!(lines[0].contains(&head), "{what}: {lines:?}");
+    }
+    let listed = block::offer(&plain(), &offered);
+    assert_eq!(
+        listed[1..3],
+        ["  .claude/agents/scout.md", "  kendex.toml"],
+        "the listed files"
     );
 }

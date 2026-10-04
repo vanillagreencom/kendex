@@ -625,7 +625,7 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
             env,
             &plan.scope,
             &report.generated,
-            &super::commit_offer::Before::Untaken,
+            &kendex_core::commit_offer::Before::Untaken,
         )?;
     }
     Ok(())

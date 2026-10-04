@@ -15,8 +15,6 @@ import {
   notChecked,
   OTHER_LABEL,
   otherNote,
-  SHARED_LABEL,
-  SHARED_NOTE,
   uncommittedInProgress,
   uncommittedNoBranch,
 } from "@/lib/copy-commit-offer";
@@ -213,16 +211,11 @@ export function ProjectChangesPage() {
               <Section title={CHANGED_FILES_SECTION}>
                 <ChangedFiles
                   root={root}
+                  since={null}
                   entries={pathEntries(paths)}
                   onOpen={setOpen}
                 />
               </Section>
-
-              {state?.kind === "pending" && state.shared.length > 0 ? (
-                <Section title={SHARED_LABEL} description={SHARED_NOTE}>
-                  <Paths paths={state.shared} />
-                </Section>
-              ) : null}
 
               {state?.kind === "pending" && state.others > 0 ? (
                 <Section title={OTHER_LABEL}>
@@ -368,20 +361,5 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-all text-right">{children}</dd>
     </div>
-  );
-}
-
-/** Paths named and not opened: the shared configuration files kendex writes
- *  one key in, which it leaves to the person. Printed whole — an
- *  abbreviation guesses at a directory and names a different file. */
-function Paths({ paths }: { paths: string[] }) {
-  return (
-    <ul className="max-h-40 overflow-y-auto font-mono text-xs text-muted-foreground">
-      {paths.map((path) => (
-        <li key={path} className="break-all">
-          {path}
-        </li>
-      ))}
-    </ul>
   );
 }

@@ -18,9 +18,9 @@ export const COMMIT_OFFER_STANDING =
   "These are the files kendex writes in this repository. Nothing is committed yet.";
 
 export const FILES_LABEL = "Files";
-export const SHARED_LABEL = "Shared files";
-export const SHARED_NOTE =
-  "kendex writes one key in each of these. Committing them would commit your own changes to them too, so kendex leaves them to you.";
+export const LEFT_OUT_LABEL = "Left out of this commit";
+export const LEFT_OUT_NOTE =
+  "This action changed each of these, and each already held changes of yours. Committing the whole file would commit those too, so kendex leaves them out. Commit them yourself.";
 export const OTHER_LABEL = "Other changes";
 export const otherNote = (others: number) =>
   `${others} other file${plural(others)} in this repository changed. kendex does not commit these.`;

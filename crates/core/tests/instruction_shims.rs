@@ -523,9 +523,8 @@ fn unparseable_gemini_settings_are_refused_not_rewritten() {
 }
 
 /// Claude Code leaving the list takes back the `CLAUDE.md` shim kendex
-/// wrote, which its inventory names. The same one line written by hand in
-/// a project that never installed for Claude Code stays: one import line
-/// is a common way to point Claude Code at `AGENTS.md`.
+/// wrote, which its inventory names. A file of the person's at that place
+/// stays: `every_retirement_leaves_a_file_holding_the_persons_content`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_claude_shim_goes_with_claude_only_where_kendex_wrote_it() {
@@ -547,62 +546,215 @@ fn a_claude_shim_goes_with_claude_only_where_kendex_wrote_it() {
         .unwrap();
     assert_eq!(row.state, DriftState::Orphaned);
     assert!(plan(&f).plan.is_empty(), "the next pass plans again");
-
-    let f = fixture("\"codex\"", true);
-    fs::write(f.project.join("CLAUDE.md"), CLAUDE_SHIM).unwrap();
-    commit(&f.project);
-    let report = plan(&f);
-    assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
-    assert!(report.drift.is_empty(), "{:?}", report.drift);
 }
 
 /// Gemini off the list: a settings file still naming `AGENTS.md` the way
 /// the shim's edit wrote it loses that entry once and keeps the person's
-/// own keys; one holding only the person's keys draws no plan and no row,
-/// that pass or any after it.
+/// own keys, and no pass after it names the file again. One holding only
+/// the person's keys is a row of
+/// `every_retirement_leaves_a_file_holding_the_persons_content`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
     let ours = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  },\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\"]\n  }\n}\n";
-    for (what, held, retired) in [
-        ("kendex's entry", ours, true),
-        ("the person's keys", theirs, false),
-    ] {
-        let f = fixture("\"codex\"", true);
-        let settings = f.project.join(".gemini/settings.json");
-        fs::create_dir_all(settings.parent().unwrap()).unwrap();
-        fs::write(&settings, held).unwrap();
+    let f = fixture("\"codex\"", true);
+    let settings = f.project.join(".gemini/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, ours).unwrap();
+    commit(&f.project);
+
+    let report = apply_now(&f);
+    let named = |report: &EngineReport| {
+        report
+            .drift
+            .iter()
+            .filter(|row| row.name == ".gemini/settings.json")
+            .map(|row| row.state)
+            .collect::<Vec<_>>()
+    };
+    assert!(touched(&f, &report).contains(&".gemini/settings.json".to_owned()));
+    assert_eq!(named(&report), vec![DriftState::Orphaned]);
+    let left: serde_json::Value = serde_json::from_str(&shim_bytes(&settings)).unwrap();
+    let wanted: serde_json::Value = serde_json::from_str(theirs).unwrap();
+    assert_eq!(left, wanted);
+    let again = plan(&f);
+    assert!(again.plan.is_empty(), "{:?}", touched(&f, &again));
+    assert_eq!(named(&again), Vec::new());
+}
+
+/// What a retired file holds after the tool leaves.
+enum Left {
+    /// Exactly the bytes the person left there.
+    Bytes,
+    /// This JSON document: the person's own keys, kendex's entry gone.
+    Json(&'static str),
+    /// This TOML document: the person's own keys, kendex's table gone.
+    Toml(&'static str),
+}
+
+/// Every retirement a tool leaving the list makes keeps a file holding the
+/// person's content: the `CLAUDE.md` shim, Gemini's context entry, a JSON
+/// document and a TOML document a removal would otherwise empty. Each row
+/// lets kendex write the file where the row installs for the tool, gives it
+/// content of the person's, then drops the tool. The file stays holding
+/// that content, no orphaned row names it, and the next pass plans nothing.
+/// Two rows are a file of the person's in a project kendex never installed
+/// the tool for.
+///
+/// Each guard turns its own row red: the shim's bytes check, the context
+/// entry's exact-value check, and the emptied-document check for each
+/// document kind.
+#[test]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one table: every retirement a dropped tool makes, each row a write, an edit of the person's and a drop of its own"
+)]
+fn every_retirement_leaves_a_file_holding_the_persons_content() {
+    struct Row {
+        what: &'static str,
+        /// The tools declared first, and after the drop.
+        first: &'static str,
+        then: &'static str,
+        /// The project declares the catalog's `gh` server.
+        mcp: bool,
+        target: &'static str,
+        /// The person's content, from what kendex wrote there (empty where
+        /// it wrote nothing).
+        theirs: fn(&str) -> String,
+        left: Left,
+    }
+    let rows = [
+        Row {
+            what: "a Claude shim kendex wrote, then the person added to",
+            first: "\"claude\"",
+            then: "\"codex\"",
+            mcp: false,
+            target: "CLAUDE.md",
+            theirs: |ours| format!("{ours}my own line\n"),
+            left: Left::Bytes,
+        },
+        Row {
+            what: "a Claude shim the person wrote where Claude Code was never installed",
+            first: "\"codex\"",
+            then: "\"codex\"",
+            mcp: false,
+            target: "CLAUDE.md",
+            theirs: |_| CLAUDE_SHIM.to_owned(),
+            left: Left::Bytes,
+        },
+        Row {
+            what: "a Gemini context entry the person extended",
+            first: "\"gemini\"",
+            then: "\"codex\"",
+            mcp: false,
+            target: ".gemini/settings.json",
+            theirs: |_| {
+                "{\n  \"context\": {\n    \"fileName\": [\"GEMINI.md\", \"AGENTS.md\", \"NOTES.md\"]\n  }\n}\n"
+                    .to_owned()
+            },
+            left: Left::Bytes,
+        },
+        Row {
+            what: "Gemini settings holding the person's keys where Gemini was never installed",
+            first: "\"codex\"",
+            then: "\"codex\"",
+            mcp: false,
+            target: ".gemini/settings.json",
+            theirs: |_| "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n".to_owned(),
+            left: Left::Bytes,
+        },
+        Row {
+            what: "a JSON document kendex wrote, then the person added a server to",
+            first: "\"claude\"",
+            then: "\"codex\"",
+            mcp: true,
+            target: ".mcp.json",
+            theirs: |ours| {
+                let mut value: serde_json::Value = serde_json::from_str(ours).unwrap();
+                value["mcpServers"]["mine"] = serde_json::json!({"command": "mine"});
+                serde_json::to_string_pretty(&value).unwrap()
+            },
+            left: Left::Json("{\"mcpServers\": {\"mine\": {\"command\": \"mine\"}}}"),
+        },
+        Row {
+            what: "a TOML document kendex wrote, then the person added a key to",
+            first: "\"codex\"",
+            then: "\"claude\"",
+            mcp: true,
+            target: ".codex/config.toml",
+            theirs: |ours| format!("model = \"o3\"\n{ours}"),
+            left: Left::Toml("model = \"o3\"\n"),
+        },
+    ];
+    for row in rows {
+        let what = row.what;
+        let f = fixture(row.first, true);
+        let catalog = f.project.parent().unwrap().join("catalog");
+        fs::create_dir_all(catalog.join("mcp")).unwrap();
+        fs::write(catalog.join("mcp/gh.toml"), "command = \"gh-mcp\"\n").unwrap();
+        fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        let declare = |harnesses: &str| {
+            let server = match row.mcp {
+                true => "\n[mcp-servers.gh]\nsource = \"cat\"\n",
+                false => "",
+            };
+            fs::write(
+                f.project.join("kendex.toml"),
+                format!(
+                    "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\n{server}",
+                    test_util::source_path(&catalog)
+                ),
+            )
+            .unwrap();
+        };
+        let target = f.project.join(row.target);
+        declare(row.first);
+        apply_now(&f);
+        commit(&f.project);
+        let ours = fs::read_to_string(&target).unwrap_or_default();
+        let theirs = (row.theirs)(&ours);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &theirs).unwrap();
         commit(&f.project);
 
-        let report = apply_now(&f);
-        let named = |report: &EngineReport| {
-            report
-                .drift
-                .iter()
-                .filter(|row| row.name == ".gemini/settings.json")
-                .map(|row| row.state)
-                .collect::<Vec<_>>()
+        // As `apply` plans it: what the dropped tool's copies leave behind
+        // is taken away.
+        let dropping = || {
+            let options = PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            };
+            plan_apply(&f.env, &f.scope, &options).unwrap()
         };
-        assert_eq!(
-            touched(&f, &report).contains(&".gemini/settings.json".to_owned()),
-            retired,
-            "{what}"
-        );
-        assert_eq!(
-            named(&report),
-            match retired {
-                true => vec![DriftState::Orphaned],
-                false => Vec::new(),
-            },
-            "{what}"
-        );
-        let left: serde_json::Value = serde_json::from_str(&shim_bytes(&settings)).unwrap();
-        let wanted: serde_json::Value = serde_json::from_str(theirs).unwrap();
-        assert_eq!(left, wanted, "{what}");
-        let again = plan(&f);
+        declare(row.then);
+        let report = dropping();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let held = fs::read_to_string(&target)
+            .unwrap_or_else(|error| panic!("{what}: {} is gone: {error}", row.target));
+        match row.left {
+            Left::Bytes => assert_eq!(held, theirs, "{what}"),
+            Left::Json(wanted) => assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&held).unwrap(),
+                serde_json::from_str::<serde_json::Value>(wanted).unwrap(),
+                "{what}: {held}"
+            ),
+            Left::Toml(wanted) => assert_eq!(
+                held.parse::<toml::Table>().unwrap(),
+                wanted.parse::<toml::Table>().unwrap(),
+                "{what}: {held}"
+            ),
+        }
+        let orphaned: Vec<&str> = report
+            .drift
+            .iter()
+            .filter(|one| one.name == row.target && one.state == DriftState::Orphaned)
+            .map(|one| one.detail.as_str())
+            .collect();
+        assert!(orphaned.is_empty(), "{what}: {orphaned:?}");
+        let again = dropping();
         assert!(again.plan.is_empty(), "{what}: {:?}", touched(&f, &again));
-        assert_eq!(named(&again), Vec::new(), "{what}");
     }
 }
 
@@ -748,7 +900,7 @@ fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
         &report.generated,
         "renders",
         &kendex_core::commit_offer::Selection::Only(chosen),
-        None,
+        &kendex_core::commit_offer::Before::Untaken,
     )
     .unwrap();
     assert_eq!(

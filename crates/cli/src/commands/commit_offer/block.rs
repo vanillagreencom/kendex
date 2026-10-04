@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use kendex_core::commit_offer::{
-    Failed, Offer, Operation, Scan, Stale, Staleness, Step, Unavailable,
+    Carry, Failed, Offer, Operation, Scan, Stale, Staleness, Step, Unavailable,
 };
 
 use super::{Asking, Choice};
@@ -26,7 +26,9 @@ use crate::ui::{self, Key, Span, Status, Style};
 pub const PATHS_SHOWN: usize = 10;
 
 /// The head line of the block, carrying the scope label the way
-/// `print_set_changes` and the ledger do.
+/// `print_set_changes` and the ledger do. Every head is drawn from a scan
+/// through [`headed_by`], so each prints the one count [`Scan::count`]
+/// gives.
 pub fn head(root: &Path, count: usize) -> String {
     format!(
         "{}: {count} file{} kendex wrote {} not committed",
@@ -51,6 +53,11 @@ fn headed(style: &Style, what: &str) -> Vec<String> {
     style.callout(what, None, &[])
 }
 
+/// The head line for what one scan carries.
+fn headed_by(scan: &Scan) -> String {
+    head(&scan.root, scan.count())
+}
+
 /// One thing said under the head.
 fn said_as(style: &Style, status: Status, line: &str) -> Vec<String> {
     style.row(status, &[Span::Prose(line)], None)
@@ -65,19 +72,19 @@ fn quoted(style: &Style, line: &str) -> Vec<String> {
 
 /// A line and nothing more: kendex owns changed files here and the offer
 /// cannot be made.
-pub fn no_branch(style: &Style, root: &Path, count: usize) -> Vec<String> {
+pub fn no_branch(style: &Style, scan: &Scan) -> Vec<String> {
     headed(
         style,
-        &format!("{}; this checkout is on no branch", head(root, count)),
+        &format!("{}; this checkout is on no branch", headed_by(scan)),
     )
 }
 
-pub fn in_progress(style: &Style, root: &Path, count: usize, operation: Operation) -> Vec<String> {
+pub fn in_progress(style: &Style, scan: &Scan, operation: Operation) -> Vec<String> {
     headed(
         style,
         &format!(
             "{}; {} is in progress",
-            head(root, count),
+            headed_by(scan),
             operation.article()
         ),
     )
@@ -85,12 +92,12 @@ pub fn in_progress(style: &Style, root: &Path, count: usize, operation: Operatio
 
 /// Nobody is at the terminal to answer, so the flags that would have are
 /// named instead.
-pub fn no_terminal(style: &Style, root: &Path, count: usize) -> Vec<String> {
+pub fn no_terminal(style: &Style, scan: &Scan) -> Vec<String> {
     headed(
         style,
         &format!(
             "{}; run again with --commit, --push, --pull-request or --leave",
-            head(root, count)
+            headed_by(scan)
         ),
     )
 }
@@ -126,7 +133,7 @@ pub fn not_vouched(style: &Style, root: &Path, why: &str) -> Vec<String> {
 /// date: the head line, then each package and why, in place of the commit
 /// choices.
 pub fn stale(style: &Style, scan: &Scan, stale: &[Stale]) -> Vec<String> {
-    let mut lines = headed(style, &head(&scan.root, scan.count()));
+    let mut lines = headed(style, &headed_by(scan));
     for held in stale {
         let name = &held.disclosure.name;
         let mut say = |status, line: String, said: &[String]| {
@@ -288,35 +295,11 @@ fn set_up_label(stale: &[Stale]) -> String {
     )
 }
 
-/// What the offer says about the changed files kendex writes into and does
-/// not own whole, each in one place: carried by the commit, left out
-/// because it held a change before the write, left out because the reading
-/// before the write would not run, or left alone.
-pub struct Beside<'a> {
-    /// The write changed each from a clean state, and the commit carries it.
-    pub carried: Vec<&'a str>,
-    /// The write changed each over a change of its own, which a commit of
-    /// the whole file would carry too.
-    pub held: Vec<&'a str>,
-    /// The reading before the write would not run, and every changed one is
-    /// left out for it.
-    pub unread: Option<(&'a Failed, Vec<&'a str>)>,
-    /// The rest: no reading says the write changed them alone.
-    pub rest: Vec<&'a str>,
-}
-
 /// The offer itself: what changed, what kendex leaves alone, and why a
 /// choice is missing. The choices follow, from [`pick`].
-pub fn offer(style: &Style, offer: &Offer, beside: &Beside) -> Vec<String> {
-    let mut paths: Vec<&str> = offer
-        .scan
-        .owned
-        .iter()
-        .map(|owned| owned.path.as_str())
-        .chain(beside.carried.iter().copied())
-        .collect();
-    paths.sort_unstable();
-    let mut lines = headed(style, &head(&offer.scan.root, paths.len()));
+pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
+    let paths = offer.scan.carried();
+    let mut lines = headed(style, &headed_by(&offer.scan));
     for path in paths.iter().take(PATHS_SHOWN) {
         lines.extend(said_as(style, Status::Notice, path));
     }
@@ -327,21 +310,7 @@ pub fn offer(style: &Style, offer: &Offer, beside: &Beside) -> Vec<String> {
             &format!("… and {} more", paths.len() - PATHS_SHOWN),
         ));
     }
-    if !beside.rest.is_empty() {
-        lines.extend(said_as(
-            style,
-            Status::Decision,
-            &format!(
-                "kendex also changed {} shared file{}; it writes one key in each, so committing them would commit your own changes to them too",
-                beside.rest.len(),
-                plural(beside.rest.len())
-            ),
-        ));
-        for path in &beside.rest {
-            lines.extend(quoted(style, path));
-        }
-    }
-    lines.extend(left_out(style, beside));
+    lines.extend(left_out(style, &offer.scan));
     if offer.scan.others > 0 {
         lines.extend(said_as(
             style,
@@ -363,35 +332,41 @@ pub fn offer(style: &Style, offer: &Offer, beside: &Beside) -> Vec<String> {
 /// held a change before this run, which a commit of the whole file would
 /// carry too, or the reading that would tell had not run. Drawn in the
 /// offer, and before the commit a flag answered, where no offer is drawn.
-pub fn left_out(style: &Style, beside: &Beside) -> Vec<String> {
+pub fn left_out(style: &Style, scan: &Scan) -> Vec<String> {
     let mut lines = Vec::new();
-    for path in &beside.held {
-        lines.extend(said_as(
-            style,
-            Status::Decision,
-            &format!(
-                "{path} held changes before this run, so the commit leaves it out; commit it yourself"
-            ),
-        ));
-    }
-    if let Some((failed, paths)) = &beside.unread {
-        lines.extend(said_as(
-            style,
-            Status::Decision,
-            &format!(
-                "kendex could not read which files held changes before this run, so the commit leaves out {} file{} it writes into and does not own whole; commit {} yourself",
-                paths.len(),
-                plural(paths.len()),
-                match paths.len() {
-                    1 => "it",
-                    _ => "them",
-                }
-            ),
-        ));
-        for path in paths {
-            lines.extend(quoted(style, path));
+    let paths = scan.left_out();
+    match &scan.carry {
+        Carry::Read(_) => {
+            for path in paths {
+                lines.extend(said_as(
+                    style,
+                    Status::Decision,
+                    &format!(
+                        "{path} held changes before this run, so the commit leaves it out; commit it yourself"
+                    ),
+                ));
+            }
         }
-        lines.extend(refusal(style, failed));
+        Carry::Unread(failed) if !paths.is_empty() => {
+            lines.extend(said_as(
+                style,
+                Status::Decision,
+                &format!(
+                    "kendex could not read which files held changes before this run, so the commit leaves out {} file{} it writes into and does not own whole; commit {} yourself",
+                    paths.len(),
+                    plural(paths.len()),
+                    match paths.len() {
+                        1 => "it",
+                        _ => "them",
+                    }
+                ),
+            ));
+            for path in paths {
+                lines.extend(quoted(style, path));
+            }
+            lines.extend(refusal(style, failed));
+        }
+        Carry::Unread(_) | Carry::Untaken => {}
     }
     lines
 }
@@ -438,7 +413,7 @@ pub fn not_on_offer(offer: &Offer, choice: Choice) -> Option<String> {
 /// names the flag that takes the route they allow, where that route is on
 /// offer.
 pub fn flag_refused(style: &Style, offer: &Offer, choice: Choice, reason: &str) -> Vec<String> {
-    let mut lines = headed(style, &head(&offer.scan.root, offer.scan.count()));
+    let mut lines = headed(style, &headed_by(&offer.scan));
     lines.extend(said_as(style, Status::Failed, reason));
     if choice == Choice::Push
         && offer.push == Err(Unavailable::PullRequestRequired)

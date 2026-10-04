@@ -63,7 +63,6 @@ const row = (over: Partial<ProjectChanges["state"]> = {}): ProjectChanges => ({
   state: {
     kind: "pending",
     files: FILES,
-    shared: [],
     others: 0,
     branch: "main",
     operation: null,

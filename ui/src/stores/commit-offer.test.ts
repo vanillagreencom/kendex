@@ -75,6 +75,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  since: null,
   stale: [],
   staleAction: [],
   ...over,
@@ -321,7 +322,7 @@ describe("the reading an action is scoped against", () => {
     });
     vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
       status: "ok",
-      data: [{ root: "/home/method/dev/site", held: [] }],
+      data: [{ root: "/home/method/dev/site", held: [], writes: [] }],
     });
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
@@ -337,7 +338,7 @@ describe("the reading an action is scoped against", () => {
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
     expect(commands.commitOfferScan).toHaveBeenCalledWith(
       ["/home/method/dev/site"],
-      [{ root: "/home/method/dev/site", held: [] }],
+      [{ root: "/home/method/dev/site", held: [], writes: [] }],
     );
   });
 
@@ -649,12 +650,26 @@ describe("answering an offer", () => {
       null,
     );
 
-    // The reading taken before the write goes with the commit: the files
-    // kendex writes into are carried only through it.
-    const since: ProjectBaseline = { root: "/home/method/dev/site", held: [] };
+    // The reading the offer was drawn against goes with the commit, and not
+    // a later one the store holds for the project: the files kendex writes
+    // into are carried only through the reading the offer listed them by.
+    const since: ProjectBaseline = {
+      root: "/home/method/dev/site",
+      held: [],
+      writes: ["kendex.toml"],
+    };
+    const later: ProjectBaseline = {
+      root: "/home/method/dev/site",
+      held: [],
+      writes: [],
+    };
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ since })],
+    });
     useCommitOfferStore.setState({
       scoped: "all",
-      baselines: { "/home/method/dev/site": since },
+      baselines: { "/home/method/dev/site": later },
     });
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
     await useCommitOfferStore.getState().run();
@@ -679,7 +694,6 @@ describe("answering an offer", () => {
           state: {
             kind: "pending",
             files: [".claude/CLAUDE.md"],
-            shared: [],
             others: 0,
             branch: "main",
             operation: null,
@@ -784,7 +798,7 @@ describe("the root a project is looked up by", () => {
   it("sends back the spelling it was given", async () => {
     vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
       status: "ok",
-      data: [{ root: WINDOWS, held: [] }],
+      data: [{ root: WINDOWS, held: [], writes: [] }],
     });
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
@@ -795,7 +809,7 @@ describe("the root a project is looked up by", () => {
     // The reading reached the scan, which is what makes attribution work.
     expect(commands.commitOfferScan).toHaveBeenCalledWith(
       [WINDOWS],
-      [{ root: WINDOWS, held: [] }],
+      [{ root: WINDOWS, held: [], writes: [] }],
     );
     // And the queue is keyed by the same spelling, so leaving answers it.
     expect(useCommitOfferStore.getState().queue[0].root).toBe(WINDOWS);
@@ -809,7 +823,7 @@ describe("the root a project is looked up by", () => {
   it("sends no reading when the answer comes back re-spelled", async () => {
     vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
       status: "ok",
-      data: [{ root: "C:/Users/me/dev/site", held: [] }],
+      data: [{ root: "C:/Users/me/dev/site", held: [], writes: [] }],
     });
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
@@ -861,11 +875,11 @@ describe("setting up a package that holds the commit", () => {
       undo: null,
     },
   });
-  const since: ProjectBaseline = { root, held: [] };
+  const since: ProjectBaseline = { root, held: [], writes: [] };
   /** Held in both commits it can make, as a project with no older pending
    *  change to the package's files is. */
   const heldOffer = (stale: StalePackage[]) =>
-    offer({ stale, staleAction: stale });
+    offer({ stale, staleAction: stale, since });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -973,12 +987,18 @@ describe("setting up a package that holds the commit", () => {
       toast: false,
     },
   ] as const)("ends where it should: $name", async (row) => {
-    // An offer a write opened holds the reading it was scoped to; one a
-    // person opened holds none.
-    const baselines: Record<string, ProjectBaseline> = row.byWrite
-      ? { [root]: since }
-      : {};
-    useCommitOfferStore.setState({ baselines });
+    // An offer a write opened holds the reading it was drawn against; one
+    // a person opened holds none, whatever reading the setup's own write
+    // left in the store for the project.
+    useCommitOfferStore.setState({
+      queue: [
+        {
+          ...heldOffer([held("notSetUp")]),
+          since: row.byWrite ? since : null,
+        },
+      ],
+      baselines: { [root]: since },
+    });
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
     vi.mocked(commands.commitOfferOpen).mockResolvedValue(row.read as never);
 
@@ -1171,7 +1191,7 @@ describe("a project that stops being one while a scan is out", () => {
     const gone = offer({ root: "/work/vsys-view", name: "vsys-view" });
     vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
       status: "ok",
-      data: [{ root: gone.root, held: [] }],
+      data: [{ root: gone.root, held: [], writes: [] }],
     });
     await useCommitOfferStore.getState().noteBaseline([gone.root]);
     expect(useCommitOfferStore.getState().baselines).toHaveProperty(gone.root);
