@@ -464,6 +464,56 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
     }
 }
 
+/// `remove --commit` commits the deletion of a render the person edited
+/// after the add committed it. The removal's plan names that render among
+/// its writes, and a render the committed inventory holds is kendex's whole
+/// however the plan reached it, so the commit carries its deletion beside
+/// the manifest, the lock and the inventory, and nothing is left pending.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_remove_commits_the_deletion_of_a_render_the_person_edited() {
+    const RENDER: &str = ".claude/agents/scout.md";
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let source = scout_and_guard(&home).to_string_lossy().into_owned();
+    let add = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            &source,
+            "--agent",
+            "scout",
+        ],
+    );
+    assert!(add.status.success(), "{}", said(&add));
+    let render = project.join(RENDER);
+    let text = fs::read_to_string(&render).unwrap();
+    fs::write(&render, format!("{text}mine\n")).unwrap();
+
+    let output = kendex(
+        &home,
+        &project,
+        &["remove", "--commit", "--no-sweep", "scout"],
+    );
+    let text = said(&output);
+
+    assert!(output.status.success(), "{text}");
+    assert!(!render.exists(), "{text}");
+    let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    for carried in [RENDER, "kendex.toml", ".kendex-lock.json"] {
+        assert!(
+            files.lines().any(|line| line == carried),
+            "{carried} is not in the commit: {files}\n{text}"
+        );
+    }
+    assert_eq!(git(&project, &["status", "--porcelain"]), "", "{text}");
+}
+
 /// A project whose root `AGENTS.md` carries a managed region the installed
 /// bot-instructions fixture renders, with the package armed and locked so
 /// an apply runs it: the body the last commit holds, then the body the

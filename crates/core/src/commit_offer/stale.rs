@@ -191,25 +191,19 @@ fn standing(
 }
 
 /// A split package's changed inputs the commit leaves out: its own paths
-/// the commit does not carry, the manifest where the action wrote it and
-/// the commit does not carry it, and the inventory where it changed and is
-/// not carried. The package renders from the whole manifest and from the
+/// the commit does not carry, the manifest where it changed, whatever the
+/// action did to it, and the commit does not carry it, and the inventory
+/// where it changed and is not carried. The package renders from the whole manifest and from the
 /// inventory, so each is named where it is left behind; which of them the
 /// check read, only its own words say.
 fn left_out(scan: &Scan, carried: &BTreeSet<String>, left: Vec<&str>) -> Vec<String> {
-    let declared = super::paths::declaration(&scan.root);
-    let manifest = scan
-        .beside
-        .iter()
-        .map(|beside| beside.path.as_str())
-        .filter(|path| declared.as_deref() == Some(*path));
     let inventory = scan
         .owned
         .iter()
         .map(|owned| owned.path.as_str())
         .filter(|path| *path == INVENTORY);
     left.into_iter()
-        .chain(manifest)
+        .chain(scan.manifest.as_deref())
         .chain(inventory)
         .filter(|path| !carried.contains(*path))
         .map(str::to_owned)

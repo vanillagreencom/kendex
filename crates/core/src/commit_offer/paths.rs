@@ -89,6 +89,7 @@ pub fn scan(
         beside,
         carry,
         others,
+        manifest: sorted.manifest,
         branch: branch(root)?,
     }))
 }
@@ -108,6 +109,9 @@ pub(super) struct Sorted {
     /// action has to record: the first is no path kendex writes, and the
     /// second is judged by its region alone.
     pub unnamed: usize,
+    /// The project's manifest where git reports it changed, in whichever
+    /// list above it sits: [`Scan::manifest`].
+    pub manifest: Option<String>,
 }
 
 /// Sort what git reports changed. The read every other one here is made
@@ -134,13 +138,15 @@ pub(super) fn sort(
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     )?;
     // Read once and only where it can matter: the rule it feeds adds the
-    // paths a sweep removed, and a sweep's removals are deletions.
+    // renders a sweep or a removal took away, and those are deletions.
     let mut committed: Option<BTreeSet<String>> = None;
+    let declared = declaration(root);
     let mut sorted = Sorted {
         owned: Vec::new(),
         beside: Vec::new(),
         others: Vec::new(),
         unnamed: 0,
+        manifest: None,
     };
     for row in rows(&status) {
         let Some(path) = text(row.path) else {
@@ -151,6 +157,9 @@ pub(super) fn sort(
             sorted.unnamed += 1;
             continue;
         };
+        if declared.as_deref() == Some(path.as_str()) {
+            sorted.manifest = Some(path.clone());
+        }
         if owned.contains(&path) {
             if let Some(region) = generated.region(root, &path)
                 && !super::regions::changed(root, region)?
@@ -159,10 +168,6 @@ pub(super) fn sort(
                 continue;
             }
             sorted.owned.push(row.owned(path));
-            continue;
-        }
-        if beside.contains(&path) {
-            sorted.beside.push(row.owned(path));
             continue;
         }
         if row.deleted() {
@@ -181,6 +186,13 @@ pub(super) fn sort(
                 });
                 continue;
             }
+        }
+        // After the deletion rule: a render the committed inventory holds
+        // stays kendex's whole however the plan reached it, and a removal's
+        // plan names the render it takes away among its writes.
+        if beside.contains(&path) {
+            sorted.beside.push(row.owned(path));
+            continue;
         }
         sorted.others.push(path);
     }

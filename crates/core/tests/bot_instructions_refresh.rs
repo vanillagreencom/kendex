@@ -957,6 +957,15 @@ enum Edit {
     DropSkillTree,
 }
 
+/// What was read of the project before the render.
+enum Reading {
+    /// Nothing: the offer was opened with no action behind it.
+    Untaken,
+    /// A reading taken over a hand edit to the manifest, which the action
+    /// then writes.
+    OverManifestEdit,
+}
+
 /// What the check over the commit holds it with.
 enum OverCommit {
     Nothing,
@@ -964,11 +973,15 @@ enum OverCommit {
 }
 
 /// An armed fixture, committed, whose doctrine then changed and whose
-/// package re-rendered after `edit`: the offer's scan and the set it was
-/// read from. A deleted manifest is deleted after the render, which reads
-/// it.
+/// package re-rendered after `edit`: the offer's scan, against what
+/// `reading` read before the render, and the set it was read from. A
+/// deleted manifest is deleted after the render, which reads it.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_offer::Scan) {
+fn edited_offer(
+    what: &str,
+    edit: &Edit,
+    reading: &Reading,
+) -> (Fixture, GeneratedPaths, commit_offer::Scan) {
     let fixture = enabled_fixture();
     if let Edit::GainCodex = edit {
         let tracked = fixture.root.join(".codex/skills/local/SKILL.md");
@@ -977,6 +990,19 @@ fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_off
         git(&fixture.root, &["add", "-A"]);
     }
     commit_fixture(&fixture.root);
+    let manifest = fixture.root.join("kendex.toml");
+    let before = match reading {
+        Reading::Untaken => Before::Untaken,
+        Reading::OverManifestEdit => {
+            let text = fs::read_to_string(&manifest).unwrap();
+            fs::write(&manifest, format!("# mine\n{text}")).unwrap();
+            Before::read(
+                &fixture.scope,
+                &GeneratedPaths::default(),
+                [manifest.clone()],
+            )
+        }
+    };
     let mut generated = GeneratedPaths::default();
     generated.whole.insert(change_doctrine(&fixture.root));
     let replace = |path: &str, from: &str, to: &str| {
@@ -1007,9 +1033,11 @@ fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_off
         .expect("the armed package renders")
         .add_to(&mut generated);
     if let Edit::DeleteManifest = edit {
-        fs::remove_file(fixture.root.join("kendex.toml")).unwrap();
+        fs::remove_file(&manifest).unwrap();
     }
-    let scan = offer_scan(&fixture, &generated);
+    let scan = commit_offer::scan(&fixture.scope, &generated, &before)
+        .expect("the offer reads the project")
+        .expect("the project has changes kendex owns");
     (fixture, generated, scan)
 }
 
@@ -1022,13 +1050,17 @@ fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_off
 /// root holds a tracked tree, a manifest key the render does not read, the
 /// manifest deleted, which fails the working-tree check and passes the one
 /// over the commit, and the inventory dropping a skill tree. The manifest
-/// a harness joined is left out in one row, where no reading shows the
-/// action wrote it, so only the check's own words name it, and carried in
-/// another; the inventory is carried in one row and left out in another,
-/// where it is named. Every row leaves the repository's own index as it found it and
-/// no candidate index behind.
+/// a harness joined is named left out where no reading was taken, and
+/// where the action wrote it over a hand edit, and carried in a third row;
+/// the inventory is carried in one row and left out in another, where it
+/// is named. Every row leaves the repository's own index as it found it
+/// and no candidate index behind.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one table: each row an edit, what was read before it and what the commit carries"
+)]
 fn a_commit_is_held_only_where_the_check_over_it_fails() {
     /// Which changed paths the commit carries.
     enum Carries<'a> {
@@ -1044,55 +1076,70 @@ fn a_commit_is_held_only_where_the_check_over_it_fails() {
     let rows = [
         (
             "the doctrine left out of the commit",
+            Reading::Untaken,
             Edit::Nothing,
             Carries::AllBut(doctrine.as_str()),
             OverCommit::Split(&[".agents/skills/bot-instructions/SKILL.md"]),
         ),
         (
             "every pending change, the doctrine included",
+            Reading::Untaken,
             Edit::Nothing,
             Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "harnesses gains codex over a tracked .codex/skills tree",
+            Reading::Untaken,
             Edit::GainCodex,
             Carries::Owned,
-            OverCommit::Split(&[]),
+            OverCommit::Split(&["kendex.toml"]),
+        ),
+        (
+            "harnesses gains codex over a manifest holding a hand edit",
+            Reading::OverManifestEdit,
+            Edit::GainCodex,
+            Carries::Owned,
+            OverCommit::Split(&["kendex.toml"]),
         ),
         (
             "harnesses gains codex, the manifest carried",
+            Reading::Untaken,
             Edit::GainCodex,
             Carries::AndTheManifest,
             OverCommit::Nothing,
         ),
         (
             "a manifest key the render does not read",
+            Reading::Untaken,
             Edit::UnreadKey,
             Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "the manifest deleted",
+            Reading::Untaken,
             Edit::DeleteManifest,
             Carries::Owned,
             OverCommit::Nothing,
         ),
         (
             "the inventory drops a skill tree, left out of the commit",
+            Reading::Untaken,
             Edit::DropSkillTree,
             Carries::AllBut(inventory),
             OverCommit::Split(&[".kendex-generated.json"]),
         ),
         (
             "the inventory drops a skill tree, carried",
+            Reading::Untaken,
             Edit::DropSkillTree,
             Carries::Owned,
             OverCommit::Nothing,
         ),
     ];
-    for (what, edit, carries, holds) in rows {
-        let (fixture, generated, scan) = edited_offer(what, &edit);
+    for (what, reading, edit, carries, holds) in rows {
+        let (fixture, generated, scan) = edited_offer(what, &edit, &reading);
         let mut carried = scan.carried();
         assert!(carried.len() > 1, "{what}: the render changed nothing");
         match carries {

@@ -1322,6 +1322,7 @@ mod tests {
                     beside: Vec::new(),
                     carry: kendex_core::commit_offer::Carry::Untaken,
                     others: 0,
+                    manifest: None,
                     branch: Branch::On("main".to_owned()),
                 },
                 branch: "main".to_owned(),

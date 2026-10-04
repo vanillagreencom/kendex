@@ -368,6 +368,11 @@ pub struct Scan {
     /// changes, which the offer counts and never touches: a file the
     /// action could have written and did not is among them.
     pub others: usize,
+    /// The project's manifest, as git spells it, where git reports it
+    /// changed or deleted: among [`Scan::beside`] where the action wrote it,
+    /// counted in [`Scan::others`] where it did not. A package that renders
+    /// from it is judged against it whatever the action did to it.
+    pub manifest: Option<String>,
     pub branch: Branch,
 }
 

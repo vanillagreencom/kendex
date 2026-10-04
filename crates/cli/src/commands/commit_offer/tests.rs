@@ -28,6 +28,7 @@ fn scan() -> Scan {
         beside: Vec::new(),
         carry: Carry::Untaken,
         others: 4,
+        manifest: None,
         branch: Branch::On("main".to_owned()),
     }
 }
