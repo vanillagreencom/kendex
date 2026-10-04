@@ -27,3 +27,4 @@ jobs:
     permissions:
       contents: read
     uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1
+    secrets: inherit

@@ -465,7 +465,7 @@ caller_names_match() { # ADOPTER
   python3 - "$1" "$SKILL_DIR/../../.github/workflows/refresh-consumer.yml" <<'NAMES'
 import re, sys
 adopter, shared = (open(path).read() for path in sys.argv[1:])
-branch = re.search(r"^  0\)\n    template_environment=(\S+)\n    template_secrets='([^']*)' ;;$", adopter, re.M)
+branch = re.search(r"^  inherit\)\n    template_environment=(\S+)\n    template_secrets='([^']*)' ;;$", adopter, re.M)
 assert branch, 'caller branch not found in the adopter'
 environments = re.findall(r'^    environment: (\S+)$', shared, re.M)
 secrets = sorted(set(re.findall(r'\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}', shared)))
@@ -552,6 +552,44 @@ for mutation in none record history; do
       ok 'repeated release-tree adoption accepts the shipped caller and keeps the inventory'
     else bad "repeated release-tree adoption (rc=$RC)" "$OUT"; fi
   fi
+done
+
+# The v1.8.0 caller passes no secrets, so its called job reads them empty. A
+# consumer holding those shipped bytes takes the current caller; a release
+# tree holding them is refused before the environment check, and the control
+# judges that caller by the inherit names in a copy of the adopter.
+git -C "$SKILL_DIR" show 22391ad71dab8ee853f53622ade4b532216ee691:refresh/kendex-refresh.yml >"$TMP/caller-no-secrets"
+ship_caller_template "$TMP/caller-no-secrets"
+ship_caller_template "$CALLER"
+sandbox
+cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
+commit "$DIR"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
+    jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
+  ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
+else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
+OLD_RELEASE="$TMP/release-no-secrets"
+mkdir -p "$OLD_RELEASE"
+cp "$TMP/caller-no-secrets" "$OLD_RELEASE/kendex-refresh.yml"
+for mutation in none inherit; do
+  sandbox
+  cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
+  commit "$DIR"
+  case "$mutation" in
+    none) ;;
+    inherit)
+      file_edit "$DIR" "$ADOPT" 1 '^  inherit\)$' 's/^  inherit)$/  inherit | no-secrets)/' ;;
+  esac
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$OLD_RELEASE"
+  matched=no
+  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$OLD_RELEASE/kendex-refresh.yml" <<<"$OUT" &&
+      cmp -s "$DIR/$REFRESH" "$TMP/caller-no-secrets" && ! grep -q '^ok check=' <<<"$OUT"; then matched=yes; fi
+  case "$mutation:$matched" in
+    none:yes) ok 'a caller template with no secrets: inherit is refused and the workflow kept' ;;
+    inherit:no) ok 'control: judging the v1.8.0 caller by the inherit names turns the refusal row red' ;;
+    *) bad "caller secrets refusal mutation=$mutation (rc=$RC)" "$OUT" ;;
+  esac
 done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

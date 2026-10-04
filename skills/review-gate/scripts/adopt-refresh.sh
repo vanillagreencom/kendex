@@ -35,14 +35,23 @@ fi
 refresh_template="$templates/kendex-refresh.yml"
 # A caller of the shared workflow declares neither; the called job reads
 # these names from the caller's environment. adopt-refresh.test.sh holds them
-# equal to the names .github/workflows/refresh-consumer.yml declares.
-caller=0
-grep -q '^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@' "$refresh_template" || caller=$?
+# equal to the names .github/workflows/refresh-consumer.yml declares. The
+# called job reads them only when `secrets: inherit` is the line under the
+# caller's `uses:` line; without it they read empty and the token step fails.
+caller="$(awk '
+  call { print ($0 == "    secrets: inherit" ? "inherit" : "no-secrets"); judged = 1; exit }
+  /^    uses: vanillagreencom\/kendex\/\.github\/workflows\/refresh-consumer\.yml@/ { call = 1 }
+  END { if (!judged) print (call ? "no-secrets" : "inline") }' "$refresh_template")" ||
+  { printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2; }
 case "$caller" in
-  0)
+  inherit)
     template_environment=kendex
     template_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY' ;;
-  1)
+  no-secrets)
+    printf 'refresh-error=caller-secrets value=%s\n%s\n' "$refresh_template" \
+      'The caller passes no secrets: put secrets: inherit on the line under its uses: line.' >&2
+    exit 2 ;;
+  inline)
     template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
     template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2 ;;
   *) printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2 ;;
