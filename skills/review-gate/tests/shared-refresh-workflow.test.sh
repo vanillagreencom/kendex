@@ -182,7 +182,7 @@ while IFS='|' read -r rule expression; do
   else bad "$rule declared secrets control"; fi
 done <<'ROWS'
 a renamed declaration|s/^      FLEET_GH_APP_PRIVATE_KEY:$/      FLEET_GH_APP_KEY:/
-a required declaration|0,/^        required: false$/s//        required: true/
+a required declaration|1,/^        required: false$/s/^        required: false$/        required: true/
 ROWS
 
 # The install step's own body, extracted from the workflow.

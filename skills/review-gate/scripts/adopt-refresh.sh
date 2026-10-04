@@ -33,11 +33,11 @@ fi
 # Process values ensure the read-only check judges the environment and secrets
 # the selected workflow reads, not a different consumer settings value.
 refresh_template="$templates/kendex-refresh.yml"
-# A caller of the shared workflow declares neither; the called job reads
-# these from the caller's environment. adopt-refresh.test.sh holds them equal
-# to the environment and secrets .github/workflows/refresh-consumer.yml
-# declares. The job reads a secret only when the caller maps it, on the line
-# under uses:, to its same-named secret; otherwise the token step reads empty.
+# A caller of the shared workflow declares neither; adopt-refresh.test.sh
+# holds these equal to what .github/workflows/refresh-consumer.yml declares.
+# The judge below accepts only the shipped template's form, mapped NAMES with
+# NAMES equal to these, and refuses every other; D003's caller-secrets
+# amendment owns how GitHub reads them.
 shared_environment=kendex
 shared_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY'
 # Forms: inline (no shared-workflow call), mapped NAMES (each entry of the
@@ -59,7 +59,7 @@ caller="$(awk '
   { printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2; }
 refuse_caller() { # CAUSE
   printf 'refresh-error=caller-secrets value=%s cause=%s\n%s\n' "$refresh_template" "$1" \
-    "Under its uses: line the caller needs a secrets: key mapping each of $shared_secrets to its same-named secret." >&2
+    "The adopter accepts only a secrets: key on the line under the caller's uses: mapping $shared_secrets, in order, each to its same-named secret." >&2
   exit 2
 }
 case "$caller" in
