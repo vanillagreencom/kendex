@@ -1,0 +1,1 @@
+- Commit-guards refusals in a clone with unarmed hooks name the tracked installer first, then `kendex guard install`, so a clone without kendex can arm its checks.

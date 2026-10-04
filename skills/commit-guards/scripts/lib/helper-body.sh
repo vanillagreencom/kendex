@@ -144,7 +144,8 @@ fail() { # KEY VALUE EXPLANATION
   done <<HELPER_EXPLANATION
 $3
 HELPER_EXPLANATION
-  echo "  The $what is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this $what with 'git $what --no-verify'." >&2
+  rearm="$(printf '%s' "${installed_scripts_rel:-$installed_scripts}/install-git-hooks" | LC_ALL=C tr '\001-\037\177' '?')" || exit 2
+  echo "  The $what is blocked because a guard could not run. Re-arm the shims with 'bash $rearm' or 'kendex guard install', or bypass this $what with 'git $what --no-verify'." >&2
   exit 2
 }
 

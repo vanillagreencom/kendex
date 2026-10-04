@@ -136,6 +136,23 @@ run_rows \
   "the tree's own render runs before a baked scripts directory that is there|fx_own_first|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN;${MSG_OK}feat: add a|" \
   "with no render at the recorded place, the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
+# The rows above pin the key; the remedy under it is read directly. The
+# tracked installer comes first, because a fresh clone carries it and may
+# carry no kendex binary.
+blocked_said() { # NAME [SCRIPTS_DIR] -> the remedy a commit with the package gone names, on stdout
+  if [ -n "${2:-}" ]; then armed_from "$1" "$2"; else armed "$1"; fi
+  stage a.txt 'hello\n'
+  rm -rf -- "${R:?}/.agents/skills/commit-guards"
+  commit_in "$R" "feat: add a"
+  LC_ALL=C sed -n 's/.*\(Re-arm the shims with .*\), or bypass .*/\1/p' <<<"$OUT"
+}
+assert_eq "a blocked commit names the tracked installer, then kendex guard install" \
+  "Re-arm the shims with 'bash $INSTALLER_REL' or 'kendex guard install'" "$(blocked_said blocked-said)"
+gg_mutant MUTANT lib/helper-body.sh "Re-arm the shims with 'bash \$rearm' or 'kendex guard install'" \
+  "Re-arm the shims with 'kendex guard install' or 'bash \$rearm'"
+assert_eq "control: a helper naming kendex guard install first fails that row" \
+  "Re-arm the shims with 'kendex guard install' or 'bash $INSTALLER_REL'" "$(blocked_said blocked-kendex-first "${MUTANT%/lib/helper-body.sh}")"
+
 echo "=== existing hooks survive the install, and ours runs first ==="
 fx_compose() {
   R="$(new_repo compose)"

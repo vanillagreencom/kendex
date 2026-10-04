@@ -308,6 +308,14 @@ state() {
 # unseeded repository can pass for the wrong reason.
 SEEDS_FAILED=""
 armed() { R="$(new_repo "$1")"; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
+# armed, from another scripts directory: how a must-fail control arms a
+# repository with a gg_mutant copy of the package.
+armed_from() { # NAME SCRIPTS_DIR
+  R="$(new_repo "$1")"
+  rm -rf -- "${R:?}/.agents/skills/commit-guards/scripts"
+  cp -R -- "$2" "$R/.agents/skills/commit-guards/scripts"
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+}
 stage() { printf '%b' "$2" >"$R/$1"; git -C "$R" add -- "$1"; }
 stage_marker() { stage b.py "# $TD: finish this\n"; }
 seed() { git -C "$R" commit -q -m "feat: seed" >/dev/null 2>&1 || SEEDS_FAILED="$SEEDS_FAILED ${R##*/}"; }
@@ -347,6 +355,8 @@ WARN="install-git-hooks:"
 X=rwxr-xr-x
 RW=rw-r--r--
 OURS="$X:ours['<repo>/.agents/skills/commit-guards/scripts']"
+# The installer a remedy names, relative to the armed checkout.
+INSTALLER_REL=".agents/skills/commit-guards/scripts/install-git-hooks"
 SHIM_PRE="$X:#!/bin/sh~@PRE@~@CREATED@"
 SHIM_MSG="$X:#!/bin/sh~@MSG@~@CREATED@"
 SHIM_PUSH="$X:#!/bin/sh~@PUSH@~@CREATED@"

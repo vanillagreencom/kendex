@@ -194,6 +194,22 @@ assert_eq "a worktree whose push lane is gone says pushes are blocked" \
 assert_eq "control: one whose commit lane is gone still says commits are blocked" \
   "commit" "$(verb_said pre-commit)"
 
+# A not-armed verdict's remedy, read directly for the same reason: the
+# tracked installer comes first, because a fresh clone carries it and may
+# carry no kendex binary.
+rearm_said() { # NAME [SCRIPTS_DIR] -> the remedy a missing pre-commit's verdict names, on stdout
+  if [ -n "${2:-}" ]; then armed_from "$1" "$2"; else armed "$1"; fi
+  rm "$R/.git/hooks/pre-commit"
+  check_in "$R"
+  LC_ALL=C sed -n 's/.*); \(run .* to re-arm\)$/\1/p' <<<"$OUT"
+}
+assert_eq "a not-armed verdict names the tracked installer, then kendex guard install" \
+  "run 'bash $INSTALLER_REL' or 'kendex guard install' to re-arm" "$(rearm_said rearm-said)"
+gg_mutant MUTANT install-git-hooks "run 'bash \$(gg_shown \"\$(gg_rearm_installer)\")' or 'kendex guard install'" \
+  "run 'kendex guard install' or 'bash \$(gg_shown \"\$(gg_rearm_installer)\")'"
+assert_eq "control: a verdict naming kendex guard install first fails that row" \
+  "run 'kendex guard install' or 'bash $INSTALLER_REL' to re-arm" "$(rearm_said rearm-kendex-first "${MUTANT%/install-git-hooks}")"
+
 echo "=== one project delivered as copies: each copy reads the helper another armed ==="
 # A project delivered to several harnesses holds the package under each skill
 # root, and the copy that arms the repository need not be the copy that checks

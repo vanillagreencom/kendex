@@ -37,6 +37,7 @@ mkdir -p "$TMP_ROOT/custom-hooks"
 cp "$ARMED_BY_PATH/.git/hooks/pre-commit" "$ARMED_BY_PATH/.git/hooks/commit-msg" "$TMP_ROOT/custom-hooks/"
 git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 NOT_A_REPO="$TMP_ROOT/plain"; mkdir -p "$NOT_A_REPO"
+INSTALLER=".agents/skills/commit-guards/scripts/install-git-hooks"
 
 # Each fixture proves once that the hook does not run repository scripts.
 # A row is `label|directory|status|first line`.
@@ -68,7 +69,10 @@ not armed: hooks-off|$HOOKS_OFF|2|pre-commit-check: unarmed=$HOOKS_OFF
 not armed: armed-by-path|$ARMED_BY_PATH|2|pre-commit-check: unarmed=$ARMED_BY_PATH
 not armed: unarmed|$UNARMED|2|pre-commit-check: unarmed=$UNARMED
 "
-assert_contains "$err" "kendex guard install" "the unarmed refusal names the command that fixes it"
+# The tracked installer comes first: a fresh clone carries it, and it may
+# carry no kendex binary.
+assert_contains "$err" "run 'bash $INSTALLER' from the repository root, or 'kendex guard install'" \
+  "the unarmed refusal names the tracked installer, then kendex guard install"
 assert_contains "$err" "kendex guard check" "and the one that explains it"
 
 echo
@@ -122,6 +126,22 @@ GLOB="$(new_repo glob)"; arm "$GLOB" pre-commit commit-msg
 run_hook "$GLOB" "$(payload 'git commit -m x *')"
 assert_eq "$rc" "0" "a glob is not expanded against a decoy named for the flag"
 assert_eq "$log" "" "nothing of the repository's ran for the glob"
+
+# The must-fail control, a mutant copy run through the same assertions: the
+# unarmed refusal naming kendex guard install before the tracked installer.
+# Skipped when this run is itself the control.
+if [[ -z "${HOOK_UNDER_TEST:-}" ]]; then
+  echo
+  echo "control"
+  mutant="$TMP_ROOT/kendex-first.sh"
+  sed -e "s|run 'bash \\($INSTALLER\\)' from the repository root, or 'kendex guard install'|run 'kendex guard install', or 'bash \\1' from the repository root|" \
+    "$HOOK" >"$mutant"
+  assert_eq "$(cmp -s "$mutant" "$HOOK" && echo same || echo differs)" differs \
+    "control: the kendex-first mutant really differs from the hook"
+  out="$(HOOK_UNDER_TEST="$mutant" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
+  assert_eq "$(grep -Fxc -e "  FAIL  the unarmed refusal names the tracked installer, then kendex guard install" <<<"$out" || true)" 1 \
+    "control kendex-first: the installer-first assertion goes red"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

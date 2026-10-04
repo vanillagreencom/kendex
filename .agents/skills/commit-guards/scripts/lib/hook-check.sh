@@ -210,6 +210,13 @@ add_reason() { # KEY VALUE EXPLANATION
   CHECK_EXPLANATIONS="${CHECK_EXPLANATIONS:+$CHECK_EXPLANATIONS; }$3"
 }
 
+# The installer a re-arm names: this copy relative to its checkout's top
+# level, which every clone carries, or its own directory where no checkout of
+# this repository holds it.
+gg_rearm_installer() { # -> the installer path, on stdout
+  printf '%s/install-git-hooks' "${INSTALLED_SCRIPTS_REL:-$SCRIPT_DIR}"
+}
+
 check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   local helper="$HOOKS_DIR/$HELPER_NAME" status=0
   if [ ! -e "$helper" ] && [ ! -L "$helper" ]; then
@@ -246,7 +253,7 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
     return 2
   fi
   if [ "$stamp" != "$expected_stamp" ]; then
-    fix="${INSTALLED_SCRIPTS_REL:-$SCRIPT_DIR}/install-git-hooks"
+    fix="$(gg_rearm_installer)"
     [ "$MAIN_CHECKOUT" -eq 0 ] || where="the main checkout"
     add_reason helper-outdated "$HELPER_NAME fix=$(gg_shown "$fix") (run from $where)" "helper $HELPER_NAME has an older or missing installer version; re-arm with the named installer"
     return 1
