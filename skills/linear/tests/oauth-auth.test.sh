@@ -127,7 +127,7 @@ for row in 'mint:1000:1:token-1' 'cache:1000:1:token-1' 'before-expiry:4540:2:to
 done
 config=$(cat "$LOG/config")
 assert_contains 'mint sends fixed scope and encoded client credentials' "$config" \
-    'grant_type=client_credentials&scope=read%2Cwrite&client_id=app%2Fid&client_secret=app%26secret'
+    'grant_type=client_credentials&scope=read%2Cwrite%2Cinitiative%3Aread&client_id=app%2Fid&client_secret=app%26secret'
 assert_not 'mint keeps client credentials out of jq arguments' \
     grep -F -e 'app&secret' -e 'app/id' "$LOG/jq-argv"
 cache_files=("$PROJECT/.cache/linear/oauth/"*.json)

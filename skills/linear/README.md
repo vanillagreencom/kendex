@@ -45,7 +45,7 @@ Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names anoth
 
 With `LINEAR_APP_TOKEN`, the skill sends a Bearer header and never mints, renews or caches the token. HTTP 401 reports that the token is expired or revoked. A configured client pair does not provide a fallback.
 
-On a host with the real client pair, run `scripts/linear.sh auth-mint`. It prints `access_token` and `expires_at` (epoch seconds) as JSON and writes no files. The fleet publishes the token as `LINEAR_APP_TOKEN` to its secret store and replaces it before expiry. Keep one minting host. The client credentials grant always requests scope exactly `read,write`. Linear revokes existing app tokens when an application requests a different scope set. See [client credentials tokens](https://linear.app/developers/oauth-2-0-authentication#client-credentials-tokens).
+On a host with the real client pair, run `scripts/linear.sh auth-mint`. It prints `access_token` and `expires_at` (epoch seconds) as JSON and writes no files. The fleet publishes the token as `LINEAR_APP_TOKEN` to its secret store and replaces it before expiry. Keep one minting host. The client credentials grant always requests scope exactly `read,write,initiative:read`. Linear revokes existing app tokens when an application requests a different scope set. See [client credentials tokens](https://linear.app/developers/oauth-2-0-authentication#client-credentials-tokens).
 
 Without `LINEAR_APP_TOKEN`, the client-pair API path stores tokens and their expiry under `.cache/linear/oauth/` at the resolved cache root. It renews before expiry and once after HTTP 401. Token files are private and replaced atomically. `auth-check` reports the selected credential and the application's or user's ID and name.
 

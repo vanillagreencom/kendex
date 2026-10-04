@@ -65,7 +65,8 @@ Environment:
                   Never renewed or cached; replace an expired or revoked token.
   LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET
                   App credentials in .env.local. Together they win over the key
-                  when no app token is set. Tokens use fixed scope read,write.
+                  when no app token is set. Tokens use fixed scope
+                  read,write,initiative:read.
                   auth-mint prints access_token and expires_at without caching;
                   the pair's API path caches and renews its own token.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins

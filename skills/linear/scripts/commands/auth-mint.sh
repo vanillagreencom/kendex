@@ -9,7 +9,7 @@ Usage: auth-mint
 
 Requires LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET (op:// supported).
 Prints {"access_token": ..., "expires_at": ...} with expiry in epoch seconds.
-Uses fixed scope read,write. Writes no files and ignores other credentials.
+Uses fixed scope read,write,initiative:read. Writes no files and ignores other credentials.
 EOF
         exit 0 ;;
     '') ;;

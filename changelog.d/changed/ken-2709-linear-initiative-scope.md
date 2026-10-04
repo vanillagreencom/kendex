@@ -1,0 +1,1 @@
+- The linear skill's app token requests scope `read,write,initiative:read`, so initiative reads work. The first mint revokes every `read,write` app token; reissue the fleet token.
