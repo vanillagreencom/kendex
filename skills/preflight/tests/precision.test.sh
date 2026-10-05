@@ -487,11 +487,12 @@ chmod +x "$R/scripts/lib/runnable.sh"
 git -C "$R" add -A
 run_pf --staged
 fires "an executable lib in the index still fails" "scripts/lib/runnable.sh:0: [fail-open]"
-case "$OUT" in
-  *"scripts/lib/common.sh"*"new shell file without strict mode"*)
-    bad "a staged sourced lib is not a finding" "$OUT" ;;
-  *) ok "a staged sourced lib is not a finding" ;;
-esac
+findings="$(pf_fired)"
+if grep -Fx -- 'scripts/lib/common.sh:0: [fail-open]' <<<"$findings" >/dev/null; then
+  bad "a staged sourced lib is not a finding" "$OUT"
+else
+  ok "a staged sourced lib is not a finding"
+fi
 
 echo "=== a deleted file is not a finding ==="
 seed deleted

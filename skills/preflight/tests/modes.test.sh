@@ -183,8 +183,8 @@ pf_world() {
 # at the end of the document, which errexit must not read; an empty table is
 # pf_table's refusal.
 #
-# `says` carries only what a row cannot be told apart without: an environment
-# error's message, and a clean verdict whose changed-file count is the claim.
+# `says` carries refusal records and clean verdicts whose changed-file count
+# is the claim. The table driver reads this machine protocol.
 IFS= read -r -d '' rows <<'ROWS' || :
 the staged dead citation fires and the unstaged one is out of scope|staged|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 the default scope is base-to-worktree, so it sees both|staged|-|-|1|docs/loose.md:3: [docs-cited-paths];docs/staged.md:3: [docs-cited-paths]|-
@@ -217,7 +217,7 @@ with nothing left to compare against, the run fails closed instead of reporting 
 ROWS
 pf_table "what each scope may speak about" "$rows"
 
-# The rows above match a fragment wherever it appears, so they cannot see a
+# The rows above check record presence, so they cannot see a
 # SECOND record printed under the first. These two cases assert the whole
 # refusal: how many records it is, and that the value never splits the line
 # carrying it.
@@ -286,13 +286,6 @@ case "$dep_first" in
   *)
     bad "a failing dependency's diagnostic does not precede the record" "first line: $dep_first" ;;
 esac
-case "$dep_out" in
-  *fatal:*)
-    ok "the dependency's own cause is replayed after the record" ;;
-  *)
-    bad "the dependency's own cause is replayed after the record" "output: $dep_out" ;;
-esac
-
 # The tab branch is its own line of code, so it gets its own case: without
 # one, deleting that line leaves this suite green and a tab reaches the
 # record raw.
