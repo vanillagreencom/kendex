@@ -1,1 +1,1 @@
-- linear: `issues create` requires a `Reached by:` line unless `LINEAR_REQUIRE_REACH` is set empty.
+- **Breaking:** linear: `issues create` requires a `Reached by:` line when `LINEAR_REQUIRE_REACH` is unset. Set it empty to keep the old behavior.
