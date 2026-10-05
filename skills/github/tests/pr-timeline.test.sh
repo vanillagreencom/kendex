@@ -162,18 +162,25 @@ ROWS
 echo "=== armed is the latest arm of any merge method ==="
 # The 10:50 arm made with another method, after the 10:26 merge-method arm:
 # `gh pr merge --squash --auto` and `--rebase --auto` record their own event
-# type.
+# type. The stub answers createdAt on every node, while GitHub answers it
+# only through the event type's own fragment, so a row also counts that
+# fragment in the query the stub received.
 #   label|item type|event type
+arm_row() { # ITEM_TYPE EVENT
+  local got
+  PR_SELECTOR="$1"
+  got="$(run ".data.repository.pullRequest.timelineItems.nodes[2].__typename = \"$2\"")"
+  printf '%s %s %s' "$got" "$(jq -c '.stamps.armed' "$TMP_ROOT/stdout")" \
+    "$(gh_stub_calls | grep -oF -- "... on $2 { createdAt }" | wc -l | tr -d ' ')"
+  PR_SELECTOR="pullRequest(number"
+}
 while IFS='|' read -r label item_type event; do
   [[ -n "$label" ]] || continue
-  PR_SELECTOR="$item_type"
-  got="$(run ".data.repository.pullRequest.timelineItems.nodes[2].__typename = \"$event\"")"
-  assert_eq "$got $(jq -c '.stamps.armed' "$TMP_ROOT/stdout")" 'rc=0 "2026-09-20T10:50:00Z"' "$label"
+  assert_eq "$(arm_row "$item_type" "$event")" 'rc=0 "2026-09-20T10:50:00Z" 1' "$label"
 done <<'ROWS'
 a squash arm|AUTO_SQUASH_ENABLED_EVENT|AutoSquashEnabledEvent
 a rebase arm|AUTO_REBASE_ENABLED_EVENT|AutoRebaseEnabledEvent
 ROWS
-PR_SELECTOR="pullRequest(number"
 
 echo "=== the pushes are read from the head branch's activity log ==="
 while IFS='|' read -r label log edit want; do
@@ -644,6 +651,12 @@ PR_SELECTOR=AUTO_SQUASH_ENABLED_EVENT
 assert_eq "$(run '.data.repository.pullRequest.timelineItems.nodes[2].__typename = "AutoSquashEnabledEvent"')" 'rc=1' \
   "control: a query that does not request squash arms reads none"
 PR_SELECTOR="pullRequest(number"
+
+# The squash fragment left out of the query: GitHub answers a squash arm's
+# node with no createdAt.
+mutate '... on AutoSquashEnabledEvent { createdAt }' ''
+assert_eq "$(arm_row AUTO_SQUASH_ENABLED_EVENT AutoSquashEnabledEvent)" 'rc=0 "2026-09-20T10:50:00Z" 0' \
+  "control: a query without the squash fragment reads no squash arm's time"
 BIN="$PR_TIMELINE"
 
 echo
