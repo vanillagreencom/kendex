@@ -574,6 +574,13 @@ repo version-package-record-off
 put package.json '{"version":"1.9.0"}\n'; stage; git -C "$R" commit -qm base
 put package.json '{"version":"2.0.0"}\n'; put CHANGELOG.md "### Unreleased\n\n$BREAK\n"; stage
 assert_eq 'a root package without a record reads its own changelog' "rc=0 $NOMATCH" "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=package.json,COMMIT_GUARDS_CHANGELOG_RECORD= '')"
+# Beside a nested record, a nested package.json is the app's version file too.
+repo version-package-nested-record
+put app/package.json '{"version":"1.0.0"}\n'; stage; git -C "$R" commit -qm base
+put app/package.json '{"version":"1.0.1"}\n'; frag added entry.md "$ADD\n"
+assert_eq 'a package.json beside a nested record reads the fragments' \
+  "rc=1 ${ERR}patch-added=app/package.json:1.0.0:1.0.1;${ERR}entry-preview=$ADD;$(summary 1 1)" \
+  "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app/package.json,COMMIT_GUARDS_CHANGELOG_RECORD=app/CHANGELOG.md '')"
 
 echo "=== the usage is answered ==="
 repo help
