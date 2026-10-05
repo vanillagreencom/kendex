@@ -54,10 +54,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "the bot instruction check refused the working tree; its own report above names each file." ;;
     decision-ids)
       echo "decisions check refused; its own records above say why. An error=id-* record names a decision ID two records share: renumber per the decider skill's workflows/create-decision.md. An error=base-unverified record means the base branch could not be fetched or read, and an error=index-row-invalid record names an INDEX row check could not parse; the reason and guidance follow each." ;;
-    shipped-decision-link)
-      echo 'a shipped decision citation needs a link: [D<digits>](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/<ID>-<name>.md). The file, line and bare ID follow.' ;;
-    shipped-decision-scan)
-      echo 'the shipped decision citation scan could not read that input; its diagnostic follows.' ;;
+    shipped-refs)
+      echo "tools/shipped-refs refused the tree — a shipped file cites a decision its package does not ship or links into a package it does not require, or the scan could not run; its own first line above names which." ;;
     file-set)
       echo 'the common file set could not be read, so its scans were not judged.' ;;
     homebrew-formula)
@@ -440,61 +438,14 @@ rendered_in_skill() { # REL: a path inside a skill, carried by its render
   done
 }
 
-# Catalog prose travels to repositories without kendex's decision directory.
-# GitHub cannot judge that prose rule, so this repository's commit lane does.
-# Reuse md-refs' block, code-span, link and ID readers. This rule requires a
-# link even where md-refs can resolve a bare ID in the author's repository.
-md_lib="$TOOLS_DIR/../.agents/skills/commit-guards/scripts/lib"
-while IFS= read -r f; do
-  case "$f" in
-    skills/*.md | agents/*.md | hooks/*.md) ;;
-    *) continue ;;
-  esac
-  case "$f" in */tests/* | */AGENTS.md) continue ;; esac
-  case "$f" in
-    skills/*)
-      skill_rel=${f#skills/}
-      rendered_in_skill "${skill_rel#*/}" || continue ;;
-  esac
-  [ -e "$f" ] || [ -L "$f" ] || continue # a deleted source has no prose
-  if [ ! -f "$f" ] || [ -L "$f" ]; then
-    say shipped-decision-scan "$f"
-    continue
-  fi
-  if ! lines=$(LC_ALL=C awk -v mode=lines -f "$md_lib/md-shapes.awk" -f "$md_lib/md-blocks.awk" "./$f" 2>&1); then
-    say shipped-decision-scan "$f"
-    show "$lines"
-    continue
-  fi
-  if ! ids=$(LC_ALL=C awk -v mode=refs -v src="$f" -v id_prefix=D -v id_width=1 \
-    -f "$md_lib/md-slug.awk" -f /dev/fd/3 -f "$md_lib/md-refs.awk" \
-    2>&1 3<<'AWK' <<<"$lines"
-{
-  # Content follows two protocol tabs, and can contain more tabs of its own.
-  first = index($0, "\t")
-  if (!first) next
-  block_kind = substr($0, 1, first - 1)
-  rest = substr($0, first + 1)
-  second = index(rest, "\t")
-  line_no = substr(rest, 1, second - 1)
-  text = substr(rest, second + 1)
-  split_spans(text)
-  text = outside
-  if (block_kind != "X") text = mask_links(text, 0)
-  emit_ids(text, block_kind)
-  next
-}
-AWK
-  ); then
-    say shipped-decision-scan "$f"
-    show "$ids"
-    continue
-  fi
-  if [ -n "$ids" ]; then
-    say shipped-decision-link "$f"
-    show "$ids"
-  fi
-done <<<"$files"
+# A catalog package installs into a repository that holds none of kendex's
+# decision records and only the packages it requires. The rule and what it
+# judges are tools/shipped-refs'; it is handed the skill entries no render
+# carries. Exit 1 is a citation or link, exit 2 a scan that could not run,
+# and neither is a pass. One line on purpose: the must-fail control in
+# tools/tests/guard.test.sh removes this lane by deleting it.
+# shellcheck disable=SC2086 # not_rendered is a word list
+"$TOOLS_DIR/shipped-refs" $not_rendered || say shipped-refs "$?"
 
 # Content rules over hand-written source. Every caller names the tree it
 # means, so the only blanket skips left are the generated files inside those

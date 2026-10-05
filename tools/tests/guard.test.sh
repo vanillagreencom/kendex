@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/guard at commit time, the last lane of the pre-commit chain: the
-# rooted() rule on new temporary fixtures, the bash32-lint and test-roster
-# lanes, the run-scoping scan, the compile checks a staged product change schedules, and
+# rooted() rule on new temporary fixtures, the bash32-lint, test-roster and
+# shipped-refs lanes, the common file set, the run-scoping scan, the compile checks a staged product change schedules, and
 # the verdicts guard leaves to the packages that own them. The --full lanes are guard-full.test.sh and the
 # render rule is guard-render.test.sh.
 set -euo pipefail
@@ -139,6 +139,46 @@ fi
 git -C "$R" reset -q HEAD -- crates/cli
 rm -f "$R/crates/cli/Cargo.toml" "$R/crates/cli/tests/main.rs" "$R/crates/cli/tests/declared.rs" "$R/crates/cli/tests/orphan.rs"
 rmdir "$R/crates/cli/tests" "$R/crates/cli"
+
+echo "=== a shipped decision citation reds through the shipped-refs lane ==="
+# The rule is tools/shipped-refs' and its rows are tools/tests/
+# shipped-refs.test.sh; this proves guard runs it and forwards its verdict.
+printf '#!/usr/bin/env bash\n# Per D015, the share stands.\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
+cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
+git -C "$R" add -A && run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: shipped-refs=1"* ]] && [[ "$OUT" == *"shipped-refs: decisions=1"* ]] && [[ "$OUT" == *$'skills/demo/scripts/demo.sh:2\tD015'* ]] && ok "a shipped decision citation reds guard through the shipped-refs lane, naming the line" || bad "a shipped decision citation reds guard through the shipped-refs lane, naming the line" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/shipped-refs/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the shipped-refs lane deleted the citation passes" \
+    || bad "control: with the shipped-refs lane deleted the citation passes" "rc=$RC out=$OUT"
+else
+  bad "control: the shipped-refs lane could not be deleted from a guard copy"
+fi
+reset_world
+
+echo "=== incomplete common-file discovery refuses all dependent scans ==="
+printf '#!/usr/bin/env bash\nif [ "$*" = "$GUARD_TEST_FAIL_COLLECTION" ]; then echo skills/demo/README.md; exit 9; fi\nexec %q "$@"\n' \
+  "$REAL_GIT" >"$MUTANT_TOOLS/git"
+chmod +x "$MUTANT_TOOLS/git"
+for command in 'ls-files' 'diff --cached --name-only'; do
+  GUARD_TEST_ENV=(-i "PATH=$MUTANT_TOOLS:$PATH" "HOME=$TMP" LC_ALL=C "GUARD_TEST_FAIL_COLLECTION=$command")
+  run_guard
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: file-set=unreadable"* ]] \
+    && ok "a failed $command cannot pass on its partial output" \
+    || bad "a failed $command cannot pass on its partial output" "rc=$RC out=$OUT"
+  matches=$(grep -Fc 'say file-set unreadable' "$GUARD") || matches=0
+  if [ "$matches" -eq 1 ] && mutant_guard 's/say file-set unreadable/:/'; then
+    run_mutant
+    [ "$RC" -eq 0 ] && ok "control: without the file-set refusal a failed $command passes" \
+      || bad "control: without the file-set refusal a failed $command passes" "rc=$RC out=$OUT"
+  else
+    bad "control: the file-set refusal was not changed in the guard copy"
+  fi
+done
+rm -f -- "${MUTANT_TOOLS:?}/git"
+unset GUARD_TEST_ENV
+
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the

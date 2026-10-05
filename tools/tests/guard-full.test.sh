@@ -707,7 +707,7 @@ LANE_BIN="$TMP/lane-bin"
 mkdir -p "$LANE_TOOLS" "$LANE_BIN"
 cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
 cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
-  "$REPO/tools/rust-reads" "$LANE_TOOLS/"
+  "$REPO/tools/rust-reads" "$REPO/tools/shipped-refs" "$LANE_TOOLS/"
 printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
 chmod +x "$LANE_TOOLS/bash32-parse"
 lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given

@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# What a catalog package ships cites nothing its install lacks.
+#
+# A package under skills/, hooks/, agents/ or pi-extensions/ installs into a
+# repository that holds none of kendex's decision records and, of the other
+# catalog packages, only those it requires. A decision citation in a shipped
+# file therefore names a record the reader cannot open unless the package
+# ships it, and a relative markdown link into a package the citing one lists
+# as optional, or not at all, is dead wherever that package is absent; the
+# consumer's md-refs warns on both at every commit. skills/AGENTS.md states
+# the rule; GitHub cannot judge it, so kendex's commit lane runs this.
+#
+# A package is the place a path sits in the catalog: skills/<name>/ and
+# pi-extensions/<name>/ directories, one hook script directly under hooks/
+# (the markdown beside them documents the directory) and one agent file
+# directly under agents/. What it ships: a skill everything its render
+# carries, which leaves out the top-level entries named on the command line;
+# a Pi package what its package.json `files` list names, or everything with
+# no list; a hook or an agent its own file.
+#
+# A decision ID is D and at least three digits bounded by non-alphanumerics,
+# the scheme docs/decisions spells. It is read in markdown prose outside
+# code spans, linked or not, by md-refs' block and ID readers; in any other
+# shipped file it is read in comment text, which the comments lane's
+# extractor separates, and a file with no comment grammar carries none. It
+# passes only where the package ships a `<ID>-*.md` record. A markdown link
+# is md-refs' link reader's relative destination, resolved against the
+# citing file; it passes where it lands in the citing package or, from a
+# skill, in a skill that skill's SKILL.md front matter lists under
+# dependencies.required as one flow list.
+#
+# Usage: tools/shipped-refs [NAME...]
+#   NAME   a top-level skill entry no render carries; tools/guard hands over
+#          its not_rendered list
+# Exit: 0 nothing breaks the rule, 1 a citation or link does, 2 the tree
+# could not be read, never read as a clean tree. Every finding opens with
+# `shipped-refs: <key>=<value>`: `decisions=<count>` or `links=<count>`, each
+# offending reference below it as path:line and the ID or destination; a
+# refusal is `unreadable=<path>` or `manifest=<path>` on stderr.
+set -euo pipefail
+
+TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 2
+GG_LIB="$TOOLS_DIR/../.agents/skills/commit-guards/scripts/lib"
+# shellcheck disable=SC2034 # the sourced message helpers name their producer from it
+GG_CHECK=shipped-refs
+# shellcheck source=../.agents/skills/commit-guards/scripts/lib/common.sh
+source "$GG_LIB/common.sh"
+# shellcheck source=../.agents/skills/commit-guards/scripts/lib/comment-text.sh
+source "$GG_LIB/comment-text.sh"
+gg_repo_root_cd
+gg_tmpdir
+
+ID_PREFIX=D
+ID_WIDTH=3
+ROOTS="skills hooks agents pi-extensions"
+
+explain() { # KEY — the English for one key, and the whole of it
+  case "$1" in
+    decisions) echo "A shipped file cites a decision record its package does not ship, which no install holds. State the decision's rule in the file instead (skills/AGENTS.md). Each citation follows as path:line and ID." ;;
+    links) echo "A shipped markdown file links by relative path outside its own package and the skills its SKILL.md lists under dependencies.required, so an install without that package holds a dead link. Name the file and section in plain text instead (skills/AGENTS.md). Each link follows as path:line and destination." ;;
+    manifest) echo "That SKILL.md front matter does not hold dependencies.required as one flow list, [a, b], under dependencies:, so the links out of its skill could not be judged." ;;
+    unreadable) echo "That input could not be read, so its references were not judged; the cause follows." ;;
+    *) gg_fail key "$1" "explain() holds no text for this key." ;;
+  esac
+}
+refuse() { # KEY VALUE [CAUSE]
+  gg_fail "$1" "$2" "$(explain "$1")${3:+
+$3}"
+}
+
+# Paths come back as git spells them, one per line, so the stages below can
+# be joined on them.
+# shellcheck disable=SC2086 # ROOTS is a word list
+git -c core.quotePath=false ls-files -- $ROOTS >"$GG_TMP/tracked" 2>"$GG_TMP/err" ||
+  refuse unreadable "git ls-files" "$(cat -- "$GG_TMP/err")"
+
+cat >"$GG_TMP/shipped.awk" <<'AWK'
+# The package a path sits in by its place in the catalog, or "" for none.
+# A bare skills/<name> or pi-extensions/<name> is a package only where the
+# judge has seen its files, since by shape alone it could be a document.
+function package_of(p,   n, s) {
+  if (p in known) return p
+  n = split(p, s, "/")
+  if ((s[1] == "skills" || s[1] == "pi-extensions") && n >= 3) return s[1] "/" s[2]
+  if (s[1] == "hooks" && n == 2 && p !~ /\.md$/) return p
+  if (s[1] == "agents" && n == 2 && p ~ /\.md$/) return p
+  return ""
+}
+
+# A `<ID>-*.md` file name, the record a decision ID names, or "".
+function record_id(path,   b, q, n) {
+  b = path
+  sub(/.*\//, "", b)
+  if (index(b, id_prefix) != 1 || b !~ /\.md$/) return ""
+  q = length(id_prefix) + 1
+  n = 0
+  while (substr(b, q + n, 1) ~ /^[0-9]$/) n++
+  if (n == 0 || substr(b, q + n, 1) != "-") return ""
+  return substr(b, 1, q + n - 1)
+}
+
+# A skill's dependencies.required, read from its SKILL.md front matter once.
+# A missing SKILL.md requires nothing, so every link out of that skill is
+# judged against its own package alone.
+function load_required(p,   file, line, n, in_deps, v, k, items, i) {
+  loaded[p] = 1
+  file = p "/SKILL.md"
+  n = 0
+  in_deps = 0
+  while ((getline line < file) > 0) {
+    n++
+    if (n == 1) { if (line != "---") break; continue }
+    if (line == "---") break
+    if (line ~ /^dependencies:/) {
+      if (line !~ /^dependencies:[ \t]*$/) { printf "E\t%s\n", file; break }
+      in_deps = 1
+      continue
+    }
+    if (line !~ /^[ \t]/) { in_deps = 0; continue }
+    if (!in_deps || line !~ /^[ \t]+required:/) continue
+    v = line
+    sub(/^[ \t]+required:[ \t]*/, "", v)
+    sub(/[ \t]+$/, "", v)
+    if (v !~ /^\[[^][]*\]$/) { printf "E\t%s\n", file; break }
+    k = split(substr(v, 2, length(v) - 2), items, ",")
+    for (i = 1; i <= k; i++) {
+      gsub(/^[ \t"']+|[ \t"']+$/, "", items[i])
+      if (items[i] != "") required[p, "skills/" items[i]] = 1
+    }
+  }
+  close(file)
+}
+
+stage == "classify" {
+  p = package_of($0)
+  if (p != "") printf "%s\t%s\n", p, $0
+  next
+}
+
+# Markdown arrives as md-blocks' "kind<TAB>line<TAB>text" records; content
+# follows two protocol tabs and can hold more of its own. Code spans are
+# names, not citations. Links are read as md-refs reads them. IDs are read
+# with no link masked, the HTML-block reading, because a linked decision is
+# still a record the install does not hold.
+stage == "extract" && carrier == "markdown" {
+  first = index($0, "\t")
+  if (!first) next
+  block_kind = substr($0, 1, first - 1)
+  rest = substr($0, first + 1)
+  second = index(rest, "\t")
+  line_no = substr(rest, 1, second - 1)
+  text = substr(rest, second + 1)
+  split_spans(text)
+  plain = outside
+  if (block_kind != "H" && block_kind != "X") emit_links(outside, text)
+  emit_ids(plain, "X")
+  next
+}
+
+# Comment text arrives as "line<TAB>text"; every ID in it is a citation.
+stage == "extract" && carrier == "comment" {
+  i = index($0, "\t")
+  if (!i) next
+  line_no = substr($0, 1, i - 1)
+  emit_ids(substr($0, i + 1), "X")
+  next
+}
+
+stage == "judge" && $1 == "S" {
+  owner[$3] = $2
+  known[$2] = 1
+  id = record_id($3)
+  if (id != "") ships[$2, id] = 1
+  next
+}
+
+# A linked ID can sit in the label and the destination of one link: one
+# citation per line and ID.
+stage == "judge" && $1 == "D" {
+  if ((owner[$2], $4) in ships || ($2, $3, $4) in cited) next
+  cited[$2, $3, $4] = 1
+  printf "decision\t%s:%s\t%s\n", $2, $3, $4
+  next
+}
+
+stage == "judge" && $1 == "L" {
+  src = $2
+  path = $4
+  sub(/#.*/, "", path)
+  sub(/\/$/, "", path)
+  if (path == "") next
+  target = resolve_from(dir_of(src), path)
+  from = owner[src]
+  to = ESCAPED ? "" : package_of(target)
+  if (to == from) next
+  if (to ~ /^skills\// && from ~ /^skills\//) {
+    if (!(from in loaded)) load_required(from)
+    if ((from, to) in required) next
+  }
+  printf "link\t%s:%s\t%s\n", src, $3, $4
+  next
+}
+
+stage == "judge" { next }
+AWK
+
+# md-refs.awk refuses a run in a mode it does not know, and its own rules
+# never see a record: every stage above ends in `next`.
+run_awk() { # STAGE [AWK-ARGS...] — the stage over its input
+  local stage=$1
+  shift
+  LC_ALL=C awk -v mode=refs -v stage="$stage" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" \
+    -f "$GG_LIB/md-slug.awk" -f "$GG_TMP/shipped.awk" -f "$GG_LIB/md-refs.awk" "$@"
+}
+
+run_awk classify "$GG_TMP/tracked" >"$GG_TMP/packages" 2>"$GG_TMP/err" ||
+  refuse unreadable "package classification" "$(cat -- "$GG_TMP/err")"
+
+# The Pi package whose `files` patterns are loaded, and those patterns: one
+# package at a time, since ls-files lists each package's paths together.
+pi_package=""
+pi_patterns=""
+pi_ships() { # PACKAGE REL — 0 when the package's npm tarball carries REL
+  local entry
+  if [ "$1" != "$pi_package" ]; then
+    pi_patterns=$(jq -r 'if has("files") then .files[] else "*" end' "$1/package.json" 2>"$GG_TMP/err") ||
+      refuse unreadable "$1/package.json" "$(cat -- "$GG_TMP/err")"
+    pi_package=$1
+  fi
+  while IFS= read -r entry; do
+    entry=${entry%/}
+    [ -n "$entry" ] || continue
+    # Unquoted on purpose: a `files` entry is a pattern npm matches.
+    # shellcheck disable=SC2254
+    case $2 in $entry | $entry/*) return 0 ;; esac
+  done <<<"$pi_patterns"
+  return 1
+}
+
+: >"$GG_TMP/shipped"
+while IFS="$GG_TAB" read -r pkg path; do
+  [ -e "$path" ] || [ -L "$path" ] || continue # deleted from the tree, nothing to read
+  rel=${path#"$pkg"/}
+  case $pkg in
+    skills/*)
+      for name in "$@"; do
+        [ "${rel%%/*}" != "$name" ] || continue 2
+      done
+      ;;
+    pi-extensions/*) pi_ships "$pkg" "$rel" || continue ;;
+  esac
+  printf 'S\t%s\t%s\n' "$pkg" "$path" >>"$GG_TMP/shipped"
+done <"$GG_TMP/packages"
+
+regular() { # PATH — refuses what is not a plain file to read
+  [ -f "$1" ] && [ ! -L "$1" ] || refuse unreadable "$1" "not a regular file"
+}
+
+: >"$GG_TMP/refs"
+while IFS="$GG_TAB" read -r _ _ path; do
+  case $path in *.md) ;; *) continue ;; esac
+  regular "$path"
+  LC_ALL=C awk -v mode=lines -f "$GG_LIB/md-shapes.awk" -f "$GG_LIB/md-blocks.awk" "./$path" \
+    >"$GG_TMP/lines" 2>"$GG_TMP/err" || refuse unreadable "$path" "$(cat -- "$GG_TMP/lines" "$GG_TMP/err")"
+  run_awk extract -v carrier=markdown -v src="$path" "$GG_TMP/lines" >>"$GG_TMP/refs" 2>"$GG_TMP/err" ||
+    refuse unreadable "$path" "$(cat -- "$GG_TMP/err")"
+done <"$GG_TMP/shipped"
+
+# Only a file whose bytes hold an ID-shaped token can cite a decision, so
+# one search names the comment carriers worth extracting.
+status=0
+# shellcheck disable=SC2086 # ROOTS is a word list
+LC_ALL=C git -c core.quotePath=false grep -l -E -e "(^|[^A-Za-z0-9])${ID_PREFIX}[0-9]{${ID_WIDTH},}([^A-Za-z0-9]|\$)" -- $ROOTS \
+  >"$GG_TMP/candidates" 2>"$GG_TMP/err" || status=$?
+[ "$status" -le 1 ] || refuse unreadable "git grep" "$(cat -- "$GG_TMP/err")"
+LC_ALL=C awk -F '\t' 'NR == FNR { hit[$0] = 1; next } ($3 in hit) && $3 !~ /\.md$/ { print $3 }' \
+  "$GG_TMP/candidates" "$GG_TMP/shipped" >"$GG_TMP/carriers" ||
+  refuse unreadable "comment carriers" "awk exited $?"
+while IFS= read -r path; do
+  regular "$path"
+  fam=$(gg_comment_family "$path" "./$path") || exit 2
+  [ -n "$fam" ] || continue
+  gg_comment_text "$fam" "./$path" "$path" >"$GG_TMP/text" ||
+    refuse unreadable "$path" "$GG_COMMENT_ERROR_DETAIL"
+  run_awk extract -v carrier=comment -v src="$path" "$GG_TMP/text" >>"$GG_TMP/refs" 2>"$GG_TMP/err" ||
+    refuse unreadable "$path" "$(cat -- "$GG_TMP/err")"
+done <"$GG_TMP/carriers"
+
+run_awk judge -F '\t' "$GG_TMP/shipped" "$GG_TMP/refs" >"$GG_TMP/verdict" 2>"$GG_TMP/err" ||
+  refuse unreadable "reference verdict" "$(cat -- "$GG_TMP/err")"
+
+# One record kind of the verdict, its leading kind field dropped.
+records() { # KIND
+  LC_ALL=C awk -F '\t' -v kind="$1" '$1 == kind { sub(/^[^\t]*\t/, ""); print }' "$GG_TMP/verdict" ||
+    refuse unreadable "reference verdict" "awk exited $?"
+}
+
+manifest=$(records E) || exit 2
+[ -z "$manifest" ] || refuse manifest "${manifest%%$'\n'*}"
+
+found=0
+for kind in decision link; do
+  hits=$(records "$kind") || exit 2
+  [ -n "$hits" ] || continue
+  found=1
+  count=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
+  gg_message "${kind}s" "$count" "$(explain "${kind}s")"
+  printf '%s\n' "$hits" | sed 's/^/  /'
+done
+exit "$found"
