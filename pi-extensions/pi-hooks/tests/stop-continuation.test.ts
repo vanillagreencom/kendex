@@ -35,7 +35,7 @@ afterAll(() => rmSync(world, { recursive: true, force: true }));
 
 /**
  * - `hook` is the user-scope `Stop` registration: `stands-down` speaks until
- *   `stop_hook_active` is true, as doc-drift-check does; `speaks` speaks on
+ *   `stop_hook_active` is true, as a once-per-finding stop hook does; `speaks` speaks on
  *   every dispatch; `silent` says nothing.
  * - `want.requests` is what the model was handed, one line per request.
  * - `want.stops` is `stop_hook_active` on each dispatch, in order.

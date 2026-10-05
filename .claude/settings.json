@@ -124,11 +124,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
-            "timeout": 30
-          },
-          {
-            "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
             "timeout": 30
           }

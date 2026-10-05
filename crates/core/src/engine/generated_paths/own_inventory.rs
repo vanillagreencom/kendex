@@ -2,11 +2,10 @@
 //!
 //! `kendex refresh` at a checkout is the only writer of
 //! `.kendex-generated.json`, and a worktree may not run it, so nothing moved
-//! the committed copy when a pull request landed a new render. Its readers —
-//! `hooks/doc-drift-check.sh`, commit-guards' `suppression-ban` and
-//! harness-ci's `harness-only` — judge a path the inventory does not list as
-//! hand-written, so a render it lost is named as uncovered code at every
-//! stop.
+//! the committed copy when a pull request landed a new render. Its readers,
+//! commit-guards' `suppression-ban` and harness-ci's `harness-only`, judge a
+//! path the inventory does not list as hand-written, so a render it lost is
+//! scanned as hand-written code.
 //!
 //! This is the check that refuses that state before the commit that would
 //! cause it. It plans this checkout the way `refresh` does and writes

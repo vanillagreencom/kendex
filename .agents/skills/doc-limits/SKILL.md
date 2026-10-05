@@ -1,7 +1,7 @@
 ---
 name: doc-limits
 description: "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_* settings."
-summary: "Byte limits for tracked Markdown and documentation HTML: an AGENTS.md or SKILL.md over its limit fails, and any other document over its limit warns. Path classes set the limits, with reasoned exclusions."
+summary: "Byte limits for the Markdown a harness loads at every turn: an AGENTS.md, CLAUDE.md, GEMINI.md or SKILL.md over its limit fails. Path classes set the limits, with reasoned exclusions."
 license: MIT
 user-invocable: true
 dependencies:
@@ -32,6 +32,6 @@ Run the document byte-ceiling check before review and in CI. The commit-guards p
 .agents/skills/doc-limits/scripts/doc-limits --staged
 ```
 
-A load-point document over its limit fails the check; any other document over its limit warns. [references/policy.md § Path classes](references/policy.md#path-classes) names the load points.
+A document over its limit fails the check. [references/policy.md § Path classes](references/policy.md#path-classes) names the classes.
 
-Bring a document under its limit in the order [docs-writing § Format](../docs-writing/SKILL.md#format) gives. A document that must stay whole gets a row in the configured excludes file with its reason. The docs-writing rule for the document's class, under [§ Per file type](../docs-writing/SKILL.md#per-file-type), decides which remedy the document admits; each finding names that rule. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `doc-limits --help`.
+A document that must stay whole gets a row in the configured excludes file with its reason. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `doc-limits --help`.

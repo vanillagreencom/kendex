@@ -759,27 +759,6 @@ run_payload '{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":fals
 CASE_HOOK="$LANE/.github/hooks/lane-mail-check.sh"
 expect 2 "lane-mail-check: unread=1" "a Claude turn end through the same copy is refused as before"
 
-# The caller arm doc-drift-check runs at a Copilot agentStop prints the
-# caller rule's answer and judges nothing: the lead's stop, whose transcript
-# sits in its own session's directory, and a custom subagent's, which names
-# its own session and the lead's transcript, as Copilot CLI 1.0.91 sends them.
-caller_answer() { # SESSION
-  ARM_ARGS=(caller)
-  COP_SESSION="$1" copilot_stop "$COP_TRANSCRIPT"
-  ARM_ARGS=()
-  printf 'RC=%s stdout=%s first=%s' "$RC" "$(cat "$TMP_ROOT/stdout")" "$(first_line)"
-}
-new_copilot_lane copilot_caller ken-261
-send KEN-261 'Rebase onto main.'
-while IFS='|' read -r label session want; do
-  assert_eq "$(caller_answer "$session")" "$want" "$label"
-done <<'CALLERS'
-the caller arm names the lead's stop the lead's|s1|RC=0 stdout=lead first=-
-the caller arm names a custom subagent's stop a subagent's|c1|RC=0 stdout=subagent first=-
-CALLERS
-assert_eq "unread=$(lane_unread KEN-261 'Rebase onto main.') recorded=$(cop_recorded)" "unread=1 recorded=" \
-  "the caller arm hands over no mail, acknowledges none and records no lead"
-
 # --- copilot controls ----------------------------------------------------
 # The tool-call judgement's lead test dropped: a call from no recorded lead
 # in the named pane is judged as the overseer's.
@@ -919,7 +898,7 @@ assert_eq "RC=$RC stderr=$(first_line) unread=$(lane_unread KEN-232 'Rebase firs
 
 # The record at a proven turn end removed: a lead whose start this install
 # missed stays a caller the judge cannot name.
-mutant copilot-stop-unrecorded -e 's@^          \[ "\$ARM" = caller \] || record_lead$@          :@'
+mutant copilot-stop-unrecorded -e 's@^          record_lead$@          :@'
 new_copilot_lane control_cop_stop_record ken-233 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-233"
 copilot_stop "$COP_TRANSCRIPT"
@@ -1205,19 +1184,6 @@ send KEN-254 'Rebase first.'
 claude_copy deliver camel
 assert_eq "RC=$RC unread=$(lane_unread KEN-254 'Rebase first.')" "RC=0 unread=0" \
   "control: without the sessionId read, a camelCase Copilot call through the Claude copy acknowledges the directive"
-
-# The caller arm left out of the transcript rule: a subagent's stop is then
-# named the lead's, and doc-drift-check judges it.
-mutant copilot-caller-arm -e 's@^    copilot:stop | copilot:caller)$@    copilot:stop)@'
-new_copilot_lane control_cop_caller_arm ken-262 "$MUTANT_PATH"
-assert_eq "$(caller_answer c1)" "RC=0 stdout=lead first=-" \
-  "control: without the caller arm in the transcript rule a subagent's stop is named the lead's"
-# The caller arm's exemption from the lead record removed: its answer for the
-# lead's stop then records the lead.
-mutant copilot-caller-records -e 's@^          \[ "\$ARM" = caller \] || record_lead$@          record_lead@'
-new_copilot_lane control_cop_caller_records ken-263 "$MUTANT_PATH"
-assert_eq "$(caller_answer s1) recorded=$(cop_recorded)" "RC=0 stdout=lead first=- recorded=s1" \
-  "control: without the caller arm's exemption its answer records the lead"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

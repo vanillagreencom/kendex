@@ -1506,7 +1506,7 @@ antigravity_rows() {
 #   agentStop                 twice: at the subagent's end under its own
 #                             session id with the lead's transcript, and at the
 #                             lead's end under the lead's with its own
-#                             (lane-mail-check's caller rule, doc-drift-check)
+#                             (lane-mail-check's caller rule)
 #   errorOccurred             at least once, each under the session's own id
 #                             with errorContext model_call and a string
 #                             error.message (stop-failure-row's gap)

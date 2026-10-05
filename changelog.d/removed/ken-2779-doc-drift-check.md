@@ -1,0 +1,1 @@
+- The `doc-drift-check` hook is retired. A refresh removes it from every harness, and no turn end is held for unchanged architecture docs or `Covers:` lines.

@@ -45,7 +45,7 @@ afterAll(() => rmSync(world, { recursive: true, force: true }));
  * A launched lane as `lane-marker` records one, with the orch scripts and the
  * project-scope lane-mail hooks a kendex install renders, and a user scope
  * whose `Stop` hook says its piece once and stands down on the dispatch at
- * the end of the continuation it caused, as doc-drift-check does. `stands` is
+ * the end of the continuation it caused, as a once-per-finding stop hook does. `stands` is
  * the nearest directory to the lane's mailbox that the lane holds when its
  * session starts.
  */
@@ -70,7 +70,7 @@ function laneWorld(name: string, stands: Stands, enabled: boolean): { lane: stri
 	registerRendered(join(lane, ".pi"), "tool_result", undefined, projectCommand(".pi/kendex/hooks/lane-mail-deliver.sh"), 30);
 	const agentDir = join(world, `${name}-agent`);
 	mkdirSync(agentDir, { recursive: true });
-	registerRendered(agentDir, "turn_end", undefined, `grep -q '"stop_hook_active":true' && exit 0; echo 'doc-drift: handle each, then finish.' >&2; exit 2`);
+	registerRendered(agentDir, "turn_end", undefined, `grep -q '"stop_hook_active":true' && exit 0; echo 'stop-check: handle each, then finish.' >&2; exit 2`);
 	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: { enabled, sessionDriftCheck: false } } } } }));
 	return { lane, agentDir };
 }
@@ -207,7 +207,7 @@ for (const row of rows) {
 			const measure = () => ({
 				wakes: prompts.filter((line) => line.startsWith("user: lane-mail-check:")).length,
 				state: row.mail === "directive" || row.mail === "busy-directive" ? directiveState(lane, id!) : undefined,
-				steered: prompts.some((line) => line.includes("doc-drift: handle each")),
+				steered: prompts.some((line) => line.includes("stop-check: handle each")),
 			});
 			// Real time: the wake is a filesystem event and a spawned judge,
 			// and the bound is the interval a live monitor answers within.

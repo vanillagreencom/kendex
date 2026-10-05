@@ -1,0 +1,1 @@
+- doc-limits measures only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and every document over its limit fails; the other shipped classes, HTML and the warn-only budget are gone.

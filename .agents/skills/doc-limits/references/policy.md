@@ -2,13 +2,13 @@
 
 ## Path classes
 
-- The check measures tracked regular Markdown files and HTML files under `docs/`.
+- The check measures tracked regular Markdown files that a class names.
 - `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first matching entry sets the document's byte ceiling.
 - An entry is `pattern=Nk`, where `N` is a positive integer and `k` means 1024 bytes. Semicolons separate entries. Whitespace around entries and `=` is ignored.
 - Patterns match the full repository-relative path. `*` crosses directory separators.
-- `SHIPPED_CLASS_ROWS` in [scripts/doc-limits](../scripts/doc-limits) declares the document classes, their limits, and for each class the anchor of its docs-writing rule. The anchors are kept by hand in step with docs-writing [§ Per file type](../../docs-writing/SKILL.md#per-file-type); the `*.md` catch-all names that section as a whole. A row with an empty rule refuses with `package-error=class-rule-missing` and exit `2`.
+- `SHIPPED_CLASSES` in [scripts/doc-limits](../scripts/doc-limits) declares the shipped classes and their limits: the documents a harness loads at every turn.
 - An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A document with no matching class has no limit.
-- A document an agent loads at every turn, at `AGENTS.md`, `*/AGENTS.md` or `*/SKILL.md`, fails the check over its limit, whichever class set that limit. Any other document over its limit is over a budget: the check warns and passes. `LOAD_POINT_PATTERNS` in [scripts/doc-limits](../scripts/doc-limits) holds the list.
+- A document over its limit fails the check, whichever class set that limit.
 
 ## Exclusion list
 
@@ -24,9 +24,8 @@
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | No load-point document exceeds its class limit. Each other document over its limit prints `notice=document-over-budget` with its size and limit. |
-| `1` | At least one load-point document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
+| `0` | No measured document exceeds its class limit. |
+| `1` | At least one document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
 | `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed or a missing jq. A settings-library refusal starts `doc-limits-error=` whatever its cause, so that level names no owner. |
 
-- A `notice=document-rule rule=docs-writing/SKILL.md#ANCHOR` line follows each over-limit or over-budget notice and names the docs-writing rule for its class. A class the shipped rows do not declare names `#per-file-type`.
 - `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and 2.0 removes it.

@@ -4,10 +4,7 @@
 # state, package-error a defect in this package, host-error a host that could
 # not serve a read. A settings-library refusal starts doc-limits-error=KEY
 # value=VALUE whatever its cause, so that level names no owner. Notices start
-# notice=KEY FIELD=VALUE. English detail follows on the next line. Each
-# notice=document-over-limit, which fails the check, or
-# notice=document-over-budget, which warns, is followed, after its remedy, by
-# one notice=document-rule rule=docs-writing/SKILL.md#ANCHOR for its class.
+# notice=KEY FIELD=VALUE. English detail follows on the next line.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
@@ -17,35 +14,17 @@ source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"
 NL='
 '
-# One row per shipped class: its pattern=Nk entry, a tab, and the anchor in
-# docs-writing SKILL.md of the rule that decides which remedy a document of
-# that class admits. The anchors are kept by hand in step with that file's
-# § Per file type; the *.md catch-all names the section as a whole. The row
-# order is the match order.
-SHIPPED_CLASS_ROWS='docs/architecture/overview.md=12k	docsarchitectureoverviewmd
-docs/architecture/*.md=16k	docsarchitecturetopicmd
-AGENTS.md=8k	agentsmd
-CLAUDE.md=24k	claudemd
-*/AGENTS.md=6k	agentsmd
-*/CLAUDE.md=24k	claudemd
-*/SKILL.md=24k	skillmd-workflowsmd-agentsmd
-*/workflows/*.md=40k	skillmd-workflowsmd-agentsmd
-README.md=16k	readmemd
-*/README.md=12k	readmemd
-docs/*.html=64k	documentation-html
-*.md=64k	per-file-type'
-# The documents an agent loads at every turn. One over its limit fails the
-# check, whichever class set that limit; any other document over its limit is
-# over a budget, which warns.
-LOAD_POINT_PATTERNS=(AGENTS.md '*/AGENTS.md' '*/SKILL.md')
+# The shipped classes, pattern=Nk entries in match order: the documents a
+# harness loads at every turn, the one set this check limits. A document over
+# its limit fails the check, whichever class set that limit.
+SHIPPED_CLASSES='AGENTS.md=8k;CLAUDE.md=24k;GEMINI.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/GEMINI.md=24k;*/SKILL.md=24k'
 STAGED=0
 usage() {
   cat <<EOF
 usage: doc-limits [--staged] [--excludes FILE]
-Check byte ceilings for tracked Markdown and docs/*.html documents. The first
-matching class sets the limit. Other files are outside this check.
-A document at ${LOAD_POINT_PATTERNS[*]} over its limit fails
-the check; any other document over its limit warns.
+Check byte ceilings for the tracked Markdown documents a harness loads at
+every turn. The first matching class sets the limit; a document with no
+matching class is outside this check. A document over its limit fails.
 --staged reads document sizes and tracked policy from the index.
 The default reads worktree files, falling back to the index for missing files.
 --against REF is retired: it has no effect and prints a warning until 2.0.
@@ -62,8 +41,8 @@ The k suffix means 1024 bytes. Bare line thresholds are not supported.
 Generated files are excluded by exact path from .kendex-generated.json.
 The inventory is required; --staged reads its tracked index copy.
 Class selection and exclusions: references/policy.md.
-Exit codes: 0 clean, or over-budget warnings only; 1 a load-point document
-over its limit; 2 the check could not judge: error= usage or policy,
+Exit codes: 0 clean; 1 a document over its limit; 2 the check could not
+judge: error= usage or policy,
 package-error= a defect in doc-limits, host-error= a failed host read or a
 missing jq. A settings-library refusal prints doc-limits-error= whatever its
 cause.
@@ -95,27 +74,6 @@ notice() {
   local key="$1" field="$2" value="$3" text="$4"
   printf 'notice=%s %s=%q\n' "$key" "$field" "$value"
   printf '%s\n' "$text"
-}
-# A maintainer adding a class row writes its rule anchor in the same row; a
-# row with an empty rule refuses before any document is read.
-SHIPPED_CLASSES=""
-while IFS="$TAB" read -r entry rule; do
-  [ -n "$rule" ] || package_error class-rule-missing value "$entry" "shipped class '$entry' names no docs-writing rule; add its anchor to SHIPPED_CLASS_ROWS"
-  SHIPPED_CLASSES="${SHIPPED_CLASSES:+$SHIPPED_CLASSES;}$entry"
-done <<EOF
-$SHIPPED_CLASS_ROWS
-EOF
-class_rule() { # PATTERN: the shipped row's anchor, else the whole § Per file type
-  local entry rule
-  CR=per-file-type
-  while IFS="$TAB" read -r entry rule; do
-    if [ "${entry%=*}" = "$1" ]; then
-      CR="$rule"
-      return 0
-    fi
-  done <<EOF
-$SHIPPED_CLASS_ROWS
-EOF
 }
 EXCLUDES_OPT=""
 EXCLUDES_SET=0
@@ -384,9 +342,6 @@ is_excluded() { # PATH — inclusion rows override both exclusion sources
     || glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1
   ! glob_match "$1" ${CARVE_PATTERNS[@]+"${CARVE_PATTERNS[@]}"}
 }
-blocks() { # PATH — 0 when a document at PATH over its limit fails the check
-  glob_match "$1" "${LOAD_POINT_PATTERNS[@]}"
-}
 path_threshold() { # PATH: first matching class, or no limit
   local i=0
   PT="" PC=""
@@ -406,7 +361,7 @@ git ls-files -s -z >"$TMP/files.z" 2>/dev/null || host_error documents-enumerati
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
-  case "$f" in *.md | docs/*.html) ;; *) continue ;; esac
+  case "$f" in *.md) ;; *) continue ;; esac
   case "$mode" in 120000 | 160000) continue ;; esac
   case "$f" in
     *"$NL"* | *"$TAB"*) config_error document-path-invalid path "$f" "tracked document path contains a tab or newline: '$f'" ;;
@@ -422,12 +377,7 @@ while IFS= read -r -d '' rec; do
 done <"$TMP/files.z"
 cut -f1 "$TMP/documents.tsv" 2>/dev/null | git cat-file --batch-check >"$TMP/sizes" 2>/dev/null \
   || host_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"
-remedy() { # CLASS: the remedy, then the docs-writing rule for CLASS
-  printf '  remedy: cut restated content first; split only at a real subject boundary; never delete a rule to fit. A document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
-  class_rule "$1"
-  notice document-rule rule "docs-writing/SKILL.md#$CR" "  the docs-writing rule at that anchor decides which of these remedies the document admits"
-}
-checked=0 violations=0 over_budget=0
+checked=0 violations=0
 while IFS="$TAB" read -r oid f limit class; do
   IFS=' ' read -r actual_oid kind n <&3 || host_error blob-size-response-incomplete path "$f" "document size response is incomplete: $f"
   [ "$actual_oid" = "$oid" ] && [ "$kind" = blob ] \
@@ -439,19 +389,14 @@ while IFS="$TAB" read -r oid f limit class; do
   fi
   case "$n" in "" | *[!0-9]*) host_error document-byte-count-invalid path "$f" "invalid byte count for tracked document: $f" ;; esac
   if [ "$n" -gt "$limit" ]; then
-    if blocks "$f"; then
-      notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
-      violations=$((violations + 1))
-    else
-      notice document-over-budget path "$f" "::warning::doc-limits: $f: $n bytes > $limit bytes (class $class); this budget warns and does not fail the check"
-      over_budget=$((over_budget + 1))
-    fi
-    remedy "$class"
+    notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
+    printf '  remedy: a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
+    violations=$((violations + 1))
   fi
   checked=$((checked + 1))
 done <"$TMP/documents.tsv" 3<"$TMP/sizes"
 if [ "$violations" -gt 0 ]; then
-  notice documents-over-limit count "$violations" "doc-limits: $violations load-point document(s) over the limit, $over_budget over a budget, $checked checked"
+  notice documents-over-limit count "$violations" "doc-limits: $violations document(s) over the limit, $checked checked"
   exit 1
 fi
-notice documents-checked count "$checked" "doc-limits: OK: $checked document(s) checked, $over_budget over a budget"
+notice documents-checked count "$checked" "doc-limits: OK: $checked document(s) checked"

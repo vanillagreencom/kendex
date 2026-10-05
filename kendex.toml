@@ -64,7 +64,6 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
-  "doc-drift-check",
   "skill-load-check",
   "skill-load-record",
   "reviewer-read-only",
@@ -156,7 +155,6 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
-  "doc-drift-check",
 ]
 skills = [
   "commit-guards",
