@@ -154,11 +154,12 @@ GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 # Bounded seconds per brief-delivery verification pass on tmux lanes.
 TMUX_VERIFY_DEFAULT=15
 TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-$TMUX_VERIFY_DEFAULT}"
-# Bounded seconds per wait for the remote shell's prompt on a hosted lane. Its
-# own setting because it measures another machine: a tailnet route coming up
-# and a login answering, not a program starting here, which is what the bound
-# above is sized for. The validation gate below names its readers and how many
-# waits spend it.
+# Bounded seconds per wait for the remote shell's prompt on a hosted lane, and
+# for a cloud session's URL. Its own setting because it measures another
+# machine: a tailnet route coming up and a login answering, or a cloud machine
+# provisioned, not a program starting here, which is what the bound above is
+# sized for. The validation gate below names its readers and how many waits
+# spend it.
 LANE_SSH_PROMPT_DEFAULT=60
 LANE_SSH_PROMPT_SECS="${ORCH_LANE_SSH_PROMPT_SECS:-$LANE_SSH_PROMPT_DEFAULT}"
 
@@ -522,22 +523,27 @@ fi
 #                      harness-screen wait of a hosted claude, codex or pi
 #                      relaunch with no --cmd and no brief
 #   lane_account_ok    a local claude, codex or copilot lane with a --lane and
-#                      no --cmd
-# The account read and its premise are not reachable on a hosted lane: LANE_FORM
-# stays `unchecked` outside the local branch, which is what
-# lane_account_readable answers on. A hosted --cmd lane reads this setting
-# nowhere. A hosted claude lane reads it for its brief or resume-or-fresh wait;
-# a hosted codex or pi relaunch reads it even after a harness switch.
+#                      no --cmd, and a cloud session
+#   cloud_cli_wait     a cloud session, before anything is typed after its
+#                      launch line
+# The account read and its premise are not reachable on an ssh-hosted lane:
+# LANE_FORM stays `unchecked` outside the local branch and the cloud session's
+# arm, which is what lane_account_readable answers on. A hosted --cmd lane
+# reads this setting nowhere. A hosted claude lane reads it for its brief or
+# resume-or-fresh wait; a hosted codex or pi relaunch reads it even after a
+# harness switch.
 # The session-file term of the
 # brief's condition is never filled on a hosted lane: its sessions are on its
 # host and this machine's session store is not scanned.
 #
 # ORCH_LANE_SSH_PROMPT_SECS is read by tmux_wait_remote_prompt and
-# tmux_wait_ssh_gone, which every hosted lane reaches whatever its harness and
-# whether or not it carries --cmd. This is the one place that names its readers
-# and the waits that spend it: a hosted launch makes three at worst, the prompt
-# wait after the first dial, the wait for the pane's own shell after the
-# interrupt, and the prompt wait after the second dial.
+# tmux_wait_ssh_gone, which every ssh-hosted lane reaches whatever its harness
+# and whether or not it carries --cmd, and by cloud_session_read, a cloud
+# session's wait for its URL, which waits on the cloud provisioning it. This
+# is the one place that names its readers and the waits that spend it: a
+# hosted launch makes three at worst, the prompt wait after the first dial,
+# the wait for the pane's own shell after the interrupt, and the prompt wait
+# after the second dial; a cloud launch makes one.
 #
 # All of them are reached only from open_tmux. A --cmd template reaches none of
 # them locally: lane_launch_form answers `unchecked` for one, and the brief is
@@ -1760,6 +1766,9 @@ launch_write() { # OPERATION TITLE PANE EXPECT ACTION VALUE
 #   2  the launch took after all: send nothing more
 #   1  neither within the window: the stuck or dead pane the failure exit is for
 #   3  a nudge did not land, which launch_write has already reported
+#   4  a capture failed, which tmux_launch_verify reads as it reads 1
+# An empty BRIEF is a caller with no brief sent yet, a cloud session's first
+# prompt: the wait is then the readiness half alone and never returns 2.
 # The loop READS before it decides whether it may still nudge, so the Enter of
 # the final pass is observed like every other: a dialog it dismissed or a draft
 # it submitted lands after the last nudge, and testing the budget before the
@@ -1776,8 +1785,8 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT
     # that footer at all, so keyed on it this wait could never return 0 and
     # the re-send below was unreachable — every consumed brief fell to the
     # failure exit.
-    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
-    lane_launched "$screen" "$brief" && return 2
+    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 4
+    if [[ -n "$brief" ]] && lane_launched "$screen" "$brief"; then return 2; fi
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     (( waited < TMUX_VERIFY_SECS )) || return 1
     launch_write nudge "$title" "$pane" "$expect" key Enter || return 3
@@ -2799,18 +2808,16 @@ launch_finish() {
   fi
 }
 
-# The three causes of a bundled clone a launcher can read, beside the GitHub
-# App's coverage, which it cannot: CCR_FORCE_BUNDLE in this shell,
-# CCR_FORCE_BUNDLE=1 in the env block of the account's settings.json or of the repository's
-# .claude/settings.json, or an origin that is no github.com URL. A bundle has
-# no git remote, so the session could push nothing. A settings file that
-# cannot be read is refused as one that sets it.
+# The two causes of a bundled clone a launcher can read and the launch line
+# cannot clear, beside the GitHub App's coverage, which it cannot read:
+# CCR_FORCE_BUNDLE=1 in the env block of the account's settings.json or of the
+# repository's .claude/settings.json, or an origin that is no github.com URL. A
+# bundle has no git remote, so the session could push nothing. A settings file
+# that cannot be read is refused as one that sets it. CCR_FORCE_BUNDLE in the
+# environment the CLI starts with, the tmux server's and not this script's,
+# is cleared on cloud_session_launch's launch line.
 cloud_bundle_risk() { # ACCOUNT
   local file
-  if [[ -n "${CCR_FORCE_BUNDLE+set}" ]]; then
-    ot_message cloud-bundle-risk "item=$item" cause=shell >&2
-    return 1
-  fi
   for file in "$1/settings.json" "$CLAIM_ROOT/.claude/settings.json"; do
     [[ -e "$file" ]] || continue
     jq -e '(.env.CCR_FORCE_BUNDLE // null | tostring) != "1"' "$file" >/dev/null 2>&1 \
@@ -2821,26 +2828,71 @@ cloud_bundle_risk() { # ACCOUNT
 }
 
 # The session id an interactive cloud session prints, inside the claude.ai
-# session URL; the capture is the id. Read off the pane as the named fallback
-# for the CLI's own answer: `claude -p --cloud --output-format json` carried
-# the session_id, and Claude Code 2.1.288 refuses --cloud with --print
-# (interactive only). `claude agents --json`, 2.1.289's one machine-readable
-# session list, names a session by its local UUID and documents no cloud id.
-CLOUD_SESSION_RE='https://claude\.ai/code/(session_[[:alnum:]_-]+)'
+# session URL; the capture is the id, a session_ or cse_ one, the two the
+# 2.1.289 CLI accepts, whose URL builder can print a cse_ id unconverted. Read
+# off the pane as the named fallback for the CLI's own answer: `claude -p
+# --cloud --output-format json` carried the session_id, and Claude Code 2.1.288
+# refuses --print where --cloud starts a new session (interactive only).
+# lane-mail's follow-up to a running session keeps the `claude -p --cloud
+# SESSION` form, which the live proof the pull request records measures.
+# `claude agents --json`, 2.1.289's one machine-readable session list, names a
+# session by its local UUID and documents no cloud id.
+CLOUD_SESSION_RE='https://claude\.ai/code/((session|cse)_[[:alnum:]_-]+)'
 
-# The cloud session id the pane's scrollback shows, into CLOUD_SESSION, read
-# once a second for up to TMUX_VERIFY_SECS. Status 1 for none inside that
-# bound, 2 for a capture that failed.
+# The cloud session id the pane's scrollback shows, into CLOUD_SESSION: the
+# first session URL whose text the first prompt PROMPT does not carry, the one
+# the CLI printed, so a brief quoting an earlier session's URL never names
+# this one wherever the TUI draws it. Read once a second for up to
+# LANE_SSH_PROMPT_SECS, the bound sized for another machine answering, since
+# the URL waits on the cloud provisioning the session. Status 1 for none
+# inside that bound, 2 for a capture that failed.
 CLOUD_SESSION=""
-cloud_session_read() { # PANE
-  local screen waited=0
+cloud_session_read() { # PANE PROMPT
+  local screen url waited=0
   while :; do
     screen="$(tmux capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2
-    if [[ "$screen" =~ $CLOUD_SESSION_RE ]]; then
-      CLOUD_SESSION="${BASH_REMATCH[1]}"
-      return 0
-    fi
-    (( waited < TMUX_VERIFY_SECS )) || return 1
+    while [[ "$screen" =~ $CLOUD_SESSION_RE ]]; do
+      url="${BASH_REMATCH[0]}"
+      if [[ "$2" != *"$url"* ]]; then
+        CLOUD_SESSION="${BASH_REMATCH[1]}"
+        return 0
+      fi
+      screen="${screen#*"$url"}"
+    done
+    (( waited < LANE_SSH_PROMPT_SECS )) || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+# Whether claude has replaced the window's shell once the launch line is
+# typed. The shell can still be reading its rc files when the line lands, and
+# until claude runs the pane writer refuses every key aimed at it, so nothing
+# is sent before this answers. Read once a second for up to TMUX_VERIFY_SECS,
+# the bound for a program starting on this machine. Status 0 once the pane
+# runs claude; 1 otherwise, CLOUD_CLI_UNSEEN naming why: bound, the bound
+# spent with no claude in the pane, pane-gone, the window closed, or
+# pane-read-failed and process-read-failed, a tmux pane list or a process
+# table this machine could not read.
+CLOUD_CLI_UNSEEN=""
+cloud_cli_wait() { # PANE
+  local rc waited=0
+  while :; do
+    rc=0
+    lane_pane_by_id "$1" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) CLOUD_CLI_UNSEEN=pane-gone; return 1 ;;
+      *) CLOUD_CLI_UNSEEN=pane-read-failed; return 1 ;;
+    esac
+    rc=0
+    lane_pane_runs "$LANE_PANE_CMD" "$LANE_PANE_PID" claude || rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      1) ;;
+      *) CLOUD_CLI_UNSEEN=process-read-failed; return 1 ;;
+    esac
+    (( waited < TMUX_VERIFY_SECS )) || { CLOUD_CLI_UNSEEN=bound; return 1; }
     sleep 1
     waited=$((waited + 1))
   done
@@ -2851,18 +2903,20 @@ cloud_session_read() { # PANE
 # branch pushed from the base tip first. The item's window then opens in that
 # worktree and runs `claude --cloud` interactively under the lane's account
 # and model, --ref naming the pushed branch, so the CLI clones it or refuses,
-# and a refusal is a failed launch. Its first prompt is the brief file closed
-# by the session words, sent as a local lane's brief is resent, once the
-# composer is up. Its session id is the launch record: a launch whose pane
-# shows none stops there. The record carries the kind, the account, that id,
-# the window and the local worktree as mail_root. The repository card the
-# session may show is the operator's or the master's to answer. A failure
-# after the create leaves the tree standing as the item's claim, one after the
-# push its branch on origin, and one after the window opened that window, with
-# whatever the CLI printed in it. Status 75 is an item another session owns; 1
-# a failure, its keyed line printed.
+# and a refusal is a failed launch. Once claude runs in the pane and its
+# composer is up, the account it runs on is read back as a local lane's is,
+# and its first prompt is the brief file closed by the session words, sent as
+# a local lane's brief is resent. Its session id is the launch record: a
+# launch whose pane shows none stops there. The record carries the kind, the
+# account, that id, the window and the local worktree as mail_root. The
+# repository card the session may show is the operator's or the master's to
+# answer. A failure after the create leaves the tree standing as the item's
+# claim, one after the push its branch on origin, and one after the window
+# opened that window, with whatever the CLI printed in it, except an account
+# mismatch, which closes it. Status 75 is an item another session owns; 1 a
+# failure, its keyed line printed.
 cloud_session_launch() {
-  local wt branch model line pane session rc=0 launched_at record_rc=0
+  local wt branch model cmd form line pane session prompt rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
@@ -2873,28 +2927,45 @@ cloud_session_launch() {
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   tmux_window_open "$wt" "$title" || return 1
   pane="$LAUNCH_PANE"
-  # On an account whose GitHub App check reads an installed App as missing
-  # (anthropics/claude-code#81776), the CLI bundles the checkout or refuses
-  # --ref; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set it clones. The
-  # variable goes once that bug is fixed, KEN-2741 being its removal point.
-  line="clear; env ${LANE_ENV%%=*}=$(lane_single_quote "${LANE_ENV#*=}") CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
-  line+=" claude --cloud --model $(lane_single_quote "$model") --ref $(lane_single_quote "$branch")"
+  # The account reaches the CLI as it reaches a local lane, through the lane's
+  # launcher or under the env prefix, lib/lane-launch.sh's one decision, which
+  # the account check reads back. The pane inherits the tmux server's
+  # environment, not this script's, so the line clears CCR_FORCE_BUNDLE there:
+  # set, it bundles the checkout. On an account whose GitHub App check reads
+  # an installed App as missing (anthropics/claude-code#81776), the CLI bundles
+  # the checkout or refuses --ref; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+  # set it clones. That variable goes once that bug is fixed, KEN-2741 being
+  # its removal point.
+  cmd="claude --cloud --model $(lane_single_quote "$model") --ref $(lane_single_quote "$branch")"
+  form="$(lane_launch_form "$cmd" claude "${LANE_ENV#*=}")" || return 1
+  LANE_FORM="$form"
+  cmd="$(lane_launch_line "$cmd" claude "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$form")" || return 1
+  line="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 $cmd"
   launch_write paste "$title" "$pane" shell text "$line" || return 1
+  cloud_cli_wait "$pane" || { ot_message cloud-cli-unseen "item=$item" "reason=$CLOUD_CLI_UNSEEN" >&2; return 1; }
   rc=0
-  tmux_wait_composer "$pane" "$title" "$BRIEF_TEXT" claude || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    # The CLI's own refusal, a --ref it cannot honor among them, ends it and
-    # hands the pane back to the window's shell.
-    if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then
-      ot_message cloud-launch-failed "item=$item" >&2
-    elif [[ "$rc" -ne 3 ]]; then
-      ot_message cloud-composer-stuck "item=$item" >&2
-    fi
-    return 1
-  fi
-  launch_write brief-send "$title" "$pane" claude text "$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT" || return 1
+  tmux_wait_composer "$pane" "$title" "" claude || rc=$?
+  case "$rc" in
+    0) ;;
+    1 | 3)
+      # Once claude ran, a pane back at the window's shell is the CLI's own
+      # exit, a --ref it cannot honor among them. A refused nudge has printed
+      # its own line.
+      if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then
+        ot_message cloud-launch-failed "item=$item" >&2
+      elif [[ "$rc" -eq 1 ]]; then
+        ot_message cloud-composer-stuck "item=$item" >&2
+      fi
+      return 1 ;;
+    4) ot_message tmux-failed "operation=capture-pane" "item=$item" >&2; return 1 ;;
+    *) ot_message composer-result-unknown "item=$item" "status=$rc" >&2; return 1 ;;
+  esac
+  # The composer is claude's own screen, the premise the account read rests on.
+  lane_account_ok "$pane" "$title" met || { tmux_window_close "$pane" "$title" || true; return 1; }
+  prompt="$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT"
+  launch_write brief-send "$title" "$pane" claude text "$prompt" || return 1
   rc=0
-  cloud_session_read "$pane" || rc=$?
+  cloud_session_read "$pane" "$prompt" || rc=$?
   case "$rc" in
     0) session="$CLOUD_SESSION" ;;
     1) ot_message cloud-session-unread "item=$item" >&2; return 1 ;;

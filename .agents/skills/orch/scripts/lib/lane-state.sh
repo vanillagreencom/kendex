@@ -407,8 +407,22 @@ lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH] [ANSWER]
     }' <<<"$1"
 }
 
+# Whether a pane whose foreground command is CMD and whose process is PID runs
+# NAME: CMD itself, or the pane process or a process below it carrying one of
+# the names lane_harness_process_re gives NAME, a harness started under a shell
+# or through a wrapper script. Status 0 runs it, 1 does not, 2 a process table
+# that could not be read. pane-write's process check and open-terminal's wait
+# for a cloud session's CLI both ask it.
+lane_pane_runs() { # CMD PID NAME
+  local table name_re found
+  [[ "$1" != "$3" ]] || return 0
+  name_re="$(lane_harness_process_re "$3")" && table="$(lane_process_table)" || return 2
+  found="$(lane_process_below "$table" "$2" "$name_re" 1)" || return 2
+  [[ "$found" == found ]] || return 1
+}
+
 # The names a harness's own process carries in a lane_process_table, as a
-# whole-name ERE: the ownership read below and pane-write's process check both
+# whole-name ERE: the ownership read below and lane_pane_runs above both
 # match on it. Every harness runs under its own name but one.
 #
 # Copilot CLI 1.0.88 does not. Its npm loader is a node script, and node names

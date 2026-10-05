@@ -295,7 +295,7 @@ CONTROLS=(
   "lib/pane-write.sh@file-unreadable@    file) [[ -f \"\$value\" && -r \"\$value\" ]] ||@    file) [[ -f \"\$value\" && -r \"\$value\" ]] || true ||@-@--window;lane;--expect;cat;--file;$TMP_ROOT/absent@rc=2 key=write-failed received="
   "lib/pane-write.sh@expect-missing@  [[ -n \"\$1\" ]] || { pane_write_refuse 1 expect-missing@  [[ -n \"\$1\" ]] || true || { pane_write_refuse 1 expect-missing@-@--window;lane;--expect;;--file;$HELLO@rc=1 key=process-mismatch received="
   "pane-write@repeated-target@      [[ -z \"\$kind\" ]] || refuse_args@      [[ -z \"\$kind\" ]] || true || refuse_args@-@--window;lane;--window;lane;--expect;cat;--file;$HELLO@rc=0 key=none received=hello,"
-  "lib/pane-write.sh@table-read@    table=\"\$(lane_process_table)\"@    table=\"\$(lane_process_table || true)\"@-@--window;lane;--expect;claude;--file;$HELLO@rc=1 key=process-mismatch received=@$FAILPS"
+  "lib/lane-state.sh@table-read@&& table=\"\$(lane_process_table)\"@&& table=\"\$(lane_process_table || true)\"@-@--window;lane;--expect;claude;--file;$HELLO@rc=1 key=process-mismatch received=@$FAILPS"
 )
 for r in "${CONTROLS[@]}"; do
   IFS='@' read -r file name old new self args want prefix <<<"$r"

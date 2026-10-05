@@ -642,7 +642,8 @@ fleet_merge() { # [quiet]
     [[ -n "$item" ]] || continue
     host_route "$item" "$host" "$root"
     ITEMS+=("$item")
-    [[ -z "$window" ]] || LANES+=("$window")
+    # A status=none kind's window holds no harness the pane passes judge.
+    [[ -z "$window" ]] || item_in "$item" ${STATUSLESS[@]+"${STATUSLESS[@]}"} || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
     [[ -z "$running" || -z "$root" ]] || LAUNCHES+=("$item=$running")
   done <<<"$rows"

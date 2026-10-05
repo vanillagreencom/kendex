@@ -3,19 +3,22 @@
 # refusals of what a cloud session cannot take, tmux mode among them, the
 # cloud-bundle-risk check, the item worktree and its pushed branch, the item's
 # window opened in that worktree running `claude --cloud` interactively, never
-# with -p or --print, under the lane's account, naming the lane's model id and
-# the pushed branch as --ref with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-# in its environment, the brief file closed by the session words sent as its
-# first prompt once the composer is up, the CLI exiting before that as a
-# failed launch, the session id the claude.ai session URL in the pane carries,
-# and the lane record naming the kind, the account, that id and the window,
-# and the standard tier whatever orch words the brief quotes. A kind whose
+# with -p or --print, under the lane's account through its launcher or the env
+# prefix, naming the lane's model id and the pushed branch as --ref with
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and CCR_FORCE_BUNDLE cleared, no
+# key sent before claude runs in the pane, the account read back once its
+# composer is up, the brief file closed by the session words sent as its first
+# prompt then, the CLI exiting before that as a failed launch, the session id
+# the claude.ai session URL in the pane carries, and the lane record naming
+# the kind, the account, that id and the window, and the standard tier
+# whatever orch words the brief quotes. A kind whose
 # launch this build does not make refuses as kind-unbuilt.
 #
 # The suite runs a copy of open-terminal beside the real lane-host, which
 # declares the claude-cloud line, in a temp git repo whose origin is a
-# github.com URL; the worktree CLI, gh, lanes and tmux are stubs, the pane the
-# stub draws standing in for the `claude` CLI.
+# github.com URL; the worktree CLI, gh and lanes are this suite's stubs, and
+# tmux is lib/open-terminal-stubs.sh's, the pane it draws standing in for the
+# `claude` CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_HOST CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
@@ -37,16 +40,15 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/assertions.sh"
 
 # Stubs. gh answers nothing, so the repository resolves from the origin; lanes
-# clears every lane. tmux holds one window, pane %1, whose new-window call it
-# logs to $TMUX_DIR/calls with every key pressed, and keeps the Nth paste's
-# text in $TMUX_DIR/paste.N. The pane runs its shell until the first paste,
-# the launch line, then claude, and draws: before the launch line nothing;
-# after it a dialog until STUB_DIALOG_KEYS keys have been pressed, the launch
-# line's Enter among them, then the empty composer, or with STUB_CLAUDE_REFUSE=1 the CLI's refusal of --ref and
-# the shell again; after the second paste, the brief, STUB_SCREEN. The worktree stub logs
-# every call, makes the item's directory on create, a git checkout on the
-# item's lowercased branch unless STUB_WT_PLAIN=1, and exits STUB_PUSH_EXIT on
-# push.
+# clears every lane. tmux is the shared stub, its pane drawing the composer
+# once the launch line's Enter lands (OT_COMPOSER_ON_ENTER=1) and the session
+# screen in $SCREEN once the brief is sent. The worktree stub logs every call,
+# makes the item's directory on create, a git checkout on the item's
+# lowercased branch unless STUB_WT_PLAIN=1, and exits STUB_PUSH_EXIT on push.
+# shellcheck source=lib/open-terminal-stubs.sh
+source "$TEST_DIR/lib/open-terminal-stubs.sh"
+OT_BIN="$TMP_ROOT/ot-bin"
+ot_stub_bin "$OT_BIN"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
@@ -63,31 +65,7 @@ case "${1:-}" in
 esac
 exit 0
 EOF
-TMUX_DIR="$TMP_ROOT/tmux"
-cat > "$BIN/tmux" <<'EOF'
-#!/usr/bin/env bash
-d="$STUB_TMUX_DIR"
-pastes="$(cat "$d/pastes" 2>/dev/null || echo 0)"
-keys="$(grep -c '^key ' "$d/calls" 2>/dev/null || true)"
-running=bash
-[[ "$pastes" -eq 0 || "${STUB_CLAUDE_REFUSE:-}" == 1 ]] || running=claude
-case "${1:-}" in
-  has-session | set-option | paste-buffer) ;;
-  list-windows) echo 1 ;;
-  new-window) printf '%s\n' "$*" >> "$d/calls"; echo "$$ %1" ;;
-  display-message) echo 0 ;;
-  list-panes) printf '%%1 %s %s\n' "$$" "$running" ;;
-  load-buffer) pastes=$((pastes + 1)); echo "$pastes" > "$d/pastes"; cat > "$d/paste.$pastes" ;;
-  send-keys) printf 'key %s\n' "${*: -1}" >> "$d/calls" ;;
-  capture-pane)
-    if [[ "$pastes" -ge 2 ]]; then printf '%s\n' "$STUB_SCREEN"
-    elif [[ "$pastes" -eq 0 ]]; then :
-    elif [[ "${STUB_CLAUDE_REFUSE:-}" == 1 ]]; then echo 'Error: --ref cc-1 cannot be honored: the GitHub App is not set up for this repository'
-    elif [[ "$keys" -lt "${STUB_DIALOG_KEYS:-0}" ]]; then echo 'Do you trust the files in this folder?'
-    else printf '\xe2\x9d\xaf\xc2\xa0\n'; fi ;;
-  *) echo "unexpected tmux stub call: $*" >&2; exit 1 ;;
-esac
-EOF
+TMUX_LOG="$TMP_ROOT/tmux.log"
 WT_LOG="$TMP_ROOT/worktree.log"
 cat > "$BIN/worktree" <<EOF
 #!/usr/bin/env bash
@@ -107,7 +85,7 @@ case "\${1:-}" in
   *) echo "unexpected worktree stub call: \$*" >&2; exit 1 ;;
 esac
 EOF
-chmod +x "$BIN/gh" "$BIN/lanes" "$BIN/tmux" "$BIN/worktree"
+chmod +x "$BIN/gh" "$BIN/lanes" "$BIN/worktree"
 
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
@@ -129,6 +107,9 @@ STATE="$REPO/tmp/state"
 SESSION_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 [[ -n "$SESSION_TEXT" ]] || { echo "open-terminal-cloud: lib/lane-launch.sh named no session words" >&2; exit 1; }
 STARTED='Session started: https://claude.ai/code/session_01CLOUD'
+SCREEN="$TMP_ROOT/screen"
+# screen LINE... — the session screen the next run_ot draws.
+screen() { printf '%s\n' "$@" > "$SCREEN"; }
 # The overseer's brief, the item's whole task, quotes and all, and the first
 # prompt the pane takes for it, closed by the session words. It quotes an orch
 # tier word, as an issue's text can.
@@ -138,38 +119,51 @@ printf '%s\n' "Fix the parser's \"--flag\" handling." '' 'Done when: `parse --fl
 PROMPT="$(cat "$BRIEF")"$'\n\n'"$SESSION_TEXT"
 
 # run_ot [SCRIPT=PATH] [ENV=VALUE...] -- ARGS... — one cloud launch of ARGS
-# from the repo in tmux session `fleet`; sets RC and ERR, and resets the
-# worktree log, the tmux stub's pane, the lane claims and the item worktrees
-# first.
+# from the repo in tmux session `fleet`; sets RC, ERR and OUT, and resets the
+# worktree log, the tmux stub's log and pane, the lane claims and the item
+# worktrees first. The session screen is $STARTED unless the row drew its own
+# with `screen` before it.
 run_ot() {
   local script="$OT" env_args=()
   [[ "${1:-}" != SCRIPT=* ]] || { script="${1#SCRIPT=}"; shift; }
   while [[ "${1:-}" != -- ]]; do env_args+=("$1"); shift; done
   shift
-  rm -f -- "${TMP_ROOT:?}/worktree.log"
-  rm -rf -- "${TMP_ROOT:?}/wt" "${TMP_ROOT:?}/tmux" "${TMP_ROOT:?}/claims"
-  mkdir -p "$TMUX_DIR"
+  rm -f -- "${TMP_ROOT:?}/worktree.log" "${TMP_ROOT:?}/panes"
+  rm -rf -- "${TMP_ROOT:?}/wt" "${TMP_ROOT:?}/claims"
+  : > "$TMUX_LOG"
+  [[ -f "$SCREEN" ]] || screen "$STARTED"
   set +e
   # The ceiling keeps a plain item directory outside every repository wherever
   # TMPDIR sits, so its branch read fails as a real one does.
-  (cd "$REPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
+  (cd "$REPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$BIN:$OT_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
     LANES_CLI="$BIN/lanes" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' GH_REPO="" TMUX="" TMUX_PANE="" \
-    ORCH_TMUX_SESSION=fleet ORCH_TMUX_VERIFY_SECS=1 STUB_TMUX_DIR="$TMUX_DIR" STUB_SCREEN="$STARTED" \
-    ${env_args[@]+"${env_args[@]}"} "$script" "$@" >/dev/null 2>"$TMP_ROOT/err")
+    ORCH_TMUX_SESSION=fleet ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 \
+    OT_TMUX_LOG="$TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/panes" OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$SCREEN" \
+    ${env_args[@]+"${env_args[@]}"} "$script" "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err")
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
+  OUT="$(cat "$TMP_ROOT/out")"
+  rm -f -- "${SCREEN:?}"
 }
 # Its model is an alias the claude adapter maps, so the arguments row reads the id.
 CLOUD=(--host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model sonnet --effort high" --brief-file "$BRIEF" --state-dir "$STATE")
 record() {
   "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | first // {} | [.host, .kind, .account, .session_id, .window, .mail_root, .status, .tier] | map(. // "null") | join(" ")'
 }
+# The Nth text pasted into the pane, its lines between the Nth load-buffer
+# the stub logged and the paste-buffer after it, `none` where there was no
+# Nth paste.
+pasted() {
+  awk -v n="$1" '
+    on && /^paste-buffer / { exit }
+    on { printf "%s%s", (lines++ ? "\n" : ""), $0; next }
+    /^load-buffer / && ++k == n { on = 1 }
+    END { if (!on) printf "none" }' "$TMUX_LOG"
+}
 # `ran` where the pane took an Nth paste, `none` where it did not.
-typed() { [[ -e "$TMUX_DIR/paste.$1" ]] && echo ran || echo none; }
-# The Nth text pasted into the pane, `none` where there was no Nth paste.
-pasted() { if [[ -f "$TMUX_DIR/paste.$1" ]]; then cat -- "$TMUX_DIR/paste.$1"; else echo none; fi; }
-LAUNCH_LINE="clear; env CLAUDE_CONFIG_DIR='$LANE_DIR' CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude --cloud --model 'claude-sonnet-5' --ref 'cc-1'"
+typed() { [[ "$(pasted "$1")" == none ]] && echo none || echo ran; }
+LAUNCH_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 env CLAUDE_CONFIG_DIR='$LANE_DIR' claude --cloud --model 'claude-sonnet-5' --ref 'cc-1'"
 # Whether the launch line holds -p or --print as a word: the CLI refuses
 # either beside --cloud.
 print_words() { local word n=0; for word in $(pasted 1); do [[ "$word" != -p && "$word" != --print ]] || n=$((n + 1)); done; echo "$n"; }
@@ -179,11 +173,11 @@ echo "=== a cloud session is launched from the item's pushed branch and recorded
 run_ot -- "${CLOUD[@]}" CC-1
 assert_eq "rc=$RC worktree=$(paste -sd, "$WT_LOG")" "rc=0 worktree=create CC-1,push CC-1 --set-upstream" \
   "the launch creates the item worktree and pushes its branch before the session" "$TMP_ROOT/err"
-assert_eq "$(grep -c -- "^new-window .* -n CC-1 -c $TMP_ROOT/wt/CC-1 " "$TMUX_DIR/calls" || true)" 1 \
+assert_eq "$(grep -c -- "^new-window .* -n CC-1 -c $TMP_ROOT/wt/CC-1 " "$TMUX_LOG" || true)" 1 \
   "the item's window opens in the item worktree"
 assert_eq "print-words=$(print_words)" "print-words=0" "the launch line holds neither -p nor --print"
 assert_eq "$(pasted 1)" "$LAUNCH_LINE" \
-  "the window runs claude --cloud interactively under the lane's account, the lane's model by its id, the pushed item branch by --ref and the #81776 workaround"
+  "the window runs claude --cloud interactively under the lane's account, the lane's model by its id, the pushed item branch by --ref, CCR_FORCE_BUNDLE cleared and the #81776 workaround"
 assert_eq "prompt=$([[ "$(pasted 2)" == "$PROMPT" ]] && echo brief || echo other)" "prompt=brief" \
   "the first prompt is the brief file's text closed by the session words, never a start command or the mailbox words"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-1 $TMP_ROOT/wt/CC-1 running standard" \
@@ -192,8 +186,8 @@ assert_eq "owed=$(grep -cxF 'open-terminal: cloud-card-owed item=CC-1 session=se
   "the launch leaves the repository card to the operator and says so"
 
 echo "=== a first-run dialog takes one Enter before the first prompt ==="
-run_ot STUB_DIALOG_KEYS=2 -- "${CLOUD[@]}" CC-14
-assert_eq "rc=$RC keys=$(grep -c '^key Enter$' "$TMUX_DIR/calls" || true) prompt=$([[ "$(pasted 2)" == "$PROMPT" ]] && echo brief || echo other) session=$(record CC-14 | cut -d' ' -f4)" \
+run_ot OT_COMPOSER_ON_ENTER=2 -- "${CLOUD[@]}" CC-14
+assert_eq "rc=$RC keys=$(grep -c '^send-keys .* Enter$' "$TMUX_LOG" || true) prompt=$([[ "$(pasted 2)" == "$PROMPT" ]] && echo brief || echo other) session=$(record CC-14 | cut -d' ' -f4)" \
   "rc=0 keys=3 prompt=brief session=session_01CLOUD" \
   "one nudge dismisses the dialog, then the brief is sent and the session recorded" "$TMP_ROOT/err"
 
@@ -240,19 +234,19 @@ done
 echo "=== each cause of a bundled clone refuses before anything is made ==="
 mkdir -p "$TMP_ROOT/bundling" "$REPO/.claude"
 printf '{"env":{"CCR_FORCE_BUNDLE":"1"}}\n' > "$TMP_ROOT/bundling/settings.json"
-# CAUSE|ENV|SETUP: the setup runs before the launch and is undone after it.
+# CAUSE|LANE|SETUP: the lane where it is not the suite's, and the setup that
+# runs before the launch and is undone after it.
 BUNDLE_ROWS=(
-  "shell|CCR_FORCE_BUNDLE=0|"
-  "settings path=$TMP_ROOT/bundling/settings.json|LANE=$TMP_ROOT/bundling|"
+  "settings path=$TMP_ROOT/bundling/settings.json|$TMP_ROOT/bundling|"
   "settings path=$REPO/.claude/settings.json||cp $TMP_ROOT/bundling/settings.json $REPO/.claude/settings.json"
   "remote||git -C $REPO remote set-url origin https://gitlab.example/owner/repo.git"
 )
 bundle_row() { # SCRIPT ROW — the launch, with RC and ERR set
-  local cause env setup lane="$LANE_DIR" envs=()
-  IFS='|' read -r cause env setup <<<"$2"
-  case "$env" in LANE=*) lane="${env#LANE=}" ;; ?*) envs=("$env") ;; esac
+  local cause lane setup
+  IFS='|' read -r cause lane setup <<<"$2"
+  [[ -n "$lane" ]] || lane="$LANE_DIR"
   [[ -z "$setup" ]] || $setup
-  run_ot SCRIPT="$1" ${envs[@]+"${envs[@]}"} -- --host claude-cloud --harness claude --lane "$lane" \
+  run_ot SCRIPT="$1" -- --host claude-cloud --harness claude --lane "$lane" \
     --launch-flags "--model opus --effort high" --brief-file "$BRIEF" --state-dir "$STATE" CC-2
   rm -f -- "${REPO:?}/.claude/settings.json"
   git -C "$REPO" remote set-url origin https://github.com/owner/repo.git
@@ -264,42 +258,132 @@ for row in "${BUNDLE_ROWS[@]}"; do
     "rc=1 refused=1 made=no" "cloud-bundle-risk cause=$cause refuses with no worktree made" "$TMP_ROOT/err"
 done
 
+echo "=== CCR_FORCE_BUNDLE in the environment is cleared on the launch line ==="
+# The pane takes the tmux server's environment, never this one, so the line
+# clears the variable where the CLI starts.
+run_ot CCR_FORCE_BUNDLE=1 -- "${CLOUD[@]}" CC-15
+assert_eq "rc=$RC clears=$(grep -c '^clear; env -u CCR_FORCE_BUNDLE ' <<<"$(pasted 1)" || true)" "rc=0 clears=1" \
+  "a launch from an environment setting CCR_FORCE_BUNDLE goes ahead on a line that clears it" "$TMP_ROOT/err"
+
+echo "=== a lane whose launcher is on PATH launches through it ==="
+LAUNCHER_BIN="$TMP_ROOT/launcher-bin"
+mkdir -p "$LAUNCHER_BIN"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$LAUNCHER_BIN/eclaude"
+chmod +x "$LAUNCHER_BIN/eclaude"
+LAUNCHER_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 '$LAUNCHER_BIN/eclaude' --cloud --model 'claude-sonnet-5' --ref 'cc-16'"
+run_ot PATH="$LAUNCHER_BIN:$BIN:$OT_BIN:$PATH" -- "${CLOUD[@]}" CC-16
+assert_eq "rc=$RC line=$([[ "$(pasted 1)" == "$LAUNCHER_LINE" ]] && echo launcher || echo other)" "rc=0 line=launcher" \
+  "the lane's launcher, by the path the judge resolved and with no env prefix, starts the CLI" "$TMP_ROOT/err"
+
+echo "=== the account is read back once the composer is up ==="
+# The stub pane's pid is 0, so the read names no account and the launch
+# stands; the line says the check ran.
+run_ot -- "${CLOUD[@]}" CC-1
+assert_eq "rc=$RC account=$(grep -c '^open-terminal: lane-unobserved item=CC-1 reason=' <<<"$ERR" || true)" "rc=0 account=1" \
+  "the cloud arm reads the pane back against the picked account" "$TMP_ROOT/err"
+
+echo "=== no key reaches the pane before claude replaces its shell ==="
+# The window's shell still reading its rc files holds the pane for three
+# reads after the launch line, and a dialog in front of the composer takes
+# one nudge, which the pane writer refuses while the shell is there.
+LATE_ENV=(ORCH_TMUX_VERIFY_SECS=3 OT_HARNESS_LATE=3 OT_COMPOSER_ON_ENTER=2)
+late_rows() { # SCRIPT LATE_ITEM UNSEEN_ITEM — the late and the unseen rows, their results in LATE and UNSEEN
+  run_ot SCRIPT="$1" "${LATE_ENV[@]}" -- "${CLOUD[@]}" "$2"
+  LATE="rc=$RC session=$(record "$2" | cut -d' ' -f4)"
+  run_ot SCRIPT="$1" OT_HARNESS_LATE=99 -- "${CLOUD[@]}" "$3"
+  UNSEEN="rc=$RC unseen=$(grep -cxF "open-terminal: cloud-cli-unseen item=$3 reason=bound" <<<"$ERR" || true) keys=$(grep -c '^send-keys .* Enter$' "$TMUX_LOG" || true) record=$(record "$3")"
+}
+late_rows "$OT" CC-17 CC-18
+assert_eq "$LATE" "rc=0 session=session_01CLOUD" \
+  "a claude starting three pane reads late is waited for, nudged, sent its brief and recorded"
+assert_eq "$UNSEEN" "rc=1 unseen=1 keys=1 record=null null null null null null null null" \
+  "a claude never seen in the pane stops with its own line, no key past the launch line's Enter and no record" "$TMP_ROOT/err"
+
 echo "=== a pane showing no claude.ai session URL stops there ==="
 # The session id bare, outside the URL the anchored read takes.
 UNREAD_SCREEN='Started session_01CLOUD'
-run_ot STUB_SCREEN="$UNREAD_SCREEN" -- "${CLOUD[@]}" CC-3
+screen "$UNREAD_SCREEN"
+run_ot -- "${CLOUD[@]}" CC-3
 assert_eq "rc=$RC unread=$(grep -cxF 'open-terminal: cloud-session-unread item=CC-3' <<<"$ERR" || true) record=$(record CC-3)" \
   "rc=1 unread=1 record=null null null null null null null null" "no URL in the pane is no record and a failed item" "$TMP_ROOT/err"
 
-echo "=== a failed push, branch read or composer stops with no record ==="
+echo "=== the session id is the CLI's own, read across the scrollback ==="
+# NAME|ENV|BRIEF|SESSION|SCREEN...: the row's session screen, one line per
+# field past the session id, read under ORCH_LANE_SSH_PROMPT_SECS=1, which is
+# two reads. A brief quoting an earlier session's URL shows it before the
+# CLI's own; a screen drawn on the second read is waited for; a URL six lines
+# up is off a five-row pane; the CLI's cse_ ids are read as its session_ ones.
+BRIEF_QUOTE="$TMP_ROOT/brief-quote.md"
+printf '%s\n' 'Follow up on https://claude.ai/code/session_01OLD.' > "$BRIEF_QUOTE"
+SESSION_ROWS=(
+  "quoted||$BRIEF_QUOTE|session_01CLOUD|> Follow up on https://claude.ai/code/session_01OLD.|$STARTED"
+  "second read|OT_SCREEN_ON=2|$BRIEF|session_01CLOUD|$STARTED"
+  "scrolled||$BRIEF|session_01CLOUD|$STARTED|working 1|working 2|working 3|working 4|working 5|working 6"
+  "cse||$BRIEF|cse_01CLOUD|Session started: https://claude.ai/code/cse_01CLOUD"
+)
+session_row() { # SCRIPT ROW ITEM — the launch, the session it recorded in SESSION
+  local name env brief want lines=() envs=()
+  IFS='|' read -r name env brief want <<<"$2"
+  IFS='|' read -r -a lines <<<"${2#*|*|*|*|}"
+  [[ -z "$env" ]] || envs=("$env")
+  screen "${lines[@]}"
+  run_ot SCRIPT="$1" ${envs[@]+"${envs[@]}"} -- --host claude-cloud --harness claude --lane "$LANE_DIR" \
+    --launch-flags "--model sonnet --effort high" --brief-file "$brief" --state-dir "$STATE" "$3"
+  SESSION="rc=$RC session=$(record "$3" | cut -d' ' -f4)"
+}
+for i in "${!SESSION_ROWS[@]}"; do
+  IFS='|' read -r name _ _ want _ <<<"${SESSION_ROWS[$i]}"
+  session_row "$OT" "${SESSION_ROWS[$i]}" "CC-4$i"
+  assert_eq "$SESSION" "rc=0 session=$want" "the $name row records the session the CLI printed" "$TMP_ROOT/err"
+done
+
+echo "=== a failed push, branch read, composer or capture stops with no record ==="
 # ENV|LINE|CLAUDE|WORKTREE|OLD -> NEW: the stub's failure, the refusal line
 # past its key word, whether claude's line was typed, the worktree calls
 # made, and the control's edit, the guard's text kept and its behaviour
 # removed; the edit is the rest of the row, `|` and all. The pane of a
 # composer that never came up still shows the session URL once a brief lands,
-# so the guard alone stops the launch.
+# so the guard alone stops the launch. A capture that fails is the URL read's
+# own, the composer wait's capture before it having succeeded.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 FAILURE_ROWS=(
   'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20,push CC-20 --set-upstream||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
   'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none|create CC-25||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
-  'STUB_DIALOG_KEYS=9|cloud-composer-stuck item=CC-26|ran|create CC-26,push CC-26 --set-upstream|  if [[ "$rc" -ne 0 ]]; then -> if false; then'
+  'OT_COMPOSER_ON_ENTER=99|cloud-composer-stuck item=CC-26|ran|create CC-26,push CC-26 --set-upstream|    1 | 3) ->     1 | 3) ;; 9)'
+  'OT_TMUX_FAIL_NTH=capture-pane:2|tmux-failed operation=capture-pane item=CC-27|ran|create CC-27,push CC-27 --set-upstream|capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2 -> capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 1'
 )
-failure_row() { # SCRIPT ROW ITEM — the launch, with RC and ERR set
+failure_row() { # SCRIPT ROW — the launch, with RC and ERR set
   local env line item
   IFS='|' read -r env line _ <<<"$2"
   item="${line#* item=}"
-  run_ot SCRIPT="$1" "$env" -- "${CLOUD[@]}" "${3:-${item%% *}}"
+  run_ot SCRIPT="$1" "$env" -- "${CLOUD[@]}" "${item%% *}"
+}
+# failure_seen ROW — the row's observation against its own refusal line.
+failure_seen() {
+  local line item
+  IFS='|' read -r _ line _ <<<"$1"
+  item="${line#* item=}"
+  printf 'rc=%s refused=%s claude=%s prompt=%s worktree=%s record=%s' "$RC" "$(grep -cxF "open-terminal: $line" <<<"$ERR" || true)" \
+    "$(typed 1)" "$(typed 2)" "$(paste -sd, "$WT_LOG")" "$(record "${item%% *}")"
+}
+# failure_want ROW — what the row's launch is held to: refused by its own line,
+# with no brief sent but where the failure is the URL read's, and no record.
+failure_want() {
+  local line claude wt prompt=none
+  IFS='|' read -r _ line claude wt _ <<<"$1"
+  [[ "$line" != tmux-failed* ]] || prompt=ran
+  printf 'rc=1 refused=1 claude=%s prompt=%s worktree=%s record=null null null null null null null null' "$claude" "$prompt" "$wt"
 }
 for row in "${FAILURE_ROWS[@]}"; do
-  IFS='|' read -r _ line claude wt _ <<<"$row"
-  item="${line#* item=}"
+  IFS='|' read -r _ line _ <<<"$row"
   failure_row "$OT" "$row"
-  assert_eq "rc=$RC refused=$(grep -cxF "open-terminal: $line" <<<"$ERR" || true) claude=$(typed 1) prompt=$(typed 2) worktree=$(paste -sd, "$WT_LOG") record=$(record "${item%% *}")" \
-    "rc=1 refused=1 claude=$claude prompt=none worktree=$wt record=null null null null null null null null" "${line%% *} stops the launch with no brief sent and no record" "$TMP_ROOT/err"
+  assert_eq "$(failure_seen "$row")" "$(failure_want "$row")" "${line%% *} stops the launch with no record" "$TMP_ROOT/err"
 done
 
 echo "=== a CLI that exits before its composer is a failed launch ==="
-run_ot STUB_CLAUDE_REFUSE=1 -- "${CLOUD[@]}" CC-21
+# The CLI runs for one pane read, then the pane is back at its shell, which
+# refuses the nudge aimed at claude.
+run_ot OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
 assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true) prompt=$(typed 2) record=$(record CC-21)" \
   "rc=1 refused=1 prompt=none record=null null null null null null null null" \
   "a refused --ref ends claude in the pane, which stops the launch as cloud-launch-failed" "$TMP_ROOT/err"
@@ -338,13 +422,11 @@ cause_control() { # INDEX OLD NEW
   assert_eq "rc=$RC" "rc=0" "control: without its check the ${BUNDLE_ROWS[$1]%%|*} row launches" "$TMP_ROOT/err"
 }
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-cause_control 0 'if [[ -n "${CCR_FORCE_BUNDLE+set}" ]]; then' 'if false; then'
+cause_control 0 "jq -e '(.env.CCR_FORCE_BUNDLE // null | tostring) != \"1\"' \"\$file\" >/dev/null 2>&1" 'true'
 # shellcheck disable=SC2016
-cause_control 1 "jq -e '(.env.CCR_FORCE_BUNDLE // null | tostring) != \"1\"' \"\$file\" >/dev/null 2>&1" 'true'
+cause_control 2 'kendex_github_origin_slug "$CLAIM_ROOT" >/dev/null' 'true'
 # shellcheck disable=SC2016
-cause_control 3 'kendex_github_origin_slug "$CLAIM_ROOT" >/dev/null' 'true'
-# shellcheck disable=SC2016
-mutant task-close 'text "$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_SESSION_TEXT"' 'text "$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_UNATTENDED_TEXT"'
+mutant task-close 'prompt="$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_SESSION_TEXT"' 'prompt="$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_UNATTENDED_TEXT"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-6
 assert_eq "prompt=$([[ "$(pasted 2)" == "$PROMPT" ]] && echo brief || echo other)" "prompt=other" \
   "control: a first prompt closing on the mailbox words fails the prompt row"
@@ -362,9 +444,9 @@ assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD 
 for i in "${!FAILURE_ROWS[@]}"; do
   IFS='|' read -r _ line _ _ edit <<<"${FAILURE_ROWS[$i]}"
   mutant "failure-$i" "${edit%% -> *}" "${edit#* -> }"
-  failure_row "$MUTANT" "${FAILURE_ROWS[$i]}" "CC-2$((i + 2))"
-  assert_eq "$(record "CC-2$((i + 2))")" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-2$((i + 2)) $TMP_ROOT/wt/CC-2$((i + 2)) running standard" \
-    "control: without its guard, the ${line%% *} row is recorded" "$TMP_ROOT/err"
+  failure_row "$MUTANT" "${FAILURE_ROWS[$i]}"
+  assert_eq "red=$([[ "$(failure_seen "${FAILURE_ROWS[$i]}")" != "$(failure_want "${FAILURE_ROWS[$i]}")" ]] && echo yes || echo no)" "red=yes" \
+    "control: without its guard, the ${line%% *} row fails" "$TMP_ROOT/err"
 done
 # The branch read kept, moved below the push: the unread row pushes.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
@@ -379,7 +461,9 @@ assert_eq "worktree=$(paste -sd, "$WT_LOG")" "worktree=create CC-25,push CC-25 -
 # NAME|OLD -> NEW: the argument and the edit that drops it.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 ARG_EDITS=(
-  'workaround| CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" -> "'
+  'workaround| CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 $cmd" ->  $cmd"'
+  'bundle clear|env -u CCR_FORCE_BUNDLE  -> env '
+  'account prefix|  cmd="$(lane_launch_line "$cmd" claude "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$form")" || return 1 -> '
   'model| --model $(lane_single_quote "$model") -> '
   'model id|model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" -> model="$LAUNCH_MODEL"'
   'ref| --ref $(lane_single_quote "$branch") -> '
@@ -391,6 +475,31 @@ for i in "${!ARG_EDITS[@]}"; do
   assert_eq "line=$([[ "$(pasted 1)" == "$LAUNCH_LINE" ]] && echo held || echo broke)" "line=broke" \
     "control: a launch without the ${ARG_EDITS[$i]%%|*} fails the launch line row" "$TMP_ROOT/err"
 done
+# The bundle clear dropped again: the CCR_FORCE_BUNDLE row's line no longer clears it.
+edit="${ARG_EDITS[1]#*|}"
+mutant bundle-row "${edit%% -> *}" "${edit#* -> }"
+run_ot SCRIPT="$MUTANT" CCR_FORCE_BUNDLE=1 -- "${CLOUD[@]}" CC-15
+assert_eq "clears=$(grep -c '^clear; env -u CCR_FORCE_BUNDLE ' <<<"$(pasted 1)" || true)" "clears=0" \
+  "control: a launch line that keeps CCR_FORCE_BUNDLE fails the clear row" "$TMP_ROOT/err"
+# The launcher judged away: the launcher row runs under the env prefix.
+# shellcheck disable=SC2016
+mutant launcher-form 'form="$(lane_launch_form "$cmd" claude "${LANE_ENV#*=}")" || return 1' 'form=prefix'
+run_ot SCRIPT="$MUTANT" PATH="$LAUNCHER_BIN:$BIN:$OT_BIN:$PATH" -- "${CLOUD[@]}" CC-16
+assert_eq "line=$([[ "$(pasted 1)" == "$LAUNCHER_LINE" ]] && echo launcher || echo other)" "line=other" \
+  "control: a launch line that skips the launcher choice fails the launcher row" "$TMP_ROOT/err"
+# The form left unrecorded: the account check reads `unchecked` and skips.
+# shellcheck disable=SC2016
+mutant account-form '  LANE_FORM="$form"' '  :'
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
+assert_eq "account=$(grep -c '^open-terminal: lane-unobserved item=CC-1 reason=' <<<"$ERR" || true)" "account=0" \
+  "control: a cloud arm that leaves LANE_FORM unchecked fails the account row" "$TMP_ROOT/err"
+# The start wait dropped: the late claude meets a refused nudge, and the
+# never-seen one its brief refused, neither under its own line.
+# shellcheck disable=SC2016
+mutant start-wait '  cloud_cli_wait "$pane" || { ot_message cloud-cli-unseen "item=$item" "reason=$CLOUD_CLI_UNSEEN" >&2; return 1; }' '  :'
+late_rows "$MUTANT" CC-60 CC-61
+assert_eq "late=$([[ "$LATE" == "rc=0 session=session_01CLOUD" ]] && echo held || echo broke) unseen=$([[ "$UNSEEN" == "rc=1 unseen=1 "* ]] && echo held || echo broke)" \
+  "late=broke unseen=broke" "control: without the start wait both rows fail" "$TMP_ROOT/err"
 # -p restored beside --cloud, the line the CLI refuses: the print row fails.
 mutant print 'claude --cloud --model' 'claude -p --cloud --model'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-10
@@ -398,17 +507,36 @@ assert_eq "print-words=$(print_words)" "print-words=1" "control: a launch line r
 # The classification removed: a CLI that exited reads as cloud-launch-failed no more.
 # shellcheck disable=SC2016
 mutant cli-exit 'if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then' 'if false; then'
-run_ot SCRIPT="$MUTANT" STUB_CLAUDE_REFUSE=1 -- "${CLOUD[@]}" CC-21
+run_ot SCRIPT="$MUTANT" OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
 assert_eq "refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true)" "refused=0" \
   "control: without the exit read the refused --ref row is not cloud-launch-failed" "$TMP_ROOT/err"
 # shellcheck disable=SC2016
 mutant session-unread '1) ot_message cloud-session-unread "item=$item" >&2; return 1 ;;' '1) session="" ;;'
-run_ot SCRIPT="$MUTANT" STUB_SCREEN="$UNREAD_SCREEN" -- "${CLOUD[@]}" CC-9
+screen "$UNREAD_SCREEN"
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-9
 assert_eq "rc=$RC" "rc=0" "control: a launch that continues past a missing session id fails the unread row" "$TMP_ROOT/err"
 # The URL anchor dropped: the bare id the unread row's pane shows is read.
-mutant session-anchor "CLOUD_SESSION_RE='https://claude\.ai/code/(session_" "CLOUD_SESSION_RE='(session_"
-run_ot SCRIPT="$MUTANT" STUB_SCREEN="$UNREAD_SCREEN" -- "${CLOUD[@]}" CC-11
+mutant session-anchor "CLOUD_SESSION_RE='https://claude\.ai/code/((session|cse)_" "CLOUD_SESSION_RE='((session|cse)_"
+screen "$UNREAD_SCREEN"
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-11
 assert_eq "rc=$RC" "rc=0" "control: a session read without the claude.ai URL anchor fails the unread row" "$TMP_ROOT/err"
+# One per session read rule: each removed in turn, its row records another
+# session or none.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+SESSION_EDITS=(
+  '      if [[ "$2" != *"$url"* ]]; then ->       if true; then'
+  '    (( waited < LANE_SSH_PROMPT_SECS )) || return 1 ->     return 1'
+  'tmux capture-pane -pJ -S - -t "$1" -> tmux capture-pane -pJ -t "$1"'
+  "((session|cse)_[[:alnum:]_-]+)' -> ((session)_[[:alnum:]_-]+)'"
+)
+for i in "${!SESSION_EDITS[@]}"; do
+  edit="${SESSION_EDITS[$i]}"
+  IFS='|' read -r name _ _ want _ <<<"${SESSION_ROWS[$i]}"
+  mutant "session-$i" "${edit%% -> *}" "${edit#* -> }"
+  session_row "$MUTANT" "${SESSION_ROWS[$i]}" "CC-5$i"
+  assert_eq "red=$([[ "$SESSION" != "rc=0 session=$want" ]] && echo yes || echo no)" "red=yes" \
+    "control: without its rule, the $name row records another session or none" "$TMP_ROOT/err"
+done
 # shellcheck disable=SC2016
 mutant tier-brief '[[ "$HOST_LAUNCH" == cloud-session ]] || TIER_TEXT+=' 'TIER_TEXT+='
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-12

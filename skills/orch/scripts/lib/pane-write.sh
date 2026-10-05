@@ -17,7 +17,7 @@
 #
 # Sourced, never run. lib/lane-state.sh is sourced first: the pane resolution is
 # its lane_pane_resolve and lane_pane_by_id, the shell names its is_bare_shell,
-# and the process read its lane_process_table and lane_process_below.
+# and the process read its lane_pane_runs.
 #
 # pane_write KIND TARGET EXPECT ACTION VALUE
 #
@@ -136,7 +136,7 @@ pane_write_resolve() { # KIND TARGET
 
 # Whether the resolved pane runs EXPECT.
 pane_write_expect() { # EXPECT
-  local table found default name_re settle="${PANE_WRITE_SETTLE_SECS:-2}" reads=0 rc
+  local default settle="${PANE_WRITE_SETTLE_SECS:-2}" reads=0 rc
   [[ -n "$1" ]] || { pane_write_refuse 1 expect-missing "pane=$PANE_WRITE_ID"; return; }
   if [[ "$1" == shell ]]; then
     # A tmux default-command that wraps the shell, such as one starting it in
@@ -167,16 +167,15 @@ pane_write_expect() { # EXPECT
       esac
     done
   else
-    [[ "$PANE_WRITE_CMD" == "$1" ]] && return 0
-    table="$(lane_process_table)" \
-      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    # The names that process runs under, lib/lane-state.sh's answer, so a
-    # harness whose process is not named for it is still found.
-    name_re="$(lane_harness_process_re "$1")" \
-      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    found="$(lane_process_below "$table" "$PANE_WRITE_PID" "$name_re" 1)" \
-      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    [[ "$found" != found ]] || return 0
+    # lib/lane-state.sh's answer, so a harness whose process is not named for
+    # it is still found.
+    rc=0
+    lane_pane_runs "$PANE_WRITE_CMD" "$PANE_WRITE_PID" "$1" || rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      1) ;;
+      *) pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return ;;
+    esac
   fi
   pane_write_refuse 1 process-mismatch "pane=$PANE_WRITE_ID" "expected=$1" "running=${PANE_WRITE_CMD:-none}"
 }

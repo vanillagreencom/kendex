@@ -17,11 +17,12 @@ LAUNCHED=2026-08-15T10:00:00Z
 LAUNCHED_EPOCH="$(date -u -d "$LAUNCHED" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$LAUNCHED" +%s)"
 
 # One running claude-cloud record, issue-1, its mail_root the local worktree
-# its launch made, which holds no status file.
-cloud_state() {
+# its launch made, which holds no status file, and WINDOW its window, none
+# where it is not given.
+cloud_state() { # [WINDOW]
   mkdir -p "$STUB_DIR/wt/issue-1"
-  jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" '{issue_id: "oversee", triaged: [], lanes: [
-    {item: "issue-1", window: null, host: "claude-cloud", kind: "claude-cloud", mail_root: $root, harness: "claude",
+  jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" --arg window "${1:-}" '{issue_id: "oversee", triaged: [], lanes: [
+    {item: "issue-1", window: (if $window == "" then null else $window end), host: "claude-cloud", kind: "claude-cloud", mail_root: $root, harness: "claude",
      session_id: "session_01CLOUD", launched_at: $at, running_at: $at, status: "running"}]}' > "$STUB_DIR/state.json"
 }
 # open_pr HEAD BODY — the item branch's open pull request, or none where HEAD
@@ -61,6 +62,15 @@ watch 700
 assert_eq "events=$EVENTS calls=$(grep -c -- '--item issue-1' "$STUB_DIR/mail.calls" || true) overseer=$(grep -q -- '--item overseer' "$STUB_DIR/mail.calls" && echo read || echo unread) lists=$(open_lists) handoff=$(handoff_reads)" \
   "events= calls=0 overseer=read lists=1 handoff=0" \
   "a session lane's mailbox and workflow state are read nowhere, and the start and stall checks share one list" "$STUB_DIR/err"
+
+echo "=== a cloud record's window is no lane the pane passes judge ==="
+# The window holds the session's local client, which the stub's server does
+# not list, so a pane pass reading it would report it gone.
+new_case cloud_window
+cloud_state main:issue-1
+open_pr abc111 "## Lane status"
+watch 700
+assert_eq "events=$EVENTS" "events=" "a status=none record with a window raises no pane event" "$STUB_DIR/err"
 
 echo "=== an open pull request that does not move is lane-stalled ==="
 # STEP rows per case: AGE|HEAD|BODY|WANT, one pass each, the first seeding the row.
@@ -113,6 +123,14 @@ open_pr abc111 "## Lane status"
 watch 700
 assert_eq "red=$([[ "$(handoff_reads)" -gt 0 ]] && echo yes || echo no)" "red=yes" \
   "control: a handoff check reading a files=none lane's state fails the state row" "$STUB_DIR/err"
+# shellcheck disable=SC2016
+cloud_mutant window-statusless oversee-watch '[[ -z "$window" ]] || item_in "$item" ${STATUSLESS[@]+"${STATUSLESS[@]}"} || LANES+=("$window")' '[[ -z "$window" ]] || LANES+=("$window")'
+new_case cloud_window_mutant
+cloud_state main:issue-1
+open_pr abc111 "## Lane status"
+watch 700
+assert_eq "events=$EVENTS" "events=EVENT window-gone main:issue-1" \
+  "control: a status=none window carried into the pane passes fails the window row" "$STUB_DIR/err"
 # shellcheck disable=SC2016
 cloud_mutant list-once lib/watch-host-kinds.sh '    [[ "${entry%%|*}" == "$1" ]] || continue' '    continue'
 new_case cloud_list_mutant

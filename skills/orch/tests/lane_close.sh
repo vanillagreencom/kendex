@@ -1618,9 +1618,33 @@ assert_eq "rc=$RC kill=$(grep -cx 'kill-window -t %7' "$CALLS" || true) kept=$(g
   'rc=0 kill=1 kept=1 status=done' 'a cloud lane whose record names a window closes that window with the record' "$TMP_ROOT/err"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 MUTANT="$(mutant cloud-window '      tmux kill-window -t "$RESOLVED_PANE" \' '      : \')"
+# The stub's kill-window empties the pane list, so each close takes it anew.
+write_panes claude
 CLOUD_WINDOW=kendex:KEN-1 cloud_close "$MUTANT"
 assert_eq "kill=$(grep -cx 'kill-window -t %7' "$CALLS" || true)" 'kill=0' \
   'control: a stop=none close that leaves the window fails the kill=1 pin'
+# A removal of the item's files that refuses leaves the window standing, as
+# item-files-failed says, so a second close finds it.
+cloud_files_refused() { # SCRIPT
+  write_panes claude
+  LANE_CLOSE_REMOVE_STATUS=3 CLOUD_WINDOW=kendex:KEN-1 cloud_close "$1"
+  printf 'rc=%s refused=%s kill=%s' "$RC" "$(grep -cx 'lane-close: item-files-failed item=KEN-1 status=3' <<<"$ERR" || true)" \
+    "$(grep -cx 'kill-window -t %7' "$CALLS" || true)"
+}
+assert_eq "$(cloud_files_refused "$SCRIPT")" 'rc=1 refused=1 kill=0' \
+  'a cloud close whose item files refuse to go leaves the window standing'
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-window-order '    remove_item_files
+    if [[ -n "$RESOLVED_PANE" ]]; then
+      tmux kill-window -t "$RESOLVED_PANE" \
+        || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$RESOLVED_PANE" >&2; exit 1; }
+    fi' '    if [[ -n "$RESOLVED_PANE" ]]; then
+      tmux kill-window -t "$RESOLVED_PANE" \
+        || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$RESOLVED_PANE" >&2; exit 1; }
+    fi
+    remove_item_files')"
+assert_eq "$(cloud_files_refused "$MUTANT")" 'rc=1 refused=1 kill=1' \
+  'control: a stop=none close that kills the window before the files go fails the kill=0 pin'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"

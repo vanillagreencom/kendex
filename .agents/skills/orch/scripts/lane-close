@@ -168,9 +168,9 @@ tracker answers terminal, closes with no lane state read and no exit wait:
 the harness is stopped through lane-host stop and the host closed.
 A record whose host kind declares stop=none (lane-host capabilities), a Claude
 cloud session, has no harness or sandbox this machine can stop: the close
-kills the record's window where a pane carries it, the session's local
-client, removes the item's files as below, removes its worktree on this machine,
-the record's mail_root, through worktree remove, records it done and prints
+removes the item's files as below, then kills the record's window where a
+pane carries it, the session's local client, then removes its worktree on
+this machine, the record's mail_root, through worktree remove, records it done and prints
 host-kept kind=KIND session=ID, the session the operator archives from the
 claude.ai sidebar. --park refuses on its stop-sandbox --check read. A
 preparing record, a hosted launch whose background job has written no
@@ -783,11 +783,13 @@ resolve_window() {
 
 # The record's host kind declares whether this machine can stop its lane. A
 # stop=none kind, a Claude cloud session, has no harness or sandbox to reach
-# and no mailbox to ask: the close closes the window its launch opened, where
-# a pane still carries it, which ends the session's local client and retires
-# its lane claim, removes the item's files and its worktree on this machine
-# and closes the record, and the session stays the operator's to archive. A
-# park keeps its stop-sandbox --check read, which the kind refuses.
+# and no mailbox to ask: the close removes the item's files, then closes the
+# window its launch opened, where a pane still carries it, which ends the
+# session's local client and retires its lane claim, then removes its
+# worktree on this machine and closes the record, and the session stays the
+# operator's to archive. The window outlives a removal that refuses, as
+# item-files-failed says. A park keeps its stop-sandbox --check read, which
+# the kind refuses.
 lane_capabilities_read "$LANE_HOST" "${host:-local}" || { message host-capabilities-unread "item=$ITEM" "host=${host:-local}" >&2; exit 1; }
 lane_capability host_stop stop
 case "$host_stop" in
@@ -795,11 +797,11 @@ case "$host_stop" in
   none)
     [[ "$PARK" != true ]] || park_judge
     [[ -z "$window_name" ]] || resolve_window
+    remove_item_files
     if [[ -n "$RESOLVED_PANE" ]]; then
       tmux kill-window -t "$RESOLVED_PANE" \
         || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$RESOLVED_PANE" >&2; exit 1; }
     fi
-    remove_item_files
     [[ -x "$WORKTREE" ]] || { message helper-missing "item=$ITEM" "path=$WORKTREE" >&2; exit 1; }
     "$WORKTREE" remove "$mail_root" >&2 || { message worktree-remove-failed "item=$ITEM" "path=$mail_root" >&2; exit 1; }
     update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }

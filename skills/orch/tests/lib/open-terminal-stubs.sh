@@ -5,10 +5,10 @@
 # and answers as the real command would, so a row reads the windows a launch
 # opened, the lines it typed and the worktrees it created without opening a
 # real window; sleep logs nothing, and returns at once for a whole-second
-# argument where OT_SLEEP_INSTANT is set. The
-# suites that drive open-terminal through lanes and hosts share them: the
-# open-terminal-lane suites, open-terminal-brief-file.sh and the others that
-# call ot_stub_bin. ot_fleet_state seeds the fleet state a launch under
+# argument where OT_SLEEP_INSTANT is set. The suites that drive open-terminal
+# through lanes, hosts and cloud sessions share them: the open-terminal-lane
+# suites, open-terminal-brief-file.sh, open-terminal-cloud.sh and the others
+# that call ot_stub_bin. ot_fleet_state seeds the fleet state a launch under
 # --state-dir binds to.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
@@ -71,6 +71,16 @@ STUBEOF
 # pane shows a prompt until the log holds N Enter keystrokes, a ready, empty
 # composer at N, and past N the first line pasted after the Nth Enter, as the
 # turn it submitted.
+#
+# A local launch line, `clear; ` and no ssh, starts the harness in the pane.
+# $OT_HARNESS_LATE=N is a shell still starting: the pane runs it for the first
+# N pane_current_command reads after the line, the harness from the next.
+# $OT_HARNESS_EXITS=M is a harness that refuses its arguments: after M reads
+# running it, the pane is back at its shell. $OT_SCREEN_FILE names a file
+# holding the screen a cloud session draws once its first prompt is sent, the
+# log's second paste after its launch line: shown from the $OT_SCREEN_ON-th
+# capture after that paste (default 1), whole under `-S -` and its last five
+# lines, a pane five rows tall, without it.
 cat > "$1/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -110,12 +120,16 @@ case "${1:-}" in
     # for the newest window since only it is written to: ssh while a dial
     # holds it, the harness once a local launch line has been typed, and the
     # window's own shell before either and after an interrupt.
-    running="$(awk '
+    running="$(awk -v late="${OT_HARNESS_LATE:-0}" -v exits="${OT_HARNESS_EXITS:-}" '
       /^new-window / { s = "bash" }
       /^clear; ssh / { s = "ssh"; next }
       /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") s = "bash"; next }
-      /^clear; / { s = "claude" }
-      END { print (s == "" ? "bash" : s) }
+      /^clear; / { s = "claude"; reads = 0; next }
+      /^list-panes .*pane_current_command/ { reads++ }
+      END {
+        if (s == "claude" && (reads <= late || (exits != "" && reads > late + exits))) s = "bash"
+        print (s == "" ? "bash" : s)
+      }
     ' "$OT_TMUX_LOG")"
     i=1; while [[ "$i" -le "$n" ]]; do
       if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"
@@ -165,6 +179,8 @@ case "${1:-}" in
     # The connected screen a row spells out, from a file because a screen is
     # several lines while run_ot's env list is one.
     elif [[ "$state" == ssh && -n "${OT_SSH_SCREEN:-}" ]]; then cat "$OT_SSH_SCREEN"
+    elif [[ -n "${OT_SCREEN_FILE:-}" ]] && (( $(awk '/^load-buffer / { p++ } p >= 2 && /^capture-pane / { c++ } END { print c + 0 }' "$OT_TMUX_LOG") >= ${OT_SCREEN_ON:-1} )); then
+      if [[ " $* " == *' -S - '* ]]; then cat "$OT_SCREEN_FILE"; else tail -n 5 "$OT_SCREEN_FILE"; fi
     elif [[ -n "${OT_COMPOSER_ON_ENTER:-}" ]]; then
       enters="$(grep -c '^send-keys .* Enter$' "$OT_TMUX_LOG")" || true
       if (( enters < OT_COMPOSER_ON_ENTER )); then printf 'dev@lane:~$\n'
