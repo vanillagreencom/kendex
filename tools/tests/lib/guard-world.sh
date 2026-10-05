@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The world every tools/guard suite starts from: a seeded repository that
 # passes a guard run as it stands. It carries a demo skill with every render
-# in step, a demo agent rendered to all three harness directories, a demo hook
+# in step, an agent rendered to all three harness directories, a demo hook
 # rendered to two of them (the real tree's hook sets differ), a hook test that
 # renders nowhere, a temporary-fixture test that predates rooted(), the
 # directories tools/bash32-lint scans and the tools/ tree tools/bash32-parse
@@ -84,10 +84,12 @@ printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
 printf '#!/usr/bin/env bash\necho accented\n' >"$R/skills/demo/scripts/frappé.sh"
 cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
 cp "$R/skills/demo/scripts/frappé.sh" "$R/.agents/skills/demo/scripts/frappé.sh"
-printf '# demo agent\n' >"$R/agents/demo.md"
-printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
-printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
-printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
+# The agent takes its own name: the settings file declares agents and hooks
+# as changelog packages, and one name may have only one package file.
+printf '# scout agent\n' >"$R/agents/scout.md"
+printf '# scout agent render\n' >"$R/.claude/agents/scout.md"
+printf 'name = "scout"\n' >"$R/.codex/agents/scout.toml"
+printf '# scout agent render\n' >"$R/.pi/agents/scout.md"
 mkdir -p "$R/hooks/tests" "$R/.claude/hooks" "$R/.codex/hooks" "$R/.pi/kendex/hooks"
 printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"

@@ -199,21 +199,21 @@ fi
 git -C "$R" reset -q --hard HEAD~1
 
 echo "=== an agent definition lands a render in every harness directory that tracks any ==="
-AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
+AGENT_RENDERS=(.claude/agents/scout.md .codex/agents/scout.toml .pi/agents/scout.md)
 for r in "${AGENT_RENDERS[@]}"; do
   git -C "$R" reset -q --hard HEAD
-  printf '# amended\n' >>"$R/agents/demo.md"
+  printf '# amended\n' >>"$R/agents/scout.md"
   for other in "${AGENT_RENDERS[@]}"; do
     [ "$other" = "$r" ] || printf '# amended\n' >>"$R/$other"
   done
   git -C "$R" add -A
   run_guard
-  [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> $r"* ]] \
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/scout.md -> $r"* ]] \
     && ok "an agent edit leaving $r behind reds, naming it" \
     || bad "an agent edit leaving $r behind reds, naming it" "rc=$RC out=$OUT"
 done
 git -C "$R" reset -q --hard HEAD
-printf '# amended\n' >>"$R/agents/demo.md"
+printf '# amended\n' >>"$R/agents/scout.md"
 git -C "$R" add -A
 if mutant_guard '/^  agents\/\*\.md)$/,/^    ;;$/d'; then
   run_mutant
@@ -233,14 +233,14 @@ run_guard
   || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD
 
-printf '# amended\n' >>"$R/agents/demo.md"
-printf '# amended\n' >>"$R/.codex/agents/demo.toml"
-printf '# amended\n' >>"$R/.pi/agents/demo.md"
-rm -f "$R/.claude/agents/demo.md"
+printf '# amended\n' >>"$R/agents/scout.md"
+printf '# amended\n' >>"$R/.codex/agents/scout.toml"
+printf '# amended\n' >>"$R/.pi/agents/scout.md"
+rm -f "$R/.claude/agents/scout.md"
 git -C "$R" add -A
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> .claude/agents/demo.md"* ]] \
-  && [[ "$OUT" != *"-> .codex/agents/demo.toml"* ]] && [[ "$OUT" != *"-> .pi/agents/demo.md"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/scout.md -> .claude/agents/scout.md"* ]] \
+  && [[ "$OUT" != *"-> .codex/agents/scout.toml"* ]] && [[ "$OUT" != *"-> .pi/agents/scout.md"* ]] \
   && ok "an agent edit with one harness render deleted reds, naming that render alone" \
   || bad "an agent edit with one harness render deleted reds, naming that render alone" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD
@@ -551,11 +551,11 @@ run_guard
 git -C "$R" reset -q --hard HEAD
 
 # A harness directory that tracks nothing is owed nothing.
-git -C "$R" rm -q .pi/agents/demo.md
+git -C "$R" rm -q .pi/agents/scout.md
 git -C "$R" commit -q -m "chore: no pi renders"
-printf '# amended\n' >>"$R/agents/demo.md"
-printf '# amended\n' >>"$R/.claude/agents/demo.md"
-printf '# amended\n' >>"$R/.codex/agents/demo.toml"
+printf '# amended\n' >>"$R/agents/scout.md"
+printf '# amended\n' >>"$R/.claude/agents/scout.md"
+printf '# amended\n' >>"$R/.codex/agents/scout.toml"
 git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
