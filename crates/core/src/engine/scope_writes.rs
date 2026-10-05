@@ -148,6 +148,11 @@ pub(super) enum Reading<T> {
     /// Not resolved apart from the record: its entry, when it has one, is
     /// carried forward unread, and a proof over the record names it.
     StoodIn(StoodIn),
+    /// Not read this pass, by the plan's choice rather than for want of a
+    /// resolution: the record's entry, written for the declaration as it
+    /// stands, is carried forward and no proof names it
+    /// ([`super::PlanOptions::keep_source_records`]).
+    Kept,
     /// Nothing to record: a path or reserved source, a disabled one, a
     /// name the manifest does not declare, and a set read from any of
     /// them. A recorded entry for one is dropped.
@@ -165,8 +170,10 @@ pub(super) struct RecordReadings {
 /// Reads every declared source and set for the record. A source no item
 /// named, one only a Pi extension names among them, has no resolution in
 /// the pass and is read from its mirror alone, so its entry is held to the
-/// declaration like any other; where `kept` is given, its entry for such a
-/// source is recorded again instead ([`kept_source`]).
+/// declaration like any other; where `kept` is given and its entry for
+/// such a source was written for the repository and revision declared
+/// now, that entry is kept instead. A redeclared source is read afresh,
+/// since the record speaks for another declaration.
 pub(super) fn record_readings(
     env: &Env,
     manifest: &Manifest,
@@ -178,17 +185,20 @@ pub(super) fn record_readings(
         .keys()
         .map(|name| {
             let reading = match repository(manifest, name) {
-                Some((repo, rev)) => match kept_source(kept, state, name, repo, rev) {
-                    Some(recorded) => Reading::Fresh(recorded.clone()),
-                    None => match commit_reading(env, repo, rev, state.sources.get(name)) {
-                        Ok(commit) => Reading::Fresh(SourceRev {
+                Some((repo, rev)) => {
+                    let keeps =
+                        kept.and_then(|lock| lock.sources.get(name))
+                            .is_some_and(|recorded| {
+                                recorded.repo == repo && recorded.rev.as_deref() == rev
+                            });
+                    commit_reading(env, repo, rev, state.sources.get(name), keeps).map(|commit| {
+                        SourceRev {
                             repo: repo.to_owned(),
                             rev: rev.map(str::to_owned),
                             commit,
-                        }),
-                        Err(stood_in) => Reading::StoodIn(stood_in),
-                    },
-                },
+                        }
+                    })
+                }
                 None => Reading::Unrecorded,
             };
             (name.clone(), reading)
@@ -207,14 +217,11 @@ pub(super) fn record_readings(
                         ),
                         None => (source_rev, state.sources.get(&decl.source)),
                     };
-                    match commit_reading(env, repo, rev, resolution) {
-                        Ok(commit) => Reading::Fresh(BundleRev {
-                            source: decl.source.clone(),
-                            source_repo: repo.to_owned(),
-                            commit,
-                        }),
-                        Err(stood_in) => Reading::StoodIn(stood_in),
-                    }
+                    commit_reading(env, repo, rev, resolution, false).map(|commit| BundleRev {
+                        source: decl.source.clone(),
+                        source_repo: repo.to_owned(),
+                        commit,
+                    })
                 }
                 None => Reading::Unrecorded,
             };
@@ -222,24 +229,6 @@ pub(super) fn record_readings(
         })
         .collect();
     RecordReadings { sources, sets }
-}
-
-/// The entry `kept` records for a source this pass read nothing at the
-/// source's own revision of, where that entry was written for the
-/// repository and revision declared now: a redeclared source is read
-/// afresh, since the record speaks for another declaration.
-fn kept_source<'a>(
-    kept: Option<&'a Lock>,
-    state: &DesiredState,
-    name: &str,
-    repo: &str,
-    rev: Option<&str>,
-) -> Option<&'a SourceRev> {
-    if state.sources.contains_key(name) {
-        return None;
-    }
-    let recorded = kept?.sources.get(name)?;
-    (recorded.repo == repo && recorded.rev.as_deref() == rev).then_some(recorded)
 }
 
 /// The repository and revision an enabled repository source is declared
@@ -256,36 +245,57 @@ fn repository<'a>(manifest: &'a Manifest, name: &str) -> Option<(&'a str, Option
 }
 
 /// The commit one enabled repository declaration reads at this pass: the
-/// resolution the pass made, or, where it made none, the mirror's answer.
-/// Never the record's own: a commit the record chose is the reason it
+/// resolution the pass made, or, where it made none, the mirror's answer,
+/// unless `keeps` says the record's entry stands for it ([`Reading::Kept`]).
+/// Never a commit the record chose for a resolution: that is the reason it
 /// stood in.
 fn commit_reading(
     env: &Env,
     repo: &str,
     rev: Option<&str>,
     resolution: Option<&SourceState>,
-) -> std::result::Result<String, StoodIn> {
+    keeps: bool,
+) -> Reading<String> {
+    let mirror = || match crate::remote::mirror_commit(env, repo, rev) {
+        Some(commit) => Reading::Fresh(commit),
+        None => Reading::StoodIn(StoodIn::Unserved),
+    };
     match resolution {
         Some(SourceState::Ready(ResolvedSource {
             commit: Some(commit),
             from_record: false,
             ..
-        })) => Ok(commit.clone()),
+        })) => Reading::Fresh(commit.clone()),
         Some(SourceState::Ready(ResolvedSource {
             from_record: true, ..
-        })) => Err(StoodIn::RecordedCommit),
-        Some(SourceState::Pending { .. }) => Err(StoodIn::Unserved),
-        // An enabled repository declaration resolves Ready with a commit,
-        // Pending, or not at all, where the resolver's failure left it out
-        // of the pass. Whatever else stands here, the mirror is asked, so
-        // no reading falls back to the record.
+        })) => Reading::StoodIn(StoodIn::RecordedCommit),
+        Some(SourceState::Pending { .. }) => Reading::StoodIn(StoodIn::Unserved),
+        // An enabled repository declaration resolves Ready with a commit or
+        // Pending. Whatever else stands here, the mirror is asked, so no
+        // reading falls back to the record.
         Some(SourceState::Ready(ResolvedSource {
             commit: None,
             from_record: false,
             ..
         }))
-        | Some(SourceState::Disabled { .. } | SourceState::Missing { .. })
-        | None => crate::remote::mirror_commit(env, repo, rev).ok_or(StoodIn::Unserved),
+        | Some(SourceState::Disabled { .. } | SourceState::Missing { .. }) => mirror(),
+        // Nothing in the pass resolved the declaration: no item reads the
+        // source at its own revision, or the resolver's failure left it
+        // out. A plan that keeps the record keeps its entry; any other asks
+        // the mirror.
+        None if keeps => Reading::Kept,
+        None => mirror(),
+    }
+}
+
+impl<T> Reading<T> {
+    fn map<U>(self, f: impl FnOnce(T) -> U) -> Reading<U> {
+        match self {
+            Reading::Fresh(value) => Reading::Fresh(f(value)),
+            Reading::StoodIn(why) => Reading::StoodIn(why),
+            Reading::Kept => Reading::Kept,
+            Reading::Unrecorded => Reading::Unrecorded,
+        }
     }
 }
 
@@ -293,8 +303,8 @@ impl RecordReadings {
     /// Which commit each source resolved to, for the lock to record. What
     /// earlier passes resolved is carried forward where this one resolved
     /// nothing apart from the record — a source that is offline today
-    /// should not lose the commit it was reading yesterday — and an entry
-    /// the pass records nothing for drops out.
+    /// should not lose the commit it was reading yesterday — or kept it,
+    /// and an entry the pass records nothing for drops out.
     pub(super) fn source_revisions(&self, lock: &Lock) -> BTreeMap<String, SourceRev> {
         revisions(&self.sources, &lock.sources)
     }
@@ -308,7 +318,8 @@ impl RecordReadings {
 
     /// Each source and set the record carries that this pass could not hold
     /// to a resolution: the entries the revisions above carried forward
-    /// unread. One the record does not carry has no entry to hold.
+    /// for want of one, not the ones it kept. One the record does not carry
+    /// has no entry to hold.
     pub(super) fn stood_in(&self, lock: &Lock) -> StoodInRecord {
         StoodInRecord {
             sources: stood_in(&self.sources, &lock.sources),
@@ -325,7 +336,7 @@ fn revisions<T: Clone>(
         .iter()
         .filter_map(|(name, reading)| match reading {
             Reading::Fresh(revision) => Some((name.clone(), revision.clone())),
-            Reading::StoodIn(_) => recorded
+            Reading::StoodIn(_) | Reading::Kept => recorded
                 .get(name)
                 .map(|revision| (name.clone(), revision.clone())),
             Reading::Unrecorded => None,
@@ -341,7 +352,7 @@ fn stood_in<T>(
         .iter()
         .filter_map(|(name, reading)| match reading {
             Reading::StoodIn(why) if recorded.contains_key(name) => Some((name.clone(), *why)),
-            Reading::StoodIn(_) | Reading::Fresh(_) | Reading::Unrecorded => None,
+            Reading::StoodIn(_) | Reading::Fresh(_) | Reading::Kept | Reading::Unrecorded => None,
         })
         .collect()
 }

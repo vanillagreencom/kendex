@@ -573,11 +573,14 @@ pub struct PlanOptions {
     pub update_only: Option<Targets>,
     /// Keep the record's commit for each source this pass read nothing at
     /// the source's own revision of, rather than recording what its mirror
-    /// resolves to now. Under a hold naming no package nothing is read
-    /// there, so the record's account of where each catalog sits stays as
-    /// it was. Only [`PlanOptions::locked`] sets this: `verify --at-record`
-    /// weighs the record against where each source resolves now, and reads
-    /// that off the record this pass would write.
+    /// resolves to now. Under a hold naming no package, only a declaration
+    /// the record cannot place reads there, and its source's record moves
+    /// to what it read; every other source keeps the record's account of
+    /// where it sits, unless it is now declared at another repository or
+    /// revision than that account was written for. Only
+    /// [`PlanOptions::locked`] sets this: `verify --at-record` weighs the
+    /// record against where each source resolves now, and reads that off
+    /// the record this pass would write.
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
@@ -667,9 +670,10 @@ impl PlanOptions {
         }
     }
 
-    /// A plan that names no package: every follower in the scope holds at
-    /// the commit its lock entries record, so nothing comes current and a
-    /// re-render reads what is installed. What `verify --at-record` checks
+    /// A plan that names no package: every follower the record can place
+    /// holds at the commit its lock entries record, so a re-render reads
+    /// what is installed; one it cannot place resolves fresh, as
+    /// [`PlanOptions::update_only`] says. What `verify --at-record` checks
     /// against.
     pub fn at_record() -> Self {
         PlanOptions::for_packages([])
@@ -677,7 +681,7 @@ impl PlanOptions {
 
     /// [`PlanOptions::at_record`] for a write: the record also keeps where
     /// it says each source sits, so a re-render of a project-side change
-    /// moves no catalog anywhere. What `refresh --locked` writes.
+    /// moves no catalog the record places. What `refresh --locked` writes.
     pub fn locked() -> Self {
         PlanOptions {
             keep_source_records: true,
