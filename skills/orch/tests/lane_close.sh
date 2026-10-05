@@ -291,8 +291,9 @@ case "$1" in
     elif [[ "${*: -1}" == '#{pane_id} #{pane_pid} #{pane_current_command}' ]]; then
       awk -F'\t' '{print $3 " " $4 " " $5}' "$LANE_CLOSE_ROWS"
     elif [[ "${*: -1}" == '#{pid} #{start_time} #{pane_id}' ]]; then
-      # The stub's server is pid 999, the one start_local_harness records.
-      awk -F'\t' '{print "999 1 " $3}' "$LANE_CLOSE_ROWS"
+      # The stub's server is pid 999, the one start_local_harness records,
+      # unless a row names another to stand for a server this close misses.
+      awk -F'\t' -v s="${LANE_CLOSE_TMUX_PID:-999}" '{print s " 1 " $3}' "$LANE_CLOSE_ROWS"
     else
       cat -- "$LANE_CLOSE_ROWS"
     fi ;;
@@ -1445,19 +1446,34 @@ cat >"$SERVER_PS_BIN/ps" <<EOF
 exec "$REAL_PS" "\$@"
 EOF
 chmod +x "$SERVER_PS_BIN/ps"
-renamed_windowless() { # SCRIPT
-  write_state running pi ''
+# A record's launch identity as open-terminal writes it, hosted lanes
+# included; LANE_CLOSE_TMUX_PID is the server pid the reached tmux answers.
+renamed_windowless() { # SCRIPT HOST TMUX_PID
+  write_state running pi "$2"
   jq '.lanes[0].launch = {pane: "%7", server: 999, pid: null, start: null}' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
   printf 'kendex\tπ session\t%%7\t999\tpi\n' >"$ROWS"; printf '\n' >"$SCREEN"
-  PATH="$SERVER_PS_BIN:$PATH" run_close "$1"
-  RENAMED_WINDOWLESS_GOT="rc=$RC renamed=$(grep -c -x 'lane-close: pane-missing item=KEN-1 window=KEN-1 pane=%7 cause=renamed' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+  LANE_CLOSE_TMUX_PID="$3" PATH="$SERVER_PS_BIN:$PATH" run_close "$1"
+  RENAMED_WINDOWLESS_GOT="rc=$RC renamed=$(grep -c -x 'lane-close: pane-missing item=KEN-1 window=KEN-1 pane=%7 cause=renamed' <<<"$ERR" || true) unread=$(grep -c -x 'lane-close: pane-read-failed item=KEN-1 pane=%7 server=999' <<<"$ERR" || true) stop=$(stop_count KEN-1 pi) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
 }
-renamed_windowless "$SCRIPT"
-assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=1 renamed=1 kill=0 removed=0 status=running' \
-  'a local record whose launch pane its server still lists under another window name refuses pane-missing cause=renamed'
-renamed_windowless "$(mutant renamed-unread '  tmux_pane_live "$server" "" "$pane" || rc=$?' '  rc=1')"
-assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=0 renamed=0 kill=0 removed=1 status=done' \
+RENAMED_WINDOWLESS_ROWS=(
+  "a local record whose launch pane its server still lists under another window name refuses pane-missing cause=renamed||999|rc=1 renamed=1 unread=0 stop=0 close=0 kill=0 removed=0 status=running"
+  "a local record whose recorded server runs a tmux this close does not reach refuses pane-read-failed||888|rc=1 renamed=0 unread=1 stop=0 close=0 kill=0 removed=0 status=running"
+  "a hosted record whose launch pane its server still lists closes through its provider|/host|999|rc=0 renamed=0 unread=0 stop=1 close=1 kill=0 removed=1 status=done"
+)
+for row in "${RENAMED_WINDOWLESS_ROWS[@]}"; do
+  IFS='|' read -r label host_dir server_pid want <<<"$row"
+  renamed_windowless "$SCRIPT" "$host_dir" "$server_pid"
+  assert_eq "$RENAMED_WINDOWLESS_GOT" "$want" "$label"
+done
+renamed_windowless "$(mutant renamed-unread '  tmux_pane_live "$server" "" "$pane" || rc=$?' '  rc=1')" '' 999
+assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=0 renamed=0 unread=0 stop=0 close=0 kill=0 removed=1 status=done' \
   'control: without the launch pane read a renamed lane closes with nothing stopped'
+renamed_windowless "$(mutant renamed-other-server '    *) message pane-read-failed "item=$ITEM" "pane=$pane" "server=$server" >&2; exit 1 ;;' '    *) ;;')" '' 888
+assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=0 renamed=0 unread=0 stop=0 close=0 kill=0 removed=1 status=done' \
+  'control: without the read-failed arm a lane on another tmux server closes with nothing stopped'
+renamed_windowless "$(mutant renamed-hosted '    0) [[ -n "$host" ]] || refuse_listed_launch_pane; state=windowless ;;' '    0) refuse_listed_launch_pane; state=windowless ;;')" /host 999
+assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=1 renamed=1 unread=0 stop=0 close=0 kill=0 removed=0 status=running' \
+  'control: a renamed check taken for hosted records strands a finished hosted lane'
 for args in '--park --pr 7' --keep-sandbox; do
   write_state running claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
   # shellcheck disable=SC2086  # the row's options are several words

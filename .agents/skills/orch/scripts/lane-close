@@ -32,7 +32,9 @@ message() { # REASON FIELD=VALUE...
     record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
     pane-missing)
       printf '%s\n' 'No tmux pane carries the recorded window name.' \
-        'cause=renamed is a local record whose launch pane, pane=, the tmux server its launch recorded still lists under another window name: the lane may still run there. Rename that window back to the recorded name and close again.' ;;
+        'cause=renamed is a local record whose launch pane, pane=, the tmux server its launch recorded still lists though no pane carries window=: that window or its session was renamed, or the window was moved to another session, and the lane may still run there.' \
+        'First confirm pane= is the lane'"'"'s: it sits in the lane'"'"'s worktree or runs its harness. A tmux server started since, handed the recorded pid, lists panes of its own under the same ids.' \
+        'Where it is the lane'"'"'s, restore window= as recorded, session name included where it names one, and close again. Where it is not, clear the record'"'"'s launch through workflow-state update oversee and close again.' ;;
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
     pane-read-failed)
       printf '%s\n' 'The lane pane could not be read.' \
@@ -175,7 +177,12 @@ local one by the launch identity the record names where that process still
 runs; with no pane to read an identity off, a record naming none, or a stale
 one, has no harness left to stop. A local record whose launch pane the tmux
 server its launch recorded still lists refuses as pane-missing cause=renamed:
-its window was renamed, not closed.
+its window or session was renamed, or the window moved, and the lane may still
+run there. A server started since and handed the recorded pid lists panes of
+its own under the same ids, so confirm the pane is the lane's before restoring
+the recorded window, and where it is not, clear the record's launch. One whose
+recorded server runs a tmux this close does not reach, or whose pane list
+cannot be read, refuses as pane-read-failed with server=.
 A record whose host kind declares stop=none (lane-host capabilities), a Claude
 cloud session, has no harness or sandbox this machine can stop: the close
 removes the item's files as below, then kills the record's window where a
