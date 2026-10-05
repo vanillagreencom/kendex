@@ -3,25 +3,27 @@
 # The checks that run before a commit lands, and the limit each one holds.
 
 # Which checks run, separated by spaces. The value shown here is the default
-# set; delete a name to turn that one off. The comments check is a further
-# one a project adds by name, and commit-msg never runs in this batch. What
+# set; delete a name to turn that one off. A project can add the optional
+# prose and comments checks by name. Commit-msg never runs in this batch. What
 # each name refuses is in the skill's CHECKS.md.
-COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
+COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
 
-# Kilobytes one tracked file may reach before a commit carrying it is
-# refused. A file already over the limit may stay that size or shrink, but
-# never grow. Asset folders are carved out through the byte-excludes list.
+# Kilobytes one tracked binary file may reach before a commit carrying it
+# is refused. An oversized binary file may hold or shrink, but never grow.
+# Text and source files have no ceiling. The byte-excludes list excludes
+# declared asset folders.
 COMMIT_GUARDS_BYTE_CEILING_KB = "200"
 
-# Percent of that ceiling, 1-100, at which a file is reported as near it.
-# The notice names the file while a split is still cheap, before a later
-# commit meets the ceiling, and does not fail the run. A value above 100
-# would switch the notice off, so it is refused.
+# Percent of that ceiling, 1-100, at which a binary file at or below the
+# ceiling is reported as near it. The notice does not fail the run. Move
+# large blobs to Git LFS, an asset store or build-time generation before
+# they grow further. Text and source files receive no warning. A value
+# above 100 would switch the notice off, so it is refused.
 COMMIT_GUARDS_BYTE_WARN_PCT = "90"
 
-# The file recording which oversized files may stay, and the size each one
-# keeps. A missing file means no exemptions at all, so every oversized file
-# fails the sweep.
+# The file recording which oversized binary files may stay, and the size
+# each one keeps. Rows naming text files are ignored. A missing file means
+# no exemptions, so every oversized binary file fails the sweep.
 COMMIT_GUARDS_BYTE_BASELINE = "tools/byte-ceiling-baseline"
 
 # Where changelog fragments live, as path patterns separated by spaces. Each

@@ -1,5 +1,6 @@
 {
   "keys": [
+    "COMMIT_GUARDS_CHANGELOG_CAP",
     "PR_APPROVAL_GATE",
     "PR_REVIEW_CHECK",
     "PR_REVIEW_GATE",
@@ -34,7 +35,8 @@
   "values": {
     "COMMIT_GUARDS_CHECKS": [
       "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs",
-      "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
+      "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names",
+      "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
     ],
     "COMMIT_GUARDS_MD_REFS_PATHS": [
       "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
