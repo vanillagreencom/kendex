@@ -77,7 +77,7 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 ### Release versions
 
-A repository that releases chooses each version by this rule. The [version-bump check](#version-bumps) refuses the violations it can read from the entries.
+A repository that releases chooses each version by this rule. Where `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` is set, the [version-bump check](#version-bumps) refuses the increases it lists, and judges a minor or a patch only from 1.0.
 
 - From 1.0, fixes, internal changes, refactors, tests and docs are a patch. A minor needs a new user-facing capability or a consumer-visible setting. A breaking change is a major and needs the owner's approval.
 - Before 1.0, a minor marks a break and a patch holds everything else.
