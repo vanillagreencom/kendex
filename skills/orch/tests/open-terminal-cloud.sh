@@ -16,8 +16,8 @@
 # stops the launch, the session id the claude.ai session URL in the pane
 # carries, and the lane record naming
 # the kind, the account, that id and the window, and the tier the brief's
-# item-tier line states, null with no line, whatever orch words the brief
-# quotes. The session words name the item branch the session pushes to, put
+# item-tier line states, a whole line, null with no line or two distinct ones,
+# whatever orch words or quoted results the brief carries. The session words name the item branch the session pushes to, put
 # an empty first commit ahead of the draft pull request, and say when that
 # pull request is marked ready, and the prompt the launch writes holds the item
 # branch where the words name it. A launch prints no cloud-card-owed line. A
@@ -237,13 +237,30 @@ assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=0" \
   "a session that shows no card prints no cloud-card-owed line"
 
 echo "=== a brief's item-tier line is the cloud lane's tier ==="
-BRIEF_TIER="$TMP_ROOT/brief-tier.md"
-{ cat "$BRIEF"; printf '%s\n' 'tier=small brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3'; } > "$BRIEF_TIER"
-CLOUD_TIER=(--host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model sonnet --effort high" --brief-file "$BRIEF_TIER" --state-dir "$STATE")
-tier_record() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | first | [.tier, .tier_inputs] | tojson'; }
-run_ot -- "${CLOUD_TIER[@]}" CC-36
-assert_eq "rc=$RC $(tier_record CC-36)" 'rc=0 ["small",{"estimate":12,"delta":40,"paths":3}]' \
-  "a cloud launch records the tier and inputs the brief's item-tier line states" "$TMP_ROOT/err"
+# The item-tier line, and a different result an issue's text can quote.
+TIER_LINE='tier=small brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3'
+TIER_QUOTE='tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=1 paths=1'
+# Each row: name, the lines the brief ends in (printf %b), the [tier,
+# tier_inputs] recorded. A result quoted in prose is no line, a line may sit
+# between blanks, and two distinct lines are no tier.
+TIER_ROWS=(
+  "line|$TIER_LINE|[\"small\",{\"estimate\":12,\"delta\":40,\"paths\":3}]"
+  "quoted|An earlier lane recorded \`$TIER_QUOTE\` for it.\n  $TIER_LINE |[\"small\",{\"estimate\":12,\"delta\":40,\"paths\":3}]"
+  "two lines|$TIER_QUOTE\n$TIER_LINE|[null,{\"estimate\":null,\"delta\":null,\"paths\":null}]"
+)
+tier_row() { # SCRIPT ROW ITEM — the launch of ROW's brief, its result and record in TIER
+  local tail
+  IFS='|' read -r _ tail _ <<<"$2"
+  { cat "$BRIEF"; printf '%b\n' "$tail"; } > "$TMP_ROOT/brief-$3.md"
+  run_ot SCRIPT="$1" -- --host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model sonnet --effort high" \
+    --brief-file "$TMP_ROOT/brief-$3.md" --state-dir "$STATE" "$3"
+  TIER="rc=$RC $("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$3"'")] | first | [.tier, .tier_inputs] | tojson')"
+}
+for i in "${!TIER_ROWS[@]}"; do
+  IFS='|' read -r name _ want <<<"${TIER_ROWS[$i]}"
+  tier_row "$OT" "${TIER_ROWS[$i]}" "CC-4$i"
+  assert_eq "$TIER" "rc=0 $want" "a cloud launch records the tier and inputs of the $name row" "$TMP_ROOT/err"
+done
 
 echo "=== the session words name the item branch and the pull request's steps ==="
 # steps LIB — the session words lib/lane-launch.sh at LIB closes a brief on,
@@ -834,11 +851,22 @@ mutant tier-start '| first | .verb) as $verb' '| first | .verb // "start") as $v
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-37
 assert_eq "$(record CC-37)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-37 $TMP_ROOT/wt/CC-37 running standard" \
   "control: a verb-less launch recorded as start fails the record row"
-# shellcheck disable=SC2016
-mutant tier-line 'if $verb == null then $inputs.tier elif' 'if $verb == null then null elif'
-run_ot SCRIPT="$MUTANT" -- "${CLOUD_TIER[@]}" CC-38
-assert_eq "$(tier_record CC-38)" '[null,{"estimate":12,"delta":40,"paths":3}]' \
-  "control: a tier not read from the item-tier line fails the item-tier row"
+# One per item-tier read rule: each removed in turn, its row records another
+# tier or none.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+TIER_EDITS=(
+  'if $verb == null then $inputs.tier elif -> if $verb == null then null elif'
+  '"^[[:space:]]*(?<line>" + $re + ")[[:space:]]*$" -> "(?<line>" + $re + ")"'
+  '| unique | if length == 1 then first else null end -> | first'
+)
+for i in "${!TIER_EDITS[@]}"; do
+  edit="${TIER_EDITS[$i]}"
+  IFS='|' read -r name _ want <<<"${TIER_ROWS[$i]}"
+  mutant "tier-$i" "${edit%% -> *}" "${edit#* -> }"
+  tier_row "$MUTANT" "${TIER_ROWS[$i]}" "CC-4$((i + 3))"
+  assert_eq "red=$([[ "$TIER" != "rc=0 $want" ]] && echo yes || echo no)" "red=yes" \
+    "control: without its rule, the $name row records another tier or none" "$TMP_ROOT/err"
+done
 # The card line restored on every launch: the no-card row fails.
 # shellcheck disable=SC2016
 mutant card-owed '  ot_message cloud-session-started "item=$item" "session=$session"' \

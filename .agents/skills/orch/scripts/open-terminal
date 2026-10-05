@@ -269,15 +269,19 @@ fi
 # start. A command naming none records the tier the brief's item-tier line
 # states, and with no line none: a launch states no tier it did not judge. A
 # cloud session runs Claude Code's cloud, no orch workflow, so orch words its
-# brief quotes from the issue are never its tier. The item-tier line retains
-# the inputs without calling a tracker or classifying the item again. Older
-# callers supply no line, so their inputs are explicitly unknown.
+# brief quotes from the issue are never its tier. Its brief carries the
+# issue's text, which can quote an earlier result, so only a whole line of the
+# brief is that line, and two distinct ones are no tier. The item-tier line
+# retains the inputs without calling a tracker or classifying the item again.
+# Older callers supply no line, so their inputs are explicitly unknown.
 if [[ "$HOST_LAUNCH" == cloud-session ]]; then RUN_TEXT=""
 else RUN_TEXT="${CMD_TEMPLATE:-/orch start}"$'\n'"$BRIEF_TEXT"; fi
 LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
   def count: if . == "-" then null else tonumber end;
   ([ $run | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb) as $verb
-  | ([ $text | capture("tier=(?<tier>micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)") ] | first) as $inputs
+  | "tier=(?<tier>micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)" as $re
+  | (if $verb == null then [ $text | splits("\n") | capture("^[[:space:]]*(?<line>" + $re + ")[[:space:]]*$") ] | unique | if length == 1 then first else null end
+     else [ $text | capture($re) ] | first end) as $inputs
   | {tier: (if $verb == null then $inputs.tier elif $verb == "start" then "standard" else $verb end),
      tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
 ')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
