@@ -500,10 +500,11 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
   show "$hits" | head -5
 }
 
-# The two shipped command-safety policies must stay working EREs that refuse
-# what their own source says they refuse: kendex.settings.toml's own value and
-# the example in docs/authoring/command-safety.md, which a project copies. The
-# hook applies whatever policy it is given and cannot judge either, so the
+# This repository's two command-safety policies must stay working EREs that
+# refuse what their own source says they refuse: kendex.settings.toml's own
+# value and the Quickshell example in docs/authoring/command-safety.md, which
+# a project copies. The hook's shipped default is its own suite's,
+# hooks/tests/command-safety.test.sh; the hook cannot judge these two, so the
 # check belongs here. The pattern is read back through the commit-guards
 # settings loader the hook itself uses; this lane adds no second parser.
 command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
@@ -617,6 +618,7 @@ command_safety_cause() { # FILE — what the lane's own tools said, replayed
 command_safety_policy kendex.settings.toml <<'ROWS'
 refuse|systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core
 refuse|systemd-run --user --scope --property=MemoryHigh=512K ./target/debug/review_fixes
+refuse|systemd-run --user --scope -p MemoryMax="64M" cargo test -p kendex-core
 allow|systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core
 allow|systemd-run --user --scope -p MemoryMax=2G cargo test -p kendex-core
 ROWS

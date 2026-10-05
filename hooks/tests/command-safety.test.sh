@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the command-safety hook. It applies whatever
-# COMMAND_SAFETY_DENY_PATTERN the project ships, and every refusal opens with
+# Tests for the command-safety hook. It applies the project's
+# COMMAND_SAFETY_DENY_PATTERN, or its own default_pattern where the project
+# sets none; this suite owns that default's rows. Every refusal opens with
 # `command-safety: <key>=<value>` — the key naming the condition, the value
 # naming the state of the policy or the status a check left. `check` asserts
 # the exit status of a row; `assert_first` pins the line the refusal opened
@@ -94,22 +95,22 @@ assert_first() { # WANT LABEL
     failed=$((failed + 1))
   fi
 }
-# The two shipped policies, kendex.settings.toml's own value and the example in
-# docs/authoring/command-safety.md, are the repository's content rather than
-# this hook's behaviour; a tools/guard lane owns them, with its control in
-# tools/tests/guard.test.sh. What stays here is that the hook applies whatever
-# policy it is given: a project pattern refuses, and a command outside it does
-# not, whichever project ships the pattern.
+# This repository's own policies, kendex.settings.toml's value and the
+# Quickshell example in docs/authoring/command-safety.md, are its content
+# rather than this hook's behaviour; a tools/guard lane owns them, with its
+# control in tools/tests/guard.test.sh. What stays here is the hook's own
+# default_pattern, and that a project pattern replaces it: a project pattern
+# refuses, and a command outside it does not.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"\n' \
   >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core' 'a project pattern replaces the default'
-settings "$ROOT/kendex.settings.toml"
-# The fleet policy is input to the hook. Commands stay in JSON payloads;
-# this suite never runs the capped commands it asks the hook to judge.
+printf '[env]\n' >"$repo/kendex.settings.toml"
+# The default is the policy here. Commands stay in JSON payloads; this suite
+# never runs the capped commands it asks the hook to judge.
 while IFS='|' read -r command_json label; do
   command="$(jq -nr "$command_json")" || exit 1
   check 2 "$command" "$label"
-  assert_first 'command-safety: refused=policy' "$label names the policy"
+  assert_first 'command-safety: refused=default-policy' "$label names the default policy"
 done <<'CONTINUATIONS'
 "systemd-run --user --scope -p MemoryMax=64M cargo test"|single-line MemoryMax
 "systemd-run --user --scope -p MemoryHigh=64M cargo test"|single-line MemoryHigh
@@ -138,7 +139,7 @@ for unconfigured in empty-env no-file; do
   while IFS='|' read -r command_json label; do
     command="$(jq -nr "$command_json")" || exit 1
     check 2 "$command" "$unconfigured: the default refuses $label"
-    assert_first 'command-safety: refused=policy' "$unconfigured: $label names the policy"
+    assert_first 'command-safety: refused=default-policy' "$unconfigured: $label names the default policy"
   done <<'DEFAULT_REFUSES'
 "systemd-run --user --scope -p MemoryMax=64M cargo test"|a bare MemoryMax
 "systemd-run --user --scope -p MemoryHigh=512K cargo test"|a bare MemoryHigh
@@ -147,10 +148,37 @@ DEFAULT_REFUSES
   check 0 'systemd-run --user --scope -p MemoryMax=2G cargo test' "$unconfigured: the default passes a gigabyte cap"
   check 0 'git status' "$unconfigured: the default passes an unrelated command"
 done
+# The default is written three times: the hook applies it, the commit-guards
+# example declares it for the app's Customize tab, and the doc prints it.
+# Each copy is read from its own file, the example through the settings
+# loader the hook uses.
+default_in_hook="$(awk -v p="default_pattern='" '
+  index($0, p) == 1 { v = substr($0, length(p) + 1); sub(/.$/, "", v); print v; n++ }
+  END { exit n != 1 }' "$hook_source")" || exit 1
+default_in_doc="$(awk '
+  /^```text$/ { inside = 1; next }
+  inside && /^```$/ { inside = 0; next }
+  inside { print; n++ }
+  END { exit n != 1 }' "$ROOT/docs/authoring/command-safety.md")" || exit 1
+default_in_example="$(cd -- "$scratch" && COMMIT_GUARDS_SETTINGS_FILE="$ROOT/skills/commit-guards/kendex.settings.toml.example" \
+  GG_CHECK=command-safety bash -c '
+  source "$1/common.sh"
+  source "$1/settings.sh"
+  gg_setting COMMAND_SAFETY_DENY_PATTERN ""
+' _ "$ROOT/skills/commit-guards/scripts/lib")" || exit 1
+if [ -n "$default_in_hook" ] && [ "$default_in_example" = "$default_in_hook" ] &&
+  [ "$default_in_doc" = "$default_in_hook" ]; then
+  printf 'PASS the example and the doc carry the hook default\n'
+  passed=$((passed + 1))
+else
+  printf 'FAIL the example and the doc carry the hook default: hook [%s] example [%s] doc [%s]\n' \
+    "$default_in_hook" "$default_in_example" "$default_in_doc"
+  failed=$((failed + 1))
+fi
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
-check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'an explicit ^$ turns the hook off'
+check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'an explicit ^$ turns matching off'
 printf '[env]\n' >"$repo/kendex.settings.toml"
-check 0 'git status' 'a global hook outside Git leaves the hook inactive' /
+check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'a global hook outside Git leaves the hook inactive' /
 mkdir -p "$scratch/outside"
 printf 'gitdir: /missing\n' >"$scratch/outside/.git"
 check 2 'git status' 'an unresolved Git worktree refuses' "$scratch/outside"
@@ -311,50 +339,64 @@ assert_first 'command-safety: exit=1' 'and the exit key carries the status the c
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 2 'scripts/validate qml' 'missing settings support refuses'
 
-# Each control removes one matching behavior from a copy and reruns these
-# assertions. The exact failure proves an allowed payload, not a bad policy
-# or loader, made the corresponding row red.
+# Each control plants one defect in a copy and reruns these assertions; a
+# defect's rows are adjacent, and each names a row that copy must turn red
+# with that row's own exit pair. The exact failure proves the planted rule,
+# not a bad policy or loader, made the row red. The default_pattern defects
+# edit one rule of the shipped default: no default at all, no quoted value,
+# and a unit widened to gigabytes.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  while IFS='|' read -r defect label; do
-    mutant="$scratch/$defect.sh"
-    awk -v defect="$defect" '
-      defect == "no-join" && /^joined_command_text=/ {
-        $0 = "joined_command_text=\"$command_text\""; changed++
-      }
-      defect == "no-raw" && /^GREP_ERR=/ {
-        changed += sub(/"\$command_text" /, "")
-      }
-      { print }
-      END { if (changed != 1) exit 1 }
-    ' "$hook_source" >"$mutant" || exit 1
-    if cmp -s -- "$hook_source" "$mutant"; then
-      printf 'FAIL control %s changed no bytes\n' "$defect"
-      exit 1
+  planted=
+  while IFS='|' read -r defect got want label; do
+    if [ "$defect" != "$planted" ]; then
+      planted="$defect"
+      mutant="$scratch/$defect.sh"
+      awk -v defect="$defect" -v q="'" '
+        function swap(from, to,   at) {
+          at = index($0, from)
+          if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
+        }
+        defect == "no-join" && /^joined_command_text=/ {
+          $0 = "joined_command_text=\"$command_text\""; changed++
+        }
+        defect == "no-raw" && /^GREP_ERR=/ {
+          changed += sub(/"\$command_text" /, "")
+        }
+        defect == "no-default" && /^default_pattern=/ {
+          $0 = "default_pattern=" q "^$" q; changed++
+        }
+        defect == "no-quote" && /^default_pattern=/ { swap("[[:punct:]]?", "") }
+        defect == "unit-g" && /^default_pattern=/ { swap("[KkMm]", "[KkMmGg]") }
+        { print }
+        END { if (changed != 1) exit 1 }
+      ' "$hook_source" >"$mutant" || exit 1
+      if cmp -s -- "$hook_source" "$mutant"; then
+        printf 'FAIL control %s changed no bytes\n' "$defect"
+        exit 1
+      fi
+      control_status=0
+      env -i HOME="$HOME" PATH="$PATH" HOOK_UNDER_TEST="$mutant" \
+        bash "${BASH_SOURCE[0]}" >"$scratch/$defect.log" 2>&1 || control_status=$?
     fi
-    control_status=0
-    env -i HOME="$HOME" PATH="$PATH" HOOK_UNDER_TEST="$mutant" \
-      bash "${BASH_SOURCE[0]}" >"$scratch/$defect.log" 2>&1 || control_status=$?
     if [ "$control_status" -eq 1 ] &&
-      grep -Fq -- "FAIL $label: exit 0, expected 2:" "$scratch/$defect.log"; then
-      printf 'PASS control %s turns its matching row red\n' "$defect"
+      grep -Fq -- "FAIL $label: exit $got, expected $want:" "$scratch/$defect.log"; then
+      printf 'PASS control %s turns %s red\n' "$defect" "$label"
       passed=$((passed + 1))
     else
       printf 'FAIL control %s: exit %s; missing failure for %s\n' "$defect" "$control_status" "$label"
       cat "$scratch/$defect.log"
       failed=$((failed + 1))
     fi
-    if [ "$defect" = no-join ]; then
-      if grep -Fq -- 'FAIL continued-line MemoryHigh: exit 0, expected 2:' "$scratch/$defect.log"; then
-        printf 'PASS control no-join also turns MemoryHigh red\n'
-        passed=$((passed + 1))
-      else
-        printf 'FAIL control no-join did not turn MemoryHigh red\n'
-        failed=$((failed + 1))
-      fi
-    fi
   done <<'CONTROLS'
-no-join|continued-line MemoryMax
-no-raw|raw quoted continuation
+no-join|0|2|continued-line MemoryMax
+no-join|0|2|continued-line MemoryHigh
+no-raw|0|2|raw quoted continuation
+no-default|0|2|empty-env: the default refuses a bare MemoryMax
+no-default|0|2|no-file: the default refuses a bare MemoryMax
+no-quote|0|2|empty-env: the default refuses a quoted MemoryMax
+no-quote|0|2|no-file: the default refuses a quoted MemoryMax
+unit-g|2|0|empty-env: the default passes a gigabyte cap
+unit-g|2|0|no-file: the default passes a gigabyte cap
 CONTROLS
 fi
 printf '%s passed, %s failed\n' "$passed" "$failed"

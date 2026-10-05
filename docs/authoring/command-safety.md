@@ -2,7 +2,7 @@
 
 The `command-safety` bundle provides a shell command policy hook. It includes the hook and the commit-guards settings loader. It works without inspecting a desktop session or process list.
 
-Configure `COMMAND_SAFETY_DENY_PATTERN` in `kendex.settings.toml` under `[env]`, then install the `command-safety` bundle, or set it in the same install with `kendex add --bundle command-safety --setting COMMAND_SAFETY_DENY_PATTERN=<pattern>`; the bundle's commit-guards skill declares the key. The value is a nonempty POSIX extended regular expression. The shared settings grammar and precedence are documented in [the commit-guards skill](../../skills/commit-guards/SKILL.md#configuration).
+Install the `command-safety` bundle; it applies the default pattern below with no setting. To replace the default, set `COMMAND_SAFETY_DENY_PATTERN` in `kendex.settings.toml` under `[env]`, or in the install with `kendex add --bundle command-safety --setting COMMAND_SAFETY_DENY_PATTERN=<pattern>`; the bundle's commit-guards skill declares the key. The value is a nonempty POSIX extended regular expression. The shared settings grammar and precedence are documented in [the commit-guards skill](../../skills/commit-guards/SKILL.md#configuration).
 
 Claude Code, Codex, Gemini CLI, and GitHub Copilot execute the hook. Pi executes it while the `pi-hooks` carrier is registered. Cursor and OpenCode install advisory instructions instead of an executable check. Antigravity executes hooks but does not receive this one: it sends the command as `toolCall.args.CommandLine`, not the `tool_input` this hook reads, and a hook reaches Antigravity only by naming it in its `harnesses` line.
 
@@ -12,7 +12,7 @@ An absent setting applies the shipped host-safety pattern, so a fresh install re
 (^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)
 ```
 
-A cap that small starved a build's cgroup into a kernel allocation failure inside a filesystem transaction, and the host's root volume went read-only. A cap in gigabytes, or a run with no cap, passes. A project that sets the key replaces this pattern, so its own pattern keeps this rule where it still wants it; the value `^$` turns the hook off. Outside a Git worktree the hook stays inactive, which lets a global installation run there. An explicitly empty value, invalid pattern, unreadable setting, or unreadable tool input refuses the command.
+A cap that small starved a build's cgroup into a kernel allocation failure inside a filesystem transaction, and the host's root volume went read-only. A cap in gigabytes, or a run with no cap, passes. A project that sets the key replaces this pattern, so its own pattern keeps this rule where it still wants it; the value `^$` turns matching off, and the refusals below still apply. Outside a Git worktree the hook stays inactive, which lets a global installation run there. An explicitly empty value, invalid pattern, unreadable setting, or unreadable tool input refuses the command.
 
 A malformed value on any `[env]` key refuses every command, not only a malformed pattern. The settings loader reads the file whole, like every kendex settings reader, so a policy read past the bad line would come from a file the rest of the toolchain rejects. The refusal replays the loader's line naming the file, the line and the key to rewrite.
 

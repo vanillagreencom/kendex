@@ -97,5 +97,5 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = ""
 # default, which the hook also applies with no setting, refuses a systemd-run
 # MemoryMax= or MemoryHigh= cap in K or M, quoted or not: such a cap starved a
 # build into a kernel allocation failure that left a host's root volume
-# read-only. "^$" turns the hook off.
+# read-only. "^$" turns matching off; unreadable settings still refuse.
 COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)"

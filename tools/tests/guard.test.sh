@@ -309,7 +309,7 @@ run_guard
   && [[ "$OUT" == *"  systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core"* ]] \
   && ok "a settings policy that stopped refusing a capped scope reds, naming the command" \
   || bad "a settings policy that stopped refusing a capped scope reds, naming the command" "rc=$RC out=$OUT"
-if mutant_guard '/^command_safety_policy kendex.settings.toml/,+5d'; then
+if mutant_guard '/^command_safety_policy kendex.settings.toml/,+6d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the settings policy rows deleted the weakened pattern passes" \
