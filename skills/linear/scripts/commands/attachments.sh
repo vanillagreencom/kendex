@@ -124,7 +124,7 @@ fetch_attachment() (
             renewed=1
             continue
         fi
-        if linear_retry_wait "$code" "$attempt" "$headers"; then
+        if linear_retry_wait read "$code" "$attempt" "$headers"; then
             attempt=$((attempt + 1))
             continue
         fi

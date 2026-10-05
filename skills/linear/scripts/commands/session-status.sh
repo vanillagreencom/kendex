@@ -305,9 +305,9 @@ get_session_status() {
     ' <<<"$all_projects") || return 1
 
     # --- Cycles (was Q3c) ---
-    # Date-based selection through the shared cycle helpers: working = most
-    # recent started + incomplete, prev/next cut at its start, or at now where
-    # no cycle is running. Reading a position in the list instead — `last` for
+    # Date-based selection through the shared cycle helpers: working = the
+    # started cycle whose end has not passed, prev/next cut at its start, or
+    # at now where no cycle is running. Reading a position in the list instead — `last` for
     # previous, `first` for next — inverted both answers between cycles, and
     # this is the read cycle planning consumes.
     local all_cycles

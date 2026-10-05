@@ -10,7 +10,7 @@ control_replace scripts/lib/common.sh 1 \
 # three requests and three waits before it fails.
 control_expect "a generic 400 fails on its first answer"
 control_replace scripts/lib/common.sh 1 \
-    '    429 | 5?? | 000) ;;' \
+    '    *) return 1 ;;' \
     '    *) ;;'
 
 # Drop the header read, so a rate limit names no time the quota refills.
@@ -22,8 +22,30 @@ control_replace scripts/lib/common.sh 1 \
 # A request that reached no server fails on its first try.
 control_expect "an unanswered request is retried"
 control_replace scripts/lib/common.sh 1 \
-    '    429 | 5?? | 000) ;;' \
-    '    429 | 5??) ;;'
+    '    5?? | 000)' \
+    '    5??)'
+
+# Send every 5xx or unanswered request again, so a mutation Linear applied and
+# answered 502, or whose answer was lost, is applied twice.
+control_expect "a mutation answered 5xx is sent once"
+control_expect "an unanswered mutation is sent once"
+control_replace scripts/lib/common.sh 1 \
+    '        if [[ "$kind" != read ]]; then' \
+    '        if false; then'
+
+# Retry reads alone, so a rate-limited mutation, which Linear refused unrun,
+# fails on its first refusal.
+control_expect "a rate-limited mutation is retried"
+control_replace scripts/lib/common.sh 1 \
+    '    429) ;;' \
+    '    429) [[ "$kind" == read ]] || return 1 ;;'
+
+# Place every document as a write, so a query answered 5xx fails on its first
+# answer.
+control_expect "a 5xx is retried"
+control_replace scripts/lib/common.sh 1 \
+    "    local read_pattern='^[[:space:]]*(query[^_[:alnum:]]|\\{)'" \
+    "    local read_pattern='^\$'"
 
 # Only a non-200 answer is read for the RATELIMITED code.
 control_expect "a RATELIMITED body on HTTP 200 reports the rate limit"
@@ -48,5 +70,12 @@ control_replace scripts/lib/common.sh 1 \
 # never waited out.
 control_expect "a rate-limited answer waits out its Retry-After"
 control_replace scripts/lib/common.sh 1 \
-    '        if linear_retry_wait "$code" "$attempt" "$headers"; then' \
-    "        if linear_retry_wait \"\$code\" \"\$attempt\" ''; then"
+    '        if linear_retry_wait "$kind" "$code" "$attempt" "$headers"; then' \
+    "        if linear_retry_wait \"\$kind\" \"\$code\" \"\$attempt\" ''; then"
+
+# Say nothing when a write is left unconfirmed, so the caller reads a plain
+# HTTP error and sends the write again unchecked.
+control_expect "a mutation answered 5xx is sent once: names the write unconfirmed"
+control_replace scripts/lib/common.sh 1 \
+    "            printf 'linear-http: write=unconfirmed code=%s\\nLinear may have applied this write; read its result before sending it again.\\n' \"\$code\" >&2" \
+    '            :'

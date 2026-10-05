@@ -231,25 +231,38 @@ linear_rate_limited() {
 }
 
 # Whether a request is sent again after an answer, every Linear request and
-# attachment download deciding alike: a rate-limited answer (HTTP 429), a 5xx
-# or no answer at all (curl reached no server, code 000) may succeed when sent
-# again, twice at most. A 4xx such as a scope or validation refusal answers
-# the same way every time. The wait doubles from LINEAR_RETRY_BASE_DELAY, or
-# is the answer's Retry-After when that names more whole seconds; a
-# Retry-After over 60 seconds makes the answer final, since a request sent
-# sooner would be refused again and a caller is better served by the failure
-# than by a minute-long hang. ATTEMPT counts the answers so far.
+# attachment download deciding alike, twice at most. A rate-limited answer
+# (HTTP 429) is a refusal of a request Linear did not run, so it is sent again
+# whatever the request does. A 5xx, or no answer at all (curl reached no
+# server or lost the reply, code 000), may follow a request Linear already
+# ran: it is sent again only for a `read`, since a `write` sent twice can
+# create a second issue or comment, and a `write` left so prints one
+# `linear-http: write=unconfirmed` line on stderr. A 4xx such as a scope or
+# validation refusal answers the same way every time. The wait doubles from
+# LINEAR_RETRY_BASE_DELAY, or is the answer's Retry-After when that names more
+# whole seconds; a Retry-After over 60 seconds makes the answer final, since a
+# request sent sooner would be refused again and a caller is better served by
+# the failure than by a minute-long hang. KIND is `read` when sending the
+# request twice has the effect of sending it once, else `write`, and any other
+# value is taken as a `write`, the side that never sends twice. ATTEMPT counts
+# the answers so far.
 # Returns 0 once the wait is over, 1 when the answer is final.
-# Usage: linear_retry_wait <code> <attempt> "$headers"
+# Usage: linear_retry_wait <kind> <code> <attempt> "$headers"
 linear_retry_wait() {
-    local code="$1" attempt="$2" delay after
+    local kind="$1" code="$2" attempt="$3" delay after
     case "$code" in
-    429 | 5?? | 000) ;;
+    429) ;;
+    5?? | 000)
+        if [[ "$kind" != read ]]; then
+            printf 'linear-http: write=unconfirmed code=%s\nLinear may have applied this write; read its result before sending it again.\n' "$code" >&2
+            return 1
+        fi
+        ;;
     *) return 1 ;;
     esac
     ((attempt < 3)) || return 1
     delay=$((LINEAR_RETRY_BASE_DELAY << (attempt - 1)))
-    after=$(linear_header_value retry-after "$3") || return 1
+    after=$(linear_header_value retry-after "$4") || return 1
     if [[ "$after" =~ ^[0-9]{1,9}$ ]]; then
         after=$((10#$after))
         ((after <= 60)) || return 1
@@ -264,10 +277,11 @@ linear_retry_wait() {
 # A rate-limited final answer is reported by linear_rate_limited and
 # returns 1.
 # Otherwise prints the final status on the first line and the body after it.
-# CONFIG is the curl config lines naming the request.
-# Usage: reply=$(linear_http_post "$config") || return 1
+# CONFIG is the curl config lines naming the request; KIND is its
+# linear_retry_wait kind.
+# Usage: reply=$(linear_http_post "$config" read) || return 1
 linear_http_post() {
-    local config="$1" attempt=1 raw code body headers
+    local config="$1" kind="$2" attempt=1 raw code body headers
     local delimiter="___HTTP_CODE___"
     while true; do
         headers=''
@@ -287,7 +301,7 @@ linear_http_post() {
         if jq -e '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1 <<<"$body"; then
             code=429
         fi
-        if linear_retry_wait "$code" "$attempt" "$headers"; then
+        if linear_retry_wait "$kind" "$code" "$attempt" "$headers"; then
             attempt=$((attempt + 1))
             continue
         fi
@@ -301,7 +315,9 @@ linear_http_post() {
 }
 
 # One GraphQL request, as the transport every read and write goes through.
-# linear_http_post owns which answers are sent again; an app pair's token is
+# linear_http_post owns which answers are sent again; a document that opens
+# as a query is its `read`, and every other document, a mutation or one whose
+# operation the pattern cannot place, its `write`. An app pair's token is
 # renewed once on an HTTP 401. Returns 2 when Linear answers that the entity
 # the request names does not exist for this actor ("Entity not found: Issue",
 # under HTTP 200), and 1 on every other failure, so a caller can tell "no
@@ -314,7 +330,11 @@ graphql_request() {
     if [ -z "$variables" ]; then
         variables='{}'
     fi
-    local authorization auth_renewed=0 payload reply http_code response
+    local authorization auth_renewed=0 payload reply http_code response kind=write
+    local read_pattern='^[[:space:]]*(query[^_[:alnum:]]|\{)'
+    if [[ "$query" =~ $read_pattern ]]; then
+        kind=read
+    fi
 
     check_api_key || return 1
     authorization=$(linear_authorization) || return 1
@@ -334,7 +354,7 @@ graphql_request() {
             'request = "POST"' \
             "header = $(curl_config_quote "Content-Type: application/json")" \
             "header = $(curl_config_quote "Authorization: $authorization")" \
-            "data = $(curl_config_quote "$payload")")") || return 1
+            "data = $(curl_config_quote "$payload")")" "$kind") || return 1
         http_code="${reply%%$'\n'*}"
         response="${reply#*$'\n'}"
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# session-status picks its cycles by date, in UTC: `cycle` is the latest
-# started cycle not yet finished, `prev_cycle` the latest one before it and
-# `next_cycle` the earliest after it; with none running, both cut at now.
+# session-status picks its cycles by date, in UTC: `cycle` is the started
+# cycle whose end has not passed, whatever its progress, `prev_cycle` the
+# latest one before it and `next_cycle` the earliest after it; with none
+# running, both cut at now.
 # Linear's startsAt is UTC with a `Z`, compared as a string, so TZ is pinned
 # east of UTC, where a local-time cut would count a cycle starting in six
 # hours as started.
@@ -32,10 +33,11 @@ printf '___HTTP_CODE___200'
 STUB
 chmod +x "$TMP_ROOT/bin/curl"
 
-# A startsAt OFFSET seconds from now, in Linear's shape.
+# A timestamp OFFSET seconds from now, in Linear's shape.
 at() { jq -rn --argjson off "$1" '(now + $off) | todate | sub("Z$"; ".000Z")'; }
-cycle() { jq -cn --arg id "$1" --arg starts "$(at "$2")" --argjson progress "$3" \
-    '{id: $id, number: 1, name: null, startsAt: $starts, endsAt: $starts, progress: $progress,
+# cycle ID START_OFFSET END_OFFSET PROGRESS
+cycle() { jq -cn --arg id "$1" --arg starts "$(at "$2")" --arg ends "$(at "$3")" --argjson progress "$4" \
+    '{id: $id, number: 1, name: null, startsAt: $starts, endsAt: $ends, progress: $progress,
       issueCountHistory: [], completedIssueCountHistory: [], scopeHistory: [], completedScopeHistory: [], team: {name: "T"}}'; }
 
 status() {
@@ -45,14 +47,22 @@ status() {
 
 # Two finished cycles, one running, one starting in six hours; listed out of
 # date order, as Linear may page them.
-running=$(jq -cs . <<<"$(cycle future 21600 0)$(cycle old -2592000 1)$(cycle current -3600 0.5)$(cycle recent -1296000 1)")
+running=$(jq -cs . <<<"$(cycle future 21600 1231200 0)$(cycle old -2592000 -1296000 1)$(cycle current -3600 1206000 0.5)$(cycle recent -1296000 -3600 1)")
 out=$(status "$running")
 assert_jq "running cycle: cycle is the started one" "$out" '.cycle.id == "current"'
 assert_jq "running cycle: prev is the latest earlier cycle" "$out" '.prev_cycle.id == "recent"'
 assert_jq "running cycle: next is the earliest later cycle" "$out" '.next_cycle.id == "future"'
 
-idle=$(jq -cs . <<<"$(cycle future 21600 0)$(cycle old -2592000 1)$(cycle recent -1296000 1)")
+idle=$(jq -cs . <<<"$(cycle future 21600 1231200 0)$(cycle old -2592000 -1296000 1)$(cycle recent -1296000 -3600 1)")
 out=$(status "$idle")
 assert_jq "no cycle running: cycle is null" "$out" '.cycle == null'
 assert_jq "no cycle running: prev cuts at now" "$out" '.prev_cycle.id == "recent"'
 assert_jq "no cycle running: next cuts at now" "$out" '.next_cycle.id == "future"'
+
+# A gap between cycles, after one that ended with issues unfinished: its
+# progress stays below 1, and it is still not running.
+gap=$(jq -cs . <<<"$(cycle future 21600 1231200 0)$(cycle old -2592000 -1296000 1)$(cycle unfinished -1296000 -86400 0.9)")
+out=$(status "$gap")
+assert_jq "ended unfinished cycle: cycle is null" "$out" '.cycle == null'
+assert_jq "ended unfinished cycle: prev is the ended cycle" "$out" '.prev_cycle.id == "unfinished"'
+assert_jq "ended unfinished cycle: next cuts at now" "$out" '.next_cycle.id == "future"'

@@ -32,7 +32,7 @@ control_replace scripts/commands/attachments.sh 1 \
 # A download is sent once, whatever it is answered.
 control_expect 'a 503 is retried: attempts'
 control_replace scripts/commands/attachments.sh 1 \
-    '        if linear_retry_wait "$code" "$attempt" "$headers"; then' \
+    '        if linear_retry_wait read "$code" "$attempt" "$headers"; then' \
     '        if false; then'
 # The answer's Retry-After is never read.
 control_expect 'a Retry-After within the bound is waited out: waits'

@@ -162,13 +162,15 @@ linear_mint_token() (
         "grant_type=client_credentials&scope=" + ($scope | @uri) + "&client_id=" + (.[0] | @uri) +
         "&client_secret=" + (.[1] | @uri)') || return 1
     payload_quote=$(curl_config_quote "$payload") || return 1
-    # linear_http_post retries as every request does and reports a rate limit
-    # in the same RATELIMITED shape.
+    # A mint is a read to linear_http_post: a second mint after a lost reply
+    # issues a second token, as the caller's next invocation would mint one
+    # anyway, and never a tracker object. A rate limit is reported in the same
+    # RATELIMITED shape as every request's.
     reply=$(linear_http_post "$(printf '%s\n' \
         'url = "https://api.linear.app/oauth/token"' \
         'request = "POST"' \
         'header = "Content-Type: application/x-www-form-urlencoded"' \
-        "data = $payload_quote")") || return 1
+        "data = $payload_quote")" read) || return 1
     http_code="${reply%%$'\n'*}"
     response="${reply#*$'\n'}"
     if [[ "$http_code" == 000 ]]; then

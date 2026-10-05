@@ -10,3 +10,9 @@ control_expect 'running cycle: prev is the latest earlier cycle'
 control_replace scripts/lib/cycle-dates.sh 1 \
     '        | sort_by(.startsAt) | reverse'\''' \
     '        | sort_by(.startsAt)'\'''
+# Progress for the end: a cycle that ended with issues unfinished stays the
+# working cycle through the gap after it.
+control_expect 'ended unfinished cycle: cycle is null'
+control_replace scripts/lib/cycle-dates.sh 1 \
+    "        '[.[] | select(.startsAt <= \$today and .endsAt > \$today)]" \
+    "        '[.[] | select(.startsAt <= \$today and .progress < 1)]"

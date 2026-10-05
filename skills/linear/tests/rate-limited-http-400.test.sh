@@ -7,7 +7,9 @@
 # API failure instead of reporting the misleading "Team not found".
 # Only a rate-limited, 5xx or unanswered request is retried: a generic 4xx
 # fails on its first answer and carries the body's first error message. A
-# Retry-After on the answer lengthens the wait before the next one.
+# Retry-After on the answer lengthens the wait before the next one. A 5xx or
+# unanswered mutation is sent once, since Linear may already have applied it;
+# a rate-limited one is retried, since Linear refused it unrun.
 #
 # Runs fully offline against a mocked curl.
 set -euo pipefail
@@ -24,7 +26,7 @@ assert_tmpdir TMP_BASE
 # %{http_code}). Headers, when given, precede the body as `dump-header = "-"`
 # writes them: CRLF lines and a blank line, one such block per header block.
 # The code `none` is a curl that reaches no server: it writes nothing and
-# exits 7.
+# exits 7. Every invocation appends one line to <root>/calls.
 make_env() {
   local root="$1" code="$2" body="$3" headers="${4:-}"
   mkdir -p "$root/.agents/skills" "$root/bin"
@@ -39,6 +41,7 @@ make_env() {
 #!/usr/bin/env bash
 # Consume the -K - config from stdin like the real invocation.
 cat >/dev/null
+echo sent >>"$root/calls"
 [[ "$code" != none ]] || exit 7
 args=("\$@")
 w_fmt=""
@@ -213,7 +216,7 @@ assert_jq "a leading-zero base delay still answers with the rate limit" \
 assert_not_contains "a leading-zero base delay is never an arithmetic error" \
   "$zero_out" "value too great for base"
 
-echo "=== only a rate-limited, 5xx or unanswered request is retried ==="
+echo "=== only a rate-limited, 5xx or unanswered query is retried ==="
 # Each arm reads the waits the retry asked for off a sleep stub. A request
 # retried twice sleeps twice; one that fails on its first answer never sleeps.
 for row in "gen|a generic 400 fails on its first answer|" "server|a 5xx is retried|0 0 " "rl|a rate-limited answer is retried|0 0 " \
@@ -241,3 +244,34 @@ chmod +x "$TMP_BASE/after/bin/sleep"
 : >"$TMP_BASE/after/slept"
 run_linear "$TMP_BASE/after" statuses list >/dev/null 2>&1 || true
 assert_eq "a rate-limited answer waits out its Retry-After" "$(tr '\n' ' ' <"$TMP_BASE/after/slept")" "5 5 "
+
+echo "=== a 5xx or unanswered mutation is sent once ==="
+# The stub answers every request alike, so the count of requests it saw is the
+# count the library sent. The mutation document opens with a newline and an
+# indent, as the commands' heredoc documents do.
+MUTATION=$'\n    mutation CreateComment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }'
+request_once() { # root, document: graphql_request's combined output
+  local root="$1"
+  (cd "$root" && env PATH="$root/bin:$PATH" LINEAR_RETRY_BASE_DELAY=0 bash -c '
+    set -u
+    LINEAR_API="https://api.linear.app/graphql"
+    LINEAR_API_KEY="lin_api_test"
+    source "$0/.agents/skills/linear/scripts/lib/common.sh"
+    graphql_request "$1" "{}"
+  ' "$root" "$2" 2>&1)
+}
+for row in "wserver|502|{}|1|a mutation answered 5xx is sent once" \
+  "wnoanswer|none||1|an unanswered mutation is sent once" \
+  "wrl|400|$RL_BODY|3|a rate-limited mutation is retried"; do
+  IFS='|' read -r env code body want label <<<"$row"
+  make_env "$TMP_BASE/$env" "$code" "$body"
+  : >"$TMP_BASE/$env/calls"
+  write_rc=0
+  out="$(request_once "$TMP_BASE/$env" "$MUTATION")" || write_rc=$?
+  assert_ne "$label: the call fails" "$write_rc" 0
+  assert_eq "$label" "$(wc -l <"$TMP_BASE/$env/calls" | tr -d ' ')" "$want"
+  if [[ "$want" == 1 ]]; then
+    # The key line an agent reads before deciding whether to send the write again.
+    assert_contains "$label: names the write unconfirmed" "$out" "linear-http: write=unconfirmed code=${code/none/000}"
+  fi
+done

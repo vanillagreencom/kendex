@@ -2,14 +2,15 @@
 # Date comparisons against Linear's cycle and issue timestamps. common.sh
 # sources this file, so every command has it.
 #
-# Linear returns `startsAt` and `updatedAt` in UTC, millisecond precision, with
-# a `Z` suffix, and every date filter here compares those strings lexically, so
-# a comparison timestamp must carry the same shape. `date -Iseconds` does not —
-# it emits the host's local time with an offset suffix, which only agrees on a
-# UTC host. Off UTC it moves the cut by the whole offset, so within that window
-# either side of a cycle boundary the answer is wrong: east of UTC `current`
-# names a cycle that has not started, and west of it `current` names the
-# previous cycle, or nothing at all when no earlier cycle is incomplete.
+# Linear returns `startsAt`, `endsAt` and `updatedAt` in UTC, millisecond
+# precision, with a `Z` suffix, and every date filter here compares those
+# strings lexically, so a comparison timestamp must carry the same shape.
+# `date -Iseconds` does not — it emits the host's local time with an offset
+# suffix, which only agrees on a UTC host. Off UTC it moves the cut by the
+# whole offset, so within that window either side of a cycle boundary the
+# answer is wrong: east of UTC `current` names a cycle that has not started,
+# and west of it `current` names the previous cycle, or nothing at all when
+# a gap came before the running one.
 
 # Now, in the shape Linear returns.
 linear_now_utc() {
@@ -25,8 +26,10 @@ linear_utc_days_ago() {
         date -u -v-"${days}"d +%Y-%m-%dT%H:%M:%S.000Z
 }
 
-# The cycle a team is working in: the most recently started cycle that is not
-# finished. Reads the cycle array on stdin, prints that cycle or `null`.
+# The cycle a team is working in: the most recently started cycle whose end
+# has not passed. Reads the cycle array on stdin, prints that cycle or `null`.
+# Progress does not decide it: a cycle that ended with issues unfinished keeps
+# a progress below 1 for good, and between two cycles it is not running.
 #
 # One definition for every caller: as copied expressions their
 # no-working-cycle fallbacks drifted apart.
@@ -34,7 +37,7 @@ linear_working_cycle() {
     # The array arrives in the order Linear paged it, so the sort carries
     # weight. One term per line keeps it separately provable from the end taken.
     jq --arg today "$(linear_now_utc)" \
-        '[.[] | select(.startsAt <= $today and .progress < 1)]
+        '[.[] | select(.startsAt <= $today and .endsAt > $today)]
            | sort_by(.startsAt)
            | last // null'
 }
