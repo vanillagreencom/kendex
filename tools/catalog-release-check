@@ -5,7 +5,8 @@ Usage: catalog-release-check BINARY CATALOG [--allow-advisories] [--prior PRIOR]
 The fresh leg installs CATALOG into a new project. With --prior, the upgrade
 leg installs PRIOR with every package it ships declared, then refreshes that
 project to CATALOG through the same declared source, as a consumer's refresh
-does after a catalog merge.
+does after a catalog merge. A PRIOR the engine's own catalog check refuses
+skips the upgrade leg.
 Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
 catalog-release: remedy=KEY on failure, catalog-release: version=JSON
 result=pass legs=NAMES on success, and catalog-release: upgrade=skip
@@ -124,22 +125,24 @@ def main():
         legs = ["fresh"]
         if prior is not None:
             upgrade = leg(binary, root / "upgrade", ceilings)
-            # The manifest records the source by this path, so the refresh
-            # reaches the candidate through the one declaration, as a
-            # consumer's subscription does across a catalog merge.
-            source = root / "upgrade" / "catalog"
-            source.symlink_to(prior, target_is_directory=True)
-            diagnostics = []
-            diagnostic = settle(upgrade, [install(source)], diagnostics)
-            if diagnostic is not None:
-                # The released engine cannot build the install this leg
-                # models, and failing here would also hold back the change
-                # that repairs that base.
-                print(f"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(diagnostic)}")
+            # The engine's catalog check answers whether it accepts the base.
+            # A base it refuses is no install this leg can model, and failing
+            # on one would hold back the change that repairs it.
+            refused = settle(upgrade, [["check", "--catalog", str(prior)]], [])
+            if refused is not None:
+                print(f"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(refused)}")
             else:
-                source.unlink()
-                source.symlink_to(catalog, target_is_directory=True)
-                diagnostic = settle(upgrade, [REFRESH, VERIFY], diagnostics)
+                # The manifest records the source by this path, so the refresh
+                # reaches the candidate through the one declaration, as a
+                # consumer's subscription does across a catalog merge.
+                source = root / "upgrade" / "catalog"
+                source.symlink_to(prior, target_is_directory=True)
+                diagnostics = []
+                diagnostic = settle(upgrade, [install(source)], diagnostics)
+                if diagnostic is None:
+                    source.unlink()
+                    source.symlink_to(catalog, target_is_directory=True)
+                    diagnostic = settle(upgrade, [REFRESH, VERIFY], diagnostics)
                 if diagnostic is not None:
                     return failed("upgrade", diagnostic)
                 legs.append("upgrade")

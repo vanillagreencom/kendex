@@ -34,8 +34,8 @@
 # that drops or renames a package the base shipped fails until a released
 # kendex retires that name: keep the package meanwhile, a stub is enough.
 # An event with no base commit, a first push, a base without the catalog
-# path, or a base the released engine cannot install runs the fresh install
-# alone and prints why.
+# path, or a base the released engine's catalog check refuses runs the fresh
+# install alone and prints why.
 name: catalog-check
 
 on:

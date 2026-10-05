@@ -225,33 +225,33 @@ fn outcome(output: &Output) -> String {
 /// The upgrade leg installs the prior catalog with each of its packages
 /// declared, then refreshes that project to the candidate. A candidate the
 /// engine settles there passes. One dropping a declared package fails there,
-/// after the fresh leg passed, and names the keep-package remedy. A prior the
-/// engine will not install skips the leg and passes on the fresh leg. A
-/// wrapper around the built binary plants that refusal, because the built
-/// engine's `add --all` installs every catalog shape tried.
+/// after the fresh leg passed, and names the keep-package remedy. A prior
+/// holding a skill name the loaders reject, which `add --all` installs
+/// without it, skips the leg on the engine's catalog check, so the candidate
+/// dropping that skill passes on the fresh leg.
 ///
 /// Each control edits a disposable copy of the checker and must reach the
 /// stated outcome: swallowing the verdict, or refreshing against the prior
 /// catalog in place of the candidate, lets the dropping candidate pass;
-/// failing on a refused prior turns the skip red.
+/// without the prior's catalog check the repair fails the upgrade leg.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
     let original = std::fs::read_to_string(&tool).unwrap();
     let dropped_passes = "exit=Some(0) result=pass legs=fresh,upgrade";
-    for (name, candidate, refuse_prior, expected, controls) in [
+    for (name, shipped, candidate, expected, controls) in [
         (
             "settles",
+            &["review", "plan"][..],
             &["review", "plan", "audit"][..],
-            false,
             "exit=Some(0) result=pass legs=fresh,upgrade",
             &[][..],
         ),
         (
             "drops",
+            &["review", "plan"][..],
             &["review"][..],
-            false,
             "exit=Some(1) leg=upgrade remedy=keep-package",
             &[
                 (
@@ -268,44 +268,24 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
         ),
         (
             "prior refused",
+            &["review", "Bad_Name"][..],
             &["review"][..],
-            true,
             "exit=Some(0) upgrade=skip cause=prior-uninstallable result=pass legs=fresh",
             &[(
-                "print(f\"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(diagnostic)}\")",
-                "return failed(\"upgrade\", diagnostic)",
+                "refused = settle(upgrade, [[\"check\", \"--catalog\", str(prior)]], [])",
+                "refused = None",
                 "exit=Some(1) leg=upgrade remedy=keep-package",
             )][..],
         ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
-        let prior = catalog_of(&home, "prior", &["review", "plan"]);
+        let prior = catalog_of(&home, "prior", shipped);
         let catalog = catalog_of(&home, "candidate", candidate);
-        let binary = if refuse_prior {
-            let wrapper = home.join("refusing-kendex");
-            std::fs::write(
-                &wrapper,
-                format!(
-                    "#!/bin/sh\nif [ \"$1\" = add ] && [ \"$(readlink -f \"$2\")\" = '{}' ]; then\n  echo 'refused: planted' >&2\n  exit 1\nfi\nexec '{}' \"$@\"\n",
-                    prior.display(),
-                    env!("CARGO_BIN_EXE_kendex"),
-                ),
-            )
-            .unwrap();
-            std::fs::set_permissions(
-                &wrapper,
-                std::os::unix::fs::PermissionsExt::from_mode(0o755),
-            )
-            .unwrap();
-            wrapper
-        } else {
-            std::path::PathBuf::from(env!("CARGO_BIN_EXE_kendex"))
-        };
         let run = |script: &Path| {
             Command::new("python3")
                 .arg(script)
-                .arg(&binary)
+                .arg(env!("CARGO_BIN_EXE_kendex"))
                 .arg(&catalog)
                 .arg("--prior")
                 .arg(&prior)
