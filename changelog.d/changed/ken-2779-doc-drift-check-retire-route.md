@@ -1,1 +1,1 @@
-- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes and applies: the entry is skipped with one bare line, `doc-drift-check: retired hook, entry skipped; delete [hooks.doc-drift-check] from kendex.toml`, its installed copies are removed, and nothing fails. KEN-2892 removes the route in the next minor release.
+- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes: the entry is skipped and its copies removed. `kendex remove doc-drift-check --scope project --sweep` drops the entry.

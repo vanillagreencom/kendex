@@ -1,1 +1,1 @@
-- kendex 1.10.1 refreshes again with `[hooks.doc-drift-check]` declared: the hook is a retired stub that runs no check, and no warning prints. Delete the entry from kendex.toml.
+- kendex 1.10.1 refreshes again with `[hooks.doc-drift-check]` declared; the hook runs no check. `kendex remove doc-drift-check --scope project --sweep` removes the entry and its files.

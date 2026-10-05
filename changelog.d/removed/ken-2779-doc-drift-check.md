@@ -1,1 +1,1 @@
-- The `doc-drift-check` hook is retired. A refresh removes it from every harness, and no turn end is held for unchanged architecture docs or `Covers:` lines.
+- The `doc-drift-check` hook is retired. `kendex remove doc-drift-check --scope project --sweep` removes its entry and files in one change; a rolling refresh sweeps a hand-deleted entry.
