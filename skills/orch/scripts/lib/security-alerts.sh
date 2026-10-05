@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # The security-alert pass of oversee-watch: every open Dependabot, code
-# scanning and secret scanning alert in each --repo, reported once until the
-# overseer records its verdict in the fleet state's `alerts_triaged`. Sourced
+# scanning and secret scanning alert in each --repo, a private one's
+# Dependabot alerts alone, reported once until the overseer records its
+# verdict in the fleet state's `alerts_triaged`. Sourced
 # by oversee-watch, and like the rest of its lib/ it reads that script's
 # globals (REPOS, PW_SEEN, WORK_DIR, WORKFLOW_STATE, WORKFLOW_STATE_ARGS) and
 # calls its `die`, `ow_message` and lane-row helpers.
@@ -139,7 +140,7 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
-  local recorded="" reported repo kind out prs line key number severity subject_key subject
+  local recorded="" reported repo kinds kind out prs line key number severity subject_key subject
   local manifest scope advisory validity url pr fields row alerts source query token keys=() fix_keys=() fix_rows=""
   SECURITY_UNREAD=""
   # The fleet renews the installation token in this file: the control VM for
@@ -179,7 +180,12 @@ check_security_alerts() {
   recorded=$'\n'"$(awk -F'\t' 'NF == 3 { print $1 "#" $2 "/" $3 }' <<<"$recorded")"$'\n'
 
   for repo in "${REPOS[@]}"; do
-    for kind in $SECURITY_KINDS; do
+    # Code and secret scanning on a private repository are paid products the
+    # fleet does not buy, so there they can only answer feature-off. A failed
+    # visibility read keeps all three reads, whose own failures are reported.
+    kinds="$SECURITY_KINDS"
+    [[ "$(GH_TOKEN="$token" gh api "repos/$repo" --jq .private 2>/dev/null)" != true ]] || kinds=dependabot
+    for kind in $kinds; do
       rc=0 source="$repo/$kind" query="state=open&per_page=100"
       # A secret's plaintext value is in the list unless GitHub is told to
       # leave it out, and the check never reads it.
