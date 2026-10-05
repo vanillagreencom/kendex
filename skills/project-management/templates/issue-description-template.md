@@ -31,7 +31,7 @@
 | `[REGRESSED_BY]` | `create_fields.regressed_by`, else the caller: the pull request that caused the defect, as `#N`, several comma-separated | Only when that pull request is known; drop the line otherwise. A review-born item that names its source PR in `[ORIGIN_CONTEXT]` leaves it empty. `oversee-report`'s Escapes count reads this line and no other `#N` |
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[DESCRIPTION]` | `items[].description` | Use as written |
-| `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list |
+| `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Top of the description; omit the line when absent |
 
