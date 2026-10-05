@@ -245,12 +245,13 @@ Options:
                   own lease in place, and skips the rebase for a tree with
                   uncommitted work. A clean tree whose branch is an ancestor
                   of its remote branch, whose commits another machine pushed,
-                  fast-forwards to it (worktree-reuse-fast-forward) and
-                  stays at that published head, unrebased, until the next
-                  push rebases it; --restack rebases it as well. Any other
-                  clean tree rebases onto origin/<default>. A clean tree
-                  also refreshes setup. The target must be registered to this
-                  repository; incomplete directories are preserved (exit 75).
+                  first fast-forwards to it (worktree-reuse-fast-forward).
+                  A clean tree at its remote branch's head stays there,
+                  unrebased, until the next push rebases it; --restack and
+                  --replay rebase it. Any other clean tree rebases onto
+                  origin/<default>. A clean tree also refreshes setup. The
+                  target must be registered to this repository; incomplete
+                  directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution
                   instead of aborting the rebase
   --replay        With --reuse/--restack: run the same restack as an ordered
@@ -791,8 +792,9 @@ before it asks for a tree can tell the two apart.
 create --reuse asks the same question before its rebase and skips the rebase
 on a merged branch; create --restack and create --replay refuse there
 instead, because a rebase is what they were asked for. create does not have
-merged's third answer: it rebases both on a not-merged answer and on a lookup
-that could not answer, recording the latter as worktree-merge-unverified,
+merged's third answer: it goes on as for a branch in flight both on a
+not-merged answer and on a lookup that could not answer, recording the
+latter as worktree-merge-unverified,
 because refusing there would disable every reuse on a machine with no gh.
 For the same reason a default branch GitHub cannot name falls back to git's
 record of origin's HEAD with a warning, worktree-default-branch-unreadable;

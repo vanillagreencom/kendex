@@ -107,7 +107,7 @@ assert_eq "$(printf '%s' "$out" | jq -r '.ahead')" "1" "stale worktree still rep
 assert_eq "$(printf '%s' "$out" | jq -r '.fresh')" "false" "stale worktree reports fresh = false"
 
 # Rebase clears staleness: after rebasing onto the fetched base (what
-# `worktree create <ID> --reuse` does), the gate must pass.
+# `worktree create <ID> --restack` does), the gate must pass.
 git -C "$WT" rebase -q origin/main >/dev/null 2>&1
 set +e
 out="$(env -u WORKTREE_DEFAULT_BRANCH "$BF" "$WT" 2>"$TMP_ROOT/err")"
@@ -217,11 +217,10 @@ assert_eq "$code" "1" "missing origin remote exits 1"
 assert_contains "$err" "base-freshness: missing-remote path=$WT remote=origin" "missing origin remote is named in the error"
 
 # Workflow wiring: the start-worktree § 1 gate runs the helper before § 2
-# delegation and routes stale bases through the supported reuse rebase.
+# delegation.
 START_WT="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
 wiring="$(cat "$START_WT")"
 assert_contains "$wiring" '.agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]' "start-worktree § 1 runs the base-freshness gate"
-assert_contains "$wiring" 'worktree create [ISSUE_ID] --reuse' "start-worktree routes stale bases through the supported reuse rebase"
 assert_contains "$wiring" 'Never review on an unverified base' "start-worktree forbids reviewing an unverified base"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

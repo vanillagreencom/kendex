@@ -142,7 +142,7 @@ step() {
       git -C "$WT" commit -q -m 'unpublished local work'
       printf 'dirty\n' >"$WT/dirty.txt"
       ;;
-    # main moves on after the topic branch, so an implicit reuse would rebase.
+    # main moves on after the topic branch, so a restack would rebase.
     advance)
       printf 'main advance\n' >"$MAIN/main-advance.txt"
       git -C "$MAIN" add main-advance.txt
@@ -258,15 +258,13 @@ topic_head() {
 }
 
 # An oid by name: main's head at fixture end, the topic head the row was
-# built with, a commit built on main's head, or other.
+# built with, or other.
 head_alias() {
   local oid="$1"
   if [[ "$oid" == "$END" ]]; then
     printf 'end'
   elif [[ "$oid" == "$PRE" ]]; then
     printf 'pre'
-  elif [[ "$(git -C "$MAIN" rev-parse "$oid~1" 2>/dev/null)" == "$END" ]]; then
-    printf 'on-end'
   else
     printf 'other'
   fi
@@ -300,7 +298,6 @@ alias_text() {
   message_records |
   { if [[ "${1:-}" == usage ]]; then sed '/^Usage: /q'; else cat; fi; } |
     sed -e "s|$WT|<topic>|g" -e "s|$TREES_DIR/other|<other>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
-      -e 's/^rebase-map: .*/rebase-map:.../' \
       -e 's/;/\\;/g' | paste -s -d ';' -
 }
 
@@ -348,9 +345,6 @@ err_text() {
     remote-fail) printf 'worktree-ownership-query-failed: origin' ;;
     unknown-option) printf 'worktree-create-option-unknown: --bogus' ;;
     default-branch) printf 'worktree-branch-default: main' ;;
-    # A completed restack reports its rewritten commits; what pairs them is
-    # worktree_create_restack.sh's contract, so the SHAs collapse here.
-    map:*) printf 'worktree-rebase-count: %s;rebase-map:...' "${1#map:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -358,7 +352,7 @@ err_text() {
 # label|fixture (- for the bare world)|command|rc|out|err|state
 ROWS='
 a published, locked, PR-backed worktree refuses implicit reuse with every signal and moves nothing|wt push advance open-pr lock|create topic|75|-|implicit:topic:clean,up,pr,lock|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
---reuse rebases the owned branch onto the advanced main|wt push advance open-pr|create topic --reuse|0|topic|map:1|main=main@end/clean cfg=true trees=topic:reg@topic@on-end branches=topic dirty=-
+--reuse adopts the owned branch and keeps it at its published head over the advanced main|wt push advance open-pr|create topic --reuse|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 an open PR still owns the branch after its checkout is dropped|wt push open-pr dropped|create topic|75|-|dup:topic:pr|main=main@end/clean cfg=true trees= branches=- dirty=-
 --pr checks the PR head out for inspection|wt push open-pr dropped pr-json|create topic --pr 42|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 dirty, unpublished local work is ownership on its own|wt local-work|create topic|75|-|implicit:topic:dirty,noup|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=?? dirty.txt

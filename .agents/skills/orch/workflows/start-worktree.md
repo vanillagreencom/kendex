@@ -70,13 +70,13 @@ The full session from inside a worktree: implement → review → submit → fin
    ```
 
    - Exit 0 → step 7. On a merge-queue base whose rules demand no up-to-date branch, a branch behind it that merges cleanly is fresh; the JSON's `reading` names what decided (`base-freshness --help`).
-   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before step 7:
+   - Exit 4 → rebase through the guarded restack, which rebases a branch at its published head too, then re-run the gate; it must exit 0 before step 7:
 
      ```bash
-     .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --reuse
+     .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --restack
      ```
 
-   - Exit 1, or a reuse that cannot complete → report the divergence and stop. Never review on an unverified base.
+   - Exit 1, or a restack that cannot complete → `worktree restack abort [ISSUE_ID]` where it paused, report the divergence and stop. Never review on an unverified base.
 
 7. **Record branch size before delegation.** Run the size report on this branch:
 

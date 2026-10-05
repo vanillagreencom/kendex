@@ -401,7 +401,7 @@ step() {
       ;;
     # The guarded restack's own map refusal: it leaves the record standing and
     # clears the authorization it prepared, so the rewrite carries none.
-    reuse-unmapped) tool create "$ISSUE" --reuse ;;
+    restack-unmapped) tool create "$ISSUE" --restack ;;
     # What a killed rewrite leaves: the record is written before git touches a
     # commit, so a death anywhere between that write and the map reaching disk
     # leaves exactly this. The rebase is run by hand here, because the window
@@ -1036,7 +1036,7 @@ a default branch that advanced between the refused push and its retry is rebased
 a rebase conflict after a refused push drops its own pending half and keeps what that push authorized|pair fix publish advance fix2 refused-rebase conflict-main|push TOPIC|1|-|rebase-failed|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
 once that conflict is resolved by a merge, the earlier authorization publishes it under the same lease|pair fix publish advance fix2 refused-rebase conflict-main conflicted-push merge-main record-push|push TOPIC|0|-|skip-rebase|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,fix2.txt:merged,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre-merged
 a published branch whose rewrite went unmapped still refuses on its record, its authorization finalized|pair twins publish twins-main unmapped-push|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=published
-a reuse whose map was refused leaves no authorization, and its record refuses the push before the lease names a republish|pair twins publish twins-main reuse-unmapped|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=- map=published
+a restack whose map was refused leaves no authorization, and its record refuses the push before the lease names a republish|pair twins publish twins-main restack-unmapped|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=- map=published
 a published branch whose rewrite went unmapped publishes under the same lease once its record is removed|pair twins publish twins-main unmapped-push remove-record record-push|push TOPIC|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
 a rewrite made outside the tool authorizes nothing and is refused|pair fix publish advance hand-rebase|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 a behind branch on a merge-queue base that merges cleanly is pushed where it stands|pair queue advance fix|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
