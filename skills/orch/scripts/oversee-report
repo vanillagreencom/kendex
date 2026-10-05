@@ -57,6 +57,7 @@ message() { # KEY VALUE [CAUSE]
       owner-reports) echo "The overseer mailbox's report notices could not be read, so the last report sent to the owner is unknown:" ;;
       notice) echo "The report file stands and was printed above, and the notice carrying it to the owner could not be sent:" ;;
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
+      host-capabilities) echo "lane-host could not name the lane host kind's channel, so whether the lane has a mailbox to read is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
       summary) echo "The summary file is missing or empty. The report notice carries the overseer's own summary to the owner, so nothing is written without one." ;;
       summary-shape)
@@ -197,6 +198,8 @@ Rows:
                   own workflow state holds, and failing checks on its open PR
                   as `github.sh pr-list-failing --all` judges them; its lane-mail
                   refusal naming the item is `- ITEM mailbox unreadable ...`.
+                  A lane whose host kind's channel is not mailbox (lane-host
+                  capabilities), a Claude cloud session, has no mailbox read.
 A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
 title; `why it matters`, the first line of its `## Done when` section. The
@@ -686,7 +689,7 @@ table() {
 BLOCKERS=""
 VALIDATION=""
 running_lanes() {
-  local lanes item host root args asks mail rc line failing="" repo list stop minutes
+  local lanes item host root args asks mail rc line failing="" repo list stop minutes channel
   BLOCKERS=""
   VALIDATION=""
   for repo in "${REPOS[@]}"; do
@@ -711,9 +714,19 @@ running_lanes() {
     args=(pending --item "$item" --root "$root")
     [[ -z "$host" ]] || args+=(--host)
     # A refusal naming this lane marks its row, as the heartbeat's `failing`
-    # does; any other failure, a missing or crashed helper too, refuses.
-    mail=read rc=0
-    asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")" || rc=$?
+    # does; any other failure, a missing or crashed helper too, refuses. A
+    # lane whose host kind's channel is not the mailbox, a Claude cloud
+    # session, has no mailbox to read, as lane_item_state reads no state
+    # where files=none.
+    lane_capabilities_read "$LANE_HOST" "${host:-local}" 2>"$WORK_DIR/caps.err" \
+      || refuse host-capabilities "${host:-local}" "$(cat "$WORK_DIR/caps.err")"
+    lane_capability channel channel
+    mail=read rc=0 asks=""
+    case "$channel" in
+      mailbox) asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")" || rc=$? ;;
+      session|task) ;;
+      *) refuse host-capabilities "${host:-local}" "channel=$channel" ;;
+    esac
     [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || refuse lane-host-busy "$item" "$(cat "$WORK_DIR/mail.err")"
     if [[ "$rc" -ne 0 ]]; then
       line="$(awk 'NR == 1' "$WORK_DIR/mail.err")"

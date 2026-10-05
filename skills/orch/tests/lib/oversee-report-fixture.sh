@@ -118,9 +118,12 @@ EOF
 # overseer's own asks are `pending --item overseer --to owner`, no root,
 # answered by pending-overseer.jsonl, failed by owner-mail-fail. `notice --item overseer --to owner
 # --attach PATH --file PATH` is the report notice: its argv is appended to
-# mail.calls, and notice-fail makes it fail.
+# mail.calls, and notice-fail makes it fail. A claude-cloud lane's call is
+# the real lane-mail's, which refuses its mailbox read as host-unreachable.
+export OVERSEE_REPORT_REAL_LANE_MAIL="$TEST_DIR/../scripts/lane-mail"
 cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
 #!/usr/bin/env bash
+[[ "${ORCH_LANE_HOST:-}" != claude-cloud ]] || exec "$OVERSEE_REPORT_REAL_LANE_MAIL" "$@"
 if [[ "$*" == "events --item overseer" ]]; then
   [[ ! -f "$CASE/events-fail" ]] || { echo "lane-mail: mail-read-failed=overseer" >&2; exit 2; }
   [[ ! -f "$CASE/events.jsonl" ]] || cat "$CASE/events.jsonl"
@@ -146,18 +149,18 @@ want="--root /w/$3"; host=""
 [[ ! -f "$CASE/mail-fail-$3" ]] || { cat "$CASE/mail-fail-$3" >&2; exit "$(cat "$CASE/mail-exit-$3" 2>/dev/null || echo 2)"; }
 [[ ! -f "$CASE/pending-$3.jsonl" ]] || cat "$CASE/pending-$3.jsonl"
 EOF
-# lane-host: claude-cloud is the real dispatcher, its files=none line and its
-# refusal of every provider verb; any other host declares a provider's
-# files=verb line. `cat --item ITEM PATH` answers host/PATH, exit 2 without it,
-# and is refused at the per-home cap for the PATH host-busy names; `touch`
-# succeeds; host-gone-ITEM fails every item call as a host that no longer
+# lane-host: local and claude-cloud are the real dispatcher, claude-cloud's
+# channel=session files=none line and its refusal of every provider verb; any
+# other host declares a provider's channel=mailbox files=verb line. `cat
+# --item ITEM PATH` answers host/PATH, exit 2 without it, and is refused at
+# the per-home cap for the PATH host-busy names; `touch` succeeds; host-gone-ITEM fails every item call as a host that no longer
 # knows the item. Every item call must run under the ORCH_LANE_HOST its
 # item's record names (hosted-ITEM).
 export OVERSEE_REPORT_REAL_LANE_HOST="$TEST_DIR/../scripts/lane-host"
 cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
 #!/usr/bin/env bash
-[[ "${ORCH_LANE_HOST:-}" != claude-cloud ]] || exec "$OVERSEE_REPORT_REAL_LANE_HOST" "$@"
-[[ "$1" != capabilities ]] || { printf 'kind=ssh\tfiles=verb\n'; exit 0; }
+case "${ORCH_LANE_HOST:-}" in local|claude-cloud) exec "$OVERSEE_REPORT_REAL_LANE_HOST" "$@" ;; esac
+[[ "$1" != capabilities ]] || { printf 'kind=ssh\tchannel=mailbox\tfiles=verb\n'; exit 0; }
 [[ -f "$CASE/hosted-$3" && "${ORCH_LANE_HOST:-}" == "$(cat "$CASE/hosted-$3")" ]] \
   || { echo "lane-host stub: $3 read under host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
 [[ ! -f "$CASE/host-gone-$3" ]] || { echo "lane-host: item-unknown=$3" >&2; exit 2; }

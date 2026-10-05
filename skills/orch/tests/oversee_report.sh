@@ -480,22 +480,31 @@ rm -f -- "${CASE:?}/host/w/KEN-7/.git"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"
 
-echo "=== render: a running claude-cloud lane has no state to read ==="
-# Its host kind declares files=none, so no state read reaches the
-# dispatcher's refusal of a provider verb.
+echo "=== render: a running claude-cloud lane has no mailbox or state to read ==="
+# Its host kind declares channel=session and files=none, so neither the
+# real lane-mail's host-unreachable refusal of its mailbox read nor the
+# dispatcher's refusal of a provider verb is reached.
 new_case cloud_lane
 report -60
 fleet '' "$(lane KEN-7 running -86400 claude-cloud)"
 issue KEN-7 "Title 7" "Outcome 7"
-cloud_row() { printf '%s|%s' "$RC" "$(first_err)"; }
+cloud_row() { printf '%s|%s|%s|%s' "$RC" "$(first_err)" "$(awk '/^Validation:/ { getline; print }' <<<"$OUT")" "$(awk '/^Waiting on you/ { on = 1 } on' <<<"$OUT")"; }
+CLOUD_WANT="0||- KEN-7: no validation run recorded|Waiting on you: none"
 run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(cloud_row)" "0|" \
-  "a running claude-cloud lane renders with no item-state refusal"
+assert_eq "$(cloud_row)" "$CLOUD_WANT" \
+  "a running claude-cloud lane renders with no mailbox blocker, no host-unreachable validation row and no item-state refusal"
+MAIL_MUTANT="$(mutant_scripts cloud-mail/orch oversee-report)" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cloud-mail/github"
+mutate_file "$MAIL_MUTANT/oversee-report" '      session|task) ;;' '      session|task) asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")" || rc=$? ;;'
+REPORT_UNDER_TEST="$MAIL_MUTANT/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$(cloud_row)" "0||- KEN-7: validation unread, its host unreachable|Waiting on you:
+- KEN-7 mailbox unreadable (mail-read=KEN-7): lane-mail: host-unreachable=KEN-7 state=unknown" \
+  "control: a claude-cloud lane whose mailbox is read lists it as unreadable on a host-unreachable validation row"
 CLOUD_MUTANT="$(mutant_scripts cloud-report/orch lib/lane-gitfile.sh)" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cloud-report/github"
 mutate_file "$CLOUD_MUTANT/lib/lane-gitfile.sh" '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
 REPORT_UNDER_TEST="$CLOUD_MUTANT/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(cloud_row)" "2|oversee-report: item-state=KEN-7" \
+assert_eq "$(cloud_row | cut -d'|' -f1-2)" "2|oversee-report: item-state=KEN-7" \
   "control: a claude-cloud lane read for its state refuses the report"
 
 echo "=== render: a lane's validation minutes are its own state's ==="
