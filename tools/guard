@@ -156,7 +156,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; grep's own error is above." ;;
-        *" reason=mapped "*) echo "the range ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
+        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
@@ -1213,8 +1213,7 @@ fi
 # pi-extensions/package-policy.test.mjs holds CI to). An untouched suite is
 # not evidence about this change and is not run here; CI also runs the
 # shards of the packages that read a touched one, as tools/ci-job-set selects.
-# Of a skill's tests and hooks/tests, both modes run only the suites
-# mapped_suites below maps the changed files to.
+# Of a skill's tests and hooks/tests, mapped_suites below states which run.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
 # CI installs them in the step before its suite, so a checkout without that
 # install names the missing peers beside the failing suite rather than in
@@ -1349,7 +1348,7 @@ reach_join() { # ROLE PATH
     *) return 3 ;;
   esac
 }
-# The suites a range or full run runs for one changed path of a tree, a skill or hooks/,
+# The suites run for one changed path of a tree, a skill or hooks/,
 # REL being the path inside it; this comment, with path_role's table and
 # reference_readers' for a reference, is the one statement of the rule.
 #   - A changed or deleted script, lib or helper starts a scan over
@@ -1514,9 +1513,6 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         ;;
       *)
         [ -d "$d/tests" ] || continue
-        # A range or full run runs, of a skill or hooks/, the suites its
-        # changed paths map to, and the whole set once one path maps to none;
-        # every other tree runs the whole set.
         run=all
         case "$d" in skills/* | hooks) run="" ;; esac
         if [ "$run" != all ]; then

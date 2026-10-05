@@ -146,11 +146,7 @@ else
   esac
 fi
 
-# --- 2. the tree parses, which is the assertion the lane exists to make ---
-# Made by the lane itself, never here: tools/guard --full runs it over the
-# covered set, and so does the guards-scans shard of skill-tests.yml.
-
-# --- 3. teeth ------------------------------------------------------------
+# --- 2. teeth ------------------------------------------------------------
 # The planted defect is the one from the failure this lane answers: a `case`
 # inside a command substitution whose patterns carry no leading `(`. Bash 5
 # parses it and Bash 3.2 refuses it, so both are asserted below — the row is
@@ -301,7 +297,7 @@ plant pass "ANSI-C and plain single quotes each close where Bash closes them" \
   "sep='\\'" \
   "msg=\$'don\\'t'"
 
-# --- 4. the fail-closed paths, each proven red ---------------------------
+# --- 3. the fail-closed paths, each proven red ---------------------------
 # A row is `label|mutation|argv|exit|first`:
 #   mutation  a copy of the lane with one or two of its declaration lines
 #             replaced, staged under the row's own directory beside a copy of
@@ -322,7 +318,7 @@ plant pass "ANSI-C and plain single quotes each close where Bash closes them" \
 #                       the pass reports a whole correct verdict and then a
 #                       line after it
 #             `hang`    a one-second bound, and a runtime whose check pass
-#                       sleeps past it; section 4c runs it
+#                       sleeps past it; section 3c runs it
 #             `-`       the shipped lane, unmodified
 #             `second`  the same, but the LAST runtime the lane names is a
 #                       stub that does deliver it — the row that proves a
@@ -548,9 +544,9 @@ EOF
   exit 2
 }
 
-# --- 4b. the extractor's own two ways of not running ---------------------
+# --- 3b. the extractor's own two ways of not running ---------------------
 # Both rows run the SHIPPED lane end to end under the real Bash 3.2, because
-# the stub worlds in section 4 answer the check pass themselves and never
+# the stub worlds in section 3 answer the check pass themselves and never
 # reach the extractor inside it. Each stages a copy of the lane with ONE line
 # of its extractor replaced, so the row turns on that line's absence and not
 # on the extractor being gone.
@@ -622,7 +618,7 @@ done <<EOF
 $extractor_rows
 EOF
 
-# --- 4c. a pass that outlasts the bound ends and takes its container ------
+# --- 3c. a pass that outlasts the bound ends and takes its container ------
 label="a pass past the bound exits 2 naming the bound and the file, and its container is ended and removed"
 if ! mutate hang; then
   bad "$label" "the row's world could not be staged"
@@ -655,7 +651,7 @@ else
   fi
 fi
 
-# --- 5. a runtime that cannot deliver does not shadow one that can -------
+# --- 4. a runtime that cannot deliver does not shadow one that can -------
 # The lane names more than one, and what a candidate ANSWERS decides it, not
 # that its name resolved: every name but the last refuses here, the last
 # delivers, and the verdict must come from that one and say which it was.

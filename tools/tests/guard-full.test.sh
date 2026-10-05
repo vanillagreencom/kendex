@@ -673,18 +673,25 @@ narrow_row_holds \
   || bad "full validation runs the mapped suites of a skill and of hooks/, and not the rest" "rc=$RC out=$OUT"
 # Two must-fail controls, one per direction: full validation back on whole
 # sets runs the suites nothing maps to, and a dropped selection skips the
-# suites the change maps to. Either turns the row red.
+# suites the change maps to. Either turns the row red, and each asserts the
+# cause it plants: its exit and the lines, joined by `~`, only that cause
+# prints. A sed expression holds `|`, so `#` separates the fields.
 narrow_controls=(
-  'whole sets under --full|s/case "\$d" in skills\/\* | hooks) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks) run="" ;; esac/'
-  'the mapped selection dropped|s/run="\$run\$sel$/run="$run/'
+  'whole sets under --full#s/case "\$d" in skills\/\* | hooks) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
+  'the mapped selection dropped#s/run="\$run\$sel$/run="$run/#0#guard-note: suites=0/2 reason=mapped tree=skills/narrow~guard-note: suites=0/3 reason=mapped tree=hooks'
 )
 for row in "${narrow_controls[@]}"; do
-  name="${row%%|*}"
-  if mutant_guard "${row#*|}"; then
+  IFS='#' read -r name expr want_rc clauses <<<"$row"
+  if mutant_guard "$expr"; then
     OUT=""
     RC=0
     OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
-    ! narrow_row_holds \
+    cause=1
+    [ "$RC" -eq "$want_rc" ] || cause=0
+    while IFS= read -r clause; do
+      [[ "$OUT" == *"$clause"* ]] || cause=0
+    done <<<"${clauses//\~/$'\n'}"
+    ! narrow_row_holds && [ "$cause" -eq 1 ] \
       && ok "control: with $name the row fails" \
       || bad "control: with $name the row fails" "rc=$RC out=$OUT"
   else

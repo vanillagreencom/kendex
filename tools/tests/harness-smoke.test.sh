@@ -928,6 +928,20 @@ else
   bad "every package row prints once" "twice: ${dup_rows:-none printed}"
 fi
 
+# Settings that each reach a row none of the others reaches share one run: the
+# transcript, the subagent's answer, the task tool's agents, the instruction
+# listing, the mixed install's own copy and the tool call's environment. It
+# runs before the listings drop reviewer-doc, so only the task tool's listing
+# leaves that agent out.
+package_run "$SMOKE" STANDIN_DENIAL=none STANDIN_SUB=SMOKE-RULES-REACHED STANDIN_TASK_AGENTS= STANDIN_INSTR=junk \
+  STANDIN_MIXED=0 STANDIN_TOOL_PROJECT_DIR=1
+package_table "a session that wrote no transcript leaves the refusal unanswerable|hook:block-argv-kill|unanswerable|wrote no transcript
+the parent's own answer, with no subagent suffix, fails|instruction:subagent|fail|did not relay an answer the subagent built
+agents on disk that the task tool does not offer fail|agent:reviewer-doc|fail|does not list it
+an instruction listing with no JSON is unanswerable|instruction:AGENTS.md|unanswerable|printed no JSON
+and so is the nested row it would compare against|instruction:nested|unanswerable|printed no JSON
+a Copilot that ran no copy fails the mixed install|mixed-hook|fail|ran no copy of smoke-tool
+a tool call carrying COPILOT_PROJECT_DIR fails the environment row|helper:env|fail|a Copilot tool call carries COPILOT_PROJECT_DIR"
 PKG_SKILLS_ALL="$(grep -vx worktree <<<"$PKG_SKILLS_ALL")"
 PKG_AGENTS_ALL="$(grep -vx reviewer-doc <<<"$PKG_AGENTS_ALL")"
 package_run "$SMOKE" STANDIN_REFUSE=0 STANDIN_NESTED_ROOT=1 STANDIN_DUP=2 STANDIN_SUB=NO-RULES-VIA-AGENT STANDIN_OMIT=CLAUDE.md
@@ -953,18 +967,6 @@ a judge's read under another wrapper's arguments is not this wrapper's run|hook:
 package_run "$SMOKE" STANDIN_DENIAL=generic
 package_table "a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
 and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook"
-# Settings that each reach a row none of the others reaches share one run: the
-# transcript, the subagent's answer, the task tool's agents, the instruction
-# listing, the mixed install's own copy and the tool call's environment.
-package_run "$SMOKE" STANDIN_DENIAL=none STANDIN_SUB=SMOKE-RULES-REACHED STANDIN_TASK_AGENTS= STANDIN_INSTR=junk \
-  STANDIN_MIXED=0 STANDIN_TOOL_PROJECT_DIR=1
-package_table "a session that wrote no transcript leaves the refusal unanswerable|hook:block-argv-kill|unanswerable|wrote no transcript
-the parent's own answer, with no subagent suffix, fails|instruction:subagent|fail|did not relay an answer the subagent built
-agents on disk that the task tool does not offer fail|agent:reviewer-doc|fail|does not list it
-an instruction listing with no JSON is unanswerable|instruction:AGENTS.md|unanswerable|printed no JSON
-and so is the nested row it would compare against|instruction:nested|unanswerable|printed no JSON
-a Copilot that ran no copy fails the mixed install|mixed-hook|fail|ran no copy of smoke-tool
-a tool call carrying COPILOT_PROJECT_DIR fails the environment row|helper:env|fail|a Copilot tool call carries COPILOT_PROJECT_DIR"
 package_run "$SMOKE" STANDIN_FEED=helper
 package_case "a hook whose trigger never reached it is unanswerable, not pass" hook:block-repo-copy unanswerable "the trigger never reached this hook"
 package_run "$SMOKE" STANDIN_SHAPE=bad STANDIN_HOOK_CWD=/ STANDIN_DROP_ENV=1 STANDIN_SKIP_HOOK=block-unsafe-rm
