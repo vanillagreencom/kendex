@@ -48,6 +48,13 @@
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
+#       One run at a time per worktree: while a run directory there has no
+#       verdict and its child, the process its pid file names with that run's
+#       --child argv, still runs, a start is refused as run-live, naming that
+#       directory, before anything is recorded. A second battery beside the
+#       first shares the host's CPU and fails the slower one on load timeouts
+#       in files the change never touched. Wait for that run with --wait, or
+#       end it with --stop, then start again.
 #       --attached runs the same child in the caller's foreground instead,
 #       through lib/job-unit.sh attach: a child of this process that leads its
 #       own process group in the caller's session, under the same bound, class
@@ -198,8 +205,9 @@
 # Exit: 0 the command passed, a ci run left its validation to the pull request
 # CI, or --stop left nothing running; 1 it failed,
 # the bound ended it, it was lost, or the cap elapsed with no verdict, or a --stop could
-# not end a run; 2 usage or configuration error; 3 --wait's budget elapsed
-# while the run was still going, so poll again.
+# not end a run; 2 usage or configuration error, or a start refused as
+# run-live; 3 --wait's budget elapsed while the run was still going, so poll
+# again.
 
 set -euo pipefail
 
@@ -257,6 +265,7 @@ die() {
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
       launch-failed) printf 'The run could not be started, so there is no verdict to wait for.\n' ;;
+      run-live) printf 'Another validation run in this worktree is still going, so none was started beside it. Wait for its verdict with --wait --run-dir, or end it with --stop --worktree, then start again.\n' ;;
       job-end-failed) printf 'The verdict is recorded; what the command left in its process group may still run.\n' ;;
     esac
   } >&2
@@ -290,6 +299,33 @@ check_seconds() { # LABEL VALUE
 
 start_field() { # FILE KEY
   sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
+}
+
+# The argv of a run directory's child ends in that directory, so a pid with
+# any other argv is not that run's child but a process that reused its id.
+child_glob() { # RUN_DIR
+  printf '* --child --run-dir */tmp/%s' "${1##*/}"
+}
+
+# The first run directory of the worktree with no verdict whose child still
+# runs, in LIVE_RUN_DIR and LIVE_RUN_PID; both empty where there is none.
+LIVE_RUN_DIR=""
+LIVE_RUN_PID=""
+find_live_run() { # WORKTREE
+  local pid_file dir pid args
+  LIVE_RUN_DIR="" LIVE_RUN_PID=""
+  for pid_file in "$1"/tmp/dev-validate-*/pid; do
+    [[ -f "$pid_file" ]] || continue
+    dir="${pid_file%/pid}"
+    [[ ! -s "$dir/exit" ]] || continue
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    args="$(ps -ww -o args= -p "$pid" 2>/dev/null)" || continue
+    # shellcheck disable=SC2053 # child_glob prints a pattern
+    [[ "$args" == $(child_glob "$dir") ]] || continue
+    LIVE_RUN_DIR="$dir" LIVE_RUN_PID="$pid"
+    return 0
+  done
 }
 
 # The run's wall time, then its sentinel, in the run directory. The wall time
@@ -606,6 +642,12 @@ if [[ "$mode" == start ]]; then
   # run to no round.
   head_sha="$(git rev-parse --verify -q 'HEAD^{commit}')" || head_sha=""
 
+  # Judged just before this run's directory is made: two starts that both
+  # pass it must each reach the check inside the other's launch, a window of
+  # the launch alone rather than of the class read above.
+  find_live_run "$worktree"
+  [[ -z "$LIVE_RUN_DIR" ]] || die run-live "run-dir=$LIVE_RUN_DIR" "pid=$LIVE_RUN_PID"
+
   # A fresh directory per start, so a poll can never read the previous round's
   # verdict as this one's.
   run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -687,11 +729,9 @@ if [[ "$mode" == stop ]]; then
     [[ -f "$runner_file" ]] || continue
     dir="${runner_file%/runner}"
     [[ ! -s "$dir/exit" ]] || continue
-    # The child's argv ends in this run directory; a pid with any other argv
-    # is not this run's child.
     pid="$(cat "$dir/pid" 2>/dev/null || true)"
     stop_rc=0
-    job_unit_stop_job "$runner_file" "$pid" "* --child --run-dir */tmp/${dir##*/}" || stop_rc=$?
+    job_unit_stop_job "$runner_file" "$pid" "$(child_glob "$dir")" || stop_rc=$?
     case "$stop_rc" in
       0) if [[ "$JOB_UNIT_RUNNER" == systemd ]]; then units=$(( units + 1 )); else groups=$(( groups + 1 )); fi ;;
       1) ;;

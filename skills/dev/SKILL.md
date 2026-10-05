@@ -76,7 +76,7 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 - `--issue` is the delegation's `Artifact Key:` line, the workflow-state key where one exists, or the `local-` key `workflow-state new-local-key` mints, per [`dev-return.md` § Identity: the round id](../orch/schemas/dev-return.md#identity-the-round-id); never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
 - `--kind` always matches what was delegated. `--validate` matches your commit message and return. `--validate-note` carries the test-only validation-ceiling report when that route applies. Flag constraints and value shapes: `dev-return-write --help`.
 
-**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.
+**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle. Once the artifact is written, start no validation, test, lint or build run in the worktree: the orchestrator validates there next.
 
 - The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. Copilot CLI's channel is not yet measured, so this contract names none for it.
 - In a Pi persistent pane, follow the return with `complete_subagent`; background agents must not call it.

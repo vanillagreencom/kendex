@@ -1486,6 +1486,74 @@ assert_eq "$RC" "0" "control: a stop failure that exits 0 reads as a clean stop"
 kill -KILL -- "-$PLANTED" 2>/dev/null || true
 RUN_PATH=""
 
+# --- A start beside a run still going in the worktree is refused ---------------
+# The same planted records, now in a project a start can run in: only a run
+# with no verdict whose pid is still that run's child holds the worktree. A
+# refused start records no run directory of its own.
+# name|verdict recorded|process|what the start does
+LIVE_ROWS=(
+  "live-child|no|child|refused"
+  "live-nonleader|no|nonleader|refused"
+  "live-reused-pid|no|other|started"
+  "live-has-verdict|yes|child|started"
+  "live-gone-pid|no|dead|started"
+  "live-no-run|no|none|started"
+)
+# One line per row: its name, then `refused` with the refusal's keyed line or
+# `started` with the verdict, and the run directories the worktree holds after.
+live_rows() { # SCRIPT
+  local row name verdict process want proj result
+  for row in "${LIVE_ROWS[@]}"; do
+    IFS='|' read -r name verdict process want <<<"$row"
+    plant "$name" setsid "$verdict" "$process"
+    proj="$PLANT_PROJ"
+    git init -q "$proj"
+    git -C "$proj" config gc.auto 0
+    git -C "$proj" config maintenance.auto false
+    printf '[env]\nDEV_VALIDATE_CMD = "true"\nDEV_VALIDATE_TIMEOUT_SECS = "30"\n' > "$proj/kendex.settings.toml"
+    run_script "$1" --worktree "$proj" --poll 1
+    if [[ "$RC" == 2 ]]; then
+      result="refused $(sed -n 1p <"$ERR" | sed "s|$proj|PROJ|; s|pid=$PLANTED\$|pid=PLANTED|")"
+    else
+      result="started $(verdict_of "$OUT") rc=$RC"
+    fi
+    printf '%s %s runs=%s\n' "$name" "$result" "$(find "$proj/tmp" -mindepth 1 -maxdepth 1 -name 'dev-validate-*' | wc -l | tr -d ' ')"
+    [[ -z "$PLANTED" ]] || kill -KILL -- "-$PLANTED" 2>/dev/null || kill -KILL "$PLANTED" 2>/dev/null || true
+    rm -rf -- "$proj"
+  done
+}
+# The line a row prints under the shipped script.
+live_want() { # NAME
+  local row name verdict process want
+  for row in "${LIVE_ROWS[@]}"; do
+    IFS='|' read -r name verdict process want <<<"$row"
+    [[ "$name" == "$1" ]] || continue
+    case "$want" in
+      refused) printf '%s refused dev-validate-run: run-live run-dir=PROJ/tmp/dev-validate-planted-%s pid=PLANTED runs=1\n' "$name" "$name" ;;
+      started) printf '%s started state=done guard-exit=0 validate=pass rc=0 runs=%s\n' "$name" "$([[ "$process" == none ]] && echo 1 || echo 2)" ;;
+    esac
+  done
+}
+live_out="$(live_rows "$RUN")"
+for row in "${LIVE_ROWS[@]}"; do
+  IFS='|' read -r name _ <<<"$row"
+  assert_eq "$(grep "^$name " <<<"$live_out")" "$(live_want "$name")" \
+    "a start in a worktree holding a planted $name record"
+done
+# One control per rule the check holds, each turning its own row: no refusal
+# at all, a run with a verdict counted as live, and any live pid counted as
+# the run's child.
+live_control() { # NAME OLD NEW ROW
+  local got
+  mutant "$1" "$2" "$3"
+  got="$(live_rows "$MUTANT" | grep "^$4 " || true)"
+  assert_eq "$([[ "$got" != "$(live_want "$4")" ]] && echo turned || echo "held:$got")" "turned" \
+    "control: $1 turns the $4 row"
+}
+live_control mutant-live-unchecked '[[ -z "$LIVE_RUN_DIR" ]] || die run-live' ': || die run-live' live-child
+live_control mutant-live-verdict $'dir="${pid_file%/pid}"\n    [[ ! -s "$dir/exit" ]] || continue' 'dir="${pid_file%/pid}"' live-has-verdict
+live_control mutant-live-argv '[[ "$args" == $(child_glob "$dir") ]] || continue' ':' live-reused-pid
+
 # --- A value option given twice is refused, never half-read ---------------------
 # option|the arguments that repeat it
 REPEAT_ROWS=(
