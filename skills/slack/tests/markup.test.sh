@@ -188,6 +188,10 @@ while IFS='|' read -r label input expected; do
   expected="${expected//@SHORT@/$SHORT}"; expected="${expected//@FULL@/$FULL}"
   sk_markup "$REFS" outbound "$input" markdown
   assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$expected" "$label"
+  case "$label" in
+    'PRs under Linear') PR_INPUT="$input"; PR_EXPECTED="0=$expected" ;;
+    'short and full commits') COMMIT_INPUT="$input"; COMMIT_EXPECTED="0=$expected" ;;
+  esac
 done <<'ROWS'
 PRs under Linear|kendex#2 #3 KEN-1|[kendex#2](https://github.com/org/kendex/pull/2) [#3](https://github.com/org/kendex/pull/3) [KEN-1](https://linear.app/workspace/issue/KEN-1)
 short and full commits|@SHORT@ @FULL@|[@SHORT@](https://github.com/org/kendex/commit/@FULL@) [@FULL@](https://github.com/org/kendex/commit/@FULL@)
@@ -204,15 +208,21 @@ assert_eq "$RC=$(jq -r '.result | join(" ")' <<<"$OUT")" "0=<https://github.com/
 # Two real Git objects share a prefix, so a hash cannot identify either one.
 AMBIGUOUS="$(python3 - "$REFS" <<'PY'
 import hashlib, os, subprocess, sys
+env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+algorithm = subprocess.run(["git", "rev-parse", "--show-object-format"], cwd=sys.argv[1],
+                           env=env, stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
 seen = {}
 for number in range(65537):
     data = str(number).encode()
-    prefix = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()[:4]
+    prefix = hashlib.new(algorithm, b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()[:4]
     if prefix in seen:
         for body in (seen[prefix], data):
             subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=sys.argv[1], input=body,
-                           env={key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ},
-                           stdout=subprocess.PIPE, check=True)
+                           env=env, stdout=subprocess.PIPE, check=True)
+        objects = subprocess.run(["git", "rev-parse", "--disambiguate=" + prefix], cwd=sys.argv[1],
+                                 env=env, stdout=subprocess.PIPE, text=True, check=True).stdout.splitlines()
+        if len(objects) < 2:
+            sys.exit("ambiguity fixture: fewer than two Git objects")
         print(prefix)
         break
     seen[prefix] = data
@@ -224,11 +234,11 @@ sk_markup "$REFS" outbound "$AMBIGUOUS $AMBIGUOUS" markdown
 assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$AMBIGUOUS $AMBIGUOUS" 'ambiguous hash stays literal at every mention'
 assert_eq "$(printf '%s\n' "$ERR" | grep -c '^slack: reference-link-unavailable=')" '1' 'ambiguous hash reports one stderr warning'
 sk_mutant pr-link markup.py 'target = f"https://github.com/\{repo\}/pull/\{number\}"' 'target = None'
-sk_markup "$REFS" outbound 'kendex#2' markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=kendex#2' 'control: current bare PR form fails the linked result'
+sk_markup "$REFS" outbound "$PR_INPUT" markdown
+sk_assert_red "$RC=$(jq -r '.result[0]' <<<"$OUT")" "$PR_EXPECTED" 'control: current bare PR form fails the linked result'
 sk_bin_reset
 sk_mutant commit-link markup.py 'target = f"https://github.com/\{repo\}/commit/\{commit\}"' 'target = None'
-sk_markup "$REFS" outbound "$SHORT" markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$SHORT" 'control: removing commit links fails the linked result'
+sk_markup "$REFS" outbound "$COMMIT_INPUT" markdown
+sk_assert_red "$RC=$(jq -r '.result[0]' <<<"$OUT")" "$COMMIT_EXPECTED" 'control: removing commit links fails the linked result'
 sk_bin_reset
 sk_summary
