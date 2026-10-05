@@ -1574,9 +1574,15 @@ check_refresh() {
     if (( rc != 0 )); then
       ow_message refresh-unread "repo=$repo" "read=log" "run=$newest" "exit=$rc" >&2
     else
-      # refresh-consumer and the commit hooks emit these diagnostics. gh
-      # prefixes each failed-step log line with job, step and timestamp.
-      cause="$(awk 'match($0, /refresh-error=|kendex-hook-/) { cause = substr($0, RSTART) }
+      # gh prefixes each failed-step log line with job, step and timestamp.
+      # The cause is the last line of the highest rank: a kendex failed: row,
+      # its Error: line, refresh-consumer's refresh-error=, a hook's kendex-hook-.
+      cause="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); rank = 0; text = $0 }
+        /^failed: / { rank = 4 }
+        !rank && /^Error: / { rank = 3 }
+        !rank && match($0, /refresh-error=/) { rank = 2; text = substr($0, RSTART) }
+        !rank && match($0, /kendex-hook-/) { rank = 1; text = substr($0, RSTART) }
+        rank && rank >= best { best = rank; cause = text }
         END { gsub("\t", " ", cause); sub(/\r$/, "", cause); print cause }' <<<"$log")" \
         || rc=$?
       if (( rc != 0 )); then
