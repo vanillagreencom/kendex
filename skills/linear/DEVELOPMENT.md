@@ -6,7 +6,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 
 1. Create `scripts/commands/<resource>.sh`, sourcing `../lib/common.sh` (auth, the GraphQL wire, resolvers, argument guards).
 2. Add a `show_help()` and register the resource in `scripts/linear.sh`.
-3. Register write actions that need a configured team with `linear_guard_write_action` (below), and guard a verb that creates an issue or changes an existing issue's fields with the cross-team guard (below).
+3. Register write actions that need a configured team with `linear_guard_write_action` (below), and guard a verb that creates an issue, changes an existing issue's fields, archives it or trashes it with the cross-team guard (below).
 4. Update the Commands table in `SKILL.md`.
 
 The GraphQL transport is `graphql_request` in `scripts/lib/common.sh`; cursor traversal and nested completion are `scripts/lib/pages.sh` (`graphql_pages` for a root collection, `graphql_query` for one entity or a mutation reply); output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
@@ -30,8 +30,9 @@ The guard proves a team is configured, not that a write lands in it. A mutation 
 
 ### Cross-team guard
 
-Linear lets the fleet's one app token write in every team, whatever team access the app's settings name, so `common.sh` keeps issue writes in `LINEAR_TEAM`. `linear_guard_issue_team ACTION REF...` runs before an existing-issue verb that changes state, assignee, priority, labels, project or cycle: `issues.sh`'s `main` calls it for `update`, `activate`, `block`, `unblock` and `complete`, and `bulk_update_issues` for every identifier it collected. `linear_guard_create_team` runs in `create_issue` after the checks that need no request. Reads, `comments create` and relations never call either.
+Linear lets the fleet's one app token write in every team, whatever team access the app's settings name, so `common.sh` keeps issue writes in `LINEAR_TEAM`. `linear_guard_issue_team ACTION REF...` runs in each existing-issue verb that changes state, assignee, priority, labels, project or cycle, or archives or trashes the issue, after the verb's checks that need no request and before its first request: `update_issue`, `activate_issue`, `block_issue`, `unblock_issue`, `complete_issue`, `archive_issue`, `trash_issue`, and `bulk_update_issues` for every identifier it collected. `linear_guard_create_team` runs in `create_issue` at the same point. Reads, `comments create` and relations never call either.
 
+- `LINEAR_TEAM_PASSED` holds the references the guard let through in this invocation, so `update_issue` called by another verb, in a subshell that inherits it, sends no second read and prints no second inactive line.
 - An identifier's team is its prefix, upper-cased. Any other reference, a UUID, is read for `issue.team.key`; a failed read refuses as `refused=cross-team-unread`.
 - A prefix equal to `LINEAR_TEAM` passes with no request. Otherwise `linear_own_team` resolves `LINEAR_TEAM` once per invocation through `resolve_team_node`, since the setting may name the team rather than key it, and the prefix must equal that key. A create compares team ids.
 - The refusal is the keyed `linear: refused=cross-team ... route=peer-mail` line, then a `fix=` line naming `lane-mail peer send --repo`. With no `LINEAR_TEAM`, both guards print `linear: cross-team-guard=inactive action=<verb> cause=no-team` and let the write through.

@@ -29,8 +29,8 @@ control_replace scripts/commands/issues.sh 1 \
 # Accept any value as a box list: box 0 reaches the issue read.
 control_expect "--done-when-met '0' refuses before any request"
 control_replace scripts/commands/issues.sh 1 \
-    '        elif [[ "$done_when_met" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then' \
-    '        elif true; then'
+    '    elif [[ "$done_when_met" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then' \
+    '    elif true; then'
 
 # Open the section at the first line: a box above `## Done when` ticks and
 # takes the numbers the caller counted from the section.

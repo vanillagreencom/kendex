@@ -5,8 +5,8 @@
 # The refused verbs, each unwired from the guard.
 control_expect "update of another team issue is refused before any write"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team update "$1" || exit 1' \
-    '        :'
+    '    linear_guard_issue_team update "$issue_id" || return 1' \
+    '    :'
 
 control_expect "bulk-update with one foreign issue writes nothing"
 control_replace scripts/commands/issues.sh 1 \
@@ -15,49 +15,80 @@ control_replace scripts/commands/issues.sh 1 \
 
 control_expect "activate of another team issue is refused"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team activate "$1" || exit 1' \
-    '        :'
+    '    linear_guard_issue_team activate "$issue_id" || return 1' \
+    '    :'
 
 control_expect "block of another team issue is refused"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team block "$1" || exit 1' \
-    '        :'
+    '    linear_guard_issue_team block "$issue_id" || return 1' \
+    '    :'
 
 control_expect "unblock of another team issue is refused"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team unblock "$1" || exit 1' \
-    '        :'
+    '    linear_guard_issue_team unblock "$issue_id" || return 1' \
+    '    :'
 
 control_expect "complete of another team issue is refused"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team complete "$1" || exit 1' \
-    '        :'
+    '    linear_guard_issue_team complete "$issue_id" || return 1' \
+    '    :'
+
+control_expect "archive of another team issue is refused"
+control_replace scripts/commands/issues.sh 1 \
+    '    linear_guard_issue_team archive "$issue_ref" || return 1' \
+    '    :'
+
+control_expect "trash of another team issue is refused"
+control_replace scripts/commands/issues.sh 1 \
+    '    linear_guard_issue_team trash "$issue_ref" || return 1' \
+    '    :'
 
 control_expect "create in another team is refused"
 control_replace scripts/commands/issues.sh 1 \
     '    linear_guard_create_team "$explicit_team" || return 1' \
     '    :'
 
+# The guard runs after the checks that need no request.
+control_expect "an unreadable attach path refuses before the guard reads the team"
+control_replace scripts/commands/issues.sh 1 \
+    '    local clear_labels="false"' \
+    '    local clear_labels="false"; linear_guard_issue_team update "$issue_id" || return 1'
+
+control_expect "bulk-update refuses an unreadable attach path before the guard reads the team"
+control_replace scripts/commands/issues.sh 1 \
+    '            [[ "$1" != --attach ]] || attach_paths+=("$2")' \
+    '            :'
+
 # How the guard judges an issue's team and its own.
 control_expect "a team configured by name resolves to its key and refuses"
 control_replace scripts/lib/common.sh 1 \
-    '        [[ "$team" == "$DEFAULT_TEAM" ]] && continue' \
-    '        continue'
+    '        if [[ "$team" != "$DEFAULT_TEAM" ]]; then' \
+    '        if false; then'
 
 control_expect "update of an own team issue writes with no guard request"
 control_replace scripts/lib/common.sh 1 \
-    '        [[ "$team" == "$DEFAULT_TEAM" ]] && continue' \
-    '        linear_own_team || return 1; [[ "$team" == "$DEFAULT_TEAM" ]] && continue'
+    '        if [[ "$team" != "$DEFAULT_TEAM" ]]; then' \
+    '        if true; then'
 
 control_expect "an own team issue passes with the team configured by name"
 control_replace scripts/lib/common.sh 1 \
-    '        [[ "$team" == "$(jq -r '"'"'.key'"'"' <<<"$LINEAR_OWN_TEAM")" ]] && continue' \
-    '        :'
+    '            if [[ "$team" != "$(jq -r '"'"'.key'"'"' <<<"$LINEAR_OWN_TEAM")" ]]; then' \
+    '            if true; then'
 
 control_expect "a configured team that matches no team refuses the write"
 control_replace scripts/lib/common.sh 1 \
-    '        linear_own_team || return 1' \
-    '        linear_own_team || continue'
+    '            linear_own_team || return 1' \
+    '            linear_own_team || continue'
+
+control_expect "bulk-update reads a team configured by name once"
+control_replace scripts/lib/common.sh 1 \
+    '    [[ -n "$LINEAR_OWN_TEAM" ]] && return 0' \
+    '    :'
+
+control_expect "an own team issue passes with the team configured by UUID"
+control_replace scripts/lib/common.sh 1 \
+    "        || query='query GetTeamById(\$name: ID!, \$after: String) { teams(filter: {id: {eq: \$name}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id key name } } }'" \
+    '        || :'
 
 control_expect "a lowercase identifier is judged by its team key"
 control_replace scripts/lib/common.sh 1 \
@@ -92,8 +123,8 @@ control_replace scripts/lib/common.sh 1 \
 # The allowed verbs, each put behind the guard.
 control_expect "block of an own team issue by another team issue passes"
 control_replace scripts/commands/issues.sh 1 \
-    '        linear_guard_issue_team block "$1" || exit 1' \
-    '        linear_guard_issue_team block "$1" "$3" || exit 1'
+    '    linear_guard_issue_team block "$issue_id" || return 1' \
+    '    linear_guard_issue_team block "$issue_id" "$blocker" || return 1'
 
 control_expect "comments create on another team issue passes"
 control_replace scripts/commands/comments.sh 1 \

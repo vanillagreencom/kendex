@@ -793,8 +793,9 @@ linear_guard_write_action() {
 # Every lane writes with one app token, and Linear lets an app token write in
 # every public team whatever team access the app's settings name, so no
 # credential keeps a lane out of another team's issues. These guards do: an
-# issue create and a change to an existing issue's fields land only in this
-# checkout's own team (LINEAR_TEAM). Reads, comments and relations are not
+# issue create, a change to an existing issue's fields, an archive and a trash
+# land only in this checkout's own team (LINEAR_TEAM). Reads, comments and
+# relations are not
 # guarded. No setting turns the guards off; with no LINEAR_TEAM they say they
 # are inactive and let the write through.
 
@@ -820,22 +821,34 @@ linear_cross_team_refusal() {
     local action="$1" team="$2" issue="${3:-}" own
     own=$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")
     echo "linear: refused=cross-team action=$action${issue:+ issue=$issue} team=$team own-team=$own route=peer-mail" >&2
-    echo "fix=Nothing was sent. Give the work to the overseer of the repository that tracks $team with lane-mail peer send --repo [REPO]." >&2
+    echo "fix=Nothing was written. Give the work to the overseer of the repository that tracks $team with lane-mail peer send --repo [REPO]." >&2
 }
 
-# Refuse, before any write, a field change to an issue outside this checkout's
-# team. An identifier's team is its prefix, judged with no request; any other
+# Refs this invocation's guard has let through, each followed by a space. A
+# verb judges its issue, then update_issue judges it again in a `$(...)`
+# subshell; the subshell inherits this and skips the second read and the
+# second inactive line.
+LINEAR_TEAM_PASSED=" "
+
+# Refuse, before any write, a write to an issue outside this checkout's team.
+# An identifier's team is its prefix, judged with no request; any other
 # reference (a UUID) is read for its team. A prefix equal to LINEAR_TEAM
-# passes with no request; otherwise LINEAR_TEAM is resolved to its key.
-# Usage: linear_guard_issue_team ACTION REF... || exit 1
+# passes with no request; otherwise LINEAR_TEAM is resolved to its key. A verb
+# calls it after the checks that need no request, before its first request.
+# Usage: linear_guard_issue_team ACTION REF... || return 1
 linear_guard_issue_team() {
-    local action="$1" ref team vars result
+    local action="$1" ref team vars result refs=()
     shift
+    for ref in "$@"; do
+        [[ "$LINEAR_TEAM_PASSED" == *" $ref "* ]] || refs+=("$ref")
+    done
+    [[ ${#refs[@]} -gt 0 ]] || return 0
     if [[ -z "$DEFAULT_TEAM" ]]; then
         linear_cross_team_inactive "$action"
+        LINEAR_TEAM_PASSED+="${refs[*]} "
         return 0
     fi
-    for ref in "$@"; do
+    for ref in "${refs[@]}"; do
         if [[ "$ref" =~ ^[A-Za-z0-9]+-[0-9]+$ ]]; then
             team=$(tr '[:lower:]' '[:upper:]' <<<"${ref%-*}")
         else
@@ -843,15 +856,18 @@ linear_guard_issue_team() {
             if ! result=$(graphql_query 'query IssueTeam($id: String!) { issue(id: $id) { team { key } } }' "$vars") \
                 || ! team=$(jq -er '.issue.team.key | strings | select(length > 0)' <<<"$result"); then
                 echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2
-                echo "The issue's team could not be read (see the previous error), so nothing was sent." >&2
+                echo "The issue's team could not be read (see the previous error), so nothing was written." >&2
                 return 1
             fi
         fi
-        [[ "$team" == "$DEFAULT_TEAM" ]] && continue
-        linear_own_team || return 1
-        [[ "$team" == "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]] && continue
-        linear_cross_team_refusal "$action" "$team" "$ref"
-        return 1
+        if [[ "$team" != "$DEFAULT_TEAM" ]]; then
+            linear_own_team || return 1
+            if [[ "$team" != "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]]; then
+                linear_cross_team_refusal "$action" "$team" "$ref"
+                return 1
+            fi
+        fi
+        LINEAR_TEAM_PASSED+="$ref "
     done
 }
 

@@ -84,9 +84,10 @@ Environment:
   LINEAR_TEAM     Target for writes that need a configured team; no default.
                   Set it in kendex.settings.toml [env] (committed, non-secret).
                   Existing-issue writes use the issue team, and an issue
-                  create or field change outside this team is refused
-                  (comments, relations and reads are not). With no team, other
-                  writes refuse and reads run without a team filter.
+                  create, field change, archive or trash outside this team
+                  is refused (comments, relations and reads are not). With no
+                  team, other writes refuse and reads run without a team
+                  filter.
                   Only issues/projects/cycles/
                   labels create, labels audit, cycles list and statuses
                   list/get take --team <key-or-name> as a per-call override.

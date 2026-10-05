@@ -9,8 +9,9 @@
 # `-` where the verb's own reads make the count beside the point), the
 # mutations sent in order, and the guard's first stderr line, `-` for none.
 #
-# Fixture teams: KEN (named kendex) and VGS (named vsys). KEN-1 and VGS-1 are
-# one issue in each, also reachable by their UUIDs.
+# Fixture teams: KEN (named kendex) and VGS (named vsys), each also reachable
+# by its team UUID. KEN-1 and VGS-1 are one issue in each, also reachable by
+# their UUIDs.
 
 set -euo pipefail
 
@@ -33,6 +34,8 @@ LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
 KEN_UUID=9c8d7e6f-5a4b-4c3d-9e2f-1a0b9c8d7e6f
 VGS_UUID=0b5f6c1e-2d3a-4b7c-8e9f-1a2b3c4d5e6f
+KEN_TEAM_UUID=1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+VGS_TEAM_UUID=6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d
 # An issue whose read fails: Linear answers it with an error.
 DEAD_UUID=ffffffff-ffff-4fff-8fff-ffffffffffff
 
@@ -67,11 +70,16 @@ jq -cj '
           + if $f == "issueUpdate" or $f == "issueCreate" then {issue: issue("KEN-1")}
             elif $f == "commentCreate" then {comment: {id: "c1", body: "b", createdAt: "2026-10-05T00:00:00Z", user: {name: "t"}}}
             elif $f == "issueRelationCreate" then {issueRelation: {id: "r1", type: "related"}}
+            elif $f == "issueArchive" or $f == "issueDelete" then
+              {entity: {id: "9c8d7e6f-5a4b-4c3d-9e2f-1a0b9c8d7e6f", identifier: "KEN-1", url: "u",
+                archivedAt: "2026-10-05T00:00:00Z", trashed: true}}
             else {} end)}}
     elif ($q | contains("ValidateBlocking")) then
       {data: {issue1: issue($v.id1), issue2: issue($v.id2)}}
+    elif ($q | contains("teams(filter: {id: {eq:")) then
+      {data: {teams: page([teams[] | select(.id == $v.name)])}}
     elif ($q | contains("teams(filter:")) then
-      {data: {teams: page([teams[] | select(.key == $v.name or .name == $v.name or .id == $v.name)])}}
+      {data: {teams: page([teams[] | select(.key == $v.name or .name == $v.name)])}}
     elif ($q | contains("issue(id:")) and $v.id == "ffffffff-ffff-4fff-8fff-ffffffffffff" then
       {errors: [{message: "issue service unavailable"}]}
     elif ($q | contains("issue(id:")) then {data: {issue: issue($v.id)}}
@@ -112,7 +120,8 @@ refused() { # ACTION ISSUE TEAM OWN — the keyed refusal line
 # reads LINEAR_TEAM's key once, since the setting may name the team rather
 # than key it, and an issue named by UUID once for its team. guard is
 # `-`, `inactive ACTION`, `unread ACTION ISSUE`, or `refused ACTION ISSUE
-# TEAM OWN` (ISSUE `-` for a create).
+# TEAM OWN` (ISSUE `-` for a create), or `error TEXT` for no guard line and
+# TEXT on stderr, the cause of a refusal before or inside the guard.
 ROWS='
 update of another team issue is refused before any write|KEN|1|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
 a lowercase identifier is judged by its team key|KEN|1|issues update vgs-1 --title t|1|-|refused update vgs-1 VGS KEN
@@ -121,15 +130,25 @@ activate of another team issue is refused|KEN|1|issues activate VGS-1 --agent ru
 block of another team issue is refused|KEN|1|issues block VGS-1 --by KEN-1|1|-|refused block VGS-1 VGS KEN
 unblock of another team issue is refused|KEN|1|issues unblock VGS-1|1|-|refused unblock VGS-1 VGS KEN
 complete of another team issue is refused|KEN|1|issues complete VGS-1|1|-|refused complete VGS-1 VGS KEN
+archive of another team issue is refused|KEN|1|issues archive VGS-1|1|-|refused archive VGS-1 VGS KEN
+trash of another team issue is refused|KEN|1|issues trash VGS-1|1|-|refused trash VGS-1 VGS KEN
+delete of another team issue is refused as trash|KEN|1|issues delete VGS-1|1|-|refused trash VGS-1 VGS KEN
 an issue named by UUID is read for its team and refused|KEN|2|issues update VGS_UUID --state Done|1|-|refused update VGS_UUID VGS KEN
 an issue whose team cannot be read is refused|KEN|1|issues update DEAD_UUID --title t|1|-|unread update DEAD_UUID
-a configured team that matches no team refuses the write|ghost|1|issues update VGS-1 --title t|1|-|-
+a configured team that matches no team refuses the write|ghost|1|issues update VGS-1 --title t|1|-|error Team not found: ghost
+an unreadable attach path refuses before the guard reads the team|kendex|0|issues update KEN-1 --attach /nonexistent/file.png|1|-|error --attach path not readable
+bulk-update refuses an unreadable attach path before the guard reads the team|kendex|0|issues bulk-update KEN-1 KEN-2 --attach /nonexistent/file.png|1|-|error --attach path not readable
 a team configured by name resolves to its key and refuses|kendex|1|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
 create in another team is refused|KEN|2|issues create --team vsys --title t|1|-|refused create - VGS KEN
+create in another team named by UUID is refused|KEN|2|issues create --team VGS_TEAM_UUID --title t|1|-|refused create - VGS KEN
 update of an own team issue writes with no guard request|KEN|2|issues update KEN-1 --title t|0|issueUpdate|-
 an own team issue named by UUID passes|KEN|-|issues update KEN_UUID --title t|0|issueUpdate|-
 an own team issue passes with the team configured by name|kendex|-|issues update KEN-1 --title t|0|issueUpdate|-
+an own team issue passes with the team configured by UUID|KEN_TEAM_UUID|-|issues update KEN-1 --title t|0|issueUpdate|-
 bulk-update of own team issues writes each|KEN|-|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
+bulk-update reads a team configured by name once|kendex|5|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
+archive of an own team issue passes|KEN|2|issues archive KEN-1|0|issueArchive|-
+trash of an own team issue passes|KEN|2|issues trash KEN-1|0|issueDelete|-
 create under the own team by another spelling passes|kendex|-|issues create --team KEN --title t|0|issueCreate|-
 block of an own team issue by another team issue passes|KEN|-|issues block KEN-1 --by VGS-1|0|issueUpdate,issueRelationCreate,commentCreate|-
 comments create on another team issue passes|KEN|-|comments create VGS-1 --body hello|0|commentCreate|-
@@ -141,9 +160,12 @@ with no team configured the guard is inactive and the update passes|-|-|issues u
 
 while IFS='|' read -r label team calls args rc writes guard; do
   [ -n "$label" ] || continue
+  cause=""
+  team=${team//KEN_TEAM_UUID/$KEN_TEAM_UUID}
   args=${args//VGS_UUID/$VGS_UUID}
   args=${args//KEN_UUID/$KEN_UUID}
   args=${args//DEAD_UUID/$DEAD_UUID}
+  args=${args//VGS_TEAM_UUID/$VGS_TEAM_UUID}
   guard=${guard//VGS_UUID/$VGS_UUID}
   guard=${guard//DEAD_UUID/$DEAD_UUID}
   read -r -a argv <<<"$args"
@@ -158,6 +180,8 @@ while IFS='|' read -r label team calls args rc writes guard; do
     read -r -a g <<<"${guard#unread }"
     guard="linear: refused=cross-team-unread action=${g[0]} issue=${g[1]}"
     ;;
+  error\ *) cause="${guard#error }" guard=- ;;
   esac
   assert_eq "$label" "$(run "$team" "$calls" "${argv[@]}")" "rc=$rc calls=$calls writes=$writes guard=$guard"
+  [[ -z "$cause" ]] || assert_file_contains "$label" "$TMP_ROOT/err" "$cause"
 done <<<"$ROWS"

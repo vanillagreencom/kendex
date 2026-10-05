@@ -76,7 +76,7 @@ control_replace scripts/lib/common.sh 2 \
 # Skip the --attach preflight, so an unreadable path reaches the resolvers this
 # change hoisted and costs API calls before the refusal --help promises.
 control_expect "an unreadable --attach path refuses before any lookup"
-control_replace scripts/commands/issues.sh 2 \
+control_replace scripts/commands/issues.sh 3 \
     '        attach_preflight_files "${attach_paths[@]}" || return 1' \
     '        true'
 
