@@ -49,3 +49,9 @@ control_expect 'a Retry-After shorter than the backoff waits the backoff: waits'
 control_replace scripts/lib/common.sh 1 \
     '        ((after <= delay)) || delay="$after"' \
     '        delay="$after"'
+# A final 429 download is reported as any failed download, without the time
+# the request quota refills.
+control_expect 'a download rate-limited past its retries reports the rate limit: rate limit'
+control_replace scripts/commands/attachments.sh 1 \
+    '    if [[ "$code" == 429 ]]; then' \
+    '    if false; then'

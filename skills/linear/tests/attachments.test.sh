@@ -24,7 +24,7 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Linear answers KEN-404 with no issue.
 # The upload server gives the answers DOWNLOAD_RESPONSES lists in turn, `;`
 # between them: a status, or `000` for no answer, and after an `@` the
-# Retry-After value it carries.
+# Retry-After value it carries. A 429 names the time its quota refills.
 cat >"$TMP_ROOT/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -46,6 +46,7 @@ if [[ "$config" == *'url = "https://uploads.linear.app/'* ]]; then
     done
     printf 'HTTP/1.1 %s Fixture\r\n' "$code"
     [[ "$answer" != *@* ]] || printf 'Retry-After: %s\r\n' "${answer#*@}"
+    [[ "$code" != 429 ]] || printf 'X-RateLimit-Requests-Reset: 1791217043000\r\n'
     printf '\r\n%s' "${format/\%\{http_code\}/$code}"
     exit 0
 fi
@@ -105,30 +106,40 @@ assert_not "fetch without --output: sends no request" test -s "$TMP_ROOT/calls"
 
 # What the download waited is read off a sleep stub, at the default one-second
 # base delay. Each row: label, the upload server's answers, the exit status,
-# the downloads sent, the waits.
+# the downloads sent, the waits, and the requests_reset of the RATELIMITED
+# line a final 429 prints, empty when no such line is due.
 cat >"$TMP_ROOT/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >>"$SLEPT"
 STUB
 chmod +x "$TMP_ROOT/bin/sleep"
 for row in \
-    'a 503 is retried|503;200|0|2|1' \
-    'a rate-limited download is retried|429;200|0|2|1' \
-    'an unanswered download is retried|000;200|0|2|1' \
-    'a download fails after two retries|503;503;503;200|1|3|1 2' \
-    'a 404 fails on its first answer|404;200|1|1|' \
-    'a Retry-After within the bound is waited out|429@5;200|0|2|5' \
-    'a Retry-After at the bound is waited out|503@60;200|0|2|60' \
-    'a Retry-After past the bound fails at once|429@61;200|1|1|' \
-    'a Retry-After shorter than the backoff waits the backoff|503;503@1;200|0|3|1 2' \
-    'an HTTP-date Retry-After waits the backoff|503@Wed, 21 Oct 2026 07:28:00 GMT;200|0|2|1'; do
-    IFS='|' read -r label DOWNLOAD_RESPONSES expected_rc downloads waits <<<"$row"
+    'a 503 is retried|503;200|0|2|1|' \
+    'a rate-limited download is retried|429;200|0|2|1|' \
+    'an unanswered download is retried|000;200|0|2|1|' \
+    'a download fails after two retries|503;503;503;200|1|3|1 2|' \
+    'a download rate-limited past its retries reports the rate limit|429;429;429;200|1|3|1 2|2026-10-05T16:17:23Z' \
+    'a 404 fails on its first answer|404;200|1|1||' \
+    'a Retry-After within the bound is waited out|429@5;200|0|2|5|' \
+    'a Retry-After at the bound is waited out|503@60;200|0|2|60|' \
+    'a Retry-After past the bound fails at once|429@61;200|1|1||2026-10-05T16:17:23Z' \
+    'a 503 Retry-After past the bound is no rate limit|503@61;200|1|1||' \
+    'a Retry-After shorter than the backoff waits the backoff|503;503@1;200|0|3|1 2|' \
+    'an HTTP-date Retry-After waits the backoff|503@Wed, 21 Oct 2026 07:28:00 GMT;200|0|2|1|'; do
+    IFS='|' read -r label DOWNLOAD_RESPONSES expected_rc downloads waits reset <<<"$row"
     rm -f -- "${TMP_ROOT:?}/out.txt"
     : >"$TMP_ROOT/slept"
     run_attachments fetch https://uploads.linear.app/o/p/plan.md --output "$TMP_ROOT/out.txt"
     assert_eq "$label: result" "$RC" "$expected_rc"
     assert_eq "$label: attempts" "$(grep -c '^url = ' "$TMP_ROOT/calls")" "$downloads"
     assert_eq "$label: waits" "$(paste -sd ' ' "$TMP_ROOT/slept")" "$waits"
+    # linear.sh's callers parse this line to hold a write until the reset.
+    quota=$(jq -c 'select(type == "object" and .code == "RATELIMITED")' "$TMP_ROOT/err" 2>/dev/null || true)
+    if [[ -n "$reset" ]]; then
+        assert_jq "$label: rate limit" "$quota" ".requests_reset == \"$reset\""
+    else
+        assert_eq "$label: rate limit" "$quota" ''
+    fi
     if [[ "$expected_rc" == 0 ]]; then
         assert_eq "$label: the file is the last answer's" "$(cat "$TMP_ROOT/out.txt")" "body of answer $downloads"
     else

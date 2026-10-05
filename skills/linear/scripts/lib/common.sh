@@ -212,18 +212,22 @@ linear_header_value() {
     awk -v name="$1:" 'tolower($1) == name { gsub("\r", "", $2); value = $2 } END { print value }' <<<"$2"
 }
 
-# The time a rate-limited answer's request quota refills, as an ISO-8601 UTC
-# instant, read from Linear's X-RateLimit-Requests-Reset header (epoch
-# milliseconds), or "unavailable" when the answer carried no usable value.
-# Usage: linear_requests_reset "$headers"
-linear_requests_reset() {
-    local value
+# Reports a rate-limited final answer, a GraphQL request's or a download's,
+# as one JSON line on stderr naming the time the request quota refills, so a
+# caller can hold its write until then. The time is an ISO-8601 UTC instant
+# read from Linear's X-RateLimit-Requests-Reset header (epoch milliseconds),
+# or "unavailable" when the answer carried no usable value.
+# Usage: linear_rate_limited "$headers"; return 1
+linear_rate_limited() {
+    local value reset
     value=$(linear_header_value x-ratelimit-requests-reset "$1") || return 1
     if [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
-        jq -rn --arg ms "$value" '$ms | tonumber / 1000 | floor | todate'
+        reset=$(jq -rn --arg ms "$value" '$ms | tonumber / 1000 | floor | todate') || return 1
     else
-        printf 'unavailable\n'
+        reset=unavailable
     fi
+    jq -cn --arg reset "$reset" \
+        '{error: ("Rate limited. Requests-Reset=" + $reset), code: "RATELIMITED", requests_reset: $reset}' >&2
 }
 
 # Whether a request is sent again after an answer, every Linear request and
@@ -257,14 +261,13 @@ linear_retry_wait() {
 # One POST to Linear, sent again while linear_retry_wait says so. Linear
 # serves its RATELIMITED code under a 400 and could serve it under any
 # status, so a body carrying it is a rate-limited answer whatever the status.
-# A rate-limited final answer prints one JSON line naming the time the
-# request quota refills, so a caller can hold its write until then, and
+# A rate-limited final answer is reported by linear_rate_limited and
 # returns 1.
 # Otherwise prints the final status on the first line and the body after it.
 # CONFIG is the curl config lines naming the request.
 # Usage: reply=$(linear_http_post "$config") || return 1
 linear_http_post() {
-    local config="$1" attempt=1 raw code body headers reset
+    local config="$1" attempt=1 raw code body headers
     local delimiter="___HTTP_CODE___"
     while true; do
         headers=''
@@ -289,9 +292,7 @@ linear_http_post() {
             continue
         fi
         if [[ "$code" == 429 ]]; then
-            reset=$(linear_requests_reset "$headers") || return 1
-            jq -cn --arg reset "$reset" \
-                '{error: ("Rate limited. Requests-Reset=" + $reset), code: "RATELIMITED", requests_reset: $reset}' >&2
+            linear_rate_limited "$headers"
             return 1
         fi
         printf '%s\n%s' "$code" "$body"

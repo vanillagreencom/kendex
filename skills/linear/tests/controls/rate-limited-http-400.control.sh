@@ -16,8 +16,8 @@ control_replace scripts/lib/common.sh 1 \
 # Drop the header read, so a rate limit names no time the quota refills.
 control_expect "a rate limit names the Requests-Reset time"
 control_replace scripts/lib/common.sh 1 \
-    "        jq -rn --arg ms \"\$value\" '\$ms | tonumber / 1000 | floor | todate'" \
-    "        printf 'unavailable\\n'"
+    "        reset=\$(jq -rn --arg ms \"\$value\" '\$ms | tonumber / 1000 | floor | todate') || return 1" \
+    '        reset=unavailable'
 
 # A request that reached no server fails on its first try.
 control_expect "an unanswered request is retried"

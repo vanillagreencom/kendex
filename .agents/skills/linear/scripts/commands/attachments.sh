@@ -130,7 +130,10 @@ fetch_attachment() (
         fi
         break
     done
-    if [[ "$code" != 200 ]]; then
+    if [[ "$code" == 429 ]]; then
+        linear_rate_limited "$headers"
+        return 1
+    elif [[ "$code" != 200 ]]; then
         if [[ "$code" == 401 ]]; then
             linear_auth_unauthorized
         fi
