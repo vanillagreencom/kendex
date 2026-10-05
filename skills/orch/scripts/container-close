@@ -144,7 +144,11 @@ container_close_message() {
       ;;
     completion-held)
       printf 'container-close: completion-held parent-id=%s requests-reset=%s summary=%s\n' "$PARENT_ID" "$REQUESTS_RESET" "$HELD_SUMMARY_STATE"
-      printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID; it stays open until a run after $REQUESTS_RESET"
+      if [[ "$REQUESTS_RESET" == unavailable ]]; then
+        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID and gave no reset time; it stays open"
+      else
+        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID; it stays open until a run after $REQUESTS_RESET"
+      fi
       ;;
     held-release)
       printf 'container-close: held-release held-dir=%s\n' "$HELD_DIR"

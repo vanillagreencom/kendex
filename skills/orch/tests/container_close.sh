@@ -93,7 +93,9 @@ case "$resource:$action" in
     while [[ $# -gt 0 ]]; do case "$1" in --summary-file) summary="$2"; shift 2 ;; *) shift ;; esac; done
     ratelimit="$(cat "$root/ratelimit.complete.once" 2>/dev/null || true)"
     rm -f "$root/ratelimit.complete.once"
-    rate_line='{"error":"Rate limited. Requests-Reset=2026-10-05T16:00:00Z","code":"RATELIMITED","requests_reset":"2026-10-05T16:00:00Z"}'
+    # The reset linear_requests_reset prints: a UTC time, or `unavailable`.
+    reset="$(cat "$root/ratelimit.reset" 2>/dev/null || printf '2026-10-05T16:00:00Z')"
+    rate_line="{\"error\":\"Rate limited. Requests-Reset=$reset\",\"code\":\"RATELIMITED\",\"requests_reset\":\"$reset\"}"
     if [[ "$ratelimit" == comment ]]; then
       printf 'ratelimit\n' >> "$root/complete.calls"
       printf '%s\n' "$rate_line" '{"error": "Completion summary comment failed for PARENT-1. Issue state unchanged."}' >&2
@@ -136,7 +138,7 @@ reset_state() {
   printf 'In Progress\n' > "$FAKE_LINEAR_ROOT/parent.state"
   printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
-    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
+    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
   [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"; mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
@@ -214,6 +216,17 @@ rc=0; out="$(run_close 2>"$TMP_ROOT/resume.err")" || rc=$?
 assert_eq "$rc:$out" "0:closed PARENT-1" "the resumed run closes on the kept summary without a PR lookup" "$TMP_ROOT/resume.err"
 assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "the resumed run posts the kept summary"
 [[ ! -e "$HELD_DIR" ]] && pass "a closed parent releases its held inputs" || fail "a closed parent releases its held inputs"
+
+# A rate limit whose answer carried no usable reset header still holds, and
+# the machine-read stdout line and keyed field carry `unavailable` as given.
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+printf 'unavailable\n' > "$FAKE_LINEAR_ROOT/ratelimit.reset"
+rc=0; out="$(run_close 2>"$TMP_ROOT/held-unavailable.err")" || rc=$?
+assert_eq "$rc:$out" "0:held PARENT-1 unavailable" "a rate limit with no reset time holds" "$TMP_ROOT/held-unavailable.err"
+assert_file_contains "$TMP_ROOT/held-unavailable.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=unavailable summary=$HELD_DIR/summary.md" "a hold with no reset time keys its reset as unavailable"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "a hold with no reset time leaves the parent open"
 
 # Controls: the hold branch and the kept-summary reuse, each disabled in a copy.
 HOLD_MUTANT="$SANDBOX/skills/orch/scripts/container-close-hold-mutant"
