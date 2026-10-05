@@ -225,7 +225,7 @@ assert_eq "$(count "$LIB" "$TMP_ROOT/stale" | tail -n 1)" "2026-09-28	2" "a reve
 calls="$TMP_ROOT/escapes-calls"
 : > "$calls"
 count "$LIB" "$WORLD" "" ESCAPES_CALLS="$calls" >/dev/null
-assert_eq "$(awk '{print $4}' "$calls" | sort | paste -sd, -)" "Bug,bug" "each spelling of bug is read, and nothing else"
+assert_eq "$(awk '{print $4}' "$calls" | LC_ALL=C sort | paste -sd, -)" "Bug,bug" "each spelling of bug is read, and nothing else"
 assert_eq "$(awk '{print $9}' "$calls" | sort -u)" "kendex" "the bug read names the project's team"
 # NOW is 2026-09-30T12:00Z and the window's reach starts 2026-08-10T00:00Z:
 # 51 whole days back, with a day of margin either side.
