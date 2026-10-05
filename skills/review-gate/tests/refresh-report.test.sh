@@ -84,8 +84,9 @@ for needle, refused, deprecated, models in [
  mutant.write_text(changed)
  assert settings(refused, deprecated, models, mutant) == ''
 # Consumer settings: a retired key, a retired default under its own key and
-# each classifier note make one row; a current value, a retired value under
-# another key and an unlisted key make none. Rows are untrusted text.
+# each refresh or classifier note make one row; a current value, a retired
+# value under another key and an unlisted key make none. Rows are untrusted
+# text.
 gate = '- <code>PR_REVIEW_GATE</code>'
 timeout = '- <code>SECOND_OPINION_TIMEOUT = &quot;300&quot;</code>'
 unset = 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS'
@@ -98,20 +99,20 @@ consumer_rows = [
  ({'PR_REVIEW_GATE': '<b>`x`</b>'}, ['queue-only: path=a <b> `x` y'],
   [gate, '- <code>queue-only: path=a &lt;b&gt; &#96;x&#96; y</code>']),
 ]
-def consumer(committed, classifier, script=reporter):
+def consumer(committed, notes, script=reporter):
  entries = dict(refused=[], deprecated=[], deprecated_models=[], committed=committed)
- if classifier is not None: entries['classifier'] = classifier
+ if notes is not None: entries['notes'] = notes
  result = settings_run(entries, script)
  assert result.returncode == 0, result.stderr
  rows = re.findall(r'^- <code>.*?</code>', result.stdout, re.M)
  assert (result.stdout == '') == (rows == []) and result.stdout.count('## Consumer settings\n') == (rows != []), result.stdout
  return rows
-for committed, classifier, rows in consumer_rows:
- assert consumer(committed, classifier) == rows, (committed, classifier)
+for committed, notes, rows in consumer_rows:
+ assert consumer(committed, notes) == rows, (committed, notes)
 for needle, replacement in [
  ('if key in retired["keys"]', 'if False'),
  ('if value in retired["values"].get(key, [])', 'if False'),
- ('entries.get("classifier", [])', '[]'),
+ ('entries.get("notes", [])', '[]'),
 ]:
  assert source.count(needle) == 1
  mutant = mutants / 'consumer-report.py'

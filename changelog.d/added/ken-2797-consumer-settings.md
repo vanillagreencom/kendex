@@ -1,1 +1,1 @@
-- The kendex refresh pull request lists retired settings, retired shipped defaults and the classifier's unset `HARNESS_CI_QUEUE_PATHS` notice under Consumer settings; it changes no setting.
+- The kendex refresh pull request lists retired settings and defaults, unset or unreadable queue settings and doc-drift-check refresh warnings, and flags Fable or Astra pins even without orch.

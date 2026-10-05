@@ -123,6 +123,9 @@ fi
 # refresh has no JSON report. Fall back to blocked.rs's plain conflicts
 # section and holds.rs's records; verify cannot report discarded edits.
 # ledger.rs counts distinct kind/name items, not rows or harnesses.
+# setting_notes collects the lines naming a consumer setting for the report:
+# refresh's own warnings here, the classifier's once it runs.
+setting_notes=()
 held_items=""
 held_keys=$'\n'
 held_count=0
@@ -157,6 +160,9 @@ while IFS= read -r line; do
     *) conflict_section=no ;;
   esac
   case "$line" in
+    # KEN-2779: refresh warns once for a kendex.toml that still names
+    # [hooks.doc-drift-check] and skips that entry.
+    'doc-drift-check: '*) setting_notes+=("$line") ;;
     *' · skipped '*' on conflict'*)
       if [ -n "$conflict_count" ] || ! [[ "$line" =~ $ledger_pattern ]]; then
         printf 'refresh-error=conflict-ledger value=%s\n' "$line" >&2
@@ -262,10 +268,10 @@ if [ "$settings_lines" -ne 1 ] || [ "$settings_output" = invalid ]; then
   printf 'refresh-error=settings-output value=%s\n' "$ROOT/.agents/skills/orch" >&2
   exit 1
 fi
-# Sets settings_report from the parse, with the classifier's setting notes
-# once it ran. A failed report stops publication and auto-merge.
-report_settings() { # [CLASSIFIER_LINE...]
-  if ! settings_report="$(jq -c --args '. + {classifier: $ARGS.positional}' -- "$@" <"$TMP/settings.json" |
+# Sets settings_report from the parse and setting_notes. A failed report
+# stops publication and auto-merge.
+report_settings() {
+  if ! settings_report="$(jq -c --args '. + {notes: $ARGS.positional}' -- ${setting_notes[@]+"${setting_notes[@]}"} <"$TMP/settings.json" |
     python3 "$SCRIPT_DIR/refresh-report.py" --settings)"; then
     printf 'refresh-error=settings-report value=%s\n' "$SCRIPT_DIR/refresh-report.py" >&2
     exit 1
@@ -313,7 +319,6 @@ class_output="$("$SCRIPT_DIR/../../harness-ci/scripts/change-class" --event pull
 printf '%s\n' "$class_output" >&2
 class=""
 class_line=""
-class_notes=()
 while IFS= read -r line; do
   case "$line" in
     change_class=*) class="${line#change_class=}" ;;
@@ -321,7 +326,7 @@ while IFS= read -r line; do
     # Every verdict carries a queue-only line; only these causes name the
     # repository's own settings.
     'setting-unset: '* | 'queue-only: '*' cause=queue-list-undeclared' | \
-      'queue-only: '*' cause=queue-settings-unreadable') class_notes+=("$line") ;;
+      'queue-only: '*' cause=queue-settings-unreadable') setting_notes+=("$line") ;;
   esac
 done <<<"$class_output"
 # change-class also emits standard as a fallback. Publication requires its
@@ -330,7 +335,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-report_settings ${class_notes[@]+"${class_notes[@]}"}
+report_settings
 merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then

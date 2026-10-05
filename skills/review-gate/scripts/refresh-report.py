@@ -33,9 +33,8 @@ Astra, as a Deprecated models section. Its committed object, every
 committed [env] `KEY = "value"` setting, is matched against the package's
 retired-settings.json: a key listed under keys, or a value listed under
 values for its key, a shipped default since replaced. Those rows and the
-classifier array, the change-class lines naming a consumer setting that
-refresh-consumer passes once the classifier ran, form a Consumer settings
-section. It reports and changes no setting. An absent array or object reads
+notes array, the kendex refresh and change-class lines naming a consumer
+setting that refresh-consumer passes, form a Consumer settings section. It reports and changes no setting. An absent array or object reads
 as empty. A clean parse emits no text. It does not parse settings or
 preference entries itself.
 """
@@ -82,7 +81,7 @@ def settings_report():
     stale = [f"- {code(key)}: retired; no package reads it." for key in committed if key in retired["keys"]]
     stale += ["- " + code(f'{key} = "{value}"') + ": a former shipped default; unset it to take the current one."
               for key, value in committed.items() if value in retired["values"].get(key, [])]
-    stale += [f"- {code(line)}" for line in entries.get("classifier", [])]
+    stale += [f"- {code(line)}" for line in entries.get("notes", [])]
     if stale:
         sections.append("## Consumer settings\n\n" + "\n".join(stale) + "\n\n"
                         "Report only: the refresh changes no committed `kendex.settings.toml` setting.")
