@@ -74,8 +74,8 @@ fi
 
 rc=0
 CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
-# Exit 75 means a lock already holds the tree, so cleanup leaves it whoever
-# holds it.
+# Exit 75 means a lock already holds the tree; this start leaves that lock as
+# it stands.
 case "$rc" in
   0 | 75) ;;
   *) notice unclaimed "$ROOT" \
