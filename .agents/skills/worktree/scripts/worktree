@@ -1155,8 +1155,8 @@ issue_branch_name() {
 # private git dir. It is the one route from an issue ID to a hosted tree that
 # does not go through HEAD: the hosted path carries no issue ID, and a paused
 # restack leaves the tree detached, so its branch is not registered to it.
-# Its presence is also how the worktree-session-claim hook knows this skill
-# laid the tree out, without running this script.
+# Its presence is also how the worktree-session-claim hook knows `create`
+# returned the tree, without running this script.
 readonly WORKTREE_ISSUE_RECORD="kendex-issue"
 
 record_worktree_issue() { # WT ISSUE

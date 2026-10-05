@@ -1,1 +1,1 @@
-- `worktree-session-claim` hook: a session opened in a worktree the worktree skill created claims it at start, so cleanup leaves it; the workflow's issue claim takes that lease over.
+- `worktree-session-claim` hook: a session that starts in a worktree `worktree create` returned, an adopted one included, claims it so cleanup leaves it; the workflow's issue claim takes it over.

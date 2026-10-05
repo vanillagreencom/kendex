@@ -2,12 +2,12 @@
 # Tests for the worktree-session-claim hook.
 #
 # The hook claims the linked worktree a session starts in through the
-# worktree skill's session guard, found from the hook's own install, when the
-# worktree skill created that tree. Each row installs the hook and the guard
-# under a fixture HOME the way a global install lays them out, starts the hook
-# in one directory of a fixture repository, and pins the hook's exit status,
-# its stdout, the keyed first line of its stderr, the guard's keyed line under
-# it and the lease owner it leaves on the worktree.
+# worktree skill's session guard, found from the hook's own install, when that
+# tree carries the worktree skill's issue record. Each row installs the hook
+# and the guard under a fixture HOME the way a global install lays them out,
+# starts the hook in one directory of a fixture repository, and pins the
+# hook's exit status, its stdout, the keyed first line of its stderr, the
+# guard's keyed line under it and the lease owner it leaves on the worktree.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls (a
 # planted copy per rule) can be run against these same assertions.
@@ -115,7 +115,7 @@ a hook in a harness root outside the home claims through the home's guard|reloca
 a session already holding its lease keeps it|installed|alice|tree|USER=alice|0|-|-|alice
 an inherited GIT_DIR does not move the claim|installed|-|tree|GIT_DIR=$MAIN/.git USER=alice|0|-|-|alice
 a main checkout claims nothing|installed|-|main|USER=alice|0|-|-|none
-a worktree a harness made for itself claims nothing|installed|-|harness|USER=alice|0|-|-|none
+a worktree with no issue record claims nothing|installed|-|harness|USER=alice|0|-|-|none
 a directory outside any repository claims nothing|installed|-|outside|USER=alice|0|-|-|none
 another owner's lease is reported and kept|installed|bob|tree|USER=alice|0|worktree-session-claim: held=TREE|worktree-guard-owner-conflict: path=TREE owner=bob|bob
 a guard that fails is reported|installed|-|tree|-|0|worktree-session-claim: unclaimed=TREE|worktree-guard-owner-required: claim|none
@@ -175,7 +175,7 @@ assert_eq "rc=$rc first=$(first_line) guard=$(grep -Fxc -- "worktree-guard-owner
 # start. A row: label|dir|owner, the session starting in TREE or HARNESS_TREE
 # under a `.env.local` that creates a file when anything sources it.
 ENV_ROWS="a skill-created worktree runs no project file|tree|alice
-a harness's own worktree runs no project file|harness|none"
+a worktree with no issue record runs no project file|harness|none"
 env_rows() {
   local label dir want_owner cwd ran="$TMP_ROOT/env-ran"
   printf ': >"%s"\n' "$ran" >"$MAIN/.env.local"
@@ -236,11 +236,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control git-env 'unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES' ':' claim_rows \
     "an inherited GIT_DIR does not move the claim;"
 
-  # A hook that claims whatever tree it starts in locks a harness's own.
+  # A hook that claims whatever tree it starts in locks one no
+  # `worktree create` returned, such as a harness's own.
   control unmarked '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' claim_rows \
-    "a worktree a harness made for itself claims nothing;"
+    "a worktree with no issue record claims nothing;"
   control unmarked-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' env_rows \
-    "a harness's own worktree runs no project file;"
+    "a worktree with no issue record runs no project file;"
 
   # A hook that asks the worktree script runs the repository's `.env.local`.
   control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' \

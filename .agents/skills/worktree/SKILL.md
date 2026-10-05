@@ -69,7 +69,7 @@ A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirna
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. The catalog's `worktree-session-claim` hook claims a worktree this skill created when a session starts in it, and the orchestrating workflow's `claim --owner <ISSUE_ID>` takes that lease over. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
+`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. The catalog's `worktree-session-claim` hook claims, when a session starts in it, a worktree carrying the `kendex-issue` record every tree `create` returns carries, one adopted through `--reuse` or `--restack` included, and the orchestrating workflow's `claim --owner <ISSUE_ID>` takes that lease over. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
 
 ## Reclaiming build output
 

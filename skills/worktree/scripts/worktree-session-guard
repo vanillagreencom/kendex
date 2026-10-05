@@ -59,9 +59,9 @@ Mutations (claim, refresh, release, sweep) serialize on a lock in the
 repository's common dir, through flock(1) where it is on PATH and a mkdir
 mutex otherwise; either refuses after waiting 60 seconds for it.
 
-Exit codes: 0 success, 1 usage/Git failure, 3 no lock, 4 non-guard lock,
-5 enumeration failure or a lease sweep could not evaluate, 75 foreign
-owner/lock or a lease not yet stale.
+Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
+3 no lock, 4 non-guard lock, 5 enumeration failure or a lease sweep could
+not evaluate, 75 foreign owner/lock or a lease not yet stale.
 EOF
 }
 
