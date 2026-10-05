@@ -39,7 +39,7 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | Cursor | none | none | none | none |
 | Antigravity | native `flash` or `pro`; classes and `inherit` omit the key | none | none | none |
 
-Class overrides do not turn a class render into an exact pin. Static native files do not resolve account availability. Pi retains the class for its child dispatcher. Codex and Copilot class files inherit the managed session. The other class field omissions and unsupported runtime paths follow [D021 § Runtime boundary](../decisions/D021-runtime-model-classes.md#runtime-boundary). Claude callbacks and lane/launcher integration remain pending there.
+Class overrides do not turn a class render into an exact pin. Static native files do not resolve account availability. Pi retains the class for its child dispatcher. Codex and Copilot class files inherit the managed session. The class table, the resolver and each harness's runtime path are [D021](../decisions/D021-runtime-model-classes.md); a native loader that gains a documented runtime class or model callback is its revisit trigger.
 
 An input class alias requests a class, not an exact pin. `inherit` follows the session. Readback refuses a provider-qualified native field where the loader needs a bare selector. Pi and OpenCode require a provider on native model selectors. Both provider and model must be nonempty. The model part can contain `/`, as in `openrouter/anthropic/claude-sonnet-4`. Pi also accepts a `:level` from its effort vocabulary.
 

@@ -49,7 +49,7 @@ LINEAR_APP_TOKEN = ""
 # Both mint paths use the fixed scope read,write,issues:create,comments:create,
 # timeSchedule:write,initiative:read,initiative:write,customer:read,
 # customer:write. auth-mint writes no file; the pair's API path keeps its
-# token in a private per-user file (README.md § Settings).
+# token in a private per-user file (README.md § Setup).
 LINEAR_CLIENT_ID = ""
 
 # The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only

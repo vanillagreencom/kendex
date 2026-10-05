@@ -108,6 +108,7 @@ done <<'CLASSES'
 AGENTS.md 8192
 CLAUDE.md 24576
 GEMINI.md 24576
+SKILL.md 24576
 pkg/AGENTS.md 6144
 pkg/CLAUDE.md 24576
 pkg/GEMINI.md 24576
@@ -165,29 +166,6 @@ must_fail 0 1 'load-point gate control: measuring every tracked file fails the R
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf README.md
 unset DOC_LIMITS_CLASSES
-
-# A load-point document no shipped class names has no limit, whatever its
-# size: the shipped list names SKILL.md below the root only. The control adds
-# a root class to a private copy of the shipped list, which fails it.
-SHIPPED_HEAD="SHIPPED_CLASSES='AGENTS.md=8k;"
-bytes SKILL.md 100000
-git -C "$R" add SKILL.md
-run --staged
-expect 0 'a root SKILL.md has no shipped class'
-expect_first_line 'notice=documents-checked count=0' 'a root SKILL.md measures nothing'
-private_command shipped-classes
-[ ! -L "$MUTANT" ]
-[ "$(grep -Fc "$SHIPPED_HEAD" "$MUTANT")" -eq 1 ]
-sed "s|^$SHIPPED_HEAD|SHIPPED_CLASSES='SKILL.md=16k;AGENTS.md=8k;|" "$SOURCE_COMMAND" >"$MUTANT.changed"
-if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
-mv "$MUTANT.changed" "$MUTANT"
-chmod +x "$MUTANT"
-bash -n "$MUTANT"
-SR="$MUTANT"
-run --staged
-must_fail 0 1 'shipped-classes control: a root SKILL.md class added to the shipped list fails the unlimited root SKILL.md row'
-SR="$SOURCE_COMMAND"
-git -C "$R" rm -qf SKILL.md
 
 # A caller still passing the retired --against keeps its verdict, warned.
 bytes AGENTS.md 8192
@@ -351,6 +329,7 @@ SR="$SOURCE_COMMAND"
 # A malformed shipped class entry is a package defect; the same entry set
 # by the project is the project's policy error. AGENTS.md stays one byte over
 # its class limit, so a run past the table exits 1.
+SHIPPED_HEAD="SHIPPED_CLASSES='AGENTS.md=8k;"
 private_command shipped-entry
 [ "$(grep -Fc "$SHIPPED_HEAD" "$MUTANT")" -eq 1 ]
 sed "s|^$SHIPPED_HEAD|SHIPPED_CLASSES='AGENTS.md=8;|" "$SOURCE_COMMAND" >"$MUTANT.changed"

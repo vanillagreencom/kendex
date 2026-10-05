@@ -17,7 +17,7 @@ NL='
 # The shipped classes, pattern=Nk entries in match order. A document over its
 # limit fails the check, whichever class set that limit; is_load_point below
 # decides which documents a class can reach at all.
-SHIPPED_CLASSES='AGENTS.md=8k;CLAUDE.md=24k;GEMINI.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/GEMINI.md=24k;*/SKILL.md=24k'
+SHIPPED_CLASSES='AGENTS.md=8k;CLAUDE.md=24k;GEMINI.md=24k;SKILL.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/GEMINI.md=24k;*/SKILL.md=24k'
 STAGED=0
 usage() {
   cat <<EOF
