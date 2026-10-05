@@ -312,7 +312,7 @@ status_json() {
 }
 
 claimed_by() {
-	worktree_message guard-owner-conflict "path=$REQUESTED_PATH owner=$1" "Another session owns this worktree." >&2
+	worktree_message guard-owner-conflict "path=$REQUESTED_PATH owner=$1" "A lease under another owner holds this worktree." >&2
 }
 
 release_current() {

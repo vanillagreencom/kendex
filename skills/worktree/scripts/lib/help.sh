@@ -24,6 +24,9 @@ Commands:
   path ID          Print the worktree path for an issue ID
   path --hosted    Print the one path a hosted lane's worktree takes
   exists ID        Check whether a worktree exists for an issue ID
+  managed PATH     Print true when this skill laid out the worktree at PATH,
+                   an issue tree under the base dir or the hosted lane path;
+                   false otherwise
   merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments. A default

@@ -183,6 +183,8 @@ EOF
       printf 'secret\n' >"$ROOT/shared-trees/issue-foreign/.env.local"
       printf '[env]\nWORKTREE_BASE_DIR = "../shared-trees"\nWORKTREE_SYMLINKS = ".env.local"\n' >"$MAIN/kendex.settings.toml"
       ;;
+    # A directory under the default base dir that git never registered.
+    stray:*) mkdir -p "$ROOT/.worktrees/main/${1#stray:}" ;;
     # Older convention: a sibling trees/ dir, registered directly with git.
     legacy:*) must git -C "$MAIN" worktree add -q -b "${1#legacy:}" "$ROOT/trees/${1#legacy:}" main ;;
     *)
@@ -235,11 +237,12 @@ state() {
 }
 
 # The command runs from the checkout under the row's environment (`-u VAR`
-# entries unset, `VAR=value` entries set) and PATH prefix.
+# entries unset, `VAR=value` entries set) and PATH prefix; `<root>` in it
+# stands for the row's root.
 run() {
   local -a argv
   local rc=0
-  read -r -a argv <<<"$1"
+  read -r -a argv <<<"${1//<root>/$ROOT}"
   (cd "$MAIN" && env ${ROW_ENV[@]+"${ROW_ENV[@]}"} PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
@@ -318,6 +321,12 @@ a WORKTREE_HOSTED_NAME that is not one path segment is refused before anything i
 cleanup under the default layout removes the merged worktree and deletes its branch, never touching the checkout|repo create:issue-default merge:issue-default|-|cleanup|0|cleaned:<root>/.worktrees/main/issue-default|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-
 cleanup reads no setup config: an invalid WORKTREE_SYMLINKS does not stop it|repo create:issue-x merge:issue-x bad-symlinks|-|cleanup|0|cleaned:<root>/.worktrees/main/issue-x|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-
 a worktree git refuses to remove is preserved with its links and branch, and cleanup reports it|repo link-env create:issue-rf merge:issue-rf fail-remove:issue-rf|-|cleanup|1|-|preserved:<root>/.worktrees/main/issue-rf|trees=<root>/.worktrees/main/issue-rf@issue-rf branches=issue-rf remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-rf/.env.local-><main>/.env.local,.worktrees/main/issue-rf/base.txt,.worktrees/main/issue-rf/issue-rf.txt
+managed reports a tree create laid out under the default base dir|repo create:issue-a|-|managed <root>/.worktrees/main/issue-a|0|true|-|trees=<root>/.worktrees/main/issue-a@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-a/base.txt
+managed reports a tree under the configured base dir|repo local-custom create:issue-custom|-|managed <root>/custom-trees/issue-custom|0|true|-|trees=<root>/custom-trees/issue-custom@issue-custom branches=issue-custom remote=- checkout=main@clean dirs=custom-trees,custom-trees/issue-custom files=custom-trees/issue-custom/base.txt
+managed reports the hosted lane tree whatever the configured base dir|repo create-hosted:issue-a|WORKTREE_BASE_DIR=<root>/abs-base|managed <root>/.worktrees/main/lane|0|true|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+managed does not report a worktree registered outside the layout|repo legacy:issue-legacy|-|managed <root>/trees/issue-legacy|0|false|-|trees=<root>/trees/issue-legacy@issue-legacy branches=issue-legacy remote=- checkout=main@clean dirs=trees,trees/issue-legacy files=trees/issue-legacy/base.txt
+managed does not report a directory under the base dir git never registered|repo stray:issue-s|-|managed <root>/.worktrees/main/issue-s|0|false|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-
+managed does not report the main checkout, even one standing in the base dir|repo|WORKTREE_BASE_DIR=<root>|managed <root>/main|0|false|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 '
 
 echo "=== the worktree base directory ==="
