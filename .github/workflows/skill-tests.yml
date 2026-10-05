@@ -79,13 +79,14 @@ name: Skill Tests
 # run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
 # pooled rest, and the orch shard comment gives the figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
-# `rest`. `render-lint` is a target whose cost is one expensive test, so no
-# target seam reaches inside it and it stands at 801-1012s, ABOVE the
-# ceiling, until that test is itself divided. `rest` landed at 235-267s and
-# has since grown past the ceiling, to a completed maximum of 720s: nearly
-# all of it is the one `integration` harness, which no `--test` seam divides.
-# It stands past its figure pending a test-name split inside that harness,
-# and answers to the step bound the comment above its test step gives.
+# `rest`, and `render-lint` is the second: a target whose cost is one
+# expensive test, so no target seam reaches inside it and it stands at
+# 801-1012s, ABOVE the ceiling, until that test is itself divided. `rest`
+# is not that case, because a seam remains inside it. `rest` landed at
+# 235-267s and has since grown past the ceiling. Nearly all of it is the one
+# `integration` harness, which no `--test` seam divides but a test-name
+# partition would. Until that split is cut, the step bound the comment above
+# its test step gives holds the leg, against a maximum not yet measured.
 #
 # The cargo lanes' test steps each carry a `timeout-minutes` set above the
 # measured maximum of the step they bound, with headroom, so a hang there
@@ -1736,12 +1737,16 @@ jobs:
         run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
       # Measured maxima of the step this bounds, over those same runs: 534s
       # for kendex-core whole and 81s for kendex-app whole. `rest` is
-      # re-measured over 688 completed steps of the pull request and merge
-      # group runs created 2026-10-02 to 2026-10-05: a 720s maximum, and
-      # a median that rose from 537s to 669s across those four days as the
-      # `integration` harness grew from 548 tests in 525s to 586 in 708s.
-      # Its bound is 20 minutes, 480s above that maximum: headroom that
-      # growth erodes, so the leg is pending the split the header names.
+      # re-measured over the pull request and merge group runs created
+      # 2026-10-02 to 2026-10-05, and its maximum there is censored: its
+      # successful steps peak at 720s, which is the old 12-minute bound, and
+      # five steps were killed by that bound at 720-734s, three with the
+      # `integration` harness still running. Its true maximum is above 720s
+      # and unmeasured. The median of its successful steps rose from 537s to
+      # 669s across those four days as that harness grew from 548 tests in
+      # 525s to 586 in 708s. Its bound is 20 minutes, at most 480s above the
+      # censored maximum: headroom that growth erodes, so the leg is pending
+      # the split the header names.
       # `render-lint` is bounded at 1012s, the maximum its test reached
       # BEFORE its comments pass was split across scopes; its post-split
       # macOS seconds come from this change's own runs, and the bound is due
