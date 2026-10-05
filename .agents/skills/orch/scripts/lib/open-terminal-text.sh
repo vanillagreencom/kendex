@@ -116,6 +116,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. Without --cmd, a hosted Codex or Pi relaunch selects a matching session on the host, or runs the start brief in the same call when none exists.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
+    relaunch-unrebased) text='The rebase onto the base branch conflicts, so it was aborted and the session relaunches on the tree as it stands. The restack is the lane'"'"'s to run.' ;;
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
     resume-lineless) text='The host selected a matching Codex session and resumed it without a continuation line. Paste its continuation into the pane per oversee-lanes.md section Talking to a lane, Pane paste. A fresh start carries its brief and needs no paste.' ;;
     relaunch-selection-failed) text='The hosted Codex selection result could not be reset, read or recognized. The operation names the failed step. The lane is not counted as launched. Repair the host file access or selection command, then relaunch.' ;;
@@ -569,13 +570,16 @@ Options:
                     otherwise have done, because the continuation line tells
                     the lane to run a script under .agents. An unmerged answer
                     and a lookup that could not answer both take
-                    `create --reuse`, which judges the question again for
-                    itself. The merged item never asks create for its guard
-                    lease: nothing rewrites the tree, and the relaunch runs on
-                    a lane the overseer has already judged dead, so the claim
-                    it would assert is one nobody still holds. An item on the
-                    reuse path is still skipped on a lease held under another
-                    owner. A hosted item whose fleet record reads parked, its
+                    `create --reuse --keep-on-conflict`, which judges the
+                    question again for itself. A reuse whose rebase onto the
+                    base conflicts aborts it and keeps the tree as it stands,
+                    reported as relaunch-unrebased: the restack is the lane's,
+                    not the launcher's. The merged item never asks create for
+                    its guard lease: nothing rewrites the tree, and the
+                    relaunch runs on a lane the overseer has already judged
+                    dead, so the claim it would assert is one nobody still
+                    holds. An item on the reuse path is still skipped on a
+                    lease held under another owner. A hosted item whose fleet record reads parked, its
                     sandbox stopped by `lane-close --park` with its disk kept,
                     is started first through `lane-host start`, whose
                     sandbox-started item=ID line is required, then created
@@ -660,7 +664,7 @@ of it. A pane read that fails on this machine is reported as tmux-failed with
 the operation, never as a host that showed no prompt.
 
 Each item's worktree is created here (worktree create, or create --reuse
-under --relaunch when the item's tree already exists). An item whose worktree
+--keep-on-conflict under --relaunch when the item's tree already exists). An item whose worktree
 is owned by another session (create exit 75) is skipped and the remaining
 items still launch. A hosted item takes the same skip on lane-host create
 exit 75; a create lane-host refused at its per-home cap is lane-host-busy, and

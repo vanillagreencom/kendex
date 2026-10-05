@@ -251,6 +251,15 @@ Options:
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
+  --keep-on-conflict
+                  With --reuse, not --restack: when the rebase or replay
+                  conflicts, abort it as --reuse does and hand the tree back
+                  on its pre-rebase head, set up as a completed reuse would
+                  be: the path on stdout, a 'worktree-reuse-unrebased' notice
+                  naming the conflicting files on stderr, exit 76. For a
+                  caller that needs a session in the tree more than a rebased
+                  branch, such as a relaunch; a caller that needs the base
+                  omits it and keeps the failure
   --hosted        The create runs for a hosted lane, on a clone that holds one
                   lane worktree: a new tree lands at
                   ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside
@@ -278,7 +287,8 @@ Transfer form:
 Reuse rebase conflicts:
   Bare create never rebases an existing worktree. When the --reuse rebase
   conflicts, the run aborts it and exits 1 listing the conflicting files; the
-  worktree is left clean on its pre-rebase state. Two recovery paths:
+  worktree is left clean on its pre-rebase state (--keep-on-conflict hands it
+  back there with exit 76 instead). Two recovery paths:
     1. Resolve in place: re-run 'create <ID> --restack'. The rebase re-runs
        and pauses in the conflict state. Resolve the listed files, stage each
        with 'git -C <path> add <file>', then 'worktree restack continue <ID>';

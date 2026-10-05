@@ -104,8 +104,10 @@ proc_cwd_write "$PROC_CWD_FILE"
 # Stub worktree CLI:
 #   exists <item>          "true" when $STUB_EXISTS_DIR/<item> is present
 #   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>
-#   create <item> --reuse  logs "<item> --reuse", exits per
-#                          $STUB_EXIT_DIR/<item>.reuse
+#   create <item> --reuse  logs "<item>" and every flag after it, exits per
+#                          $STUB_EXIT_DIR/<item>.reuse; exit 76, the
+#                          --keep-on-conflict handback of a tree whose rebase
+#                          conflicted, still makes and prints the dir
 #   merged <item>          prints $STUB_MERGED_DIR/<item> when that file is
 #                          present (its merge commit, exit 0); exits 2 with a
 #                          worktree-merge-unverified record when
@@ -149,17 +151,19 @@ if [[ "\${1:-}" == "create" ]]; then
   item="\${2:-unknown}"
   key="\$item"
   logged="\$item"
-  if [[ "\${3:-}" == "--reuse" ]]; then key="\$item.reuse"; logged="\$item --reuse"; fi
+  if [[ "\${3:-}" == "--reuse" ]]; then key="\$item.reuse"; logged="\${*:2}"; fi
   printf '%s\n' "\$logged" >> "\$STUB_CALL_LOG"
-  if [[ -f "\$STUB_EXIT_DIR/\$key" ]]; then
+  rc=0
+  [[ ! -f "\$STUB_EXIT_DIR/\$key" ]] || rc="\$(cat "\$STUB_EXIT_DIR/\$key")"
+  if [[ "\$rc" -ne 0 && "\$rc" -ne 76 ]]; then
     echo "stub: refusing \$item" >&2
-    exit "\$(cat "\$STUB_EXIT_DIR/\$key")"
+    exit "\$rc"
   fi
   d="$TMP_ROOT/wt/\$item"
   mkdir -p "\$d"
   git init -q "\$d"
   printf '%s\n' "\$d"
-  exit 0
+  exit "\$rc"
 fi
 echo "unexpected worktree stub call: \$*" >&2
 exit 1
@@ -256,7 +260,8 @@ EXISTS_DIR="$TMP_ROOT/exists5"; mkdir -p "$EXISTS_DIR"
 printf '75' > "$EXIT_DIR/CC-1"; touch "$EXISTS_DIR/CC-1"
 run_case c5 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch launches into the existing worktree"
-assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "--relaunch creates with --reuse, and never retries bare"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse --keep-on-conflict " "--relaunch creates with --reuse, keeping a tree whose rebase conflicts, and never retries bare"
+assert_not_contains "$OUT" "relaunch-unrebased" "a relaunch over a clean rebase reports no unrebased tree"
 assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the replacement session is launched"
 assert_not_contains "$ERR" "open-terminal: item-owned item=CC-1" "a relaunched item is not skipped as owned"
 # The stub writes worktree-unmerged on stderr here, the ordinary answer on any
@@ -315,7 +320,7 @@ MERGED_DIR="$TMP_ROOT/merged9m"; mkdir -p "$MERGED_DIR"
 touch "$EXISTS_DIR/CC-1" "$MERGED_DIR/CC-1.unverified"
 run_case c9m -- --relaunch CC-1
 assert_eq "$RC" "0" "an unanswerable merge lookup still launches the item"
-assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "an unanswerable lookup takes the reuse path, which judges it again"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse --keep-on-conflict " "an unanswerable lookup takes the reuse path, which judges it again"
 assert_not_contains "$OUT" "worktree-reuse-merged" "an unanswerable lookup is never reported as a merged tree"
 assert_contains "$ERR" "worktree-merge-unverified: CC-1" "the unanswered question reaches the operator"
 
@@ -332,6 +337,29 @@ run_case c10 -- --relaunch CC-1
 assert_eq "$RC" "1" "a kept tree whose links cannot be restored fails the item"
 assert_contains "$ERR" "open-terminal: worktree-links-failed item=CC-1" "the unreachable links are named"
 assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "no lane is launched into a tree it cannot read"
+
+# Case 11: an unmerged item whose rebase onto the base conflicts. A relaunch is
+# not a restack point, so create hands the tree back unrebased (exit 76) and
+# the session launches on it, reported as relaunch-unrebased. Case 5 is the
+# same relaunch over a clean rebase, which reports nothing.
+EXIT_DIR="$TMP_ROOT/exit11"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists11"; mkdir -p "$EXISTS_DIR"
+MERGED_DIR="$TMP_ROOT/merged11"; mkdir -p "$MERGED_DIR"
+printf '76' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
+run_case c11 -- --relaunch CC-1
+assert_eq "$RC" "0" "a relaunch whose rebase conflicts still launches"
+assert_contains "$OUT" "open-terminal: relaunch-unrebased item=CC-1 path=$TMP_ROOT/wt/CC-1" "the unrebased tree is reported with its path"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the session is launched on the tree as it stands"
+assert_not_contains "$ERR" "open-terminal: worktree-failed" "the kept tree is not a create failure"
+
+# Must-fail control: without the handback arm the same exit is a create failure.
+UNREBASED_CONTROL="$REPO/scripts/open-terminal-unrebased-control"
+cp "$OT" "$UNREBASED_CONTROL"
+mutate_file "$UNREBASED_CONTROL" 'if [[ "$create_rc" -eq "$WORKTREE_REUSE_UNREBASED_EXIT"' 'if false && [[ "$create_rc" -eq "$WORKTREE_REUSE_UNREBASED_EXIT"'
+EXIT_DIR="$TMP_ROOT/exit11"; EXISTS_DIR="$TMP_ROOT/exists11"
+OT="$UNREBASED_CONTROL" run_case c11-control -- --relaunch CC-1
+assert_eq "rc=$RC" "rc=1" "control: without the handback arm the conflicting relaunch fails"
+assert_contains "$ERR" "open-terminal: worktree-failed item=CC-1 exit=76" "control: the mutant reports the kept tree as a create failure"
 
 MERGED_DIR=""
 

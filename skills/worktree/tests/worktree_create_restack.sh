@@ -498,6 +498,8 @@ err_text() {
     reuse-dirty) printf 'worktree-reuse-dirty: <wt>' ;;
     paused) printf 'worktree-rebase-conflicts: <wt>' ;;
     aborted) printf 'worktree-rebase-failed: <wt>' ;;
+    unrebased) printf 'worktree-reuse-unrebased: <wt>' ;;
+    keep-mode) printf 'worktree-keep-mode-required: --keep-on-conflict' ;;
     refusal:*) printf 'worktree-restack-state: path=<wt> reason=%s' "${spec#refusal:}" ;;
     conflicts) printf 'worktree-restack-conflicts: file.txt' ;;
     unstaged) printf 'worktree-restack-unstaged: other.txt' ;;
@@ -528,6 +530,8 @@ out_text() {
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
 ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict over a conflict aborts the rebase and hands the tree back on its pre-rebase head|conflict|create topic --reuse --keep-on-conflict|76|wt|unrebased|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict with --restack is refused before any mutation|conflict|create topic --restack --keep-on-conflict|1|-|keep-mode|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 a merged branch is kept as it stands and rebased by nothing|conflict merged-pr|create topic --reuse|0|wt|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --restack on a merged branch refuses rather than pausing in a conflict with its own merge|conflict merged-pr|create topic --restack|1|-|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 a merge lookup that cannot answer is recorded and the rebase still runs|conflict gh-fail|create topic --reuse|1|-|merge-unverified+aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
@@ -560,6 +564,7 @@ abort succeeds under a setup config that no longer applies|conflict publish rest
 remote movement after authorization fails the exact lease|clean reuse move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=external map=1
 a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+--keep-on-conflict over a clean rebase rebases as --reuse does|plain|create topic --reuse --keep-on-conflict|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 dirty reuse refreshes the worktree without rebasing its uncommitted work|plain dirty-other|create topic --reuse|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
@@ -674,6 +679,29 @@ assert_eq "$(grep -c '^worktree-reuse-merged: ' "$ROOT/merged-mutant.err" || tru
   "control: the mutant never reports the merge"
 assert_eq "$(grep -c '^worktree-rebase-failed: ' "$ROOT/merged-mutant.err" || true)" "1" \
   "control: the mutant stops on conflicts against the branch's own merge"
+
+echo
+echo "=== must-fail control: with the keep cut, a conflicting --keep-on-conflict reuse fails ==="
+
+# The rows above pin that --keep-on-conflict hands a conflicting tree back. The
+# defect planted here is the rebase arm's call to the keep exit, on a private
+# package copy: the same reuse then fails as a plain --reuse does.
+build keep-mutant conflict
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+keep_mutant="$ROOT/pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$' "$keep_mutant")" "1" \
+  "control finds the rebase arm's keep exit"
+sed -i.bak 's/keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$/: "keep cut"/' "$keep_mutant"
+rm -f -- "${keep_mutant:?}.bak"
+assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$' "$keep_mutant")" "0" \
+  "control cuts it only in its private copy"
+keep_mutant_rc=0
+(cd "$MAIN" && "$keep_mutant" create "$ISSUE" --reuse --keep-on-conflict \
+  >"$ROOT/keep-mutant.out" 2>"$ROOT/keep-mutant.err") || keep_mutant_rc=$?
+assert_eq "$keep_mutant_rc" "1" "control: the mutant fails the reuse it should have kept"
+assert_eq "$(grep -c '^worktree-reuse-unrebased: ' "$ROOT/keep-mutant.err" || true)" "0" \
+  "control: the mutant never reports the kept tree"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

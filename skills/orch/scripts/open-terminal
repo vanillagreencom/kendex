@@ -149,6 +149,9 @@ source "$SCRIPT_DIR/lib/lane-cap.sh"
 # shellcheck source=lib/lane-capabilities.sh
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
+# `worktree create --reuse --keep-on-conflict` handed back a tree whose rebase
+# conflicted, unrebased (`worktree create --help`).
+readonly WORKTREE_REUSE_UNREBASED_EXIT=76
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 # Bounded seconds per brief-delivery verification pass on tmux lanes.
@@ -3140,6 +3143,11 @@ for raw in "${ITEMS[@]}"; do
   # `create --reuse`, which asks again and records an unanswerable lookup as
   # worktree-merge-unverified.
   #
+  # A relaunch is not a restack point: the lane may have been told to wait on
+  # other merges before it restacks, and a conflict is the lane's to resolve.
+  # So the reuse keeps a tree whose rebase conflicts where it stood
+  # (--keep-on-conflict) and the launch reports it as relaunch-unrebased.
+  #
   # Skipping create skips its guard lease, which is deliberate: nothing on this
   # arm rewrites the tree, and a relaunch runs on a lane the overseer has
   # already judged dead, so the claim create would assert is one nobody still
@@ -3154,7 +3162,7 @@ for raw in "${ITEMS[@]}"; do
       ot_message worktree-reuse-merged "item=$item" "commit=$reuse_merged"
     else
       reuse_merged=""
-      create_args+=(--reuse)
+      create_args+=(--reuse --keep-on-conflict)
     fi
   fi
   # One name for "the tree already stands and create is not asked for it",
@@ -3212,6 +3220,10 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?
   elif [[ "$keep_tree" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
+  if [[ "$create_rc" -eq "$WORKTREE_REUSE_UNREBASED_EXIT" && "$LANE_HOST" == local ]]; then
+    ot_message relaunch-unrebased "item=$item" "path=$wt"
+    create_rc=0
+  fi
   if [[ "$create_rc" -eq 0 && "$keep_tree" == true ]] && ! launchable_dir "$wt" "$title"; then
     failed=$((failed + 1))
     continue

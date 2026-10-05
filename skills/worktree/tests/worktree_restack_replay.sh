@@ -447,6 +447,7 @@ err_text() {
     dirty) printf 'worktree-replay-dirty: <wt>' ;;
     merges) printf 'worktree-replay-merges: <wt>' ;;
     aborted) printf 'worktree-replay-failed: <wt>' ;;
+    unrebased) printf 'worktree-reuse-unrebased: <wt>' ;;
     paused) printf 'worktree-replay-conflicts: <wt>' ;;
     refusal:*) printf 'worktree-restack-state: path=<wt> reason=%s' "${spec#refusal:}" ;;
     unreattachable) printf 'worktree-restack-reattach-failed: <wt>' ;;
@@ -476,6 +477,7 @@ push after a clean replay publishes the head with the original lease|clean repla
 a dirty tree is refused before any mutation|clean dirty|create topic --reuse --replay|1|-|dirty|engine=none branch=topic head=pre ref=pre ahead=1 dirty= M file.txt tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
 a merge commit in the range is refused and routed to the rebase engine|clean merge|create topic --reuse --replay|1|-|merges|engine=none branch=topic head=end ref=end ahead=3 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig,side.txt:side restack=- remote=pre map=-
 --reuse --replay over a conflict aborts back to the pre-replay branch and names both recovery paths|conflict|create topic --reuse --replay|1|-|aborted|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict over a conflicting replay aborts it and hands the tree back on its pre-replay branch|conflict|create topic --reuse --replay --keep-on-conflict|76|wt|unrebased|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --reuse --replay on a merged branch refuses rather than replaying the merged work onto its own squash|conflict merged-pr|create topic --reuse --replay|1|-|reuse-merged|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --restack --replay over a published branch pauses the sequencer with a bound token and the branch unmoved|conflict publish|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=pre map=unmapped
 --restack --replay over an unpublished branch pauses with no remote lease|conflict|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound,mode:replay remote=- map=unmapped
@@ -516,6 +518,29 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+echo
+echo "=== must-fail control: with the keep cut, a conflicting --keep-on-conflict replay fails ==="
+
+# The row above pins that --keep-on-conflict hands a conflicting replay's tree
+# back. The defect planted here is the replay arm's call to the keep exit, on a
+# private package copy: the same replay then fails as a plain one does.
+build keep-mutant conflict
+mkdir -p "$ROOT/pkg"
+cp -R "$(cd "$TEST_DIR/.." && pwd)" "$ROOT/pkg/worktree"
+keep_mutant="$ROOT/pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack --replay"$' "$keep_mutant")" "1" \
+  "control finds the replay arm's keep exit"
+sed -i.bak 's/keep_unrebased_worktree "\$CONFLICT_FILES" "--restack --replay"$/: "keep cut"/' "$keep_mutant"
+rm -f -- "${keep_mutant:?}.bak"
+assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack --replay"$' "$keep_mutant")" "0" \
+  "control cuts it only in its private copy"
+keep_mutant_rc=0
+(cd "$MAIN" && PATH="$NOREBASE_PATH" "$keep_mutant" create "$ISSUE" --reuse --replay --keep-on-conflict \
+  >"$ROOT/keep-mutant.out" 2>"$ROOT/keep-mutant.err") || keep_mutant_rc=$?
+assert_eq "$keep_mutant_rc" "1" "control: the mutant fails the replay it should have kept"
+assert_eq "$(grep -c '^worktree-reuse-unrebased: ' "$ROOT/keep-mutant.err" || true)" "0" \
+  "control: the mutant never reports the kept tree"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   optional: [github]
-argument-hint: "create <ID> [<branch>] [--base <branch>|--from <ref>|--pr <N>] [--reuse|--restack] [--replay] [--hosted] | create <ID> --transfer <branch> (not with <branch>, --base, --from, --pr, --reuse, --restack, or --replay) | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
+argument-hint: "create <ID> [<branch>] [--base <branch>|--from <ref>|--pr <N>] [--reuse [--keep-on-conflict]|--restack] [--replay] [--hosted] | create <ID> --transfer <branch> (not with <branch>, --base, --from, --pr, --reuse, --restack, or --replay) | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: kendex
@@ -53,6 +53,8 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push. Add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
 A branch is rebased only through `worktree push`, `create --restack`, or `create --reuse`, never a bare `git rebase`; use this section's replay fallback for recovery.
+
+`create --reuse --keep-on-conflict` aborts a conflicting rebase and hands the tree back on its pre-rebase head with exit 76, for a relaunch that must start the session before the restack; a caller that needs the base omits the flag and keeps the failure (`create --help`).
 
 A branch whose pull request the merge lookup confirms merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit. When the lookup cannot answer, `create` records `worktree-merge-unverified` and rebases as for a branch in flight (`merged --help`).
 
