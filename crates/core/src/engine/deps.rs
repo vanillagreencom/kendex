@@ -685,9 +685,6 @@ fn wanted_by(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Option<Wanted> {
-    if super::desired::retired_hook(kind, parent).is_some() {
-        return None;
-    }
     let own: CatalogKey = (parent_decl.source.clone(), parent_decl.rev.clone());
     let (env, scope) = (catalogs.env, catalogs.scope);
     let OpenCatalog {
@@ -695,6 +692,10 @@ fn wanted_by(
         config,
         offered,
     } = catalogs.get(&own.0, own.1.as_deref(), state)?;
+    // A retired item installs nothing, so it derives nothing either.
+    if config.retired(kind, parent).is_some() {
+        return None;
+    }
     let mut wanted = Wanted {
         deps: Vec::new(),
         findings: Vec::new(),
@@ -1240,6 +1241,20 @@ fn resolve(
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<String> {
+    // Retired, the companion is never written, which withholds an armed
+    // hook that requires it rather than arming it alone.
+    if let Some(migration) = config.retired(dep_kind, name) {
+        found.push(warn(
+            kind,
+            parent,
+            format!("{parent} requires {name}, which the catalog '{source}' retired"),
+            match migration.is_empty() {
+                true => format!("drop {name} from {parent}'s dependencies"),
+                false => migration.to_owned(),
+            },
+        ));
+        return None;
+    }
     let resolved = match dep_kind {
         ItemKind::Skill => offered.resolve(sealed, config, name),
         ItemKind::Hook

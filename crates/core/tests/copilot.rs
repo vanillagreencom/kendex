@@ -208,8 +208,11 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
     assert_eq!(entry["timeoutSec"], 10);
     assert!(is_clean(&f));
 
+    // The registry held only this hook, so switching it off takes the
+    // file, as Claude Code's emptied settings go, and switching it on
+    // writes it back.
     toggle(&f, "audit", false);
-    assert!(json(&registry).get("hooks").is_none());
+    assert!(!registry.exists());
     assert!(f.project.join(".github/hooks/audit.sh.disabled").is_file());
     assert!(is_clean(&f));
 
@@ -218,7 +221,7 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
 
     remove(&f, "audit");
     assert!(!script.exists());
-    assert!(json(&registry).get("hooks").is_none());
+    assert!(!registry.exists());
 }
 
 /// Copilot skips an entry whose matcher is the empty string and documents

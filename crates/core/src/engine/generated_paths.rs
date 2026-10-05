@@ -405,7 +405,7 @@ pub(super) fn plan(
     if !root.join(".git").exists() {
         return Ok(generated);
     }
-    let Some(adopted) = adopted::collect(root, state)? else {
+    let Some(adopted) = adopted::collect(root, state, ops)? else {
         // Verify reports the malformed document. An apply must retain it:
         // rewriting it could erase adoption declarations it cannot read.
         return Ok(generated);

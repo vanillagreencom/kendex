@@ -56,6 +56,10 @@ pub struct SourceConfig {
     pub discovery: Discovery,
     /// What is wrong with the control file itself.
     pub config_findings: Vec<CatalogFinding>,
+    /// The items this catalog retired, by kind and name, each with the
+    /// one-line migration a consumer still declaring it reads; empty where
+    /// the catalog gave none.
+    pub retired: BTreeMap<(ItemKind, String), String>,
 }
 
 impl SourceConfig {
@@ -117,6 +121,14 @@ impl SourceConfig {
         Some(hidden.join("; "))
     }
 
+    /// The migration line for an item this catalog retired, `None` for one
+    /// it did not.
+    pub fn retired(&self, kind: ItemKind, name: &str) -> Option<&str> {
+        self.retired
+            .get(&(kind, name.to_owned()))
+            .map(String::as_str)
+    }
+
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
         self.config_findings
             .push(CatalogFinding::new(file, problem, fix));
@@ -168,6 +180,10 @@ pub fn source_config(sealed: &SealedSource, display: &str) -> Result<SourceConfi
             // declared anything.
             config.mode = CatalogMode::Explicit;
             read_tables(&mut config, &table);
+            // An unusable catalog answers for nothing, retirements included.
+            if config.mode != CatalogMode::Unusable {
+                read_retired(&mut config, &table);
+            }
         }
     }
     if config.plugin_registry.is_some() && config.mode != CatalogMode::Unusable {
@@ -331,6 +347,40 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             }
             config.frontmatter.insert(harness.clone(), per_agent);
         }
+    }
+}
+
+/// `[retired]`: one table per kind, keyed as a manifest declares that kind,
+/// naming each retired item with its migration line. A table that will not
+/// read retires nothing and is a finding: a consumer still declaring the
+/// item then gets the not-found refusal, which removes nothing.
+fn read_retired(config: &mut SourceConfig, table: &toml::Table) {
+    let Some(retired) = table.get("retired") else {
+        return;
+    };
+    let mut read = BTreeMap::new();
+    let whole = retired.as_table().is_some_and(|kinds| {
+        kinds.iter().all(|(key, names)| {
+            let kind = ItemKind::ALL
+                .into_iter()
+                .find(|kind| *kind != ItemKind::Plugin && format!("{}s", kind.name()) == *key);
+            kind.zip(names.as_table()).is_some_and(|(kind, names)| {
+                names.iter().all(|(name, migration)| {
+                    migration
+                        .as_str()
+                        .map(|line| read.insert((kind, name.clone()), line.to_owned()))
+                        .is_some()
+                })
+            })
+        })
+    });
+    match whole {
+        true => config.retired = read,
+        false => config.config_findings.push(CatalogFinding::new(
+            crate::manifest::MANIFEST_FILE,
+            "`[retired]` could not be read, so it retires nothing",
+            "write one table per kind, such as `[retired.hooks]`, mapping each retired name to a migration string",
+        )),
     }
 }
 

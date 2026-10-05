@@ -63,6 +63,7 @@ mod refresh_agent_cleanup;
 mod refresh_fresh_clone;
 mod refresh_ledger;
 mod refresh_locked;
+mod refresh_retired;
 mod release_workflow;
 mod remote_e2e;
 mod remove_locked;

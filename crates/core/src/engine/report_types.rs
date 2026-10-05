@@ -337,6 +337,9 @@ pub struct EngineReport {
     /// name. `verify` holds them against the project's ignore rules
     /// (`tracked_output`).
     pub tracked_outputs: BTreeMap<String, Vec<String>>,
+    /// Declarations naming an item their catalog retired: the plan installs
+    /// nothing for them, so the record owes them no entry.
+    pub retired: BTreeSet<(ItemKind, String)>,
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -439,6 +442,7 @@ impl EngineReport {
             record: Lock::default(),
             held: Vec::new(),
             tracked_outputs: BTreeMap::new(),
+            retired: BTreeSet::new(),
         }
     }
 

@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use super::{ensure_object, names, one, written};
 
 /// The schema version Copilot's hook loader expects a file to declare.
-const COPILOT_HOOK_VERSION: u64 = 1;
+pub(super) const COPILOT_HOOK_VERSION: u64 = 1;
 
 // The project command binds its owned script before the walker and wrapper.
 fn hook_key(command: &str) -> &str {
@@ -60,7 +60,8 @@ pub(super) fn upsert_copilot_hook(
 
 /// Takes our entry back out, from every event when none is named. A file
 /// left holding no hooks at all keeps its version line: it is still a hook
-/// file, and Copilot's loader wants one.
+/// file, and Copilot's loader wants one. A project's file left so goes whole
+/// (`ConfigEdit::removes_empty_document`).
 pub(super) fn remove_copilot_hook(
     root: &mut Map<String, Value>,
     event: Option<&str>,

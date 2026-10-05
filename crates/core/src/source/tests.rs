@@ -343,6 +343,54 @@ engineer = ["dev"]
     assert_eq!(config.role_skills["engineer"], ["dev"]);
 }
 
+/// `[retired]` reads per kind, under the table a manifest declares that kind
+/// in; a shape it cannot read retires nothing, as a finding, so a consumer
+/// still declaring the item keeps the not-found refusal, which removes
+/// nothing.
+#[test]
+fn a_retired_table_reads_whole_or_retires_nothing() {
+    for (row, table, retired) in [
+        (
+            "per kind",
+            "[retired.hooks]\nold-check = \"\"\n[retired.pi-extensions]\nold-ext = \"declare new-ext\"\n",
+            vec![
+                ((ItemKind::Hook, "old-check"), ""),
+                ((ItemKind::PiExtension, "old-ext"), "declare new-ext"),
+            ],
+        ),
+        (
+            "a list for a kind",
+            "[retired]\nhooks = [\"old-check\"]\n",
+            vec![],
+        ),
+        ("an unknown kind", "[retired.plugins]\nold = \"\"\n", vec![]),
+        (
+            "a migration that is no string",
+            "[retired.hooks]\nold-check = true\n",
+            vec![],
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("kendex.toml"),
+            format!("is_source_catalog = true\n{table}"),
+        )
+        .unwrap();
+        let config = source_config(&SealedSource::open(tmp.path()).unwrap(), "cat").unwrap();
+        let read: Vec<((ItemKind, &str), &str)> = config
+            .retired
+            .iter()
+            .map(|((kind, name), line)| ((*kind, name.as_str()), line.as_str()))
+            .collect();
+        assert_eq!(read, retired, "{row}");
+        assert_eq!(
+            config.config_findings.is_empty(),
+            !retired.is_empty(),
+            "{row}"
+        );
+    }
+}
+
 /// A declared-layout catalog lists only names that install: a deceptive or
 /// otherwise unusable directory name is not drawn as a row find_item would
 /// refuse, and never as an on-screen name that differs from the one on disk.

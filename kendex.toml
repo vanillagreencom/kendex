@@ -167,6 +167,12 @@ description = "Project-defined shell command restrictions"
 hooks = ["command-safety"]
 skills = ["commit-guards"]
 
+# Items this catalog no longer ships, one table per kind, each name with a
+# migration line (empty for none). A consumer still declaring one refreshes
+# with one warning carrying it, and the refresh removes what it installed.
+[retired.hooks]
+doc-drift-check = ""
+
 # Skill mappings per agent — always loaded into context.
 [agent-skills]
 rust = ["github", "linear"]

@@ -868,7 +868,9 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize
 /// harnesses line leaves each one out is not asked for here: apply records
 /// nothing for it, so it goes to `left_out` and never to the gap. The
 /// engine's report answers which those are
-/// ([`EngineReport::left_out_by_own_line`]).
+/// ([`EngineReport::left_out_by_own_line`]). Nor is a declaration naming
+/// an item its catalog retired ([`EngineReport::retired`]), which the plan
+/// skips with a warning and installs nothing for.
 ///
 /// The closure is read with the `options` and the record the audit
 /// rendered through, so under `--at-record` a package held at its recorded
@@ -887,9 +889,16 @@ fn declared_packages(
         (Err(_), _) | (Ok(_), None) => return Declared::unread(),
     };
     let (planned, status) = planned_closure_held(env, scope, manifest, &records.lock, options);
-    let (left_out, wanted): (Vec<_>, Vec<_>) = planned.into_iter().partition(|declared| {
-        report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
-    });
+    let (left_out, wanted): (Vec<_>, Vec<_>) = planned
+        .into_iter()
+        .filter(|declared| {
+            !report
+                .retired
+                .contains(&(declared.kind, declared.name.clone()))
+        })
+        .partition(|declared| {
+            report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
+        });
     let pair = |declared: kendex_core::engine::PlannedDeclaration| (declared.kind, declared.name);
     Declared {
         wanted: wanted

@@ -304,6 +304,9 @@ pub struct DesiredState {
     /// another catalog installed it, invariant 4's conflict
     /// (`plan_pass::plan_rebound`).
     pub processed: BTreeMap<(ItemKind, String), String>,
+    /// Declarations naming an item their catalog retired;
+    /// `EngineReport::retired`.
+    pub retired: BTreeSet<(ItemKind, String)>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -545,13 +548,15 @@ fn compute(
                 continue;
             };
             super::catalog::notes(&config, &decl.source, &mut state);
-            // Ahead of the catalog lookup: a carried hook installs nothing.
-            // Its installed copies are stranded, so the sweep takes them the
-            // way it takes a harness dropped from a declaration.
-            if let Some(warning) = retired_hook(kind, name) {
+            // Ahead of the catalog lookup: a retired item the catalog still
+            // carries installs nothing. Its installed copies are stranded, so
+            // the sweep takes them the way it takes a harness dropped from a
+            // declaration.
+            if let Some(warning) = retired(&config, kind, name) {
                 state
                     .processed
                     .insert((kind, name.clone()), provenance.clone());
+                state.retired.insert((kind, name.clone()));
                 state.warnings.push(warning);
                 continue;
             }
@@ -665,29 +670,32 @@ impl ItemCtx<'_> {
     }
 }
 
-/// Hooks the catalog retired that a consumer manifest may still declare.
-/// A declaration naming one is skipped with a warning carrying the manifest
-/// edit and derives no companion, whether or not the catalog still carries
-/// the hook, where every other name the catalog does not carry is refused,
-/// so a refresh at that consumer still runs. KEN-2892 removes the route one
-/// minor release after it ships, the owner's ruling for this one route.
-const RETIRED_HOOKS: &[&str] = &["doc-drift-check"];
-
-/// The warning a retired hook's declaration gets in place of the refusal.
-/// The message is the whole line: it opens with the hook's name as its key
-/// and carries the edit itself, so the line a program reads is complete
-/// with nothing before the key and nothing beneath it. The consumer
-/// refresh report (KEN-2797) forwards every `kendex refresh` line opening
-/// `<hook>: `, and the CLI prints a message keyed by its own name as that
-/// line.
-pub(super) fn retired_hook(kind: ItemKind, name: &str) -> Option<super::ItemWarning> {
-    (kind == ItemKind::Hook && RETIRED_HOOKS.contains(&name)).then(|| super::ItemWarning {
+/// The warning a declaration naming an item its catalog retired
+/// (`[retired]`) gets in place of the not-found refusal, so a refresh at a
+/// consumer still declaring it runs. The message is the whole line: it opens
+/// with the item's name as its key and carries the manifest edit and the
+/// catalog's migration, so the line a program reads is complete with nothing
+/// before the key and nothing beneath it. The consumer refresh report
+/// (KEN-2797) forwards every `kendex refresh` line opening `<name>: `, and
+/// the CLI prints a message keyed by its own name as that line.
+pub(super) fn retired(
+    config: &SourceConfig,
+    kind: ItemKind,
+    name: &str,
+) -> Option<super::ItemWarning> {
+    let migration = config.retired(kind, name)?;
+    let kind_name = kind.name();
+    let mut message = format!(
+        "{name}: retired {kind_name}, entry skipped; delete [{kind_name}s.{name}] from kendex.toml"
+    );
+    if !migration.is_empty() {
+        message = format!("{message}; {migration}");
+    }
+    Some(super::ItemWarning {
         kind,
         name: name.to_owned(),
         harness: None,
-        message: format!(
-            "{name}: retired hook, entry skipped; delete [hooks.{name}] from kendex.toml"
-        ),
+        message,
         remediation: None,
     })
 }

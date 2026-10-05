@@ -297,7 +297,10 @@ pub(super) fn orphans(
                 drift.push(row(
                     entry,
                     DriftState::Orphaned,
-                    "left over from an earlier setup; nothing needs it anymore".into(),
+                    format!(
+                        "left over from an earlier setup; nothing needs it anymore — refresh, or remove {}, takes it",
+                        entry.name
+                    ),
                     None,
                 ));
                 if unneeded {
@@ -431,12 +434,14 @@ fn verdicts<'a>(
             continue;
         }
         let unneeded = derived_only(entry);
+        // Refresh's unfiltered sweep takes every record nothing declares or
+        // derives anymore, a declaration deleted from the manifest or
+        // renamed included, so a consumer holds only what its manifest and
+        // catalog ship. A named removal does not sweep unrelated requested
+        // items.
         let unfiltered = options.removal_filter.is_none();
-        // Refresh's unfiltered sweep retires agents dropped by a manifest
-        // rename. A named removal does not sweep unrelated requested agents.
-        let dropped_agent = unfiltered && entry.kind == ItemKind::Agent;
         let removable = (options.remove_orphans && (named || unfiltered))
-            || (options.sweep_unneeded && (unneeded || departed_harness || dropped_agent));
+            || (options.sweep_unneeded && (unneeded || departed_harness || unfiltered));
         if !removable {
             verdicts.push((key, Verdict::Left { unneeded }));
             continue;

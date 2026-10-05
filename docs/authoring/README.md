@@ -50,7 +50,15 @@ agents = ["agents"]
 description = "Everything a new project needs"
 skills = ["review"]
 agents = ["scout"]
+
+# Optional: items the catalog no longer ships, one table per kind (skills,
+# agents, hooks, commands, pi-extensions), each name with a one-line
+# migration, or "" for none.
+[retired.hooks]
+old-check = "declare new-check"
 ```
+
+A consumer still declaring a retired item refreshes with one warning carrying its migration, and that refresh removes what the item installed, with any workflow adopted from its templates. An item that requires a retired one is withheld with a warning naming it.
 
 Without a `[marketplace]` table the directory listing falls back to what GitHub knows. A `kendex.toml` that exists but does not parse makes the whole catalog a finding, never a silently different catalog.
 

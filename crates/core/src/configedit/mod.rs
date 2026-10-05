@@ -203,9 +203,9 @@ impl ConfigEdit {
     /// absent) rather than write it. A text file a marker block sits in is a
     /// Pi append file, retired when nothing of its own is left
     /// ([`crate::pi_ext::append_system_retires`]). A JSON file goes when
-    /// left an empty object or the lone `$schema` OpenCode's upsert writes,
-    /// and a TOML file when left with no key or table and no text but
-    /// whitespace, since the edit keeps the person's comments and a table
+    /// left an empty object, the lone `$schema` OpenCode's upsert writes or
+    /// the lone `version` Copilot's hook removal keeps, and a TOML file when
+    /// left with no key or table and no text but whitespace, since the edit keeps the person's comments and a table
     /// does not hold them. A composed OpenCode cleanup retires one holding
     /// only the schema whatever it held before. Any other JSON or TOML edit
     /// retires it only where `emptied` allows and the edits took something
@@ -238,7 +238,11 @@ impl ConfigEdit {
                 let value = parse(&updated)?;
                 let mut schema_only = Map::new();
                 opencode_schema(&mut schema_only);
-                if value != json!({}) && value != Value::Object(schema_only) {
+                let version_only = edits
+                    .iter()
+                    .any(|edit| matches!(edit, Self::RemoveCopilotHook { .. }))
+                    && value == json!({"version": copilot::COPILOT_HOOK_VERSION});
+                if value != json!({}) && value != Value::Object(schema_only) && !version_only {
                     return Ok(false);
                 }
                 let prunes = edits

@@ -262,7 +262,7 @@ pub fn plan_scope(
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     state.warnings.extend(state.agent_names.warnings());
-    let mut report = EngineReport {
+    let report = EngineReport {
         declaration_status: DeclarationStatus::of(&state),
         // Ahead of the moves out of `state` below, and read before `drift`
         // moves in: an effect belongs to a package this pass adds to what
@@ -273,11 +273,12 @@ pub fn plan_scope(
         refused: state.refused,
         drift,
         plan: Plan::landed(scope.clone(), ops)?,
-        notes: state.notes,
+        notes: [state.notes, scope_notes].concat(),
         warnings: state.warnings,
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
+        retired: state.retired,
         set_changes,
         sweepable,
         kept,
@@ -292,7 +293,6 @@ pub fn plan_scope(
         record: new_lock,
         held,
     };
-    report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
 }
 
