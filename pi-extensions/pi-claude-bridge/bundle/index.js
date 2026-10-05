@@ -36819,8 +36819,10 @@ var FABLE_MODEL_ID = "claude-fable-5-1";
 var FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
 var OPUS_5_5_MODEL_ID = "claude-opus-5-5";
 var OPUS_5_MODEL_ID = "claude-opus-5";
+var SONNET_5_5_MODEL_ID = "claude-sonnet-5-5";
 var SONNET_5_MODEL_ID = "claude-sonnet-5";
 function fallbackModelForPrimaryModel(modelId) {
+  if (modelId === SONNET_5_5_MODEL_ID) return SONNET_5_MODEL_ID;
   return modelId === FABLE_MODEL_ID || modelId === OPUS_5_5_MODEL_ID || modelId === OPUS_5_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : void 0;
 }
 var MODEL_IDS_IN_ORDER = [
@@ -36830,6 +36832,7 @@ var MODEL_IDS_IN_ORDER = [
   FABLE_FALLBACK_MODEL_ID,
   "claude-opus-4-7",
   "claude-opus-4-6",
+  SONNET_5_5_MODEL_ID,
   SONNET_5_MODEL_ID,
   "claude-sonnet-4-6",
   "claude-haiku-4-5"
@@ -36867,6 +36870,15 @@ var FALLBACK_MODELS = {
     name: "Claude Opus 4.8",
     reasoning: true,
     thinkingLevelMap: { xhigh: "xhigh" },
+    input: ["text", "image"],
+    contextWindow: 1e6,
+    maxTokens: 128e3
+  },
+  [SONNET_5_5_MODEL_ID]: {
+    id: SONNET_5_5_MODEL_ID,
+    name: "Claude Sonnet 5.5",
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     input: ["text", "image"],
     contextWindow: 1e6,
     maxTokens: 128e3

@@ -2,8 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.1.0
 
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is selectable under the `pi-claude` provider, listed ahead of Sonnet 5, with 1M context, 128k output and `xhigh`/`max` effort. A turn its safety classifiers decline falls back to Claude Sonnet 5, Anthropic's default fallback for it.
 - The installed `DEVELOPMENT.md` names pi-extension-manager's resolver contract in plain text instead of a relative link, so a scope without pi-extension-manager holds no dead link.
 
 ### 4.0.11
