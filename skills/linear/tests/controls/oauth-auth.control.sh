@@ -264,3 +264,10 @@ control_expect 'token-beats-partial: request succeeds'
 control_replace scripts/lib/auth.sh 1 \
     '    app-token|app|api-key) return 0 ;;' \
     '    app|api-key) return 0 ;;'
+
+# Send the mint as a write, so an unanswered mint fails on its first try.
+control_expect 'mint-token-transport: mint count'
+control_expect 'mint-token-transport: no unconfirmed-write notice'
+control_replace scripts/lib/auth.sh 1 \
+    '        "data = $payload_quote")" read) || return 1' \
+    '        "data = $payload_quote")" write) || return 1'

@@ -137,9 +137,9 @@ if [[ "${ACTION:-}" == download ]]; then
 fi
 source "$PWD/.agents/skills/linear/scripts/lib/common.sh"
 if [[ "${ACTION:-}" == none ]]; then exit 0; fi
-graphql_query '{ viewer { id name } }' '{}'
+graphql_query 'query Viewer { viewer { id name } }' '{}'
 if [[ "${ACTION:-}" == twice ]]; then
-    graphql_query '{ viewer { id name } }' '{}'
+    graphql_query 'query Viewer { viewer { id name } }' '{}'
 fi
 SH
 chmod +x "$PROJECT/bin/curl" "$PROJECT/bin/date" "$PROJECT/bin/jq" "$PROJECT/bin/mktemp" "$PROJECT/bin/mv" \
@@ -447,12 +447,19 @@ for row in \
     assert_file_contains "mint-response-$label: response diagnostic" "$LOG/error" 'token=invalid-response'
     assert_eq "mint-response-$label: no stdout" "$OUT" ''
 done
-for row in 'token-failure|token-http=400' 'token-transport|token=transport-failed' 'token-ratelimited|"code":"RATELIMITED"'; do
-    IFS='|' read -r mode diagnostic <<<"$row"
+# A mint is a read: an unanswered or rate-limited mint is sent three times, and
+# a refused one once.
+for row in 'token-failure|token-http=400|1' 'token-transport|token=transport-failed|3' \
+    'token-ratelimited|"code":"RATELIMITED"|3'; do
+    IFS='|' read -r mode diagnostic mints <<<"$row"
+    : >"$LOG/mints"
     run_oauth_request auth-mint LINEAR_CLIENT_ID=app/id LINEAR_CLIENT_SECRET='app&secret' MODE="$mode"
     assert_eq "mint-$mode: refuses" "$RC" 1
     assert_file_contains "mint-$mode: diagnostic" "$LOG/error" "$diagnostic"
     assert_eq "mint-$mode: no stdout" "$OUT" ''
+    count=$(wc -l <"$LOG/mints")
+    assert_eq "mint-$mode: mint count" "${count//[[:space:]]/}" "$mints"
+    assert_file_lacks "mint-$mode: no unconfirmed-write notice" "$LOG/error" 'write=unconfirmed'
 done
 
 # A token minted before a scope change, in the per-user file a pair-only key

@@ -153,7 +153,7 @@ if ! linear_check_credentials; then
   exit 1
 fi
 
-result=$(graphql_query "{ viewer { id name } }" "{}") || {
+result=$(graphql_query "query AuthCheck { viewer { id name } }" "{}") || {
   emit false "API request failed"
   exit 1
 }

@@ -316,8 +316,8 @@ linear_http_post() {
 
 # One GraphQL request, as the transport every read and write goes through.
 # linear_http_post owns which answers are sent again; a document that opens
-# as a query is its `read`, and every other document, a mutation or one whose
-# operation the pattern cannot place, its `write`. An app pair's token is
+# with the `query` keyword is its `read`, and every other document, a mutation
+# or the `{ ... }` shorthand, its `write`. An app pair's token is
 # renewed once on an HTTP 401. Returns 2 when Linear answers that the entity
 # the request names does not exist for this actor ("Entity not found: Issue",
 # under HTTP 200), and 1 on every other failure, so a caller can tell "no
@@ -331,7 +331,7 @@ graphql_request() {
         variables='{}'
     fi
     local authorization auth_renewed=0 payload reply http_code response kind=write
-    local read_pattern='^[[:space:]]*(query[^_[:alnum:]]|\{)'
+    local read_pattern='^[[:space:]]*query[^_[:alnum:]]'
     if [[ "$query" =~ $read_pattern ]]; then
         kind=read
     fi
