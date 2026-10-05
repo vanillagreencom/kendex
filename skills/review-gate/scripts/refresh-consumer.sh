@@ -123,6 +123,10 @@ fi
 # refresh has no JSON report. Fall back to blocked.rs's plain conflicts
 # section and holds.rs's records; verify cannot report discarded edits.
 # ledger.rs counts distinct kind/name items, not rows or harnesses.
+# setting_notes collects the refresh lines and the change-class lines that
+# name a consumer setting; a run with no render change runs no classifier
+# and reports only the refresh lines.
+setting_notes=()
 held_items=""
 held_keys=$'\n'
 held_count=0
@@ -157,6 +161,10 @@ while IFS= read -r line; do
     *) conflict_section=no ;;
   esac
   case "$line" in
+    # refresh names a retired [hooks] entry on one bare line with this prefix
+    # and exits 0; the consumer's maintainer deletes the entry, so the line
+    # reaches the pull request body. No other refresh line is forwarded.
+    'doc-drift-check: '*) setting_notes+=("$line") ;;
     *' · skipped '*' on conflict'*)
       if [ -n "$conflict_count" ] || ! [[ "$line" =~ $ledger_pattern ]]; then
         printf 'refresh-error=conflict-ledger value=%s\n' "$line" >&2
@@ -262,9 +270,6 @@ if [ "$settings_lines" -ne 1 ] || [ "$settings_output" = invalid ]; then
   printf 'refresh-error=settings-output value=%s\n' "$ROOT/.agents/skills/orch" >&2
   exit 1
 fi
-# setting_notes collects the change-class lines naming a consumer setting; a
-# run with no render change runs no classifier and reports none.
-setting_notes=()
 # Sets settings_report from the parse and setting_notes. A failed report
 # stops publication and auto-merge.
 report_settings() {

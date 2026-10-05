@@ -90,6 +90,7 @@ case "$1" in
   refresh)
     : >"$TEST_STATE/refreshed"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
+    [ -z "${TEST_REFRESH_LINES:-}" ] || printf '%s\n' "$TEST_REFRESH_LINES"
     if [ -n "$TEST_REFRESH_SKILL" ]; then
       rm -rf -- .agents/skills/review-gate
       cp -R "$TEST_REFRESH_SKILL" .agents/skills/review-gate
@@ -395,7 +396,7 @@ for mode in report committed-control notes-control; do
         '^    committed\+=\(' 's/^    committed+=(/    : # &/' ;;
     notes-control)
       file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        'setting_notes\+=\(' 's/setting_notes+=("\$line")/:/' ;;
+        "queue-settings-unreadable'\\) setting_notes\\+=\\(" '/queue-settings-unreadable/s/setting_notes+=("\$line")/:/' ;;
   esac
   commit "$repo"
   git -C "$repo" push -q origin main
@@ -468,6 +469,43 @@ for row in \
       grep -qxF '## Consumer settings' "$TMP/state/body" && [ "$rows" = "$expected" ]; then
     ok "$name classifier queue-only line appears under Consumer settings"
   else bad "$name classifier queue-only line" "$OUT"; fi
+done
+# kendex refresh names a retired [hooks] entry on one bare line and exits 0.
+# Only a refresh line with that exact prefix joins Consumer settings; the
+# control drops the forwarding arm.
+RETIRE_LINE='doc-drift-check: retired hook, entry skipped; delete [hooks.doc-drift-check] from kendex.toml'
+for row in \
+  "retire-line|$RETIRE_LINE|- <code>$RETIRE_LINE</code>" \
+  "other-prefix|warning: $RETIRE_LINE|" \
+  "retire-control|$RETIRE_LINE|"; do
+  IFS='|' read -r name lines expected <<<"$row"
+  reset_default
+  cp "$TMP/stale-runner" "$runner"
+  rm -f -- "${repo:?}/kendex.settings.toml"
+  if [ "$name" = retire-control ]; then
+    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      "'doc-drift-check: '\\*\\) setting_notes\\+=\\(" '/doc-drift-check/s/setting_notes+=("\$line")/:/'
+  fi
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  : >"$TMP/state/calls"
+  REFRESH_LINES="$lines"
+  run_refresh "retire-$name" pass render
+  unset REFRESH_LINES
+  rows="$(grep -F -- '- <code>' "$TMP/state/body")" || rows=""
+  if [ "$name" = retire-control ]; then
+    if [ "$RC" -eq 0 ] && ! grep -qxF '## Consumer settings' "$TMP/state/body" && [ -z "$rows" ]; then
+      ok 'control: a dropped refresh-line arm turns the retire-line assertion red'
+    else bad 'refresh-line forwarding control' "$OUT"; fi
+  elif [ -z "$expected" ]; then
+    if refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
+        ! grep -qxF '## Consumer settings' "$TMP/state/body" && [ -z "$rows" ]; then
+      ok "a refresh line under another prefix ($name) is not forwarded"
+    else bad "$name refresh line" "$OUT"; fi
+  elif refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
+      grep -qxF '## Consumer settings' "$TMP/state/body" && [ "$rows" = "$expected" ]; then
+    ok 'the retire line kendex refresh prints appears under Consumer settings'
+  else bad 'retire line under Consumer settings' "$OUT"; fi
 done
 # A report that cannot read the retired list stops before publication or
 # merge changes.
