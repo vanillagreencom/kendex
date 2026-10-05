@@ -1805,6 +1805,60 @@ assert_eq "$RC|$(grep -cF 'detail=relative-home' <<<"$OUT")" "3|1" \
   "control: without the account refusal an unknown account reaches the retained reader gate"
 fleet_state
 
+# A Copilot CLI pane reports `node`, its npm loader, and no reading names a
+# harness before its first turn end; with no --harness the harness is the
+# process under the pane carrying one of Copilot's own names, `MainThread`
+# the native binary on Linux or `copilot`, within two levels (lib/lane-context.sh
+# § lane_context_pane_shape). A Copilot run a Codex session starts sits under
+# its tool shells, deeper. Each process is a copy of sleep under that name, so
+# ps reads the name and no stub runs.
+mkdir -p "$TMP_ROOT/procs"
+for proc in MainThread copilot other; do cp "$(command -v sleep)" "$TMP_ROOT/procs/$proc"; done
+copilot_node_caller() { # TREE — MainThread, copilot, other or deep under a node pane
+  local child="'$TMP_ROOT/procs/$1' 100000 &"
+  [[ "$1" != deep ]] || child="sh -c \"sh -c \\\"'$TMP_ROOT/procs/copilot' 100000; :\\\"; :\" &"
+  new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; $child exec '$BIN/node' 100000"
+  record_account "$CALLER_PANE" "$H/.1copilot"
+}
+COPILOT_MODEL_LINE="$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --model claude-fable-5.1 --reasoning-effort high --allow-all -i '$BRIEF'"
+while IFS='|' read -r tree expected; do
+  copilot_node_caller "$tree"
+  run_succeed "nodecopilot$tree" '' --print-launch-line -- --model claude-fable-5.1 --reasoning-effort high --allow-all
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "${expected//PANE/$CALLER_PANE}" \
+    "a node pane over the $tree process tree, with no --harness, prints its line"
+done <<ROWS
+MainThread|0|$COPILOT_MODEL_LINE
+copilot|0|$COPILOT_MODEL_LINE
+other|1|oversee-succeed: harness-unnamed pane=PANE
+deep|1|oversee-succeed: harness-unnamed pane=PANE
+ROWS
+# The same pane at its headroom mark succeeds onto the second Copilot account
+# with the predecessor's model, effort and flags.
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":30}}}' > "$FIXTURE_DIR/.1copilot.json"
+COP_MODEL_SUCCESSOR="lane=$H/.2copilot;--autopilot;--max-autopilot-continues;3;--context;long_context;--no-auto-update;--model;claude-fable-5.1;--reasoning-effort;high;--allow-all;-i;$BRIEF;"
+copilot_node_caller MainThread
+LANE_DIRS="$COPILOT_PAIR" run_succeed nodecopsucceed '' -- --model claude-fable-5.1 --reasoning-effort high --allow-all
+assert_eq "$RC|$(layout)|$(caller_open)|$(recorded copilot)" "0|0 overseer;|no|$COP_MODEL_SUCCESSOR" \
+  "a node pane over Copilot's binary at its headroom mark succeeds onto the second copilot account"
+fleet_state
+# Control: the reader's Copilot arm cut, the same pane names no harness.
+NODECOPILOT="$(mutant_scripts nodecopilot lib/lane-context.sh)" || exit 1
+mutate_file "$NODECOPILOT/lib/lane-context.sh" '    node | copilot)' '    node-x)'
+copilot_node_caller MainThread
+SUCCEED_BIN="$NODECOPILOT/oversee-succeed" run_succeed nodecopilotctl '' --print-launch-line -- --allow-all
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
+  "control: without the reader's copilot arm a node pane over Copilot's binary names no harness"
+# Control: the depth bound cut, a Copilot run under a Codex session's tool
+# shells is read as the pane's harness.
+NODEDEPTH="$(mutant_scripts nodedepth lib/lane-context.sh)" || exit 1
+mutate_file "$NODEDEPTH/lib/lane-context.sh" '"$name_re" 1 2)' '"$name_re" 1)'
+copilot_node_caller deep
+SUCCEED_BIN="$NODEDEPTH/oversee-succeed" run_succeed nodedepthctl '' --print-launch-line -- --allow-all
+assert_eq "$RC|$(grep -c -F "COPILOT_HOME='$H/.1copilot' copilot " <<<"$OUT")" "0|1" \
+  "control: without the depth bound a deeper Copilot process names the pane copilot"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":200}}}' > "$FIXTURE_DIR/.1copilot.json"
+fleet_state
+
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that
 # pane to answer a folder-trust question either. A codex line therefore carries
 # the same preparation a live succession makes and names the home the trust was

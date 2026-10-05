@@ -50,8 +50,8 @@
 #   fleet state's `overseer` object (../schemas/workflow-state.md § Oversee state
 #   state), where it names the caller pane on this tmux server. The harness,
 #   account, model and directory it names are taken ahead of the caller's
-#   SessionStart row (lib/session-rows.sh), then --harness, the pane command,
-#   the pane's context reading and the account variables, which answer only
+#   SessionStart row (lib/session-rows.sh), then --harness, the pane command
+#   and the processes under it, the pane's context reading and the account variables, which answer only
 #   for a session neither the record nor the row names and for a fact both
 #   leave unknown; `--check-marks` reads the harness, account and model. A
 #   record naming a model gives the caller's successor that model and effort
@@ -885,7 +885,8 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 # Where no record answers, the session's own SessionStart row
 # (lib/session-rows.sh) does: the harness its hook install names, the account
 # its environment carries, its model and its directory, as the harness itself
-# stated them. Where neither answers, --harness precedes the pane command, the
+# stated them. Where neither answers, --harness precedes the pane command and
+# the processes under it (lib/lane-context.sh § lane_context_pane_shape), the
 # named fallback, and a context reading for this pane supplies its model and,
 # for ambiguous commands, its harness. No stored count is judged; which
 # reading stands is the context.json row of schemas/workflow-state.md.
@@ -914,9 +915,11 @@ if [[ "$MODE" != dead ]]; then
   elif [[ -n "$HARNESS_ARG" ]]; then
     CALLER_HARNESS="$HARNESS_ARG"
   else
-    CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
+    caller_obs="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_pid} #{pane_current_command}' 2>"$DEP_ERR")" \
       || die pane-unreadable "pane=$CALLER_PANE"
-    CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")" || die harness-unnamed "pane=$CALLER_PANE"
+    caller_cmd="${caller_obs#* }"
+    CALLER_HARNESS="$(lane_context_pane_shape "${caller_cmd#-}" "${caller_obs%% *}")" \
+      || die pane-unreadable "pane=$CALLER_PANE" field=process-table
   fi
   if [[ "$CALLER_HARNESS" == both ]]; then
     case "$reading_harness" in

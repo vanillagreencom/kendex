@@ -112,6 +112,32 @@ lane_context_shape() {
   esac
 }
 
+# lane_context_pane_shape CMD PANE_PID — lane_context_shape for a pane whose
+# foreground process is CMD and whose own process is PANE_PID, naming a
+# Copilot CLI pane too. That pane reads `node`, its npm loader, or `copilot`,
+# the binary started directly, so its harness is a process carrying one of
+# Copilot's own names (lib/lane-state.sh § lane_harness_process_re) at most two
+# levels under the pane: its shell, the loader, the binary. A Codex pane also
+# reads `node`, and a Copilot run it starts sits deeper, under its own tool
+# shell, so it is not this pane's harness. The process reads are
+# lib/lane-state.sh's, which the caller sources. Status 2 is a process table
+# that could not be read.
+lane_context_pane_shape() { # CMD PANE_PID
+  local table name_re below
+  case "$1" in
+    node | copilot)
+      table="$(lane_process_table)" || return 2
+      name_re="$(lane_harness_process_re copilot)" || return 2
+      below="$(lane_process_below "$table" "$2" "$name_re" 1 2)" || return 2
+      if [[ "$below" == found ]]; then
+        printf 'copilot\n'
+        return 0
+      fi
+      ;;
+  esac
+  lane_context_shape "$1"
+}
+
 # The config directory a session of shape $1 runs its credential out of: a
 # lane's, and an overseer's where its launch record names none. `lanes context`
 # asks it about the pane it is reading, and the lane's own turn-end hook asks
