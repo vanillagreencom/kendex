@@ -752,20 +752,75 @@ mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
 # --- A ci request runs nothing where the base requires the named context -------
 # Projects whose validation command is `echo full` and whose range command
 # prints that it ran. Each names the context that runs its validation, or
-# none, in DEV_VALIDATE_CI_CONTEXT. The gh on PATH is a stub: asked for the
-# rules of the base branch main, it prints the contexts STUB_REQUIRED names,
-# one per line, and exits STUB_GH_EXIT; asked anything else, it fails. Each
+# none, in DEV_VALIDATE_CI_CONTEXT. The gh on PATH is a stub that answers the
+# two reads of the base branch main the way GitHub's API does, applying the
+# --jq filter it is handed to a JSON payload built from the world the row
+# names, then exiting with that world's status; any other call fails. Each
 # row's run is a ci request; the classifier stub answers the class, the docs
 # verdict and the measured marker.
 GH_STUB_BIN="$TMP_ROOT/gh-stub"
 mkdir -p "$GH_STUB_BIN"
 cat > "$GH_STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
-[[ "$1 $2" == "api repos/{owner}/{repo}/rules/branches/main" ]] || exit 9
-[[ -z "${STUB_REQUIRED:-}" ]] || tr ',' '\n' <<<"$STUB_REQUIRED"
-exit "${STUB_GH_EXIT:-0}"
+[[ "${1:-}" == api ]] || exit 9
+path="$2"
+shift 2
+filter=""
+while (( $# > 0 )); do
+  case "$1" in
+    --jq) filter="$2"; shift 2 ;;
+    --paginate) shift ;;
+    *) exit 9 ;;
+  esac
+done
+[[ -n "$filter" ]] || exit 9
+list() { jq -cn --arg v "$1" '$v | split(",") | map(select(. != ""))'; }
+case "$path" in
+  'repos/{owner}/{repo}/rules/branches/main')
+    payload="$(jq -cn --argjson req "$(list "${STUB_RULES:-}")" --argjson other "$(list "${STUB_OTHER:-}")" '
+      [{type: "required_status_checks", parameters: {required_status_checks: ($req | map({context: ., integration_id: 15368}))}},
+       {type: "workflows", parameters: {required_status_checks: ($other | map({context: .}))}}]')"
+    status="${STUB_RULES_EXIT:-0}"
+    [[ -z "${STUB_RULES_STDERR:-}" ]] || printf '%s\n' "$STUB_RULES_STDERR" >&2
+    ;;
+  'repos/{owner}/{repo}/branches/main')
+    if [[ "${STUB_CLASSIC:-}" == absent ]]; then
+      payload='{"name":"main","protected":true}'
+    else
+      payload="$(jq -cn --argjson ctx "$(list "${STUB_CLASSIC:-}")" --argjson chk "$(list "${STUB_CLASSIC_CHECKS:-}")" '
+        {name: "main", protection: {enabled: true, required_status_checks: {contexts: $ctx, checks: ($chk | map({context: ., app_id: 15368}))}}}')"
+    fi
+    status="${STUB_CLASSIC_EXIT:-0}"
+    ;;
+  *) exit 9 ;;
+esac
+jq -r "$filter" <<<"$payload" || exit $?
+exit "$status"
 SH
 chmod +x "$GH_STUB_BIN/gh"
+# ci_world WORLD — exports the payloads and statuses the gh stub answers with:
+#   rules           a ruleset requires CI
+#   classic         classic protection's contexts require CI, no ruleset does
+#   classic-check   classic protection's checks require CI, no ruleset does
+#   other-type      CI appears only in a rule of another type
+#   unrequired      both reads answer, and neither names CI
+#   rules-fail      the ruleset read prints CI, then fails
+#   classic-absent  the branch payload carries no protection key
+#   classic-fail    the classic read prints CI, then fails
+ci_world() {
+  export STUB_RULES=Lint STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0
+  case "$1" in
+    rules) STUB_RULES=Lint,CI ;;
+    classic) STUB_CLASSIC=CI ;;
+    classic-check) STUB_CLASSIC_CHECKS=CI ;;
+    other-type) STUB_OTHER=CI ;;
+    unrequired) STUB_RULES=Lint,CI-extra STUB_CLASSIC=Deploy ;;
+    rules-fail) STUB_RULES=CI STUB_RULES_EXIT=1 ;;
+    classic-absent) STUB_CLASSIC=absent ;;
+    classic-fail) STUB_CLASSIC=CI STUB_CLASSIC_EXIT=1 ;;
+    *) printf 'ci_world: world=%s\n' "$1" >&2; return 1 ;;
+  esac
+}
 ci_proj() { # NAME CONTEXT — CONTEXT empty leaves the setting unset
   local dir
   dir="$(make_mode_proj "$1" 'echo range')"
@@ -779,49 +834,63 @@ ci_proj() { # NAME CONTEXT — CONTEXT empty leaves the setting unset
 proj_ci="$(ci_proj proj-ci CI)"
 proj_ci_unset="$(ci_proj proj-ci-unset '')"
 ci_head="$(git -C "$proj_ci" rev-parse HEAD)"
-# label|setting named (yes/no)|contexts the base requires|gh exit|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
+# label|setting named (yes/no)|world|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode|ci-fallback line
 CI_ROWS=(
-  "a measured micro diff under a required context is left to CI|yes|Lint,CI|0|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured small diff under a required context is left to CI|yes|CI|0|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured standard diff under a required context is left to CI|yes|CI|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a project that names no context runs the range command|no|CI|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a context the base does not require runs the range command|yes|Lint,CI-extra|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a rules read that fails runs the range command|yes|CI|1|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a render diff, whose checks CI stands down, runs the range command|yes|CI|0|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a trivial diff outside the docs set runs the range command|yes|CI|0|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard diff of docs alone runs the range command|yes|CI|0|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard class the classifier fell back to runs the range command|yes|CI|0|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range"
-  "a class with no measured marker runs the range command|yes|CI|0|change_class=micro|false||state=done guard-exit=0 validate=pass range|range"
-  "a docs verdict that did not read runs the range command|yes|CI|0|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range"
+  "a measured micro diff under a ruleset's required context is left to CI|yes|rules|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci|"
+  "a measured small diff under a ruleset's required context is left to CI|yes|rules|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci|"
+  "a measured standard diff under a ruleset's required context is left to CI|yes|rules|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|"
+  "a context classic protection's contexts require is left to CI|yes|classic|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|"
+  "a context classic protection's checks require is left to CI|yes|classic-check|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|"
+  "a project that names no context runs the range command|no|rules|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|setting-empty"
+  "a context only a rule of another type names runs the range command|yes|other-type|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|context-unrequired"
+  "a context the base does not require runs the range command|yes|unrequired|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|context-unrequired"
+  "a ruleset read that fails runs the range command|yes|rules-fail|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
+  "a branch payload with no protection runs the range command|yes|classic-absent|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
+  "a classic read that fails runs the range command|yes|classic-fail|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
+  "a render diff, whose checks CI stands down, runs the range command|yes|rules|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a trivial diff outside the docs set runs the range command|yes|rules|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a standard diff of docs alone runs the range command|yes|rules|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a standard class the classifier fell back to runs the range command|yes|rules|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a class with no measured marker runs the range command|yes|rules|change_class=micro|false||state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a docs verdict that did not read runs the range command|yes|rules|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
 )
 # ci_rows SCRIPT — one line per row: its label, its stderr file, then the
-# verdict, what the command printed and the recorded mode, tab-separated.
+# verdict, what the command printed, the recorded mode and the recorded
+# ci-fallback, tab-separated.
 ci_rows() {
-  local row label named required gh_exit answer docs measured proj ci_dir
+  local row label named world answer docs measured proj ci_dir
   for row in "${CI_ROWS[@]}"; do
-    IFS='|' read -r label named required gh_exit answer docs measured _ _ <<<"$row"
+    IFS='|' read -r label named world answer docs measured _ _ _ <<<"$row"
     proj="$proj_ci"
     [[ "$named" == yes ]] || proj="$proj_ci_unset"
-    STUB_REQUIRED="$required" STUB_GH_EXIT="$gh_exit" RUN_PATH="$GH_STUB_BIN:$PATH" \
-      STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
+    ci_world "$world"
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
       run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
     ci_dir="$(run_dir_of "$OUT")"
-    printf '%s\t%s\t%s %s|%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
-      "$(start_line "$ci_dir" validate-mode 2>/dev/null)"
+    printf '%s\t%s\t%s %s|%s|%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
+      "$(start_line "$ci_dir" validate-mode 2>/dev/null)" "$(start_line "$ci_dir" ci-fallback 2>/dev/null)"
   done
 }
 CI_SCRIPT="$LAYOUT/orch/scripts/dev-validate-run"
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
 for row in "${CI_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ _ _ want_out want_mode <<<"$row"
+  IFS='|' read -r label _ _ _ _ _ want_out want_mode want_fallback <<<"$row"
   got_line="$(awk -F'\t' -v want="$label" '$1 == want' <<<"$CI_GOT")"
   IFS=$'\t' read -r _ err got <<<"$got_line"
-  assert_eq "$got" "$want_out|$want_mode" "$label" "$err"
+  assert_eq "$got" "$want_out|$want_mode|$want_fallback" "$label" "$err"
 done
+# A failed read's own stderr is kept beside the run, never discarded.
+ci_world rules-fail
+STUB_RULES_STDERR='gh: HTTP 401: Bad credentials' RUN_PATH="$GH_STUB_BIN:$PATH" \
+  STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+assert_eq "$(start_line "$(run_dir_of "$OUT")" ci-fallback) $(cat "$(run_dir_of "$OUT")/ci.log" 2>/dev/null)" \
+  "rules-unread gh: HTTP 401: Bad credentials" \
+  "a rules read that fails names rules-unread and keeps gh's error in ci.log" "$ERR"
 # ci_run [ARG...] — a micro ci request in proj_ci, whose base requires CI.
 ci_run() {
-  STUB_REQUIRED=CI STUB_GH_EXIT=0 RUN_PATH="$GH_STUB_BIN:$PATH" \
-    STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  ci_world rules
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
     run_script "$@" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
 }
 # The ci run's record, its wait and its exit: no command ran, so no time passed.
@@ -846,24 +915,40 @@ ci_run "$CI_SCRIPT.mutant" --attached
 assert_eq "$(sed -n 1p <<<"$OUT" | cut -d' ' -f1)" "state=done" \
   "control: an attached ci run that skips its started line opens on the done line" "$ERR"
 # One control per rule the ci route holds: each mutant copy sits beside the
-# stubbed classifier and leaves to CI the one row that rule keeps local.
-ci_control() { # LABEL ANCHOR REPLACEMENT ROW
+# stubbed classifier and turns the one row that rule decides, to ci unless
+# the control names another result.
+ci_control() { # LABEL ANCHOR REPLACEMENT ROW [EXPECT]
   local got_line got
   cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
   mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
   got_line="$(ci_rows "$CI_SCRIPT.mutant" | awk -F'\t' -v want="$4" '$1 == want')"
   IFS=$'\t' read -r _ _ got <<<"$got_line"
-  assert_eq "$got" "state=done guard-exit=0 validate=pass |ci" "control: with $1, '$4' fails"
+  assert_eq "$got" "${5:-state=done guard-exit=0 validate=pass |ci|}" "control: with $1, '$4' fails"
 }
+# shellcheck disable=SC2016 # the script's own text, not expansions
+{
 ci_control 'the setting defaulting to CI' 'DEV_VALIDATE_CI_CONTEXT "")"' 'DEV_VALIDATE_CI_CONTEXT CI)"' \
   'a project that names no context runs the range command'
-# shellcheck disable=SC2016 # the script's own text, not an expansion
-ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$required"' 'true' \
+ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$rules"$'"'"'\n'"'"'"$classic"' 'true' \
   'a context the base does not require runs the range command'
-ci_control 'a failed rules read kept' "2>/dev/null)\" \\
-    || return 1" "2>/dev/null)\" \\
-    || true" \
-  'a rules read that fails runs the range command'
+ci_control 'every rule type read' 'select(.type == "required_status_checks") | ' '' \
+  'a context only a rule of another type names runs the range command'
+ci_control 'a failed ruleset read kept' $'    rules=""\n    unread=true\n' $'    unread=true\n' \
+  'a ruleset read that fails runs the range command'
+ci_control 'a failed classic read kept' $'    classic=""\n    unread=true\n' $'    unread=true\n' \
+  'a classic read that fails runs the range command'
+ci_control 'a missing protection read as empty' 'error("protection unreadable")' 'empty' \
+  'a branch payload with no protection runs the range command' \
+  'state=done guard-exit=0 validate=pass range|range|context-unrequired'
+ci_control 'classic protection unread' '"repos/{owner}/{repo}/branches/$uri"' '"repos/{owner}/{repo}/branchesx/$uri"' \
+  "a context classic protection's contexts require is left to CI" \
+  'state=done guard-exit=0 validate=pass range|range|rules-unread'
+ci_control 'an unread rule named as unrequired' 'if [[ "$unread" == true ]]; then' 'if false; then' \
+  'a ruleset read that fails runs the range command' \
+  'state=done guard-exit=0 validate=pass range|range|context-unrequired'
+ci_control 'the class cause unrecorded' $'    ci_fallback=class-uncovered\n' '' \
+  'a render diff, whose checks CI stands down, runs the range command' \
+  'state=done guard-exit=0 validate=pass range|range|'
 ci_control 'render among the covered classes' \
   'micro|small|standard) if ci_runs_validation' 'micro|small|standard|render) if ci_runs_validation' \
   'a render diff, whose checks CI stands down, runs the range command'
@@ -873,13 +958,25 @@ ci_control 'the measured marker unread' ' && "$CHANGE_CLASS_MEASURED" == true' '
   'a standard class the classifier fell back to runs the range command'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
+}
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# shellcheck disable=SC2016
 mutate_file "$CI_SCRIPT.mutant" 'rules/branches/$uri' 'rules/branches/x$uri'
 ci_run "$CI_SCRIPT.mutant"
 assert_eq "$(start_line "$(run_dir_of "$OUT")" validate-mode)" "range" \
   "control: a rules read of another branch leaves the micro row to range" "$ERR"
+# The read's error stays beside the run: a run directory that drops ci.log
+# loses gh's line.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# shellcheck disable=SC2016
+mutate_file "$CI_SCRIPT.mutant" '[[ ! -f "$class_scratch/ci.log" ]] || mv' 'true ||'
+ci_world rules-fail
+RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT.mutant" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+assert_eq "$([[ -f "$(run_dir_of "$OUT")/ci.log" ]] && echo kept || echo dropped)" "dropped" \
+  "control: a run directory that does not take ci.log keeps no read error" "$ERR"
 # A ci run left to CI reads neither command, so a project that sets neither
 # passes it. Control: resolving the range mode first, as a range run does,
 # reads the empty DEV_VALIDATE_CMD and refuses.
