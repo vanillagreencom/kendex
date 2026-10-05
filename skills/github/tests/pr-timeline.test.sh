@@ -120,11 +120,15 @@ ACTIVITY_PATH="api-repos/owner/repo/activity?ref=refs%2Fheads%2Ffeature&per_page
 stage_pages() { :; }
 
 BIN="$PR_TIMELINE"
+# PR_SELECTOR is the text the PR query must carry for the response to answer
+# it; a case staging an event only some requested item type returns names
+# that type, as GitHub returns no event of a type the query did not request.
+PR_SELECTOR="pullRequest(number"
 run() { # EDIT [ARGS...]
   local edit="$1" rc=0
   shift
   gh_stub_reset
-  gh_stub_answer "api-graphql:pullRequest(number" "$(response "$edit")"
+  gh_stub_answer "api-graphql:$PR_SELECTOR" "$(response "$edit")"
   stage_pages
   gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
@@ -154,6 +158,22 @@ a PR whose author GitHub no longer names counts every Bot review@.data.repositor
 no force push leaves the head's push, its first check suite, the last push@.data.repository.pullRequest.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent"))@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:20:00Z", "2026-09-20T10:25:00Z"]
 a final head with no check suite and no force push falls back to its commit date@.data.repository.pullRequest |= (.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent")) | (.commits.nodes[0], .reviews.nodes[2,3]).commit.firstSuite.nodes = [])@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:10:00Z", "2026-09-20T10:25:00Z"]
 ROWS
+
+echo "=== armed is the latest arm of any merge method ==="
+# The 10:50 arm made with another method, after the 10:26 merge-method arm:
+# `gh pr merge --squash --auto` and `--rebase --auto` record their own event
+# type.
+#   label|item type|event type
+while IFS='|' read -r label item_type event; do
+  [[ -n "$label" ]] || continue
+  PR_SELECTOR="$item_type"
+  got="$(run ".data.repository.pullRequest.timelineItems.nodes[2].__typename = \"$event\"")"
+  assert_eq "$got $(jq -c '.stamps.armed' "$TMP_ROOT/stdout")" 'rc=0 "2026-09-20T10:50:00Z"' "$label"
+done <<'ROWS'
+a squash arm|AUTO_SQUASH_ENABLED_EVENT|AutoSquashEnabledEvent
+a rebase arm|AUTO_REBASE_ENABLED_EVENT|AutoRebaseEnabledEvent
+ROWS
+PR_SELECTOR="pullRequest(number"
 
 echo "=== the pushes are read from the head branch's activity log ==="
 while IFS='|' read -r label log edit want; do
@@ -610,6 +630,20 @@ mutate 'if [ -z "$approved" ]; then' 'if :; then'
 run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
 assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" '"2026-09-20T10:05:00Z" 2' \
   "control: with the status history read beside an approval its older pass is the first gate pass"
+
+# The arm read from merge-method events alone: a later squash arm is lost.
+mutate 'select(.__typename | IN("AutoMergeEnabledEvent", "AutoSquashEnabledEvent", "AutoRebaseEnabledEvent"))' \
+  'select(.__typename == "AutoMergeEnabledEvent")'
+run '.data.repository.pullRequest.timelineItems.nodes[2].__typename = "AutoSquashEnabledEvent"' >/dev/null
+assert_eq "$(jq -c '.stamps.armed' "$TMP_ROOT/stdout")" '"2026-09-20T10:26:00Z"' \
+  "control: without the squash event type a later squash arm is not the arm"
+
+# The squash item type left out of the query: GitHub returns no squash arm.
+mutate 'AUTO_SQUASH_ENABLED_EVENT, ' ''
+PR_SELECTOR=AUTO_SQUASH_ENABLED_EVENT
+assert_eq "$(run '.data.repository.pullRequest.timelineItems.nodes[2].__typename = "AutoSquashEnabledEvent"')" 'rc=1' \
+  "control: a query that does not request squash arms reads none"
+PR_SELECTOR="pullRequest(number"
 BIN="$PR_TIMELINE"
 
 echo

@@ -475,6 +475,15 @@ a fix pushed between two reviews and a rebase pushed after them are both bot wai
 another phase is the miss's cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=merged bot_wait=380 thread_fix=2500 paused=0
 null push times split nothing and leave the miss its phase|null|400 1500 2000|-|-|3200|phase=gate_green cause=gate_green bot_wait=- thread_fix=- paused=-
 ROWS
+new_case split-admin-route
+printf micro > "$CASE/class"
+gate_timeline "100 1400" "400 1500 2000" 3200
+edit_json "$CASE/timeline.json" '.stamps.armed = null'
+got="$(record KEN-1 standard)"
+assert_eq "$(field phase "$got") $(field cause "$got") $(field bot_wait "$got") $(field thread_fix "$got") $(field missing "$got")" \
+  "phase=gate_green cause=thread_fix bot_wait=380 thread_fix=2500 missing=armed" \
+  "an admin-route merge, never armed or queued, reads its phase and gate waits from the stamps it has"
+
 new_case split-record
 printf micro > "$CASE/class"
 gate_timeline "100 1400" "400 1500 2000" 3200
@@ -526,7 +535,7 @@ while IFS='|' read -r label merged ci armed want stored; do
   assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.cause')" "$stored" "$label: the record carries it"
 done <<'ROWS'
 a miss with a stamp missing reads no phase and records unread|5000|null|420|verdict=miss phase=- cause=unread|"unread"
-a miss with armed unread reads no phase and records unread|5000|360|null|verdict=miss phase=- cause=unread|"unread"
+a miss on the admin route, never armed or queued, reads its phase|5000|360|null|verdict=miss phase=merged cause=merged|"merged"
 a miss on merged records its phase|5000|360|420|verdict=miss phase=merged cause=merged|"merged"
 a met record names no cause|800|360|420|verdict=met phase=merged cause=-|null
 ROWS
@@ -793,6 +802,14 @@ control m-miss-cause oversee-cycle 'def miss_cause: .cause // .phase // "unread"
 miss_cause_case c-miss-cause 5000 null
 assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=-" \
   "control: without the fallback a miss with a stamp missing records no cause"
+
+control m-admin-route oversee-cycle '$missing - ["launched", "first_commit", "armed"]' '$missing - ["launched", "first_commit"]'
+new_case c-admin-route; printf micro > "$CASE/class"
+gate_timeline "100 1400" "400 1500 2000" 3200
+edit_json "$CASE/timeline.json" '.stamps.armed = null'
+got="$(record KEN-1 standard)"
+assert_eq "$(field phase "$got") $(field bot_wait "$got")" "phase=- bot_wait=-" \
+  "control: with armed a stamp the span requires, an admin-route merge reads no phase or gate waits"
 RUN_BIN=""
 
 echo

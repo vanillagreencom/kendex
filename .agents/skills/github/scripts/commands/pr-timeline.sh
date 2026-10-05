@@ -49,7 +49,11 @@ Output, one JSON object on stdout:
                         success on the final head,
     "ci_green":         the last check run on the final head completed, when
                         every one concluded success, neutral or skipped,
-    "armed":            the last time auto-merge was enabled,
+    "armed":            the last time auto-merge was enabled, by any
+                        method: GitHub records an arm with the merge method
+                        as AutoMergeEnabledEvent, with squash as
+                        AutoSquashEnabledEvent and with rebase as
+                        AutoRebaseEnabledEvent,
     "queued":           the last time the PR joined a merge queue,
     "merged":           the merge
   },
@@ -145,12 +149,14 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
       reviews(first: 100) { totalCount nodes { state submittedAt author { __typename login } commit { oid ...pushed } } }
-      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT]) {
+      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_SQUASH_ENABLED_EVENT, AUTO_REBASE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
           __typename
           ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid ...pushed } }
           ... on AutoMergeEnabledEvent { createdAt }
+          ... on AutoSquashEnabledEvent { createdAt }
+          ... on AutoRebaseEnabledEvent { createdAt }
           ... on AddedToMergeQueueEvent { createdAt }
           ... on ReviewDismissedEvent { previousReviewState review { submittedAt } }
         }
@@ -292,7 +298,9 @@ def rounds($reviews; $pushed):
       gate_met: (([$approvals[] | select(.commit.oid == $head.oid) | .submittedAt] | min)
                  // ([gate($head)] | first // null)),
       ci_green: null,
-      armed: ([$p.timelineItems.nodes[] | select(.__typename == "AutoMergeEnabledEvent") | .createdAt] | max),
+      armed: ([$p.timelineItems.nodes[]
+               | select(.__typename | IN("AutoMergeEnabledEvent", "AutoSquashEnabledEvent", "AutoRebaseEnabledEvent"))
+               | .createdAt] | max),
       queued: ([$p.timelineItems.nodes[] | select(.__typename == "AddedToMergeQueueEvent") | .createdAt] | max),
       merged: $p.mergedAt
     } as $stamps
