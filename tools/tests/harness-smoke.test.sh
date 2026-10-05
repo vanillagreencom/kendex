@@ -156,9 +156,10 @@ mkdir -p "$ROWS_REPO" "$ROWS_BIN" "$ROWS_CFG"
 # What a stub kendex prints for `index`, in the shape `kendex index --json`
 # gives: one package per hook this checkout ships, unsupported on a tool with
 # that reason where a row of INDEX_GAPS says so, OpenCode and Cursor taking it
-# as advice, and every other tool running it. The rows are the answers of the
-# real summary that a run here reads: the lane-mail-check and lane-mail-halt
-# hooks on every harness, and every hook on Copilot.
+# as advice, and every other tool running it. The stub mirrors the index's
+# shape, not its exact text: its rows cover the cells a run here reads, the
+# lane-mail-check and lane-mail-halt hooks on every harness and every hook on
+# Copilot, with reasons of its own.
 INDEX_GAPS="critical-path-deny copilot the critical-path check whose prompt this answers is Claude Code's
 lane-mail-check gemini it has no Stop event
 lane-mail-check antigravity its Stop payload carries no stop_hook_active

@@ -511,6 +511,49 @@ fn preview_carries_readme_files_tags_and_sets() {
     assert_eq!(hook.files.len(), 1);
 }
 
+/// A hook's preview carries the tools its own header says do not run it as
+/// written, each list written out here rather than derived from core.
+#[test]
+fn a_hook_preview_carries_its_supported_tools() {
+    use crate::model::HarnessId::*;
+    use crate::package::support::{FallbackTool, UnsupportedTool};
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    six_member_catalog(&catalog);
+    fs::write(
+        catalog.join("hooks/stated.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: stated\n# event: SessionEnd\n\
+         # description: Rows. On codex: a watcher reads its pane instead. Not run on pi: it is left out.\n\
+         # harnesses: [claude, codex, opencode]\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+
+    let hook = package_preview(&env, &cat(&scope), ItemKind::Hook, "stated", None).unwrap();
+    let gap = |tool, reason: Option<&str>| UnsupportedTool {
+        tool,
+        reason: reason.map(str::to_owned),
+    };
+    assert_eq!(
+        hook.unsupported,
+        [
+            gap(Cursor, None),
+            gap(Pi, Some("it is left out")),
+            gap(Gemini, None),
+            gap(Copilot, None),
+            gap(Antigravity, None),
+        ]
+    );
+    assert_eq!(hook.advisory, [Opencode]);
+    assert_eq!(
+        hook.fallback,
+        [FallbackTool {
+            tool: Codex,
+            reason: "a watcher reads its pane instead".to_owned(),
+        }]
+    );
+}
+
 /// A catalog's words reach a page and a terminal: control characters are
 /// shown as what they are, never acted on.
 #[test]

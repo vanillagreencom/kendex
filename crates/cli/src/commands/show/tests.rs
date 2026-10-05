@@ -2,7 +2,7 @@ use super::{detail, file_list, metadata, supported_tools};
 use crate::ui::testing::{plain, rich, tagged};
 use crate::width::visible_width;
 use kendex_core::model::HarnessId;
-use kendex_core::package::support::{FallbackTool, UnsupportedTool};
+use kendex_core::package::support::{FallbackTool, RecordSupport, UnsupportedTool};
 
 #[test]
 fn inspection_show_snapshots() {
@@ -17,9 +17,11 @@ fn inspection_show_snapshots() {
         enabled: true,
         fork: None,
         catalog: None,
-        unsupported: vec![],
-        advisory: vec![],
-        fallback: vec![],
+        support: RecordSupport::Read {
+            unsupported: vec![],
+            advisory: vec![],
+            fallback: vec![],
+        },
     };
     assert_eq!(
         metadata(&plain(), &meta),
@@ -104,9 +106,11 @@ fn inspection_show_wraps_links_and_file_paths() {
         enabled: true,
         fork: None,
         catalog: None,
-        unsupported: vec![],
-        advisory: vec![],
-        fallback: vec![],
+        support: RecordSupport::Read {
+            unsupported: vec![],
+            advisory: vec![],
+            fallback: vec![],
+        },
     };
     let files = [detail::PackageFile {
         path: long,
@@ -128,14 +132,6 @@ fn inspection_show_wraps_links_and_file_paths() {
     );
 }
 
-/// One shape of core's answer and the line it prints.
-type Row = (
-    Vec<UnsupportedTool>,
-    Vec<HarnessId>,
-    Vec<FallbackTool>,
-    &'static str,
-);
-
 /// The one supported-tools line `kendex show` prints from core's answer:
 /// each row is one shape that answer takes.
 #[test]
@@ -150,44 +146,61 @@ fn the_supported_tools_line_names_each_gap_and_the_advisory_tools() {
         tool,
         reason: reason.to_owned(),
     };
-    let rows: [Row; 7] = [
-        (vec![], vec![], vec![], "all"),
+    let read = |unsupported, advisory, fallback| RecordSupport::Read {
+        unsupported,
+        advisory,
+        fallback,
+    };
+    // Two reasons, each given by tools that are not neighbours.
+    let alternating = HarnessId::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(at, tool)| gap(tool, Some(if at % 2 == 0 { "first" } else { "second" })))
+        .collect();
+    let rows: [(RecordSupport, &str); 9] = [
+        (read(vec![], vec![], vec![]), "all"),
         (
-            vec![gap(Pi, Some("it has no Stop event")), gap(Gemini, None)],
-            vec![],
-            vec![],
+            read(
+                vec![gap(Pi, Some("it has no Stop event")), gap(Gemini, None)],
+                vec![],
+                vec![],
+            ),
             "all except Pi (it has no Stop event), Gemini CLI",
         ),
         (
-            vec![],
-            vec![Opencode, Cursor],
-            vec![],
+            read(vec![], vec![Opencode, Cursor], vec![]),
             "all; advisory on OpenCode, Cursor",
         ),
         (
-            vec![gap(Antigravity, Some("not named"))],
-            vec![Opencode],
-            vec![],
+            read(
+                vec![gap(Antigravity, Some("not named"))],
+                vec![Opencode],
+                vec![],
+            ),
             "all except Antigravity (not named); advisory on OpenCode",
         ),
         (
-            vec![gap(Gemini, None)],
-            vec![Cursor],
-            vec![note(Codex, "a watcher reads its pane")],
+            read(
+                vec![gap(Gemini, None)],
+                vec![Cursor],
+                vec![note(Codex, "a watcher reads its pane")],
+            ),
             "all except Gemini CLI; advisory on Cursor; fallback on Codex (a watcher reads its pane)",
         ),
-        (every(None), vec![], vec![], "none"),
+        (read(every(None), vec![], vec![]), "none"),
         (
-            every(Some("its script could not be read")),
-            vec![],
-            vec![],
+            read(every(Some("its script could not be read")), vec![], vec![]),
             "none (its script could not be read)",
         ),
+        (read(alternating, vec![], vec![]), "none (first; second)"),
+        (
+            RecordSupport::Unread {
+                cause: "source 'cat' is disabled".to_owned(),
+            },
+            "unknown (source 'cat' is disabled)",
+        ),
     ];
-    for (unsupported, advisory, fallback, expected) in rows {
-        assert_eq!(
-            supported_tools(&unsupported, &advisory, &fallback),
-            expected
-        );
+    for (support, expected) in rows {
+        assert_eq!(supported_tools(&support), expected);
     }
 }

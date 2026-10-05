@@ -18,10 +18,11 @@
 #
 # The writer is the lane-mail-check hook, run with the argument `row` and the
 # event by the session-start-row, session-end-row and stop-failure-row hooks,
-# on the harnesses each one's harnesses line names (kendex show hook <name>), and in
-# its own turn-end run for the overseer: a Stop at every overseer turn end,
-# which lifts a standing StopFailure row and dates the turn end oversee-watch
-# holds the overseer's context record against. The readers are oversee-watch's
+# on the harnesses that run each one (those `kendex show hook <name>` lists as
+# neither unsupported nor advisory), and in its own turn-end run for the
+# overseer: a Stop at every overseer turn end, which lifts a standing
+# StopFailure row and dates the turn end oversee-watch holds the overseer's
+# context record against. The readers are oversee-watch's
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
 #
 # A last row session_rows_verdict cannot judge reads `unsupported`, and its

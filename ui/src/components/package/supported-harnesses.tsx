@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { HarnessId, PackagePreview } from "@/bindings";
+import type { HarnessId, PackagePreview, RecordSupport } from "@/bindings";
 import { HarnessBadge } from "@/components/harness-badge";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
@@ -8,11 +8,13 @@ import {
   SUPPORTED_ALL_EXCEPT,
   SUPPORTED_FALLBACK_ON,
   SUPPORTED_NONE,
+  SUPPORTED_UNKNOWN,
 } from "@/lib/copy-library";
 import { HARNESS_NAMES } from "@/lib/labels";
 
-/** What core answers about the harnesses one package runs on. The installed
- *  package's record and the available package's preview both carry it. */
+/** What core answers about the harnesses one package runs on. The available
+ *  package's preview carries it, and so does the installed package's record
+ *  where core read the package's header ([`RecordHarnesses`]). */
 export type HarnessSupport = Pick<
   PackagePreview,
   "unsupported" | "advisory" | "fallback"
@@ -101,4 +103,24 @@ export function SupportedHarnesses({ support }: { support: HarnessSupport }) {
       ) : null}
     </div>
   );
+}
+
+/** The installed package's record: core's lists as [`SupportedHarnesses`]
+ *  lays them out, or, where core could not read the hook's header at the
+ *  installed revision, why, and no harness at all. */
+export function RecordHarnesses({ support }: { support: RecordSupport }) {
+  switch (support.state) {
+    case "read":
+      return <SupportedHarnesses support={support} />;
+    case "unread":
+      return (
+        <Line lead={SUPPORTED_UNKNOWN}>
+          <li className="text-xs text-muted-foreground">{support.cause}</li>
+        </Line>
+      );
+    default: {
+      const unreachable: never = support;
+      return unreachable;
+    }
+  }
 }

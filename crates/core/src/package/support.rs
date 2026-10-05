@@ -5,15 +5,20 @@
 //!
 //! The answer describes the package, never the machine: it reads the
 //! capability table and the package's own header, and nothing a scope or
-//! a carrier registration decides. That is why it does not call
-//! [`crate::hook::delivery`], which answers for one installation.
+//! a carrier registration decides. A hook's reach on each tool is
+//! [`crate::hook::hook_reach`], the judgement [`crate::hook::delivery`]
+//! makes for one installation, fed the capability table's enforcement in
+//! place of the machine's. A hook whose required companion is withheld on
+//! a tool it reaches is not judged here: `crates/core/tests/hooks_readme.rs`
+//! refuses such a hook in this catalog, which states the tool off its
+//! `harnesses:` line instead.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::harness::{Enforcement, capabilities};
 use crate::hook::{
-    HookSpec, Stated, ToolSentence, by_name_only, never_fires, parse_hook, stated_reason,
+    HookSpec, Reach, Refusal, Stated, ToolSentence, hook_reach, parse_hook, stated_reason,
 };
 use crate::model::{HarnessId, ItemKind};
 
@@ -53,6 +58,34 @@ pub struct ToolSupport {
     /// Tools that install and run a hook whose own job a fallback there
     /// does instead, as the hook states it. Not unsupported: the hook runs.
     pub fallback: Vec<FallbackTool>,
+}
+
+/// What an installed package's record says about the tools it runs on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum RecordSupport {
+    /// [`ToolSupport`], read from the package's own header at the
+    /// installed revision, or from the capability table alone for a kind
+    /// that declares nothing.
+    Read {
+        unsupported: Vec<UnsupportedTool>,
+        advisory: Vec<HarnessId>,
+        fallback: Vec<FallbackTool>,
+    },
+    /// The hook's header could not be read at the installed revision, so
+    /// nothing says which tools run it. `cause` is why, control characters
+    /// shown rather than acted on.
+    Unread { cause: String },
+}
+
+impl From<ToolSupport> for RecordSupport {
+    fn from(support: ToolSupport) -> RecordSupport {
+        RecordSupport::Read {
+            unsupported: support.unsupported,
+            advisory: support.advisory,
+            fallback: support.fallback,
+        }
+    }
 }
 
 /// What one package declares about the tools it runs on. `header` is the
@@ -109,38 +142,30 @@ enum Gap {
     Unsupported(Option<String>),
 }
 
-/// One hook on one tool that takes hooks, judged in the order
-/// [`crate::hook::delivery`] judges an installation: the tool's own
-/// enforcement answers before the event and the by-name rule. Where the
-/// hook does not run, its own `Not run on <id>: <reason>.` sentence is the
-/// reason; where it runs, its `On <id>: <reason>.` sentence names the
-/// fallback doing its job there (`hooks/AGENTS.md`).
+/// One hook on one tool that takes hooks, by [`hook_reach`]. Where the hook
+/// does not run, its own `Not run on <id>: <reason>.` sentence is the
+/// reason, else core's own where core has one; where it runs, its
+/// `On <id>: <reason>.` sentence names the fallback doing its job there
+/// (`hooks/AGENTS.md`).
 fn hook_gap(spec: &HookSpec, tool: HarnessId, enforcement: Enforcement) -> Gap {
     let stated = |form| match stated_reason(&spec.description, form, tool) {
         Stated::Reason(reason) => Some(reason.to_owned()),
         Stated::Absent | Stated::Unterminated => None,
     };
-    if !spec.applies_to(tool) {
-        return Gap::Unsupported(stated(ToolSentence::NotRun));
-    }
-    match enforcement {
-        Enforcement::Advisory => return Gap::Advisory,
-        Enforcement::Enforced => {}
-        Enforcement::NotApplicable => {
-            unreachable!("{tool:?} installs hooks and declares no hook enforcement")
-        }
-    }
-    if !crate::hook::delivery::event_fires(tool, &spec.event) {
-        return Gap::Unsupported(
-            stated(ToolSentence::NotRun).or_else(|| Some(never_fires(tool, &spec.event))),
-        );
-    }
-    if tool.hooks_by_name_only() && spec.harnesses.is_none() {
-        return Gap::Unsupported(stated(ToolSentence::NotRun).or_else(|| Some(by_name_only(tool))));
-    }
-    match stated(ToolSentence::On) {
-        Some(reason) => Gap::Fallback(reason),
-        None => Gap::Runs,
+    match hook_reach(tool, enforcement, spec) {
+        Reach::Registry | Reach::InAgentFile => match stated(ToolSentence::On) {
+            Some(reason) => Gap::Fallback(reason),
+            None => Gap::Runs,
+        },
+        Reach::Advisory => Gap::Advisory,
+        // A tool off the hook's own list is the author's choice, and only
+        // the author can say why.
+        Reach::Refused(Refusal::LeftOut) => Gap::Unsupported(stated(ToolSentence::NotRun)),
+        Reach::Refused(
+            refusal @ (Refusal::NoHooks | Refusal::NeverFires | Refusal::ByNameOnly),
+        ) => Gap::Unsupported(
+            stated(ToolSentence::NotRun).or_else(|| Some(refusal.reason(tool, spec))),
+        ),
     }
 }
 

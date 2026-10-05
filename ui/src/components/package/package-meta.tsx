@@ -7,7 +7,7 @@ import type {
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
-import { SupportedHarnesses } from "@/components/package/supported-harnesses";
+import { RecordHarnesses } from "@/components/package/supported-harnesses";
 import { SectionHeading } from "@/components/section";
 import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusLine } from "@/components/status-note";
@@ -93,7 +93,7 @@ export function PackageMetaBlock({
         </Row>
         {meta ? (
           <Row label={SUPPORTED_HARNESSES_LABEL}>
-            <SupportedHarnesses support={meta} />
+            <RecordHarnesses support={meta.support} />
           </Row>
         ) : null}
         <Row label={PLACE_ROW_LABEL}>{scopeName(primary.scope)}</Row>

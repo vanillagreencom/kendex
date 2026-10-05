@@ -1,7 +1,10 @@
 //! How one hook reaches one harness at one scope. A hook's delivery is
 //! decided here by capability, never by which author wrote it, and every
-//! surface — the engine, the agent renderer, the editor preview — reads the
-//! same decision (docs/architecture/harnesses.md § Boundaries).
+//! surface — the engine, the agent renderer, the editor preview, the
+//! package's supported-tools row — reads the same decision
+//! (docs/architecture/harnesses.md § Boundaries): [`hook_reach`] judges the
+//! hook against one harness's enforcement, and [`delivery`] adds what one
+//! installation's scope and machine decide.
 
 use crate::env::Env;
 use crate::harness::Enforcement;
@@ -72,11 +75,90 @@ pub fn by_name_only(harness: HarnessId) -> String {
     )
 }
 
-/// Why a catalog script installs nothing on a harness that never fires its
-/// event: the one sentence the plan and the package's supported-tools row
-/// both say.
-pub fn never_fires(harness: HarnessId, event: &str) -> String {
-    format!("{} never fires {event}", harness.display_name())
+/// How far one hook reaches one harness on the hook's own header and the
+/// harness's hook enforcement, before any scope or registration target is
+/// consulted. [`delivery`] reads it with the enforcement one installation
+/// gets (`hook_enforcement`), and the package's supported-tools row
+/// (`package::support`) with the capability table's, so the two answer
+/// one question in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// The harness's own hook registry runs it, wherever the scope has a
+    /// target to register it in.
+    Registry,
+    /// Claude's per-agent `hooks:` block runs it.
+    InAgentFile,
+    /// Prose in the agent file; nothing enforces it.
+    Advisory,
+    /// The harness never runs it.
+    Refused(Refusal),
+}
+
+/// Why a hook never runs on one harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The hook's own `harnesses:` line leaves the harness out.
+    LeftOut,
+    /// The harness takes no hooks at all.
+    NoHooks,
+    /// The harness never fires the hook's event, and the hook is a catalog
+    /// script, which has no agent file to fall back into.
+    NeverFires,
+    /// The harness is reached only by a hook that names it, and this one
+    /// names none ([`by_name_only`]).
+    ByNameOnly,
+}
+
+impl Refusal {
+    /// Core's own sentence for the refusal: the reason a plan, the
+    /// customization editor and the supported-tools row say.
+    pub fn reason(self, harness: HarnessId, spec: &HookSpec) -> String {
+        match self {
+            Refusal::LeftOut => format!(
+                "{} is not on the hook's harnesses line",
+                harness.display_name()
+            ),
+            Refusal::NoHooks => format!("{} takes no hooks", harness.display_name()),
+            Refusal::NeverFires => format!("{} never fires {}", harness.display_name(), spec.event),
+            Refusal::ByNameOnly => by_name_only(harness),
+        }
+    }
+}
+
+/// The machine-free half of [`delivery`]: the hook's `harnesses:` line,
+/// then the harness's `enforcement`, the event, agent scoping and the
+/// by-name rule, in that order.
+pub fn hook_reach(harness: HarnessId, enforcement: Enforcement, spec: &HookSpec) -> Reach {
+    if !spec.applies_to(harness) {
+        return Reach::Refused(Refusal::LeftOut);
+    }
+    match enforcement {
+        Enforcement::NotApplicable => return Reach::Refused(Refusal::NoHooks),
+        Enforcement::Advisory => return Reach::Advisory,
+        Enforcement::Enforced => {}
+    }
+    if !event_fires(harness, &spec.event) {
+        // A catalog hook has no agent file to fall back into; a custom hook
+        // keeps its advisory prose there.
+        return match &spec.body {
+            HookBody::Command(_) => Reach::Advisory,
+            HookBody::Script(_) => Reach::Refused(Refusal::NeverFires),
+        };
+    }
+    if !spec.every_agent() {
+        return match agent_scoping(harness) {
+            AgentScoping::PerAgentFile => Reach::InAgentFile,
+            AgentScoping::Payload { .. } => Reach::Registry,
+            AgentScoping::None => Reach::Advisory,
+        };
+    }
+    // Registration is where the payload matters: advisory prose above
+    // reads none. A harness reached only by name takes a hook that names
+    // it, and refuses one written for the payload every other tool sends.
+    if harness.hooks_by_name_only() && spec.harnesses.is_none() {
+        return Reach::Refused(Refusal::ByNameOnly);
+    }
+    Reach::Registry
 }
 
 pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -> Delivery {
@@ -91,40 +173,20 @@ pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -
             harness.display_name()
         ));
     }
-    match crate::harness::hook_enforcement(env, scope, harness) {
-        Enforcement::NotApplicable => {
-            return Delivery::NotInstallable(format!("{} takes no hooks", harness.display_name()));
+    let enforcement = crate::harness::hook_enforcement(env, scope, harness);
+    match hook_reach(harness, enforcement, spec) {
+        Reach::InAgentFile => Delivery::InAgentFile,
+        Reach::Advisory => Delivery::Advisory,
+        Reach::Refused(refusal) => Delivery::NotInstallable(refusal.reason(harness, spec)),
+        Reach::Registry => {
+            match crate::engine::hook_target(env, scope, harness, &spec.name, None) {
+                Some(_) => Delivery::Registered,
+                None => Delivery::NotInstallable(format!(
+                    "{} has nowhere to register a hook at this scope",
+                    harness.display_name()
+                )),
+            }
         }
-        Enforcement::Advisory => return Delivery::Advisory,
-        Enforcement::Enforced => {}
-    }
-    if !event_fires(harness, &spec.event) {
-        // A catalog hook has no agent file to fall back into; a custom hook
-        // keeps its advisory prose there.
-        return match &spec.body {
-            HookBody::Command(_) => Delivery::Advisory,
-            HookBody::Script(_) => Delivery::NotInstallable(never_fires(harness, &spec.event)),
-        };
-    }
-    if !spec.every_agent() {
-        return match agent_scoping(harness) {
-            AgentScoping::PerAgentFile => Delivery::InAgentFile,
-            AgentScoping::Payload { .. } => Delivery::Registered,
-            AgentScoping::None => Delivery::Advisory,
-        };
-    }
-    // Registration is where the payload matters: advisory prose above
-    // reads none. A harness reached only by name takes a hook that names
-    // it, and refuses one written for the payload every other tool sends.
-    if harness.hooks_by_name_only() && spec.harnesses.is_none() {
-        return Delivery::NotInstallable(by_name_only(harness));
-    }
-    match crate::engine::hook_target(env, scope, harness, &spec.name, None) {
-        Some(_) => Delivery::Registered,
-        None => Delivery::NotInstallable(format!(
-            "{} has nowhere to register a hook at this scope",
-            harness.display_name()
-        )),
     }
 }
 

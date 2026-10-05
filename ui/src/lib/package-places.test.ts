@@ -64,9 +64,7 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
   enabled: true,
   fork: null,
   catalog: null,
-  unsupported: [],
-  advisory: [],
-  fallback: [],
+  support: { state: "read", unsupported: [], advisory: [], fallback: [] },
 });
 
 /** A read that landed with nothing running behind it: the only state in

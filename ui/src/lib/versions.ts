@@ -74,7 +74,9 @@ export interface UpdateOffer {
  *  symptom of this cause. Nothing this page can re-read lifts it, so it
  *  carries no [`retry`]; the note names the source to refresh instead. It
  *  yields to one thing: this page's record read failing for a reason of its
- *  own. That read touches the manifest and the lock and never the source
+ *  own. That read fails only on the manifest and the lock: the one thing it
+ *  reads from the source, a hook's header, is best effort and a failure
+ *  there stays in the record as its cause
  *  (`crates/core/src/package/detail.rs` `package_meta`), so a failure there
  *  beside an unfetched timeline is a second fact, one a re-read can lift,
  *  and it keeps its words and its retry.

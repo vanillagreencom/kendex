@@ -157,12 +157,18 @@ fn each_package_carries_its_unsupported_and_advisory_tools() {
     fs::create_dir_all(root.join("hooks")).unwrap();
     fs::create_dir_all(root.join("mcp")).unwrap();
     skill(&root, "gh", "");
+    // The index cuts a description at 500 characters; the tool sentences
+    // sit past that cut, where only the whole header text reaches them.
+    let filler = "It reads the payload before the call. ".repeat(14);
+    assert!(filler.len() > 500, "the filler reaches past the cut");
     fs::write(
         root.join("hooks/guard.sh"),
-        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n\
-         # description: Guard. Not run on pi: its payload is unmeasured. \
-         On codex: a watcher reads its pane instead.\n\
-         # harnesses: [claude, codex, opencode, gemini, copilot]\n# ---\nexit 0\n",
+        format!(
+            "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n\
+             # description: Guard. {filler}Not run on pi: its payload is unmeasured. \
+             On codex: a watcher reads its pane instead.\n\
+             # harnesses: [claude, codex, opencode, gemini, copilot]\n# ---\nexit 0\n"
+        ),
     )
     .unwrap();
     fs::write(root.join("mcp/gh.toml"), "command = \"gh-mcp\"\n").unwrap();

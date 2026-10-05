@@ -620,8 +620,10 @@ export const commands = {
 	 *  `None` where nothing is declared under this name — a derived bundle member
 	 *  or dependency, an unmanaged or vendor copy. That is this command's whole
 	 *  half of [`no_managed_package`]: `detail::package_meta` reads a source's
-	 *  repository off the manifest rather than binding to one, so the other
-	 *  variant cannot escape it; that half is [`package_versions`]'s, which does
+	 *  repository off the manifest rather than binding to one, and a hook's
+	 *  header off the source only best effort, a read that fails standing in
+	 *  the record as its cause, so the other variant cannot escape it; that
+	 *  half is [`package_versions`]'s, which does
 	 *  bind. The CLI's own `show` keeps core's refusal either way: it was asked
 	 *  about one package and has nothing else to draw.
 	 */
@@ -641,20 +643,12 @@ export const commands = {
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
 	/**
-	 *  The tools that never run the package, read from the package's own
-	 *  header at the revision this scope reads ([`super::support`]).
+	 *  The tools the package runs on ([`super::support`]), a hook's read
+	 *  from its own header at the installed revision. Best effort: a header
+	 *  that cannot be read there says why, and the rest of the record
+	 *  stands.
 	 */
-	unsupported: UnsupportedTool[],
-	/**
-	 *  The tools that take the package, a hook, only as instructions the
-	 *  model may ignore. Not in `unsupported`.
-	 */
-	advisory: HarnessId[],
-	/**
-	 *  The tools that run the package, a hook, while a fallback there does
-	 *  its job. Not in `unsupported`.
-	 */
-	fallback: FallbackTool[],
+	support: RecordSupport,
 } | null, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
 	/**
 	 *  Every saved item, read against this machine. One read for the whole
@@ -2222,8 +2216,8 @@ export type Excluded = {
 export type FallbackTool = {
 	tool: HarnessId,
 	/**
-	 *  The hook's own `Not run on <id>: <reason>.` sentence naming the
-	 *  fallback, control characters shown rather than acted on.
+	 *  The hook's own `On <id>: <reason>.` sentence naming the fallback,
+	 *  control characters shown rather than acted on.
 	 */
 	reason: string,
 };
@@ -3706,20 +3700,12 @@ export type PackageMeta_Deserialize = {
 	fork: ForkProvenance_Deserialize | null,
 	catalog: CatalogGroupMeta | null,
 	/**
-	 *  The tools that never run the package, read from the package's own
-	 *  header at the revision this scope reads ([`super::support`]).
+	 *  The tools the package runs on ([`super::support`]), a hook's read
+	 *  from its own header at the installed revision. Best effort: a header
+	 *  that cannot be read there says why, and the rest of the record
+	 *  stands.
 	 */
-	unsupported: UnsupportedTool[],
-	/**
-	 *  The tools that take the package, a hook, only as instructions the
-	 *  model may ignore. Not in `unsupported`.
-	 */
-	advisory: HarnessId[],
-	/**
-	 *  The tools that run the package, a hook, while a fallback there does
-	 *  its job. Not in `unsupported`.
-	 */
-	fallback: FallbackTool[],
+	support: RecordSupport,
 };
 
 export type PackageMeta_Serialize = {
@@ -3738,20 +3724,12 @@ export type PackageMeta_Serialize = {
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
 	/**
-	 *  The tools that never run the package, read from the package's own
-	 *  header at the revision this scope reads ([`super::support`]).
+	 *  The tools the package runs on ([`super::support`]), a hook's read
+	 *  from its own header at the installed revision. Best effort: a header
+	 *  that cannot be read there says why, and the rest of the record
+	 *  stands.
 	 */
-	unsupported: UnsupportedTool[],
-	/**
-	 *  The tools that take the package, a hook, only as instructions the
-	 *  model may ignore. Not in `unsupported`.
-	 */
-	advisory: HarnessId[],
-	/**
-	 *  The tools that run the package, a hook, while a fallback there does
-	 *  its job. Not in `unsupported`.
-	 */
-	fallback: FallbackTool[],
+	support: RecordSupport,
 };
 
 /**
@@ -4295,6 +4273,21 @@ export type Reach =
  *  at all. `why` is the whole reason, from whichever reader judged it.
  */
 { at: "unavailable"; why: string };
+
+/**  What an installed package's record says about the tools it runs on. */
+export type RecordSupport = 
+/**
+ *  [`ToolSupport`], read from the package's own header at the
+ *  installed revision, or from the capability table alone for a kind
+ *  that declares nothing.
+ */
+{ state: "read"; unsupported: UnsupportedTool[]; advisory: HarnessId[]; fallback: FallbackTool[] } | 
+/**
+ *  The hook's header could not be read at the installed revision, so
+ *  nothing says which tools run it. `cause` is why, control characters
+ *  shown rather than acted on.
+ */
+{ state: "unread"; cause: string };
 
 /**  A step that did not go through. */
 export type Refused = {

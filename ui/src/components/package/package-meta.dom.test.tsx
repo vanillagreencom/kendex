@@ -4,7 +4,10 @@
 // draws; what each shape of that answer reads as is the row's own test.
 import { beforeEach, describe, expect, it } from "vitest";
 import type { PackageMeta_Serialize } from "@/bindings";
-import { SUPPORTED_HARNESSES_LABEL } from "@/lib/copy-library";
+import {
+  SUPPORTED_HARNESSES_LABEL,
+  SUPPORTED_UNKNOWN,
+} from "@/lib/copy-library";
 import type { ItemGroup } from "@/lib/derive";
 import { useProvenanceStore } from "@/stores/provenance";
 import { mount } from "@/test/dom";
@@ -51,12 +54,15 @@ const META: PackageMeta_Serialize = {
   enabled: true,
   fork: null,
   catalog: null,
-  unsupported: [
-    { tool: "pi", reason: "it has no Stop event" },
-    { tool: "gemini", reason: null },
-  ],
-  advisory: ["opencode"],
-  fallback: [{ tool: "codex", reason: "a watcher reads its pane" }],
+  support: {
+    state: "read",
+    unsupported: [
+      { tool: "pi", reason: "it has no Stop event" },
+      { tool: "gemini", reason: null },
+    ],
+    advisory: ["opencode"],
+    fallback: [{ tool: "codex", reason: "a watcher reads its pane" }],
+  },
 };
 
 /** The value cell of the row labelled `label`, or null when none is drawn. */
@@ -83,6 +89,27 @@ describe("the harnesses an installed package runs on", () => {
     expect(chips).toEqual(["Pi", "Gemini CLI", "OpenCode", "Codex"]);
     expect(row.textContent).toContain("it has no Stop event");
     expect(row.textContent).toContain("a watcher reads its pane");
+  });
+
+  // A record whose hook header core could not read says so, with why, and
+  // names no harness: neither every one nor none of them is known.
+  it("draws the cause where the record's header could not be read", () => {
+    const host = mount(
+      <PackageMetaBlock
+        group={group}
+        primary={primary}
+        meta={{
+          ...META,
+          support: { state: "unread", cause: "source 'cat' is disabled" },
+        }}
+      />,
+    );
+
+    const row = rowValue(host, SUPPORTED_HARNESSES_LABEL);
+    if (!row) throw new Error("no supported harnesses row");
+    expect(row.querySelectorAll("button")).toHaveLength(0);
+    expect(row.textContent).toContain(SUPPORTED_UNKNOWN);
+    expect(row.textContent).toContain("source 'cat' is disabled");
   });
 
   // With no record there is no answer to draw, and a row claiming every

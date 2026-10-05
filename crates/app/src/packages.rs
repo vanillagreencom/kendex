@@ -253,8 +253,10 @@ pub fn readme(
 /// `None` where nothing is declared under this name — a derived bundle member
 /// or dependency, an unmanaged or vendor copy. That is this command's whole
 /// half of [`no_managed_package`]: `detail::package_meta` reads a source's
-/// repository off the manifest rather than binding to one, so the other
-/// variant cannot escape it; that half is [`package_versions`]'s, which does
+/// repository off the manifest rather than binding to one, and a hook's
+/// header off the source only best effort, a read that fails standing in
+/// the record as its cause, so the other variant cannot escape it; that
+/// half is [`package_versions`]'s, which does
 /// bind. The CLI's own `show` keeps core's refusal either way: it was asked
 /// about one package and has nothing else to draw.
 #[tauri::command(async)]

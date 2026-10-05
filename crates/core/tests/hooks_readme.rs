@@ -1,65 +1,38 @@
 //! `hooks/README.md` is rendered from this catalog's own hooks, and the
 //! committed file is held to that rendering. The rendering also holds each
-//! hook to a stated reason wherever it does not run, judged by
-//! `hook::delivery` for one hook on one harness at project scope, the
-//! pi-hooks carrier registered the way a Pi install enforces hooks: a
-//! harness the hook's own `harnesses:` line leaves out, an applicable
-//! companion core cannot deliver, and any refusal other than the
-//! by-name-only one, need the hook's `Not run on <id>: <reason>.` sentence,
-//! read by `hook::stated_reason`, the reader the package's supported-tools
-//! row takes. A missing or unterminated sentence fails the rendering naming
-//! the hook and harness, and so does a sentence in the wrong form: `Not run
-//! on <id>:` for a harness the hook runs on, or `On <id>:`, the fallback
-//! sentence, for one it does not.
+//! hook's tool sentences to the reach the package's supported-tools row
+//! reads: `hook::hook_reach` for one hook on one harness, fed the
+//! capability table's enforcement, as `package::support` feeds it. A
+//! harness the hook does not run on, other than one core states the reason
+//! for itself, needs the hook's `Not run on <id>: <reason>.` sentence, read
+//! by `hook::stated_reason`, the reader the row takes. A missing or
+//! unterminated sentence fails the rendering naming the hook and harness,
+//! and so does a sentence in the wrong form: `Not run on <id>:` for a
+//! harness the hook runs on, or `On <id>:`, the fallback sentence, for one
+//! it does not. A hook that reaches a harness where a companion it requires
+//! is withheld fails too: the row would say it runs there, and the engine
+//! installs it nowhere, so its `harnesses:` line must leave that harness
+//! out.
 //!
 //! Every failure opens with `hooks-readme: <key>=<value>`, English below it.
 //! Regenerate the file with the command in `REGENERATE`.
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::{checkout_root, rooted};
+use test_util::checkout_root;
 
 use std::fs;
 use std::path::PathBuf;
 
-use kendex_core::env::{Env, FakeOs};
+use kendex_core::harness::capabilities;
 use kendex_core::hook::{
-    Delivery, HookSource, HookSpec, Stated, ToolSentence, by_name_only, delivery, parse_hook,
+    HookSource, HookSpec, Reach, Refusal, Stated, ToolSentence, hook_reach, parse_hook,
     stated_reason,
 };
-use kendex_core::model::{HarnessId, Scope};
+use kendex_core::model::{HarnessId, ItemKind};
 
 const REGENERATE: &str =
     "cargo test -p kendex-core --test integration -- --ignored regenerate_hooks_readme";
-
-/// The project every hook is judged in: a fake home whose project registers
-/// the pi-hooks carrier in its own Pi settings.
-struct World {
-    _tmp: tempfile::TempDir,
-    env: Env,
-    scope: Scope,
-}
-
-#[allow(
-    clippy::expect_used,
-    reason = "a fixture that cannot be built is the test's own failure"
-)]
-fn world() -> World {
-    let tmp = tempfile::tempdir().expect("a scratch directory");
-    let home = rooted(&tmp);
-    let project = home.join("app");
-    fs::create_dir_all(project.join(".pi")).expect("the project's Pi directory");
-    fs::write(
-        project.join(".pi/settings.json"),
-        r#"{ "packages": ["./packages/@vanillagreen/pi-hooks"] }"#,
-    )
-    .expect("the carrier registration");
-    World {
-        env: Env::fake(&home, FakeOs::Linux),
-        scope: Scope::Project { root: project },
-        _tmp: tmp,
-    }
-}
 
 fn readme_path() -> PathBuf {
     checkout_root().join("hooks/README.md")
@@ -126,60 +99,63 @@ fn absent(spec: &HookSpec, form: ToolSentence, harness: HarnessId) -> Result<(),
     })
 }
 
-/// Whether core cannot deliver a directly required companion on `harness`.
-/// The dependency walk (`engine/deps.rs::companion`) skips companions whose
+/// The hook's reach on `harness`, as the supported-tools row judges it.
+fn reach(spec: &HookSpec, harness: HarnessId) -> Reach {
+    hook_reach(
+        harness,
+        capabilities(harness, ItemKind::Hook).enforcement,
+        spec,
+    )
+}
+
+/// Whether a directly required companion never runs on `harness`. The
+/// dependency walk (`engine/deps.rs::companion`) skips companions whose
 /// own `harnesses:` line excludes it: they are not required there.
-fn companion_absent(
-    world: &World,
-    hook: &HookSource,
-    catalog: &[HookSpec],
-    harness: HarnessId,
-) -> bool {
+fn companion_absent(hook: &HookSource, catalog: &[HookSpec], harness: HarnessId) -> bool {
     hook.requires.iter().any(|name| {
         catalog.iter().any(|spec| {
             spec.name == *name
                 && spec.applies_to(harness)
-                && matches!(
-                    delivery(&world.env, &world.scope, harness, spec),
-                    Delivery::NotInstallable(_)
-                )
+                && matches!(reach(spec, harness), Reach::Refused(_))
         })
     })
 }
 
-/// How core delivers one hook on one harness, which decides the sentence the
-/// hook may state there.
+/// How the hook reaches one harness, which decides the sentence the hook
+/// may state there.
 enum Standing {
-    /// Core registers the hook and the harness runs it: a fallback is an
-    /// `On <id>:` sentence, and a `Not run on <id>:` sentence is false.
+    /// The harness runs the hook: a fallback is an `On <id>:` sentence, and
+    /// a `Not run on <id>:` sentence is false.
     Runs,
     /// Installed, run by no hook runner: core states it, and the
     /// supported-tools row reads neither sentence.
     Advisory,
     /// Not run: `stated` is whether core states the reason itself, as it
-    /// does for the by-name-only refusal; an `On <id>:` sentence is false.
+    /// does for the by-name-only refusal and a harness that takes no hooks;
+    /// an `On <id>:` sentence is false.
     NotRun { stated: bool },
 }
 
-/// The hook's [`Standing`] on `harness`, `withheld` being
-/// [`companion_absent`]'s answer.
-fn standing(world: &World, spec: &HookSpec, withheld: bool, harness: HarnessId) -> Standing {
-    if !spec.applies_to(harness) || withheld {
-        return Standing::NotRun { stated: false };
-    }
-    match delivery(&world.env, &world.scope, harness, spec) {
-        Delivery::Registered | Delivery::InAgentFile => Standing::Runs,
-        Delivery::Advisory => Standing::Advisory,
-        Delivery::NotInstallable(refusal) => Standing::NotRun {
-            stated: refusal == by_name_only(harness),
+fn standing(spec: &HookSpec, harness: HarnessId) -> Standing {
+    match reach(spec, harness) {
+        Reach::Registry | Reach::InAgentFile => Standing::Runs,
+        Reach::Advisory => Standing::Advisory,
+        Reach::Refused(refusal) => Standing::NotRun {
+            stated: match refusal {
+                Refusal::ByNameOnly | Refusal::NoHooks => true,
+                Refusal::LeftOut | Refusal::NeverFires => false,
+            },
         },
     }
 }
 
 /// Every finding the hook's sentences hold on `harness`: one in the wrong
-/// form, and a reason the hook owes and does not state.
-fn judged(world: &World, spec: &HookSpec, withheld: bool, harness: HarnessId) -> Vec<String> {
-    let checks = match standing(world, spec, withheld, harness) {
+/// form, a reason the hook owes and does not state, and a reach its
+/// withheld companion (`withheld`, [`companion_absent`]'s answer) denies.
+fn judged(spec: &HookSpec, withheld: bool, harness: HarnessId) -> Vec<String> {
+    let (hook, id) = (&spec.name, harness.name());
+    let standing = standing(spec, harness);
+    let mut checks = match standing {
         Standing::Runs => vec![absent(spec, ToolSentence::NotRun, harness)],
         Standing::Advisory => vec![],
         Standing::NotRun { stated: true } => vec![absent(spec, ToolSentence::On, harness)],
@@ -188,11 +164,16 @@ fn judged(world: &World, spec: &HookSpec, withheld: bool, harness: HarnessId) ->
             reason(spec, harness),
         ],
     };
+    if withheld && !matches!(standing, Standing::NotRun { .. }) {
+        checks.push(Err(format!(
+            "hooks-readme: companion-withheld={hook}:{id}\na companion the hook requires never runs on {id}, so the hook is installed nowhere there; leave {id} off its harnesses line and state 'Not run on {id}: <reason>.'"
+        )));
+    }
     checks.into_iter().filter_map(Result::err).collect()
 }
 
 /// The whole README, or every finding the hooks' frontmatter holds.
-fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
+fn render(hooks: &[HookSource]) -> Result<String, Vec<String>> {
     let catalog: Vec<HookSpec> = hooks.iter().cloned().map(HookSpec::from).collect();
     let mut findings = Vec::new();
     let mut list = String::new();
@@ -204,8 +185,8 @@ fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
         ));
         let spec = HookSpec::from(hook.clone());
         for harness in HarnessId::ALL {
-            let withheld = companion_absent(world, hook, &catalog, harness);
-            findings.extend(judged(world, &spec, withheld, harness));
+            let withheld = companion_absent(hook, &catalog, harness);
+            findings.extend(judged(&spec, withheld, harness));
         }
     }
     if !findings.is_empty() {
@@ -232,15 +213,14 @@ fn compare(committed: &str, rendered: &str) -> Result<(), String> {
     ))
 }
 
-fn rendered(world: &World, hooks: &[HookSource]) -> String {
-    render(world, hooks).unwrap_or_else(|findings| panic!("{}", findings.join("\n")))
+fn rendered(hooks: &[HookSource]) -> String {
+    render(hooks).unwrap_or_else(|findings| panic!("{}", findings.join("\n")))
 }
 
 #[test]
 fn the_committed_readme_is_what_the_hooks_render() {
-    let world = world();
     let committed = fs::read_to_string(readme_path()).unwrap_or_default();
-    if let Err(finding) = compare(&committed, &rendered(&world, &catalog_hooks())) {
+    if let Err(finding) = compare(&committed, &rendered(&catalog_hooks())) {
         panic!("{finding}");
     }
 }
@@ -252,9 +232,7 @@ fn the_committed_readme_is_what_the_hooks_render() {
     reason = "a README that cannot be written is the command's own failure"
 )]
 fn regenerate_hooks_readme() {
-    let world = world();
-    fs::write(readme_path(), rendered(&world, &catalog_hooks()))
-        .expect("hooks/README.md is writable");
+    fs::write(readme_path(), rendered(&catalog_hooks())).expect("hooks/README.md is writable");
 }
 
 #[test]
@@ -263,7 +241,6 @@ fn regenerate_hooks_readme() {
     reason = "the catalog must hold the hook and its companion"
 )]
 fn a_companion_is_required_only_on_its_own_harnesses() {
-    let world = world();
     let hooks = catalog_hooks();
     let hook = hooks
         .iter()
@@ -292,8 +269,8 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
     for (harness, expected) in rows {
         assert_eq!(
             [
-                companion_absent(&world, hook, &catalog, harness),
-                companion_absent(&world, hook, &undeliverable, harness),
+                companion_absent(hook, &catalog, harness),
+                companion_absent(hook, &undeliverable, harness),
             ],
             expected,
             "companion applicability on {}",
@@ -314,9 +291,8 @@ type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
     reason = "a planted defect that is not refused is the failure this test names"
 )]
 fn each_planted_defect_is_refused_on_its_keyed_line() {
-    let world = world();
     let hooks = catalog_hooks();
-    let clean = rendered(&world, &hooks);
+    let clean = rendered(&hooks);
 
     let edited = clean.replacen("- `block-argv-kill`: ", "- `block-argv-kill`: Edited. ", 1);
     assert_ne!(edited, clean, "the planted line edit changed nothing");
@@ -326,9 +302,10 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
         Some("hooks-readme: drift=hooks/README.md")
     );
 
-    let planted_rows: [PlantedRow; 5] = [
+    let planted_rows: [PlantedRow; 6] = [
         // Codex and Copilot never fire TaskCompleted. The planted Copilot
-        // recorder reason leaves its requirer and both Codex hooks without one.
+        // recorder reason leaves the Codex recorder without one, and the
+        // requirer still reaches both tools its recorder is withheld on.
         (
             "skill-load-record",
             |source| {
@@ -336,8 +313,8 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
                 source.description.push_str(" Not run on copilot: planted.");
             },
             &[
-                "hooks-readme: missing-reason=skill-load-check:codex",
-                "hooks-readme: missing-reason=skill-load-check:copilot",
+                "hooks-readme: companion-withheld=skill-load-check:codex",
+                "hooks-readme: companion-withheld=skill-load-check:copilot",
                 "hooks-readme: missing-reason=skill-load-record:codex",
             ],
         ),
@@ -388,6 +365,18 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
                 "hooks-readme: missing-reason=session-end-row:antigravity",
             ],
         ),
+        // Antigravity fires PreToolUse and is reached only by a hook that
+        // names it: core states that reason, so the hook owes none, and a
+        // fallback sentence there is false.
+        (
+            "block-bare-cd",
+            |source| {
+                source
+                    .description
+                    .push_str(" On antigravity: a planted fallback.");
+            },
+            &["hooks-readme: wrong-form=block-bare-cd:antigravity"],
+        ),
     ];
     for (hook, plant, keys) in planted_rows {
         let mut planted_hooks = hooks.clone();
@@ -401,7 +390,7 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
             *target, before,
             "the planted edit to {hook} changed nothing"
         );
-        let findings = render(&world, &planted_hooks).expect_err("the planted hook is refused");
+        let findings = render(&planted_hooks).expect_err("the planted hook is refused");
         let firsts: Vec<&str> = findings
             .iter()
             .filter_map(|finding| finding.lines().next())

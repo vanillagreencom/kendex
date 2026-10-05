@@ -347,3 +347,138 @@ fn a_shared_install_reached_through_a_symlink_still_reads() {
         detail::package_file(&w.env, &w.scope, ItemKind::Skill, "shared", "SKILL.md").unwrap();
     assert_eq!(file.content, "---\nname: shared\n---\nBody.\n");
 }
+
+/// A hook's header, as the catalog commit `install_hook` lays down.
+const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n\
+     # description: Guard. Not run on pi: its payload is unmeasured.\n\
+     # harnesses: [claude, codex, opencode]\n# ---\nexit 0\n";
+
+/// Installs the catalog hook `guard` on Claude and returns the manifest's
+/// path, for a test that rewrites the source declaration.
+#[allow(clippy::unwrap_used)]
+fn install_hook(w: &World) -> PathBuf {
+    fs::create_dir_all(w.upstream.join("hooks")).unwrap();
+    fs::write(w.upstream.join("hooks/guard.sh"), GUARD).unwrap();
+    fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    commit(&w.upstream, "guard");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, hook_manifest(&format!("repo = \"{REPO}\"\n"))).unwrap();
+    let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    path
+}
+
+/// The manifest declaring `guard` from source `cat`, whose table holds
+/// `source`.
+fn hook_manifest(source: &str) -> String {
+    format!(
+        "schema = 6\n\n[sources.cat]\n{source}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n"
+    )
+}
+
+/// The supported tools a hook's record carries come from its own header at
+/// the installed revision: a newer catalog commit that states another
+/// reason changes nothing until it is installed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_record_reads_its_tools_from_the_installed_header() {
+    use kendex_core::model::HarnessId::*;
+    use kendex_core::package::support::{RecordSupport, UnsupportedTool};
+    let w = world();
+    let path = install_hook(&w);
+    fs::write(
+        w.upstream.join("hooks/guard.sh"),
+        GUARD.replace(
+            "unmeasured.",
+            "unmeasured. Not run on gemini: a newer reason.",
+        ),
+    )
+    .unwrap();
+    commit(&w.upstream, "newer");
+    let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let meta = detail::package_meta(&w.env, &w.scope, ItemKind::Hook, "guard").unwrap();
+    let gap = |tool, reason: Option<&str>| UnsupportedTool {
+        tool,
+        reason: reason.map(str::to_owned),
+    };
+    assert_eq!(
+        meta.support,
+        RecordSupport::Read {
+            unsupported: vec![
+                gap(Cursor, None),
+                gap(Pi, Some("its payload is unmeasured")),
+                gap(Gemini, None),
+                gap(Copilot, None),
+                gap(Antigravity, None),
+            ],
+            advisory: vec![Opencode],
+            fallback: vec![],
+        }
+    );
+}
+
+/// A hook whose installed revision cannot be read still has a record: the
+/// provenance stands, and the supported tools name why they are unknown.
+/// Each row rewrites the source declaration one way a person or a refresh
+/// leaves it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_record_whose_source_cannot_be_read_names_the_cause() {
+    use kendex_core::package::support::RecordSupport;
+    let rows: [(&str, &str, &str); 3] = [
+        (
+            "switched off",
+            "repo = \"owner/catalog\"\nenabled = false\n",
+            "source 'cat' is disabled",
+        ),
+        (
+            "re-pointed at a repository never downloaded",
+            "repo = \"owner/absent\"\n",
+            "source 'cat' has not been downloaded yet — refresh it first",
+        ),
+        (
+            "re-pointed at another repository that holds the commit",
+            "repo = \"owner/other\"\n",
+            "source 'cat' now reads owner/other, not owner/catalog, which this package was installed from",
+        ),
+    ];
+    for (case, source, cause) in rows {
+        let w = world();
+        let path = install_hook(&w);
+        let other = w.home.join("git/owner/other");
+        git(
+            &w.home.join("git/owner"),
+            &[
+                "clone",
+                "--quiet",
+                w.upstream.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        fs::write(&path, hook_manifest(source)).unwrap();
+        if source.contains("owner/other") {
+            let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
+            remote::sync_sources(&w.env, &loaded).unwrap();
+        }
+
+        let meta = detail::package_meta(&w.env, &w.scope, ItemKind::Hook, "guard")
+            .unwrap_or_else(|error| panic!("{case}: the record still answers: {error}"));
+        assert_eq!(meta.source, "cat", "{case}");
+        assert!(
+            meta.current.is_some(),
+            "{case}: the installed version stands"
+        );
+        assert_eq!(
+            meta.support,
+            RecordSupport::Unread {
+                cause: cause.to_owned()
+            },
+            "{case}"
+        );
+    }
+}

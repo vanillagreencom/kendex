@@ -122,9 +122,7 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
   enabled: true,
   fork: null,
   catalog: null,
-  unsupported: [],
-  advisory: [],
-  fallback: [],
+  support: { state: "read", unsupported: [], advisory: [], fallback: [] },
 });
 
 const at = (commit: string): VersionRef => ({

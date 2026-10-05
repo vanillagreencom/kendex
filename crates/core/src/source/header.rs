@@ -168,40 +168,21 @@ impl DeclaredHeaders {
         name: &str,
         installed: Option<&InstalledFrom>,
     ) -> Option<Metadata> {
-        let (source, repo, hold) = match installed {
-            Some(installed) => (
-                installed.source.clone(),
-                Some(installed.repo.clone()),
-                installed.commit.clone(),
-            ),
-            None => {
-                let decl = manifest.declared(kind).get(name)?;
-                (decl.source.clone(), None, decl.rev.clone())
-            }
-        };
+        let read_at = ReadAt::of(manifest, kind, name, installed)?;
         // Keyed by everything that decides the bytes — the scope, the
         // source name, what it must resolve to, and the revision — so no
         // two installations that differ in any of them read each other's
         // catalog.
-        let key = (scope.clone(), source.clone(), repo.clone(), hold.clone());
-        let opened = self.opened.entry(key).or_insert_with(|| {
-            let state = super::resolve_at(env, scope, &source, manifest, hold.as_deref()).ok()?;
-            let super::SourceState::Ready(ready) = state else {
-                return None;
-            };
-            // The record names the catalog these bytes came out of. Where
-            // the declaration now reads somewhere else, that is a
-            // different catalog under one name and its words are about a
-            // different package.
-            if let Some(repo) = &repo
-                && &ready.provenance != repo
-            {
-                return None;
-            }
-            let sealed = SealedSource::open(&ready.root).ok()?;
-            let config = super::source_config_for(&sealed, &ready.provenance).ok()?;
-            Some((sealed, config))
-        });
+        let key = (
+            scope.clone(),
+            read_at.source.clone(),
+            read_at.repo.clone(),
+            read_at.hold.clone(),
+        );
+        let opened = self
+            .opened
+            .entry(key)
+            .or_insert_with(|| read_at.open(env, scope, manifest).ok());
         let (sealed, config) = opened.as_ref()?;
         let path = super::find_item(sealed, config, kind, name)?;
         // A kind that writes no header of its own has nothing to answer
@@ -209,5 +190,100 @@ impl DeclaredHeaders {
         // a blank reading here would stand in front of them.
         header_file(kind, &path)?;
         Some(read(sealed, kind, &path))
+    }
+}
+
+/// The text of one installed package's header file, read where
+/// [`DeclaredHeaders::of`] reads its words: the catalog and revision the
+/// installation's record names, else the declaration's. The error is the
+/// cause, worded for the person reading the package's record: a source
+/// that is pending, switched off, gone from its path or re-pointed at
+/// another repository, or an item no longer at that revision.
+pub(crate) fn installed_text(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    kind: ItemKind,
+    name: &str,
+    installed: Option<&InstalledFrom>,
+) -> Result<String, String> {
+    let read_at = ReadAt::of(manifest, kind, name, installed)
+        .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
+    let (sealed, config) = read_at.open(env, scope, manifest)?;
+    let path = super::find_item(&sealed, &config, kind, name).ok_or_else(|| {
+        crate::error::CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: read_at.source.clone(),
+        }
+        .to_string()
+    })?;
+    try_text(&sealed, kind, &path)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("'{name}' has no header file in source '{}'", read_at.source))
+}
+
+/// Which catalog a read about one installation opens: the installation's
+/// own record outranks the declaration in full, as
+/// [`DeclaredHeaders::of`] sets out.
+struct ReadAt {
+    source: String,
+    /// What the source must resolve to: the record's, where one claims the
+    /// installation.
+    repo: Option<String>,
+    hold: Option<String>,
+}
+
+impl ReadAt {
+    fn of(
+        manifest: &crate::manifest::Manifest,
+        kind: ItemKind,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+    ) -> Option<ReadAt> {
+        Some(match installed {
+            Some(installed) => ReadAt {
+                source: installed.source.clone(),
+                repo: Some(installed.repo.clone()),
+                hold: installed.commit.clone(),
+            },
+            None => {
+                let decl = manifest.declared(kind).get(name)?;
+                ReadAt {
+                    source: decl.source.clone(),
+                    repo: None,
+                    hold: decl.rev.clone(),
+                }
+            }
+        })
+    }
+
+    /// The catalog, opened. Nothing here fetches: [`super::require_ready_at`]
+    /// answers out of the cache a previous install filled and names why it
+    /// cannot otherwise.
+    fn open(
+        &self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+    ) -> Result<(SealedSource, super::SourceConfig), String> {
+        let ready =
+            super::require_ready_at(env, scope, &self.source, manifest, self.hold.as_deref())
+                .map_err(|error| error.to_string())?;
+        // The record names the catalog these bytes came out of. Where the
+        // declaration now reads somewhere else, that is a different
+        // catalog under one name and its words are about a different
+        // package.
+        if let Some(repo) = &self.repo
+            && &ready.provenance != repo
+        {
+            return Err(format!(
+                "source '{}' now reads {}, not {repo}, which this package was installed from",
+                self.source, ready.provenance
+            ));
+        }
+        let sealed = SealedSource::open(&ready.root).map_err(|error| error.to_string())?;
+        let config = super::source_config_for(&sealed, &ready.provenance)
+            .map_err(|error| error.to_string())?;
+        Ok((sealed, config))
     }
 }

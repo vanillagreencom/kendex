@@ -4,7 +4,7 @@ use kendex_core::env::Env;
 use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use kendex_core::model::HarnessId;
 use kendex_core::package::detail;
-use kendex_core::package::support::{FallbackTool, UnsupportedTool};
+use kendex_core::package::support::{RecordSupport, UnsupportedTool};
 
 use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, payload, resolve_scopes};
@@ -83,12 +83,16 @@ fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
 /// The package's supported tools in one value: every tool, less the ones
 /// core names unsupported, each with its reason where the package states
 /// one, then the tools that take it only as advice, then the tools where a
-/// fallback does its job.
-fn supported_tools(
-    unsupported: &[UnsupportedTool],
-    advisory: &[HarnessId],
-    fallback: &[FallbackTool],
-) -> String {
+/// fallback does its job. A record core could not read says so, with why.
+fn supported_tools(support: &RecordSupport) -> String {
+    let (unsupported, advisory, fallback) = match support {
+        RecordSupport::Read {
+            unsupported,
+            advisory,
+            fallback,
+        } => (unsupported, advisory, fallback),
+        RecordSupport::Unread { cause } => return format!("unknown ({cause})"),
+    };
     let named = |gap: &UnsupportedTool| match &gap.reason {
         Some(reason) => format!("{} ({reason})", gap.tool.display_name()),
         None => gap.tool.display_name().to_owned(),
@@ -96,11 +100,13 @@ fn supported_tools(
     let mut value = if unsupported.is_empty() {
         "all".to_owned()
     } else if unsupported.len() == HarnessId::ALL.len() {
-        let mut reasons: Vec<&str> = unsupported
-            .iter()
-            .filter_map(|gap| gap.reason.as_deref())
-            .collect();
-        reasons.dedup();
+        // Each reason once, in the order the tools first give it.
+        let mut reasons: Vec<&str> = Vec::new();
+        for reason in unsupported.iter().filter_map(|gap| gap.reason.as_deref()) {
+            if !reasons.contains(&reason) {
+                reasons.push(reason);
+            }
+        }
         match reasons.as_slice() {
             [] => "none".to_owned(),
             reasons => format!("none ({})", reasons.join("; ")),
@@ -167,7 +173,7 @@ fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
     }
     field(
         "supported tools",
-        &supported_tools(&meta.unsupported, &meta.advisory, &meta.fallback),
+        &supported_tools(&meta.support),
         Status::Notice,
         None,
     );

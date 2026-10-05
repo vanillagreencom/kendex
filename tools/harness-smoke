@@ -152,11 +152,14 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
     mail-frontmatter)
       echo "that hook could not be read, or its frontmatter gives no event, so the event that hands a lane its mail over is unknown." ;;
     mail-delivery)
-      echo "the kendex on PATH printed no summary of that checkout, or its summary lists no lane-mail-check or lane-mail-halt hook there, so which harness gets a lane's mail by which mechanism is unknown." ;;
+      echo "the kendex on PATH printed no summary of that checkout, or its summary lists no lane-mail-check or lane-mail-halt hook there,"
+      echo "or that kendex is a build without a hook's unsupported and advisory lists, as one --allow-stale lets through,"
+      echo "so which harness gets a lane's mail by which mechanism is unknown." ;;
     packages)
       echo "no package of that kind was found there, so the Copilot package table would list none of them: the checkout or this script's reader is broken." ;;
     package-cell)
-      echo "the summary kendex index prints for this checkout lists no such hook, so whether kendex installs it on Copilot is unknown." ;;
+      echo "the summary kendex index prints for this checkout lists no such hook, or the kendex on PATH is a build without a hook's"
+      echo "unsupported and advisory lists, as one --allow-stale lets through, so whether kendex installs it on Copilot is unknown." ;;
     package-row)
       echo "the Copilot package table has no answer, or a second one, for that row: tools/harness-smoke is broken." ;;
     setup)
@@ -688,12 +691,14 @@ holds() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT MARKER-LINE — a plain-te
   fi
 }
 # ---- the lane-mail row -----------------------------------------------------
-# A fleet overseer's directive reaches a lane two ways, and kendex's own hook
-# delivery decision says which way each harness gets it. That decision is the
-# one `kendex index --json` prints for each hook of this checkout, from the
-# hook's own frontmatter through core (`crates/core/src/package/support.rs`),
-# so reading it is reading the hook's frontmatter through its owner rather
-# than parsing that frontmatter a second time. A tool in neither the hook's
+# A fleet overseer's directive reaches a lane two ways, and the hook's declared
+# support says which way each harness gets it: the package's supported-tools
+# answer `kendex index --json` prints for each hook of this checkout, which core
+# judges from the hook's own frontmatter through the one hook reach decision
+# (`crates/core/src/hook/delivery.rs::hook_reach`, read by
+# `crates/core/src/package/support.rs`). It is the package's declared support,
+# not one machine's delivery, and reading it is reading the frontmatter through
+# its owner rather than parsing that frontmatter a second time. A tool in neither the hook's
 # `unsupported` nor its `advisory` list is `enforced`, a fallback tool among
 # them, since the hook runs there: the hook's event hands the directive over
 # at the turn's end, so the row runs a one-turn lane session and passes only

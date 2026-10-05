@@ -29,3 +29,5 @@ export const SUPPORTED_ALL_EXCEPT = "All except";
 export const SUPPORTED_ADVISORY_ON = "Advisory on";
 /** Harnesses that run the hook while a fallback there does its job. */
 export const SUPPORTED_FALLBACK_ON = "Fallback on";
+/** An installed hook whose header core could not read: its cause follows. */
+export const SUPPORTED_UNKNOWN = "Unknown";
