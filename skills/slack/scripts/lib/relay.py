@@ -24,8 +24,10 @@ SLACK_THREAD_DAYS, delivers the top-level messages past the position, and
 reads every open ask and every recently active thread, including parents
 older than the history lookback. A refused thread read does not block the
 other threads or outbound mail; a temporary refusal leaves catch-up due
-on the next poll. So a message sent while the relay was disconnected, one whose
-envelope never arrived, and one acknowledged before a stop cut its delivery
+on the next poll. A rate-limited read, history or thread, is never waited out,
+since Slack's Retry-After can outlast many polls: it ends the catch-up for that
+poll, with nothing it read lost, and the next poll resumes it. So a message sent while
+the relay was disconnected, one whose envelope never arrived, and one acknowledged before a stop cut its delivery
 off land on a catch-up within that lookback, and lane-mail's delivery id judges any repeat.
 The connection opens before the catch-up reads, so no message falls between
 them.
@@ -282,7 +284,12 @@ class RootRelay:
                 self.thread_refused(err, str(message.get("thread_ts") or message["ts"]))
                 self.pending_live.pop(str(message["ts"]))
         if not self.caught_up:
-            self.catch_up(bot_user)
+            try:
+                self.catch_up(bot_user)
+            except Refusal as err:
+                if err.key != "slack-rate-limited":
+                    raise
+                print_refusal(err)
         self.mark_read()
         now = self.clock()
         touched = self.master_touched()
@@ -332,7 +339,7 @@ class RootRelay:
         horizon = self.settings.horizon(self.clock())
         position = self.state.seen_ts
         oldest = position if self.discovered or float(position) <= horizon else f"{horizon:.6f}"
-        messages = list(self.api.paged("conversations.history", "messages", channel=self.channel, oldest=oldest))
+        messages = list(self.api.paged("conversations.history", "messages", retries=0, channel=self.channel, oldest=oldest))
         messages.sort(key=lambda m: float(m["ts"]))
         new = [m for m in messages if float(m["ts"]) > float(position)]
         for message in new:
@@ -362,9 +369,10 @@ class RootRelay:
     def thread_refused(self, err: Refusal, thread_ts: str) -> bool:
         """Report one thread's refusal without stopping the root. Slack's
         thread_not_found closes only the journal's ask, not lane-mail's ask.
-        Authentication failure still stops the relay, not just one thread.
-        Returns whether the refusal needs no later catch-up retry."""
-        if err.key == "slack-auth-failed":
+        Authentication failure still stops the relay, and a rate limit the
+        catch-up, not just one thread. Returns whether the refusal needs no
+        later catch-up retry."""
+        if err.key in ("slack-auth-failed", "slack-rate-limited"):
             raise err
         thread = self.state.threads.get(thread_ts)
         envelope = thread.envelope if thread is not None else ""
@@ -399,7 +407,7 @@ class RootRelay:
         oldest = max(thread.seen, self.binding.bound_at, key=float)
         try:
             replies = list(
-                self.api.paged("conversations.replies", "messages", channel=self.channel, ts=thread.ts, oldest=oldest)
+                self.api.paged("conversations.replies", "messages", retries=0, channel=self.channel, ts=thread.ts, oldest=oldest)
             )
         except Refusal as err:
             return self.thread_refused(err, thread.ts)

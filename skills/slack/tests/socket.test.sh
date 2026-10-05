@@ -34,10 +34,10 @@ echo "=== slack listen: Socket Mode ==="
 
 # lines ROOT KIND — the `at`-less shape of each journal line of KIND, one per line
 lines() { jq -r --arg k "$2" 'select(.t == $k) | [.t, (.reason // "")] | join(" ")' "$(sk_journal "$1")"; }
-# awaited CMD... — CMD's output once it is non-empty, twenty seconds at most
+# awaited CMD... — CMD's output once it is non-empty, AWAIT_TRIES tenths of a second at most, 200 by default
 awaited() {
   local tries=0 out
-  while [ "$tries" -lt 200 ]; do
+  while [ "$tries" -lt "${AWAIT_TRIES:-200}" ]; do
     out="$("$@")"
     if [ -n "$out" ]; then printf '%s' "$out"; return 0; fi
     tries=$((tries + 1))
@@ -479,27 +479,59 @@ not-owner owner 0/6 Ignored topic.
 no-text owner 0/6 empty
 ROWS
 
-# A long Retry-After holds catch-up, not the socket reader.
-RATE="$(sk_new_root rate-ack)"
-sk_bind "$RATE"
-RC_CH="$(sk_channel "$RATE")"
-relay "$RATE" SLACK_POLL_SECONDS=60
-sk_ctl /_test/fault '{"method":"conversations.history","status":429,"retry_after":8}' >/dev/null
-sk_ctl /_test/socket '{"disconnect":"refresh_requested"}' >/dev/null
-sleep 0.5 # The replacement socket opens before catch-up enters its API retry.
-RT="$(sk_inject "$RC_CH" U001 'During Retry-After')"
-sk_ctl /_test/socket '{"ping":"during-429"}' >/dev/null
-sleep 0.5 # Observe the acknowledgement before the eight-second API retry ends.
-assert_eq "$(envelope "$RC_CH" "$RT")" 'sent=1 unacked=0' '429 wait does not block acknowledgements'
-assert_eq "$(sk_state '[.pongs[] | select(. == "during-429")] | length')" 1 '429 wait does not block pong'
-landed "$RATE" "$RC_CH:$RT" >/dev/null
-RID="$(jq -r --arg d "$RC_CH:$RT" 'select(.delivery_id == $d) | .id' "$(sk_box "$RATE")/to-lane.jsonl")"
-# lane-mail appends before returning; eyes follows the flushed delivery notice.
-# Await that completion within the row's bound, before the next 60-second poll.
-assert_eq "$(awaited sk_reactions "$RC_CH" "$RT")" eyes 'catch-up marks delivery immediately'
-assert_eq "$(grep -Fc "slack: delivered=ts=$RT id=$RID path=catch-up" "$SK_TMP/relay.out")" 1 'catch-up logs its delivery once'
-sk_relay_stop
-sk_ctl /_test/faults-reset >/dev/null
+# --- a reconnect's catch-up under Slack's rate limit ---------------------------------------
+# The drop withholds a reply's envelope, so the reconnect's catch-up alone can
+# land it. In the `rate` row Slack answers that catch-up's history read, then
+# its thread read, with 429 and a Retry-After far past the poll interval. Each
+# ends its poll's catch-up, so the poll after the reconnect records ok and
+# connected within one interval, a live message lands from its event, and the
+# third poll lands the reply. `none` reconnects with no limit; `control`
+# waits out the Retry-After again.
+reconnect_polled() { # ROOT — yes once an ok record names the reconnect as its connection's start
+  local at
+  at="$(jq -r 'select(.t == "reconnect") | .at' "$(sk_journal "$1")")"
+  [ -n "$at" ] && jq -e --arg at "$at" '.last_poll_ok and .connection == "connected" and .connection_since == $at' \
+    "$1/tmp/slack/status.json" >/dev/null 2>&1 && echo yes
+}
+deliveries() { jq -s --arg d "$2" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$1")/to-lane.jsonl"; } # ROOT DELIVERY_ID
+for row in rate none control; do
+  [ "$row" != control ] || sk_mutant rate-wait api.py 'if err\.code == 429 and attempt < retries:' 'if err.code == 429 and attempt < RETRIES:'
+  RATE="$(sk_new_root "rate-$row")"
+  sk_bind "$RATE"
+  RC_CH="$(sk_channel "$RATE")"
+  relay "$RATE" SLACK_POLL_SECONDS=3
+  TOPIC="$(sk_inject "$RC_CH" U001 'Rate topic.')"
+  landed "$RATE" "$RC_CH:$TOPIC" >/dev/null
+  sleep 1 # The record names the connect's second until a poll after the reconnect, which must differ.
+  if [ "$row" != none ]; then
+    sk_ctl /_test/fault '{"method":"conversations.history","status":429,"retry_after":60}' >/dev/null
+    sk_ctl /_test/fault '{"method":"conversations.replies","status":429,"retry_after":60}' >/dev/null
+  fi
+  sk_ctl /_test/fault '{"method": "socket", "drop": true}' >/dev/null
+  OFFLINE="$(sk_inject "$RC_CH" U001 'Reply while dropped.' "$TOPIC")"
+  # One poll interval: the poll after the reconnect runs at once.
+  POLLED="$(AWAIT_TRIES=30 awaited reconnect_polled "$RATE")"
+  LIVE="$(sk_inject "$RC_CH" U001 'Live during the limit.')"
+  LIVE_TEXT="$(landed "$RATE" "$RC_CH:$LIVE" 30)"
+  if [ "$row" = control ]; then
+    sk_assert_red "$POLLED|$LIVE_TEXT" 'yes|Live during the limit.' 'control: a catch-up that waits out Retry-After holds the poll and the live message'
+  else
+    assert_eq "$POLLED|$LIVE_TEXT|$(state_link "$RATE")" 'yes|Live during the limit.|ok connected' \
+      "$row: the poll after the reconnect records ok and connected within one interval, and a live message lands from its event"
+    OFFLINE_TEXT="$(landed "$RATE" "$RC_CH:$OFFLINE")"
+    assert_eq "$OFFLINE_TEXT|$(deliveries "$RATE" "$RC_CH:$OFFLINE")|$(deliveries "$RATE" "$RC_CH:$LIVE")" 'Reply while dropped.|1|1' \
+      "$row: a later poll finishes the catch-up, and each message lands once"
+    assert_eq "$(grep -Ec "^slack: delivered=ts=$LIVE id=[^ ]+ path=live\$" "$SK_TMP/relay.out")|$(grep -Ec "^slack: delivered=ts=$OFFLINE id=[^ ]+ path=catch-up\$" "$SK_TMP/relay.out")" \
+      '1|1' "$row: the live message lands from its event and the withheld reply from the catch-up"
+    WANT_LIMITED=0
+    [ "$row" = none ] || WANT_LIMITED=2
+    assert_eq "$(grep -Ec '^slack: slack-rate-limited=conversations\.(history|replies)$' "$SK_TMP/relay.err")" "$WANT_LIMITED" \
+      "$row: each rate-limited catch-up read is printed once"
+  fi
+  sk_relay_stop
+  sk_ctl /_test/faults-reset >/dev/null
+  sk_bin_reset
+done
 
 # Settled eyes failures retain a retry and print the actual Slack cause.
 for failure in no_reaction message_not_found internal_error mutant; do

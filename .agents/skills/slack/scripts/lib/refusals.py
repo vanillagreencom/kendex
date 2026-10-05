@@ -92,11 +92,11 @@ EXPLAIN = {
         " written. fix= names the remedy."
     ),
     "slack-rate-limited": (
-        "Slack answered 429 on every retry allowed. The relay makes a refused"
-        " post or read again on its next poll, and a history read it cut off"
-        " stays due until it lands; it makes a refused connect again on its"
-        " reconnect wait. A `slack post` or `slack setup` refused this way"
-        " sent nothing and must be run again."
+        "Slack answered 429 on every retry allowed; a catch-up read allows"
+        " none. The relay makes a refused post or read again on its next poll,"
+        " and a catch-up it cut off stays due until it lands; it makes a"
+        " refused connect again on its reconnect wait. A `slack post` or"
+        " `slack setup` refused this way sent nothing and must be run again."
     ),
     "slack-owner-unknown": (
         "Slack has no account under the named email address. fix= names the"

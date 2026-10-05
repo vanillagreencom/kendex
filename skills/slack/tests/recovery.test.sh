@@ -160,9 +160,11 @@ ROWS
 done
 
 # A temporary conversations.replies refusal leaves catch-up due on the same
-# RootRelay. Its other thread and outbound post still complete on the first poll.
+# RootRelay, and outbound mail still posts on the first poll. A cut read leaves
+# the other thread to that poll; a rate-limited one ends the catch-up there,
+# and the next poll reads both threads.
 for mode in normal control; do
-while read -r parent fault; do
+while read -r parent fault want; do
   ROOT="$(sk_new_root "read-$mode-$parent-$fault")"
   sk_bind "$ROOT"
   CH="$(sk_channel "$ROOT")"
@@ -180,26 +182,29 @@ while read -r parent fault; do
   sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text retry-outbound 'Read retry outbound.')" >/dev/null
   NOTE="$(jq -r 'select(.text == "Read retry outbound.") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
   case "$fault" in
-    rate) sk_ctl /_test/fault "{\"method\":\"conversations.replies\",\"ts\":\"$PARENT\",\"status\":429,\"times\":4,\"retry_after\":0}" >/dev/null ;;
+    rate) sk_ctl /_test/fault "{\"method\":\"conversations.replies\",\"ts\":\"$PARENT\",\"status\":429,\"retry_after\":0}" >/dev/null ;;
     cut) sk_ctl /_test/fault "{\"method\":\"conversations.replies\",\"ts\":\"$PARENT\",\"cut\":\"chunked\"}" >/dev/null ;;
   esac
   if [ "$mode" = control ]; then
-    sk_mutant thread-retry relay.py '        return missing' '        return True'
+    case "$fault" in
+      rate) sk_mutant rate-ends relay.py 'if err\.key in \("slack-auth-failed", "slack-rate-limited"\):' 'if err.key == "slack-auth-failed":' ;;
+      cut) sk_mutant thread-retry relay.py '        return missing' '        return True' ;;
+    esac
   fi
   sk_recovery "$ROOT" catchup-retry
-  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr --arg reply "$REPLY" --arg good "$GOOD_REPLY" --arg note "$NOTE" '[.error,.polls[0].caught_up,(.polls[0].delivered | index($good) != null),(.polls[0].carried | index($note) != null),(.polls[1].delivered | index($reply) != null),.polls[1].caught_up]')"
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr --arg reply "$REPLY" --arg good "$GOOD_REPLY" --arg note "$NOTE" '[.error,.polls[0].caught_up,(.polls[0].delivered | index($good) != null),(.polls[0].carried | index($note) != null),(.polls[1].delivered | index($reply) != null),(.polls[1].delivered | index($good) != null),.polls[1].caught_up]')"
   if [ "$mode" = normal ]; then
-    assert_eq "$GOT" '["",false,true,true,true,true]' "$parent/$fault: same-instance catch-up retries the refused read while the first poll delivers healthy replies and outbound mail"
+    assert_eq "$GOT" "$want" "$parent/$fault: same-instance catch-up retries the refused read while the first poll posts outbound mail"
     assert_eq "$(jq -s --arg d "$CH:$REPLY" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")|$(asks "$CH" 'Read retry outbound.')" '1|1' "$parent/$fault: read recovery delivers the reply and outbound notice once"
   else
-    sk_assert_red "$GOT" '["",false,true,true,true,true]' "$parent/$fault: completing refused catch-up breaks same-instance recovery"
+    sk_assert_red "$GOT" "$want" "$parent/$fault: completing a refused catch-up, or reading past a rate limit, breaks same-instance recovery"
   fi
   sk_bin_reset
 done <<'ROWS'
-known rate
-known cut
-unknown rate
-unknown cut
+known rate ["",false,false,true,true,true,true]
+known cut ["",false,true,true,true,true,true]
+unknown rate ["",false,false,true,true,true,true]
+unknown cut ["",false,true,true,true,true,true]
 ROWS
 done
 

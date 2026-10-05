@@ -67,7 +67,7 @@ A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` l
 
 | Keyed line | Meaning |
 |------------|---------|
-| `slack: thread-read-failed=ts=TS id=ID reason=KEY VALUE` | One thread read was refused. `TS` is the parent stamp; `ID` is its envelope, empty for a parent with no known envelope. `KEY VALUE` names the refusal. Catch-up continues with other threads and outbound mail; a temporary refusal keeps catch-up due next poll, for known threads and parent discovery. A token refusal still stops the relay. A deleted open ask writes `resolved` with `reason=thread_not_found`. A retained live event whose parent is deleted is dropped on poll with this line, not retried on every poll |
+| `slack: thread-read-failed=ts=TS id=ID reason=KEY VALUE` | One thread read was refused. `TS` is the parent stamp; `ID` is its envelope, empty for a parent with no known envelope. `KEY VALUE` names the refusal. Catch-up continues with other threads and outbound mail; a temporary refusal keeps catch-up due next poll, for known threads and parent discovery. A token refusal still stops the relay, and `slack-rate-limited` ends the catch-up for that poll in place of this line. A deleted open ask writes `resolved` with `reason=thread_not_found`. A retained live event whose parent is deleted is dropped on poll with this line, not retried on every poll |
 
 ## The status record
 

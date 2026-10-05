@@ -1,9 +1,10 @@
 """The Slack Web API client: one method per call, honouring 429.
 
 Every call is counted with its time so `--status` can print the calls used
-in the last minute. A 429 is honoured by `Retry-After` up to RETRIES times;
-an `ok: false` answer names Slack's error; an auth error is its own key
-because its remedy is a new token and nothing else.
+in the last minute. A 429 is honoured by `Retry-After` up to the call's
+`retries`, RETRIES by default, then refused `slack-rate-limited`; an
+`ok: false` answer names Slack's error; an auth error is its own key because
+its remedy is a new token and nothing else.
 
 A network failure is one of two keys, by where urllib raised it. urllib wraps
 every error of the request phase, the connect, the TLS handshake and the
@@ -105,13 +106,13 @@ class Slack:
         except (OSError, http.client.HTTPException) as err:
             raise Refusal("slack-response-lost", f"{label} ({err})") from err
 
-    def _request(self, req: urllib.request.Request, method: str) -> Dict:
-        for attempt in range(RETRIES + 1):
+    def _request(self, req: urllib.request.Request, method: str, retries: int) -> Dict:
+        for attempt in range(retries + 1):
             try:
                 body = self._open(req, method)
                 break
             except urllib.error.HTTPError as err:
-                if err.code == 429 and attempt < RETRIES:
+                if err.code == 429 and attempt < retries:
                     retry_after = err.headers.get("Retry-After", "1")
                     self.sleep(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 1.0)
                     continue
@@ -132,24 +133,24 @@ class Slack:
             raise Refusal("slack-api-failed", f"{method} error={error}", error=error)
         return answer
 
-    def get(self, method: str, **params: object) -> Dict:
+    def get(self, method: str, retries: int = RETRIES, **params: object) -> Dict:
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         req = urllib.request.Request(f"{self.base_url}/{method}?{query}")
         req.add_header("Authorization", f"Bearer {self.token}")
-        return self._request(req, method)
+        return self._request(req, method, retries)
 
     def post(self, method: str, **body: object) -> Dict:
         data = json.dumps({k: v for k, v in body.items() if v is not None}).encode()
         req = urllib.request.Request(f"{self.base_url}/{method}", data=data, method="POST")
         req.add_header("Authorization", f"Bearer {self.token}")
         req.add_header("Content-Type", "application/json; charset=utf-8")
-        return self._request(req, method)
+        return self._request(req, method, RETRIES)
 
-    def paged(self, method: str, key: str, **params: object):
+    def paged(self, method: str, key: str, retries: int = RETRIES, **params: object):
         """Every item of a cursor-paginated method, page after page."""
         cursor: Optional[str] = None
         while True:
-            answer = self.get(method, cursor=cursor, limit=200, **params)
+            answer = self.get(method, retries=retries, cursor=cursor, limit=200, **params)
             for item in answer.get(key, []):
                 yield item
             cursor = (answer.get("response_metadata") or {}).get("next_cursor") or None
