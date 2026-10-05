@@ -338,6 +338,8 @@ echo "=== a lane that keeps its state in its worktree recovers there ==="
 # resolve the main checkout and refuse.
 HOSTED_MAIN="$TMP_ROOT/hosted-main"
 git init -q -b main "$HOSTED_MAIN"
+git -C "$HOSTED_MAIN" config gc.auto 0
+git -C "$HOSTED_MAIN" config maintenance.auto false
 git -C "$HOSTED_MAIN" -c user.email=test@example.com -c user.name=Test -c commit.gpgsign=false \
   commit -q --allow-empty -m base
 HOSTED="$TMP_ROOT/hosted-wt"
