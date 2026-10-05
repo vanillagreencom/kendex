@@ -153,7 +153,7 @@ lane() {
     claude) ;;
     codex) printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
     # the harness under a shell: liveness is answered from the shell's children
-    fish) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '2747883\n' > "$STUB_DIR/kids-9002.txt" ;;
+    fish) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '2747883 claude\n' > "$STUB_DIR/kids-9002.txt" ;;
     # three claims, read in glob order: one from another live server, one from
     # THIS server on another pane, and the pane actually captured. Window
     # names repeat across sessions as well as across servers.

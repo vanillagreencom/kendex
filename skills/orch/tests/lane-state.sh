@@ -62,7 +62,7 @@ COMPOSER=$'\xe2\x9d\xaf\xc2\xa0'
 new_case judge
 export STUB_DIR
 export PATH="$TMP_ROOT/bin:$PATH"
-printf '4242\n' > "$STUB_DIR/kids-100.txt"   # pid 100 has a child
+printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"   # pid 100 has a child
 printf '2' > "$STUB_DIR/probe-fail-102"  # pid 102's probe cannot run
 # A harness resumed by a script the pane's shell ran: 103 keeps the script's
 # shell once the harness exits, 104 still runs the harness under it, and 105's
@@ -158,6 +158,12 @@ SHELL_WALK_MUTANT="$(mutant_scripts shell-walk lib/lane-state.sh)" || exit 1
 mutate_file "$SHELL_WALK_MUTANT/lib/lane-state.sh" 'is_bare_shell "$name" || { LANE_PROBE_RC=0; return 0; }' '{ LANE_PROBE_RC=0; return 0; }'
 shell_walk_control="$(source "$SHELL_WALK_MUTANT/lib/lane-state.sh" && lane_state row_state listed fish 103 "$(screen_for idle)" && printf '%s' "$row_state")" || exit 1
 assert_eq "$shell_walk_control" idle "control: without the walk through shells a shell over a shell reads as the lane"
+# Control: without `-l` pgrep prints no name, so every child shell reads as
+# the lane, the fish-over-fish pane this walk exists for.
+NAMES_MUTANT="$(mutant_scripts probe-names lib/lane-state.sh)" || exit 1
+mutate_file "$NAMES_MUTANT/lib/lane-state.sh" 'rows="$(pgrep -l -P "$pid" 2>/dev/null)"' 'rows="$(pgrep -P "$pid" 2>/dev/null)"'
+names_control="$(source "$NAMES_MUTANT/lib/lane-state.sh" && lane_state row_state listed fish 103 "$(screen_for idle)" && printf '%s' "$row_state")" || exit 1
+assert_eq "$names_control" idle "control: a probe printing no names reads a shell over a shell as the lane"
 
 # The provider creates the remote harness; tmux holds only its live ssh child.
 echo "=== lane-state § remote harness: one provider read, no ssh-child verdict ==="
@@ -666,7 +672,7 @@ while IFS='|' read -r screen pid cmd want event; do
   [[ -n "$screen" ]] || continue
   new_case "agree-$screen"
   export STUB_DIR
-  printf '4242\n' > "$STUB_DIR/kids-100.txt"
+  printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
   # The wake's own word, where it can differ from the watch's. Where
   # proc_table_readable says the producer can read no process at all — every
   # macOS runner, and this suite runs on one — it refuses the whole lane the
@@ -694,7 +700,7 @@ while IFS='|' read -r screen event; do
   [[ -n "$screen" ]] || continue
   new_case "agree-$screen"
   export STUB_DIR
-  printf '4242\n' > "$STUB_DIR/kids-100.txt"
+  printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
   assert_eq "$(watch_event "$screen" 100 node)" "$event" \
     "the watch reads the $screen screen as $event"
 done <<'ROWS'
@@ -712,7 +718,7 @@ ROWS
 # walking past it.
 new_case agree-unreadable-cwd
 export STUB_DIR
-printf '4242\n' > "$STUB_DIR/kids-100.txt"
+printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
 proc_table_write "$PROC_TABLE" "$$ 1 claude"
 PROC_HIDDEN_PIDS="$$"
 assert_eq "$(wake_state idle 100 claude)" "unjudged" \
@@ -761,7 +767,7 @@ chmod +x "$VERB_REPO/scripts/lane-host"
 
 new_case verb
 export STUB_DIR
-printf '4242\n' > "$STUB_DIR/kids-100.txt"
+printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
 
 VERB_ERR="$TMP_ROOT/verb.err"
 VERB_TOUCH_LOG="$TMP_ROOT/verb.touch"

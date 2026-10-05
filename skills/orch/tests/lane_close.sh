@@ -1410,6 +1410,23 @@ if proc_table_readable; then
   assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") wait=$(exit_wait_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=0 lane=gone wait=0 status=done' 'a local record with no pane stops the harness its launch identity names'
   kill -KILL "$LANE_PID" 2>/dev/null || true
+  # A reboot leaves the record naming a pid and start that no longer run: with
+  # no pane left, that stale identity is no harness to stop either.
+  stale_windowless() { # SCRIPT
+    MAIL_ROOT="$LANE_ROOT" write_state running claude ''; : >"$ROWS"; printf '\n' >"$SCREEN"
+    start_local_harness claude
+    kill -KILL "$LANE_PID"
+    while [[ "$(proc_state_after "$LANE_PID")" != gone ]]; do sleep 0.05; done
+    proc_table_write "$PROC_TABLE"
+    PATH="$LOCAL_PATH" run_close "$1"
+    STALE_WINDOWLESS_GOT="rc=$RC stale=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=identity-stale\$" <<<"$ERR" || true) unread=$(grep -c 'cause=identity-unread' <<<"$ERR" || true) wait=$(exit_wait_count) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+  }
+  stale_windowless "$SCRIPT"
+  assert_eq "$STALE_WINDOWLESS_GOT" 'rc=0 stale=0 unread=0 wait=0 removed=1 status=done' \
+    'a local record with no pane and a stale launch identity on a terminal item closes with no exit wait'
+  stale_windowless "$(lib_mutant no-pane-stale '  if [[ -z "$1" ]]; then' '  if [[ -z "$1" && -z "$2$3" ]]; then')"
+  assert_eq "$STALE_WINDOWLESS_GOT" 'rc=1 stale=1 unread=0 wait=0 removed=0 status=running' \
+    'control: a windowless stop kept to records naming no identity refuses a stale one'
 fi
 for args in '--park --pr 7' --keep-sandbox; do
   write_state running claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"

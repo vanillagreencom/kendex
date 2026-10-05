@@ -3163,11 +3163,11 @@ check_lanes() {
   # a shell, so a session that hit its limit, crashed, or quit leaves the
   # shell in the foreground — a window that exists, a pane that matches no
   # question prompt, and a slot held until someone looks. A bare shell with
-  # nothing but shells running under it IS that lane, finished; its closing lines carry
-  # why. A provider-confirmed exit is news in this pass. A local shell takes
-  # two consecutive passes: a live harness can hold a shell with no harness under it in
-  # the foreground for one poll, and relaunching a working lane costs more
-  # than one interval. The first pass is a `lane-exited` row keyed by the
+  # nothing but shells under it IS that lane, finished; its closing lines
+  # carry why. A provider-confirmed exit is news in this pass. A local shell
+  # takes two consecutive passes: a live harness can hold such a shell in the
+  # foreground for one poll, and relaunching a working lane costs more than
+  # one interval. The first pass is a `lane-exited` row keyed by the
   # pane, so the second can be the next run's first; that second pass marks
   # the row reported, so a later run over the same pane stays silent, and a
   # replacement pane starts over and is news again.

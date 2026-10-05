@@ -136,7 +136,7 @@ lane() {
     bash_once) printf 'bash\n' > "$STUB_DIR/cmd-gh-2.1.txt" ;;
     # the harness resumed from an interactive prompt: the shell stays the
     # pane process with the harness as its child
-    fish_child) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '2747883\n' > "$STUB_DIR/kids-9002.txt" ;;
+    fish_child) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '2747883 claude\n' > "$STUB_DIR/kids-9002.txt" ;;
     fish) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
     # a child probe that cannot run: pgrep's syntax-error status, or its fatal one
     fish_probe2) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; : > "$STUB_DIR/probe-fail-9002" ;;

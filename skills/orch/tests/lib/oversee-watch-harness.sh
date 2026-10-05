@@ -444,19 +444,20 @@ EOF
 
 # pgrep stub, modelling the probe the watch actually runs: `pgrep -l -P <pid>`
 # prints kids-<pid>.txt and exits 0 when that file exists — the children of a
-# pane process, one `PID NAME` line each, a line with no name a process that is
-# no shell — and exits 1 with nothing when it does not, the way procps and
-# BSD pgrep both report no match. probe-fail-<pid> holds the status to exit
-# with instead, empty meaning 2 — the statuses that are not an answer, since
-# pgrep documents 2 for a syntax error and 3 for a fatal one, and a pgrep
-# missing from PATH leaves 127. Every call is logged to pgrep.calls, so a case
-# can hold the watch to one probe per shell it walks per pass.
+# pane process, one `PID NAME` line each, the NAME column printed only under
+# `-l` as real pgrep prints it — and exits 1 with nothing when it does not, the
+# way procps and BSD pgrep both report no match. probe-fail-<pid> holds the
+# status to exit with instead, empty meaning 2 — the statuses that are not an
+# answer, since pgrep documents 2 for a syntax error and 3 for a fatal one,
+# and a pgrep missing from PATH leaves 127. Every call is logged to
+# pgrep.calls, so a case can hold the watch to one probe per shell it walks
+# per pass.
 cat > "$TMP_ROOT/bin/pgrep" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-ppid=""
+ppid="" names=false
 while [[ $# -gt 0 ]]; do
-  case "$1" in -P) ppid="$2"; shift ;; esac
+  case "$1" in -P) ppid="$2"; shift ;; -l) names=true ;; esac
   shift
 done
 [[ -n "$ppid" ]] || exit 2
@@ -466,7 +467,7 @@ if [[ -f "$STUB_DIR/probe-fail-$ppid" ]]; then
   exit "${rc:-2}"
 fi
 [[ -f "$STUB_DIR/kids-$ppid.txt" ]] || exit 1
-cat "$STUB_DIR/kids-$ppid.txt"
+if [[ "$names" == true ]]; then cat "$STUB_DIR/kids-$ppid.txt"; else cut -d' ' -f1 "$STUB_DIR/kids-$ppid.txt"; fi
 EOF
 
 # Fake pr-watch: records GH_REPO in prwatch.repo (the latest call) and appends
