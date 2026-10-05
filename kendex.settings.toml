@@ -123,7 +123,9 @@ ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:hig
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
-# fleet launch past it.
+# fleet launch past it. A kendex lane is a 4 vCPU / 8 GiB Daytona sandbox, so 20
+# take 80 vCPU / 160 GiB of the shared 500 vCPU / 1000 GiB pool; a launch
+# Daytona refuses waits for a lane to close or park (fleet D070).
 ORCH_OVERSEER_LANES = "20"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
