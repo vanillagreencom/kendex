@@ -94,8 +94,9 @@ printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
 cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
 cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
-# The command-safety policy lane reads the repository's own two policy
-# sources; the world carries the real ones so every guard run has them.
+# The command-safety policy lane reads the Quickshell example in the
+# repository's own doc; the world carries the real one so every guard run has
+# it, and the real settings file the other lanes read.
 mkdir -p "$R/docs/authoring"
 cp "$REPO/kendex.settings.toml" "$R/kendex.settings.toml"
 cp "$REPO/docs/authoring/command-safety.md" "$R/docs/authoring/command-safety.md"

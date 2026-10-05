@@ -298,27 +298,8 @@ fi
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
 
-echo "=== the shipped command-safety policies keep refusing what they document ==="
+echo "=== the shipped command-safety policy keeps refusing what it documents ==="
 policy_line='COMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"'
-cp "$R/kendex.settings.toml" "$TMP/settings.orig"
-awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
-  "$TMP/settings.orig" >"$R/kendex.settings.toml"
-git -C "$R" add kendex.settings.toml
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=kendex.settings.toml"* ]] \
-  && [[ "$OUT" == *"  systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core"* ]] \
-  && ok "a settings policy that stopped refusing a capped scope reds, naming the command" \
-  || bad "a settings policy that stopped refusing a capped scope reds, naming the command" "rc=$RC out=$OUT"
-if mutant_guard '/^command_safety_policy kendex.settings.toml/,+6d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the settings policy rows deleted the weakened pattern passes" \
-    || bad "control: with the settings policy rows deleted the weakened pattern passes" "rc=$RC out=$OUT"
-else
-  bad "control: the settings policy rows could not be deleted from a guard copy"
-fi
-cp "$TMP/settings.orig" "$R/kendex.settings.toml"
-
 cp "$R/docs/authoring/command-safety.md" "$TMP/doc.orig"
 awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
   "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
@@ -328,68 +309,62 @@ run_guard
   && [[ "$OUT" == *"  qs -c vshell"* ]] \
   && ok "a doc example that stopped refusing its own call reds, naming the command" \
   || bad "a doc example that stopped refusing its own call reds, naming the command" "rc=$RC out=$OUT"
+if mutant_guard '/^command_safety_policy docs\/authoring\/command-safety.md/,+9d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the doc policy rows deleted the weakened pattern passes" \
+    || bad "control: with the doc policy rows deleted the weakened pattern passes" "rc=$RC out=$OUT"
+else
+  bad "control: the doc policy rows could not be deleted from a guard copy"
+fi
 cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
 awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"[\"" ; next } { print }' \
-  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
 run_guard
 # The lane's own tools speak here: grep refuses the pattern. Guard forwards
 # the streams of everything it runs, so the claim is not that the keyed line
 # is line 1 of the run — it is that the keyed line comes before the
 # diagnostic that explains it, rather than after it.
-keyed_at="$(awk '/guard: command-safety-not-an-ere=kendex.settings.toml/ { print NR; exit }' <<<"$OUT")"
+keyed_at="$(awk '/guard: command-safety-not-an-ere=docs\/authoring\/command-safety.md/ { print NR; exit }' <<<"$OUT")"
 grep_at="$(awk '/^grep: / { print NR; exit }' <<<"$OUT")"
 [ "$RC" -ne 0 ] && [ -n "$keyed_at" ] && [ -n "$grep_at" ] && [ "$keyed_at" -lt "$grep_at" ] \
   && ok "a policy that is not a valid ERE reds with its own clause, above what grep said" \
   || bad "a policy that is not a valid ERE reds with its own clause, above what grep said" \
     "rc=$RC keyed=${keyed_at:--} grep=${grep_at:--} out=$OUT"
-cp "$TMP/settings.orig" "$R/kendex.settings.toml"
-
-# The assignment moved out of [env] with its text intact: the settings loader
-# follows table headers, so this is no longer a policy the hook would apply
-# and the lane must not read the line as one. A line-matching reader would
-# find the same text and pass.
-awk '/^COMMAND_SAFETY_DENY_PATTERN = / { held = $0; next } { print }
-  END { print "[other]"; print held }' \
-  "$TMP/settings.orig" >"$R/kendex.settings.toml"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-empty=kendex.settings.toml"* ]] \
-  && ok "an assignment outside [env] is not read as a policy" \
-  || bad "an assignment outside [env] is not read as a policy" "rc=$RC out=$OUT"
-cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
 # A pattern broad enough to catch what the source documents as allowed is the
-# other direction of the same rule, and the only one no row drove: `cargo
-# test` under an uncapped scope is a command the settings comment names as
-# left alone.
-awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"systemd-run\""; next } { print }' \
-  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+# other direction of the same rule, and the only one no row drove: a qs call
+# on a test fixture is a command the doc names as left alone.
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"qs\""; next } { print }' \
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-over=kendex.settings.toml"* ]] \
-  && [[ "$OUT" == *"  systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-over=docs/authoring/command-safety.md"* ]] \
+  && [[ "$OUT" == *"  qs -c test-fixture"* ]] \
   && ok "a policy broadened over a documented-allowed command reds, naming the command" \
   || bad "a policy broadened over a documented-allowed command reds, naming the command" "rc=$RC out=$OUT"
-cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
 # The loader answers from the process environment before the file it is given.
 # The source is weakened and the environment carries the real policy: reading
 # the environment would report a policy the file does not carry, which is the
 # fail-open this lane exists to refuse.
 awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
-  "$TMP/settings.orig" >"$R/kendex.settings.toml"
-real_policy="$(sed -n 's/^COMMAND_SAFETY_DENY_PATTERN = "\(.*\)"$/\1/p' "$TMP/settings.orig")"
-[ -n "$real_policy" ] || bad "precondition: the settings policy could not be read for the override row"
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
+real_policy="$(sed -n 's/^COMMAND_SAFETY_DENY_PATTERN = "\(.*\)"$/\1/p' "$TMP/doc.orig")"
+[ -n "$real_policy" ] || bad "precondition: the doc policy could not be read for the override row"
 run_guard COMMAND_SAFETY_DENY_PATTERN="$real_policy"
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=kendex.settings.toml"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=docs/authoring/command-safety.md"* ]] \
   && ok "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" \
   || bad "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" "rc=$RC out=$OUT"
-cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
-git -C "$R" add kendex.settings.toml docs/authoring/command-safety.md
+git -C "$R" add docs/authoring/command-safety.md
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "the shipped policies pass the lane unchanged" \
-  || bad "the shipped policies pass the lane unchanged" "rc=$RC out=$OUT"
+  && ok "the shipped policy passes the lane unchanged" \
+  || bad "the shipped policy passes the lane unchanged" "rc=$RC out=$OUT"
 
 echo "=== commit compile scheduling follows product changes ==="
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"

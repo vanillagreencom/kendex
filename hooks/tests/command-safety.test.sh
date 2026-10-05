@@ -95,10 +95,10 @@ assert_first() { # WANT LABEL
     failed=$((failed + 1))
   fi
 }
-# This repository's own policies, kendex.settings.toml's value and the
-# Quickshell example in docs/authoring/command-safety.md, are its content
-# rather than this hook's behaviour; a tools/guard lane owns them, with its
-# control in tools/tests/guard.test.sh. What stays here is the hook's own
+# This repository's own policy, the Quickshell example in
+# docs/authoring/command-safety.md, is its content rather than this hook's
+# behaviour; a tools/guard lane owns it, with its control in
+# tools/tests/guard.test.sh. What stays here is the hook's own
 # default_pattern, and that a project pattern replaces it: a project pattern
 # refuses, and a command outside it does not.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"\n' \
@@ -340,14 +340,16 @@ mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 2 'scripts/validate qml' 'missing settings support refuses'
 
 # Each control plants one defect in a copy and reruns these assertions; a
-# defect's rows are adjacent, and each names a row that copy must turn red
-# with that row's own exit pair. The exact failure proves the planted rule,
-# not a bad policy or loader, made the row red. The default_pattern defects
-# edit one rule of the shipped default: no default at all, no quoted value,
-# and a unit widened to gigabytes.
+# defect's rows are adjacent, and each names the line that copy must print,
+# from FAIL through the got and expected values of its own instrument, so an
+# exit row, a first-line row and the copy check are read alike. The exact
+# failure proves the planted rule, not a bad policy or loader, made the row
+# red. The default_pattern defects edit one rule of the shipped default: no
+# default at all, no quoted value, and a unit widened to gigabytes; the
+# default-key defect sends the default's refusal out under the project key.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   planted=
-  while IFS='|' read -r defect got want label; do
+  while IFS='|' read -r defect want; do
     if [ "$defect" != "$planted" ]; then
       planted="$defect"
       mutant="$scratch/$defect.sh"
@@ -367,6 +369,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         }
         defect == "no-quote" && /^default_pattern=/ { swap("[[:punct:]]?", "") }
         defect == "unit-g" && /^default_pattern=/ { swap("[KkMm]", "[KkMmGg]") }
+        defect == "default-key" { swap("refuse refused default-policy", "refuse refused policy") }
         { print }
         END { if (changed != 1) exit 1 }
       ' "$hook_source" >"$mutant" || exit 1
@@ -378,25 +381,28 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       env -i HOME="$HOME" PATH="$PATH" HOOK_UNDER_TEST="$mutant" \
         bash "${BASH_SOURCE[0]}" >"$scratch/$defect.log" 2>&1 || control_status=$?
     fi
-    if [ "$control_status" -eq 1 ] &&
-      grep -Fq -- "FAIL $label: exit $got, expected $want:" "$scratch/$defect.log"; then
-      printf 'PASS control %s turns %s red\n' "$defect" "$label"
+    if [ "$control_status" -eq 1 ] && awk -v want="$want" '
+      index($0, want) == 1 { found = 1 }
+      END { exit !found }' "$scratch/$defect.log"; then
+      printf 'PASS control %s prints %s\n' "$defect" "$want"
       passed=$((passed + 1))
     else
-      printf 'FAIL control %s: exit %s; missing failure for %s\n' "$defect" "$control_status" "$label"
+      printf 'FAIL control %s: exit %s; missing line %s\n' "$defect" "$control_status" "$want"
       cat "$scratch/$defect.log"
       failed=$((failed + 1))
     fi
   done <<'CONTROLS'
-no-join|0|2|continued-line MemoryMax
-no-join|0|2|continued-line MemoryHigh
-no-raw|0|2|raw quoted continuation
-no-default|0|2|empty-env: the default refuses a bare MemoryMax
-no-default|0|2|no-file: the default refuses a bare MemoryMax
-no-quote|0|2|empty-env: the default refuses a quoted MemoryMax
-no-quote|0|2|no-file: the default refuses a quoted MemoryMax
-unit-g|2|0|empty-env: the default passes a gigabyte cap
-unit-g|2|0|no-file: the default passes a gigabyte cap
+no-join|FAIL continued-line MemoryMax: exit 0, expected 2:
+no-join|FAIL continued-line MemoryHigh: exit 0, expected 2:
+no-raw|FAIL raw quoted continuation: exit 0, expected 2:
+no-default|FAIL empty-env: the default refuses a bare MemoryMax: exit 0, expected 2:
+no-default|FAIL no-file: the default refuses a bare MemoryMax: exit 0, expected 2:
+no-quote|FAIL empty-env: the default refuses a quoted MemoryMax: exit 0, expected 2:
+no-quote|FAIL no-file: the default refuses a quoted MemoryMax: exit 0, expected 2:
+no-quote|FAIL the example and the doc carry the hook default: hook [
+unit-g|FAIL empty-env: the default passes a gigabyte cap: exit 2, expected 0:
+unit-g|FAIL no-file: the default passes a gigabyte cap: exit 2, expected 0:
+default-key|FAIL empty-env: a bare MemoryMax names the default policy: first line command-safety: refused=policy, expected command-safety: refused=default-policy
 CONTROLS
 fi
 printf '%s passed, %s failed\n' "$passed" "$failed"

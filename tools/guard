@@ -500,13 +500,14 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
   show "$hits" | head -5
 }
 
-# This repository's two command-safety policies must stay working EREs that
-# refuse what their own source says they refuse: kendex.settings.toml's own
-# value and the Quickshell example in docs/authoring/command-safety.md, which
-# a project copies. The hook's shipped default is its own suite's,
-# hooks/tests/command-safety.test.sh; the hook cannot judge these two, so the
-# check belongs here. The pattern is read back through the commit-guards
-# settings loader the hook itself uses; this lane adds no second parser.
+# This repository's command-safety policy must stay a working ERE that refuses
+# what its own source says it refuses: the Quickshell example in
+# docs/authoring/command-safety.md, which a project copies. The hook's shipped
+# default is its own suite's, hooks/tests/command-safety.test.sh, which also
+# holds this repository's copies of it equal; the hook cannot judge this
+# example, so the check belongs here. The pattern is read back through the
+# commit-guards settings loader the hook itself uses; this lane adds no second
+# parser.
 command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
   local source="$1" rows
   rows=$(cat)
@@ -531,27 +532,14 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
     source "$guards/lib/common.sh"
     source "$guards/lib/settings.sh"
     gg_tmpdir
-    # A settings file is handed to the loader whole. gg_env_table is the
-    # stateful reader the hook itself goes through: it follows table headers,
-    # so an assignment outside [env] or one sitting inside a multiline string
-    # is not a policy, and it refuses a key assigned twice. Extracting a line
-    # first would put a second, weaker parser in front of that judge, and a
-    # deleted assignment with a lookalike line elsewhere in the file would
-    # read as a policy that is still there.
-    #
     # The Markdown example carries its assignment inside prose, so there is no
     # settings file to hand over and the line is extracted into one. That
-    # extraction is the whole of what this branch claims: exactly one line in
+    # extraction is the whole of what this step claims: exactly one line in
     # the document spells the assignment.
-    case "$source" in
-      (*.toml) probe="$PWD/$source" ;;
-      (*)
-        line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
-          END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
-        probe="$GG_TMP/kendex.settings.toml"
-        { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
-        ;;
-    esac
+    line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
+      END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
+    probe="$GG_TMP/kendex.settings.toml"
+    { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
     # The loader answers from the process environment first, then .env.local,
     # and only then the file it was given, so either of those could answer for
     # a policy the source does not carry: a weakened source would pass this
@@ -593,7 +581,7 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
     [ -n "$verdict" ] || continue
     said=1
     case "$verdict" in
-      one-line) say command-safety-lines "$source" ;; # the document branch only
+      one-line) say command-safety-lines "$source" ;;
       unreadable) say command-safety-unreadable "$source" ;;
       empty) say command-safety-empty "$source" ;;
       not-an-ere) say command-safety-not-an-ere "$source" ;;
@@ -612,16 +600,8 @@ command_safety_cause() { # FILE — what the lane's own tools said, replayed
   rm -f -- "$1"
 }
 
-# The rows are what each source states about itself: the settings comment names
-# the capped scopes it refuses and the uncapped ones it leaves alone, and the
-# doc names the calls its example blocks and the validation it allows.
-command_safety_policy kendex.settings.toml <<'ROWS'
-refuse|systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core
-refuse|systemd-run --user --scope --property=MemoryHigh=512K ./target/debug/review_fixes
-refuse|systemd-run --user --scope -p MemoryMax="64M" cargo test -p kendex-core
-allow|systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core
-allow|systemd-run --user --scope -p MemoryMax=2G cargo test -p kendex-core
-ROWS
+# The rows are what the source states about itself: the doc names the calls
+# its example blocks and the validation it allows.
 command_safety_policy docs/authoring/command-safety.md <<'ROWS'
 refuse|qs -c vshell
 refuse|qs -p quickshell/vshell
