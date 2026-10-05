@@ -355,10 +355,10 @@ Then decide the QA routing. The inputs, in precedence order:
 2. **Diff scan** — deterministic checks on the round's full diff:
 
 ```bash
-git -C [WORKTREE_PATH] diff --quiet -G'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)' "origin/[BASE_BRANCH]"...HEAD
+git -C [WORKTREE_PATH] diff --exit-code -G'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)' "origin/[BASE_BRANCH]"...HEAD >/dev/null
 ```
 
-   `[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. Exit **1** means a matching change exists and adds `needs-safety-audit`; **0** means no signal; any other exit is an error. When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
+   `[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. Exit **1** means a matching change exists and adds `needs-safety-audit`; **0** means no signal; any other exit is a failed scan, which never reads as no signal: it adds `needs-safety-audit`, and the `qa_decision` rationale names the exit. Never use `--quiet` here: with `-G` it can exit 0 on a range holding a matching change. When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
 
 ```bash
 .agents/skills/orch/scripts/orch-env QA_PERF_PATHS ""
