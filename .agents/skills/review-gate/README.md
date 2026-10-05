@@ -12,7 +12,9 @@ This package watches GitHub pull requests and reports their review state. It als
 
 ## Install
 
-
+```bash
+kendex add vanillagreencom/kendex --skill review-gate
+```
 
 ## How it works
 
@@ -20,7 +22,7 @@ The pull-request watcher reads GitHub's review state. It reports open threads, o
 
 ## Setup
 
-Install with `kendex add review-gate`, then run `kendex refresh` and commit the installed files.
+After installing, run `kendex refresh` and commit the installed files.
 
 Declare organization-standard values in `kendex.settings.toml` under `[env]`. Set `PR_REVIEW_WAIT_SECS` to change the watcher's quiet period. Existing consumers first take the [trusted removal PR](references/adoption.md#trusted-removal-for-an-existing-consumer). [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
 
