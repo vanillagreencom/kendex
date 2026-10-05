@@ -62,13 +62,20 @@ parse_claude_usage() {
 		    limit_dollars: ((.limit_dollars | numbers) // null), used_dollars: ((.used_dollars | numbers) // null),
 		    remaining_dollars: ((.remaining_dollars | numbers) // null), resets_at: ((.resets_at | strings) // null),
 		    locked_reason: .locked_reason} else null end) as $credit
-		| {
-		    session_5h_pct:  (if $s then pct($s.utilization) else null end),
-		    weekly_pct:      (if $w then pct($w.utilization) else null end),
-		    model_pct:       (if $m then pct($m.percent) else null end),
+		# One window present with a percentage that does not read makes the
+		# whole reading unmeasured: the windows beside it would otherwise bind
+		# the lane and hide a window that may be exhausted. A window the body
+		# omits is no reading at all and leaves the others measured.
+		| ([(if $s then $s.utilization else empty end), (if $w then $w.utilization else empty end),
+		    $scoped[].percent] | any(pct(.) == null)) as $unread
+		| def read($p): if $unread then null else pct($p) end;
+		{
+		    session_5h_pct:  (if $s then read($s.utilization) else null end),
+		    weekly_pct:      (if $w then read($w.utilization) else null end),
+		    model_pct:       (if $m then read($m.percent) else null end),
 		    model_label:     (if $m then ($m.scope.model.display_name // "weekly (model)") else null end),
 		    model_buckets:   [$scoped[] | {label: .scope.model.display_name,
-		                                   pct: pct(.percent),
+		                                   pct: read(.percent),
 		                                   resets_at: (.resets_at // null)}],
 		    credits:         $credit,
 		    resets: {
@@ -125,6 +132,9 @@ parse_codex_usage() {
 		| [ (.rate_limit.primary_window   // null),
 		    (.rate_limit.secondary_window // null) ]
 		| map(select(. != null) | win(.))
+		# A present window whose percentage does not read unmeasures every
+		# window, as in parse_claude_usage; an absent one leaves the rest.
+		| (if any(.[]; .pct == null) then map(.pct = null) else . end)
 		# Within 50% of the 5h window counts as the session bucket; anything
 		# materially longer (daily, weekly, monthly) is the long window.
 		| ((map(select(.window_s > 0 and .window_s <= ($sw * 3 / 2))) | first) // null) as $s

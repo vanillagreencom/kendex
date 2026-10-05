@@ -934,34 +934,63 @@ table \
 
 echo "=== a percentage that does not read is unmeasured, never an empty window ==="
 # Read as 0, an unreadable window would leave the account measured with full
-# headroom, and pick would launch onto it.
+# headroom, and pick would launch onto it. Each lane carries one unreadable
+# window beside readable ones: the readable ones must not bind the lane while
+# the unreadable one may be exhausted. A window the body omits is no reading,
+# and the windows beside it stay measured.
 new_home invalid-pct
-make_lane "$H" claude 3600
-make_codex_lane "$H/.codex"
-jq -n '{five_hour: {utilization: "12", resets_at: "2026-07-27T06:00:00Z"},
-        seven_day: {resets_at: "2026-08-01T06:00:00Z"},
-        limits: [{kind: "weekly_scoped", percent: -5, scope: {model: {display_name: "Opus"}}},
-                 {kind: "weekly_scoped", percent: 1e13, scope: {model: {display_name: "Fable"}}}]}' \
-  > "$FIXTURE_DIR/.claude.json"
-jq -n '{rate_limit: {primary_window: {used_percent: "30", limit_window_seconds: 18000},
-                     secondary_window: {used_percent: -1, limit_window_seconds: 604800}}}' \
-  > "$FIXTURE_DIR/.codex.json"
-INVALID_CLAUDE="a string, missing, negative or oversized Claude percentage is null and the lane unmeasured||$LIST|first.session_5h_pct=null first.weekly_pct=null first.model_pct=null first.buckets=Opus:null,Fable:null first.status=no_usage_data"
-INVALID_CODEX="a string or negative Codex percentage is null and the lane unmeasured||list --harness codex --json|first.session_5h_pct=null first.weekly_pct=null first.status=no_usage_data"
-table "$INVALID_CLAUDE" "$INVALID_CODEX"
-# One control per rule and harness: the type test and the range test.
+for lane in sclaude mclaude nclaude oclaude lclaude aclaude; do make_lane "$H" "$lane" 3600; done
+for lane in scodex mcodex ncodex ocodex; do make_codex_lane "$H/.$lane"; done
+claude_body() { # LANE FILTER
+  jq -n '{five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+          seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+          limits: [{kind: "weekly_scoped", percent: 30, scope: {model: {display_name: "Opus"}}},
+                   {kind: "weekly_scoped", percent: 40, scope: {model: {display_name: "Fable"}}}]} | '"$2" \
+    > "$FIXTURE_DIR/.$1.json" || exit 1
+}
+claude_body sclaude '.five_hour.utilization = "12"'
+claude_body mclaude 'del(.seven_day.utilization)'
+claude_body nclaude '.limits[0].percent = -5'
+claude_body oclaude '.limits[1].percent = 1e13'
+claude_body lclaude 'del(.limits) | .seven_day_sonnet = {utilization: 5} | .seven_day_opus = {utilization: "7"}'
+claude_body aclaude '.five_hour = null | del(.limits)'
+codex_body() { # LANE FILTER
+  jq -n '{rate_limit: {primary_window: {used_percent: 30, limit_window_seconds: 18000},
+                       secondary_window: {used_percent: 20, limit_window_seconds: 604800}}} | '"$2" \
+    > "$FIXTURE_DIR/.$1.json" || exit 1
+}
+codex_body scodex '.rate_limit.primary_window.used_percent = "30"'
+codex_body mcodex 'del(.rate_limit.secondary_window.used_percent)'
+codex_body ncodex '.rate_limit.secondary_window.used_percent = -1'
+codex_body ocodex '.rate_limit.primary_window.used_percent = 1e13'
+unmeasured() { printf '%s.status=no_usage_data %s.verdict=unmeasured %s.session_5h_pct=null %s.weekly_pct=null' "$1" "$1" "$1" "$1"; }
+table \
+  "a string Claude session beside a readable weekly leaves the lane unmeasured||$LIST|$(unmeasured sclaude) sclaude.model_pct=null" \
+  "a missing Claude weekly percentage leaves the lane unmeasured||$LIST|$(unmeasured mclaude) mclaude.model_pct=null" \
+  "a negative scoped Claude window leaves the lane unmeasured||$LIST|$(unmeasured nclaude) nclaude.model_pct=null" \
+  "an oversized scoped Claude window leaves the lane unmeasured||$LIST|$(unmeasured oclaude) oclaude.model_pct=null" \
+  "an unreadable legacy Claude model window leaves the lane unmeasured||$LIST|$(unmeasured lclaude) lclaude.model_pct=null" \
+  "an absent Claude session window leaves the weekly measured||$LIST|aclaude.status=ok aclaude.session_5h_pct=null aclaude.weekly_pct=20 aclaude.headroom_pct=80" \
+  "a string Codex primary beside a readable secondary leaves the lane unmeasured||list --harness codex --json|$(unmeasured scodex)" \
+  "a missing Codex secondary percentage leaves the lane unmeasured||list --harness codex --json|$(unmeasured mcodex)" \
+  "a negative Codex secondary leaves the lane unmeasured||list --harness codex --json|$(unmeasured ncodex)" \
+  "an oversized Codex primary leaves the lane unmeasured||list --harness codex --json|$(unmeasured ocodex)"
+# One control per rule and harness: the type test, the range test, and the
+# rule that one unreadable window unmeasures the rest.
 range='(if (. > 1e12 or . < 0) then'
-for spec in claude:round:type claude:round:range codex:floor:type codex:floor:range; do
-  IFS=':' read -r harness op rule <<<"$spec"
+for spec in claude:sclaude:type:round claude:nclaude:range:round codex:scodex:type:floor codex:ncodex:range:floor \
+  claude:sclaude:whole: codex:scodex:whole:; do
+  IFS=':' read -r harness lane rule op <<<"$spec"
   dir="$(mutant_scripts "mutant-pct-$harness-$rule" lib/lane-usage.sh)" || exit 1
-  if [[ $rule == type ]]; then
-    mutate_file "$dir/lib/lane-usage.sh" "$op | $range null else . end) else null end;" "$op | $range null else . end) else 0 end;"
-  else
-    mutate_file "$dir/lib/lane-usage.sh" "$op | $range null" "$op | $range 0"
-  fi
+  case "$harness:$rule" in
+    *:type) mutate_file "$dir/lib/lane-usage.sh" "$op | $range null else . end) else null end;" "$op | $range null else . end) else 0 end;" ;;
+    *:range) mutate_file "$dir/lib/lane-usage.sh" "$op | $range null" "$op | $range 0" ;;
+    claude:whole) mutate_file "$dir/lib/lane-usage.sh" 'if $unread then null' 'if false then null' ;;
+    codex:whole) mutate_file "$dir/lib/lane-usage.sh" '(if any(.[]; .pct == null) then' '(if false then' ;;
+  esac
   LANES="$dir/lanes"
   run_lanes "" list --harness "$harness" --json
-  assert_eq "$(observe first.status)" "first.status=ok" "control $harness $rule: an invalid percentage read as 0 measures the lane"
+  assert_eq "$(observe "$lane.status")" "$lane.status=ok" "control $harness $rule: an unreadable percentage leaves the lane measured"
 done
 LANES="$SCRIPTS_DIR/lanes"
 
