@@ -152,7 +152,8 @@
 #            variable names through lib/lane-context.sh, the harness the
 #            pane's foreground process names, or copilot where the pane reads
 #            node or copilot and a Copilot process runs at most two levels
-#            under it (its account --account's alone), and the pane's
+#            under it (its account --account's, else the COPILOT_HOME or
+#            HOME/.copilot that process was started with), and the pane's
 #            directory, the model unknown. The home is a private CODEX_HOME
 #            where the session carries one, the account otherwise; no effort
 #            is read. Where ol_names proves the same server, server start and
@@ -400,35 +401,19 @@ if [[ "$COMMAND" == register ]]; then
       || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_path
     cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
       || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_command
-    shape="$(lane_context_shape "${cmd#-}")"
-    # The account --account named, kept apart from the one derived below,
-    # which reads the Claude and Codex variables and so answers for no
-    # Copilot pane.
-    given_account="$ACCOUNT"
-    [[ -n "$ACCOUNT" ]] || ACCOUNT="$(lane_context_caller_cfg "$shape")"
-    # A Copilot pane reads `node`, its npm loader, or `copilot`, the binary
-    # started directly, and neither names a shape, so its harness is the
-    # process carrying one of Copilot's own names (lib/lane-state.sh §
-    # lane_harness_process_re) at most two levels under the pane: its shell,
-    # the loader, the binary. A Codex pane also reads `node`, and a Copilot
-    # run it starts sits deeper, under its own tool shell, so it is not this
-    # pane's harness. Its account is --account's alone: with no SessionStart
-    # row, nothing here reads the COPILOT_HOME a session runs under.
-    if [[ "$shape" == both ]]; then
-      case "${cmd#-}" in
-        node | copilot)
-          pane_pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>"$DEP_ERR")" \
-            || die pane-unreadable "pane=$TMUX_PANE" field=pane_pid
-          table="$(lane_process_table)" || die pane-unreadable "pane=$TMUX_PANE" field=process-table
-          name_re="$(lane_harness_process_re copilot)" || die pane-unreadable "pane=$TMUX_PANE" field=process-table
-          if ! below="$(lane_process_below "$table" "$pane_pid" "$name_re" 1 2)"; then
-            die pane-unreadable "pane=$TMUX_PANE" field=process-table
-          fi
-          if [[ "$below" == found ]]; then
-            shape=copilot ACCOUNT="$given_account"
-          fi
-          ;;
-      esac
+    pane_pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>"$DEP_ERR")" \
+      || die pane-unreadable "pane=$TMUX_PANE" field=pane_pid
+    # A Copilot pane is named, and its account read off its own Copilot
+    # process, by lib/lane-context.sh § lane_context_pane_shape. --account
+    # outranks that account; the one lane_context_caller_cfg derives reads the
+    # Claude and Codex variables and so answers for no Copilot pane.
+    lane_context_pane_shape "${cmd#-}" "$pane_pid" \
+      || die pane-unreadable "pane=$TMUX_PANE" field=process-table
+    shape="$LANE_PANE_SHAPE"
+    if [[ "$shape" == copilot ]]; then
+      ACCOUNT="${ACCOUNT:-$LANE_PANE_ACCOUNT}"
+    elif [[ -z "$ACCOUNT" ]]; then
+      ACCOUNT="$(lane_context_caller_cfg "$shape")"
     fi
   fi
   # The home its own variable carries where that is a private codex home, and

@@ -507,7 +507,7 @@ message() { # KEY FIELD=VALUE...
     pane-unreadable) text='The caller pane could not be read.' ;;
     harness-unnamed) text='The caller pane runs no harness this script launches, and neither --harness nor a context reading of this pane names one.' ;;
     invalid-harness) text='--harness takes claude, codex, copilot or pi.' ;;
-    copilot-account-unknown) text='This overseer runs Copilot CLI and its launch record names no account, and nothing here reads COPILOT_HOME for a session. Nothing was printed. Record the account with oversee register --account DIR from this pane, then print the line again.' ;;
+    copilot-account-unknown) text='This overseer runs Copilot CLI, its launch record names no account, and no Copilot process under its pane had an environment to read one from. Nothing was printed. Record the account with oversee register --account DIR from this pane, then print the line again.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
     context-unmeasured) text="No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. $headroom_text" ;;
     context-below-mark) text="No mark is reached; nothing was launched. The shared context rule requires no handoff at this reading. $headroom_text" ;;
@@ -912,14 +912,17 @@ if [[ "$MODE" != dead ]]; then
   fi
   if [[ -n "$OL_KNOWN_HARNESS" ]]; then
     CALLER_HARNESS="$OL_KNOWN_HARNESS"
-  elif [[ -n "$HARNESS_ARG" ]]; then
+  elif [[ -n "$HARNESS_ARG" && "$HARNESS_ARG" != copilot ]]; then
     CALLER_HARNESS="$HARNESS_ARG"
   else
+    # --harness copilot still reads the pane, for the account its Copilot
+    # process was started on.
     caller_obs="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_pid} #{pane_current_command}' 2>"$DEP_ERR")" \
       || die pane-unreadable "pane=$CALLER_PANE"
     caller_cmd="${caller_obs#* }"
-    CALLER_HARNESS="$(lane_context_pane_shape "${caller_cmd#-}" "${caller_obs%% *}")" \
+    lane_context_pane_shape "${caller_cmd#-}" "${caller_obs%% *}" \
       || die pane-unreadable "pane=$CALLER_PANE" field=process-table
+    CALLER_HARNESS="${HARNESS_ARG:-$LANE_PANE_SHAPE}"
   fi
   if [[ "$CALLER_HARNESS" == both ]]; then
     case "$reading_harness" in
@@ -1012,10 +1015,14 @@ fi
 # successor there. A session spending no account `lanes` measures names none
 # where its record names none, and `dead` reads neither.
 # A Copilot session's account is the one its record or its own start row
-# names, and no other: this script can run outside the session, where the
-# COPILOT_HOME lane_context_caller_cfg reads is not the session's. The line is
-# refused where neither names one.
+# names, else the one its own Copilot process was started on
+# (lib/lane-context.sh § lane_context_pane_shape), and no other: this script
+# can run outside the session, where the COPILOT_HOME lane_context_caller_cfg
+# reads is not the session's. The line is refused where none names one.
 CALLER_CFG="$OL_KNOWN_ACCOUNT"
+if [[ "$CALLER_HARNESS" == copilot && -z "$CALLER_CFG" ]]; then
+  CALLER_CFG="$LANE_PANE_ACCOUNT"
+fi
 [[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown "pane=$CALLER_PANE"
 case "$CALLER_ACCOUNT_HARNESS" in
   claude | codex | pi) [[ -n "$CALLER_CFG" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")" ;;

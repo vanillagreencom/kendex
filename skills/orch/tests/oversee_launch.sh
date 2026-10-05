@@ -654,8 +654,9 @@ assert_eq "$(harness_ended)|$(recorded exit.at | grep -cE '^[0-9]{4}-[0-9]{2}-[0
 tm kill-window -t "$(recorded window)"
 # register on a Copilot pane. Its command reads node, the npm loader, here a
 # copy of bash under that name whose child carries Copilot's Linux name,
-# MainThread, a copy of sleep. The account is --account's, never the Claude
-# or Codex variable the session happens to carry.
+# MainThread, a copy of sleep. The account is --account's, else the
+# COPILOT_HOME that process was started with, never the Claude or Codex
+# variable the session happens to carry.
 CP="$TMP_ROOT/copilot-bin"
 mkdir -p "$CP"
 cp "$(command -v bash)" "$CP/node"
@@ -666,7 +667,7 @@ printf '%s\n' "'$CP/wrap' '$CP/binary.sh'; :" > "$CP/tool.sh"
 printf '%s\n' "'$CP/wrap' '$CP/tool.sh'; :" > "$CP/deep.sh"
 # copilot_pane NAME PROGRAM SCRIPT — a pane whose own process is PROGRAM
 # running SCRIPT.
-copilot_pane() { tm new-window -d -t "fleet:$1" -n "cp$1" -P -F '#{pane_id}' "exec '$CP/$2' '$CP/$3'"; }
+copilot_pane() { tm new-window -d -t "fleet:$1" -n "cp$1" -P -F '#{pane_id}' "export COPILOT_HOME='$H/.1copilot'; exec '$CP/$2' '$CP/$3'"; }
 COPILOT_PANE="$(copilot_pane 7 node binary.sh)"
 # A Claude overseer behind a wrapper with a Copilot run under it: the pane
 # reads wrap, which names no harness and is no Copilot pane.
@@ -674,6 +675,8 @@ WRAPPED_PANE="$(copilot_pane 8 wrap binary.sh)"
 # A Codex overseer's pane also reads node, and a Copilot run it starts sits
 # three levels down, under its tool shell.
 DEEP_PANE="$(copilot_pane 9 node deep.sh)"
+# A second Copilot pane, which no record has ever named.
+FRESH_PANE="$(copilot_pane 10 node binary.sh)"
 register_on() { # PANE [OVERSEE_BIN] [ARGS...]
   local pane="$1" bin="${2:-}"
   shift 2
@@ -708,31 +711,38 @@ register_on "$COPILOT_PANE" ''
 assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
   "0|copilot|$H/.1copilot|$H/.1copilot" \
   "register on the same copilot pane with no --account keeps its proven account, never the claude one its session carries"
+# A host with no per-process environment to read names the harness and no
+# account (lib/lane-context.sh § lane_context_pane_shape).
+FRESH_ACCOUNT=none
+! lane_process_env_readable || FRESH_ACCOUNT="$H/.1copilot"
+register_on "$FRESH_PANE" ''
+assert_eq "$RC|$(recorded pane)|$(recorded harness)|$(recorded account)" "0|$FRESH_PANE|copilot|$FRESH_ACCOUNT" \
+  "register on a copilot pane no record names, with no --account, records the account its Copilot process runs on"
 register_on "$WRAPPED_PANE" ''
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "a pane reading neither node nor copilot is no copilot pane, whatever runs under it"
 register_on "$DEEP_PANE" ''
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "a node pane whose Copilot run sits three levels down is not a copilot pane"
-# One control per rule: the process read, the given account, the command
-# gate and the depth bound.
-COPILOTCTL="$(mutant_scripts copilotctl oversee)" || exit 1
-mutate_file "$COPILOTCTL/oversee" '          if [[ "$below" == found ]]; then' '          if false; then'
+# One control per rule: the process read, the account, the command gate and
+# the depth bound, each through the shared reader register calls.
+COPILOTCTL="$(mutant_scripts copilotctl lib/lane-context.sh)" || exit 1
+mutate_file "$COPILOTCTL/lib/lane-context.sh" '      if [[ -n "$found" ]]; then' '      if false; then'
 register_on "$COPILOT_PANE" "$COPILOTCTL/oversee" --account "$H/.1copilot"
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "control: a register that reads no process under the pane records no harness for copilot"
 ACCTCTL="$(mutant_scripts acctctl oversee)" || exit 1
-mutate_file "$ACCTCTL/oversee" 'shape=copilot ACCOUNT="$given_account"' 'shape=copilot'
-register_on "$COPILOT_PANE" "$ACCTCTL/oversee"
+mutate_file "$ACCTCTL/oversee" '      ACCOUNT="${ACCOUNT:-$LANE_PANE_ACCOUNT}"' '      ACCOUNT="${ACCOUNT:-$(lane_context_caller_cfg claude)}"'
+register_on "$FRESH_PANE" "$ACCTCTL/oversee"
 assert_eq "$RC|$(recorded account)" "0|$H/.claude" \
-  "control: a register that keeps the derived account records the claude one for a copilot pane"
-GATECTL="$(mutant_scripts gatectl oversee)" || exit 1
-mutate_file "$GATECTL/oversee" '        node | copilot)' '        *)'
+  "control: a register that takes the derived account records the claude one for a copilot pane"
+GATECTL="$(mutant_scripts gatectl lib/lane-context.sh)" || exit 1
+mutate_file "$GATECTL/lib/lane-context.sh" '    node | copilot)' '    *)'
 register_on "$WRAPPED_PANE" "$GATECTL/oversee"
 assert_eq "$RC|$(recorded harness)" "0|copilot" \
   "control: without the command gate a wrapper pane with a Copilot run under it reads copilot"
-DEPTHCTL="$(mutant_scripts depthctl oversee)" || exit 1
-mutate_file "$DEPTHCTL/oversee" '"$name_re" 1 2)"' '"$name_re" 1)"'
+DEPTHCTL="$(mutant_scripts depthctl lib/lane-context.sh)" || exit 1
+mutate_file "$DEPTHCTL/lib/lane-context.sh" '"$name_re" 1 2 pids)' '"$name_re" 1 "" pids)'
 register_on "$DEEP_PANE" "$DEPTHCTL/oversee"
 assert_eq "$RC|$(recorded harness)" "0|copilot" \
   "control: without the depth bound a Copilot run deep under a node pane reads copilot"
