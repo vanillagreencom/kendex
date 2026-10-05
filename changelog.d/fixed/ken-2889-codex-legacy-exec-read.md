@@ -1,0 +1,1 @@
+- skill-load-check counts a Codex `functions.exec` skill read in a thread kept in Legacy history, which writes no command events, so the next `linear.sh` call is no longer refused.

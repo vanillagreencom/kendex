@@ -45,7 +45,13 @@
 # tail of the long text. The cut-line rows plant the first half of a captured
 # line: as the last line, which Codex may still be writing when the hook
 # reads, and ahead of whole records, as a rollout Codex reopened after an
-# interruption holds.
+# interruption holds. The legacy capture is a thread whose seeded rollout
+# names no paginated history_mode, which Codex 0.160.0 resumed and wrote in
+# Legacy history mode, with no CommandExecution event: a lone
+# text(await ...) read, and one wrapper of three such statements, a skill
+# read, a failed read and an echo, each printing its own result object. Its
+# session_meta keeps only the identity and version fields. The legacy-shaped
+# rows drop the events of a Paginated capture, as Legacy mode writes none.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
@@ -288,7 +294,7 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL [SKILL]
   case "$fixture:$scenario" in
     *-truncated-reads:*) skill=$5; command=skill-capture-command ;;
     *-failed:*) skill=missing-KEN-2484; command=skill-capture-command ;;
-    *-batched:failed-read) skill=missing; command=skill-capture-command ;;
+    *-batched:failed-read | *-legacy:failed-read) skill=missing; command=skill-capture-command ;;
     *-batched:* | *-truncated:* | *-unprinted:* | *-child-*:* | *-direct:*) skill=demo; command=skill-capture-command ;;
     *) skill=linear; command=.agents/skills/linear/scripts/linear.sh ;;
   esac
@@ -357,6 +363,12 @@ direct-no-event|skill-load-check-codex-0.160.0-direct|no-event:7,9|rc=0 first=-|
 half-last|skill-load-check-codex-0.160.0|half-last|rc=0 first=-|functions.exec read before a half-written last line
 cut-then-whole|skill-load-check-codex-0.160.0|cut-then-whole|rc=0 first=-|functions.exec read after a cut line mid-file
 half-read|skill-load-check-codex-0.160.0|half-read|rc=2 first=skill-load-check: unloaded=linear|functions.exec read whose output line is half-written
+legacy|skill-load-check-codex-0.160.0-legacy|lines:1,4|rc=0 first=-|functions.exec lone read in a Legacy rollout
+legacy-batched|skill-load-check-codex-0.160.0-legacy|lines:5,7|rc=0 first=-|functions.exec batched read in a Legacy rollout
+legacy-failed|skill-load-check-codex-0.160.0-legacy|failed-read|rc=2 first=skill-load-check: unloaded=missing|functions.exec batched failed read in a Legacy rollout
+legacy-compound-js|skill-load-check-codex-0.160.0-legacy|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound JavaScript in a Legacy rollout
+legacy-escaped|skill-load-check-codex-0.160.0-child-whole|no-event:1,4|rc=0 first=-|functions.exec escaped read with no events
+legacy-cut|skill-load-check-codex-0.160.0-child-cut|no-event:1,4|rc=2 first=skill-load-check: unloaded=demo|functions.exec read cut by max_output_tokens with no events
 ROWS
 }
 # One wrapper, one skill judged per row.
@@ -370,6 +382,7 @@ whole|original|linear|rc=0 first=-|functions.exec truncated output keeps a whole
 whole-last|original|code-quality|rc=0 first=-|functions.exec truncated output keeps the last whole read
 cut-tail|original|github|rc=2 first=skill-load-check: unloaded=github|functions.exec truncated output cuts the tail of a read
 cut-head|original|worktree|rc=2 first=skill-load-check: unloaded=worktree|functions.exec truncated output cuts the head of a read
+legacy-whole|no-event:1,6|linear|rc=2 first=skill-load-check: unloaded=linear|functions.exec truncated output with no events
 whole-failed|failed-status|linear|rc=2 first=skill-load-check: unloaded=linear|functions.exec truncated output with a failed whole read
 no-output|no-output|linear|rc=2 first=skill-load-check: unloaded=linear|functions.exec truncated output with no event output
 ROWS
@@ -411,6 +424,10 @@ exec_shell_row() { exec_rows compound-shell; exec_rows field-compound-shell; }
 exec_suffix_row() { exec_rows printed-suffix; exec_rows captured-printed-suffix; exec_rows field-printed-suffix; }
 exec_output_row() { exec_rows failed-wrapper; }
 exec_id_row() { exec_rows other-id; }
+legacy_row() { exec_rows legacy; exec_rows legacy-batched; exec_rows legacy-escaped; }
+legacy_failed_row() { exec_rows legacy-failed; }
+legacy_cut_row() { exec_rows legacy-cut; }
+legacy_parse_row() { exec_rows missing-event; truncated_reads_rows legacy-whole; }
 exec_rows
 truncated_reads_rows
 
@@ -498,6 +515,18 @@ skill_load_control exec-output "$HOOK" '| .[0] | objects | .text | strings' \
   '          | "Script completed\nOutput:\n"' HOOK exec_output_row 'functions.exec failed wrapper'
 skill_load_control exec-call-id "$HOOK" '    | (.call_id | strings | select(. != "")) as $id' \
   '    | "other" as $id' HOOK exec_id_row 'functions.exec another call output'
+# Judges a wrapper with no events by the event rule alone.
+skill_load_control legacy "$HOOK" '      and any($items[$index + 1] | objects; .type == "custom_tool_call_output")) as $legacy' \
+  '    | false as $legacy' HOOK legacy_row 'functions.exec lone read in a Legacy rollout' \
+  'functions.exec batched read in a Legacy rollout' 'functions.exec escaped read with no events'
+skill_load_control legacy-exit "$HOOK" '          | fromjson? | objects; .exit_code == 0' \
+  '          or true' HOOK legacy_failed_row 'functions.exec batched failed read in a Legacy rollout'
+skill_load_control legacy-field-cut "$HOOK" '          and (.output | type == "string"' \
+  '            or true' HOOK legacy_cut_row 'functions.exec read cut by max_output_tokens with no events'
+# Takes any printed item for a whole result object.
+skill_load_control legacy-parse "$HOOK" '      or ($legacy and any($texts[$at + 1]' \
+  '          | sub("^(?s).*"; "{\"exit_code\":0,\"output\":\"\"}")' HOOK legacy_parse_row \
+  'functions.exec without shell completion' 'functions.exec truncated output with no events'
 
 # Codex exec --ephemeral's PreToolUse producer always emits transcript_path,
 # null when Session::hook_transcript_path has no live_thread. Missing is not
