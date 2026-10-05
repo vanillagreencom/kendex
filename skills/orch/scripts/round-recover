@@ -9,6 +9,7 @@
 #
 # Usage:
 #   round-recover --worktree PATH --issue ID --round-id RID [--transcript FILE]
+#     [--state-dir DIR]
 #
 # The transcript is the stalled agent's JSONL record, located per harness by
 # references/agent-transcripts.md; omit --transcript when the harness kept none.
@@ -67,6 +68,11 @@
 # answer: the round is not stalled. Reasons: no-transcript, no-report, unparsed,
 # commit-mismatch, validate-unproven, mac-run-unproven. Usage and environment
 # errors exit 2 with a keyed line on stderr.
+#
+# --state-dir DIR is the workflow-state directory the round's state is read
+# from and the fresh round id is minted in, passed to workflow-state as its own
+# --state-dir; without it, workflow-state's State directory rule decides. A lane
+# that keeps its state in its own worktree passes it.
 
 set -euo pipefail
 
@@ -115,12 +121,15 @@ issue=""
 round_id=""
 transcript=""
 transcript_given=false
+state_dir=""
+state_dir_given=false
 while (( $# > 0 )); do
   case "$1" in
     --worktree)   need "$1" $# "${2:-}"; worktree="$2"; shift 2 ;;
     --issue)      need "$1" $# "${2:-}"; issue="$2"; shift 2 ;;
     --round-id)   need "$1" $# "${2:-}"; round_id="$2"; shift 2 ;;
     --transcript) need "$1" $# "${2:-}"; transcript_given=true; transcript="$2"; shift 2 ;;
+    --state-dir)  need "$1" $# "${2:-}"; state_dir_given=true; state_dir="$2"; shift 2 ;;
     -h|--help)    usage; exit 0 ;;
     *)            die unknown-argument "argument=$1" ;;
   esac
@@ -133,11 +142,15 @@ for pair in "--issue=$issue" "--round-id=$round_id"; do
   [[ -n "$value" ]] || die required "option=${pair%%=*}"
   [[ "$value" =~ $ID_GRAMMAR && "$value" != *..* ]] || die invalid-id "option=${pair%%=*}" "value=$value"
 done
+# Empty would read as absent and resolve the default state directory.
+[[ "$state_dir_given" == false || -n "$state_dir" ]] || die required option=--state-dir
+state=("$SCRIPT_DIR/workflow-state")
+[[ -z "$state_dir" ]] || state+=(--state-dir "$state_dir")
 if [[ "$transcript_given" == true ]]; then
   [[ -f "$transcript" && -r "$transcript" ]] || die transcript-unreadable "path=$transcript"
 fi
 
-if ! delegated_at="$("$SCRIPT_DIR/workflow-state" get "$issue" '.dev_delegated_at // empty')"; then
+if ! delegated_at="$("${state[@]}" get "$issue" '.dev_delegated_at // empty')"; then
   die state-failed "issue=$issue"
 fi
 [[ "$delegated_at" =~ ^[0-9]+$ ]] || die delegated-at "issue=$issue" "value=$delegated_at"
@@ -186,17 +199,17 @@ fi
 # re-delegation. Never returns.
 no_report() { # REASON
   local recovery new
-  if ! recovery="$("$SCRIPT_DIR/workflow-state" get "$issue" '.recovery_round_id // empty')"; then
+  if ! recovery="$("${state[@]}" get "$issue" '.recovery_round_id // empty')"; then
     die state-failed "issue=$issue"
   fi
   if [[ "$recovery" == "$round_id" ]]; then
     printf '%s: exhausted round-id=%s reason=%s\n' "$PROG" "$round_id" "$1"
     exit 1
   fi
-  if ! new="$("$SCRIPT_DIR/workflow-state" new-round-id "$issue" dev_round_id)"; then
+  if ! new="$("${state[@]}" new-round-id "$issue" dev_round_id)"; then
     die state-failed "issue=$issue"
   fi
-  "$SCRIPT_DIR/workflow-state" set "$issue" recovery_round_id "$new" >/dev/null \
+  "${state[@]}" set "$issue" recovery_round_id "$new" >/dev/null \
     || die state-failed "issue=$issue"
   printf '%s: redelegate round-id=%s from=%s reason=%s\n' "$PROG" "$new" "$round_id" "$1"
   exit 3

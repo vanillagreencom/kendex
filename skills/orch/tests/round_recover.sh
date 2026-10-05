@@ -330,6 +330,52 @@ run --worktree "$WT" --issue KEN-20 --round-id "$NEW" --transcript "$TMP_ROOT/em
 assert_eq "rc=$RC $OUT $(state_get KEN-20 dev_round_id)" "rc=1 round-recover: exhausted round-id=$NEW reason=no-report $NEW" \
   "the re-delegated round's own stall is exhausted and mints nothing" "$TMP_ROOT/stderr"
 
+echo "=== a lane that keeps its state in its worktree recovers there ==="
+# A hosted lane keeps workflow state in its worktree's tmp/, and the main
+# checkout it is linked to has no tmp/ at all. The lane runs round-recover from
+# its worktree with no ORCH_STATE_DIR, so --state-dir alone points the state
+# reads and the minted round id at the lane's state; without it the reads
+# resolve the main checkout and refuse.
+HOSTED_MAIN="$TMP_ROOT/hosted-main"
+git init -q -b main "$HOSTED_MAIN"
+git -C "$HOSTED_MAIN" -c user.email=test@example.com -c user.name=Test -c commit.gpgsign=false \
+  commit -q --allow-empty -m base
+HOSTED="$TMP_ROOT/hosted-wt"
+git -C "$HOSTED_MAIN" worktree add -q -b hosted "$HOSTED"
+init_growth_state "$STATE" "$HOSTED" KEN-115 11-1
+"$STATE" --state-dir "$HOSTED/tmp" set KEN-115 dev_delegated_at "$(( NOW - 50 ))" >/dev/null
+# `label^extra args^expect`; extra args split on spaces, EMPTY an empty value.
+# A refusal's expect is the program and key of round-recover's stderr line.
+lane_rows=(
+  "the lane's own state directory^--state-dir $HOSTED/tmp^rc=3 round-recover: redelegate"
+  "an empty state directory^--state-dir EMPTY^rc=2 round-recover: required"
+  "control: no state directory^^rc=2 round-recover: state-failed"
+)
+for row in "${lane_rows[@]}"; do
+  IFS='^' read -r label extra expect <<<"$row"
+  read -r -a extra_args <<<"$extra"
+  for i in "${!extra_args[@]}"; do [[ "${extra_args[$i]}" != EMPTY ]] || extra_args[i]=""; done
+  set +e
+  OUT="$(cd "$HOSTED" && env -u ORCH_STATE_DIR "$RECOVER" --worktree "$HOSTED" --issue KEN-115 --round-id 11-1 \
+    ${extra_args[@]+"${extra_args[@]}"} 2>"$TMP_ROOT/stderr")"
+  RC=$?
+  set -e
+  if (( RC == 2 )); then
+    seen=""
+    while read -r prog key _; do
+      [[ "$prog" != round-recover: ]] || seen="$prog $key"
+    done <"$TMP_ROOT/stderr"
+  else
+    seen="${OUT%% round-id=*}"
+  fi
+  assert_eq "rc=$RC $seen" "$expect" "lane: $label" "$TMP_ROOT/stderr"
+done
+NEW="$("$STATE" --state-dir "$HOSTED/tmp" get KEN-115 '.dev_round_id')"
+assert_eq "$([[ "$NEW" != 11-1 ]] && echo fresh || echo stale) $("$STATE" --state-dir "$HOSTED/tmp" get KEN-115 '.recovery_round_id')" \
+  "fresh $NEW" "lane: the minted id is recorded in the lane's own state"
+assert_eq "$([[ -e "$HOSTED_MAIN/tmp" ]] && echo written || echo none)" "none" \
+  "lane: nothing is written under the main checkout"
+
 echo "=== a report the disk contradicts, or cannot be read, is no report ==="
 # One planted defect per row; %H, %B, %R and %O are HEAD, main, a fix round's
 # base_sha and a commit HEAD does not reach. A fix row's report is
