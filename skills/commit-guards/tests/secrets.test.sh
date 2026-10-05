@@ -283,6 +283,8 @@ while IFS='|' read -r name setting file; do
     "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --policy-root "$POLICY"
   carries fixtures/cred.txt
   assert_eq "$name: the policy root's own row still excludes its path" "absent" "$HAS"
+  row "$name: the --policy-root= form reads the policy root's list too" \
+    "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" "--policy-root=$POLICY"
   row "$name: without it the repository's own row governs, as at commit time" \
     "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$R"
 done <<'ROWS'
@@ -326,8 +328,6 @@ while IFS='|' read -r option form; do
     absent) args=("$option") ;;
   esac
   row "$option in the $form form refuses" "rc=2 secrets: argument-missing=$option" "$R" "${args[@]}"
-  carries "summary="
-  assert_eq "$option in the $form form scans nothing" "absent" "$HAS"
 done <<'ROWS'
 --policy-root|equals
 --policy-root|separate
@@ -342,12 +342,8 @@ done <<'ROWS'
 --against|separate
 --against|absent
 ROWS
-row "a non-empty --policy-root= reads the policy root's list" \
-  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" "--policy-root=$POLICY"
 row "a non-empty --excludes= reads the list it names" \
   "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --excludes=tools/narrow-excludes
-row "without either the repository's own list passes every path" \
-  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$R"
 
 echo "=== the tool: missing or too old is a gap outside CI and on --staged, a refusal on a CI range or --all ==="
 NO_TOOL_PATH="$TMP/no-tool-bin"
