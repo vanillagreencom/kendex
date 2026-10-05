@@ -6,10 +6,13 @@
 //! harness the hook does not run on, other than one core states the reason
 //! for itself, needs the hook's `Not run on <id>: <reason>.` sentence, read
 //! by `hook::stated_reason`, the reader the row takes. A missing or
-//! unterminated sentence fails the rendering naming the hook and harness,
-//! and so does a sentence in the wrong form: `Not run on <id>:` for a
-//! harness the hook runs on, or `On <id>:`, the fallback sentence, for one
-//! it does not. A hook that reaches a harness where a companion it requires
+//! unterminated sentence fails the rendering naming the hook and harness.
+//! On a harness the hook runs on, an `On <id>:` fallback sentence is
+//! optional, and an unterminated one fails: the row would list the harness
+//! as plainly supported and drop the fallback. A sentence in the wrong form
+//! fails too: `Not run on <id>:` for a harness the hook runs on, `On <id>:`
+//! for one it does not, and either for one that takes it as advisory prose,
+//! where the row reads neither. A hook that reaches a harness where a companion it requires
 //! is withheld fails too: the row would say it runs there, and the engine
 //! installs it nowhere, so its `harnesses:` line must leave that harness
 //! out.
@@ -67,6 +70,27 @@ fn catalog_hooks() -> Vec<HookSource> {
         .collect()
 }
 
+/// The finding for a `form` sentence naming `harness` that the reader
+/// cannot end, so the supported-tools row drops it.
+fn unterminated(spec: &HookSpec, form: ToolSentence, harness: HarnessId) -> String {
+    let (hook, id) = (&spec.name, harness.name());
+    let (key, marker, dropped) = match form {
+        ToolSentence::NotRun => (
+            "unterminated-reason",
+            format!("Not run on {id}: "),
+            "the row shows core's reason or none in its place",
+        ),
+        ToolSentence::On => (
+            "unterminated-fallback",
+            format!("On {id}: "),
+            "the row lists the harness as plainly supported and shows no fallback",
+        ),
+    };
+    format!(
+        "hooks-readme: {key}={hook}:{id}\nthe '{marker}' sentence ends in no period followed by a space or the end of the description, so {dropped}"
+    )
+}
+
 /// The hook's own `Not run on <id>: <reason>.` sentence is there, or the
 /// finding naming why it is not.
 fn reason(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
@@ -76,27 +100,43 @@ fn reason(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
         Stated::Absent => Err(format!(
             "hooks-readme: missing-reason={hook}:{id}\nthe hook does not run on {id} and its description carries no 'Not run on {id}: <reason>.' sentence"
         )),
-        Stated::Unterminated => Err(format!(
-            "hooks-readme: unterminated-reason={hook}:{id}\nthe 'Not run on {id}: ' sentence ends in no period followed by a space or the end of the description"
-        )),
+        Stated::Unterminated => Err(unterminated(spec, ToolSentence::NotRun, harness)),
     }
 }
 
-/// No `form` sentence names `harness`, where the hook's standing there makes
-/// that sentence false, or the finding naming it.
-fn absent(spec: &HookSpec, form: ToolSentence, harness: HarnessId) -> Result<(), String> {
+/// The hook's optional `On <id>: <reason>.` fallback sentence ends, or the
+/// finding naming it.
+fn fallback(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
+    match stated_reason(&spec.description, ToolSentence::On, harness) {
+        Stated::Reason(_) | Stated::Absent => Ok(()),
+        Stated::Unterminated => Err(unterminated(spec, ToolSentence::On, harness)),
+    }
+}
+
+/// No `form` sentence names `harness`, where the hook's `standing` there
+/// makes that sentence false, or the finding naming it.
+fn absent(
+    spec: &HookSpec,
+    standing: &Standing,
+    form: ToolSentence,
+    harness: HarnessId,
+) -> Result<(), String> {
     let (hook, id) = (&spec.name, harness.name());
     if stated_reason(&spec.description, form, harness) == Stated::Absent {
         return Ok(());
     }
-    Err(match form {
-        ToolSentence::NotRun => format!(
-            "hooks-readme: wrong-form={hook}:{id}\nthe hook runs on {id}, so its 'Not run on {id}: ' sentence is false; a fallback there is 'On {id}: <reason>.'"
+    let why = match standing {
+        Standing::Runs => format!(
+            "the hook runs on {id}, so its 'Not run on {id}: ' sentence is false; a fallback there is 'On {id}: <reason>.'"
         ),
-        ToolSentence::On => format!(
-            "hooks-readme: wrong-form={hook}:{id}\nthe hook does not run on {id}, so its 'On {id}: ' sentence names no fallback; the reason there is 'Not run on {id}: <reason>.'"
+        Standing::Advisory => format!(
+            "{id} takes the hook as advisory prose, which the supported-tools row shows without reading any sentence naming {id}; drop the sentence"
         ),
-    })
+        Standing::NotRun { .. } => format!(
+            "the hook does not run on {id}, so its 'On {id}: ' sentence names no fallback; the reason there is 'Not run on {id}: <reason>.'"
+        ),
+    };
+    Err(format!("hooks-readme: wrong-form={hook}:{id}\n{why}"))
 }
 
 /// The hook's reach on `harness`, as the supported-tools row judges it.
@@ -124,11 +164,11 @@ fn companion_absent(hook: &HookSource, catalog: &[HookSpec], harness: HarnessId)
 /// How the hook reaches one harness, which decides the sentence the hook
 /// may state there.
 enum Standing {
-    /// The harness runs the hook: a fallback is an `On <id>:` sentence, and
-    /// a `Not run on <id>:` sentence is false.
+    /// The harness runs the hook: a fallback is an `On <id>:` sentence,
+    /// which must end, and a `Not run on <id>:` sentence is false.
     Runs,
-    /// Installed, run by no hook runner: core states it, and the
-    /// supported-tools row reads neither sentence.
+    /// Installed, run by no hook runner: core states it, the
+    /// supported-tools row reads neither sentence, and either is false.
     Advisory,
     /// Not run: `stated` is whether core states the reason itself, as it
     /// does for the by-name-only refusal and a harness that takes no hooks;
@@ -150,17 +190,26 @@ fn standing(spec: &HookSpec, harness: HarnessId) -> Standing {
 }
 
 /// Every finding the hook's sentences hold on `harness`: one in the wrong
-/// form, a reason the hook owes and does not state, and a reach its
+/// form, a reason the hook owes and does not state, a sentence the reader
+/// cannot end, and a reach its
 /// withheld companion (`withheld`, [`companion_absent`]'s answer) denies.
 fn judged(spec: &HookSpec, withheld: bool, harness: HarnessId) -> Vec<String> {
     let (hook, id) = (&spec.name, harness.name());
     let standing = standing(spec, harness);
     let mut checks = match standing {
-        Standing::Runs => vec![absent(spec, ToolSentence::NotRun, harness)],
-        Standing::Advisory => vec![],
-        Standing::NotRun { stated: true } => vec![absent(spec, ToolSentence::On, harness)],
+        Standing::Runs => vec![
+            absent(spec, &standing, ToolSentence::NotRun, harness),
+            fallback(spec, harness),
+        ],
+        Standing::Advisory => vec![
+            absent(spec, &standing, ToolSentence::On, harness),
+            absent(spec, &standing, ToolSentence::NotRun, harness),
+        ],
+        Standing::NotRun { stated: true } => {
+            vec![absent(spec, &standing, ToolSentence::On, harness)]
+        }
         Standing::NotRun { stated: false } => vec![
-            absent(spec, ToolSentence::On, harness),
+            absent(spec, &standing, ToolSentence::On, harness),
             reason(spec, harness),
         ],
     };
@@ -283,26 +332,9 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
 /// that refuse it.
 type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
 
-/// Each rule refuses the one defect its row plants into this catalog's own
-/// hooks, and names it on its keyed line.
-#[test]
-#[allow(
-    clippy::expect_used,
-    reason = "a planted defect that is not refused is the failure this test names"
-)]
-fn each_planted_defect_is_refused_on_its_keyed_line() {
-    let hooks = catalog_hooks();
-    let clean = rendered(&hooks);
-
-    let edited = clean.replacen("- `block-argv-kill`: ", "- `block-argv-kill`: Edited. ", 1);
-    assert_ne!(edited, clean, "the planted line edit changed nothing");
-    let drift = compare(&edited, &clean).expect_err("a hand-edited line is refused");
-    assert_eq!(
-        drift.lines().next(),
-        Some("hooks-readme: drift=hooks/README.md")
-    );
-
-    let planted_rows: [PlantedRow; 6] = [
+/// Every planted defect, each in one of this catalog's own hooks.
+fn planted_rows() -> [PlantedRow; 9] {
+    [
         // Codex and Copilot never fire TaskCompleted. The planted Copilot
         // recorder reason leaves the Codex recorder without one, and the
         // requirer still reaches both tools its recorder is withheld on.
@@ -377,8 +409,58 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
             },
             &["hooks-readme: wrong-form=block-bare-cd:antigravity"],
         ),
-    ];
-    for (hook, plant, keys) in planted_rows {
+        // Codex runs block-bare-cd: a fallback there must end, or the row
+        // drops it.
+        (
+            "block-bare-cd",
+            |source| {
+                source
+                    .description
+                    .push_str(" On codex: an unterminated fallback");
+            },
+            &["hooks-readme: unterminated-fallback=block-bare-cd:codex"],
+        ),
+        // OpenCode and Cursor take block-bare-cd as advisory prose, where
+        // the row reads neither sentence.
+        (
+            "block-bare-cd",
+            |source| {
+                source
+                    .description
+                    .push_str(" On opencode: a planted fallback.");
+            },
+            &["hooks-readme: wrong-form=block-bare-cd:opencode"],
+        ),
+        (
+            "block-bare-cd",
+            |source| {
+                source.description.push_str(" Not run on cursor: planted.");
+            },
+            &["hooks-readme: wrong-form=block-bare-cd:cursor"],
+        ),
+    ]
+}
+
+/// Each rule refuses the one defect its row plants into this catalog's own
+/// hooks, and names it on its keyed line.
+#[test]
+#[allow(
+    clippy::expect_used,
+    reason = "a planted defect that is not refused is the failure this test names"
+)]
+fn each_planted_defect_is_refused_on_its_keyed_line() {
+    let hooks = catalog_hooks();
+    let clean = rendered(&hooks);
+
+    let edited = clean.replacen("- `block-argv-kill`: ", "- `block-argv-kill`: Edited. ", 1);
+    assert_ne!(edited, clean, "the planted line edit changed nothing");
+    let drift = compare(&edited, &clean).expect_err("a hand-edited line is refused");
+    assert_eq!(
+        drift.lines().next(),
+        Some("hooks-readme: drift=hooks/README.md")
+    );
+
+    for (hook, plant, keys) in planted_rows() {
         let mut planted_hooks = hooks.clone();
         let target = planted_hooks
             .iter_mut()
