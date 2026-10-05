@@ -738,11 +738,12 @@ without it:
                     otherwise.
 
 Every launch, relaunch and wake under --state-dir is judged on the overseer's
-repository before the state is touched. The overseer's directory is the one
-the state's overseer record names, else the --state-dir itself, which sits in
-the overseer's checkout; a --state-dir outside any git checkout whose state
-records no overseer directory names no overseer repository, so the launch
-binds to this checkout's own and goes ahead. A checkout sharing that
+repository, or on this checkout's own where neither the state nor the
+--state-dir names one, before the state is touched. The overseer's directory
+is the one the state's overseer record names, else the --state-dir itself,
+which sits in the overseer's checkout; a --state-dir outside any git checkout
+whose state records no overseer directory names no overseer repository, so
+the launch binds to this checkout's own and goes ahead. A checkout sharing that
 directory's git common directory, or whose origin names the same OWNER/REPO,
 goes ahead. Any other goes ahead only where ORCH_CONNECTED_REPOS, read
 through orch-env from that overseer directory and never from this checkout,

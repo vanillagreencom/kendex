@@ -35,6 +35,7 @@ TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-overseer: scratch=mktemp-failed
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-overseer: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-overseer: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+SCRATCH_PARENT="$(dirname -- "$TMP_ROOT")"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -130,21 +131,24 @@ fleet() {
   fi
 }
 
-# run_ot [SCRIPT=PATH] [CWD=PATH] [ENV=NAME=VALUE]... ARGS — one fleet launch
-# into $STATE; sets OUT, ERR and RC. ENV= adds a variable to the launcher's
-# environment, which otherwise carries no ORCH_CONNECTED_REPOS.
+# run_ot [SCRIPT=PATH] [CWD=PATH] [ENV=NAME=VALUE]... [WAKE] ARGS — one fleet
+# launch into $STATE; sets OUT, ERR and RC. ENV= adds a variable to the
+# launcher's environment, which otherwise carries no ORCH_CONNECTED_REPOS.
+# WAKE runs a --wake, which takes no custom command, in place of the launch.
+# Git looks for no checkout above $TMP_ROOT, so $TMP_ROOT/state, $NO_GIT and
+# $TMP_ROOT itself, where the state-dir walk ends for a state not yet made,
+# stay outside one wherever the scratch root sits.
 run_ot() {
-  local script="$OT" cwd="$PWD" extra=()
-  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == CWD=* || "${1:-}" == ENV=* ]]; do
-    case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; CWD=*) cwd="${1#CWD=}" ;; ENV=*) extra+=("${1#ENV=}") ;; esac
+  local script="$OT" cwd="$PWD" extra=() mode=(--cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL")
+  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == CWD=* || "${1:-}" == ENV=* || "${1:-}" == WAKE ]]; do
+    case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; CWD=*) cwd="${1#CWD=}" ;; ENV=*) extra+=("${1#ENV=}") ;; WAKE) mode=(--wake) ;; esac
     shift
   done
   set +e
   OUT="$(cd "$cwd" && env -u ORCH_CONNECTED_REPOS PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
-    WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$TMP_ROOT/home" LINEAR_TEAM= \
+    GIT_CEILING_DIRECTORIES="$SCRATCH_PARENT" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$TMP_ROOT/home" LINEAR_TEAM= \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX= TMUX_PANE= GH_REPO= ${extra[@]+"${extra[@]}"} \
-    "$script" --state-dir "$STATE" --ghostty --harness claude \
-    --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$@" 2>"$TMP_ROOT/err")"
+    "$script" --state-dir "$STATE" --ghostty --harness claude "${mode[@]}" "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
@@ -156,6 +160,10 @@ record() {
   "$WS" --state-dir "$STATE" get oversee '[.lanes[]? | select(.item == "'"$1"'") | "repo=\(.repo // "null")"] | if . == [] then "none" else join(",") end'
 }
 refused() { grep -c "^open-terminal: $1" <<<"$ERR" || true; }
+# unparsable — overwrites the oversee state in $STATE with a body jq cannot
+# parse.
+unparsable() { printf '{\n' > "$STATE/workflow-state-oversee.json"; }
+STATE_READ_LINE="open-terminal: overseer-unjudged cause=state-read state=oversee"
 FOREIGN_LINE="open-terminal: overseer-foreign item=CC-1 repo=acme/target overseer=own/fleet route=connected-repos,peer-mail"
 
 echo "=== a fleet launch runs in its overseer's repository or one it lists ==="
@@ -231,6 +239,12 @@ fleet cwd "$OVERSEER_REPO"
 run_ot CWD="$TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=setting path=$OVERSEER_REPO" <<<"$ERR" || true) retired=$(grep -c '^orch-env: retired-setting ' <<<"$ERR" || true)" \
   "rc=1 unjudged=1 retired=1" "a setting orch-env refuses to read from the overseer's checkout is unjudged, under orch-env's own line"
+connected absent
+fleet cwd "$OVERSEER_REPO"
+unparsable
+run_ot CWD="$TARGET" WAKE CC-1
+assert_eq "rc=$RC unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" "rc=1 unjudged=1" \
+  "a wake, which the cap does not count, on a state that does not parse is unjudged"
 
 # One control per rule, each on a copy of the script that keeps the matched
 # text and drops its behaviour.
@@ -313,6 +327,14 @@ fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "unjudged=$(refused 'overseer-unjudged cause=setting ')" "unjudged=0" \
   "control: without the setting-read refusal no overseer-unjudged line is printed"
+MUT="$(control state-read "$BIND" '[[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read state=oversee >&2; return 1; }
+      OVERSEER_BIND=unread
+      return 0' '[[ "$CAP_GATED" == true ]] || true || { ot_message overseer-unjudged cause=state-read state=oversee >&2; return 1; }
+      cwd=""')"
+connected absent; fleet cwd "$OVERSEER_REPO"; unparsable
+run_ot SCRIPT="$MUT" CWD="$TARGET" WAKE CC-1
+assert_eq "unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" "unjudged=0" \
+  "control: judging a state that does not parse as one with no overseer directory prints no state-read line"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
