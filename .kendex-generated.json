@@ -945,8 +945,6 @@
   ".github/hooks/block-worktree-refresh.sh",
   ".github/hooks/command-safety.json",
   ".github/hooks/command-safety.sh",
-  ".github/hooks/doc-drift-check.json",
-  ".github/hooks/doc-drift-check.sh",
   ".github/hooks/lane-mail-check.json",
   ".github/hooks/lane-mail-check.sh",
   ".github/hooks/lane-mail-deliver.json",
