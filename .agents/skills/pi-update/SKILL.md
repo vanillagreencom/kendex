@@ -58,6 +58,7 @@ Create this run's own directory with `mkdir -p tmp/pi-update && mktemp -d tmp/pi
   - Required parity fix: Pi changed a behaviour, event shape, provider input or setting that an extension overrides, mirrors, reads or copied.
   - Optional improvement: a new Pi field, helper or event that could simplify an extension that is still correct.
   - Non-impact: outside every extension surface. One line of reason each.
+- For an entry that adds or changes a field of a tool result, an event or a provider stream option, find every kendex listener or override of that surface, including `tool_result` handlers and `registerProvider` shims. Record each listener or override beside the entry with its classification.
 - **Triage by import.** A source reaches every package that imports its npm package (`coding-agent` is `@earendil-works/pi-coding-agent`, `ai` is `@earendil-works/pi-ai`, `agent` is `@earendil-works/pi-agent-core`, `tui` is `@earendil-works/pi-tui`, and so on). Find them on each run, never from a stored list: `grep -rlE "['\"]@earendil-works/pi-<name>['\"/]" pi-extensions/*/ --include='*.ts' --include='*.mjs' --include='*.js' --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=__tests__`. For an `ai` entry that names a provider, also grep `pi-extensions/*/` for that provider id: a package that registers the provider is in reach. A source that no package imports is Non-impact.
 - For each Required or Optional entry, cite the affected `path::symbol` and read the Pi source when a field name is unclear.
 
@@ -69,7 +70,7 @@ Read `pi-extensions/pi-hooks/pi-contract.json` for the events and calls pi-hooks
 
 Package suites run on older pinned Pi versions and fake hosts, so a green suite does not prove a contract change. For every Required entry and every blocking entry:
 
-- **One install location.** Node resolves an import from the importing file's own directories, so an install beside a package is invisible to it. Copy the whole `pi-extensions` tree without any `node_modules`, so a test that imports a sibling package by relative path finds it. Each time this step runs, make a new directory with `mktemp -d <run>/work.XXXXXX` and copy into it with `rsync -a --exclude node_modules pi-extensions <that directory>/`. `<copy>` is `pi-extensions/<package>` inside that directory. In `<copy>`, run `npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund` with every `@earendil-works/pi-*` package the package's `package.json` names, each at `@<version>`, plus the other packages its `DEVELOPMENT.md` install line names. The extension, its other dependencies, every check and the suite then run from `<copy>`.
+- **One install location.** Node resolves an import from the importing file's own directories, so an install beside a package is invisible to it. Copy the whole `pi-extensions` tree without any `node_modules`, so a test that imports a sibling package by relative path finds it. Each time this step runs, make a new directory with `mktemp -d <run>/work.XXXXXX` and copy into it with `rsync -a --exclude node_modules pi-extensions <that directory>/`. `<copy>` is `pi-extensions/<package>` inside that directory. In `<copy>`, run `npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund` with every `@earendil-works/pi-*` package named in its dependency declarations, including `peerDependencies` and `devDependencies`, each at `@<version>`, plus the other packages its `DEVELOPMENT.md` install line names. Keep `package.json` unchanged. The extension, its other dependencies, every check and the suite then run from `<copy>`.
 - **Prove the version.** Before any check or suite, print the `@earendil-works/pi-coding-agent` version that resolves from the extension's entry file and from the suite's directory. The record states it. A version other than the target stops the run.
 
   ```bash
@@ -106,6 +107,8 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 - Publication is the `npm-deploy` skill, run as linked work: a Linear item related to this one. A failed publish leaves that item open. It does not block fleet rollout, and it does not block the next compatibility run. Add no publication recovery step.
 
 ## Audit record
+
+Name each Linear item by id only, beside the Pi entry and package it concerns. Do not state its status, priority or adoption.
 
 The record holds: the ``Marker `<old>` → `<new>`.`` line, where `<old>` is `lastVersion` at run start and `<new>` the target; the sources fetched; every classified entry; and a `## Verdict` section. The Verdict section opens with the verdict and then this summary, in this form:
 
