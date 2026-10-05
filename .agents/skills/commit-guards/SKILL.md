@@ -27,7 +27,7 @@ repo-effects:
     - "preflight"
     - "bot-instructions"
   notes:
-    - "A missing companion is skipped silently. Preflight is skipped on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
+    - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
     - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
     - "Git does not clone hooks; arm every clone once."
@@ -103,7 +103,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Binary blob ceiling in KB. |
 | `COMMIT_GUARDS_BYTE_WARN_PCT` | `90` | Percent of the binary blob ceiling at which byte-ceiling prints a `near-ceiling` notice, 1-100; the exit status is unchanged. |
 | `COMMIT_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
-| `COMMIT_GUARDS_BYTE_BASELINE` | `tools/byte-ceiling-baseline` | byte-ceiling `--all` baseline: the object size each legacy oversized file is held to. |
+| `COMMIT_GUARDS_BYTE_BASELINE` | `tools/byte-ceiling-baseline` | byte-ceiling `--all` baseline: the object size each legacy oversized binary file is held to. Rows naming text files are ignored. |
 | `COMMIT_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
 | `COMMIT_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
 | `COMMIT_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |

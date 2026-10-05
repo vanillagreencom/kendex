@@ -79,7 +79,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 `scripts/pre-commit` judges one commit snapshot: staged content, with tracked configuration read from the index. Order:
 
-1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. The resolution and the lane are `scripts/lib/siblings.sh`'s, so the pre-push chain runs the same gate the same way.
+1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a silent skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. `scripts/lib/siblings.sh` owns resolution for both hooks. Pre-push announces an absent doc-limits copy.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it.
 4. `commit-guards all --staged`.
@@ -103,7 +103,7 @@ Stated once, in CHECKS.md § todo-ban. At `--staged` the change set is collected
 
 The shared binary classifier selects blobs for the ceiling and warning. Text and source files are not sized against the ceiling. Large binary blobs remain in every clone.
 
-Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling, so which tree the source blob comes from decides what the ratchet permits: `--base` takes it from the merge base, `--against` from the ref's own tree, `--staged` from the index's parent. `--all` has no source blob; its prior is the file's row in `COMMIT_GUARDS_BYTE_BASELINE`, read from the index. Rename detection is pinned on and held to exact content in every lane that diffs.
+Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling, so which tree the source blob comes from decides what the ratchet permits: `--base` takes it from the merge base, `--against` from the ref's own tree, `--staged` from the index's parent. `--all` has no source blob; an oversized binary file's prior is its row in `COMMIT_GUARDS_BYTE_BASELINE`, read from the index. Rows naming text files are ignored. Rename detection is pinned on and held to exact content in every lane that diffs.
 
 ## suppression-ban patterns
 

@@ -21,7 +21,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 
 In the sub-issue tree, complete blockers before the issues they block; entries marked `(completed)` are context only and are skipped in the § 4 loop.
 
-An optional `Near-ceiling:` line, one per file, is a `byte-ceiling` record a previous round produced: the path, its bytes, the ceiling in bytes and the percent of the ceiling reached. That file is within reach of the wall, and this round owns its split — plan or perform it rather than growing the file further, or say in the return why the split cannot be made here. With no line, no file is known to be within reach.
+An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record a previous round produced: the path, its bytes, the ceiling in bytes and the percent reached. Plan or perform a move to Git LFS, an asset store or generation before the blob grows further. If that remedy cannot be applied here, state why in the return. With no line, no binary blob is known to be within reach of the ceiling.
 
 ---
 

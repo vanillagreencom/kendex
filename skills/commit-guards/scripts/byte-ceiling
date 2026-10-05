@@ -18,21 +18,22 @@
 #                       REF. Where REF is an ancestor of HEAD the two agree;
 #                       where the two have diverged they do not, and only
 #                       this one measures the effect on REF
-#   --all               every tracked file (full sweep), each oversized one
-#                       held to its row in the byte baseline
+#   --all               every tracked file (full sweep), each oversized binary
+#                       file held to its row in the byte baseline
 #
 # Sizes are OBJECT sizes (`git cat-file -s` of each diff blob): the bytes that
 # enter history, filters applied, independent of worktree state. The source
 # blob is the tighten-only baseline for an existing oversized file. Renames
 # are detected, so moving an existing large file is not an addition; a copy
 # is one. A sweep has no second tree and so no source blob: its prior is the
-# declared baseline (path<TAB>bytes), and a row looser than its file or naming
-# no oversized file fails, so the declaration only tightens.
+# declared baseline (path<TAB>bytes). Rows naming text files are ignored.
+# Every other row fails if it is looser than its file or names no oversized
+# binary file, so the binary baseline only tightens.
 #
 # A binary file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
 # of it gets one near-ceiling notice and no violation: a refusal that arrives
-# only at the wall stops a branch of a dozen commits for a split the round
-# before could have planned.
+# only at the wall can stop a commit before the asset can move to Git LFS,
+# an asset store or generation.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -70,10 +71,11 @@ push asks. A file already over the ceiling at the shared ancestor, smaller at
 REF and larger at HEAD, is a shrink to the first question and growth to the
 second.
 
---all has no prior tree, so it holds each oversized file to its row in the
-baseline (path<TAB>bytes, read from the index): a file at its row passes, one
-past it or with no row fails, and a row larger than its file or naming no
-oversized file fails. An absent baseline is empty.
+--all has no prior tree, so it holds each oversized binary file to its row
+in the baseline (path<TAB>bytes, read from the index): a file at its row
+passes, one past it or with no row fails. Rows naming text files are ignored.
+Every other row fails if it is larger than its file or names no oversized
+binary file. An absent baseline is empty.
 
 A binary file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
 percent of it prints one near-ceiling line and does not fail. Text files
@@ -360,8 +362,9 @@ while IFS= read -r -d '' sha \
   fi
 done <"$GG_TMP/candidates.z"
 
-# A row no oversized file met holds nothing today, and would let a file
-# re-added at that path return to the row's size.
+# A row neither an oversized binary nor an exempt text file met holds
+# nothing today, and would let a file re-added at that path return to the
+# row's size.
 if [ "$MODE" = "all" ]; then
   while IFS="$GG_TAB" read -r row_path row_bytes || [ -n "$row_path" ]; do
     case "$NL$matched_rows" in

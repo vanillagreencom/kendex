@@ -5,9 +5,9 @@
 # copy and a moved-and-grown file are, a symlink or gitlink is not sized
 # content, --base judges the branch since its merge-base, --against judges
 # what it would do to another tree, and --all sweeps
-# every tracked file, holding an oversized one to its baseline row and failing
-# a row that is loose or names no oversized file, lockfiles, Markdown files
-# and declared asset trees are exempt, the
+# every tracked file, holding an oversized binary to its baseline row and
+# ignoring text-path rows; other loose or stale rows fail, lockfiles and declared
+# asset trees are exempt, the
 # ceiling resolves through the settings ladder and is validated, a file under
 # the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent of it is
 # named without failing the run, and a
@@ -119,7 +119,7 @@ run_rows \
 
 
 echo "=== text and source files have no ceiling or warning ==="
-text_file() { repo "$1"; head -c 307200 /dev/zero | tr '\0' 'x' >"$R/$2"; git -C "$R" add -A; }
+text_file() { repo "$1"; head -c "${3:-307200}" /dev/zero | tr '\0' 'x' >"$R/$2"; git -C "$R" add -A; }
 run_rows \
   "a 300 KB source file passes the default ceiling|text_file large-source source.rs|||rc=0 $(ok 1 "$STAGED" 200)" \
   "a 300 KB text file passes the default ceiling|text_file large-text document.md|||rc=0 $(ok 1 "$STAGED" 200)" \
@@ -287,6 +287,7 @@ echo "=== a file under the ceiling but within reach of it is named, and the run 
 near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero >"$R/near.bin"; git -C "$R" add -A; } # NAME BYTES
 run_rows \
   "a staged file at 97 percent of the ceiling is named, with its bytes, the ceiling and the percent, and the run still passes|near_fx warn-over 1000|$C=1||rc=0 $(near near.bin 1000 1024 97);$(ok 1)" \
+  "a NUL-free source file in the warning band has no near-ceiling record|text_file warn-text source.rs 950|$C=1||rc=0 $(ok 1)" \
   "control: the same file at 87 percent is silent|near_fx warn-under 900|$C=1||rc=0 $(ok 1)" \
   "the smallest file the default threshold holds is named: 922 bytes is the first at or above 90 percent of 1024|near_fx warn-exact 922|$C=1||rc=0 $(near near.bin 922 1024 90);$(ok 1)" \
   "control: one byte below that is silent|near_fx warn-just-under 921|$C=1||rc=0 $(ok 1)" \
@@ -300,6 +301,25 @@ run_rows \
   "control: 100 is the top of the range and is accepted|near_fx warn-hundred 1024|$C=1,$W=100||rc=0 $(near near.bin 1024 1024 100);$(ok 1)" \
   "a warn percent above the range is exit 2: past the ceiling the notice would be off with no word|near_fx warn-101 100|$C=1,$W=101||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:101" \
   "a warn percent large enough to overflow the comparison is refused by the same bound, not measured|near_fx warn-overflow 10|$C=1,$W=9007199254740993||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:9007199254740993"
+
+# Restore text warnings below the refusal limit while retaining the text
+# exemption above it. The warning-band assertion must reject that regression.
+gg_mutant WARNING_MUTANT byte-ceiling \
+  'if ! gg_blob_is_binary "$GG_TMP/blob" "$f"; then' \
+  'if [ "$size" -gt "$CEILING_BYTES" ] && ! gg_blob_is_binary "$GG_TMP/blob" "$f"; then'
+text_file warn-text-control source.rs 950
+BC="$WARNING_MUTANT"
+warning_actual="$(run "$C=1" '')"
+assert_eq "control: the mutation restores the source warning" \
+  "rc=0 $(near source.rs 950 1024 92);$(ok 1)" "$warning_actual"
+control_rc=0
+(
+  FAIL=0
+  assert_eq "text warning-band result" "rc=0 $(ok 1)" "$warning_actual"
+  [ "$FAIL" -eq 0 ]
+) >"$TMP/warning-control.log" || control_rc=$?
+BC="$SKILL_DIR/scripts/byte-ceiling"
+assert_eq "control: restoring a text warning fails the no-warning assertion" 1 "$control_rc"
 
 echo "=== the ceiling resolves through the settings ladder and is validated ==="
 cfg() { repo "$1"; put f.txt 1; } # NAME

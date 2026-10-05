@@ -24,10 +24,10 @@
 #     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
 #     [--item N DECISION REASONING]...
 #
-# near_ceiling carries one byte-ceiling near-ceiling line per file within
+# near_ceiling carries one byte-ceiling near-ceiling line per binary blob within
 # reach of the byte ceiling, as that lane reports the branch at artifact time,
-# so the orchestrator's next round brief plans the split before a later commit
-# meets the wall. --near-ceiling-base REF is the field's one producer: this
+# so the next round can plan Git LFS, an asset store or generation before
+# the blob grows further. --near-ceiling-base REF is the field's one producer: this
 # writer runs the worktree's installed lane with --base REF and keeps every
 # stdout line beginning "byte-ceiling: near-ceiling=" on exit 0 or 1 (exit 1
 # only adds a file already over the ceiling). A repository with nothing at the
@@ -290,9 +290,9 @@ stalled agent's transcript and records recovered_from: transcript. The three
 are mutually exclusive (one summary source, no silent precedence).
 --near-ceiling-base REF runs the worktree's
 .agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
-near-ceiling line per file within reach of the byte ceiling on exit 0 or 1;
-the next round's brief plans the split from it. A repository with nothing at
-that path records []. An omitted --near-ceiling-base, a broken link on the way
+near-ceiling line per binary blob within reach of the byte ceiling on exit
+0 or 1; the next round plans Git LFS, an asset store or generation from it.
+A repository with nothing at that path records []. An omitted --near-ceiling-base, a broken link on the way
 to the lane, a lane that is not executable, or a lane that exits otherwise
 records near_ceiling null and the cause in near_ceiling_error, so the
 orchestrator keeps the list it carries.
