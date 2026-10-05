@@ -192,10 +192,11 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               approval it holds for that ask id names the same text_hash
   ask --item overseer --to owner --file PATH --options a,b --reserved
               [--wait MINUTES] [--ref MSGID]
-              an owner-reserved decision, which only the owner's answer in
-              text closes. The record carries `reserved: true` and a
-              deadline but no recommendation, and --recommend or --draft
-              beside it is refused `option-conflict`. pending --due never
+              an owner-reserved decision, which no default closes: the
+              overseer closes it once it holds the owner's answer. The
+              record carries `reserved: true` and a deadline but no
+              recommendation, and --recommend or --draft beside it is
+              refused `option-conflict`. pending --due never
               lists it, so the watch's deadline step leaves it open, and
               resolve --default refuses it `ask-reserved`; past its
               deadline it stays in pending --to owner
@@ -532,7 +533,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
-    ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Only the owner'"'"'s answer in text closes it, through resolve --text or send --re.' ;;
+    ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
     ask-unknown) text='No owner ask in the overseer mailbox carries that id. send --re answers owner asks and resolve closes them.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;

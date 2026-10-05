@@ -605,6 +605,10 @@ class RootRelay:
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
         closed = {e.get("re") for e in closures.values()}
+        # An owner answer leaves its ask open until the overseer closes it,
+        # but the owner is no longer the one it waits on.
+        answered = {e.get("re") for e in events
+                    if e.get("box") == "to-lane" and e.get("mail_class") == "resolution"}
         by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
@@ -619,7 +623,7 @@ class RootRelay:
                 if envelope["kind"] == "resolution":
                     continue
             if (envelope.get("reserved") is True and env_id in state.carried and env_id not in closed
-                    and overdue_id(env_id) not in state.carried
+                    and env_id not in answered and overdue_id(env_id) not in state.carried
                     and at_epoch(str(envelope["deadline"])) <= self.clock()):
                 routed.append((envelope, "overdue"))
             if env_id in state.carried or env_id in self.skipped:
@@ -745,7 +749,7 @@ class RootRelay:
         if envelope.get("recommend"):
             tail.append(f"Recommended: {envelope['recommend']}.")
         if envelope.get("reserved") is True:
-            tail.append(f"This decision is yours alone and has no default; reply in this thread by {local_time(str(envelope['deadline']))}.")
+            tail.append(f"No default: this decision waits for your reply in this thread, due {local_time(str(envelope['deadline']))}.")
         elif envelope.get("deadline"):
             tail.append(f"It stands at {local_time(str(envelope['deadline']))} unless you reply in this thread.")
         if tail:
@@ -768,14 +772,21 @@ class RootRelay:
 
     def post_overdue(self, envelope: Dict) -> None:
         """A reserved ask past its deadline, posted again in its thread once,
-        under its own journal id so no later poll posts it again."""
-        reminder = dict(envelope, id=overdue_id(str(envelope["id"])))
-        thread_ts = self.state.post_thread(str(envelope["id"]))
-        text = (f"{mention(self.binding)} Past its deadline and still waiting on you, with no default: "
-                f"{envelope.get('text', '')}")
+        under its own journal id so no later poll posts it again. With no
+        thread to post in, one whose post response was lost or one Slack
+        deleted, the reminder's own thread becomes the ask's, so a reply
+        there answers the ask."""
+        ask_id = str(envelope["id"])
+        reminder = dict(envelope, id=overdue_id(ask_id))
+        thread_ts = self.state.post_thread(ask_id)
+        text = f"{mention(self.binding)} Overdue, no default: {envelope.get('text', '')}"
         landed = self._send(reminder, "overdue", text, thread_ts)
-        if landed is not None:
-            self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
+        if landed is None:
+            return
+        if thread_ts is None:
+            self._out(envelope, "ask", "open", thread=landed,
+                      parent=self.parent_of({"ts": landed, "text": text}, "bot", ask_id))
+        self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
     def post_notice(self, envelope: Dict) -> None:
         ref = envelope.get("ref")

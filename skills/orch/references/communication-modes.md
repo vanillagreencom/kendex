@@ -86,7 +86,7 @@ The owner can answer more than once. Each answer lands through `send --item over
 - At the deadline the watch runs `resolve --default`. An answered ask closes without a recommendation answer; an unanswered ask takes its recommendation. A reserved ask has no deadline default.
 - After closing, later text arrives as a directive. A repeated delivery still names its original answer.
 
-A decision the owner's authority rule reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, and an x.0 release of kendex or an app. It takes `--reserved` in place of `--recommend`, so no option stands at its deadline. The watch never closes it, `resolve --default` refuses it, and only the owner's answer in text closes it. Past its deadline it stays in `pending --item overseer --to owner`, "Waiting on you" marks it overdue, and the Slack relay posts it once more in its thread.
+A decision the owner's authority rule reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, and an x.0 release of kendex or an app. It takes `--reserved` in place of `--recommend`, so no option stands at its deadline. No default closes it: the watch leaves it open and `resolve --default` refuses it. The overseer closes it once it holds the owner's answer. Past its deadline and unanswered, it stays in `pending --item overseer --to owner`, "Waiting on you" marks it overdue, and the Slack relay posts it once more in its thread; an answered one reads as awaiting close.
 
 ```bash
 .agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --reserved --file [PATH]

@@ -193,7 +193,9 @@ Rows:
                   <text>`, with its recommendation and the time after which
                   it becomes the default where the ask carries them; a
                   reserved ask says it has no default and when it is due,
-                  or that it is overdue once that time has passed,
+                  or that it is overdue once that time has passed, or,
+                  once `lane-mail events` holds an owner answer to it, that
+                  it awaits its close,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
@@ -473,12 +475,18 @@ MARKER=""
 # lane-mail events is the existing record of notices actually sent. Match
 # report attachments, not other owner notices, and use the file's list-read
 # time rather than the notice's later time, which could skip a mid-render merge.
-if ! OWNER_REPORTS="$("$LANE_MAIL" events --item overseer 2>"$WORK_DIR/mail.err")"; then
+if ! OWNER_EVENTS="$("$LANE_MAIL" events --item overseer 2>"$WORK_DIR/mail.err")"; then
   refuse owner-reports overseer "$(cat "$WORK_DIR/mail.err")"
 fi
 if ! OWNER_REPORTS="$(jq -s '[.[] | select(.kind == "notice" and .to == "owner") | .attach // empty]' \
-  <<<"$OWNER_REPORTS" 2>"$WORK_DIR/mail.err")"; then
+  <<<"$OWNER_EVENTS" 2>"$WORK_DIR/mail.err")"; then
   refuse owner-reports overseer "$(cat "$WORK_DIR/mail.err")"
+fi
+# The asks an owner answer names, by lane-mail's own class for an answer:
+# Waiting on you reads a reserved one as answered, not overdue.
+if ! OWNER_ANSWERED="$(jq -s '[.[] | select(.box == "to-lane" and .mail_class == "resolution") | .re]' \
+  <<<"$OWNER_EVENTS" 2>"$WORK_DIR/mail.err")"; then
+  refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
 fi
 OWNER_MARKER=""
 for file in "$REPORT_DIR"/*; do
@@ -865,9 +873,10 @@ render() {
   if ! list="$("$LANE_MAIL" pending --item overseer --to owner 2>"$WORK_DIR/mail.err")"; then
     refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi
-  if ! list="$(jq -r -R --argjson now "$NOW" 'fromjson? | objects
+  if ! list="$(jq -r -R --argjson now "$NOW" --argjson answered "$OWNER_ANSWERED" 'fromjson? | objects
     | "- Question for you: \(.text // "" | gsub("\n"; " "))"
-      + (if .reserved == true
+      + (if .reserved == true and (.id | IN($answered[])) then " (reserved, answered, awaiting close)"
+        elif .reserved == true
           then " (reserved, no default; \(if (.deadline | fromdateiso8601) <= $now then "overdue since" else "due" end) \(.deadline))"
         elif .recommend then " (recommended \(.recommend); \(if .deadline then "defaults to it after \(.deadline)" else "no deadline" end))" else "" end)' \
     <<<"$list" 2>"$WORK_DIR/mail.err")"; then

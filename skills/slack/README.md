@@ -116,7 +116,7 @@ The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overse
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
 | An edit or a deletion | Ignored |
 
-A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. A reserved question, a decision only you can take, has no option that stands: past its deadline the relay posts it once more in its thread, mentioning you, and it stays open until you answer. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: a plain restart never invites an added owner, who could then steer a channel they cannot see.
+A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. A reserved question, a decision only you can take, has no option that stands. If you have not answered by its deadline, the relay posts it once more in its thread, mentioning you, or in a new thread where its own is gone; a reply there answers it. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: a plain restart never invites an added owner, who could then steer a channel they cannot see.
 
 ## Credential boundary
 
