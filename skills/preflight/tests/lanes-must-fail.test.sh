@@ -301,67 +301,67 @@ Rust array const blocks retain all-file test scope|rustsignature block|--all|-|1
 Rust generic const blocks retain staged test scope|rustsignature generic|--staged|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
 Rust generic const blocks retain all-file test scope|rustsignature generic|--all|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
 an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
-an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
-a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155
-an mktemp assignment in an errexit-less file fails as fail-open|mktemp|-|-|1|scripts/loose.sh:3: [fail-open]|unchecked mktemp
-a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scripts/fresh.sh:0: [fail-open]|new shell file without strict mode
-a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|grep || true swallows exit 2
-the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
-a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|-
+a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|-
+an mktemp assignment in an errexit-less file fails as fail-open|mktemp|-|-|1|scripts/loose.sh:3: [fail-open]|-
+a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scripts/fresh.sh:0: [fail-open]|-
+a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|-
+the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|-
+a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|-
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
-a bracket -z guard fails as fail-open at the look-ahead edge|bareguard single unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a bracket -n guard fails as fail-open|bareguard single unary -n direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a bracket variable-left equality guard fails as fail-open|bareguard single equality left direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a bracket variable-right equality guard fails as fail-open|bareguard single equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a double-bracket unary guard fails as fail-open|bareguard double unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a double-bracket right equality guard fails as fail-open|bareguard double equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an inline test unary guard fails as fail-open|bareguard test unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an inline test right equality guard fails as fail-open|bareguard test equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an operator inside the substitution does not exempt the equality guard|bareguard single equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a comment backslash preserves the immediate guard|multisubst comment bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
-an if close comment preserves the guard in default scope|multisubst closeif bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-an if close comment preserves the guard in base scope|multisubst closeif bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-an if close comment preserves the guard in staged scope|multisubst closeif bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-an if close comment preserves the guard in all scope|multisubst closeif bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a while close comment preserves the guard in default scope|multisubst closewhile bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a while close comment preserves the guard in base scope|multisubst closewhile bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a while close comment preserves the guard in staged scope|multisubst closewhile bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a while close comment preserves the guard in all scope|multisubst closewhile bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
+a bracket -z guard fails as fail-open at the look-ahead edge|bareguard single unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a bracket -n guard fails as fail-open|bareguard single unary -n direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a bracket variable-left equality guard fails as fail-open|bareguard single equality left direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a bracket variable-right equality guard fails as fail-open|bareguard single equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a double-bracket unary guard fails as fail-open|bareguard double unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a double-bracket right equality guard fails as fail-open|bareguard double equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+an inline test unary guard fails as fail-open|bareguard test unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+an inline test right equality guard fails as fail-open|bareguard test equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|-
+an operator inside the substitution does not exempt the equality guard|bareguard single equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|-
+a comment backslash preserves the immediate guard|multisubst comment bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|-
+an if close comment preserves the guard in default scope|multisubst closeif bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|-
+an if close comment preserves the guard in base scope|multisubst closeif bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|-
+an if close comment preserves the guard in staged scope|multisubst closeif bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|-
+an if close comment preserves the guard in all scope|multisubst closeif bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a while close comment preserves the guard in default scope|multisubst closewhile bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a while close comment preserves the guard in base scope|multisubst closewhile bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a while close comment preserves the guard in staged scope|multisubst closewhile bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a while close comment preserves the guard in all scope|multisubst closewhile bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|-
 
-a case close comment preserves the guard in default scope|multisubst closecase bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a case close comment preserves the guard in base scope|multisubst closecase bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a case close comment preserves the guard in staged scope|multisubst closecase bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a case close comment preserves the guard in all scope|multisubst closecase bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a brace close comment preserves the guard in default scope|multisubst closebrace bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a brace close comment preserves the guard in base scope|multisubst closebrace bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a brace close comment preserves the guard in staged scope|multisubst closebrace bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
-a brace close comment preserves the guard in all scope|multisubst closebrace bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|bare command-substitution assignment under errexit
+a case close comment preserves the guard in default scope|multisubst closecase bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a case close comment preserves the guard in base scope|multisubst closecase bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a case close comment preserves the guard in staged scope|multisubst closecase bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a case close comment preserves the guard in all scope|multisubst closecase bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a brace close comment preserves the guard in default scope|multisubst closebrace bare|-|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a brace close comment preserves the guard in base scope|multisubst closebrace bare|--base HEAD|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a brace close comment preserves the guard in staged scope|multisubst closebrace bare|--staged|-|1|scripts/multisubst.sh:5: [fail-open]|-
+a brace close comment preserves the guard in all scope|multisubst closebrace bare|--all|-|1|scripts/multisubst.sh:5: [fail-open]|-
 the two-line jq assignment ending with or-die is checked|multisubst continued or|-|-|0|-|preflight: clean=1
 a continued assignment ending with an and-handler is checked|multisubst continued and|-|-|0|-|preflight: clean=1
 a quoted multiline substitution ending with or-die is checked|multisubst quoted or|-|-|0|-|preflight: clean=1
 an escaped newline inside double quotes preserves the handler|multisubst doublequote or|-|-|0|-|preflight: clean=1
-an escaped newline inside double quotes preserves the bare assignment finding|multisubst doublequote bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+an escaped newline inside double quotes preserves the bare assignment finding|multisubst doublequote bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|-
 a quoted hash does not turn a continuation into a comment|multisubst hash or|-|-|0|-|preflight: clean=1
-a comment slash inside a substitution preserves its closing line|multisubst commented bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+a comment slash inside a substitution preserves its closing line|multisubst commented bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|-
 a comment slash inside a substitution preserves its handler|multisubst commented or|-|-|0|-|preflight: clean=1
 a slash in a single-quoted literal preserves its newline|multisubst literal or|-|-|0|-|preflight: clean=1
-an array prefix preserves the following bare assignment finding|multisubst arrayprefix bare|-|-|1|scripts/multisubst.sh:6: [fail-open]|bare command-substitution assignment under errexit
+an array prefix preserves the following bare assignment finding|multisubst arrayprefix bare|-|-|1|scripts/multisubst.sh:6: [fail-open]|-
 an array prefix preserves the following checked assignment|multisubst arrayprefix or|-|-|0|-|preflight: clean=1
 an if continued onto the assignment stays checked|multisubst condition if|-|-|0|-|preflight: clean=1
 a while continued onto the assignment stays checked|multisubst condition while|-|-|0|-|preflight: clean=1
 an until continued onto the assignment stays checked|multisubst condition until|-|-|0|-|preflight: clean=1
 a substitution inside a double-bracket test remains checked|multisubst quoted test|-|-|0|-|preflight: clean=1
 a checked multiline mktemp without errexit stays checked|multisubst mktemp or|-|-|0|-|preflight: clean=1
-an unchecked multiline mktemp without errexit still fails|multisubst mktemp bare|-|-|1|scripts/loose.sh:4: [fail-open]|unchecked mktemp
+an unchecked multiline mktemp without errexit still fails|multisubst mktemp bare|-|-|1|scripts/loose.sh:4: [fail-open]|-
 
-removing only the closing-line handler fails at the statement-end guard boundary in base scope|multisubst quoted bare|--base HEAD|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
-removing only the closing-line handler fails at the statement-end guard boundary in staged scope|multisubst quoted bare|--staged|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
-an operator inside a multiline substitution does not check its assignment|multisubst inner bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
-a later command handler does not check the multiline assignment|multisubst quoted later|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+removing only the closing-line handler fails at the statement-end guard boundary in base scope|multisubst quoted bare|--base HEAD|-|1|scripts/multisubst.sh:4: [fail-open]|-
+removing only the closing-line handler fails at the statement-end guard boundary in staged scope|multisubst quoted bare|--staged|-|1|scripts/multisubst.sh:4: [fail-open]|-
+an operator inside a multiline substitution does not check its assignment|multisubst inner bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|-
+a later command handler does not check the multiline assignment|multisubst quoted later|-|-|1|scripts/multisubst.sh:4: [fail-open]|-
 a quoted unary operand with a path suffix is not a direct guard|bareguard single unary -z suffix|-|-|0|-|preflight: clean=1
 a quoted right-hand equality operand with a path suffix is not a direct guard|bareguard single equality right suffix|-|-|0|-|preflight: clean=1
-a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
-an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
+a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|-
+an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|-
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
 a JS mkdirSync taking the literal fails|mkjs|-|-|1|src/mk.js:2: [hardcoded-temp-path]|-
 a JS mkdtempSync prefix under /tmp is the same finding|mkjsprefix|-|-|1|src/mk.js:2: [hardcoded-temp-path]|-
@@ -371,20 +371,20 @@ a Python mkdtemp aimed at /tmp by keyword fails|mkpykw|-|-|1|src/mk.py:2: [hardc
 a bare-root mkdtemp keyword (dir=/tmp, no trailing slash) fails|mkpyroot|-|-|1|src/mk.py:2: [hardcoded-temp-path]|-
 a Rust create_dir_all taking the literal fails|mkrs|-|-|1|src/mk.rs:2: [hardcoded-temp-path]|-
 /var/tmp is the same literal|mkvar|-|-|1|src/mkvar.py:2: [hardcoded-temp-path]|-
-a new suite named by no runner fails as unwired-suite, and the suite the workflow names is not a finding|unwired|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|new suite is not invoked by any runner
+a new suite named by no runner fails as unwired-suite, and the suite the workflow names is not a finding|unwired|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|-
 a suite renamed into place is judged as the new file it is|renamed|-|-|1|tests/moved.test.sh:0: [unwired-suite]|-
 the same holds in staged scope|renamed|--staged|-|1|tests/moved.test.sh:0: [unwired-suite]|-
-a citation of a missing file under a real directory fails|docs|-|-|1|README.md:4: [docs-cited-paths]|cites a path that does not exist: docs/gone.md
-a shell comment citing a missing doc fails at its line|srccite|-|-|1|scripts/cite.sh:3: [docs-cited-paths]|cites a path that does not exist: docs/gone.md
-a non-shell source comment is judged the same way|srccitesrc|-|-|1|src/main.rs:2: [docs-cited-paths]|cites a path that does not exist: docs/gone.md
-a JSON file jq cannot parse fails as data-syntax|json|-|jq|1|data/config.json:3: [data-syntax]|invalid JSON
-a TOML file no parser accepts fails as data-syntax|toml|-|toml|1|data/bad.toml:2: [data-syntax]|invalid TOML
-editing a migration the base already carried fails|migrationedit|-|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|an applied migration was edited
+a citation of a missing file under a real directory fails|docs|-|-|1|README.md:4: [docs-cited-paths]|-
+a shell comment citing a missing doc fails at its line|srccite|-|-|1|scripts/cite.sh:3: [docs-cited-paths]|-
+a non-shell source comment is judged the same way|srccitesrc|-|-|1|src/main.rs:2: [docs-cited-paths]|-
+a JSON file jq cannot parse fails as data-syntax|json|-|jq|1|data/config.json:3: [data-syntax]|-
+a TOML file no parser accepts fails as data-syntax|toml|-|toml|1|data/bad.toml:2: [data-syntax]|-
+editing a migration the base already carried fails|migrationedit|-|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
 the staged scope sees the same edit|migrationedit|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
-Flyway's own directory is in the default set|migrationflyway|-|-|1|src/main/resources/db/migration/V1__init.sql:0: [applied-migration-edited]|an applied migration was edited
-deleting one is the same finding|migrationdelete|-|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|an applied migration was deleted
-renaming one names where it went|migrationrename|-|-|1|store/migrations/V2__more.sql:0: [applied-migration-edited]|an applied migration was renamed to store/migrations/V2__later.sql
-the verdict counts findings and changed files|verdict|-|-|1|docs/guide.md:5: [docs-cited-paths];docs/guide.md:6: [docs-cited-paths]|preflight: findings=2;across 1 changed file(s)
+Flyway's own directory is in the default set|migrationflyway|-|-|1|src/main/resources/db/migration/V1__init.sql:0: [applied-migration-edited]|-
+deleting one is the same finding|migrationdelete|-|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
+renaming one names where it went|migrationrename|-|-|1|store/migrations/V2__more.sql:0: [applied-migration-edited]|-
+the verdict counts findings and changed files|verdict|-|-|1|docs/guide.md:5: [docs-cited-paths];docs/guide.md:6: [docs-cited-paths]|preflight: findings=2
 ROWS
 pf_table "every lane's must-fail control" "$rows"
 

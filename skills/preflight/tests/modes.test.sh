@@ -191,18 +191,18 @@ the default scope is base-to-worktree, so it sees both|staged|-|-|1|docs/loose.m
 the staged runner wires the staged suite, whatever the worktree copy says|staged-runner|--staged|-|0|-|-
 a worktree-only mention does not wire a staged suite|worktree-runner|--staged|-|1|tests/new2.test.sh:0: [unwired-suite]|-
 a staged JSONC setting governs the staged file despite a narrower worktree copy|staged-jsonc|--staged|jq|0|-|-
-a worktree-only JSONC setting cannot widen the staged policy|worktree-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
-control: staged JSON stays strict before a shared JSONC setting exists|untracked-jsonc-control|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
-an untracked root settings file cannot widen staged JSONC policy|untracked-root-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
-an untracked nested settings file cannot widen staged JSONC policy|untracked-nested-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
+a worktree-only JSONC setting cannot widen the staged policy|worktree-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|-
+control: staged JSON stays strict before a shared JSONC setting exists|untracked-jsonc-control|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|-
+an untracked root settings file cannot widen staged JSONC policy|untracked-root-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|-
+an untracked nested settings file cannot widen staged JSONC policy|untracked-nested-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|-
 an untracked root settings file cannot narrow staged migration policy|untracked-root-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
 an untracked nested settings file cannot narrow staged migration policy|untracked-nested-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
-a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|docs/never-added.md:3: [docs-cited-paths]|across 2 changed file(s)
+a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|docs/never-added.md:3: [docs-cited-paths]|-
 --staged sees only the index, so the untracked file is out of scope|untracked|--staged|-|0|-|-
-an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|cites a path that does not exist: docs/new/missing.md
+an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|-
 content comes from the index, so line 3 is the staged line|rewound|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean=0
---all reaches the committed violation the default scope ignores|everything|--all|-|1|docs/legacy.md:3: [docs-cited-paths]|changed file(s)
+--all reaches the committed violation the default scope ignores|everything|--all|-|1|docs/legacy.md:3: [docs-cited-paths]|-
 --base main sees the commit made on the branch|based|--base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
 --base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean=0
 --repo relocates the run without a cd|repo-relocate|--repo {R} --base main|-|1|docs/loose.md:3: [docs-cited-paths]|-

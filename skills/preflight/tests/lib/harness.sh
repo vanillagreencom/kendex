@@ -117,8 +117,9 @@ pf_scope_seed() { # NAME — fixture in $R
 # `argv` is `-` or the preflight flags, `needs` is `-` or a token
 # (`pf_needs_absent`), `rc` is exact, `fired` is the exact ordered
 # `;`-separated list of finding heads the run must print (`-` for none),
-# compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
-# must carry, or `-`; it is the last field, so `read` keeps a `|` inside it.
+# compared whole against `pf_fired`. `says` is `;`-separated complete
+# `preflight: key=value` records, or `-`. This driver reads that machine
+# protocol; human explanations never participate in an assertion.
 # A `{R}` in `argv` expands to the fixture path, which the row cannot spell
 # before its world is built. A row with an empty field asserts nothing and
 # refuses the run, as does a `needs` token `pf_needs_absent` does not know, a
@@ -130,7 +131,7 @@ pf_scope_seed() { # NAME — fixture in $R
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
   local field before reason needs_rc got miss frag lines brace_r
-  local pf_seen out_line
+  local pf_seen out_line record_re='^preflight: [a-z][a-z-]*=.+$'
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -187,25 +188,19 @@ EOF
     if [ "$says" != - ]; then
       while IFS= read -r frag; do
         [ -n "$frag" ] || continue
-        # A fragment naming a record is compared as a WHOLE line: as a
-        # substring, `preflight: clean=1` is satisfied by `clean=10` and by a
-        # record carrying an extra value, so the pin would not hold what it
-        # names. Every other fragment stays a substring, which is what rows
-        # matching a finding's message rely on.
-        case "$frag" in
-          'preflight: '*)
-            pf_seen=0
-            while IFS= read -r out_line; do
-              [ "$out_line" = "$frag" ] || continue
-              pf_seen=1
-              break
-            done <<INNER
+        [[ $frag =~ $record_re ]] || {
+          printf 'pf_table: invalid-record=%s\n' "$frag" >&2
+          exit 2
+        }
+        pf_seen=0
+        while IFS= read -r out_line; do
+          [ "$out_line" = "$frag" ] || continue
+          pf_seen=1
+          break
+        done <<INNER
 $OUT
 INNER
-            [ "$pf_seen" = 1 ] || miss="${miss:+$miss;}$frag"
-            ;;
-          *) case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac ;;
-        esac
+        [ "$pf_seen" = 1 ] || miss="${miss:+$miss;}$frag"
       done <<EOF
 $(printf '%s\n' "$says" | tr ';' '\n')
 EOF

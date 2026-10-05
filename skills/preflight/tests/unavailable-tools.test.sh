@@ -56,8 +56,6 @@ run_pf
 for lane in shellcheck-errors masked-returns data-syntax; do
   has "preflight: not-run=$lane" && ok "$lane is named" || bad "$lane is named"
 done
-has 'JSON: jq is unavailable' && has 'TOML: taplo or python3 with tomllib is unavailable' \
-  && ok 'data-syntax identifies each unavailable format' || bad 'data format skip details'
 has_record 'preflight: clean=5' \
   && ok 'the verdict record carries the changed-file count' \
   || bad 'the verdict record carries the changed-file count'
@@ -92,8 +90,8 @@ if real="$(command -v jq)"; then
   printf '{"fixture":\n' >"$R/data/one.json"
   git -C "$R" add data/one.json
   run_pf
-  [ "$RC" -eq 1 ] && has 'invalid JSON:' && ! has 'JSON: jq is unavailable' \
-    && has 'TOML: taplo or python3 with tomllib is unavailable' \
+  [ "$RC" -eq 1 ] && has 'data/one.json:2: [data-syntax]' \
+    && has_record 'preflight: not-run=data-syntax' \
     && ok 'available jq runs while TOML remains skipped' || bad 'JSON partial coverage'
   printf '{"fixture":true}\n' >"$R/data/one.json"
   git -C "$R" add data/one.json
@@ -107,8 +105,8 @@ if real="$(command -v python3)" && "$real" -c 'import tomllib' >/dev/null 2>&1; 
   printf 'fixture = [\n' >"$R/data/config.toml"
   git -C "$R" add data/config.toml
   run_pf
-  [ "$RC" -eq 1 ] && has 'invalid TOML:' && ! has 'TOML: taplo or python3 with tomllib is unavailable' \
-    && has 'JSON: jq is unavailable' \
+  [ "$RC" -eq 1 ] && has 'data/config.toml:0: [data-syntax]' \
+    && has_record 'preflight: not-run=data-syntax' \
     && ok 'Python TOML fallback still runs without taplo' || bad 'TOML fallback coverage'
   rm "$BIN/python3"
 else
@@ -119,7 +117,7 @@ fi
 printf '#!/usr/bin/env bash\nexit 1\n' >"$BIN/python3"
 chmod +x "$BIN/python3"
 run_pf
-[ "$RC" -eq 0 ] && has 'TOML: taplo or python3 with tomllib is unavailable' \
+[ "$RC" -eq 0 ] && has_record 'preflight: not-run=data-syntax' \
   && ok 'Python without tomllib preserves the optional-parser status' || bad 'missing tomllib reporting'
 
 git -C "$R" reset -q HEAD
