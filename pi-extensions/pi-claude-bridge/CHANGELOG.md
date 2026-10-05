@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- The installed `DEVELOPMENT.md` names pi-extension-manager's resolver contract in plain text instead of a relative link, so a scope without pi-extension-manager holds no dead link.
+
 ### 4.0.11
 
 - After Pi compacts or navigates the history while a request is still being answered, Claude Code receives that request again as live input, with any steers queued behind it, ahead of the continuation notice. Before, the notice alone was the live prompt and the request became imported history or was gone with the summary, so a reply could ignore it ("No response requested."). Tool calls that already ran are still imported once and not run again. New user messages that arrive with the rewrite follow the request in the same prompt.
