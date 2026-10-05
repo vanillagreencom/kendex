@@ -1,8 +1,8 @@
-use super::{Coverage, coverage, detail, file_list, metadata};
+use super::{Coverage, Segment, detail, file_list, metadata, segments};
 use crate::ui::testing::{plain, rich, tagged};
 use crate::width::visible_width;
 use kendex_core::model::HarnessId;
-use kendex_core::package::support::{RecordSupport, UnsupportedTool};
+use kendex_core::package::support::{FallbackTool, RecordSupport, UnsupportedTool};
 
 #[test]
 fn inspection_show_snapshots() {
@@ -132,16 +132,22 @@ fn inspection_show_wraps_links_and_file_paths() {
     );
 }
 
-/// How the supported-tools line collapses core's unsupported list: each row
-/// is one shape that list takes and the branch it lands in.
+/// What the supported-tools line says for each shape of record: the
+/// unsupported list's collapse, an unread record's cause, and the advisory
+/// and fallback lists.
 #[test]
-fn the_unsupported_list_collapses_to_all_except_or_none() {
+fn the_supported_tools_line_follows_the_record() {
     use HarnessId::*;
     let gap = |tool, reason: Option<&str>| UnsupportedTool {
         tool,
         reason: reason.map(str::to_owned),
     };
     let every = |reason: Option<&str>| HarnessId::ALL.map(|tool| gap(tool, reason)).to_vec();
+    let read = |unsupported| RecordSupport::Read {
+        unsupported,
+        advisory: vec![],
+        fallback: vec![],
+    };
     let partial = vec![gap(Pi, Some("a reason")), gap(Gemini, None)];
     // Two reasons, each given by tools that are not neighbours: an adjacent
     // dedup would keep every one of them.
@@ -150,14 +156,49 @@ fn the_unsupported_list_collapses_to_all_except_or_none() {
         .enumerate()
         .map(|(at, tool)| gap(tool, Some(if at % 2 == 0 { "first" } else { "second" })))
         .collect();
-    let rows: [(Vec<UnsupportedTool>, Coverage); 5] = [
-        (vec![], Coverage::All),
-        (partial.clone(), Coverage::Except(&partial)),
-        (every(None), Coverage::None(vec![])),
-        (every(Some("shared")), Coverage::None(vec!["shared"])),
-        (alternating, Coverage::None(vec!["first", "second"])),
+    let advisory = vec![Pi];
+    let fallback = vec![FallbackTool {
+        tool: Codex,
+        reason: "a fallback".into(),
+    }];
+    let rows: [(RecordSupport, Vec<Segment>); 7] = [
+        (read(vec![]), vec![Segment::Coverage(Coverage::All)]),
+        (
+            read(partial.clone()),
+            vec![Segment::Coverage(Coverage::Except(&partial))],
+        ),
+        (
+            read(every(None)),
+            vec![Segment::Coverage(Coverage::None(vec![]))],
+        ),
+        (
+            read(every(Some("shared"))),
+            vec![Segment::Coverage(Coverage::None(vec!["shared"]))],
+        ),
+        (
+            read(alternating),
+            vec![Segment::Coverage(Coverage::None(vec!["first", "second"]))],
+        ),
+        (
+            RecordSupport::Unread {
+                cause: "a cause".into(),
+            },
+            vec![Segment::Unknown("a cause")],
+        ),
+        (
+            RecordSupport::Read {
+                unsupported: vec![],
+                advisory: advisory.clone(),
+                fallback: fallback.clone(),
+            },
+            vec![
+                Segment::Coverage(Coverage::All),
+                Segment::Advisory(&advisory),
+                Segment::Fallback(&fallback),
+            ],
+        ),
     ];
-    for (unsupported, expected) in rows {
-        assert_eq!(coverage(&unsupported), expected, "{unsupported:?}");
+    for (support, expected) in rows {
+        assert_eq!(segments(&support), expected, "{support:?}");
     }
 }

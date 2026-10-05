@@ -4,7 +4,7 @@ use kendex_core::env::Env;
 use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use kendex_core::model::HarnessId;
 use kendex_core::package::detail;
-use kendex_core::package::support::{RecordSupport, UnsupportedTool};
+use kendex_core::package::support::{FallbackTool, RecordSupport, UnsupportedTool};
 
 use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, payload, resolve_scopes};
@@ -108,44 +108,73 @@ fn coverage(unsupported: &[UnsupportedTool]) -> Coverage<'_> {
     Coverage::None(reasons)
 }
 
-/// The package's supported tools in one value: every tool, less the ones
-/// core names unsupported, each with its reason where the package states
-/// one, then the tools that take it only as advice, then the tools where a
-/// fallback does its job. A record core could not read says so, with why.
-fn supported_tools(support: &RecordSupport) -> String {
+/// One `; `-separated part of the supported-tools line, in line order.
+#[derive(Debug, PartialEq)]
+enum Segment<'a> {
+    /// Core could not read the record; the cause says why. The whole line.
+    Unknown(&'a str),
+    /// Which tools run the package, less the unsupported ones.
+    Coverage(Coverage<'a>),
+    /// Tools that take the package only as advice.
+    Advisory(&'a [HarnessId]),
+    /// Tools where a fallback does the package's job.
+    Fallback(&'a [FallbackTool]),
+}
+
+/// What the supported-tools line says about a record: its coverage, then
+/// the advisory tools and the fallback tools where there are any. A record
+/// core could not read says only that, with why.
+fn segments(support: &RecordSupport) -> Vec<Segment<'_>> {
     let (unsupported, advisory, fallback) = match support {
         RecordSupport::Read {
             unsupported,
             advisory,
             fallback,
         } => (unsupported, advisory, fallback),
-        RecordSupport::Unread { cause } => return format!("unknown ({cause})"),
+        RecordSupport::Unread { cause } => return vec![Segment::Unknown(cause)],
     };
+    let mut line = vec![Segment::Coverage(coverage(unsupported))];
+    if !advisory.is_empty() {
+        line.push(Segment::Advisory(advisory));
+    }
+    if !fallback.is_empty() {
+        line.push(Segment::Fallback(fallback));
+    }
+    line
+}
+
+/// The package's supported tools in one value, each segment worded: an
+/// unsupported tool with its reason where the package states one.
+fn supported_tools(support: &RecordSupport) -> String {
     let named = |gap: &UnsupportedTool| match &gap.reason {
         Some(reason) => format!("{} ({reason})", gap.tool.display_name()),
         None => gap.tool.display_name().to_owned(),
     };
-    let mut value = match coverage(unsupported) {
-        Coverage::All => "all".to_owned(),
-        Coverage::Except(gaps) => {
-            let gaps: Vec<String> = gaps.iter().map(named).collect();
-            format!("all except {}", gaps.join(", "))
-        }
-        Coverage::None(reasons) if reasons.is_empty() => "none".to_owned(),
-        Coverage::None(reasons) => format!("none ({})", reasons.join("; ")),
-    };
-    if !advisory.is_empty() {
-        let tools: Vec<&str> = advisory.iter().map(|tool| tool.display_name()).collect();
-        value.push_str(&format!("; advisory on {}", tools.join(", ")));
-    }
-    if !fallback.is_empty() {
-        let tools: Vec<String> = fallback
-            .iter()
-            .map(|note| format!("{} ({})", note.tool.display_name(), note.reason))
-            .collect();
-        value.push_str(&format!("; fallback on {}", tools.join(", ")));
-    }
-    value
+    let worded: Vec<String> = segments(support)
+        .into_iter()
+        .map(|segment| match segment {
+            Segment::Unknown(cause) => format!("unknown ({cause})"),
+            Segment::Coverage(Coverage::All) => "all".to_owned(),
+            Segment::Coverage(Coverage::Except(gaps)) => {
+                let gaps: Vec<String> = gaps.iter().map(named).collect();
+                format!("all except {}", gaps.join(", "))
+            }
+            Segment::Coverage(Coverage::None(reasons)) if reasons.is_empty() => "none".to_owned(),
+            Segment::Coverage(Coverage::None(reasons)) => format!("none ({})", reasons.join("; ")),
+            Segment::Advisory(tools) => {
+                let tools: Vec<&str> = tools.iter().map(|tool| tool.display_name()).collect();
+                format!("advisory on {}", tools.join(", "))
+            }
+            Segment::Fallback(notes) => {
+                let tools: Vec<String> = notes
+                    .iter()
+                    .map(|note| format!("{} ({})", note.tool.display_name(), note.reason))
+                    .collect();
+                format!("fallback on {}", tools.join(", "))
+            }
+        })
+        .collect();
+    worded.join("; ")
 }
 
 fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
