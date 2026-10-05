@@ -397,8 +397,12 @@ child_row() { # SCRIPT ITEM — the launch, its result in CHILD
   run_ot SCRIPT="$1" OT_HARNESS_LATE=99 OT_COMPOSER_ON_ENTER=2 -- "${CLOUD[@]}" "$2"
   kill "$child" 2>/dev/null || true
   wait "$child" 2>/dev/null || true
-  CHILD="rc=$RC account=$(grep -c "^open-terminal: lane-unobserved item=$2 reason=pane-pid\$" <<<"$ERR" || true) session=$(record "$2" | cut -d' ' -f4)"
+  CHILD="rc=$RC account=$(grep -c "^open-terminal: lane-unobserved item=$2 reason=$CHILD_REASON\$" <<<"$ERR" || true) session=$(record "$2" | cut -d' ' -f4)"
 }
+# The account check asks for a readable per-process environment before it
+# reads the stub pane's pid, so a host without one names that instead.
+CHILD_REASON=pane-pid
+[[ "$PROC_ENV" == true ]] || CHILD_REASON=no-process-environment
 CHILD_WANT="rc=0 account=1 session=session_01CLOUD"
 child_row "$OT" CC-32
 assert_eq "$CHILD" "$CHILD_WANT" \

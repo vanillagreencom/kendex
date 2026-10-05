@@ -23,14 +23,16 @@
 #      against a selection and an event, with GitHub's implicit success() where a
 #      condition carries no status function. A merge group runs the class
 #      job set its pull request ran, less the two jobs held to the
-#      pull-request event. macOS skill suites run on main pushes alone.
+#      pull-request event. macOS skill suites run on main pushes and
+#      dispatches alone, and a dispatch runs every job and step a push runs.
 #      A dead classifier runs every gated job and the whole Linux shard roster. A pull
 #      request's run is cancelled by its next push; no other run is. The `CI` job needs every job that can run on a gated event but the aggregators and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
 #      function, one that ignores the class on a merge group, a matrix with
 #      its arms swapped, one ignoring the event, a shard key reading no
-#      selection, a cancel held to no event, a job dropped from CI's needs, CI without always(),
+#      selection, a cancel held to no event, a job and a step that a
+#      dispatch runs and a push does not, a job dropped from CI's needs, CI without always(),
 #      a lane dropped from one aggregate alone and an event-held job held to
 #      another condition. The doc-limits and todo-ban steps run on a pull
 #      request alone and the bot-instructions check beside them on both
@@ -385,14 +387,61 @@ pull_request|failure|false
 merge_group|success|false
 merge_group|failure|false
 push|skipped|true
+workflow_dispatch|skipped|true
 ROWS
 check "the main-push macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
-check "main pushes run the full shard roster through the alias" "$ROSTER" \
-  "$(gh_eval value "$(context_json push skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+for event in push workflow_dispatch; do
+  check "$event runs the full shard roster through the alias" "$ROSTER" \
+    "$(gh_eval value "$(context_json "$event" skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+done
 plant "$WORKFLOW" "github.event_name == 'push'" "github.event_name != 'push'" "$TMP/wf-macos-pr.yml" skill-suites-macos
 check "must-fail: macOS skill suites moved onto a PR run there" true \
   "$(gh_eval value "$(context_json pull_request success "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-pr.yml")")"
+
+# A dispatch is how a branch runs what a push to main runs before it merges,
+# the macOS suites above among it. Every job condition and every step
+# condition evaluates alike on the two events, the classifier skipped on
+# both, so no job held to pull_request and merge_group runs on a dispatch.
+step_ifs() { # WORKFLOW — `JOB<TAB>EXPR` for every step's `if:`, `${{ }}` stripped
+  awk '
+    /^jobs:/ { in_jobs = 1; next }
+    !in_jobs { next }
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
+    /^        if: / {
+      expr = $0
+      sub(/^        if: */, "", expr)
+      if (substr(expr, 1, 3) == "${{") { expr = substr(expr, 4); sub(/}}[ ]*$/, "", expr) }
+      print job "\t" expr
+    }
+  ' "$1"
+}
+# A step condition also reads `matrix`, `steps` and `runner`, given empty so
+# every condition evaluates rather than both events meeting one refusal; a
+# refusal on either event is a gap of its own.
+dispatch_ctx() { # EVENT
+  context_json "$1" skipped "$ALL_OFF" "$TMP/published-map" | jq -c '. + {matrix: {}, steps: {}, runner: {}}'
+}
+dispatch_gap() { # WORKFLOW — `JOB<TAB>EXPR` for each condition a push and a dispatch disagree on
+  local job expr push dispatch rows=0
+  while IFS=$'\t' read -r job expr; do
+    rows=$((rows + 1))
+    push="$(gh_eval value "$(dispatch_ctx push)" "$expr" 2>/dev/null)"
+    dispatch="$(gh_eval value "$(dispatch_ctx workflow_dispatch)" "$expr" 2>/dev/null)"
+    case "$push$dispatch" in *gh-eval-refused*) printf '%s\trefused: %s\n' "$job" "$expr"; continue ;; esac
+    [ "$push" = "$dispatch" ] || printf '%s\t%s\n' "$job" "$expr"
+  done < <(job_ifs "$1"; step_ifs "$1")
+  [ "$rows" -gt 0 ] || printf 'no-condition-read\n'
+}
+check "a dispatch runs every job and step a push runs, and no other" "" "$(dispatch_gap "$WORKFLOW")"
+plant "$WORKFLOW" " && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
+  " && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" "$TMP/wf-dispatch-ui.yml" ui-tests
+check "must-fail: a job reading only != 'push' runs on a dispatch" ui-tests \
+  "$(dispatch_gap "$TMP/wf-dispatch-ui.yml" | cut -f1)"
+plant "$WORKFLOW" "        if: github.event_name != 'push' && github.event_name != 'workflow_dispatch'" \
+  "        if: github.event_name != 'push'" "$TMP/wf-dispatch-step.yml" cargo-tests-windows
+check "must-fail: a step reading only != 'push' runs on a dispatch" cargo-tests-windows \
+  "$(dispatch_gap "$TMP/wf-dispatch-step.yml" | cut -f1)"
 
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
@@ -550,10 +599,11 @@ pull_request|failure|yes
 merge_group|failure|yes
 merge_group|skipped|yes
 push|success|no
+workflow_dispatch|success|no
 ROWS
 [ "$ci_rows" -ge 5 ] || { echo "the CI table read $ci_rows rows" >&2; exit 1; }
 # The classifier every lane and CI read runs on both gated events.
-check "the workflow runs on both gated events" "merge_group pull_request push" \
+check "the workflow runs on both gated events" "merge_group pull_request push workflow_dispatch" \
   "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
 for event in pull_request merge_group; do
@@ -621,8 +671,8 @@ esac
 
 # A condition without its status function keeps GitHub's implicit success()
 # and stands its lane down on exactly the run nothing classified.
-plant "$WORKFLOW" "!cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
-  "github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
+plant "$WORKFLOW" "!cancelled() && github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
+  "github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
   "$TMP/wf-no-status.yml"
 case " $(running "$TMP/wf-no-status.yml" "$ALL_OFF" failure) " in
   *" ui-tests "*) bad "must-fail: a condition with no status function still runs under a dead classifier" ;;

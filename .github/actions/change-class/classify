@@ -219,11 +219,14 @@ if [ -n "${LANES_FROM:-}" ]; then
       "lanes-from names the tree under judgement, whose author could stand a lane down"
   declaration="$lanes_root/.github/ci-lanes.conf"
   # The declaration's reader ships beside the classifier, so change-class's
-  # queue-only line and these verdicts read one grammar.
+  # queue-only line and these verdicts read one grammar. The readability test
+  # comes first because Bash 3.2 under errexit exits 1 on a `.` that finds no
+  # file, before the `||` beside it runs.
   # shellcheck source=../../../skills/harness-ci/scripts/lib/ci-lanes.sh
-  . "$SCRIPTS/lib/ci-lanes.sh" ||
+  if [ ! -r "$SCRIPTS/lib/ci-lanes.sh" ] || ! . "$SCRIPTS/lib/ci-lanes.sh"; then
     die "lanes-reader-unreadable root=$scripts_root" \
       "no skills/harness-ci/scripts/lib/ci-lanes.sh under the classifier root"
+  fi
 fi
 
 work="$(mktemp -d)" || die mktemp-failed "could not create a working directory"

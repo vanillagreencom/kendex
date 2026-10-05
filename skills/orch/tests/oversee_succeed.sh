@@ -1824,7 +1824,10 @@ copilot_node_caller() { # TREE [ENV] — a node or copilot pane with no fleet re
     MainThread | copilot | other) run="'$p/$1' 100000 & exec '$BIN/node' 100000" ;;
     # The pane shell stays and runs the loader as its foreground job, so the
     # binary sits two levels down, the layout a shell's `copilot` command makes.
-    loader) run="exec bash -mc \"sh -c \\\"'$p/MainThread' 100000 & exec '$BIN/node' 100000\\\"; :\"" ;;
+    # Job control is turned on by `set -m` inside the script: Bash 3.2 ignores
+    # `-m` on a `-c` command line, which leaves the shell as the pane's
+    # foreground process and the pane reading `bash`.
+    loader) run="exec bash -c \"set -m; sh -c \\\"'$p/MainThread' 100000 & exec '$BIN/node' 100000\\\"; :\"" ;;
     direct) run="exec '$p/copilot' 100000" ;;
     deep) run="sh -c \"sh -c \\\"'$p/copilot' 100000; :\\\"; :\" & exec '$BIN/node' 100000" ;;
   esac
