@@ -1,1 +1,0 @@
-- Commit and restore keep your own keys in `.gemini/settings.json`. Dropping Gemini removes its `context.fileName` entry where a project has no `.git` of its own and after a broken file is fixed.

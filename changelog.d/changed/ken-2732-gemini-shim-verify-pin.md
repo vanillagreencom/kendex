@@ -1,1 +1,0 @@
-- Gemini projects' install record gains a `shims` entry. A `kendex verify` pinned to an earlier build fails the record row until the pin moves to this release.

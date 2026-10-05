@@ -8,6 +8,20 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-05
+
+### Changed
+
+- Gemini projects' install record gains a `shims` entry. A `kendex verify` pinned to an earlier build fails the record row until the pin moves to this release.
+- commit-guards `CHECKS.md` § Release versions states the release-version rule: from 1.0, fixes and internal changes are a patch; a minor needs a user-facing capability or consumer-visible setting.
+- Issue writing cuts, and review blocks, a test that pins wording or a growing count, a compatibility clause the repository's policy does not require, or a new gate with no named failure.
+
+### Fixed
+
+- Commit and restore keep your own keys in `.gemini/settings.json`. Dropping Gemini removes its `context.fileName` entry where a project has no `.git` of its own and after a broken file is fixed.
+- `kendex verify` fails the record row when `.kendex-lock.json` no longer carries the Gemini shim kendex keeps, or still carries one kendex no longer keeps; the next apply writes the record again.
+- The orch merge-pr rebundle no longer aborts the merge on a label the taxonomy does not declare: the new parent keeps only declared labels and names each dropped one.
+
 ## [1.10.0] - 2026-10-05
 
 ### Added
@@ -1521,7 +1535,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.1
 [1.10.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.0
 [1.9.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.9.0
 [1.8.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.8.0

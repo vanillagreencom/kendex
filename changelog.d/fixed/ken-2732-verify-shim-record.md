@@ -1,1 +1,0 @@
-- `kendex verify` fails the record row when `.kendex-lock.json` no longer carries the Gemini shim kendex keeps, or still carries one kendex no longer keeps; the next apply writes the record again.
