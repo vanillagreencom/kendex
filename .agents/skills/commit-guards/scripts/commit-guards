@@ -7,6 +7,8 @@
 #   commit-guards [all] --base REF the same batch over the changes since REF
 #   commit-guards [all] --against REF   the same batch over what those changes
 #                                  would do to REF's own tree
+#   ... --history REF              with a range, the commit-history lanes judge
+#                                  from REF instead
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
 # --skip-unscoped withholds the checks the run's scope leaves nothing for,
@@ -63,6 +65,12 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # instead — a range there would answer a smaller
 # question under the setting's name.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
+# The range lanes that judge the commits a range adds rather than the tree it
+# lands. A caller that knows where those commits start hands it as --history,
+# and these lanes take --against that ref in place of the range: the push
+# hook's range from a pre-restack remote head holds every base commit the
+# restack carried in, which the branch never authored.
+HISTORY_SCOPED_CHECKS="changelog-entries"
 # Withheld by a --skip-unscoped run, the push hook's: ../CHECKS.md § secrets.
 PUSH_WITHHELD_CHECKS="secrets"
 
@@ -70,7 +78,7 @@ usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<EOF
 usage: commit-guards [all] [--staged | --base REF | --against REF]
-                     [--skip-unscoped] | CHECK [ARGS...]
+                     [--history REF] [--skip-unscoped] | CHECK [ARGS...]
 
 Checks: $KNOWN_CHECKS
 
@@ -79,6 +87,9 @@ COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
 $FULL_SCOPED_CHECKS get --all, the rest read the index by design.
 --base REF hands $RANGE_SCOPED_CHECKS --base REF instead (CI on a PR), and
 --against REF hands them --against REF (what the change does to REF's tree).
+--history REF, beside --base or --against, hands $HISTORY_SCOPED_CHECKS
+--against REF instead: the commit REF names is where the commits the range
+adds start.
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 --skip-unscoped is for a caller whose scope stages nothing: it withholds every
 check that would then open no file, and $PUSH_WITHHELD_CHECKS, naming each one.
@@ -97,13 +108,14 @@ EOF
 SCOPE_MODE="all"
 BASE_REF=""
 SKIP_UNSCOPED=0
+HISTORY_REF=""
 if [ $# -ge 1 ]; then
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    all | --staged | --base | --base=* | --against | --against=* | --skip-unscoped) ;;
+    all | --staged | --base | --base=* | --against | --against=* | --history | --skip-unscoped) ;;
     *)
       CHECK="$1"
       shift
@@ -124,6 +136,12 @@ while [ $# -gt 0 ]; do
     --skip-unscoped)
       SKIP_UNSCOPED=1
       shift
+      continue
+      ;;
+    --history)
+      [ $# -ge 2 ] || gg_fail argument-missing "--history" "--history requires a ref"
+      HISTORY_REF="$2"
+      shift 2
       continue
       ;;
     --staged) SCOPE_MODE="staged" ;;
@@ -147,7 +165,7 @@ while [ $# -gt 0 ]; do
       SCOPE_MODE="against"
       BASE_REF="${1#--against=}"
       ;;
-    *) gg_fail argument-unknown "$1" "'all' takes only --staged, --base REF, --against REF or --skip-unscoped; invoke a single check to pass flags" ;;
+    *) gg_fail argument-unknown "$1" "'all' takes only --staged, --base REF, --against REF, --history REF or --skip-unscoped; invoke a single check to pass flags" ;;
   esac
   SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
   shift
@@ -155,6 +173,8 @@ done
 [ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged, --base and --against name different scopes; pass one"
 [ "$SKIP_UNSCOPED" -eq 0 ] || [ "$SCOPE_MODE" != "staged" ] \
   || gg_fail scope-contradiction "--staged,--skip-unscoped" "--staged IS the scope those checks read, so nothing is unscoped under it"
+[ -z "$HISTORY_REF" ] || [ "$SCOPE_MODE" = base ] || [ "$SCOPE_MODE" = against ] \
+  || gg_fail history-without-range "$SCOPE_MODE" "--history narrows a range for the commit-history lanes; pass it with --base or --against"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
@@ -259,6 +279,9 @@ scope_for() { # CHECK
     base) SCOPE=(--base "$BASE_REF") ;;
     against) SCOPE=(--against "$BASE_REF") ;;
   esac
+  if [ -n "$HISTORY_REF" ]; then
+    case " $HISTORY_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--against "$HISTORY_REF") ;; esac
+  fi
 }
 
 withheld() { # CHECK — 0 for a push-withheld lane, or one handed no scope that reads the staged diff

@@ -1,0 +1,1 @@
+- commit-guards: a force push after a restack is no longer refused by the changelog check for commits the base branch already holds.

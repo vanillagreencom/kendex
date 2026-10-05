@@ -50,7 +50,7 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary|no-match)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
+KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|todo-ban: index-count=|md-format: (staged-count|summary|no-match)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
 # No fixture here carries a doc-limits sibling, so that lane states its skip on
 # every single run and would repeat one long line in every row below. It is
 # asserted once, directly, after the table; what the lane finds at push is
@@ -428,6 +428,98 @@ diverged THREEDOTTED threedotted "$THREEDOT"
 assert_eq "must-fail: judged from the shared ancestor, that growth reads as a shrink and pushes" \
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
+
+# ------------------------------------------------------- the restack
+#
+# A branch already on the remote, restacked onto a base that gained a commit
+# the changelog rule refuses: a major bump with no Breaking entry, landed with
+# no hook. Two dots from the remote head would hold that base commit, which
+# the branch never authored; changelog-entries judges only what the branch
+# adds over the base. byte-ceiling keeps the remote head.
+restacked() { # VAR NAME BRANCH-BUMPS(0|1) [SKILL-SOURCE] — VAR gets a repo whose topic was restacked
+  local __v="$1" r=""
+  new_repo r "$2" "${4:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling changelog-entries"\nCOMMIT_GUARDS_BYTE_CEILING_KB = "1"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json lib.json"\n' \
+    >"$r/kendex.settings.toml"
+  printf '{"version":"1.0.0"}\n' >"$r/app.json"
+  printf '{"version":"1.0.0"}\n' >"$r/lib.json"
+  q git -C "$r" add kendex.settings.toml app.json lib.json
+  q git -C "$r" commit -q -m "feat: seed"
+  q git -C "$r" push -q origin main
+  # What a clone records and the history boundary reads: the remote's default.
+  q git -C "$r" remote set-head origin main
+  q git -C "$r" checkout -q -b topic
+  mkdir -p "$r/changelog.d/fixed"
+  printf -- '- A fix.\n' >"$r/changelog.d/fixed/topic.md"
+  q git -C "$r" add changelog.d/fixed/topic.md
+  q git -C "$r" commit -q -m "fix: the branch's own change"
+  if [ "$3" -eq 1 ]; then
+    printf '{"version":"2.0.0"}\n' >"$r/lib.json"
+    q git -C "$r" add lib.json
+    q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the branch's own major"
+  fi
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  q git -C "$r" checkout -q main
+  printf '{"version":"2.0.0"}\n' >"$r/app.json"
+  q git -C "$r" add app.json
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the base's major"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q topic
+  q git -C "$r" rebase -q main
+  eval "$__v=\$r"
+}
+
+# What byte-ceiling's verdict names as its range, unmasked, for the tree
+# control: the remote head the force push replaces, or the oid it names.
+tree_ref() { # REPO -> "remote-head" or the oid byte-ceiling judged against
+  local rc=0 out="" head=""
+  head="$(git -C "$1" rev-parse origin/topic)"
+  out="$(git -C "$1" push --dry-run --force-with-lease origin topic 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C sed -n 's/^byte-ceiling: result=.*:against:\([0-9a-f]*\)$/\1/p')"
+  if [ "$out" = "$head" ]; then echo remote-head; else echo "${out:-none}"; fi
+}
+
+RESTACK_PASS="rc=0 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0"
+RESTACKED=""
+restacked RESTACKED restacked 0
+assert_eq "the tree guard still judges against the remote head" "remote-head" "$(tree_ref "$RESTACKED")"
+assert_eq "a restacked branch is not refused for a base commit that breaks the changelog rule" \
+  "$RESTACK_PASS" "$(push_ref "$RESTACKED" topic --force-with-lease)"
+
+OWN_MAJOR=""
+restacked OWN_MAJOR own-major 1
+assert_eq "a branch commit that breaks the changelog rule is still refused, and the base's is not named" \
+  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
+  "$(push_ref "$OWN_MAJOR" topic --force-with-lease)"
+
+# The must-fail controls. A copy with no history boundary judges the
+# changelog rule from the remote head, and refuses the restack for the base's
+# major. A copy that hands every lane the boundary moves byte-ceiling off the
+# remote head.
+RANGES="$TMP/.ranges/commit-guards"
+mkdir -p "$(dirname "$RANGES")"
+cp -R "$SKILL_TEMPLATE" "$RANGES"
+RANGES_LANE="$RANGES/scripts/pre-push"
+RANGES_KEPT="$TMP/pre-push.ranges.kept"
+cp -- "$RANGES_LANE" "$RANGES_KEPT"
+sed -i.bak 's#^  default="$(git symbolic-ref --quiet .*$#  return 1#' "$RANGES_LANE"
+rm -f -- "$RANGES_LANE.bak"
+assert_eq "the boundary edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
+UNBOUNDED=""
+restacked UNBOUNDED unbounded 0 "$RANGES"
+assert_eq "must-fail: with no history boundary, the restack is refused for the base's major" \
+  "rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
+  "$(push_ref "$UNBOUNDED" topic --force-with-lease)"
+
+cp -- "$RANGES_KEPT" "$RANGES_LANE"
+sed -i.bak 's#--against "$remote_oid" --history "$history"#--against "$history"#' "$RANGES_LANE"
+rm -f -- "$RANGES_LANE.bak"
+assert_eq "the whole-batch edit took" "rewritten" \
+  "$(if cmp -s "$RANGES_KEPT" "$RANGES_LANE"; then echo unchanged; else echo rewritten; fi)"
+WHOLE_BATCH=""
+restacked WHOLE_BATCH whole-batch 0 "$RANGES"
+assert_eq "must-fail: with the boundary handed to every lane, byte-ceiling leaves the remote head" \
+  "$(git -C "$WHOLE_BATCH" rev-parse main)" "$(tree_ref "$WHOLE_BATCH")"
 
 # ------------------------------------------------ the markdown lanes at push
 #

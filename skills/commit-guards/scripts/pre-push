@@ -64,7 +64,10 @@ asked what landing HEAD there would DO to that tree: `--against`, two dots,
 against the oid git read from the destination's own advertisement. Three dots
 would answer what the branch adds over the ancestor the two share, which on a
 diverged or force-pushed branch excuses a file that in fact grows at the
-destination.
+destination. The lanes that judge the commits a push adds rather than the
+tree, changelog-entries, start instead at the newer of HEAD's merge bases
+with that oid and with the remote's default branch (refs/remotes/REMOTE/HEAD),
+so a branch restacked onto new base commits is not judged for them.
 
 Otherwise the scope is a best-effort LOCAL one — `--base`, what this branch
 adds over what this repository's refs for the remote last recorded — and not
@@ -264,6 +267,30 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   done <"$GG_TMP/boundary"
   eval "$__v=''"
   return 1
+}
+
+# Where the commits this push adds start, for the lanes that judge commits
+# rather than the tree they land. The two-dot range from the remote head is
+# right for a tree, and wrong for history after a restack: it holds every
+# commit the base branch gained since the branch last left it, which the
+# pusher did not author and cannot rewrite.
+#
+# The newer of two merge bases with HEAD: the remote head's, past which the
+# branch's commits are new, and the default branch's, past which they are not
+# the base's. Where neither descends from the other, as after a merge from the
+# base, the default branch's is taken, so the branch's own commits are judged
+# again rather than the base's. The default branch is git's record of the
+# remote's HEAD, held only where those refs describe this push. With no
+# answer the caller keeps the remote head for these lanes too: wider, never
+# narrower.
+history_boundary() { # VAR REMOTE-OID — VAR gets the boundary; 1 when there is none
+  local __v="$1" default="" pushed="" base=""
+  tracking_describes_push || return 1
+  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
+  pushed="$(git merge-base "$2" HEAD 2>/dev/null)" || return 1
+  base="$(git merge-base "$default" HEAD 2>/dev/null)" || return 1
+  git merge-base --is-ancestor "$base" "$pushed" 2>/dev/null || pushed="$base"
+  eval "$__v=\$pushed"
 }
 
 # Whether the index holds exactly the content the pushed commit does.
@@ -476,7 +503,14 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   # is what the destination gets.
   if ! zero_oid "$remote_oid" \
     && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
-    judge "against:$remote_oid" "$ref" --against "$remote_oid"
+    # The commit-history lanes take their own start, where it is not the
+    # remote head itself.
+    history=""
+    if history_boundary history "$remote_oid" && [ "$history" != "$remote_oid" ]; then
+      judge "against:$remote_oid:history:$history" "$ref" --against "$remote_oid" --history "$history"
+    else
+      judge "against:$remote_oid" "$ref" --against "$remote_oid"
+    fi
     continue
   fi
   base=""
