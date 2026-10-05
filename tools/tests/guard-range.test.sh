@@ -377,14 +377,14 @@ echo "=== a range runs the suites a skill's changed files map to ==="
 # lib/alpha.sh and then lib/wrap.sh, and by runner and drives through
 # scripts/runner, which sources it: runner is named for that script and
 # drives names it; cited names pid.sh only on a comment line. scripts/caller
-# runs scripts/tool, and the suite caller is named for it. pyuse names
+# runs scripts/tool, and the suite caller is named for it; scripts/front
+# sources scripts/base, and the suite front is named for it. pyuse names
 # lib/mod.py, a module an import reaches without spelling its path. helped
 # reaches scripts/driven only through tests/lib/helper.sh, which names it,
-# and the suite wrap names driven and shares lib/wrap.sh's name; nothing
+# probed through tests/lib/probe.py, a test module that runs it, and the
+# suite wrap names driven and shares lib/wrap.sh's name; nothing
 # names tests/lib/lonely.sh, and longer names only a script whose name
-# begins with orphan's. battery names the runner and skilldoc names
-# SKILL.md, so the arms that turn those two away are what keep each from
-# mapping to its namer alone. references/table.conf is read by tool through
+# begins with orphan's. references/table.conf is read by tool through
 # its path, cited in toolbox's prose, read whole by docscan's glob and by
 # lib/refs.sh, which refsuse sources, and met by walker's find over the skill
 # root and catalogscan's over the skills directory; driven reads another
@@ -405,15 +405,18 @@ printf 'for f in "${BASH_SOURCE[0]%%/*}/../../references"/*; do :; done\n' >"$M/
 printf '#!/usr/bin/env bash\necho orphan\n' >"$M/scripts/orphan"
 printf '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib/pid.sh"\n' >"$M/scripts/runner"
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/tool"\n' >"$M/scripts/caller"
+printf 'BASE=1\n' >"$M/scripts/base"
+printf '#!/usr/bin/env bash\nsource "$(dirname "$0")/base"\n' >"$M/scripts/front"
 printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../references/unrelated.conf"\n' >"$M/scripts/driven"
 printf 'fixture\n' >"$M/tests/fixtures/x.sh"
 printf 'drive() { "$SKILL/../../scripts/driven"; }\n' >"$M/tests/lib/helper.sh"
 printf 'lonely=1\n' >"$M/tests/lib/lonely.sh"
+printf 'import subprocess\nsubprocess.run([HERE + "/../../scripts/driven"])\n' >"$M/tests/lib/probe.py"
 printf -- '---\nname: mapped\n---\n' >"$M/SKILL.md"
 suite_naming() { # NAME [TEXT] — a passing suite whose code holds TEXT
   printf '#!/usr/bin/env bash\n: "%s"\necho "pass: 1   fail: 0"\n' "${2:-}" >"$M/tests/$1.sh"
 }
-for s in tool tool_extra other runner caller; do suite_naming "$s"; done
+for s in tool tool_extra other runner caller front; do suite_naming "$s"; done
 suite_running() { # NAME LINE — a passing suite that runs LINE first
   printf '#!/usr/bin/env bash\n%s\necho "pass: 1   fail: 0"\n' "$2" >"$M/tests/$1.sh"
 }
@@ -428,8 +431,7 @@ suite_naming deep 'names ../scripts/lib/alpha.sh'
 suite_naming drives 'runs ../scripts/runner'
 suite_naming pyuse 'reads ../scripts/lib/mod.py'
 suite_naming helped 'sources lib/helper.sh'
-suite_naming battery 'runs ../tests/run-all.sh'
-suite_naming skilldoc 'reads ../SKILL.md'
+suite_naming probed 'runs lib/probe.py'
 suite_naming wrap 'runs ../scripts/driven'
 suite_naming longer 'runs ../scripts/orphan-twin'
 printf '#!/usr/bin/env bash\n# names ../scripts/lib/pid.sh\necho "pass: 1   fail: 0"\n' >"$M/tests/cited.sh"
@@ -464,7 +466,12 @@ hook_suite beta ': ../beta.sh'
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: two skills and hooks with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
-MAPPED_ALL="battery caller catalogscan cited deep docscan drives helped longer other pid_direct pyuse refsuse runner skilldoc tool tool_extra toolbox walker wrap wrapped"
+MAPPED_ALL="caller catalogscan cited deep docscan drives front helped longer other pid_direct probed pyuse refsuse runner tool tool_extra toolbox walker wrap wrapped"
+# A range across two trees: the hooks suites alpha's change maps to beside
+# the mapped skill's for runner, one sorted list as started() prints it.
+TWO_TREES="$(printf '%s\n' alpha-copilot.test.sh alpha.test.sh via-world.test.sh drives runner | sort | tr '\n' ' ' | sed 's/ $//')"
+# The same range with the mapped skill read from the hooks scan: its whole set.
+TWO_TREES_ONE_SCAN="$(printf '%s\n' alpha-copilot.test.sh alpha.test.sh via-world.test.sh $MAPPED_ALL | sort | tr '\n' ' ' | sed 's/ $//')"
 PLAIN_ALL="alpha.test.sh beta.test.sh gamma.test.mjs"
 HOOKS_ALL="alpha-copilot.test.sh alpha.test.sh beta.test.sh demo.test.sh via-world.test.sh"
 note_for() { printf 'guard-note: suites=all reason=%s path=%s' "$1" "$2"; }
@@ -490,14 +497,16 @@ change() { # HOW PATH... — append to each, or delete each
     esac
   done
 }
-# One row per arm of mapped_suites and per entry of skill_files.
+# One row per arm of mapped_suites and path_role and per entry of skill_files.
 # label|how|paths, space-separated|suites that start, sorted|the note, or none
 MAP_ROWS=(
   "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/21 skills/mapped)"
   "a changed script runs each suite named for it, not one its name only begins nor one named for a script running it|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/21 skills/mapped)"
   "a changed script runs the suite that reads it beside the one named for it|append|skills/mapped/scripts/runner|drives runner|$(mapped_note 2/21 skills/mapped)"
+  "a changed script another script sources runs the suite named for its sourcer|append|skills/mapped/scripts/base|front|$(mapped_note 1/21 skills/mapped)"
+  "a range across two trees runs each tree's narrowed set and notes both|append|hooks/alpha.sh skills/mapped/scripts/runner|$TWO_TREES|$(mapped_note 3/5 hooks);;$(mapped_note 2/21 skills/mapped)"
   "a changed lib runs every suite reaching it through libs, scripts and names, and none citing it in a comment|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/21 skills/mapped)"
-  "a changed script reaches a suite through a tests/lib helper naming it, and a suite sharing a lib's name carries none of the lib's readers|append|skills/mapped/scripts/driven|helped wrap|$(mapped_note 2/21 skills/mapped)"
+  "a changed script reaches a suite through a tests/lib helper or test module naming it, and a suite sharing a lib's name carries none of the lib's readers|append|skills/mapped/scripts/driven|helped probed wrap|$(mapped_note 3/21 skills/mapped)"
   "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/21 skills/mapped)"
   "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/20 skills/mapped)"
   "a deleted tests/lib helper nothing names runs the whole set and says so|delete|skills/mapped/tests/lib/lonely.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/lib/lonely.sh)"
@@ -520,7 +529,7 @@ MAP_ROWS=(
   "a changed hook no suite reaches runs the whole hooks set and says so|append|hooks/lone.sh|$HOOKS_ALL|$(note_for unmapped hooks/lone.sh)"
   "a hooks file that is no hook runs the whole hooks set and says so|append|hooks/README.md|$HOOKS_ALL|$(note_for unmapped hooks/README.md)"
 )
-map_row() { # HOW PATHS NOTE [GUARD] — sets VERDICT
+map_row() { # HOW PATHS NOTE[;;NOTE...] [GUARD] — sets VERDICT
   local noted
   # shellcheck disable=SC2086 # the row's paths, split on purpose
   change "$1" $2
@@ -528,7 +537,12 @@ map_row() { # HOW PATHS NOTE [GUARD] — sets VERDICT
   if [ "$3" = none ]; then
     noted=$([[ "$OUT" != *"guard-note: suites="* ]] && echo none || echo noted)
   else
-    noted=$([[ "$OUT" == *"$3"* ]] && echo "$3" || echo missing)
+    # Several notes, joined by `;;`, must each be printed.
+    noted="$3"
+    local want_note
+    while IFS= read -r want_note; do
+      [[ "$OUT" == *"$want_note"* ]] || noted=missing
+    done <<<"${3//;;/$'\n'}"
   fi
   # A note whose reason has no explanation arm prints the broken-guard line.
   [[ "$OUT" != *"no explanation is defined for this value"* ]] || noted=unexplained
@@ -558,28 +572,31 @@ back_to_mapped
 MAP_CONTROLS=(
   "control: without the reach's suites the changed suite runs the whole set~append~skills/mapped/tests/tool.sh~s/^    if \[ -n \"\${reached\[i\]-}\" \] \&\& \[ \"\${SCAN_ROLE\[i\]}\" = suite \]; then$/    if false; then/~$MAPPED_ALL"
   "control: without the reach's suites the suite reading the changed script stands down~append~skills/mapped/scripts/runner~s/^    if \[ -n \"\${reached\[i\]-}\" \] \&\& \[ \"\${SCAN_ROLE\[i\]}\" = suite \]; then$/    if false; then/~runner"
-  "control: without the deleted-suite arm a deleted suite runs the whole set~delete~skills/mapped/tests/other.sh~s/\] || return 0 ;;$/] || return 1 ;;/~battery caller catalogscan cited deep docscan drives helped longer pid_direct pyuse refsuse runner skilldoc tool tool_extra toolbox walker wrap wrapped"
+  "control: without the deleted-suite arm a deleted suite runs the whole set~delete~skills/mapped/tests/other.sh~s/\] || return 0 ;;$/] || return 1 ;;/~caller catalogscan cited deep docscan drives front helped longer pid_direct probed pyuse refsuse runner tool tool_extra toolbox walker wrap wrapped"
   "control: with the deleted-suite arm taking any path under tests a deleted helper runs nothing~delete~skills/mapped/tests/lib/lonely.sh~s/^      tests\/\*\/\*) ;;$/      tests\/never) ;;/~"
   "control: with names handed to the runner as substrings the changed suite runs its namesakes~append~skills/mapped/tests/tool.sh~s/filters+=(\"=\${t%.sh}\")/filters+=(\"\${t%.sh}\")/~tool tool_extra toolbox"
   "control: without the name-and-dash arm the script's second suite stands down~append~skills/mapped/scripts/tool~s/case \"\$base\" in \"\$name\" | \"\$name\"-\*)/case \"\$base\" in \"\$name\")/~tool"
   "control: with names matched by their start a script whose name begins another's runs that one's reader~append~skills/mapped/scripts/orphan~s/\"\$nl\/\$n\$nl\"/\"\$nl\/\$n\"/~longer"
-  "control: with a top-level script's name matched in every file the suite of a script running it runs~append~skills/mapped/scripts/tool~s/^        0:suite | 0:helper)$/        0:*)/~caller tool tool_extra"
-  "control: with a suite adding its name the readers of the lib sharing it run~append~skills/mapped/scripts/driven~s/^    suite) ;;$/    suite) next_any+=(\"\${2##*\/}\") ;;/~deep helped wrap wrapped"
+  "control: with a top-level script's name matched in every file the suite of a script running it runs~append~skills/mapped/scripts/tool~s/^          \*) names=\${SCAN_SOURCED\[i\]} ;;$/          *) ;;/~caller tool tool_extra"
+  "control: without the source-line needle the script a script sources goes unreached and the whole set runs~append~skills/mapped/scripts/base~s/^          \*) names=\${SCAN_SOURCED\[i\]} ;;$/          *) names=\"\" ;;/~$MAPPED_ALL"
+  "control: with one scan loaded for every tree the second tree's path reaches nothing and its whole set runs~append~hooks/alpha.sh skills/mapped/scripts/runner~s/\[ \"\${SCAN_DIR-}\" = \"\$dir\" \] || scan_load/[ -n \"\${SCAN_DIR-}\" ] || scan_load/~$TWO_TREES_ONE_SCAN"
+  "control: with a suite adding its name the readers of the lib sharing it run~append~skills/mapped/scripts/driven~s/^    suite) ;;$/    suite) next_any+=(\"\${2##*\/}\") ;;/~deep helped probed wrap wrapped"
   "control: with comment lines read as code the suite citing a lib in a comment runs~append~skills/mapped/scripts/lib/pid.sh~s/'^\[\[:space:\]\]\*/'^NEVER/~cited deep drives pid_direct runner wrapped"
-  "control: with one pass of the scan the suites two files away stand down~append~skills/mapped/scripts/lib/pid.sh~s/^  while \[ \"\${#next_any\[@\]}\" -gt 0 \] || \[ \"\${#next_suite\[@\]}\" -gt 0 \]; do$/  for _ in 1; do/~pid_direct runner"
+  "control: with one pass of the scan the suites two files away stand down~append~skills/mapped/scripts/lib/pid.sh~s/^  while \[ \"\${#next_any\[@\]}\" -gt 0 \] || \[ \"\${#next_script\[@\]}\" -gt 0 \]; do$/  for _ in 1; do/~pid_direct runner"
   "control: without a joining file adding its needle only the suite naming the lib itself runs~append~skills/mapped/scripts/lib/pid.sh~/^      reach_join \"\${SCAN_ROLE\[i\]}\" \"\${SCAN_PATH\[i\]}\" || return 3$/d~pid_direct"
   "control: without the name rule for a reached script its named suite stands down~append~skills/mapped/scripts/lib/pid.sh~s/^  for f in \${reach_scripts\[@\]+\"\${reach_scripts\[@\]}\"}; do$/  for f in; do/~deep drives pid_direct wrapped"
-  "control: with skill_files missing top-level scripts the lib's script and its suites stand down~append~skills/mapped/scripts/lib/pid.sh~s|^  for f in \"\$1\"/scripts/\*; do$|  for f in; do|~deep pid_direct wrapped"
-  "control: with skill_files missing scripts subdirectories the lib chain stands down~append~skills/mapped/scripts/lib/pid.sh~s|^  for f in \"\$1\"/scripts/\*/\*; do$|  for f in; do|~drives pid_direct runner"
-  "control: with skill_files missing tests/lib the helper's suite goes unreached~append~skills/mapped/scripts/driven~s|^  for f in \"\$1\"/tests/lib/\*; do$|  for f in; do|~wrap"
-  "control: without tests/lib in the scanned-path arm a changed helper runs the whole set~append~skills/mapped/tests/lib/helper.sh~/^    \*:tests\/lib\/\*.sh) role=helper ;;$/d~$MAPPED_ALL"
-  "control: without the subdirectory arm the Python module runs only its namer~append~skills/mapped/scripts/lib/mod.py~/^    \*:scripts\/\*\/\* | \*:tests\/\*\/\*) return 1 ;;$/d~pyuse"
+  "control: with skill_files missing top-level scripts the lib's script and its suites stand down~append~skills/mapped/scripts/lib/pid.sh~s| \"\$1\"/scripts/\* \"\$1\"/scripts/\*/\*| \"\$1\"/scripts/*/*|~deep pid_direct wrapped"
+  "control: with skill_files missing scripts subdirectories the lib chain stands down~append~skills/mapped/scripts/lib/pid.sh~s| \"\$1\"/scripts/\*/\* \"\$1\"/tests/lib/\*| \"\$1\"/tests/lib/*|~drives pid_direct runner"
+  "control: with skill_files missing tests/lib the helper's suite goes unreached~append~skills/mapped/scripts/driven~s| \"\$1\"/tests/lib/\* \"\$1\"/tests/\*.sh| \"\$1\"/tests/*.sh|~wrap"
+  "control: without tests/lib in the scanned-path arm a changed helper runs the whole set~append~skills/mapped/tests/lib/helper.sh~/^    \*:tests\/lib\/\*.sh | \*:tests\/lib\/\*.bash) echo helper ;;$/d~$MAPPED_ALL"
+  "control: with a changed module taken as a seed the Python module runs only its namer~append~skills/mapped/scripts/lib/mod.py~/^  case \"\$role\" in module | test-module) return 1 ;; esac$/d~pyuse"
+  "control: with a test module matching a script only on a source line the suite using it stands down~append~skills/mapped/scripts/driven~s/^          suite | helper | test-module) ;;$/          suite | helper) ;;/~helped wrap"
   "control: without the runner arm a deleted runner runs nothing~delete~skills/mapped/tests/run-all.sh~/^    \*:tests\/run-all.sh) return 1 ;;$/d~"
-  "control: without the references arm a changed reference runs the whole set~append~skills/mapped/references/table.conf~/^    \*:references\/\*) role=reference ;;$/d~$MAPPED_ALL"
+  "control: without the references arm a changed reference runs the whole set~append~skills/mapped/references/table.conf~/^    \*:references\/\*) echo reference ;;$/d~$MAPPED_ALL"
   "control: with the reference matched by its bare name the suite citing it in prose runs~append~skills/mapped/references/table.conf~s|grep -qF -e \"/\$rel\"|grep -qF -e \"/\${rel:11}\"|~catalogscan docscan refsuse tool tool_extra toolbox walker"
   "control: with comment lines read as code the script citing a reference in a comment runs its suite~append~skills/plain/references/note.md~s/'^\[\[:space:\]\]\*/'^NEVER/~alpha.test.sh"
   "control: without the directory-reader match the glob readers stand down~append~skills/mapped/references/table.conf~/grep -qE -e '\/references/s/grep -qE/false/~catalogscan tool tool_extra walker"
-  "control: with the directory pattern taking any reference path a reader of another reference runs~append~skills/mapped/references/table.conf~s,/references(/?\\\$,/references(/|/?\$,~catalogscan docscan helped refsuse tool tool_extra walker wrap"
+  "control: with the directory pattern taking any reference path a reader of another reference runs~append~skills/mapped/references/table.conf~s,/references(/?\\\$,/references(/|/?\$,~catalogscan docscan helped probed refsuse tool tool_extra walker wrap"
   "control: without the readers seeding the scan only the suites reading the reference run~append~skills/mapped/references/table.conf~/^  if \[ \"\$role\" = reference \]; then$/,/^  else$/s/reach_join .*/:/~catalogscan docscan walker"
   "control: with a skill-root variable no longer taken as a walk start the skill-root walker stands down~append~skills/mapped/references/table.conf~s/\[A-Z_\]\*SKILL\[A-Z_\]\*/NEVER/~catalogscan docscan refsuse tool tool_extra"
   "control: with a path ending in /skills no longer taken as a walk start the skills-directory walker stands down~append~skills/mapped/references/table.conf~s,\*/skills)\"?,*/NEVER)\"?,~docscan refsuse tool tool_extra walker"
@@ -592,7 +609,7 @@ MAP_CONTROLS=(
   "control: without the .test strip the script's suite goes unmatched and the whole set runs~append~skills/plain/scripts/alpha.sh~/base=\"\${base%.test}\"/d~$PLAIN_ALL"
   "control: with the range mapping skills alone a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ range:skills\/\* | range:hooks) run=\"\" ;;/ range:skills\/*) run=\"\" ;;/~$HOOKS_ALL"
   "control: with a render's path kept whole a changed hook render runs the whole hooks set~append~.codex/hooks/demo.sh~s/^        rel=\"\${f#\*hooks\/}\"$/        rel=\"\$f\"/~$HOOKS_ALL"
-  "control: without the hook arm a changed hook runs the whole hooks set~append~hooks/alpha.sh~/^    hooks:\*.sh) role=script ;;$/d~$HOOKS_ALL"
+  "control: without the hook arm a changed hook runs the whole hooks set~append~hooks/alpha.sh~/^    hooks:\*.sh) echo script ;;$/d~$HOOKS_ALL"
 )
 for row in "${MAP_CONTROLS[@]}"; do
   IFS='~' read -r label how paths expr want <<<"$row"

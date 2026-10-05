@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 #
 # The stub commands an open-terminal suite puts ahead of PATH: worktree, gh,
-# tmux, sleep and ghostty. Each logs what the launcher asked of it and answers as the
-# real command would, so a row reads the windows a launch opened, the lines it
-# typed and the worktrees it created without opening a real window. The
+# tmux, sleep and ghostty. Each but sleep logs what the launcher asked of it
+# and answers as the real command would, so a row reads the windows a launch
+# opened, the lines it typed and the worktrees it created without opening a
+# real window; sleep logs nothing, and returns at once for a whole-second
+# argument where OT_SLEEP_INSTANT is set. The
 # suites that drive open-terminal through lanes and hosts share them: the
 # open-terminal-lane suites, open-terminal-brief-file.sh and the others that
 # call ot_stub_bin.
