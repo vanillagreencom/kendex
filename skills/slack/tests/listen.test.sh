@@ -294,7 +294,7 @@ assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "3" "the reply under the 
 sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text s1 'token xoxb-0123456789-abcdefghij')" >/dev/null
 sk_poll "$GAMMA"
 SECRET_ID="$(jq -r 'select(.kind == "notice") | .id' "$(sk_box "$GAMMA")/to-overseer.jsonl")"
-assert_eq "$RC=$ERR1" "0=slack: secret-value=id=$SECRET_ID" "a notice matching the secret-value pattern is refused by id"
+assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "0=slack: secret-value=id=$SECRET_ID" "a notice matching the secret-value pattern is refused by id"
 assert_eq "$(sk_state '[.messages.C002[] | select(.text | contains("xoxb"))] | length')" "0" "nothing matching the pattern is posted"
 assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$SECRET_ID\") | .state" "$(sk_journal "$GAMMA")")" "refused" "the refusal is journaled"
 refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\" and .state != \"inflight\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
@@ -305,7 +305,7 @@ printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$LEAK"
 sk_lm "$GAMMA" notice --item overseer --to owner --attach "$LEAK" --file "$(sk_text s3 'Clean report.')" >/dev/null
 sk_poll "$GAMMA"
 LEAK_ID="$(notice_id "$GAMMA" 'Clean report.')"
-assert_eq "$RC=$ERR1" "0=slack: secret-value=id=$LEAK_ID file=$LEAK" "a report whose file matches the pattern is refused by id and file"
+assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "0=slack: secret-value=id=$LEAK_ID file=$LEAK" "a report whose file matches the pattern is refused by id and file"
 assert_eq "$(refused_line "$GAMMA" "$LEAK_ID")" "refused secret-value" "the file's refusal is journaled"
 assert_eq "$(sk_state '[.uploads[] | select(contains("ghp_"))] | length')" "0" "nothing matching the pattern is uploaded"
 GONE="$GAMMA/tmp/progress-reports/gone.md"

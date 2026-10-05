@@ -48,10 +48,10 @@ assert_eq "$(last C001)" "top | UBOT | The report." "the share carries the text 
 
 BEFORE="$(sk_state '.messages.C001 | length')"
 sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
-assert_eq "$RC=$ERR1" "2=slack: secret-value=text" "text matching the secret-value pattern is refused"
+assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "2=slack: secret-value=text" "text matching the secret-value pattern is refused"
 printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$SK_TMP/leak.md"
 sk_run -- post --root "$ROOT" --text 'clean' --file "$SK_TMP/leak.md"
-assert_eq "$RC=$ERR1" "2=slack: secret-value=file=$SK_TMP/leak.md" "a file matching the pattern is refused by path"
+assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "2=slack: secret-value=file=$SK_TMP/leak.md" "a file matching the pattern is refused by path"
 assert_eq "$(sk_state '.messages.C001 | length')=$(sk_state '.uploads | length')" "$BEFORE=1" "nothing matching is posted or uploaded"
 sk_run -- post --root "$ROOT" --text "$LONG"
 assert_eq "$RC=$ERR1" "2=slack: text-too-long=text chars=12001 limit=12000" "a text past the markdown_text cap is refused with its length"
