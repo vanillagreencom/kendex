@@ -32,7 +32,7 @@ fail() { say "$1" "$2"; printf '%s\n' "$3"; exit 1; } # KEY VALUE EXPLANATION
 usage() { printf '%s\n' "usage: install-gitleaks DIR" "A DIR that starts with - is refused; write it as ./DIR."; }
 [ $# -eq 1 ] && [ -n "$1" ] || { say usage "$#"; usage; exit 2; }
 case "$1" in
-  -h | --help) usage; exit 0 ;;
+  -h | --help) say usage help; usage; exit 0 ;;
   -*) say usage "$1"; usage; exit 2 ;;
 esac
 dir=$1

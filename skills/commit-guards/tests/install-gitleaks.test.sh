@@ -149,7 +149,7 @@ in_cwd() {
   res="$(cd -- "$1" && run "$2")" || return 1
   printf '%s cwd=[%s] fetched=[%s]' "$res" "$(ls -A -- "$1")" "$(cat -- "$CURL_LOG")"
 }
-for row in "-h|rc=0 " "--help|rc=0 " "-gitleaks|rc=2 install-gitleaks: usage=-gitleaks"; do
+for row in "-h|rc=0 install-gitleaks: usage=help" "--help|rc=0 install-gitleaks: usage=help" "-gitleaks|rc=2 install-gitleaks: usage=-gitleaks"; do
   arg=${row%%|*}
   assert_eq "$arg exits with its code and creates and downloads nothing" \
     "${row#*|} cwd=[] fetched=[]" "$(in_cwd "$TMP_ROOT/cwd$arg" "$arg")"
@@ -167,7 +167,7 @@ run "$TMP_ROOT/arch-map-dir" UNAME_S=Darwin UNAME_M=arm64 >/dev/null
 assert_eq "control: a wrong architecture map fetches the wrong release" \
   "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz" "$(cat "$CURL_LOG")"
 
-copy no-help '-h | --help) usage; exit 0 ;;' '--never) usage; exit 0 ;;'
+copy no-help '-h | --help) say usage help;' '--never) say usage help;'
 assert_eq "control: without the help case --help is refused as a dash-led DIR" \
   "rc=2 install-gitleaks: usage=--help cwd=[] fetched=[]" "$(in_cwd "$TMP_ROOT/no-help-cwd" --help)"
 copy no-dash "$LINUX_PIN" "$FIXTURE_SHA" '-*) say usage "$1"' '--never) say usage "$1"'
