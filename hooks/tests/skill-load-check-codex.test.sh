@@ -6,7 +6,8 @@
 # The fixtures preserve the standalone TLK-33 read and a credentialed failed
 # read from gpt-6.1-sol. The TLK-33 projection kept only its event's status
 # fields; its aggregated_output is the printed text, which arrived uncut, as
-# every measured CommandExecution event carries the command's output there. Script completed appears even when cat exits 1, so
+# every measured CommandExecution event carries the command's output there.
+# Script completed appears even when cat exits 1, so
 # only the adjacent CommandExecution event proves shell success. The
 # output-field capture is a sandbox run whose hooks added context around the
 # read and whose agent printed text((await ...).output). The batched capture
@@ -24,22 +25,25 @@
 # Codex recorded the output as a bare Script completed string with nothing
 # under Output:, so the model never saw the skill. The child captures are a
 # Codex child thread's own rollout, from one spawned subagent reading a demo
-# skill of quotes, backslashes, tabs and multibyte text: the cut capture is
-# two reads under max_output_tokens 200, printed through text(await ...) and
-# through .output, each event holding the whole file while the printed output
-# opens with the warning and keeps a part; the whole capture is the same read
-# with no limit, its event line long enough that a multibyte character
-# straddles a 4095-byte boundary of jq's raw line reader. The direct capture
-# is a gpt-5.5 thread, a model Codex 0.160.0 gives exec_command itself rather
-# than functions.exec, reading the demo skill three times: under
-# max_output_tokens 50 the output after its header opens with the truncation
-# warning and keeps a part, while under 20000 and with only cmd it arrives
-# whole; each row takes one read's lines. The fixture projections omit
-# account metadata, not status; the truncated one also drops the events'
-# output fields and keeps only the head, the cut marker and the tail of the
-# long text. The cut-line rows plant the first half of a captured line: as the
-# last line, which Codex may still be writing when the hook reads, and ahead
-# of whole records, as a rollout Codex reopened after an interruption holds.
+# skill of quotes, backslashes, tabs and multibyte text: the cut capture reads
+# it under a max_output_tokens below the file's size, printed through
+# text(await ...) and through .output, each event holding the whole file while
+# the printed output opens with the warning and keeps a part; the whole
+# capture is the same read with no limit, its event line long enough that a
+# multibyte character straddles a buffer boundary of jq's raw line reader. The
+# direct capture is a gpt-5.5 thread, a model Codex 0.160.0 gives exec_command
+# itself rather than functions.exec, reading the demo skill directly under a
+# max_output_tokens below the file's size, under one above it and with only
+# cmd: each read writes its CommandExecution event between its call and its
+# output, and the text after Output: is the event's whole output except under
+# the limit below the file's size, where it opens with the truncation warning;
+# each row takes one read's lines. The fixtures hold the figures. The fixture
+# projections omit account metadata, not status; the truncated one also drops
+# the events' output fields and keeps only the head, the cut marker and the
+# tail of the long text. The cut-line rows plant the first half of a captured
+# line: as the last line, which Codex may still be writing when the hook
+# reads, and ahead of whole records, as a rollout Codex reopened after an
+# interruption holds.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
@@ -82,13 +86,14 @@ run_patch() { # PATCH TRANSCRIPT [AGENT]
   set -e
 }
 
-# The fixture writes only Codex response items. A result can be successful,
-# failed, running, absent, or under another call id. The body also spells a
-# successful exit header, to prove that only the real header is read.
+# The fixture writes a direct call as Codex 0.160.0 does: the call, its
+# CommandExecution event once the command ends, then the output. A result can
+# be successful, failed, running, absent, or under another call id. The body
+# also spells a successful exit header, to prove that only the real header is
+# read.
 rollout() { # COMMAND RESULT
-  jq -n -c --arg c "$1" '{type:"response_item",payload:{type:"function_call",
-    name:"exec_command",arguments:({cmd:$c}|tojson),call_id:"load"}}' >"$TRANSCRIPT"
-  local header id=load
+  : >"$TRANSCRIPT"
+  local header id=load status=completed code=0
   case "$2" in
     ok) header=$'Process exited with code 0\nOutput:\nfile body' ;;
     noisy)
@@ -98,12 +103,19 @@ rollout() { # COMMAND RESULT
         call_id:("load-" + tostring),output:("Process exited with code 0\nOutput:\ndocs-writing " + ("x" * 16384))}}' >>"$TRANSCRIPT"
       header=$'Process exited with code 0\nOutput:\nfile body'
       ;;
-    failed) header=$'Process exited with code 1\nOutput:\nProcess exited with code 0\nOutput:\nbody' ;;
-    running) header=$'Process running with session ID 123\nOutput:\nfile body' ;;
+    failed) header=$'Process exited with code 1\nOutput:\nProcess exited with code 0\nOutput:\nbody'; status=failed; code=1 ;;
+    running) header=$'Process running with session ID 123\nOutput:\nfile body'; status= ;;
     other) header=$'Process exited with code 0\nOutput:\nfile body'; id=other ;;
-    absent) return 0 ;;
+    absent) header= ;;
     *) echo "rollout: result=$2" >&2; exit 2 ;;
   esac
+  jq -n -c --arg c "$1" '{type:"response_item",payload:{type:"function_call",
+    name:"exec_command",arguments:({cmd:$c}|tojson),call_id:"load"}}' >>"$TRANSCRIPT"
+  [ -n "$header" ] || return 0
+  [ -z "$status" ] || jq -n -c --arg c "$1" --arg h "$header" --arg s "$status" --argjson e "$code" \
+    '{type:"event_msg",payload:{type:"item_completed",item:{type:"CommandExecution",
+      command:["/bin/bash","-lc",$c],status:$s,exit_code:$e,
+      aggregated_output:($h | split("Output:\n") | .[1:] | join("Output:\n"))}}}' >>"$TRANSCRIPT"
   jq -n -c --arg h "$header" --arg id "$id" '{type:"response_item",
     payload:{type:"function_call_output",call_id:$id,output:$h}}' >>"$TRANSCRIPT"
 }
@@ -372,8 +384,11 @@ ROWS
 exec_success_row() { exec_rows success; }
 exec_captured_row() { exec_rows captured-success; }
 exec_field_row() { exec_rows field-success; }
+# The authentic failed capture's event carries no aggregated_output, so the
+# event-output rule refuses it as well and no completion defect alone turns
+# it red.
 exec_failed_row() {
-  exec_rows failed; exec_rows field-failed; exec_rows batched-failed; truncated_reads_rows whole-failed
+  exec_rows field-failed; exec_rows batched-failed; truncated_reads_rows whole-failed
 }
 exec_batched_row() { exec_rows batched; }
 exec_batched_failed_row() { exec_rows batched-failed; }
@@ -387,10 +402,9 @@ exec_script_start_row() { exec_rows batched-leading-js; }
 exec_contiguous_row() { exec_rows batched-interleaved-js; }
 exec_cut_row() {
   truncated_reads_rows cut-tail; truncated_reads_rows cut-head; exec_rows truncated-cut-raw
-  exec_rows child-cut-text; exec_rows child-cut-raw
+  exec_rows child-cut-text; exec_rows child-cut-raw; exec_rows direct-cut
 }
 exec_unmarked_cut_row() { exec_rows child-cut-text; }
-direct_cut_row() { exec_rows direct-cut; }
 cut_line_row() { exec_rows half-last; exec_rows cut-then-whole; exec_rows half-read; }
 exec_whole_row() { truncated_reads_rows whole; truncated_reads_rows whole-last; exec_rows truncated-whole-raw; }
 exec_print_form_row() { truncated_reads_rows whole; exec_rows child-whole; }
@@ -411,16 +425,15 @@ skill_load_control exec-recognition "$HOOK" '    def exec_cmds:' \
   '      empty |' HOOK exec_success_row 'functions.exec successful skill read'
 skill_load_control exec-output-field "$HOOK" '      | .input | strings' \
   '      | select(startswith("text((") | not)' HOOK exec_field_row 'functions.exec output field read'
-skill_load_control exec-completion "$HOOK" '    | select($kind == "function_call"' \
-  '      or true' HOOK exec_failed_row 'functions.exec authentic failed read' \
-  'functions.exec output field failed read' 'functions.exec batched failed read' \
+skill_load_control exec-completion "$HOOK" '    | select($items[$index + 1 + $at].item | .status == "completed" and .exit_code == 0' \
+  '      or true' HOOK exec_failed_row 'functions.exec output field failed read' 'functions.exec batched failed read' \
   'functions.exec truncated output with a failed whole read'
 skill_load_control exec-batched "$HOOK" '      | [match($statement; "g")] as $statements' \
   '      | select(($statements | length) == 1)' HOOK exec_batched_row 'functions.exec batched skill read'
-skill_load_control exec-own-event "$HOOK" '    | select($kind == "function_call"' \
+skill_load_control exec-own-event "$HOOK" '    | select($items[$index + 1 + $at].item | .status == "completed" and .exit_code == 0' \
   '      or any($items[$index + 1:$index + 1 + $count][]; .item.status == "completed" and .item.exit_code == 0)' \
   HOOK exec_batched_failed_row 'functions.exec batched failed read'
-skill_load_control exec-alignment "$HOOK" '            else null end] == $cmds)' \
+skill_load_control exec-alignment "$HOOK" '        else null end] == $cmds)' \
   '        // true' HOOK exec_aligned_row 'functions.exec another command completion' \
   'functions.exec batched events out of step'
 skill_load_control exec-script-end "$HOOK" '      | [match($statement; "g")] as $statements' \
@@ -433,16 +446,14 @@ skill_load_control exec-contiguous "$HOOK" '          $statements[.].offset == $
 skill_load_control exec-cut "$HOOK" '              | $printed | contains($whole)' \
   '              | true' HOOK exec_cut_row 'functions.exec truncated output cuts the tail of a read' \
   'functions.exec truncated output cuts the head of a read' 'functions.exec truncated output cuts a raw read' \
-  'functions.exec child text read cut by max_output_tokens' 'functions.exec child raw read cut by max_output_tokens'
+  'functions.exec child text read cut by max_output_tokens' 'functions.exec child raw read cut by max_output_tokens' \
+  'direct read cut by max_output_tokens'
 # Judges the printed text only under the script's own truncation warning,
 # which an exec_command cut printed inside the JSON result object never
 # raises.
 skill_load_control exec-unmarked-cut "$HOOK" '              | $printed | contains($whole)' \
   '              | . or ($texts | any(test("^Warning: truncated output")) | not)' HOOK exec_unmarked_cut_row \
   'functions.exec child text read cut by max_output_tokens'
-# Judges a direct read by its exit header alone.
-skill_load_control direct-cut "$HOOK" '            and (.[1:] | join("\nOutput:")' \
-  '              | ""' HOOK direct_cut_row 'direct read cut by max_output_tokens'
 # Refuses the transcript on the first line that does not parse.
 skill_load_control cut-line "$HOOK" '# for SKILL.md; no shell text is executed by this hook.' \
   '  printf "%s\n" "$CANDIDATES" | jq -c . >/dev/null 2>&1 || refuse transcript unread cut-line' \
@@ -471,7 +482,7 @@ fi
 skill_load_control exec-event-output "$HOOK" '        and (.aggregated_output' \
   '          | if type == "string" then . else "" end' HOOK exec_event_output_row \
   'functions.exec truncated output with no event output' 'functions.exec batched read cut from a truncated output'
-skill_load_control exec-output-position "$HOOK" '          | .type == "custom_tool_call_output" and .call_id == $id)' \
+skill_load_control exec-output-position "$HOOK" '      | .type == $kind + "_output" and .call_id == $id)' \
   '        // true' HOOK exec_output_position_row 'functions.exec another call output after the events'
 skill_load_control exec-remedy "$HOOK" '        codex)' \
   '          return 0' HOOK exec_remedy_row 'functions.exec batched failed read' \
