@@ -1,0 +1,1 @@
+- harness-ci: a lane marked `:queue` in `.github/ci-lanes.conf` skips pull requests that touch its paths, runs in the merge group, and keeps those pull requests off the admin merge.

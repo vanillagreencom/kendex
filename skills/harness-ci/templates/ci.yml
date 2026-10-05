@@ -147,7 +147,9 @@ jobs:
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
   # job per lane, each declared in .github/ci-lanes.conf, marked
-  # `:event-uniform` there where it does the same work on every event, and
+  # `:event-uniform` there where it does the same work on every event,
+  # `:queue` where it is slow enough to run in the merge group alone, which
+  # keeps the pull request that defers it off the admin merge, and
   # published as a
   # `lane_<name>` output above, given this `needs:` and this `if:` with its
   # own output, named in CI's `needs:` and aggregate step as they name

@@ -88,6 +88,15 @@ outputs:
   change_class:
     description: render, trivial, micro, small or standard.
     value: ${{ steps.classify.outputs.change_class }}
+  queue_only:
+    description: >-
+      true where the change must run in a merge group before it lands, false
+      where it need not: the value of the shipped change-class's
+      `queue-only:` line, which github.sh pr-merge reads before the admin
+      route, true also where a lane the declaration marks `:queue` was
+      deferred off this pull request. Empty only where the classifier root
+      predates this output; read empty as true.
+    value: ${{ steps.classify.outputs.queue_only }}
   docs_only:
     description: >-
       true where the shipped harness-only --mode docs accepts every changed

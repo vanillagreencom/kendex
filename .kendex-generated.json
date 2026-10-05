@@ -176,6 +176,7 @@
   ".agents/skills/harness-ci/scripts/change-class",
   ".agents/skills/harness-ci/scripts/harness-only",
   ".agents/skills/harness-ci/scripts/lib/change-class.sh",
+  ".agents/skills/harness-ci/scripts/lib/ci-lanes.sh",
   ".agents/skills/harness-ci/templates/ci.yml",
   ".agents/skills/iced-rs/README.md",
   ".agents/skills/iced-rs/SKILL.md",

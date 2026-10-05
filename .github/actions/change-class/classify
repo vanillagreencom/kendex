@@ -42,6 +42,11 @@
 # Outputs appended to GITHUB_OUTPUT:
 #   change_class       render|trivial|micro|small|standard, written by the
 #                      shipped classifier itself
+#   queue_only         true|false, written by the shipped classifier itself:
+#                      whether the change must run in a merge group before
+#                      it lands, the value of its `queue-only:` line, whose
+#                      statement is change-class's header. Absent where the
+#                      classifier root predates the output.
 #   docs_only          true|false, written by the shipped `harness-only --mode
 #                      docs` itself. It answers false where harness-only
 #                      cannot read the diff (an unsupported event, a missing
@@ -94,7 +99,13 @@
 # false wherever lanes is false; otherwise true where a changed path matches
 # one of the lane's globs, true for every lane where a changed path no lane
 # claims lies outside the docs set or where no changed path was read, and
-# false everywhere else. A glob is a shell pattern, so `*` also matches `/`.
+# false everywhere else, save on a pull request, where a lane the
+# declaration marks `:queue` and one of its own globs reaches is false with
+# the cause queue-deferred: it runs in the merge group, which reuses no
+# proof for it because this run's record says it did not run, and
+# change-class answers queue_only=true off the same globs. A glob is a
+# shell pattern, so `*` also matches `/`. The declaration's grammar and
+# reader are the classifier's lib/ci-lanes.sh.
 # The declaration is read from LANES_FROM, the default branch's copy, because
 # the author of the diff under judgement could edit the tree's own copy to
 # stand a lane down. An absent or malformed declaration is not a refusal:
@@ -190,6 +201,12 @@ if [ -n "${LANES_FROM:-}" ]; then
     die "lanes-from-judged-tree root=$LANES_FROM" \
       "lanes-from names the tree under judgement, whose author could stand a lane down"
   declaration="$lanes_root/.github/ci-lanes.conf"
+  # The declaration's reader ships beside the classifier, so change-class's
+  # queue-only line and these verdicts read one grammar.
+  # shellcheck source=../../../skills/harness-ci/scripts/lib/ci-lanes.sh
+  . "$SCRIPTS/lib/ci-lanes.sh" ||
+    die "lanes-reader-unreadable root=$scripts_root" \
+      "no skills/harness-ci/scripts/lib/ci-lanes.sh under the classifier root"
 fi
 
 work="$(mktemp -d)" || die mktemp-failed "could not create a working directory"
@@ -288,75 +305,6 @@ else
   lanes=true lanes_cause="$class"
 fi
 
-# The declaration: `<lane>[:event-uniform] <glob>...` per line, `#` to the
-# end of a line a comment, and a lane named on several lines reading every
-# glob they give it and marked event-uniform where any of them marks it.
-# Bash 3.2 has no associative array, so lane N's name, its globs, one per
-# line, and its mark sit at index N of three arrays.
-lane_names=()
-lane_globs=()
-lane_uniform=()
-lane_count=0
-declaration_note=""
-read_declaration() { # sets declaration_note and returns 1 where malformed
-  local text line number=0 name uniform glob index
-  text="$(cat -- "$declaration" 2>/dev/null)" ||
-    { declaration_note="cause=unreadable"; return 1; }
-  while IFS= read -r line; do
-    number=$((number + 1))
-    line="${line%%#*}"
-    set -f
-    # shellcheck disable=SC2086 # a line is blank-separated words
-    set -- $line
-    set +f
-    [ "$#" -gt 0 ] || continue
-    name="$1"
-    shift
-    uniform=false
-    case "$name" in
-      *:event-uniform) uniform=true ;;
-    esac
-    case "${name%:event-uniform}" in
-      '' | [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)
-        declaration_note="cause=bad-name line=$number name=$name"
-        return 1 ;;
-    esac
-    name="${name%:event-uniform}"
-    [ "$#" -gt 0 ] ||
-      { declaration_note="cause=no-globs line=$number lane=$name"; return 1; }
-    index=0
-    while [ "$index" -lt "$lane_count" ] && [ "${lane_names[$index]}" != "$name" ]; do
-      index=$((index + 1))
-    done
-    if [ "$index" -eq "$lane_count" ]; then
-      lane_names[$index]="$name"
-      lane_globs[$index]=""
-      lane_uniform[$index]=false
-      lane_count=$((lane_count + 1))
-    fi
-    [ "$uniform" = false ] || lane_uniform[$index]=true
-    for glob in "$@"; do
-      lane_globs[$index]="${lane_globs[$index]}$glob
-"
-    done
-  done <<<"$text"
-  [ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }
-}
-
-LANE_GLOB_HIT=""
-lane_claims() { # INDEX PATH — sets LANE_GLOB_HIT on a match
-  local glob IFS='
-'
-  set -f; for glob in ${lane_globs[$1]}; do
-    # shellcheck disable=SC2254 # the glob is a pattern
-    case "$2" in
-      $glob) set +f; LANE_GLOB_HIT="$glob"; return 0 ;;
-    esac
-  done
-  set +f
-  return 1
-}
-
 outside_docs() { # PATH — 0 outside the docs set, 1 inside it
   local status=0
   grep -qxF -- "$1" "${work:?}/outside" 2>/dev/null || status=$?
@@ -368,11 +316,12 @@ outside_docs() { # PATH — 0 outside the docs set, 1 inside it
   esac
 }
 
+lane_count=0
 lane_state="unset"
 if [ -n "$declaration" ]; then
   if [ ! -e "$declaration" ]; then
     lane_state="absent"
-  elif read_declaration; then
+  elif ci_lanes_read "$declaration"; then
     lane_state="read"
   else
     lane_state="malformed" lane_count=0
@@ -404,7 +353,7 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
     claimed=false
     index=0
     while [ "$index" -lt "$lane_count" ]; do
-      if lane_claims "$index" "$path"; then
+      if ci_lanes_claims "$index" "$path"; then
         claimed=true
         [ -n "${lane_hits[$index]}" ] ||
           lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"
@@ -417,13 +366,20 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
   done <"${work:?}/paths"
 fi
 
-# Each lane's classified verdict and cause, at its index.
+# Each lane's classified verdict and cause, at its index. On a pull request
+# a lane marked `:queue` that one of its own globs reached stands down: it
+# runs in the merge group, and change-class's queue-only line, off the same
+# globs, keeps the pull request off the admin merge. A queue lane only
+# `every` reached runs here, since no glob of its own put the diff in the
+# queue.
 lane_values=()
 lane_causes=()
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then
+    lane_values[$index]=false lane_causes[$index]="cause=queue-deferred ${lane_hits[$index]#cause=claimed }"
   elif [ -n "$every" ]; then
     lane_values[$index]=true lane_causes[$index]="$every"
   elif [ -n "${lane_hits[$index]}" ]; then

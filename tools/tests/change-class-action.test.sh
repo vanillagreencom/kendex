@@ -13,7 +13,7 @@
 # answer the STUB_* variables set, since classify calls the proof beside
 # itself; one row runs the tracked pair to see the real proof answer.
 #
-# Six surfaces:
+# Six surfaces, the queue mark under the fifth:
 #   1. the outputs: one diff per class, a docs-only diff at `standard` size
 #      and a `trivial` one off the docs set, asserting every output line the
 #      step writes, and the arguments each wrapped script was called with.
@@ -47,7 +47,12 @@
 #      asserting the verdict lines and the declaration's state; the judged
 #      tree carries a declaration of its own that no row may read, and
 #      every run starts in a directory holding files the globs would expand
-#      to. One mutant copy per rule must fail the row the rule decides.
+#      to. One mutant copy per rule must fail the row the rule decides, the
+#      copy of classify or of the shipped lanes lib it reads, whichever
+#      holds the rule. Beside them, the queue mark: a lane marked `:queue`
+#      its own glob reaches stands down on a pull request and on no other
+#      event, a merge group runs it whatever the proof says, and the
+#      classifier's queue_only line reaches the step's outputs.
 #   6. the proof: what a proof's record stands down, with and without a
 #      declaration, per what it covers, a declared lane only where the
 #      declaration marks it event-uniform; the record this run writes for the
@@ -62,6 +67,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 ROOT="$(git rev-parse --show-toplevel)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
+LANES_LIB="$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh"
 ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
@@ -87,7 +93,8 @@ cat >"$STUBS/skills/harness-ci/scripts/change-class" <<'STUB'
 set -euo pipefail
 printf 'change-class %s\n' "$*" >>"$STUB_LOG"
 [ "${STUB_CLASS_EXIT:-0}" -eq 0 ] || exit "$STUB_CLASS_EXIT"
-[ -z "${GITHUB_OUTPUT:-}" ] || printf 'change_class=%s\n' "$STUB_CLASS" >>"$GITHUB_OUTPUT"
+[ -z "${GITHUB_OUTPUT:-}" ] ||
+  printf 'change_class=%s\nqueue_only=%s\n' "$STUB_CLASS" "${STUB_QUEUE:-false}" >>"$GITHUB_OUTPUT"
 printf 'change_class=%s\n' "$STUB_CLASS"
 STUB
 cat >"$STUBS/skills/harness-ci/scripts/harness-only" <<'STUB'
@@ -117,6 +124,14 @@ printf '%s\n' "$line"
 STUB
 chmod +x "$STUBS/skills/harness-ci/scripts/change-class" \
   "$STUBS/skills/harness-ci/scripts/harness-only"
+# The lane declaration's reader is the shipped one, read from the stubs root
+# as classify reads it from the classifier root. A root without it is the
+# lanes-reader refusal's.
+mkdir -p "$STUBS/skills/harness-ci/scripts/lib"
+cp "$LANES_LIB" "$STUBS/skills/harness-ci/scripts/lib/ci-lanes.sh"
+mkdir -p "$TMP/no-lanes-lib"
+cp -R "$STUBS/skills" "$TMP/no-lanes-lib/skills"
+rm -- "${TMP:?}/no-lanes-lib/skills/harness-ci/scripts/lib/ci-lanes.sh"
 # The proof stub answers what STUB_REUSE, STUB_RUN, STUB_TREE and
 # STUB_WORKFLOW say, with STUB_REASON in place of the reason each answer
 # carries, and where it reuses, writes STUB_RECORD as the record in the work
@@ -186,6 +201,13 @@ declare_lanes bad-leading 'check src/*
 '
 declare_lanes bad-mark-only ':event-uniform src/*
 '
+# `queued` marks `bench` on its first line alone, so its second line's glob
+# defers too, and `nightly` carries both marks, the queue mark last.
+declare_lanes queued 'check:event-uniform src/*
+bench:queue benches/*
+bench Cargo.lock
+nightly:event-uniform:queue nightly/*
+'
 mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
   "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
@@ -197,13 +219,16 @@ printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
 RUN_DIR="$TMP/run"
 mkdir -p "$RUN_DIR"
 cp "$STUB_PROOF" "$RUN_DIR/proof"
+# ROW_CLASSIFIER, when set, is the scripts root a run reads in place of the
+# stubs root: plant sets it to a root holding a planted lanes lib.
+ROW_CLASSIFIER=""
 run_in_place() { # SCRIPT [NAME=VALUE]...
   local script="$1" status=0
   shift
   : >"$OUT"
   : >"$LOG"
   (cd "$CWD" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
-    CLASSIFIER="$STUBS" EVENT=pull_request BASE=b0 HEAD=h1 REPO="$TMP/subject" \
+    CLASSIFIER="${ROW_CLASSIFIER:-$STUBS}" EVENT=pull_request BASE=b0 HEAD=h1 REPO="$TMP/subject" \
     GITHUB_OUTPUT="$OUT" STUB_LOG="$LOG" STUB_CLASS=standard STUB_DOCS=false \
     "$@" bash "$script" >"$TMP/stdout" 2>"$TMP/err") || status=$?
   printf '%s' "$status"
@@ -243,13 +268,13 @@ refusal() { # the first refusal line's cause, or nothing
 NO_PROOF="proof_reuse=false proof_reason=ineligible-event proof_run= proof_tree= proof_record="
 class_rows() {
   cat <<ROWS
-render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md $NO_PROOF lanes=false lanes_cause=render lane_verdicts= record_dir=
-trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
-trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
-micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md $NO_PROOF lanes=true lanes_cause=micro lane_verdicts= record_dir=
-small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs $NO_PROOF lanes=true lanes_cause=small lane_verdicts= record_dir=
-standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs $NO_PROOF lanes=true lanes_cause=standard lane_verdicts= record_dir=
-docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md $NO_PROOF lanes=false lanes_cause=docs-only lane_verdicts= record_dir=
+render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render queue_only=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md $NO_PROOF lanes=false lanes_cause=render lane_verdicts= record_dir=
+trivial|trivial|true|docs/guide.md|change_class=trivial queue_only=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
+trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial queue_only=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
+micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro queue_only=false docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md $NO_PROOF lanes=true lanes_cause=micro lane_verdicts= record_dir=
+small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small queue_only=false docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs $NO_PROOF lanes=true lanes_cause=small lane_verdicts= record_dir=
+standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard queue_only=false docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs $NO_PROOF lanes=true lanes_cause=standard lane_verdicts= record_dir=
+docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard queue_only=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md $NO_PROOF lanes=false lanes_cause=docs-only lane_verdicts= record_dir=
 ROWS
 }
 
@@ -325,6 +350,36 @@ NEEDLE="$needle" awk '
 check "must-fail: a classify that decides its own class fails the render row" \
   no "$(row_holds "$mutant" render)"
 
+# A rule planted wrong in a copy of TARGET, `classify` or `lib`, every other
+# line kept: a classify copy at $mutant, or a lanes lib copy in a stubs root
+# of its own, which ROW_CLASSIFIER then names for the runs after it. Sets
+# PLANTED to the classify to run. Called outside a substitution, so the
+# root it names reaches the runs.
+MUTANT_STUBS="$TMP/mutant-stubs"
+PLANTED=""
+plant() { # TARGET NEEDLE REPLACEMENT
+  local file copy
+  case "$1" in
+    classify) file="$CLASSIFY" copy="$mutant" ROW_CLASSIFIER="" ;;
+    lib)
+      file="$LANES_LIB" copy="$MUTANT_STUBS/skills/harness-ci/scripts/lib/ci-lanes.sh"
+      rm -rf -- "${MUTANT_STUBS:?}"
+      cp -R "$STUBS" "$MUTANT_STUBS"
+      ROW_CLASSIFIER="$MUTANT_STUBS" ;;
+    *) echo "no mutant target $1" >&2; exit 1 ;;
+  esac
+  [ "$(grep -cF -- "$2" "$file")" -eq 1 ] ||
+    { echo "the rule '$2' is no longer one line in $file" >&2; exit 1; }
+  NEEDLE="$2" REPLACEMENT="$3" awk '
+    { i = index($0, ENVIRON["NEEDLE"]) }
+    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
+    { print }
+  ' "$file" >"$copy"
+  ! cmp -s "$file" "$copy" || { echo "the mutant for '$2' changed nothing" >&2; exit 1; }
+  PLANTED="$CLASSIFY"
+  [ "$1" = lib ] || PLANTED="$mutant"
+}
+
 # One copy per lanes rule, the rule planted wrong and every other line kept.
 # Each copy must run to completion and fail the row its rule decides.
 # NEEDLE@REPLACEMENT@ROW THE RULE DECIDES, split on `@` because a rule spells
@@ -386,10 +441,11 @@ lanes-from-unreadable root=$TMP/nowhere|LANES_FROM=$TMP/nowhere
 lanes-from-judged-tree root=$TMP/subject|LANES_FROM=$TMP/subject
 repo-unreadable repo=$TMP/nowhere|LANES_FROM=$TMP/decl/good REPO=$TMP/nowhere
 outside-list-unreadable status=2|LANES_FROM=$TMP/decl/good STUB_PATHS=Makefile STUB_NO_OUTSIDE=1
+lanes-reader-unreadable root=$TMP/no-lanes-lib|LANES_FROM=$TMP/decl/good CLASSIFIER=$TMP/no-lanes-lib
 proof-failed status=2|STUB_PROOF_EXIT=2
 proof-unreadable lines=tree= workflow=.github/workflows/ci.yml reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
 ROWS
-[ "$refusal_rows" -eq 18 ] ||
+[ "$refusal_rows" -eq 19 ] ||
   { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
 
 # A classify with no proof beside it is a broken action, refused before
@@ -630,39 +686,34 @@ done
 
 # One copy per lane rule, the rule planted wrong and every other line kept.
 # Each must run to completion and fail the row its rule decides.
-# NEEDLE@REPLACEMENT@ROW, split on `@` because a rule spells the shell's `&&`.
+# NEEDLE@REPLACEMENT@ROW@TARGET, split on `@` because a rule spells the
+# shell's `&&`; TARGET is the file holding the rule, as plant takes it.
 mutants=0
-while IFS='@' read -r needle replacement row; do
+while IFS='@' read -r needle replacement row target; do
   mutants=$((mutants + 1))
-  [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
-    { echo "the lane rule '$needle' is no longer one line in $CLASSIFY" >&2; exit 1; }
-  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
-    { i = index($0, ENVIRON["NEEDLE"]) }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
-    { print }
-  ' "$CLASSIFY" >"$mutant"
-  ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant for '$needle' changed nothing" >&2; exit 1; }
+  plant "$target" "$needle" "$replacement"
   check "must-fail: '$needle' planted as '$replacement' fails the $row row" \
-    no "$(lane_row_holds "$mutant" "$row")"
+    no "$(lane_row_holds "$PLANTED" "$row")"
 done <<'ROWS'
-declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.github/ci-lanes.conf"@one-lane
-    line="${line%%#*}"@    line="$line"@one-lane
-[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@never-a-lane-name)@bad-name
-{ declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs
-[ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes
-          lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes
-    if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then@    if false; then@unclaimed
- && outside_docs "$path"; then@ && true; then@unclaimed-docs
-    every="cause=no-changed-paths"@    every=""@no-paths
-    lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good
-[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@*[!@bad-leading
-      '' | [!@      [!@bad-mark-only
-    set -f@    :@one-lane
-  set -f; for glob in@  for glob in@one-lane
-    lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@    lane_values[$index]=true lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@docs-only
-    lane_values[$index]=false lane_causes[$index]="cause=unreached"@    lane_values[$index]=true lane_causes[$index]="cause=unreached"@one-lane
-{ declaration_note="cause=unreadable"; return 1; }@:@unreadable
+declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.github/ci-lanes.conf"@one-lane@classify
+    line="${line%%#*}"@    line="$line"@one-lane@lib
+[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@never-a-lane-name)@bad-name@lib
+{ declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs@lib
+[ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes@lib
+          lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes@classify
+    if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then@    if false; then@unclaimed@classify
+ && outside_docs "$path"; then@ && true; then@unclaimed-docs@classify
+    every="cause=no-changed-paths"@    every=""@no-paths@classify
+    lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good@classify
+[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@*[!@bad-leading@lib
+      '' | [!@      [!@bad-mark-only@lib
+    set -f@    :@one-lane@lib
+  set -f; for glob in@  for glob in@one-lane@lib
+    lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@    lane_values[$index]=true lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@docs-only@classify
+    lane_values[$index]=false lane_causes[$index]="cause=unreached"@    lane_values[$index]=true lane_causes[$index]="cause=unreached"@one-lane@classify
+{ declaration_note="cause=unreadable"; return 1; }@:@unreadable@lib
 ROWS
+ROW_CLASSIFIER=""
 [ "$mutants" -eq 17 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
 
 # The refusal of a lanes-from naming the judged tree, planted away.
@@ -678,6 +729,83 @@ NEEDLE="$needle" awk '
 status="$(run "$mutant" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
 check "must-fail: a classify reading lanes from the judged tree is not refused" \
   "0 lane_verdicts=lane_evil=true" "$status $(outputs | tr ' ' '\n' | grep '^lane_verdicts=')"
+
+# --- 5b. The queue mark ------------------------------------------------------
+
+# A lane marked `:queue` that one of its own globs reaches stands down on a
+# pull request alone; every other event runs it as an unmarked lane, and a
+# queue lane only an unclaimed path reached runs on the pull request too.
+# ROW|EVENT|PATHS (each outside the docs set)|EXPECTED: the lane_verdicts
+# value and the lanes the step's `lane:` lines name queue-deferred.
+queue_rows() {
+  cat <<'ROWS'
+pr-deferred|pull_request|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
+pr-second-line|pull_request|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
+pr-both-marks|pull_request|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
+pr-unclaimed|pull_request|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-and-claimed|pull_request|Makefile benches/b.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=true deferred=bench
+merge-group|merge_group|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+push|push|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
+ROWS
+}
+queue_answer() { # SCRIPT ROW — the row's answer, or `crashed`
+  local line name event paths expected
+  line="$(queue_rows | grep -m1 "^$2|")" || { echo "no queue row named $2" >&2; exit 1; }
+  IFS='|' read -r name event paths expected <<<"$line"
+  if [ "$(run "$1" EVENT="$event" LANES_FROM="$TMP/decl/queued" STUB_PATHS="$paths" \
+    STUB_OUTSIDE="$paths")" != 0 ]; then
+    echo crashed
+    return 0
+  fi
+  printf '%s deferred=%s\n' "$(outputs | tr ' ' '\n' | grep '^lane_verdicts=')" \
+    "$(sed -n 's/^lane: name=\([^ ]*\) verdict=false cause=queue-deferred .*/\1/p' "$TMP/err" | tr '\n' ' ' | sed 's/ $//')"
+}
+rows=0
+while IFS='|' read -r name event paths expected; do
+  rows=$((rows + 1))
+  check "queue row $name" "$expected" "$(queue_answer "$CLASSIFY" "$name")"
+done < <(queue_rows)
+[ "$rows" -eq 7 ] || { echo "the queue table read $rows rows" >&2; exit 1; }
+check "a deferred lane's line names the path and glob that deferred it" \
+  "lane: name=bench verdict=false cause=queue-deferred path=benches/b.rs glob=benches/*" \
+  "$(queue_answer "$CLASSIFY" pr-deferred >/dev/null; grep '^lane: name=bench ' "$TMP/err")"
+check "the step forwards the classifier's queue_only line as it wrote it" "queue_only=true" \
+  "$(run "$CLASSIFY" STUB_QUEUE=true STUB_PATHS=src/main.rs >/dev/null; grep '^queue_only=' "$OUT")"
+
+# The merge group after a pull request that deferred `bench`: that run's
+# record says bench did not run, so the proof stands down `check`, which
+# it ran and `queued` marks event-uniform, and never `bench`.
+run "$CLASSIFY" EVENT=merge_group LANES_FROM="$TMP/decl/queued" \
+  STUB_PATHS="benches/b.rs src/main.rs" STUB_OUTSIDE="benches/b.rs src/main.rs" \
+  STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 \
+  STUB_RECORD="$(printf 'covers=lanes\nlane_check=true\nlane_bench=false\nlane_nightly=false')" >/dev/null
+check "a merge group runs the lane its pull request deferred, whatever the proof" \
+  "lanes=true lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false" \
+  "$(outputs | tr ' ' '\n' | grep -E '^(lanes|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')"
+
+# One copy per queue rule, the rule planted wrong and every other line kept.
+# NEEDLE@REPLACEMENT@ROW@TARGET, as the lane table above.
+mutants=0
+while IFS='@' read -r needle replacement row target; do
+  mutants=$((mutants + 1))
+  plant "$target" "$needle" "$replacement"
+  answer="$(queue_answer "$PLANTED" "$row")"
+  expected="$(queue_rows | grep -m1 "^$row|" | cut -d'|' -f4)"
+  case "$answer" in
+    crashed) bad "must-fail: '$needle' planted as '$replacement' crashed the $row row" ;;
+    "$expected") bad "must-fail: '$needle' planted as '$replacement' still answers the $row row" ;;
+    *) ok "must-fail: '$needle' planted as '$replacement' fails the $row row" ;;
+  esac
+done <<'ROWS'
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then@  elif false; then@pr-deferred@classify
+[ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
+ && [ -n "${lane_hits[$index]}" ]; then@; then@pr-unclaimed@classify
+*:queue) queue=true name=@*:queue) queue=false name=@pr-deferred@lib
+    [ "$queue" = false ] || lane_queue[$index]=true@    lane_queue[$index]="$queue"@pr-second-line@lib
+    while :; do@    for _ in once; do@pr-both-marks@lib
+ROWS
+ROW_CLASSIFIER=""
+[ "$mutants" -eq 6 ] || { echo "the queue mutant table read $mutants rows" >&2; exit 1; }
 
 # --- 6. The proof -------------------------------------------------------------
 
@@ -761,6 +889,7 @@ pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs 
 pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
 pr-decl-gated|pull_request|good|standard|false|src/main.rs docs/guide.md|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=true,changed_path=src/main.rs,changed_path=docs/guide.md
 mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=true,changed_path=src/main.rs
+pr-queue-deferred|pull_request|queued|standard|false|benches/b.rs src/main.rs|benches/b.rs src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_bench=false,lane_nightly=false,changed_path=benches/b.rs,changed_path=src/main.rs
 push|push|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|absent
 ROWS
 }
@@ -795,7 +924,7 @@ while IFS='|' read -r name event decl class docs paths outside reuse record env 
   rows=$((rows + 1))
   check "record row $name" "$expected" "$(record_answer "$CLASSIFY" "$name")"
 done < <(record_rows)
-[ "$rows" -eq 11 ] || { echo "the record table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 12 ] || { echo "the record table read $rows rows" >&2; exit 1; }
 check "the step names the record it wrote" "record: path=$RECORD_DIR/record tree=t1 covers=all" \
   "$(record_answer "$CLASSIFY" pr-all >/dev/null; grep '^record: ' "$TMP/err")"
 check "a push says why it leaves no record" "record: skipped cause=unrecorded-event event=push" \
@@ -885,22 +1014,16 @@ check "must-fail: an action uploading under another artifact name breaks the bin
   "$(binding "$PROOF_SCRIPT" "$TMP/action-name.yml")"
 
 # One copy per proof rule, the rule planted wrong and every other line kept.
-# NEEDLE@REPLACEMENT@TABLE:ROW, split on `@` because a rule spells `||`.
+# NEEDLE@REPLACEMENT@TABLE:ROW@FILE, split on `@` because a rule spells
+# `||`; FILE is the file holding the rule, as plant takes it.
 mutants=0
-while IFS='@' read -r needle replacement target; do
+while IFS='@' read -r needle replacement target file; do
   mutants=$((mutants + 1))
-  [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
-    { echo "the proof rule '$needle' is no longer one line in $CLASSIFY" >&2; exit 1; }
-  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
-    { i = index($0, ENVIRON["NEEDLE"]) }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
-    { print }
-  ' "$CLASSIFY" >"$mutant"
-  ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant for '$needle' changed nothing" >&2; exit 1; }
+  plant "$file" "$needle" "$replacement"
   row="${target#*:}"
   case "${target%%:*}" in
-    proof) expected="$(proof_rows | grep -m1 "^$row|" | awk -F '|' '{ print $8 }')"; got="$(proof_answer "$mutant" "$row")" ;;
-    record) expected="$(record_rows | grep -m1 "^$row|" | awk -F '|' '{ print $11 }')"; got="$(record_answer "$mutant" "$row")" ;;
+    proof) expected="$(proof_rows | grep -m1 "^$row|" | awk -F '|' '{ print $8 }')"; got="$(proof_answer "$PLANTED" "$row")" ;;
+    record) expected="$(record_rows | grep -m1 "^$row|" | awk -F '|' '{ print $11 }')"; got="$(record_answer "$PLANTED" "$row")" ;;
   esac
   case "$got" in
     crashed) bad "must-fail: '$needle' planted as '$replacement' crashed the $row row" ;;
@@ -908,24 +1031,25 @@ while IFS='@' read -r needle replacement target; do
     *) ok "must-fail: '$needle' planted as '$replacement' fails the $row row" ;;
   esac
 done <<'ROWS'
-  [ "$record_covers" = all ] && return 0@  false && return 0@proof:all-decl
-  grep -qxF -- "lane_$1=true" <<<"$record_lanes"@  grep -qF -- "lane_$1=" <<<"$record_lanes"@proof:lanes-decl-partial
-    if [ "$uncovered" -eq 0 ] && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@    if [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@proof:lanes-decl-partial
- && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@ && [ "$stood" -gt 0 ]; then@proof:lanes-decl-gated
-  elif [ "$record_covers" = all ]; then@  elif true; then@proof:lanes-no-decl
-if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then@if [ "$proof_reuse" = true ]; then@proof:render-no-decl
-    *) record_covers=none ;;@    *) record_covers=all ;;@proof:no-covers-no-decl
-if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then@if false; then@record:pr-all
- && [ "${COVERS_ALL_LANES:-}" = true ]; then@; then@record:pr-selecting
-[ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] ||@[ "${lane_values[$index]}" != true ] ||@record:pr-decl
- || covered=true@ || covered="${lane_uniform[$index]}"@record:pr-decl-gated
-elif [ "$lane_state" = read ]; then@elif false; then@record:mg-decl-all
-      *:event-uniform) uniform=true ;;@      *:event-uniform) uniform=false ;;@proof:lanes-decl-covered
-    [ "$uniform" = false ] || lane_uniform[$index]=true@    lane_uniform[$index]="$uniform"@proof:lanes-decl-covered
- && [ "${lane_uniform[$index]}" = true ]; then@; then@proof:lanes-decl-gated
-elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried
-  pull_request | merge_group)@  pull_request | merge_group | push)@record:push
+  [ "$record_covers" = all ] && return 0@  false && return 0@proof:all-decl@classify
+  grep -qxF -- "lane_$1=true" <<<"$record_lanes"@  grep -qF -- "lane_$1=" <<<"$record_lanes"@proof:lanes-decl-partial@classify
+    if [ "$uncovered" -eq 0 ] && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@    if [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@proof:lanes-decl-partial@classify
+ && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@ && [ "$stood" -gt 0 ]; then@proof:lanes-decl-gated@classify
+  elif [ "$record_covers" = all ]; then@  elif true; then@proof:lanes-no-decl@classify
+if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then@if [ "$proof_reuse" = true ]; then@proof:render-no-decl@classify
+    *) record_covers=none ;;@    *) record_covers=all ;;@proof:no-covers-no-decl@classify
+if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then@if false; then@record:pr-all@classify
+ && [ "${COVERS_ALL_LANES:-}" = true ]; then@; then@record:pr-selecting@classify
+[ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] ||@[ "${lane_values[$index]}" != true ] ||@record:pr-decl@classify
+ || covered=true@ || covered="${lane_uniform[$index]}"@record:pr-decl-gated@classify
+elif [ "$lane_state" = read ]; then@elif false; then@record:mg-decl-all@classify
+*:event-uniform) uniform=true name=@*:event-uniform) uniform=false name=@proof:lanes-decl-covered@lib
+    [ "$uniform" = false ] || lane_uniform[$index]=true@    lane_uniform[$index]="$uniform"@proof:lanes-decl-covered@lib
+ && [ "${lane_uniform[$index]}" = true ]; then@; then@proof:lanes-decl-gated@classify
+elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried@classify
+  pull_request | merge_group)@  pull_request | merge_group | push)@record:push@classify
 ROWS
+ROW_CLASSIFIER=""
 [ "$mutants" -eq 17 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

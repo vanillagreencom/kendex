@@ -3,7 +3,8 @@
 # package's risk sits in and not the package whole, the render inventory only
 # where its change is more than the names the same diff adds or deletes, an
 # agent instruction file held to small where it would earn trivial or micro,
-# and the `queue` group that makes a change queue-only.
+# and the `queue` group and the lanes a base commit's .github/ci-lanes.conf
+# marks `:queue`, which make a change queue-only.
 #
 # The list is the real references/narrow-change.conf beside the script under
 # test, so a row follows the shipped list rather than a copy of it. Ownership
@@ -73,6 +74,7 @@ apply_edit() { # EDIT
       write_lines "$KEPT_RENDER" 2
       edit_inventory 'map(select(. != $kept))' ;;
     inventory-invalid) printf '{unparsed\n' >"$repo/$INVENTORY" ;;
+    unmark-bench) printf 'bench benches/*\n' >"$repo/.github/ci-lanes.conf" ;;
     *=*) write_lines "${1%=*}" "${1##*=}" ;;
     *) echo "unknown edit $1" >&2; exit 1 ;;
   esac
@@ -332,6 +334,57 @@ assert_eq "a declared list naming none of the diff warns never" 0 \
   "$(unset_warnings_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
 ROW_BASE=""
 
+# A lane the base commit's .github/ci-lanes.conf marks `:queue` is one the
+# change-class action defers off a pull request, so a changed path one of
+# its globs claims is queue-only under its own cause. Each base declares an
+# empty repository list, so only the lane rule answers. `bench` is marked on
+# its first line alone, so its second line's glob is a queue glob too; the
+# `paren` glob reads as the action's reader reads it, extglob off. A
+# malformed declaration marks no lane, as the action then defers none; one
+# that is not a file is unreadable; and the base's declaration decides where
+# the branch unmarks the lane.
+# A base declaring the empty list and DECLARATION, a directory where it is
+# `-`.
+lanes_base() { # DECLARATION -> prints the base commit
+  ROW_BASE="" reset_case
+  printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
+  mkdir -p "$repo/.github"
+  if [ "$1" = - ]; then
+    mkdir -p "$repo/.github/ci-lanes.conf"
+    : >"$repo/.github/ci-lanes.conf/keep"
+  else
+    printf '%s\n' "$1" >"$repo/.github/ci-lanes.conf"
+  fi
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "lanes base"
+  git -C "$repo" rev-parse HEAD
+}
+queued_base="$(lanes_base 'check src/*
+bench:queue benches/*
+bench Cargo.lock
+paren:queue *(x)')"
+malformed_base="$(lanes_base 'bench:queue benches/*
+Bad x')"
+unreadable_base="$(lanes_base -)"
+# label | expected queue-only line | edits | base
+lane_rows=0
+while IFS='|' read -r label expected edits row_base; do
+  lane_rows=$((lane_rows + 1))
+  ROW_BASE="${!row_base}"
+  # shellcheck disable=SC2086
+  assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
+done <<'ROWS'
+a path a queue lane claims is queue-only|queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|benches/b.rs=2|queued_base
+a glob on the queue lane's unmarked line is a queue glob|queue_only=true cause=queue-lane lane=bench path=Cargo.lock glob=Cargo.lock|Cargo.lock=2|queued_base
+a path only an unmarked lane claims is not queue-only|queue_only=false cause=no-queue-path|src/main.rs=2|queued_base
+a queue glob matches with extglob off|queue_only=true cause=queue-lane lane=paren path=a(x) glob=*(x)|a(x)=2|queued_base
+a malformed declaration marks no lane|queue_only=false cause=no-queue-path|benches/b.rs=2|malformed_base
+a declaration that is not a file is queue-only|queue_only=true cause=lane-declaration-unreadable|benches/b.rs=2|unreadable_base
+the base's declaration decides where the branch unmarks the lane|queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|unmark-bench benches/b.rs=2|queued_base
+ROWS
+ROW_BASE=""
+require_rows queue-lane "$lane_rows"
+
 # Every `queue` entry of the shipped list has a row above, read off the list
 # itself. The floor and the one required entry say the reader found the
 # group; a reader that found nothing has broken, not found an empty list.
@@ -483,6 +536,42 @@ rejected_mutant="$(mutant queue-settings-unreadable change-class \
 assert_eq "a classifier that reads rejected settings as not queue-only lets the diff through" \
   "queue_only=false cause=queue-settings-unreadable" \
   "$(settings_queue "$rejected_mutant" "$rejected_base")"
+# One must-fail control per queue-lane rule, each on the row it holds: a
+# classifier that never matches a queue lane's globs, one that reads every
+# lane as marked, one that reads an unreadable declaration as not
+# queue-only, one that keeps a malformed declaration's lanes, one that reads
+# the head's declaration, and a reader that leaves extglob on.
+ROW_BASE="$queued_base"
+control "a classifier that never matches a queue lane lets its path through" \
+  "queue_only=false cause=no-queue-path" benches/b.rs=2 \
+  queue-lane-match change-class \
+  '        if ci_lanes_claims "$index" "$path"; then' '        if false; then'
+control "a classifier that reads every lane as marked holds an unmarked lane's path" \
+  "queue_only=true cause=queue-lane lane=check path=src/main.rs glob=src/*" src/main.rs=2 \
+  queue-lane-mark change-class \
+  '    if [ "${lane_queue[$index]}" = true ]; then' '    if true; then'
+control "a reader that leaves extglob on loses the paren glob" \
+  "queue_only=false cause=no-queue-path" 'a(x)=2' \
+  queue-lane-extglob lib/ci-lanes.sh \
+  '  ! shopt -q extglob || { extglob=true; shopt -u extglob; }' '  :'
+lane_head_mutant="$(mutant queue-lane-head change-class \
+  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||' \
+  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" ||')"
+assert_eq "a classifier that reads the head's declaration lets the unmarked lane's path through" \
+  "queue_only=false cause=no-queue-path" \
+  "$(queue_of "$(run_row "$lane_head_mutant" unmark-bench benches/b.rs=2)")"
+ROW_BASE="$malformed_base"
+control "a classifier that keeps a malformed declaration's lanes holds their paths" \
+  "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*" benches/b.rs=2 \
+  queue-lane-malformed change-class \
+  '  ci_lanes_read "$work/ci-lanes.conf" || return 0' '  ci_lanes_read "$work/ci-lanes.conf" || :'
+ROW_BASE="$unreadable_base"
+control "a classifier that reads an unreadable declaration as not queue-only lets the diff through" \
+  "queue_only=false cause=lane-declaration-unreadable" benches/b.rs=2 \
+  queue-lane-unreadable change-class \
+  '    QUEUE_CAUSE="cause=lane-declaration-unreadable"' \
+  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=lane-declaration-unreadable"'
+ROW_BASE=""
 CONTROL_READ=verdict_of
 
 report narrow-change
