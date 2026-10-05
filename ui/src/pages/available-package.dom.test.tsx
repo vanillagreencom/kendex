@@ -11,6 +11,7 @@ import { commands, type PackageView } from "@/bindings";
 import { README_TAG } from "@/lib/copy";
 import { PICK_A_FILE_NOTE } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
+import { SUPPORTED_HARNESSES_LABEL } from "@/lib/copy-library";
 import {
   LOCAL_FOLDER_LABEL,
   MARKETPLACE_NOT_DOWNLOADED,
@@ -274,6 +275,37 @@ describe("where the available package says it comes from", () => {
     expect(
       [...(from?.querySelectorAll("span") ?? [])].map((el) => el.textContent),
     ).not.toContain(".");
+  });
+});
+
+// The facts column says which harnesses the package runs on from the
+// preview core answered, the same row the installed package's Details draw.
+describe("the harnesses the available package runs on", () => {
+  it("draws the preview's unsupported, advisory and fallback harnesses", async () => {
+    answer({
+      ...view.preview,
+      kind: "hook",
+      unsupported: [
+        { tool: "pi", reason: "it has no Stop event" },
+        { tool: "gemini", reason: null },
+      ],
+      advisory: ["opencode"],
+      fallback: [{ tool: "codex", reason: "a watcher reads its pane" }],
+    });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    const row = [...host.querySelectorAll("aside section")].find(
+      (section) =>
+        section.querySelector("h3")?.textContent === SUPPORTED_HARNESSES_LABEL,
+    );
+    if (!row) throw new Error("no supported harnesses row");
+    const chips = [...row.querySelectorAll("button")].map((chip) =>
+      chip.getAttribute("aria-label"),
+    );
+    expect(chips).toEqual(["Pi", "Gemini CLI", "OpenCode", "Codex"]);
+    expect(row.textContent).toContain("it has no Stop event");
+    expect(row.textContent).toContain("a watcher reads its pane");
   });
 });
 

@@ -7,6 +7,7 @@ import type {
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
+import { SupportedHarnesses } from "@/components/package/supported-harnesses";
 import { SectionHeading } from "@/components/section";
 import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusLine } from "@/components/status-note";
@@ -17,6 +18,7 @@ import {
   PLACE_ROW_LABEL,
   REPOSITORY_NONE,
   REPOSITORY_ROW_LABEL,
+  SUPPORTED_HARNESSES_LABEL,
 } from "@/lib/copy-library";
 import {
   groupRef,
@@ -89,6 +91,11 @@ export function PackageMetaBlock({
             <SharedFilesBadge files={sharedFiles(group.installations)} />
           </span>
         </Row>
+        {meta ? (
+          <Row label={SUPPORTED_HARNESSES_LABEL}>
+            <SupportedHarnesses support={meta} />
+          </Row>
+        ) : null}
         <Row label={PLACE_ROW_LABEL}>{scopeName(primary.scope)}</Row>
         {origin?.origin === "marketplace" ? (
           <Row label="From">

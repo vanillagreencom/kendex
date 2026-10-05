@@ -16,3 +16,16 @@ export const PLACE_ROW_LABEL = "Place";
 export const MARKETPLACE_VERSION_ROW_LABEL = "Marketplace version";
 export const REPOSITORY_ROW_LABEL = "Repository";
 export const REPOSITORY_NONE = "None. Managed from this computer";
+
+/** The row naming the harnesses a package runs on, in the words of the
+ *  `supported tools:` line `kendex show` prints. Shared by the installed
+ *  package's Details and the available package's facts column. */
+export const SUPPORTED_HARNESSES_LABEL = "Supported harnesses";
+export const SUPPORTED_ALL = "All";
+export const SUPPORTED_NONE = "None";
+export const SUPPORTED_ALL_EXCEPT = "All except";
+/** Harnesses that run no hooks, so a hook there is advice the model may
+ *  ignore: neither supported outright nor unsupported. */
+export const SUPPORTED_ADVISORY_ON = "Advisory on";
+/** Harnesses that run the hook while a fallback there does its job. */
+export const SUPPORTED_FALLBACK_ON = "Fallback on";

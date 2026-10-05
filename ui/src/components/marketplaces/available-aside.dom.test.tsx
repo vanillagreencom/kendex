@@ -18,6 +18,9 @@ const view = (bundles: string[]): PackageView =>
       dependencies: { required: [], optional: [] },
       state: "available",
       collision: null,
+      unsupported: [],
+      advisory: [],
+      fallback: [],
     },
     safety: null,
   }) as never;

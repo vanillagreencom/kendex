@@ -1,9 +1,12 @@
 import type { PackageView } from "@/bindings";
 import { DependencyFacts } from "@/components/marketplaces/package-dependencies";
+import { SupportedHarnesses } from "@/components/package/supported-harnesses";
+import { SUPPORTED_HARNESSES_LABEL } from "@/lib/copy-library";
 import { IN_BUNDLES_HEADING, nameTakenLine } from "@/lib/copy-marketplaces";
 
-/** The available-package page's facts column: where it comes from, the sets
- * that carry it, what it needs, and a name clash. The safety reading is not
+/** The available-package page's facts column: where it comes from, the
+ * harnesses it runs on, the sets that carry it, what it needs, and a name
+ * clash. The safety reading is not
  * here — score and findings are one block, and it sits in the main column
  * where there is room for the findings under the number. Neither are the
  * files: they read as a tree beside the file they open, which is the app's
@@ -50,6 +53,14 @@ export function AvailableAside({
           ) : null}
         </p>
       </section>
+      {view ? (
+        <section>
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
+            {SUPPORTED_HARNESSES_LABEL}
+          </h3>
+          <SupportedHarnesses support={view.preview} />
+        </section>
+      ) : null}
       {view && view.preview.bundles.length > 0 ? (
         <section>
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
