@@ -2,9 +2,9 @@
 # Tests for the create-time reach guard. Filing is the cheap
 # disposition — `Declined:` needs a disproof a gate checks, `Tracked: <ID>` needs
 # only an issue to exist — so creation is the one chokepoint that can hold the
-# filing bar. With LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
-# `issues create` refuses, before any API call, a description with no `Reached
-# by:` line and a review-born `--priority 2` body with no `Symptom:`.
+# filing bar. Unless LINEAR_REQUIRE_REACH is set empty in kendex.settings.toml
+# [env], `issues create` refuses, before any API call, a description with no
+# `Reached by:` line and a review-born `--priority 2` body with no `Symptom:`.
 
 set -euo pipefail
 
@@ -107,10 +107,14 @@ run_linear issues create --title "Structural priority" --priority 2 \
   --description "$(printf '%s\n' "$REACH_LINE")"
 assert_created "a structural priority-2 create with no Symptom line"
 
-echo "=== no declaration: creates are unaffected, and help never trips ==="
+echo "=== no key is on, an empty key is off, and help never trips ==="
 guard ''
+run_linear issues create --title "Default repo"
+assert_refused_before_api "a bare create with no LINEAR_REQUIRE_REACH key"
+
+guard 'LINEAR_REQUIRE_REACH = ""\n'
 run_linear issues create --title "Unguarded repo"
-assert_created "a bare create with no LINEAR_REQUIRE_REACH key"
+assert_created "a bare create with an empty LINEAR_REQUIRE_REACH"
 
 guard 'LINEAR_REQUIRE_REACH = "1"\n'
 run_linear issues create --help

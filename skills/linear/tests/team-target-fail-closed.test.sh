@@ -135,10 +135,10 @@ run() {
   settings "$fixture"
   : >"$CURL_LOG"
   if [ "$envteam" = "-" ]; then
-    out="$(cd "$PROJECT" && env -u LINEAR_TEAM PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+    out="$(cd "$PROJECT" && env -u LINEAR_TEAM LINEAR_REQUIRE_REACH= PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
       CURL_LOG="$CURL_LOG" bash "$LINEAR" "$@" 2>"$TMP_ROOT/err")" || rc=$?
   else
-    out="$(cd "$PROJECT" && env LINEAR_TEAM="$envteam" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+    out="$(cd "$PROJECT" && env LINEAR_TEAM="$envteam" LINEAR_REQUIRE_REACH= PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
       CURL_LOG="$CURL_LOG" bash "$LINEAR" "$@" 2>"$TMP_ROOT/err")" || rc=$?
   fi
   err="$(sed "s#$PROJECT#<project>#g" "$TMP_ROOT/err" | paste -sd';' -)"

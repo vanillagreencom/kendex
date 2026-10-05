@@ -69,7 +69,7 @@ run_team_ref() {
   shift
   : >"$TMP_ROOT/$name.jsonl"
   (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
+    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
     FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
     "$BASH" "$PROJECT/.agents/skills/linear/scripts/linear.sh" "$@") \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"

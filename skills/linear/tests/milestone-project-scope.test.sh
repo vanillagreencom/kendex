@@ -128,7 +128,7 @@ run() {
   local rc=0 err
   : >"$CURL_LOG"
   (cd "$PROJECT" && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$TMP_ROOT/err" || rc=$?
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$TMP_ROOT/err" || rc=$?
   err="$(sed "s#$TMP_ROOT#<root>#g" "$TMP_ROOT/err" | paste -sd';' -)"
   printf 'rc=%s wire=%s%s' "$rc" "$(wire)" "${err:+ $err}"
 }

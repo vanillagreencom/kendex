@@ -168,11 +168,12 @@ blocking_level_violation_message() {
 # hypothetical gets an issue where it should have got a decline. Every Linear
 # `Tracked:` passes through this create, so it is where the filing bar can be
 # held on this tracker; a `Tracked: #<n>` filed with `gh issue create` never
-# reaches here and is unguarded. Under LINEAR_REQUIRE_REACH
-# (kendex.settings.toml [env]) a create refuses, before any API call, a
-# description with no `Reached by:` line — an unsubstituted placeholder and a
-# null token counting as absent. Whether the line names a real producer is the
-# author's judgement, not this guard's. Empty or unset keeps the guard off.
+# reaches here and is unguarded. Unless LINEAR_REQUIRE_REACH
+# (kendex.settings.toml [env]) is set empty, a create refuses, before any API
+# call, a description with no `Reached by:` line — an unsubstituted
+# placeholder and a null token counting as absent. Whether the line names a
+# real producer is the author's judgement, not this guard's. Unset is on, the
+# value the settings template ships.
 # The bar itself is project-management SKILL.md, § Disposition.
 
 # The rule the refusal quotes, so message and rule cannot drift apart.
@@ -210,7 +211,7 @@ issue_marked_value() {
 # a research spike — reports no symptom by construction and creates unchecked.
 require_issue_reach() {
 	local description="$1" priority="$2" review_born="${3:-}"
-	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0
+	[ -n "${LINEAR_REQUIRE_REACH-1}" ] || return 0
 
 	local reach
 	reach=$(issue_marked_value "$description" '[Rr]eached[[:space:]][Bb]y')

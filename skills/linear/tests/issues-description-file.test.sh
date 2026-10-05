@@ -63,7 +63,7 @@ MD
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
 create_rc=0
-create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
+create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$create_log" \
   bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file" 2>&1)" || create_rc=$?
 assert_eq "issues create --description-file exits zero" "$create_rc" 0
 
@@ -102,7 +102,7 @@ assert_fails() {
   local label="$1" expected="$2"
   shift 2
   local err_file="$TMP_ROOT/err.txt" rc=0
-  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= \
     bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file" || rc=$?
 
   assert_ne "$label: exits nonzero" "$rc" 0

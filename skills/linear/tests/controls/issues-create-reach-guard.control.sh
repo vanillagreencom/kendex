@@ -37,3 +37,17 @@ control_expect "a whole-line bold [REACH] placeholder body is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	if [ -z "$reach" ]; then' \
 	'	if false; then'
+
+# 4. The default. Read as off when unset, every project that never set the key
+#    files issues naming nothing they reach.
+control_expect "a bare create with no LINEAR_REQUIRE_REACH key is refused"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'	[ -n "${LINEAR_REQUIRE_REACH-1}" ] || return 0' \
+	'	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0'
+
+# 5. The off switch. Read as on when empty, a project that turned the guard off
+#    has every create refused.
+control_expect "a bare create with an empty LINEAR_REQUIRE_REACH exits zero"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'	[ -n "${LINEAR_REQUIRE_REACH-1}" ] || return 0' \
+	'	[ -n "${LINEAR_REQUIRE_REACH:-1}" ] || return 0'

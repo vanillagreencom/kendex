@@ -330,7 +330,7 @@ run_label_team_request() {
 	done
 	: >"$TMP_ROOT/$name.jsonl"
 	(cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$project/bin:$PATH" \
-		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
+		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
 		FIXTURE_FAIL="$fail" \
 		FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
 		${extra_env[@]+"${extra_env[@]}"} \

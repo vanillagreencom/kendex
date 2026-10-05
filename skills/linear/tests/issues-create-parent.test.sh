@@ -92,7 +92,7 @@ run_create() {
   (
     cd "$TMP_ROOT" && \
     PATH="$TMP_ROOT/bin:$PATH" \
-      LINEAR_API_KEY_OVERRIDE=test-token \
+      LINEAR_API_KEY_OVERRIDE=test-token LINEAR_REQUIRE_REACH= \
       CURL_PAYLOAD_LOG="$payload_log" \
       LINEAR_PARENT_TEST_CASE="$scenario" \
       bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \

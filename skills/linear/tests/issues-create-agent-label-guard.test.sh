@@ -4,9 +4,11 @@
 # prints a URL that looks like success.
 #
 # When the project declares its agent-label taxonomy (LINEAR_AGENT_LABELS in
-# kendex.settings.toml [env]), a bare `issues create` must refuse before any
-# API call, with an actionable error naming the TPM pipeline and the
-# --no-agent-label escape hatch. Projects with no declaration are unaffected.
+# kendex.settings.toml [env], or with that key unset the agent category of the
+# rendered label taxonomy), a bare `issues create` must refuse before any API
+# call, with an actionable error naming the TPM pipeline and the
+# --no-agent-label escape hatch. Projects with no declaration, and one whose
+# key is set empty, are unaffected.
 #
 # One table. A row names the declared taxonomy and the create's arguments and
 # pins what came back as one line: the exit status, every logged operation
@@ -77,22 +79,51 @@ wire() {
     "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
 }
 
+# The rendered project-management SKILL.md a run may carry: `agents` lists
+# agent labels in its agent category, `no-agent` has no agent category, and
+# `unreadable` has the heading with no JSON contract.
+RENDER="$PROJECT/.agents/skills/project-management/SKILL.md"
+RENDER_SHOWN="$(cd -P "$PROJECT" && pwd)/.agents/skills/project-management/SKILL.md"
+render() {
+  local categories
+  rm -rf -- "${PROJECT:?}/.agents/skills/project-management"
+  case "$1" in
+  '') return 0 ;;
+  agents) categories='"agent": {"match": {"prefix": "agent:"}, "labels": ["agent:generalist", "agent:rust"]}, "classification": {"labels": ["bug", "docs"]}' ;;
+  no-agent) categories='"classification": {"labels": ["bug", "docs"]}' ;;
+  unreadable) categories='' ;;
+  *) printf 'UNKNOWN-RENDER:%s' "$1"; return 1 ;;
+  esac
+  mkdir -p "${RENDER%/*}"
+  {
+    printf '%s\n' '<!-- kendex:project-instructions:start -->' '### Project taxonomy'
+    [ -z "$categories" ] || printf '```json\n{"categories": {%s}}\n```\n' "$categories"
+    printf '%s\n' '<!-- kendex:project-instructions:end -->'
+  } >"$RENDER"
+}
+
 # run TAXONOMY VIEW ARGS... — `issues create ARGS` in the project whose
 # settings declare TAXONOMY (`none`: no LINEAR_AGENT_LABELS key; `empty`: the
-# key with no value; else the declared list), with LINEAR_TEAM and
-# LINEAR_AGENT_LABELS absent from the process (parent env wins over project
-# files). VIEW `err` renders the wire and stderr; `out` the first stdout line;
-# `doc` stdout whole.
+# key with no value; else the declared list), suffixed `@RENDER` to carry that
+# render, with LINEAR_TEAM and LINEAR_AGENT_LABELS absent from the process
+# (parent env wins over project files). VIEW `err` renders the wire and
+# stderr; `out` the first stdout line; `doc` stdout whole.
 run() {
   local taxonomy="$1" view="$2" rc=0 out err
   shift 2
+  if [[ "$taxonomy" == *@* ]]; then
+    render "${taxonomy#*@}" || return 0
+    taxonomy="${taxonomy%@*}"
+  else
+    render ''
+  fi
   case "$taxonomy" in
   none) printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml" ;;
   empty) printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = ""\n' >"$PROJECT/kendex.settings.toml" ;;
   *) printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "%s"\n' "$taxonomy" >"$PROJECT/kendex.settings.toml" ;;
   esac
   : >"$CURL_LOG"
-  out="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+  out="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS LINEAR_REQUIRE_REACH= PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" bash "$LINEAR" issues create "$@" 2>"$TMP_ROOT/err")" || rc=$?
   err="$(paste -sd';' "$TMP_ROOT/err")"
   case "$view" in
@@ -107,6 +138,9 @@ run() {
 # expected SPEC — from the row's spec:
 #   unrouted DECLARED       the bare-create refusal, listing DECLARED
 #   unknown NAMES~DECLARED  the typo refusal for NAMES against DECLARED
+#   taxonomy-unrouted, taxonomy-unknown
+#                           the same, naming the taxonomy's agent category
+#   unreadable              the unreadable-taxonomy refusal
 #   unresolved NAME         the hard failure of a declared label Linear lacks,
 #                           after the resolver's own warning
 #   created WIRE            exit 0, the team lookup then exactly WIRE, nothing
@@ -115,14 +149,22 @@ run() {
 #   help                    one help document, no call
 TEAM='GetTeam(name="Configured")'
 warned() { printf "Warning: Label not found: '%s';" "$1"; }
+ENV_SOURCE='LINEAR_AGENT_LABELS in kendex.settings.toml [env]'
+TAXONOMY_SOURCE="the agent category of the label taxonomy in $RENDER_SHOWN"
 expected() {
-  local spec="$1"
+  local spec="$1" source="$ENV_SOURCE"
+  if [[ "$spec" == taxonomy-* ]]; then
+    spec="${spec#taxonomy-}"
+    source="$TAXONOMY_SOURCE"
+  fi
   case "$spec" in
+  unreadable)
+    printf 'rc=1 wire= linear-labels: taxonomy-unreadable taxonomy=%s;{"error":"The repository declares a label taxonomy in %s but its ### Project taxonomy section holds no readable JSON contract (project-management references/labels.md § Project Taxonomy Contract), so no label can be judged. Fix the manifest [skill-instructions].project-management and render it."}' "$RENDER_SHOWN" "$RENDER_SHOWN" ;;
   unrouted\ *)
-    printf 'rc=1 wire= {"error":"Refusing to create an unrouted issue: this project declares an agent-label taxonomy (LINEAR_AGENT_LABELS in kendex.settings.toml [env]) and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [%s], or --no-agent-label for a deliberate bare create (e.g. intake mirroring)."}' "${spec#unrouted }" ;;
+    printf 'rc=1 wire= {"error":"Refusing to create an unrouted issue: this project declares an agent-label taxonomy (%s) and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [%s], or --no-agent-label for a deliberate bare create (e.g. intake mirroring)."}' "$source" "${spec#unrouted }" ;;
   unknown\ *)
     spec="${spec#unknown }"
-    printf 'rc=1 wire= {"error":"Unknown agent label(s): %s - not in this project declared agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env]): %s. Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create."}' "${spec%%~*}" "${spec#*~}" ;;
+    printf 'rc=1 wire= {"error":"Unknown agent label(s): %s - not in this project declared agent-label set (%s): %s. Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create."}' "${spec%%~*}" "$source" "${spec#*~}" ;;
   unresolved\ *)
     spec="${spec#unresolved }"
     printf 'rc=1 wire=%s,GetLabel(name="%s") %s{"error":"Agent label failed to resolve in Linear: %s - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry."}' "$TEAM" "$spec" "$(warned "$spec")" "$spec" ;;
@@ -155,6 +197,14 @@ an empty declaration: a bare create is unaffected|empty|err|--title "Empty decla
 comma-space labels reach the guard and the resolver trimmed|agent:generalist, agent:rust|err|--title "Natural input" --labels "bug, agent:rust"|created GetLabel(name="bug"),GetLabel(name="agent:rust"),CreateIssue(input.title="Natural input",input.labelIds.0="label-uuid",input.labelIds.1="label-uuid")
 a declared label missing in Linear hard-fails the create|agent:generalist, agent:rust, agent:ghost|err|--title "Stale declared label" --labels "agent:ghost"|unresolved agent:ghost
 --help never trips the guard|agent:generalist, agent:rust|out|--help|help
+a declared taxonomy with no key refuses a bare create|none@agents|err|--title "Unrouted follow-up"|taxonomy-unrouted agent:generalist, agent:rust
+a declared taxonomy with no key refuses a typoed agent label|none@agents|err|--title Typo --labels "agent:generalst"|taxonomy-unknown agent:generalst~agent:generalist, agent:rust
+a declared taxonomy with no key passes its agent label|none@agents|err|--title Routed --labels "bug,agent:rust"|created GetLabel(name="bug"),GetLabel(name="agent:rust"),CreateIssue(input.title="Routed",input.labelIds.0="label-uuid",input.labelIds.1="label-uuid")
+a declared taxonomy with an empty key leaves a bare create alone|empty@agents|err|--title "Empty declaration create"|created CreateIssue(input.title="Empty declaration create")
+a set key outranks the taxonomy|agent:generalist@agents|err|--title "Unrouted follow-up"|unrouted agent:generalist
+a taxonomy with no agent category leaves a bare create alone|none@no-agent|err|--title "Bare repo create"|created CreateIssue(input.title="Bare repo create")
+an unreadable taxonomy with no key refuses a bare create|none@unreadable|err|--title "Unrouted follow-up"|unreadable
+--no-agent-label never reads the taxonomy|none@unreadable|err|--title "Intake mirror" --no-agent-label|created CreateIssue(input.title="Intake mirror")
 '
 
 while IFS='|' read -r label taxonomy view args spec; do

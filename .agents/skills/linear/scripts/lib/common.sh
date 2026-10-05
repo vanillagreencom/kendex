@@ -989,8 +989,10 @@ resolve_label_id() {
 # and `..`, which bash before 5.2 matches with `.*`, and the source layout).
 # linear_taxonomy_root names that project. Renders of one manifest carry one
 # block, so two that differ refuse. Its declared names are every category's
-# `labels[]` and `match.parent`, plus each LINEAR_AGENT_LABELS name. With no
-# such heading the repository declares no taxonomy, and no rule below applies.
+# `labels[]` and `match.parent`, plus each LINEAR_AGENT_LABELS name. Its
+# `agent` category's `labels[]` is the agent-routing set where
+# LINEAR_AGENT_LABELS is unset. With no such heading the repository declares
+# no taxonomy, and no rule below applies.
 # LINEAR_TAXONOMY_FILE is the render a message names: the first found, or the
 # shared one when none is.
 
@@ -1089,10 +1091,10 @@ linear_label_message() {
     esac
 }
 
-# Print the declared label names as a JSON array, or nothing when the
-# repository declares no taxonomy. A declared taxonomy this cannot read
-# refuses: enforcing nothing then would pass every label it exists to stop.
-linear_declared_labels() {
+# Print the taxonomy's JSON contract, compact, or nothing when the repository
+# declares no taxonomy. A declared taxonomy this cannot read refuses:
+# enforcing nothing then would pass every label it exists to stop.
+linear_taxonomy_contract() {
     local file block rc=0 first=""
     [[ ${#LINEAR_TAXONOMY_RENDERS[@]} -gt 0 ]] || return 0
     for file in "${LINEAR_TAXONOMY_RENDERS[@]}"; do
@@ -1121,17 +1123,37 @@ linear_declared_labels() {
         linear_label_message unreadable "$LINEAR_TAXONOMY_FILE" >&2
         return 1
     fi
-    if ! jq -ce --arg agents "${LINEAR_AGENT_LABELS:-}" '
+    if ! jq -ce '
         select(type == "object" and (.categories | type == "object")
             and all(.categories[]; type == "object"
                 and ((.labels // []) | type == "array" and all(type == "string"))
-                and ((.match.parent // "") | type == "string")))
-        | [.categories[] | (.labels // [])[], (.match.parent // empty)]
-            + [$agents | splits("[, ]+") | select(length > 0)]
-        | unique' <<<"$block" 2>/dev/null; then
+                and ((.match.parent // "") | type == "string")))' <<<"$block" 2>/dev/null; then
         linear_label_message unreadable "$LINEAR_TAXONOMY_FILE" >&2
         return 1
     fi
+}
+
+# Print the declared label names as a JSON array, or nothing when the
+# repository declares no taxonomy.
+linear_declared_labels() {
+    local contract
+    contract=$(linear_taxonomy_contract) || return 1
+    [[ -n "$contract" ]] || return 0
+    jq -c --arg agents "${LINEAR_AGENT_LABELS:-}" '
+        [.categories[] | (.labels // [])[], (.match.parent // empty)]
+            + [$agents | splits("[, ]+") | select(length > 0)]
+        | unique' <<<"$contract"
+}
+
+# Print the `labels[]` of the taxonomy's `agent` category, comma-separated:
+# the agent-routing set of a project that leaves LINEAR_AGENT_LABELS unset.
+# Nothing when the repository declares no taxonomy, or one with no agent
+# category or none listed in it.
+linear_taxonomy_agent_labels() {
+    local contract
+    contract=$(linear_taxonomy_contract) || return 1
+    [[ -n "$contract" ]] || return 0
+    jq -r '.categories.agent.labels // [] | join(", ")' <<<"$contract"
 }
 
 # Refuse, before any write, a label name the taxonomy does not declare.

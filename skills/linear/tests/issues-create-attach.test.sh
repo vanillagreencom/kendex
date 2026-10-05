@@ -120,7 +120,7 @@ assert_not_log() {
 run_linear() {
   : >"$CURL_LOG"
   RC=0
-  OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
+  OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS LINEAR_REQUIRE_REACH= \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \

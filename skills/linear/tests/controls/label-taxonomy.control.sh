@@ -163,8 +163,8 @@ control_replace scripts/lib/common.sh 1 \
 # Declare a match.parent category's labels[] without its group name.
 control_expect "label-group: accepted"
 control_replace scripts/lib/common.sh 1 \
-    '        | [.categories[] | (.labels // [])[], (.match.parent // empty)]' \
-    '        | [.categories[] | (.labels // [])[]]'
+    '        [.categories[] | (.labels // [])[], (.match.parent // empty)]' \
+    '        [.categories[] | (.labels // [])[]]'
 
 # Read the taxonomy for a create with no labels.
 control_expect "label-less: an unreadable taxonomy does not stop a create with no labels"

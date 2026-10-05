@@ -125,9 +125,12 @@ Create Options:
   --no-agent-label      Permit a deliberate bare create (e.g. intake
                         mirroring) in a project that declares its agent-label
                         taxonomy. When LINEAR_AGENT_LABELS is set in
-                        kendex.settings.toml [env], create refuses without an
-                        agent:* label from that set: an unlabeled issue is
-                        invisible to agent routing. Route normal issue
+                        kendex.settings.toml [env], or, with it unset, the
+                        label taxonomy's agent category lists labels, create
+                        refuses without an agent:* label from that set (an
+                        empty LINEAR_AGENT_LABELS turns this off): an
+                        unlabeled issue is invisible to agent routing.
+                        Route normal issue
                         creation through the TPM pipeline (project-management
                         skill), which owns labels, project, priority, and
                         relations — do not create tracked issues directly.
@@ -135,10 +138,10 @@ Create Options:
   --review-born         This create came from a review finding, which is what
                         subjects it to the `Symptom:` half of the bar below.
 
-  Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
-  create refuses a description with no `Reached by:` line, and a `--review-born
-  --priority 2` one with no `Symptom:`; a placeholder or null token (TBD, n/a,
-  none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
+  Reach guard: unless LINEAR_REQUIRE_REACH is set empty in kendex.settings.toml
+  [env], create refuses a description with no `Reached by:` line, and a
+  `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
+  token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
@@ -925,14 +928,21 @@ get_issue() {
 # invisible to agent routing — no labels, project, or routing — while the CLI
 # prints a URL that looks like success. When the project declares its
 # agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env],
-# comma- or space-separated), refuse a bare create before any API call.
+# comma- or space-separated, or, with that key unset, the agent category of
+# the label taxonomy), refuse a bare create before any API call.
 # An undeclared/empty set keeps the guard off; --no-agent-label opts a
 # single deliberate bare create out (e.g. intake mirroring).
 require_agent_routing_label() {
     local labels="$1" opt_out="$2"
-    local declared="${LINEAR_AGENT_LABELS:-}"
-    [ -n "$declared" ] || return 0
     [ "$opt_out" = "1" ] && return 0
+    local declared source="LINEAR_AGENT_LABELS in kendex.settings.toml [env]"
+    if [ -n "${LINEAR_AGENT_LABELS+x}" ]; then
+        declared="$LINEAR_AGENT_LABELS"
+    else
+        declared=$(linear_taxonomy_agent_labels) || return 1
+        source="the agent category of the label taxonomy in $LINEAR_TAXONOMY_FILE"
+    fi
+    [ -n "$declared" ] || return 0
 
     local declared_names=()
     IFS=', ' read -ra declared_names <<<"$declared"
@@ -962,13 +972,13 @@ require_agent_routing_label() {
     # A typoed agent label would otherwise be warn-and-skipped by
     # resolve_label_id, creating an unrouted issue that looks routed.
     if [ -n "$unknown_agent" ]; then
-        jq -cn --arg unknown "$unknown_agent" --arg declared "$declared" \
-            '{error: ("Unknown agent label(s): " + $unknown + " - not in this project declared agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env]): " + $declared + ". Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create.")}' >&2
+        jq -cn --arg unknown "$unknown_agent" --arg declared "$declared" --arg source "$source" \
+            '{error: ("Unknown agent label(s): " + $unknown + " - not in this project declared agent-label set (" + $source + "): " + $declared + ". Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create.")}' >&2
         return 1
     fi
     if [ "$agent_matched" != "1" ]; then
-        jq -cn --arg declared "$declared" \
-            '{error: ("Refusing to create an unrouted issue: this project declares an agent-label taxonomy (LINEAR_AGENT_LABELS in kendex.settings.toml [env]) and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [" + $declared + "], or --no-agent-label for a deliberate bare create (e.g. intake mirroring).")}' >&2
+        jq -cn --arg declared "$declared" --arg source "$source" \
+            '{error: ("Refusing to create an unrouted issue: this project declares an agent-label taxonomy (" + $source + ") and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [" + $declared + "], or --no-agent-label for a deliberate bare create (e.g. intake mirroring).")}' >&2
         return 1
     fi
     return 0
@@ -1238,8 +1248,9 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
-    # The taxonomy judges label writes only: a create with no labels never
-    # reads it, so an unreadable one does not stop a label-less create.
+    # The declared-label check judges label writes only: a create with no
+    # labels skips it, so an unreadable taxonomy stops a label-less create
+    # only where the routing guard above reads it.
     local declared=""
     if [[ -n "$labels" ]]; then
         declared=$(linear_declared_labels) || return 1

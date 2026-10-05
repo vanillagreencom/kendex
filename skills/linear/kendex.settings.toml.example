@@ -15,15 +15,16 @@ LINEAR_TEAM = "" # required
 LINEAR_TEAM_PREFIX = "PROJ"
 
 # The labels that route an issue to an agent, separated by commas. With a
-# list here, creating an issue that carries none of them is refused, because
-# nothing would pick that issue up. Empty turns the refusal off.
+# list, creating an issue that carries none of them is refused, because
+# nothing would pick that issue up. Left out of this file, the agent labels
+# the repository's label taxonomy lists stand in. Empty turns the refusal off.
 LINEAR_AGENT_LABELS = ""
 
 # Whether a new issue must say who runs into the problem. Any value turns it
 # on: a description with no "Reached by" line is refused, and a
 # high-priority issue born from a review also needs a "Symptom" line. Empty
 # turns it off.
-LINEAR_REQUIRE_REACH = ""
+LINEAR_REQUIRE_REACH = "1"
 
 # How read commands print: "safe" flat, "table" for a person, "ids" bare
 # identifiers, "compact" small for routing, "raw" Linear's own nesting.
