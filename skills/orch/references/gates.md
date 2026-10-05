@@ -23,7 +23,7 @@ Every first or repeated Copilot request uses the mode owner:
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-`off` ends the request path without a request or a wait. `approval` confirms that the request succeeded. `fallback` means no request went out, because `PR_COPILOT_REQUESTS` is `off` or GitHub refused it: start no Copilot wait, and in a lane send the `copilot-fallback` notice for the current head at once, as [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends it, so the overseer approves the head. A nonzero exit is no mode: report it and stop. `approval-wait --help` owns the action contract.
+`off` ends the request path without a request or a wait. `approval` confirms that the request succeeded. `fallback` means no request went out, because `PR_COPILOT_REQUESTS` is `off` or GitHub refused it: start no Copilot wait, and in a lane send the `copilot-fallback` notice for the current head at once, as [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends it, so the overseer approves the head. A nonzero exit is no mode: report it and stop. `--copilot-route` gives the same answer with no request, for a head that waits on the automatic review. `approval-wait --help` owns the action contract.
 
 ## Which waiter answers which state
 

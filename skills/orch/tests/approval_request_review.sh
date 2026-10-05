@@ -86,7 +86,10 @@ for row in \
   'Copilot requests off on an off gate|--request-review|"off"|off||0|0|off|0' \
   'Copilot requests off at resolution|--resolve-mode|"enforce"|off||0|0|approval|0' \
   'base checkout cannot turn Copilot requests off|--request-review|"enforce"||off|0|0|approval|1' \
-  'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0'; do
+  'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0' \
+  'Copilot route with requests on|--copilot-route|"enforce"|||0|0|approval|0' \
+  'Copilot route with requests off|--copilot-route|"enforce"|off||0|0|fallback|0' \
+  'Copilot route on an off gate|--copilot-route|"off"|||0|0|off|0'; do
   IFS='|' read -r label action setting caller_copilot base_copilot request_exit want_rc want_out want_requests <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
   write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
@@ -102,7 +105,7 @@ assert_eq "$(cat "$REQUEST_LOG")" "$BASE|pr edit 42 --repo consumer/repo --add-r
 assert_contains "$(cat "$QUERY_LOG")" "$BASE|api repos/consumer/repo/rules/branches/feature%2Fbase --paginate" \
   'the trusted native owner reads stacked-base rules from the consumer directory' "$ERR"
 
-for action in --request-review --resolve-mode; do
+for action in --request-review --copilot-route --resolve-mode; do
   for context in '' "$TMP_ROOT/missing"; do
     base_args=()
     [[ -z "$context" ]] || base_args=(--base-checkout "$context")
@@ -110,7 +113,7 @@ for action in --request-review --resolve-mode; do
     assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '2||0||' "$action refuses unavailable context [$context] before native reads" "$ERR"
   done
 done
-# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests
+# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests~action (default --request-review)
 for row in \
   'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
   'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0' \
@@ -121,15 +124,16 @@ for row in \
   'copilot-off~"enforce"~off~~0~    if [[ "$COPILOT_REQUESTS" == off ]]; then~    if false; then~0~fallback~0' \
   'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback~1' \
   'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
-  'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0'; do
-  IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests <<< "$row"
+  'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0' \
+  'route-only~"enforce"~~~0~    elif ! $ROUTE_ONLY; then~    elif true; then~0~approval~0~--copilot-route'; do
+  IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests action <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
   write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
   scripts="$(mutant_scripts "$label/orch" approval-wait)"
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$label/github"
   ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/$label/review-gate"
   mutate_file "$scripts/approval-wait" "$old" "$new"
-  run_action "$scripts/approval-wait" "$request_exit" --request-review --base-checkout "$BASE"
+  run_action "$scripts/approval-wait" "$request_exit" "${action:---request-review}" --base-checkout "$BASE"
   if [[ "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$EXECUTION_LOG")" == "$want_rc|$want_out|$want_requests|" ]]; then
     fail "$label control did not turn its behavioral assertion red"
   else

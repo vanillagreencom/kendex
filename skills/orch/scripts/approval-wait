@@ -156,6 +156,7 @@ Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      [--item ID]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
        approval-wait <PR#> --request-review --base-checkout PATH
+       approval-wait <PR#> --copilot-route --base-checkout PATH
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
 result on stdout: a stable status line with English below, or a JSON object
@@ -187,6 +188,10 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  PR_COPILOT_REQUESTS is off, or GitHub refused the request
                  (copilot-request-refused on stderr). The caller then asks the
                  overseer for the head approval and starts no Copilot wait.
+  --copilot-route
+                 --request-review's answer without its request: approval when a
+                 Copilot review may come, so the caller waits for it; fallback
+                 when PR_COPILOT_REQUESTS is off; off for an off gate.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -361,6 +366,8 @@ JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
 REQUEST_REVIEW=false
+# --copilot-route: --request-review's routing with no request sent.
+ROUTE_ONLY=false
 BASE_CHECKOUT=""
 ON_TIMEOUT_FLAG=""
 ITEM=""
@@ -373,7 +380,11 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
-    --request-review) REQUEST_REVIEW=true; shift ;;
+    --request-review|--copilot-route)
+      REQUEST_REVIEW=true
+      [[ "$1" == --request-review ]] || ROUTE_ONLY=true
+      shift
+      ;;
     --base-checkout)
       [[ -n "${2:-}" ]] || { approval_message base-checkout-invalid >&2; exit 2; }
       BASE_CHECKOUT="$2"
@@ -758,7 +769,7 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
     if [[ "$COPILOT_REQUESTS" == off ]]; then
       answer=fallback
-    else
+    elif ! $ROUTE_ONLY; then
       request_rc=0
       gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
       if [[ "$request_rc" -ne 0 ]]; then

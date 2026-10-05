@@ -247,7 +247,13 @@ A retarget changes the base without touching the head, so every path below that 
 
 **Who acts.** The lane waits and triages under its own credential, and never approves its own PR. The overseer approves a head only as [copilot-head-notices.md](../references/copilot-head-notices.md) sets, reached by pr-watch's `awaiting-stale` line ([oversee-events.md](../references/oversee-events.md), `pr-watch`) or a Copilot notice from [review-pr-comments.md](review-pr-comments.md#72-copilot-head-route) § 7.2. The lane's own `timeout` row below keeps it waiting or asks the user. An approval that arrives ends the wait as `approved`.
 
-1. **Wait.** Poll for the verdict and new comments together:
+1. **Wait.** First read the Copilot route through the same consumer base:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --copilot-route --base-checkout [REVIEW_BASE_CHECKOUT]
+   ```
+
+   `fallback` means no Copilot review will come: unless this head already has one, send the `copilot-fallback` notice for it at once, as [review-pr-comments.md](review-pr-comments.md) § 7.2 sends it, and the overseer's approval ends the wait below. `approval` and `off` send nothing. A nonzero exit is no route: report it and stop. Then poll for the verdict and new comments together:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]
