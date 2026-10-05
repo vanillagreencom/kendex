@@ -6,7 +6,8 @@
 # parents; the repository cannot switch a finding off through gitleaks' own
 # allowlists, nor through its own exclusion list under --policy-root, which
 # still refuses that list or its setting when malformed, and refuses a policy
-# root it cannot enter or that is no git repository; a
+# root it cannot enter or that is no git repository; a value option refuses
+# an empty or missing value in either form before any scan; a
 # missing or too-old gitleaks is a gap notice that passes, except under CI on
 # a range or --all scan; a gitleaks run that fails, or a report the lane
 # cannot read, is exit 2. Each row builds a fresh repository
@@ -310,6 +311,44 @@ a judged setting the lane cannot use refuses|/abs/excludes||rc=2 secrets: path-a
 a judged row without a reason refuses||docs/*\n|rc=2 secrets: exclusion-reason=tools/secrets-excludes:1
 ROWS
 
+echo "=== a value option refuses an empty or missing value in either form, before any scan ==="
+# The repository's own list excludes every path, so a lane that read an
+# empty --policy-root or --excludes as not given would pass the credential.
+repo empty-values
+put tools/secrets-excludes "*\tthe repository excludes every path\n"
+put tools/narrow-excludes "fixtures/*\tfake credentials the suite asserts against\n"
+put cred.txt "aws = $CRED\n"
+EMPTY_VALUES="$R"
+while IFS='|' read -r option form; do
+  case "$form" in
+    equals) args=("$option=") ;;
+    separate) args=("$option" "") ;;
+    absent) args=("$option") ;;
+  esac
+  row "$option in the $form form refuses" "rc=2 secrets: argument-missing=$option" "$R" "${args[@]}"
+  carries "summary="
+  assert_eq "$option in the $form form scans nothing" "absent" "$HAS"
+done <<'ROWS'
+--policy-root|equals
+--policy-root|separate
+--policy-root|absent
+--excludes|equals
+--excludes|separate
+--excludes|absent
+--base|equals
+--base|separate
+--base|absent
+--against|equals
+--against|separate
+--against|absent
+ROWS
+row "a non-empty --policy-root= reads the policy root's list" \
+  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" "--policy-root=$POLICY"
+row "a non-empty --excludes= reads the list it names" \
+  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --excludes=tools/narrow-excludes
+row "without either the repository's own list passes every path" \
+  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$R"
+
 echo "=== the tool: missing or too old is a gap outside CI and on --staged, a refusal on a CI range or --all ==="
 NO_TOOL_PATH="$TMP/no-tool-bin"
 mkdir -p "$NO_TOOL_PATH"
@@ -459,6 +498,14 @@ a lane that never returns to the judged repository scans the policy root and pas
 a lane that skips the judged setting passes its absolute path^JUDGED_EXCLUDES="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_SECRETS_EXCLUDES "tools/secrets-excludes" excludes)"^JUDGED_EXCLUDES=tools/secrets-excludes^a judged setting the lane cannot use refuses^trusted-policy^rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0
 a lane that skips the judged list passes its malformed row^gg_load_excludes "$JUDGED_EXCLUDES"^true^a judged row without a reason refuses^trusted-policy^rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0
 ROWS
+gg_mutant LANE secrets '[ $# -ge 2 ] && [ -n "$2" ] || gg_fail argument-missing' '[ $# -ge 2 ] || gg_fail argument-missing'
+row "control: a lane that takes an empty --policy-root= scans under the judged repository's own list" \
+  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$EMPTY_VALUES" --policy-root=
+row "control: and takes an empty separate --policy-root the same way" \
+  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$EMPTY_VALUES" --policy-root ""
+gg_mutant LANE secrets '[ $# -ge 2 ] && [ -n "$2" ] || gg_fail argument-missing' '[ -n "$2" ] || gg_fail argument-missing'
+row "control: without the count check a trailing option fails on the unset value, not as a refusal" \
+  "rc=1 " "$EMPTY_VALUES" --policy-root
 gg_mutant LANE secrets '--config "$GG_TMP/gitleaks.toml"' '--log-level warn'
 row "control: without the config flag the environment's configuration allowlists the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$ENV_TOML" "$ENV_CONFIG"
