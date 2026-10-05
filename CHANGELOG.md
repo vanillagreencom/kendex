@@ -22,6 +22,7 @@ change came from an outside contributor.
 - `session-start-row`, `session-end-row` or `stop-failure-row` pinned to fewer harnesses than `lane-mail-check`, or removed, now withholds `lane-mail-check` there; widen the pin or restore the hook.
 - Commit-guards refusals in an unarmed clone name the tracked installer before `kendex guard install`. Re-arm each clone once: until then, hook checks report the helper outdated.
 - A consumer refresh pull request of any change class now arms auto-merge and merges once its required approval, thread resolution and checks pass. Before, only `render` armed.
+- Code-quality loads language rules on demand and clarifies test evidence and ownership. Preflight rejects direct environment mutation in Rust test files.
 
 ### Fixed
 

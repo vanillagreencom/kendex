@@ -1,1 +1,0 @@
-- Code-quality loads language rules on demand and clarifies test evidence and ownership. Preflight rejects direct environment mutation in Rust test files.
