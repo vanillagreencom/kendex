@@ -38,6 +38,8 @@ case "$query" in
   printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200" ;;
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-todo","name":"Todo"}]}}}___HTTP_CODE___200' ;;
+*"teams(filter:"*)
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"PROJ","name":"Claude"}]}}}___HTTP_CODE___200' ;;
 *"issue(id:"*)
   printf '%s' "{\"data\":{\"issue\":$issue_json}}___HTTP_CODE___200" ;;
 *)

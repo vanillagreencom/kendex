@@ -32,7 +32,7 @@ printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query="$(jq -r '.query' <<<"$payload")"
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"ISS","name":"TestTeam"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
   name="$(jq -r '.variables.name // empty' <<<"$payload")"

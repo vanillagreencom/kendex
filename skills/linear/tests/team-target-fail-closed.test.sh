@@ -38,7 +38,7 @@ query="$(jq -r '.query' <<<"$payload")"
 
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"TEAM","name":"TEAM"}]}}}___HTTP_CODE___200'
   ;;
 *"viewer"*)
   printf '%s' '{"data":{"viewer":{"id":"viewer-uuid"}}}___HTTP_CODE___200'
@@ -234,7 +234,7 @@ expected() {
 ROWS='
 issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
 issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|inactive update GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
-issues update resolves under the issue team, not the configured spelling of it|TEAM|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
+issues update resolves under the issue team, not the configured spelling of it|TEAM|-|err|issues update TEAM-1 --state Done --labels backend|ok GetTeam(name="TEAM"),GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
 comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused

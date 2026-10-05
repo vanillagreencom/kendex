@@ -141,12 +141,13 @@ statuses get|statuses get --team VALUE --name Todo
 ROWS
 
 # The issue's team is named ENG, which is another team's key: its state
-# resolves under the id the issue read carries, with no team lookup at all.
+# resolves under the id the issue read carries, never by a lookup of that
+# name. The one team lookup is the cross-team guard's read of LINEAR_TEAM.
 ENX_TEAM_ID=3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73
 OWN_TEAM=KEN run_status rc run_team_ref update-state issues update KEN-2413 --state "In Progress"
 assert_eq "issues update --state: succeeds for a team named ENG" "$rc" 0
-assert "issues update --state: sends no team lookup" \
-  jq -s -e 'length > 0 and all(.query | contains("teams(filter:") | not)' "$TMP_ROOT/update-state.jsonl"
+assert "issues update --state: looks up no team but the configured one" \
+  jq -s -e '[.[] | select(.query | contains("teams(filter:")) | .variables.name] == ["KEN"]' "$TMP_ROOT/update-state.jsonl"
 assert "issues update --state: resolves the state under the issue's own team id" \
   jq -s -e --arg team "$ENX_TEAM_ID" \
     'map(select(.query | contains("workflowStates(filter:"))) | length == 1 and .[0].variables.teamId == $team' \

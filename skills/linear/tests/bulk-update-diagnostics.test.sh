@@ -9,12 +9,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 
+# Under LINEAR_TEAM=CC the cross-team guard reads that team before the first
+# item; each child's graphql_request answers that read, and only that read.
+
 rc=0
 out="$(
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC bash -euo pipefail -c '
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
+        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             case "$1" in
@@ -62,6 +66,7 @@ warn_out="$(
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
+        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             printf "WARN: %s is a sub-issue of CC-1 — sort order has no effect on sub-issues\n" "$1" >&2
@@ -78,6 +83,7 @@ warn_err="$(
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
+        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             printf "WARN: %s is a sub-issue of CC-1 — sort order has no effect on sub-issues\n" "$1" >&2

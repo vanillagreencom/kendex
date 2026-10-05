@@ -24,7 +24,7 @@ control_replace scripts/lib/common.sh 1 \
 
 # Resolve the update's state through the issue's team name again: ENG is one
 # team's key and another's name, so the lookup refuses as ambiguous.
-control_expect "issues update --state: sends no team lookup"
+control_expect "issues update --state: looks up no team but the configured one"
 control_expect "issues update --state: resolves the state under the issue's own team id"
 control_replace scripts/commands/issues.sh 1 \
     '    team_id=$(echo "$issue_result" | jq -r '"'"'.issue.team.id // empty'"'"')' \

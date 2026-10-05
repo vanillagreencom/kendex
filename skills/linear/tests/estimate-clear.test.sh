@@ -94,6 +94,8 @@ assert "--clear-estimate with --estimate 0 builds estimate: null" \
     jq -e '.input.estimate == null' "$cap"
 
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
+# Under LINEAR_TEAM=CC the cross-team guard reads that team before the first
+# item; each child's graphql_request answers that read, and only that read.
 cap="$TMP/bulk-clear.json"
 out="$(
     CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
@@ -103,6 +105,7 @@ out="$(
             issues_sh="$1"
             # shellcheck disable=SC1090
             source "$issues_sh"
+            graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
             attach_download_from_text() { :; }
             graphql_query() {
@@ -124,6 +127,7 @@ out="$(
             issues_sh="$1"
             # shellcheck disable=SC1090
             source "$issues_sh"
+            graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
             attach_download_from_text() { :; }
             graphql_query() { printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{}}}"; }

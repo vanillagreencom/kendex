@@ -69,6 +69,9 @@ case "$query" in
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-in-progress"}]}}}___HTTP_CODE___200'
   ;;
+*"teams(filter:"*)
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
+  ;;
 *"issue(id:"*)
   if [[ "${FAKE_FAIL:-}" == issue ]]; then
     printf '%s' '{"errors":[{"message":"issue read unavailable"}]}___HTTP_CODE___200'
@@ -175,5 +178,7 @@ lookup-failed|users|0|users lookup unavailable
 issue-read-failed|issue|0|issue read unavailable
 update-failed|update|1|-
 ROWS
+# The cross-team guard's read of LINEAR_TEAM comes first; the issue read is
+# then the only request.
 assert_eq "issue-read-failed: nothing is requested after the failed issue read" \
-  "$(jq -s 'length' "$TMP_ROOT/issue-read-failed.jsonl")" 1
+  "$(jq -s '[.[] | select(.query | contains("teams(filter:") | not)] | length' "$TMP_ROOT/issue-read-failed.jsonl")" 1

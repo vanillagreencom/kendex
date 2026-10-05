@@ -63,6 +63,8 @@ case "\$query" in
   entity_unconfirmed)
     printf '%s' "{\"data\":{\"\$op\":{\"success\":true,\"entity\":\$unconfirmed_entity}}}___HTTP_CODE___200" ;;
   esac ;;
+*"teams(filter:"*)
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"PROJ","name":"Claude"}]}}}___HTTP_CODE___200' ;;
 *"issue(id:"*)
   printf '%s' '{"data":{"issue":{"id":"$UUID"}}}___HTTP_CODE___200' ;;
 *)
