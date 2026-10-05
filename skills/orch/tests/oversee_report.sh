@@ -792,6 +792,7 @@ custom_interval|600|ORCH_REPORT_EVERY_MINUTES=10||report-due reason=minutes sinc
 empty_minutes|999999|ORCH_REPORT_EVERY_MINUTES=||
 zero_minutes|999999|ORCH_REPORT_EVERY_MINUTES=0||
 off|999999|ORCH_REPORT=off||
+off_connected_unread|999999|ORCH_REPORT=off ORCH_CONSUMER_REPOS=x/y||
 no_report_yet|none|||report-due reason=minutes since=@AGE
 issues_reached|60|ORCH_REPORT_EVERY_ISSUES=1|-30|report-due reason=issues since=@AGE landed=1
 issues_before_marker|60|ORCH_REPORT_EVERY_ISSUES=1|-120|
@@ -801,6 +802,18 @@ issues_past_lookback|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES
 issues_past_lookback_none|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2||
 issues_inside_lookback|259200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|
 ROWS
+# Off exits before ORCH_CONNECTED_REPOS is read, so a setting orch-env refuses
+# cannot fail it. Control: the read planted above the off exit refuses.
+OFF_MUTANT="$(mutant_scripts off-order/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/off-order/github"
+mutate_file "$OFF_MUTANT" '[[ "$VERB" != due || "$REPORT" == on ]] || exit 0' \
+  'CONNECTED="$(orch_connected_repos "${REPOS[@]}")" || refuse setting-read ORCH_CONNECTED_REPOS
+[[ "$VERB" != due || "$REPORT" == on ]] || exit 0'
+new_case due_off_order_control
+fleet '' "$(lane KEN-1 running -86400)"
+REPORT_UNDER_TEST="$OFF_MUTANT" run ORCH_REPORT=off ORCH_CONSUMER_REPOS=x/y -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: setting-read=ORCH_CONNECTED_REPOS" \
+  "control: with the read above the off exit, off refuses on the unreadable setting"
 # A due judged on minutes reaches no gh call, so a credential that would
 # refuse is never asked.
 new_case due_minutes_no_gh

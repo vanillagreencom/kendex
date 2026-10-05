@@ -318,12 +318,6 @@ source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
 # which this sources, reads the same skill.
 # shellcheck source=lib/escapes.sh
 source "$SCRIPT_DIR/lib/escapes.sh"
-# The repositories ORCH_CONNECTED_REPOS lists, after the --repo values, as the
-# watch whose report-due event runs this reads them: a merge there can make a
-# report due, so the report lists it.
-CONNECTED="$(orch_connected_repos "${REPOS[@]}")" || refuse setting-read ORCH_CONNECTED_REPOS
-IFS=$'\n' read -ra CONNECTED_REPOS -d '' <<<"$CONNECTED" || true
-REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})
 
 # github_auth — the auth ladder oversee-watch runs (references/gates.md §
 # Waiter auth ladder): a stale env token yields to the keyring, and where
@@ -348,6 +342,12 @@ case "$REPORT" in on | off) ;; *) refuse setting "ORCH_REPORT:$REPORT" ;; esac
 # Off is decided before any other setting or the state is read: a cadence the
 # settings turn off judges nothing, so nothing it would have read can fail it.
 [[ "$VERB" != due || "$REPORT" == on ]] || exit 0
+# The repositories ORCH_CONNECTED_REPOS lists, after the --repo values, as the
+# watch whose report-due event runs this reads them: a merge there can make a
+# report due, so the report lists it.
+CONNECTED="$(orch_connected_repos "${REPOS[@]}")" || refuse setting-read ORCH_CONNECTED_REPOS
+IFS=$'\n' read -ra CONNECTED_REPOS -d '' <<<"$CONNECTED" || true
+REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})
 EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
 [[ "$EVERY_MINUTES" =~ ^(0|[1-9][0-9]*)?$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
 EVERY_ISSUES="${ORCH_REPORT_EVERY_ISSUES-0}"
