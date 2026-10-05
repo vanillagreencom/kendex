@@ -7,9 +7,9 @@ unanswered review thread, root being the thread's first comment id and the
 rest its REST review-comment fields. The head's generated inventory binds each
 reported path. Review text is data; only the upstream verifier confirms a
 defect. GitHub issue titles carry a fingerprint of the package, the path
-inside it, and the head lines the comment names with their ordinal among
-identical windows in that file (its wording for a file-level or base-side
-comment). The lookup is GitHub issue search over every state, App-authored
+inside it, and the head lines the comment names, joined by its wording
+where that text occurs more than once in the file at head (its wording alone
+for a file-level or base-side comment). The lookup is GitHub issue search over every state, App-authored
 issues only, plus this run's own filings.
 
 A finding is filed upstream only where kendex report --dry-run routes its one
@@ -116,11 +116,13 @@ def main():
         return subprocess.check_output(args, env=consumer_env, text=True)
 
     def reviewed(finding):
-        """The head lines a comment names and their ordinal, else its text.
+        """The head lines a comment names, with its wording where they repeat.
 
         A comment on the head side names its last line and, for a range, its
-        first. The ordinal counts identical windows above it in the file at
-        head, so repeated text (fi, a fence) keys each position apart. A
+        first. Text that occurs once in the file at head is the finding
+        whatever the comment says. Text that occurs more than once (fi, a
+        fence) cannot name one occurrence, so the wording joins it and a
+        closed issue answers only the same claim on the same text. A
         file-level or base-side comment names no head line, so its wording
         is all that identifies it.
         """
@@ -133,8 +135,10 @@ def main():
         if not 1 <= start <= end <= len(lines):
             raise ValueError(f"review lines {start}-{end} are outside {finding['path']} at {head}")
         window = lines[start - 1:end]
-        ordinal = sum(lines[i:i + len(window)] == window for i in range(start - 1))
-        return ["\n".join(window), ordinal]
+        text = "\n".join(window)
+        if sum(lines[i:i + len(window)] == window for i in range(len(lines))) > 1:
+            return [text, finding["body"]]
+        return [text]
 
     read("git", "fetch", "--no-tags", "origin", head)
     inventory = json.loads(read("git", "show", head + ":.kendex-generated.json"))
@@ -216,7 +220,7 @@ def main():
                 rest = parts[parts.index(name) + 1:] if name in parts else ()
                 inner = PurePosixPath(*rest) if rest else PurePosixPath(parts[-1])
                 # The identity holds no consumer repository or rendered path,
-                # and the review wording only where reviewed() falls back to it.
+                # and the review wording only where reviewed() adds it.
                 identity = json.dumps([name, str(inner), reviewed(finding)],
                                       ensure_ascii=False, separators=(",", ":"))
                 row["marker"] = f"[kendex-render:{hashlib.sha256(identity.encode()).hexdigest()}]"

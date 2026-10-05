@@ -203,11 +203,13 @@ results=[]
 # project-instructions block that shifts every line.
 skill_md=['---','name: review-gate','---','','Run the gate.','Then read the verdict.','']
 # A script whose `fi` windows repeat with identical surrounding lines, and two
-# single-file packages sharing a line.
-agent='---\nname: x\n---\nDo the work.\n'
+# single-file packages sharing a line, whose only repeated text is their first
+# and last lines.
+agent='---\nname: x\nDo the work.\n---\n'
+block='run() {\n  if a; then\n    x\n  fi\n}\n\n'
 files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
        '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:]),
-       '.agents/skills/review-gate/scripts/test.sh':'run() {\n  if a; then\n    x\n  fi\n}\n\n'*3,
+       '.agents/skills/review-gate/scripts/test.sh':block*3,
        '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent}
 def reset(**extra):
  world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
@@ -267,23 +269,28 @@ assert package_line()=='one'
 # The fold stops at the line: another line of the same file, a base-side
 # comment and a file-level comment are their own findings, and the
 # wording identifies the last two.
-# Each position of text repeated in one file, surrounding lines and all, is
-# its own finding, as are the frontmatter fences; a range and a single line
-# sharing its end are two findings, and a single-file package folds by its
-# own name.
+# Text repeated in one file keys on its lines and the wording, never its
+# position: two claims on `fi` are two findings, one claim on `fi` or on a
+# fence folds wherever it sits and whichever render it is in, and text at
+# the first and last lines repeats. A range and a single line sharing its
+# end are two findings, and a single-file package folds by its own name.
 other_line=dict(consumer_a,line=5,start_line=None)
 same_end=dict(consumer_a,root=31,start_line=None)
 base_side=dict(consumer_a,side='LEFT')
 first_fi=dict(consumer_a,root=32,path='.agents/skills/review-gate/scripts/test.sh',line=4,start_line=None)
-repeated_text=[first_fi, dict(first_fi,root=33,line=10)]
-fences=[dict(consumer_a,root=34,line=1,start_line=None), dict(consumer_a,root=35,line=3,start_line=None)]
-agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=4,start_line=None)
+repeated_text=[first_fi, dict(first_fi,root=33,line=10,body='Another defect.')]
+same_claim=[first_fi, dict(first_fi,root=33,line=10)]
+fences=[dict(consumer_a,root=34,line=3,start_line=None), dict(consumer_b,root=35,line=1,start_line=None,body=consumer_a['body'])]
+agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=3,start_line=None)
 agents=[agent_a, dict(agent_a,root=61,body='Another wording.'), dict(agent_a,root=62,path='.claude/agents/maintainer.md')]
+file_ends=[dict(agent_a,root=63,line=1), dict(agent_a,root=64,line=4,body='Another wording.')]
 for rows, issues in [
  ([consumer_a, other_line], 2),
  ([consumer_a, same_end], 2),
  (repeated_text, 2),
- (fences, 2),
+ (same_claim, 1),
+ (fences, 1),
+ (file_ends, 2),
  (agents, 2),
  ([base_side, dict(base_side,body='Another wording.')], 2),
  ([dict(consumer_a,line=None,start_line=None), dict(consumer_b,line=None,start_line=None)], 2),
@@ -292,16 +299,19 @@ for rows, issues in [
  reset(); assert len(run(rows=rows)['issues'])==issues, rows
  # Search indexes a new issue late; one run's repeat rides on its own filing.
  assert len({r['issue'] for r in results})==issues
-# One occurrence of repeated text, reviewed again after two lines are
-# prepended above it, folds into its issue.
-def shifted(driver=skill/'scripts/refresh-report.py'):
- reset(); run(driver,rows=[dict(first_fi,line=10)])
- moved=json.loads(world.read_text()); moved['files'][first_fi['path']]='#!/bin/sh\n\n'+files[first_fi['path']]
- world.write_text(json.dumps(moved))
- later=run(driver,rows=[dict(first_fi,root=36,line=12,url='https://github.com/acme/repo/pull/2#discussion_r36')],
-           overrides={'GITHUB_RUN_ID':'43'})
+# A closed issue on repeated text answers only its own claim: after a block
+# is inserted above the reviewed `fi` or one deleted, another claim on the
+# same line is filed anew.
+reshapes=(block*4, block*2)
+def reshaped(text, driver=skill/'scripts/refresh-report.py'):
+ reset(); closed=run(driver,rows=[dict(first_fi,line=10)])
+ closed['issues'][0].update(state='closed',state_reason='completed')
+ closed['files'][first_fi['path']]=text; world.write_text(json.dumps(closed))
+ later=run(driver,rows=[dict(first_fi,root=36,line=10,body='Another defect.',
+                             url='https://github.com/acme/repo/pull/2#discussion_r36')],overrides={'GITHUB_RUN_ID':'43'})
  return len(later['issues']), results[0]['note']
-assert shifted()==(1,'Existing open report')
+for text in reshapes:
+ assert reshaped(text)==(2,'Filed for upstream confirmation'), text
 # Each thread folded onto this run's own filing leaves its text and evidence.
 def folded_evidence(driver=skill/'scripts/refresh-report.py'):
  reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
@@ -440,11 +450,12 @@ mutant.write_text(changed)
 for name, row, overrides, note in not_filed_rows:
  assert not_filed(mutant, row, overrides, note) == (name != 'elsewhere'), name
 # Each identity and lookup rule: the consumer repository or the wording in
-# the identity, an open-only search, a closed issue read as open, and this
-# run's own filing forgotten.
+# the identity of unique text, an open-only search, a closed issue read as
+# open, and this run's own filing forgotten.
 for needle,replacement,expect in [
  ('[name, str(inner), reviewed(finding)]', '[repo, name, str(inner), reviewed(finding)]', 'consumers'),
  ('[name, str(inner), reviewed(finding)]', '[name, str(inner), finding["body"]]', 'consumers'),
+ ('        return [text]\n', '        return [text, finding["body"]]\n', 'consumers'),
  ('is:issue in:title', 'is:issue is:open in:title', 'closed'),
  ('if existing and existing["state"] != "open":', 'if False and existing:', 'closed'),
 ]:
@@ -454,7 +465,10 @@ for needle,replacement,expect in [
 for needle,replacement,rows,issues in [
  ('                    known[marker] = created\n', '                    pass\n', [consumer_a, consumer_b], 2),
  ('start = start or end', 'start = end', [consumer_a, same_end], 1),
- ('return ["\\n".join(window), ordinal]', 'return ["\\n".join(window), 0]', repeated_text, 1),
+ ('return [text, finding["body"]]', 'return [text]', repeated_text, 1),
+ ('return [text, finding["body"]]', 'return [text, finding["body"], start]', same_claim, 2),
+ ('for i in range(len(lines))', 'for i in range(len(lines) - 1)', file_ends, 1),
+ ('for i in range(len(lines))', 'for i in range(1, len(lines))', file_ends, 1),
  ('if end is None or finding.get("side") != "RIGHT":', 'if end is None:', [base_side, dict(base_side,body='Another wording.')], 1),
 ]:
  assert source.count(needle)==1, needle
@@ -473,11 +487,11 @@ needle='SEARCH_TERMS = 3\n'
 assert source.count(needle)==1
 mutant=root/'batch.py'; mutant.write_text(source.replace(needle,'SEARCH_TERMS = 4\n'))
 reset(); assert attempt(mutant,many,None).returncode!=0
-# Keying a window by its line number splits a moved occurrence; the
-# evidence, author and rate-limit rules each turn their case red.
+# Repeated text without its wording lets a closed issue answer another
+# claim; the evidence, author and rate-limit rules each turn their case red.
 for needle,replacement,check,expect in [
- ('return ["\\n".join(window), ordinal]', 'return ["\\n".join(window), start]', shifted,
-  (2,'Filed for upstream confirmation')),
+ ('return [text, finding["body"]]', 'return [text]', lambda d: [reshaped(t,d) for t in reshapes],
+  [(1,'Closed upstream as completed')]*len(reshapes)),
  ('if record not in (existing.get("body") or ""):', 'if run not in existing["body"]:', folded_evidence, []),
  ('and (i.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
  ('if RATE_LIMIT.search(result.stderr):', 'if False:', lambda d: rate_limited(rate_limits[0],d), False),
