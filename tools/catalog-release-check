@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Check and render a catalog with the installed release, without changing it.
 
-Usage: catalog-release-check BINARY CATALOG [--allow-advisories]
-Report protocol: catalog-release: version=JSON feature=JSON on failure. The
+Usage: catalog-release-check BINARY CATALOG [--allow-advisories] [--prior PRIOR]
+The fresh leg installs CATALOG into a new project. With --prior, the upgrade
+leg installs PRIOR with every package it ships declared, then refreshes that
+project to CATALOG through the same declared source, as a consumer's refresh
+does after a catalog merge.
+Report protocol: catalog-release: version=JSON leg=NAME feature=JSON on
+failure, catalog-release: version=JSON result=pass legs=NAMES on success. The
 feature value is the engine's diagnostic, not a second feature classifier.
 Core owns declared-hook delivery and catalog validation rules.
 """
@@ -14,63 +19,116 @@ import subprocess
 import sys
 import tempfile
 
+REFRESH = ["refresh", "--scope", "project", "--yes", "--leave"]
+VERIFY = ["verify", "--scope", "project"]
+
+
+def arguments(argv):
+    usage = "catalog-release: cause=arguments\nExpected BINARY CATALOG [--allow-advisories] [--prior PRIOR]."
+    if len(argv) < 2:
+        raise SystemExit(usage)
+    binary, catalog, options = argv[0], argv[1], argv[2:]
+    strict = ["--strict"]
+    prior = None
+    while options:
+        if options[0] == "--allow-advisories" and strict:
+            strict, options = [], options[1:]
+        elif options[0] == "--prior" and prior is None and len(options) > 1:
+            prior, options = options[1], options[2:]
+        else:
+            raise SystemExit(usage)
+    return binary, catalog, strict, prior
+
+
+def install(source):
+    return ["add", str(source), "--all", "--all-harnesses",
+            "--copy", "--yes", "--throwaway", "--leave"]
+
+
+def leg(binary, place, ceilings):
+    """A runner for one leg: its own home and project under place."""
+    home = place / "home"
+    project = place / "project"
+    home.mkdir(parents=True)
+    (project / ".agents").mkdir(parents=True)
+    # No credentials or live kendex settings reach the child.
+    environment = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local/share"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "KENDEX_REAL_HOME": "1",
+        "KENDEX_UI": "plain",
+        "GIT_CEILING_DIRECTORIES": ceilings,
+    }
+
+    def run(command, check=False):
+        return subprocess.run(
+            [binary, *command], env=environment, cwd=project,
+            capture_output=True, text=True, check=check,
+        )
+    return run
+
+
+def settle(run, commands, diagnostics):
+    """Run each command in order; the diagnostics so far once one fails."""
+    for command in commands:
+        rendered = run(command)
+        diagnostics.append("\n".join(filter(None, (
+            rendered.stderr.strip(), rendered.stdout.strip(),
+        ))))
+        if rendered.returncode != 0:
+            return "\n".join(diagnostics)
+    return None
+
 
 def main():
-    if len(sys.argv) == 3:
-        strict = ["--strict"]
-    elif len(sys.argv) == 4 and sys.argv[3] == "--allow-advisories":
-        strict = []
-    else:
-        raise SystemExit("catalog-release: cause=arguments\nExpected BINARY CATALOG [--allow-advisories].")
-    binary = str(Path(sys.argv[1]).resolve(strict=True))
-    catalog = str(Path(sys.argv[2]).resolve(strict=True))
+    binary, catalog, strict, prior = arguments(sys.argv[1:])
+    binary = str(Path(binary).resolve(strict=True))
+    catalog = Path(catalog).resolve(strict=True)
+    catalogs = [catalog] if prior is None else [catalog, Path(prior).resolve(strict=True)]
     # All writes, including project registration, belong to this one scratch
-    # lifetime. No credentials or live kendex settings reach the child.
+    # lifetime.
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP")) as scratch:
         root = Path(scratch)
-        home = root / "home"
-        project = root / "project"
-        home.mkdir()
-        (project / ".agents").mkdir(parents=True)
-        environment = {
-            "PATH": os.environ["PATH"],
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(home / ".config"),
-            "XDG_DATA_HOME": str(home / ".local/share"),
-            "XDG_CACHE_HOME": str(home / ".cache"),
-            "KENDEX_REAL_HOME": "1",
-            "KENDEX_UI": "plain",
-            # An archived catalog and the render project must not inherit an
-            # enclosing checkout's ignored tmp/ directory. A catalog's own
-            # repository remains discoverable, including its ignore rules.
-            "GIT_CEILING_DIRECTORIES": os.pathsep.join((str(Path(catalog).parent), str(root))),
-        }
-        version = subprocess.run(
-            [binary, "--version"], env=environment, cwd=project,
-            capture_output=True, text=True, check=True,
-        ).stdout.strip().removeprefix("kendex ")
-        commands = [
-            ["check", "--catalog", catalog, *strict],
-            ["add", catalog, "--all", "--all-harnesses",
-             "--copy", "--yes", "--throwaway", "--leave"],
-            ["refresh", "--scope", "project", "--yes", "--leave"],
-            ["verify", "--scope", "project"],
-        ]
-        diagnostics = []
-        for command in commands:
-            rendered = subprocess.run(
-                [binary, *command], env=environment, cwd=project,
-                capture_output=True, text=True, check=False,
-            )
-            diagnostics.append("\n".join(filter(None, (
-                rendered.stderr.strip(), rendered.stdout.strip(),
-            ))))
-            if rendered.returncode != 0:
-                diagnostic = "\n".join(diagnostics)
-                print(f"catalog-release: version={json.dumps(version)} feature={json.dumps(diagnostic)}")
-                print("Release an engine that supports this catalog before merging it. See the app-deploy skill § Catalog compatibility.")
-                return 1
-        print(f"catalog-release: version={json.dumps(version)} result=pass")
+        # An archived catalog and the render project must not inherit an
+        # enclosing checkout's ignored tmp/ directory. A catalog's own
+        # repository remains discoverable, including its ignore rules; git
+        # resolves the upgrade leg's source link to the catalog it names.
+        ceilings = os.pathsep.join((*(str(path.parent) for path in catalogs), str(root)))
+        fresh = leg(binary, root / "fresh", ceilings)
+        version = fresh(["--version"], check=True).stdout.strip().removeprefix("kendex ")
+
+        def failed(name, diagnostic):
+            print(f"catalog-release: version={json.dumps(version)} leg={name} feature={json.dumps(diagnostic)}")
+            print("Release an engine that settles this catalog, fresh and over the prior one, before merging it. See the app-deploy skill § Catalog compatibility.")
+            return 1
+
+        diagnostic = settle(fresh, [
+            ["check", "--catalog", str(catalog), *strict],
+            install(catalog), REFRESH, VERIFY,
+        ], [])
+        if diagnostic is not None:
+            return failed("fresh", diagnostic)
+        legs = ["fresh"]
+        if prior is not None:
+            upgrade = leg(binary, root / "upgrade", ceilings)
+            # The manifest records the source by this path, so the refresh
+            # reaches the candidate through the one declaration, as a
+            # consumer's subscription does across a catalog merge.
+            source = root / "upgrade" / "catalog"
+            source.symlink_to(catalogs[1], target_is_directory=True)
+            diagnostics = []
+            diagnostic = settle(upgrade, [install(source)], diagnostics)
+            if diagnostic is None:
+                source.unlink()
+                source.symlink_to(catalog, target_is_directory=True)
+                diagnostic = settle(upgrade, [REFRESH, VERIFY], diagnostics)
+            if diagnostic is not None:
+                return failed("upgrade", diagnostic)
+            legs.append("upgrade")
+        print(f"catalog-release: version={json.dumps(version)} result=pass legs={','.join(legs)}")
         return 0
 
 

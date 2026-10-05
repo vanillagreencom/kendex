@@ -192,6 +192,94 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
     }
 }
 
+/// A catalog holding one skill per name, each body naming its catalog.
+#[allow(clippy::unwrap_used)]
+fn catalog_of(home: &Path, name: &str, skills: &[&str]) -> std::path::PathBuf {
+    let catalog = home.join(name);
+    for skill in skills {
+        let directory = catalog.join("skills").join(skill);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!("---\nname: {skill}\ndescription: {skill} changes\n---\nBody of {name}.\n"),
+        )
+        .unwrap();
+    }
+    catalog
+}
+
+/// The upgrade leg installs the prior catalog with each of its packages
+/// declared, then refreshes that project to the candidate. A candidate the
+/// engine settles in that project passes; one dropping a declared package
+/// fails there, after the fresh leg passed. Two controls: swallowing the
+/// verdict, and refreshing against the prior catalog instead of the
+/// candidate, each let the dropping candidate pass.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
+    let original = std::fs::read_to_string(&tool).unwrap();
+    for (name, candidate, exit) in [
+        ("settles", &["review", "plan", "audit"][..], 0),
+        ("drops", &["review"][..], 1),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let prior = catalog_of(&home, "prior", &["review", "plan"]);
+        let catalog = catalog_of(&home, "candidate", candidate);
+        let run = |script: &Path| {
+            Command::new("python3")
+                .arg(script)
+                .arg(env!("CARGO_BIN_EXE_kendex"))
+                .arg(&catalog)
+                .arg("--prior")
+                .arg(&prior)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("PATH", std::env::var("PATH").unwrap_or_default())
+                .env("RUNNER_TEMP", &home)
+                .output()
+                .unwrap()
+        };
+        let output = run(&tool);
+        assert_eq!(output.status.code(), Some(exit), "{name}: {output:?}");
+        let record = String::from_utf8_lossy(&output.stdout);
+        let first = record.lines().next().unwrap();
+        assert!(first.starts_with("catalog-release: version="), "{record}");
+        if exit == 0 {
+            assert!(
+                first.ends_with(" result=pass legs=fresh,upgrade"),
+                "{record}"
+            );
+            continue;
+        }
+        assert!(first.contains(" leg=upgrade feature="), "{record}");
+        for (target, replacement) in [
+            (
+                "if rendered.returncode != 0:",
+                "if False and rendered.returncode != 0:",
+            ),
+            (
+                "source.symlink_to(catalog, target_is_directory=True)",
+                "source.symlink_to(catalogs[1], target_is_directory=True)",
+            ),
+        ] {
+            assert_eq!(original.matches(target).count(), 1);
+            let mutant = original.replace(target, replacement);
+            assert_ne!(mutant, original);
+            let path = home.join("mutant-check");
+            std::fs::write(&path, mutant).unwrap();
+            let control = run(&path);
+            assert_eq!(control.status.code(), Some(0), "{target}: {control:?}");
+            assert!(
+                String::from_utf8_lossy(&control.stdout)
+                    .contains(" result=pass legs=fresh,upgrade"),
+                "{target}: {control:?}"
+            );
+        }
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_seeded_bad_catalog_fails_the_check() {

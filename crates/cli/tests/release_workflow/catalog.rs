@@ -6,6 +6,7 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -127,9 +128,9 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
         let output = check(binary, script, &catalog, &ignored);
         if directory == root {
             assert!(output.status.success(), "ignored snapshot: {output:?}");
-            let target = "            \"GIT_CEILING_DIRECTORIES\": os.pathsep.join((str(Path(catalog).parent), str(root))),\n";
+            let target = "        ceilings = os.pathsep.join((*(str(path.parent) for path in catalogs), str(root)))\n";
             assert_eq!(text.matches(target).count(), 1);
-            let mutated = text.replace(target, "            \"GIT_CEILING_DIRECTORIES\": \"\",\n");
+            let mutated = text.replace(target, "        ceilings = \"\"\n");
             assert_ne!(text, mutated);
             let mutant = root.join("unbounded-git.py");
             fs::write(&mutant, mutated).unwrap();
@@ -259,6 +260,126 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     }
 }
 
+const RENDER_COMMAND: &str = "python3 kendex/tools/catalog-release-check \"$HOME/.local/bin/kendex\" \"$CATALOG_PATH\" ${{ !inputs.strict && '--allow-advisories' || '' }} ${PRIOR_PATH:+--prior \"$PRIOR_PATH\"}";
+
+/// What the prior-catalog steps hand the checker, each run as bash runs
+/// them: the base commit the caller's event names, or a `catalog-release:
+/// upgrade=skip cause=` line and no `--prior`.
+#[allow(clippy::unwrap_used)]
+fn assert_prior_selection(workflow: &str) {
+    let find = step(workflow, "name: Find the prior catalog");
+    assert!(find.iter().any(|line| line.trim()
+        == "PRIOR_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}"));
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let zeros = "0".repeat(40);
+    for (prior, chosen, said) in [
+        (sha, Some(sha), None),
+        (zeros.as_str(), None, Some("no-prior-commit")),
+        ("", None, Some("no-base-commit")),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let output = rooted(&tmp).join("github-output");
+        let run = Command::new("bash")
+            .args(["-e", "-c", &run_script(&find)])
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap())
+            .env("PRIOR_SHA", prior)
+            .env("GITHUB_OUTPUT", &output)
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{prior}: {run:?}");
+        let written = fs::read_to_string(&output).unwrap_or_default();
+        assert_eq!(
+            written.lines().find_map(|line| line.strip_prefix("sha=")),
+            chosen,
+            "{prior}: {written}"
+        );
+        let skipped = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix("catalog-release: upgrade=skip cause="))
+            .map(str::to_owned);
+        assert_eq!(skipped.as_deref(), said, "{prior}: {run:?}");
+    }
+
+    // A stand-in python3 prints the checker's arguments, one per line.
+    let render = run_script(&step(
+        workflow,
+        "name: Render the catalog with the released engine",
+    ))
+    .replace("${{ !inputs.strict && '--allow-advisories' || '' }}", "");
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let root = root.as_path();
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(root.join("prior/present")).unwrap();
+    let python = bin.join("python3");
+    fs::write(&python, "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\n").unwrap();
+    fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
+    for (prior, handed, said) in [
+        ("", None, None),
+        ("prior/present", Some("prior/present"), None),
+        ("prior/absent", None, Some("path-absent")),
+    ] {
+        let run = Command::new("bash")
+            .args(["-e", "-c", &render])
+            .current_dir(root)
+            .env_clear()
+            .env(
+                "PATH",
+                format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .envs(fixture_env(root))
+            .env("CATALOG_PATH", "catalog/.")
+            .env("PRIOR_PATH", prior)
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{prior}: {run:?}");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let arguments: Vec<_> = stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("arg="))
+            .collect();
+        let binary = format!("{}/.local/bin/kendex", root.display());
+        let mut expected = vec!["kendex/tools/catalog-release-check", &binary, "catalog/."];
+        if let Some(path) = handed {
+            expected.extend(["--prior", path]);
+        }
+        assert_eq!(arguments, expected, "{prior}: {stdout}");
+        let skipped = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("catalog-release: upgrade=skip cause="))
+            .map(|rest| rest.split_whitespace().next().unwrap_or_default());
+        assert_eq!(skipped, said, "{prior}: {stdout}");
+    }
+}
+
+/// The caller's base commit reaches the checker as `--prior`, and each case
+/// with no prior catalog skips by name. Controls: an all-zero `before` taken
+/// as a commit, and a base without the catalog path handed on, each fail the
+/// assertion.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn catalog_ci_hands_the_callers_base_catalog_to_the_upgrade_leg() {
+    let text = fs::read_to_string(repo().join(".github/workflows/catalog-check.yml")).unwrap();
+    assert_prior_selection(&text);
+    for (target, replacement) in [
+        ("            *[!0]*) echo", "            *) echo"),
+        (
+            "if [ -n \"$PRIOR_PATH\" ] && [ ! -d \"$PRIOR_PATH\" ]; then",
+            "if false; then",
+        ),
+    ] {
+        assert_eq!(text.matches(target).count(), 1, "{target}");
+        let mutated = text.replace(target, replacement);
+        assert_ne!(text, mutated);
+        assert!(
+            std::panic::catch_unwind(|| assert_prior_selection(&mutated)).is_err(),
+            "{target}"
+        );
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_installs_the_release_and_runs_its_render_check() {
@@ -329,8 +450,8 @@ fn catalog_ci_installs_the_release_and_runs_its_render_check() {
             "released-engine render must block catalog CI"
         );
         assert_eq!(
-            run_script(&render_step).trim(),
-            "python3 kendex/tools/catalog-release-check \"$HOME/.local/bin/kendex\" \"$CATALOG_PATH\" ${{ !inputs.strict && '--allow-advisories' || '' }}"
+            run_script(&render_step).trim().lines().last(),
+            Some(RENDER_COMMAND)
         );
     };
     assert_blocking_render(&text);

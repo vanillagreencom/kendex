@@ -43,6 +43,8 @@ A release carries:
 
 `.github/workflows/catalog-check.yml` installs the latest released kendex and `tools/catalog-release-check` runs that engine's catalog check, then installs the catalog into an isolated project for all harnesses and runs the consumer's refresh and verify commands. Release an engine that supports a feature before merging catalog content that uses it; a binary built from the pull request does not satisfy this check.
 
+A catalog change must also settle in an existing install, not only a fresh one. The same check installs the catalog as the caller's base commit held it, every package declared, then refreshes that project to the change through the same source and verifies it. A dropped or renamed package that the released engine cannot retire fails it: keep the package, or release the engine that retires it first.
+
 ## Pre-releases
 
 A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outright and marked pre-release. The workflow's `channel` job puts its `feed.json` on the fixed `prerelease` release, keeping every download URL on the immutable tagged release. A build whose own version is a candidate reads its updates from there; a full release is never offered a candidate. The channel moves forward only (`tools/release-channel-point`): re-running an older tag leaves it alone, the job's concurrency group drops repoints and never releases, and pushing the newest tag again moves the channel to it. A machine on a candidate stays on candidates until moved by hand.

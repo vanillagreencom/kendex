@@ -1,0 +1,1 @@
+- Catalog CI also refreshes an install of the caller's base catalog to the change with the released engine, so a change that breaks existing installs fails before merge.

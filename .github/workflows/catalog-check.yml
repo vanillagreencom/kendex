@@ -26,6 +26,12 @@
 # disagrees with its own directory. With `strict`, structural advisories
 # fail it too. Safety findings print with their fix and fail nothing,
 # under either setting.
+#
+# The render step installs the catalog with the latest released engine
+# twice: into a fresh project, and over the catalog as the caller's base
+# commit held it, the way a consumer's refresh meets a catalog merge. An
+# event with no base commit, a first push, or a base without the catalog
+# path runs the fresh install alone and prints why.
 name: catalog-check
 
 on:
@@ -68,11 +74,36 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           kendex/skills/review-gate/scripts/install-latest.sh
+      # github.event is the caller's: a pull request's base, a merge group's
+      # base or the commit a push replaced. A push that created the branch
+      # or the repository names forty zeros.
+      - name: Find the prior catalog
+        id: prior
+        env:
+          PRIOR_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          case "$PRIOR_SHA" in
+            "") echo "catalog-release: upgrade=skip cause=no-base-commit" ;;
+            *[!0]*) echo "sha=$PRIOR_SHA" >> "$GITHUB_OUTPUT" ;;
+            *) echo "catalog-release: upgrade=skip cause=no-prior-commit" ;;
+          esac
+      - name: Check out the prior catalog
+        if: steps.prior.outputs.sha != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.prior.outputs.sha }}
+          path: prior
+          persist-credentials: false
       - name: Render the catalog with the released engine
         env:
           CATALOG_PATH: catalog/${{ inputs.path || '.' }}
+          PRIOR_PATH: ${{ steps.prior.outputs.sha && format('prior/{0}', inputs.path || '.') || '' }}
         run: |
-          python3 kendex/tools/catalog-release-check "$HOME/.local/bin/kendex" "$CATALOG_PATH" ${{ !inputs.strict && '--allow-advisories' || '' }}
+          if [ -n "$PRIOR_PATH" ] && [ ! -d "$PRIOR_PATH" ]; then
+            echo "catalog-release: upgrade=skip cause=path-absent path=$PRIOR_PATH"
+            PRIOR_PATH=
+          fi
+          python3 kendex/tools/catalog-release-check "$HOME/.local/bin/kendex" "$CATALOG_PATH" ${{ !inputs.strict && '--allow-advisories' || '' }} ${PRIOR_PATH:+--prior "$PRIOR_PATH"}
       # The caller's own answer, honoured as given. This repository asks
       # for `strict: true` from own-catalog.yml: the default marketplace
       # carries no structural advisories either. Safety findings print
