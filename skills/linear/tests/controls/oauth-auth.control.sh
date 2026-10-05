@@ -97,8 +97,15 @@ control_replace scripts/lib/auth.sh 1 \
 # The token has one store, the user's cache directory.
 control_expect 'unwritable cache dir: one mint serves both requests'
 control_replace scripts/lib/auth.sh 1 \
-    '    for candidate in "$base/kendex/linear-oauth" "${TMPDIR:-/tmp}/kendex-linear-oauth-$UID"; do' \
-    '    for candidate in "$base/kendex/linear-oauth"; do'
+    '    candidates+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")' \
+    '    :'
+
+# With no HOME and no XDG_CACHE_HOME the pair refuses before the TMPDIR
+# directory is tried.
+control_expect 'no HOME: requests succeed'
+control_replace scripts/lib/auth.sh 1 \
+    '    [[ -z "$base" ]] || candidates+=("$base/kendex/linear-oauth")' \
+    '    [[ -n "$base" ]] || return 1; candidates+=("$base/kendex/linear-oauth")'
 
 # A directory this session cannot write is still taken, so a revoked token
 # there is read ahead of the renewal it cannot hold.

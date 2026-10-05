@@ -74,7 +74,7 @@ Environment:
                   auth-mint prints access_token and expires_at and writes no
                   file; the pair's API path keeps its token until it expires in
                   kendex/linear-oauth/ under XDG_CACHE_HOME, else ~/.cache,
-                  or, when this user cannot write there, in
+                  or, when neither is set or this user cannot write there, in
                   kendex-linear-oauth-<uid>/ under TMPDIR or /tmp.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins
                   over a plain environment export (auth-check warns when they

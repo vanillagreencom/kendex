@@ -492,6 +492,17 @@ assert_eq 'unwritable cache dir: the TMPDIR directory is private' \
     "$(find "$FALLBACK_DIR" \( -type d -perm 0700 \) -o \( -type f -perm 0600 \) | wc -l | tr -d ' ')" 2
 assert_file_lacks 'unwritable cache dir: no store failure' "$LOG/error" 'token-store=failed'
 
+# With neither HOME nor XDG_CACHE_HOME set there is no cache directory, and the
+# token lives in this user's directory under TMPDIR.
+forget_token
+: >"$LOG/mints"
+: >"$LOG/auth"
+run_oauth_request request ACTION=twice env -u HOME
+assert_eq 'no HOME: requests succeed' "$RC" 0
+assert_eq 'no HOME: one mint serves both requests' "$(cat "$LOG/auth")" $'Bearer token-1\nBearer token-1'
+assert_matches 'no HOME: the token file is in the TMPDIR directory' \
+    "$(find "$TMP_ROOT/tmpdir" -type f)" "^$FALLBACK_DIR/[0-9a-f]{12}[.]json\$"
+
 # A cache directory this session can read but not write, holding an unexpired
 # token Linear has revoked, is never read: the token lives in the directory
 # its renewal can replace, so one mint serves this invocation and the next.

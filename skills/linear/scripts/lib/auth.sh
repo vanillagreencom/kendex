@@ -86,27 +86,22 @@ linear_authorization() (
     # candidate this user owns and can write: the user's cache directory, else
     # one under TMPDIR (else /tmp) named by the user id, for a session such as
     # a sandbox whose writes are held to its workspace and temporary
-    # directory. That one directory serves both the read and the store, so a
+    # directory, or one with neither HOME nor XDG_CACHE_HOME set. That one directory serves both the read and the store, so a
     # renewal always replaces the token it renews and a revoked token left
     # where this session cannot write is never read. Under a shared /tmp
     # another user could make the name first, so a symlink or another user's
     # directory is never used. The file is named by the fingerprint of the pair
     # and the scope set, so a token minted under another set is never reused.
-    local base candidate cause dir='' failed='' identity token_file now cached token staged=''
-    if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
-        base="$XDG_CACHE_HOME"
-    elif [[ -n "${HOME:-}" ]]; then
-        base="$HOME/.cache"
-    else
-        echo '{"error": "linear-auth: token-dir=unset\nSet HOME or XDG_CACHE_HOME: the app pair'"'"'s token file lives under it."}' >&2
-        return 1
-    fi
+    local base candidate candidates=() cause dir='' failed='' identity token_file now cached token staged=''
+    base=${XDG_CACHE_HOME:-${HOME:+$HOME/.cache}}
+    [[ -z "$base" ]] || candidates+=("$base/kendex/linear-oauth")
+    candidates+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")
     identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE") || return 1
     umask 077
     trap '[[ -z "${staged:-}" ]] || rm -f -- "${staged:?}"' EXIT
     # The staged file is the write probe and, after a mint, the atomic
     # replacement that keeps parallel callers from reading a partial token.
-    for candidate in "$base/kendex/linear-oauth" "${TMPDIR:-/tmp}/kendex-linear-oauth-$UID"; do
+    for candidate in "${candidates[@]}"; do
         if ! mkdir -p -- "$candidate" 2>/dev/null; then
             cause=mkdir-failed
         elif [[ -L "$candidate" ]]; then
