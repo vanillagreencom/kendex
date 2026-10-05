@@ -545,6 +545,10 @@ enabled = true
 source = "."
 harnesses = ["claude", "codex", "pi"]
 
+[hooks.worktree-session-claim]
+source = "."
+harnesses = ["claude", "codex", "pi"]
+
 [hooks.session-end-row]
 source = "."
 harnesses = ["claude", "codex", "pi"]

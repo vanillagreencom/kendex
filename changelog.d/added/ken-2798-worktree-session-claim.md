@@ -1,0 +1,1 @@
+- `worktree-session-claim` hook: a session opened in a linked worktree claims it at start, so cleanup leaves it; the workflow's issue claim takes that lease over.

@@ -383,6 +383,46 @@ second_code=$?
 set -e
 assert_eq "$second_code" "75" "with the mutex free only the first owner holds the lease"
 
+echo "=== claim --owner takes over the session's env-owned lease ==="
+
+# A session-start hook claims under the env ladder; the workflow then claims
+# the same tree under the issue ID. A row: label|verb|env|rc|owner after.
+# Each starts from a lease alice took with no --owner.
+HANDOVER_WT="$MUTEX_ROOT/trees/handover"
+git -C "$MUTEX_ROOT/main" worktree add -q -b handover "$HANDOVER_WT" main
+HANDOVER="the env owner's lease passes to --owner|claim|USER=alice|0|ISSUE-1
+the ladder's top rung is the env owner|claim|KENDEX_SESSION_OWNER=alice USER=bob|0|ISSUE-1
+another env owner is refused|claim|USER=bob|75|alice
+refresh does not take a lease over|refresh|USER=alice|75|alice"
+handover_rows() { # GUARD
+  local guard="$1" label verb envspec expected_rc expected_owner handover_rc
+  local -a handover_env
+  while IFS='|' read -r label verb envspec expected_rc expected_owner; do
+    read -r -a handover_env <<<"$envspec"
+    "$guard" release "$HANDOVER_WT" --force >/dev/null 2>&1 || :
+    env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice "$guard" claim "$HANDOVER_WT" >/dev/null
+    handover_rc=0
+    env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER "${handover_env[@]}" \
+      "$guard" "$verb" "$HANDOVER_WT" --owner ISSUE-1 >/dev/null 2>&1 || handover_rc=$?
+    assert_eq "rc=$handover_rc owner=$("$guard" status "$HANDOVER_WT" --repo "$MUTEX_ROOT/main" | jq -r .owner)" \
+      "rc=$expected_rc owner=$expected_owner" "$label"
+  done <<<"$HANDOVER"
+}
+handover_rows "$GUARD_SCRIPT"
+
+# Must-fail control: a guard copy whose env owner never matches refuses the
+# takeover, so both takeover rows go red.
+HANDOVER_CONTROL="$TMP_ROOT/handover-control"
+cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$HANDOVER_CONTROL"
+HANDOVER_ANCHOR='env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"'
+assert_eq "$(grep -cxF -- "$HANDOVER_ANCHOR" "$HANDOVER_CONTROL/worktree-session-guard")" "1" \
+  "control: the takeover anchor appears once in the guard"
+awk -v anchor="$HANDOVER_ANCHOR" '{ print } $0 == anchor { print "env_owner=" }' \
+  "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" >"$HANDOVER_CONTROL/worktree-session-guard"
+handover_control_log="$(PASS=0 FAIL=0; handover_rows "$HANDOVER_CONTROL/worktree-session-guard")"
+assert_eq "$(grep -c '^  FAIL  ' <<<"$handover_control_log")" "2" \
+  "control: the planted guard fails the two takeover rows"
+
 echo "=== release refusal records ==="
 
 git -C "$REUSE_ROOT/main" worktree add -q -b manual "$REUSE_ROOT/manual" main
