@@ -733,10 +733,11 @@ class RootRelay:
             self.post_refused(err, envelope, kind)
             return None
 
-    def post_ask(self, envelope: Dict) -> bool:
-        """Whether the ask landed and its `open` line was journaled."""
+    def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
+        """The whole question under `header`: its text, any draft, and its
+        options, recommendation and deadline, a blank line between each."""
         options = ", ".join(envelope.get("options") or [])
-        lines = [f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:", envelope.get("text", "")]
+        lines = [header, envelope.get("text", "")]
         draft = envelope.get("draft")
         if draft:
             # The owner approves this exact text, so it is posted whole and
@@ -759,6 +760,11 @@ class RootRelay:
             if pieces:
                 pieces.append("\n\n")
             pieces.append(line)
+        return pieces
+
+    def post_ask(self, envelope: Dict) -> bool:
+        """Whether the ask landed and its `open` line was journaled."""
+        pieces = self.ask_pieces(envelope, f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:")
         ts = self._send(envelope, "ask", pieces, None)
         if ts is None:
             return False
@@ -779,13 +785,19 @@ class RootRelay:
         ask_id = str(envelope["id"])
         reminder = dict(envelope, id=overdue_id(ask_id))
         thread_ts = self.state.post_thread(ask_id)
-        text = f"{mention(self.binding)} Overdue, no default: {envelope.get('text', '')}"
-        landed = self._send(reminder, "overdue", text, thread_ts)
+        header = f"{mention(self.binding)} Overdue, no default"
+        # A new thread may be the owner's first sight of the question, so it
+        # carries the whole question; the original thread already shows it.
+        pieces: List[Union[str, Verbatim]] = (
+            [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
+            else self.ask_pieces(envelope, f"{header}. Question from {envelope.get('from', 'overseer')}:"))
+        landed = self._send(reminder, "overdue", pieces, thread_ts)
         if landed is None:
             return
         if thread_ts is None:
+            excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
             self._out(envelope, "ask", "open", thread=landed,
-                      parent=self.parent_of({"ts": landed, "text": text}, "bot", ask_id))
+                      parent=self.parent_of({"ts": landed, "text": excerpt}, "bot", ask_id))
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
     def post_notice(self, envelope: Dict) -> None:

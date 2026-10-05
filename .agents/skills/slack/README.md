@@ -109,7 +109,7 @@ The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overse
 | Where you write | What happens |
 |-----------------|--------------|
 | Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
-| In an open question's thread, any reply | The overseer receives your words as an answer to that question, with eyes when they land. The question stays open until the overseer closes it or its deadline passes |
+| In an open question's thread, any reply | The overseer receives your words as an answer to that question, with eyes when they land. The question stays open until the overseer closes it or its deadline passes; a reserved question has no deadline close and stays open until the overseer closes it |
 | In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive with small parent context, unless it answers an open question |
 | A file, with or without text | The overseer receives the text, then the saved path of each file |
 | A message with no text and no file | Not routed; the relay replies once, and once more after its journal is moved aside |
