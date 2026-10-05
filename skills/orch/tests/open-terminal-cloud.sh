@@ -219,6 +219,45 @@ assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD 
 assert_eq "owed=$(grep -cxF 'open-terminal: cloud-card-owed item=CC-1 session=session_01CLOUD' <<<"$ERR" || true)" "owed=1" \
   "the launch leaves the repository card to the operator and says so"
 
+echo "=== the session words make no arming step mandatory and name the merge gates ==="
+# The words are the cloud session's own instructions, its first message: a
+# cloud machine has no kendex and no tools/setup, so a mandatory arming step
+# there is one the session stops to ask about. The commit-guards script arms
+# the hooks with no kendex, where the checkout carries it. gates LIB — the
+# words lib/lane-launch.sh at LIB closes a brief on, as the count of each
+# kendex-bound arming command, of the script under its condition and of each
+# gate holding the merge.
+HOOKS='.agents/skills/commit-guards/scripts/install-git-hooks'
+gates() {
+  local text
+  text="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")" || { echo "unread"; return; }
+  printf 'setup=%s install=%s hooks=%s conditional=%s ci=%s review=%s second=%s' \
+    "$(grep -c 'tools/setup' <<<"$text" || true)" "$(grep -c 'guard install' <<<"$text" || true)" \
+    "$(grep -cF "$HOOKS" <<<"$text" || true)" "$(grep -cF "Where $HOOKS is present" <<<"$text" || true)" \
+    "$(grep -c 'pull request CI' <<<"$text" || true)" "$(grep -c 'review gate' <<<"$text" || true)" \
+    "$(grep -c 'second-opinion gate' <<<"$text" || true)"
+}
+GATES_WANT="setup=0 install=0 hooks=1 conditional=1 ci=1 review=1 second=1"
+assert_eq "$(gates "$SCRIPTS_DIR/lib/lane-launch.sh")" "$GATES_WANT" \
+  "the session words name no kendex-bound arming step, arm through install-git-hooks only where present, and name the three merge gates"
+# One per rule, each a copy of the lib with one sentence edited: NAME|OLD|NEW.
+# The mandatory step restored, the script made unconditional, and the gates
+# dropped.
+GATES_SENTENCE=' Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge.'
+GATES_EDITS=(
+  "arming|$GATES_SENTENCE|$GATES_SENTENCE Before your first commit, run tools/setup where the repository has it, else kendex guard install."
+  "unconditional|Where $HOOKS is present, arm the commit hooks with it|Arm the commit hooks with $HOOKS"
+  "gates|$GATES_SENTENCE|"
+)
+for edit in "${GATES_EDITS[@]}"; do
+  IFS='|' read -r name old new <<<"$edit"
+  lib="$TMP_ROOT/gates-$name"
+  cp -R "$SCRIPTS_DIR/lib" "$lib"
+  mutate_file "$lib/lane-launch.sh" "$old" "$new"
+  assert_eq "red=$([[ "$(gates "$lib/lane-launch.sh")" != "$GATES_WANT" ]] && echo yes || echo no)" "red=yes" \
+    "control: session words with the $name edit fail the merge-gates row"
+done
+
 echo "=== a first-run dialog takes one Enter before the session read ==="
 run_ot OT_COMPOSER_ON_ENTER=2 -- "${CLOUD[@]}" CC-14
 assert_eq "rc=$RC keys=$(grep -c '^send-keys .* Enter$' "$TMUX_LOG" || true) pasted=$(typed 2) session=$(record CC-14 | cut -d' ' -f4)" \
@@ -440,8 +479,8 @@ for row in "${FAILURE_ROWS[@]}"; do
 done
 
 echo "=== a CLI that exits before its composer is a failed launch ==="
-# The CLI runs for one pane read, then the pane is back at its shell, which
-# refuses the nudge aimed at claude.
+# The CLI runs for one pane read, then the pane is back at its shell showing
+# no session URL.
 run_ot OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
 assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true) prompt=$(typed 2) record=$(record CC-21)" \
   "rc=1 refused=1 prompt=none record=null null null null null null null null" \
@@ -450,7 +489,9 @@ assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=C
 echo "=== a CLI that prints its session and exits is a started session ==="
 # Claude Code's detached --cloud path: the session's View URL printed, no
 # composer drawn, and the pane back at its shell. NAME|ENV: the CLI exiting
-# after one pane read, and one exiting before any read saw it.
+# after one pane read, and one exiting before any read saw it. Neither takes a
+# nudge, which the pane writer would refuse at the shell and report as a failed
+# write.
 DETACHED_ROWS=(
   'exits|OT_HARNESS_EXITS=1'
   'unseen|OT_HARNESS_LATE=99'
@@ -459,12 +500,13 @@ detached_row() { # SCRIPT ROW ITEM — the launch, its result in DETACHED
   screen 'Created cloud session: Fix the parser' 'View: https://claude.ai/code/session_01CLOUD?from=cli&m=0' \
     'Resume with: claude --teleport session_01CLOUD'
   run_ot SCRIPT="$1" "${2#*|}" OT_COMPOSER_ON_ENTER=99 OT_SCREEN_ON=0 -- "${CLOUD[@]}" "$3"
-  DETACHED="rc=$RC unread=$(grep -cxF "open-terminal: lane-unobserved item=$3 reason=cli-exited" <<<"$ERR" || true) record=$(record "$3")"
+  DETACHED="rc=$RC unread=$(grep -cxF "open-terminal: lane-unobserved item=$3 reason=cli-exited" <<<"$ERR" || true) refused=$(grep -c -e '^pane-write: ' -e '^open-terminal: pane-refused ' <<<"$ERR" || true) record=$(record "$3")"
 }
+detached_want() { echo "rc=0 unread=1 refused=0 record=claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:$1 $TMP_ROOT/wt/$1 running standard"; }
 for i in "${!DETACHED_ROWS[@]}"; do
   detached_row "$OT" "${DETACHED_ROWS[$i]}" "CC-7$i"
-  assert_eq "$DETACHED" "rc=0 unread=1 record=claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-7$i $TMP_ROOT/wt/CC-7$i running standard" \
-    "the ${DETACHED_ROWS[$i]%%|*} row records the session the exited CLI printed, its account unread" "$TMP_ROOT/err"
+  assert_eq "$DETACHED" "$(detached_want "CC-7$i")" \
+    "the ${DETACHED_ROWS[$i]%%|*} row records the session the exited CLI printed, its account unread, with no refused write" "$TMP_ROOT/err"
 done
 
 echo "=== the launch arm is the declared launch ==="
@@ -519,6 +561,23 @@ mutant record-window 'lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-8
 assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-8 running standard" \
   "control: a record written with no window fails the record row"
+# The detached probe kept, moved after the nudge: the exits row's nudge meets
+# the shell and is refused.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+PROBE='    if [[ -n "$prompt" ]]; then
+      rc=0
+      cloud_cli_detached "$pane" "$prompt" || rc=$?
+      case "$rc" in 0) return 5 ;; 2) return 1 ;; 3) return 4 ;; esac
+    fi
+'
+# shellcheck disable=SC2016
+NUDGE='    (( waited < TMUX_VERIFY_SECS )) || return 1
+    launch_write nudge "$title" "$pane" "$expect" key Enter || return 3
+'
+mutant nudge-first "$PROBE$NUDGE" "$NUDGE$PROBE"
+detached_row "$MUTANT" "${DETACHED_ROWS[0]}" CC-79
+assert_eq "red=$([[ "$DETACHED" != "$(detached_want CC-79)" ]] && echo yes || echo no)" "red=yes" \
+  "control: a nudge ahead of the detached probe fails the exits row" "$TMP_ROOT/err"
 # One per failure guard: each removed in turn, its row fails.
 for i in "${!FAILURE_ROWS[@]}"; do
   IFS='|' read -r _ line _ _ edit <<<"${FAILURE_ROWS[$i]}"

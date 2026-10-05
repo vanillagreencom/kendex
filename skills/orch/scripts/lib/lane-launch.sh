@@ -665,10 +665,11 @@ LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this p
 # open-terminal pushed, so no worktree create meets that branch already checked
 # out. It names the steps the kind never takes, each one a
 # mailbox, a tracker the cloud cannot reach, a merge under another identity or
-# a wait on a person, and arms the commit chain the repository hooks require
-# before its first commit. It holds no apostrophe or backtick, as the words
-# above hold none.
-LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch: work on it as checked out, and create no worktree and no other branch. You reach your overseer through your branch and pull request and nothing else: push the item branch and open a draft pull request as your first step, keep where the work stands under a ## Lane status heading in the pull request body, and name a blocker in a pull request comment. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person. Before your first commit, arm the commit chain: run tools/setup where the repository has it, else kendex guard install, and quote its report under ## Lane status.'
+# a wait on a person. A cloud machine has no kendex and no tools/setup, so it
+# arms the commit hooks only through the commit-guards script where the
+# checkout carries it, and otherwise commits under the gates that hold the
+# merge. It holds no apostrophe or backtick, as the words above hold none.
+LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch: work on it as checked out, and create no worktree and no other branch. You reach your overseer through your branch and pull request and nothing else: push the item branch and open a draft pull request as your first step, keep where the work stands under a ## Lane status heading in the pull request body, and name a blocker in a pull request comment. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person. Where .agents/skills/commit-guards/scripts/install-git-hooks is present, arm the commit hooks with it before your first commit. Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge.'
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in
