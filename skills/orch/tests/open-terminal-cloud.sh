@@ -9,8 +9,10 @@
 # shell reads from the worktree's git directory, with
 # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and CCR_FORCE_BUNDLE cleared, no
 # key sent before claude runs in the pane and nothing pasted after its launch
-# line, the account read back once its composer is up, the CLI exiting before
-# that as a failed launch, the session id
+# line, the account read back once its composer is up and a refusal there
+# naming the session the CLI already made, the CLI exiting before that as a
+# failed launch unless it printed its session URL, a started session, the
+# session id
 # the claude.ai session URL in the pane carries, and the lane record naming
 # the kind, the account, that id and the window, and the standard tier
 # whatever orch words the brief quotes. A kind whose
@@ -314,6 +316,31 @@ run_ot -- "${CLOUD[@]}" CC-1
 assert_eq "rc=$RC account=$(grep -c '^open-terminal: lane-unobserved item=CC-1 reason=' <<<"$ERR" || true)" "rc=0 account=1" \
   "the cloud arm reads the pane back against the picked account" "$TMP_ROOT/err"
 
+echo "=== an account refusal names the session the CLI already made ==="
+# The pane's child runs on another account, the case a wrapper on PATH
+# exporting its own CLAUDE_CONFIG_DIR makes. The row needs a readable
+# per-process environment and skips where the platform has none, the
+# reader's own predicate deciding.
+OTHER_LANE="$TMP_ROOT/.other"
+mkdir -p "$OTHER_LANE"
+mismatch_row() { # SCRIPT ITEM — the launch, its result in MISMATCH
+  local tree child="$TMP_ROOT/mismatch-child"
+  bash -c 'env CLAUDE_CONFIG_DIR="$1" sleep 30 & echo "$!" > "$2"; wait' _ "$OTHER_LANE" "$child" & tree=$!
+  run_ot SCRIPT="$1" OT_PANE_PID="$tree" ORCH_TMUX_VERIFY_SECS=3 -- "${CLOUD[@]}" "$2"
+  kill "$(cat "$child")" "$tree" 2>/dev/null || true
+  MISMATCH="rc=$RC mismatch=$(grep -cxF "open-terminal: lane-mismatch item=$2 picked=$LANE_DIR observed=$OTHER_LANE" <<<"$ERR" || true) refused=$(grep -cxF "open-terminal: cloud-account-refused item=$2 session=session_01CLOUD" <<<"$ERR" || true) closed=$(grep -c '^kill-window' "$TMUX_LOG" || true) record=$(record "$2")"
+}
+MISMATCH_WANT="rc=1 mismatch=1 refused=1 closed=1 record=null null null null null null null null"
+PROC_ENV=true
+( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ) || PROC_ENV=false
+if [[ "$PROC_ENV" == true ]]; then
+  mismatch_row "$OT" CC-23
+  assert_eq "$MISMATCH" "$MISMATCH_WANT" \
+    "a pane observed on another account names the session already running there, then closes the window with no record" "$TMP_ROOT/err"
+else
+  printf '  skip  cloud account refusal row (no readable per-process environment)\n'
+fi
+
 echo "=== no key reaches the pane before claude replaces its shell ==="
 # The window's shell still reading its rc files holds the pane for three
 # reads after the launch line, and a dialog in front of the composer takes
@@ -419,6 +446,26 @@ run_ot OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
 assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true) prompt=$(typed 2) record=$(record CC-21)" \
   "rc=1 refused=1 prompt=none record=null null null null null null null null" \
   "a CLI refusing its arguments ends claude in the pane, which stops the launch as cloud-launch-failed" "$TMP_ROOT/err"
+
+echo "=== a CLI that prints its session and exits is a started session ==="
+# Claude Code's detached --cloud path: the session's View URL printed, no
+# composer drawn, and the pane back at its shell. NAME|ENV: the CLI exiting
+# after one pane read, and one exiting before any read saw it.
+DETACHED_ROWS=(
+  'exits|OT_HARNESS_EXITS=1'
+  'unseen|OT_HARNESS_LATE=99'
+)
+detached_row() { # SCRIPT ROW ITEM — the launch, its result in DETACHED
+  screen 'Created cloud session: Fix the parser' 'View: https://claude.ai/code/session_01CLOUD?from=cli&m=0' \
+    'Resume with: claude --teleport session_01CLOUD'
+  run_ot SCRIPT="$1" "${2#*|}" OT_COMPOSER_ON_ENTER=99 OT_SCREEN_ON=0 -- "${CLOUD[@]}" "$3"
+  DETACHED="rc=$RC unread=$(grep -cxF "open-terminal: lane-unobserved item=$3 reason=cli-exited" <<<"$ERR" || true) record=$(record "$3")"
+}
+for i in "${!DETACHED_ROWS[@]}"; do
+  detached_row "$OT" "${DETACHED_ROWS[$i]}" "CC-7$i"
+  assert_eq "$DETACHED" "rc=0 unread=1 record=claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-7$i $TMP_ROOT/wt/CC-7$i running standard" \
+    "the ${DETACHED_ROWS[$i]%%|*} row records the session the exited CLI printed, its account unread" "$TMP_ROOT/err"
+done
 
 echo "=== the launch arm is the declared launch ==="
 CODEX_LINE=$'kind=codex-cloud\tlaunch=cloud-task\tchannel=task\tfiles=none\tstatus=task\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=plan\tland=handoff'
@@ -543,10 +590,10 @@ mutant account-form '  LANE_FORM="$form"' '  :'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
 assert_eq "account=$(grep -c '^open-terminal: lane-unobserved item=CC-1 reason=' <<<"$ERR" || true)" "account=0" \
   "control: a cloud arm that leaves LANE_FORM unchecked fails the account row" "$TMP_ROOT/err"
-# The start wait dropped: the late claude meets a refused nudge, and the
-# never-seen one its brief refused, neither under its own line.
+# The start wait dropped: the late and the never-seen claude each meet a
+# refused nudge and read as an exited CLI, neither under its own line.
 # shellcheck disable=SC2016
-mutant start-wait '  cloud_cli_wait "$pane" || { ot_message cloud-cli-unseen "item=$item" "reason=$CLOUD_CLI_UNSEEN" >&2; return 1; }' '  :'
+mutant start-wait '  if ! cloud_cli_wait "$pane"; then' '  if false; then'
 late_rows "$MUTANT" CC-60 CC-61
 assert_eq "late=$([[ "$LATE" == "rc=0 session=session_01CLOUD" ]] && echo held || echo broke) unseen=$([[ "$UNSEEN" == "rc=1 unseen=1 "* ]] && echo held || echo broke)" \
   "late=broke unseen=broke" "control: without the start wait both rows fail" "$TMP_ROOT/err"
@@ -556,10 +603,25 @@ run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-10
 assert_eq "print-words=$(print_words)" "print-words=1" "control: a launch line restoring -p fails the print row" "$TMP_ROOT/err"
 # The classification removed: a CLI that exited reads as cloud-launch-failed no more.
 # shellcheck disable=SC2016
-mutant cli-exit 'if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then' 'if false; then'
+mutant cli-exit 'if ! lane_pane_by_id "$1" || ! is_bare_shell "$LANE_PANE_CMD"; then return 1; fi' 'if true; then return 1; fi'
 run_ot SCRIPT="$MUTANT" OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
 assert_eq "refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true)" "refused=0" \
   "control: without the exit read the refused-arguments row is not cloud-launch-failed" "$TMP_ROOT/err"
+# The exited CLI's URL left unread: both detached rows fail.
+# shellcheck disable=SC2016
+mutant detached-read '  cloud_session_read "$1" "$2" 0 || rc=$?' '  rc=1'
+for i in "${!DETACHED_ROWS[@]}"; do
+  detached_row "$MUTANT" "${DETACHED_ROWS[$i]}" "CC-8$i"
+  assert_eq "rc=$RC" "rc=1" "control: without the URL read the ${DETACHED_ROWS[$i]%%|*} row fails" "$TMP_ROOT/err"
+done
+# The refusal's session read dropped: the account refusal row names none.
+if [[ "$PROC_ENV" == true ]]; then
+  # shellcheck disable=SC2016
+  mutant refusal-read '      ! cloud_session_read "$pane" "$prompt" || session="$CLOUD_SESSION"' '      ! false || session="$CLOUD_SESSION"'
+  mismatch_row "$MUTANT" CC-24
+  assert_eq "red=$([[ "$MISMATCH" != "$MISMATCH_WANT" ]] && echo yes || echo no)" "red=yes" \
+    "control: an account refusal that reads no session fails the refusal row" "$TMP_ROOT/err"
+fi
 # shellcheck disable=SC2016
 mutant session-unread '1) ot_message cloud-session-unread "item=$item" >&2; return 1 ;;' '1) session="" ;;'
 screen "$UNREAD_SCREEN"
@@ -575,7 +637,7 @@ assert_eq "rc=$RC" "rc=0" "control: a session read without the claude.ai URL anc
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 SESSION_EDITS=(
   '      if [[ "$2" != *"$url"* ]]; then ->       if true; then'
-  '    (( waited < LANE_SSH_PROMPT_SECS )) || return 1 ->     return 1'
+  '    (( waited < secs )) || return 1 ->     return 1'
   'tmux capture-pane -pJ -S - -t "$1" -> tmux capture-pane -pJ -t "$1"'
   "((session|cse)_[[:alnum:]_-]+)' -> ((session)_[[:alnum:]_-]+)'"
 )

@@ -80,7 +80,9 @@ STUBEOF
 # holding the screen a cloud session draws once its composer is up: shown from
 # the $OT_SCREEN_ON-th capture (default 1) after the one that drew the
 # $OT_COMPOSER_ON_ENTER composer, whole under `-S -` and its last five lines, a
-# pane five rows tall, without it.
+# pane five rows tall, without it. $OT_SCREEN_ON=0 shows it from the first
+# capture, composer or none: a CLI that prints its session and draws no
+# composer.
 cat > "$1/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
