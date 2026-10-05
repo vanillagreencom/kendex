@@ -53,13 +53,14 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// and the moved record proves ownership only where its `renderedHash`
 /// matches the destination. Every other destination remains a conflict.
 ///
-/// Version 11 gained [`Lock::shims`] without a bump. A build that predates
-/// it drops the field when it writes the record again, which leaves a
-/// later retirement no record of the shim. That loss is recovered rather
-/// than refused: where the project has its own `.git`, the inventory
-/// listing the shim's file seeds the record again at retirement
-/// (`engine::instruction_shims::retire`); elsewhere an apply with the
-/// shim's harness still listed writes it again.
+/// Version 11 gained [`Lock::shims`] without a bump, at two costs to a
+/// build that predates the field. That build drops the field when it
+/// writes the record again, which leaves a later retirement no record of
+/// the shim; where retirement still finds it is
+/// `engine::instruction_shims::retire`'s. And its `kendex verify` lays a
+/// record that carries the field out again without it (`attest::record`),
+/// so it fails the record row as not laid out as kendex writes it until
+/// the verifying build is one that knows the field.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
