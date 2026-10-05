@@ -54,8 +54,11 @@
 # its place are its evidence, named in --validate-note, which it requires. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses only a full
-# pass, so a range pass recorded as full, or a failed run recorded as a pass,
-# would stand in for the whole battery. A pass or no-verdict requires the
+# pass with no validate_class_base, so a range pass recorded as full, a full
+# pass whose class --record reads from a round base recorded without it, or a
+# failed run recorded as a pass, would stand in for the whole battery.
+# validate_class_base is that base, present only where --record reports one.
+# A pass or no-verdict requires the
 # run. A failing round may omit it, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
 # exists; validate_mode is then null. validate_time is the run's wall time as
@@ -76,7 +79,7 @@
 # nothing leaves the next round's base at the HEAD its own run started at, but
 # that run started before the next round was delegated. Accepting either would
 # record a pass for a commit it never judged, and submit would reuse a full one
-# as the whole battery. An implement round has no round record and no binding.
+# whose class covered the branch as the whole battery. An implement round has no round record and no binding.
 #
 # The Apple gate. Where the base branch holds the mac-run workflow, which
 # GitHub dispatches only from there, the receipt declares the item's labels
@@ -109,6 +112,10 @@
 #                                             // read from --validate-run-dir;
 #                                             // null with no run or an
 #                                             // unfinished one
+#     "validate_class_base": "[SHA]",         // read from --validate-run-dir;
+#                                             // present only where the run's
+#                                             // class was read from a round
+#                                             // base, not the base branch
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
@@ -232,7 +239,9 @@ validate_mode is the mode dev-validate-run --record reports for it, full,
 range or ci, and a --validate pass needs a run that passed, no-verdict a run the
 timeout ended and a --validate-note naming the scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
-records validate_mode null. Submit reuses only a full pass. validate_time is
+records validate_mode null. validate_class_base is the round base --record
+reports the run's class was read from, absent where the class covered the
+branch; submit reuses only a full pass without one. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
 that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
@@ -325,6 +334,7 @@ validate_note=""
 validate_mode=""
 validate_lanes=""
 validate_selection=""
+validate_class_base=""
 validate_run_dir=""
 validate_seconds=""
 validate_started_at=""
@@ -438,8 +448,9 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   fi
   # The one line --record prints: validate-mode=M [lanes=L] selection=S verdict=V head=H start=S,
   # then validate-base-orphaned=O where a rebase left the run's base off the
-  # branch, then seconds=N started-at=T ended-at=T where the run finished, the
-  # bound's end included.
+  # branch, then class-base=C where the class was read from a round base, then
+  # seconds=N started-at=T ended-at=T where the run finished, the bound's end
+  # included.
   run_verdict=""
   read -r -a run_fields <<<"$run_record"
   for field in ${run_fields[@]+"${run_fields[@]}"}; do
@@ -451,6 +462,7 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
       head=*) run_head="${field#*=}" ;;
       start=*) run_start="${field#*=}" ;;
       validate-base-orphaned=*) run_orphaned="${field#*=}" ;;
+      class-base=*) validate_class_base="${field#*=}" ;;
       seconds=*) validate_seconds="${field#*=}" ;;
       started-at=*) validate_started_at="${field#*=}" ;;
       ended-at=*) validate_ended_at="${field#*=}" ;;
@@ -747,6 +759,7 @@ jq -n \
   --arg validate_mode "$validate_mode" \
   --arg validate_lanes "$validate_lanes" \
   --arg validate_selection "$validate_selection" \
+  --arg validate_class_base "$validate_class_base" \
   --arg validate_seconds "$validate_seconds" \
   --arg validate_started_at "$validate_started_at" \
   --arg validate_ended_at "$validate_ended_at" \
@@ -781,6 +794,7 @@ jq -n \
      items: $items
    } + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
      + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
+     + (if $validate_class_base == "" then {} else {validate_class_base: $validate_class_base} end)
      + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
 mv "$tmp" "$out"

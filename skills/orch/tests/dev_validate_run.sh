@@ -357,19 +357,20 @@ start_line() { # RUN_DIR KEY — one line of the run's start record
   sed -n "s/^$2=//p" "$1/start"
 }
 RANGE_CMD='echo range $DEV_VALIDATE_BASE'
-# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)
+# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)|record's class base
 MODE_ROWS=(
-  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no"
-  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes"
-  "a range run in a project with no range command runs the whole battery and records full||--validate-mode range --base HEAD|full|full|no"
+  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no|"
+  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes| class-base=HEAD"
+  "a range run in a project with no range command runs the whole battery and records full, with the class base that run read||--validate-mode range --base HEAD|full|full|no| class-base=HEAD"
 )
 n=0
 for row in "${MODE_ROWS[@]}"; do
-  IFS='|' read -r label range_cmd args want_log want_mode want_base <<<"$row"
+  IFS='|' read -r label range_cmd args want_log want_mode want_base want_class_base <<<"$row"
   n=$((n + 1))
   proj="$(make_mode_proj "proj-mode-$n" "$range_cmd")"
   head_sha="$(git -C "$proj" rev-parse HEAD)"
   want_log="${want_log/HEAD/$head_sha}"
+  want_class_base="${want_class_base/HEAD/$head_sha}"
   # shellcheck disable=SC2086 # the row's argument list, split on purpose
   run_script "$RUN" --worktree "$proj" --poll 1 $args
   mode_dir="$(run_dir_of "$OUT")"
@@ -380,8 +381,8 @@ for row in "${MODE_ROWS[@]}"; do
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
   assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
-    "validate-mode=$want_mode selection=unreported verdict=pass head=$head_sha start=$(start_of "$mode_dir") seconds=N started-at=T ended-at=T" \
-    "$label — the run's record names that mode, the pass, the HEAD and second it started at and its wall time" "$ERR"
+    "validate-mode=$want_mode selection=unreported verdict=pass head=$head_sha start=$(start_of "$mode_dir")$want_class_base seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass, the HEAD and second it started at, any class base and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -441,23 +442,23 @@ rebased_b1="$(git -C "$proj_orphan" rev-parse HEAD)"
 orphan_commit "$proj_orphan" r1
 fork="$(git -C "$proj_orphan" rev-parse main)"
 
-# label|--base|files the range holds|validate-base|validate-base-orphaned
+# label|--base|files the range holds|validate-base|validate-base-orphaned|class-base
 ORPHAN_ROWS=(
-  "a base the rebase left off the branch validates the branch's own diff|$pre_rebase|b1 r1 |$fork|$pre_rebase"
-  "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1|"
+  "a base the rebase left off the branch validates the branch's own diff|$pre_rebase|b1 r1 |$fork|$pre_rebase|"
+  "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
 )
-# The record's orphaned field, empty where the line carries none.
-record_orphaned() { sed -n 's/.* validate-base-orphaned=\([^ ]*\).*/\1/p' <<<"$1"; }
+# One field of a --record line, empty where the line carries none.
+record_field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
 for row in "${ORPHAN_ROWS[@]}"; do
-  IFS='|' read -r label base want_range want_base want_orphaned <<<"$row"
+  IFS='|' read -r label base want_range want_base want_orphaned want_class_base <<<"$row"
   run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
   orphan_dir="$(run_dir_of "$OUT")"
   assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
   assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
     "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
   run_script "$RUN" --record --run-dir "$orphan_dir"
-  assert_eq "$RC $(record_orphaned "$OUT")" "0 $want_orphaned" \
-    "$label — the record names the orphaned base a fix receipt binds through" "$ERR"
+  assert_eq "$RC $(record_field validate-base-orphaned "$OUT")|$(record_field class-base "$OUT")" "0 $want_orphaned|$want_class_base" \
+    "$label — the record names the orphaned base a fix receipt binds through, and the base its class was read from" "$ERR"
 done
 
 # An orphaned base with no origin base branch to take a fork point from is
@@ -1079,15 +1080,25 @@ round_base="$(git -C "$proj_round" rev-parse HEAD)"
 mkdir -p "$proj_round/docs"
 orphan_commit "$proj_round" docs/note.md
 run_script "$RUN" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
-assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 true docs/note.md full" \
+round_dir="$(run_dir_of "$OUT")"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$round_dir" validate-mode)" "0 true docs/note.md full" \
   "a docs-only round on a branch with an earlier code commit classifies docs-only against the round base" "$ERR"
+# That full pass ran the round's lanes only, so its record names the class base
+# that keeps submit from reusing it as the branch's.
+run_script "$RUN" --record --run-dir "$round_dir"
+assert_eq "$RC ${OUT%% *} $(record_field class-base "$OUT")" "0 validate-mode=full $round_base" \
+  "the full run judged from the round base records that base as its class base" "$ERR"
+mutant mutant-record-class-base '"${record_class_base:+ class-base=$record_class_base}"' '""'
+run_script "$MUTANT" --record --run-dir "$round_dir"
+assert_eq "$RC $(record_field class-base "$OUT")" "0 " \
+  "control: with the class base unprinted the full run's record reads as the branch's" "$ERR"
 mutant mutant-round-base 'class_base="$base_sha"' 'class_base=""'
 # The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
 RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"
 run_script "$MUTANT" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
 RUN_PATH=""
-assert_eq "$RC $(output_of "$OUT")" "0 false app.sh docs/note.md" \
-  "control: classified from the base branch, the round reads the branch's code commit" "$ERR"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" class-base)" "0 false app.sh docs/note.md " \
+  "control: classified from the base branch, the round reads the branch's code commit and records no class base" "$ERR"
 
 
 # label|arguments after the worktree or run directory|refusal's first line

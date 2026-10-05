@@ -581,6 +581,18 @@ CHECK="$LANE_CHECK"
 receipt_table "control: dropping the lane echo reds its assertion^impl^.validate_lanes=\"lint,test\" | .validate_selection=\"subset\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=subset"
 CHECK="$CHECK_SHIPPED"
 
+echo "=== the class base reaches the orchestrator ==="
+# Submit reuses a full pass only where its class covered the branch, so the
+# base a round's class was read from is echoed, and null where none is recorded.
+CLASS_BASE="0123456789abcdef0123456789abcdef01234567"
+receipt_table \
+  "a class base is echoed beside a full mode^impl^.validate_class_base=\"$CLASS_BASE\"^$FILE_ARGS^reason=valid validate_mode=full validate_class_base=$CLASS_BASE" \
+  "no class base echoes null^impl^.^$FILE_ARGS^reason=valid validate_mode=full validate_class_base=null"
+CHECK="$(mutant_scripts class-base-echo dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$CHECK" '    --argjson validate_class_base "$validate_class_base"' '    --argjson validate_class_base null'
+receipt_table "control: dropping the class base echo reds its assertion^impl^.validate_class_base=\"$CLASS_BASE\"^$FILE_ARGS^reason=valid validate_class_base=null"
+CHECK="$CHECK_SHIPPED"
+
 # Control: without the kind rule an implement round's ci run is valid.
 CHECK="$(mutant_scripts ci-kind dev-artifact-check)/dev-artifact-check" || exit 1
 mutate_file "$CHECK" '.validate_mode == "ci" and $k == "fix"' '.validate_mode == "ci"'

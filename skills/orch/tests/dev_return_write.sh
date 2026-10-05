@@ -78,7 +78,7 @@ env ORCH_STATE_DIR="$FW/tmp" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 -
   --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "review decision" "tools/guard on a staged render" >/dev/null
 # Further fix rounds on the same worktree, one per fix row below, each bound
 # to its own record. Every record's base is FIX_HEAD, where the runs start.
-for rid in 9-9 14-15 17-17 41-41; do
+for rid in 9-9 14-15 17-17 41-41 43-43; do
   growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 --round-id "$rid" \
     --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 done
@@ -87,6 +87,8 @@ VRUN_FIX_9="$(round_run_dir "$TMP_ROOT/validate-run-fix-9" "$FW" issue-776 9-9)"
 VRUN_FIX_14="$(round_run_dir "$TMP_ROOT/validate-run-fix-14" "$FW" issue-776 14-15)"
 VRUN_FIX_RANGE="$(round_run_dir "$TMP_ROOT/validate-run-fix-range" "$FW" issue-776 17-17 range)"
 VRUN_FIX_CI="$(round_run_dir "$TMP_ROOT/validate-run-fix-ci" "$FW" issue-776 41-41 ci)"
+VRUN_FIX_CLASS="$(round_run_dir "$TMP_ROOT/validate-run-fix-class" "$FW" issue-776 43-43)"
+printf 'class-base=%s\n' "$FIX_HEAD" >> "$VRUN_FIX_CLASS/start"
 printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"
 SUMMARY_FILE="$TMP_ROOT/summary.md"
 
@@ -179,7 +181,7 @@ echo "=== the record's variable fields, one written artifact per row ==="
 table \
   "no labels, --no-summary and a FAILING verdict|--worktree $WT --kind implement --issue issue-100 --round-id 5-5 --branch b --commit %H --validate FAILING:+lint,build --no-summary|rc=0 written=yes .qa_labels|tojson=[] .summary_posted=false .validate=FAILING:+lint,build roundtrip=valid" \
   "--summary-file embeds the file and keeps summary_posted false|--worktree $WT --kind implement --issue issue-gh --round-id 6-6 --branch b --commit %H --validate pass --validate-run-dir $VRUN --no-summary --summary-file $SUMMARY_FILE|rc=0 .summary|split(\"\\n\")[0]=##+Completion+Summary .summary_posted=false" \
-  "a fix carries its items, n numeric, and round-trips through the bound round|--worktree %FW --kind fix --issue issue-776 --round-id 7-7 --branch issue-776 --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX --item 1 Applied fixed+nil+deref --item 2 Skipped contradicts+D010|rc=0 .kind=fix .items|length=2 .items[0].n|type=number .items[0].decision=Applied .items[1].decision=Skipped" \
+  "a fix carries its items, n numeric, and round-trips through the bound round|--worktree %FW --kind fix --issue issue-776 --round-id 7-7 --branch issue-776 --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX --item 1 Applied fixed+nil+deref --item 2 Skipped contradicts+D010|rc=0 .kind=fix has:validate_class_base=false .items|length=2 .items[0].n|type=number .items[0].decision=Applied .items[1].decision=Skipped" \
   "a bundled implement aggregates its labels|--worktree $WT --kind implement --issue PROJ-100 --round-id 8-8 --branch feat/proj-100 --commit %H --validate pass --validate-run-dir $VRUN --bundled --item 1 Applied sub+A+done --item 2 Applied sub+B+done --qa-label needs-safety-audit --qa-label needs-review|rc=0 .bundled=true .items|length=2 .qa_labels|tojson=[\"needs-safety-audit\",\"needs-review\"] roundtrip=valid" \
   "a Blocked decision is accepted|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_9 --item 3 Blocked needs+API+design|rc=0 .items[0].decision=Blocked" \
   "--recovered-text embeds the report and records recovered_from|--worktree $WT --kind implement --issue issue-rec --round-id 15-15 --branch b --commit %H --validate pass --validate-run-dir $VRUN --recovered-text $SUMMARY_FILE|rc=0 .recovered_from=transcript .summary|split(\"\\n\")[0]=##+Completion+Summary roundtrip=valid" \
@@ -212,6 +214,17 @@ mutate_file "$LANE_WRITE" 'lanes=*) validate_lanes="${field#*=}" ;;' 'lanes=*) v
 WRITE_SHIPPED="$WRITE"
 WRITE="$LANE_WRITE"
 table "control: dropping lanes reds the receipt assertion|$LANE_ARGS|rc=0 has:validate_lanes=false .validate_selection=subset"
+WRITE="$WRITE_SHIPPED"
+
+echo "=== a class read from the round base reaches the receipt ==="
+# A full run in a project with no range command, whose class dev-validate-run
+# read from the round base: submit must not reuse it as the branch's.
+CLASS_ARGS="--worktree %FW --kind fix --issue issue-776 --round-id 43-43 --branch b --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX_CLASS --item 1 Applied fixed"
+table "a full pass judged from the round base records that base|$CLASS_ARGS|rc=0 .validate_mode=full .validate_class_base=$FIX_HEAD roundtrip=valid"
+CLASS_WRITE="$(mutant_scripts class-base-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$CLASS_WRITE" 'class-base=*) validate_class_base="${field#*=}" ;;' 'class-base=*) validate_class_base="" ;;'
+WRITE="$CLASS_WRITE"
+table "control: dropping the class base records the round's full pass as the branch's|$CLASS_ARGS|rc=0 .validate_mode=full has:validate_class_base=false"
 WRITE="$WRITE_SHIPPED"
 
 echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
