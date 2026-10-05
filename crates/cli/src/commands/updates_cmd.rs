@@ -111,7 +111,15 @@ fn run_with(
         None => {}
     }
     if apply {
-        return super::refresh::run(env, filter, &target, false, yes, false);
+        return super::refresh::run(
+            env,
+            filter,
+            &target,
+            false,
+            yes,
+            super::refresh::Catalog::Current,
+            false,
+        );
     }
     let report = evaluate(env, &scope)?;
     let style = ui::style();

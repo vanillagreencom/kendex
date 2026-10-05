@@ -84,7 +84,8 @@ pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;
 pub use planned::{
-    PlannedDeclaration, planned_closure, planned_closure_held, planned_declarations,
+    PlannedDeclaration, held_declarations, planned_closure, planned_closure_held,
+    planned_declarations,
 };
 pub use scoring::{ItemSafety, SafetyTarget};
 
@@ -190,7 +191,7 @@ pub fn plan_scope(
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
     let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
-    let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state);
+    let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state, options);
     let (mut written, mut kept) = (written::Written::default(), item_plan::KeptAsIs::default());
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
@@ -580,8 +581,10 @@ fn fresh_lock(
     manifest: &Manifest,
     lock: &Lock,
     state: &desired::DesiredState,
+    options: &PlanOptions,
 ) -> (Lock, scope_writes::RecordReadings) {
-    let readings = record_readings(env, manifest, state);
+    let kept = options.keep_source_records.then_some(lock);
+    let readings = record_readings(env, manifest, state, kept);
     let fresh = Lock {
         version: crate::lock::LOCK_VERSION,
         entries: lock

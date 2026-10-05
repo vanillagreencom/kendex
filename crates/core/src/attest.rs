@@ -186,7 +186,7 @@ impl Reading {
     pub fn plan_options(self) -> crate::engine::PlanOptions {
         let options = match self {
             Reading::Current => crate::engine::PlanOptions::default(),
-            Reading::Recorded => crate::engine::PlanOptions::for_packages([]),
+            Reading::Recorded => crate::engine::PlanOptions::at_record(),
         };
         crate::engine::PlanOptions {
             judge_pins: true,

@@ -18,6 +18,11 @@ Options:
       --discard-edits
           Overwrite installations you edited by hand
 
+      --locked
+          Render each package that follows its source at the commit the install
+          record names, so a re-render of a project-side change moves no
+          catalog; a package the record cannot place resolves as usual
+
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
           was typed in

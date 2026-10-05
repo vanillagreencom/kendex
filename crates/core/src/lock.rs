@@ -87,7 +87,9 @@ pub struct Lock {
     /// The commit each declared source resolved to, by source name.
     /// Reproducibility cache, never intent: the manifest says which
     /// revision is wanted, this says which commit that came out as. A lost
-    /// lock costs the record, not the pin.
+    /// lock costs the record, not the pin. A locked refresh keeps the
+    /// entry of a source it read nothing at the source's revision of
+    /// (`PlanOptions::keep_source_records`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceRev>,
     /// The commit each installed set was read at, by the name the manifest

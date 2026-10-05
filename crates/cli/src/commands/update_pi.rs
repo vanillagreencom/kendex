@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use kendex_core::engine::PlanOptions;
 use kendex_core::env::Env;
 use kendex_core::manifest::ManifestFile;
 use kendex_core::model::Scope;
@@ -108,11 +109,16 @@ fn updatable(row: &&Row) -> bool {
 /// The declared packages `settle_scope` would install in this scope, read
 /// the way it reads them and writing nothing: what a verb shows before it
 /// asks for the yes that lets the settle write, and the names it then
-/// hands the settle.
-pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+/// hands the settle. `options` are the verb's plan options, so each
+/// package is read at the commit that plan reads it at.
+pub fn pending_settle(
+    env: &Env,
+    scope: &Scope,
+    options: &PlanOptions,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
-    Ok(settleable(env, scope, &root, &other_roots)?
+    Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
             Settlement::Copy(_) => Some(name),
@@ -126,10 +132,11 @@ pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn s
 pub(super) fn deferred_settle(
     env: &Env,
     scope: &Scope,
+    options: &PlanOptions,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
-    Ok(settleable(env, scope, &root, &other_roots)?
+    Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
             Settlement::Copy(_) => None,
@@ -155,11 +162,12 @@ pub fn settle_scope(
     env: &Env,
     scope: &Scope,
     names: &[String],
+    options: &PlanOptions,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
     let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
-    let rows = settleable(env, scope, &root, &other_roots)?
+    let rows = settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter(|(name, _)| names.contains(name))
         .filter_map(|(name, settlement)| match settlement {
@@ -201,12 +209,14 @@ pub fn settle_scope(
 /// bytes differ from the source, which a lockless scope refuses to record
 /// rather than replaces; and one whose metadata will not read, resolve or
 /// compare is left as it stands: no read of one package stops the scope,
-/// only the record's.
+/// only the record's. Each package's source is read at the commit a plan
+/// under `options` reads it at.
 fn settleable(
     env: &Env,
     scope: &Scope,
     root: &Path,
     other_roots: &[PathBuf],
+    options: &PlanOptions,
 ) -> Result<Vec<(String, Settlement)>, Box<dyn std::error::Error>> {
     let Ok(ManifestFile::Current(manifest)) = manifest::load(&manifest::manifest_path(env, scope))
     else {
@@ -216,6 +226,7 @@ fn settleable(
         return Ok(Vec::new());
     }
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+    let manifest = kendex_core::engine::held_declarations(&manifest, &lock, options);
     let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
         let key = kendex_core::lock::entry_key(

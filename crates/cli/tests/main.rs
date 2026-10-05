@@ -61,6 +61,7 @@ mod project_path_target;
 mod refresh_agent_cleanup;
 mod refresh_fresh_clone;
 mod refresh_ledger;
+mod refresh_locked;
 mod release_workflow;
 mod remote_e2e;
 mod safety_print;

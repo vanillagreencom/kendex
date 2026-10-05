@@ -1,0 +1,1 @@
+- `kendex refresh --locked` re-renders at the catalog commits `.kendex-lock.json` records, so a project-only change moves no catalog.

@@ -36,6 +36,9 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
+    /// Render each package that follows its source at the commit the install record names, so a re-render of a project-side change moves no catalog; a package the record cannot place resolves as usual
+    #[arg(long)]
+    locked: bool,
     // The project this run writes, named rather than walked up to. The
     // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
     // a doc comment here would reach no output.
@@ -51,6 +54,32 @@ impl RefreshArgs {
     /// The scope selection shared by dispatch and the pre-bootstrap lane check.
     pub(super) fn effective_scope(&self) -> Result<ScopeFilter, String> {
         ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::All)
+    }
+
+    fn catalog(&self) -> Catalog {
+        match self.locked {
+            true => Catalog::Recorded,
+            false => Catalog::Current,
+        }
+    }
+}
+
+/// Which commit a refresh renders each package that follows its source at.
+#[derive(Debug, Clone, Copy)]
+pub enum Catalog {
+    /// The commit the source resolves to now: the catalog comes current.
+    Current,
+    /// The commit the install record names: a re-render that moves no
+    /// catalog.
+    Recorded,
+}
+
+impl Catalog {
+    fn plan_options(self) -> PlanOptions {
+        match self {
+            Catalog::Current => PlanOptions::default(),
+            Catalog::Recorded => PlanOptions::locked(),
+        }
     }
 }
 
@@ -239,6 +268,7 @@ impl PreparedScope {
 fn prepare_scope(
     env: &Env,
     scope: kendex_core::model::Scope,
+    catalog: Catalog,
     discard_edits: bool,
 ) -> PreparedScope {
     let synced = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
@@ -252,7 +282,7 @@ fn prepare_scope(
     let options = PlanOptions {
         sweep_unneeded: true,
         overwrite_edited: discard_edits,
-        ..PlanOptions::default()
+        ..catalog.plan_options()
     };
     let report = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
@@ -261,7 +291,7 @@ fn prepare_scope(
     let planned = match report {
         Ok(mut report) => {
             synced.suppress_busy_pending(&mut report.notes);
-            super::update_pi::pending_settle(env, &scope)
+            super::update_pi::pending_settle(env, &scope, &options)
                 .map(|pending| (report, pending))
                 .map_err(|error| error.to_string())
         }
@@ -281,6 +311,7 @@ fn prepare_scopes(
     target: &crate::flags::ProjectTargetFlag,
     verbose: bool,
     yes: bool,
+    catalog: Catalog,
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes_at(env, filter, target.path())?;
@@ -291,7 +322,7 @@ fn prepare_scopes(
     super::project::target_registrable(env, target, &scopes)?;
     let prepared: Vec<_> = scopes
         .into_iter()
-        .map(|scope| prepare_scope(env, scope, discard_edits))
+        .map(|scope| prepare_scope(env, scope, catalog, discard_edits))
         .collect();
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
@@ -337,9 +368,10 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
 fn defer_process_installs(
     env: &Env,
     scope: &kendex_core::model::Scope,
+    options: &PlanOptions,
     report: &mut EngineReport,
 ) -> CliResult {
-    let deferred = super::update_pi::deferred_settle(env, scope)?;
+    let deferred = super::update_pi::deferred_settle(env, scope, options)?;
     report.drift.retain(|row| {
         let defer = row.kind == kendex_core::model::ItemKind::PiExtension
             && row.harness == kendex_core::model::HarnessId::Pi
@@ -397,7 +429,7 @@ fn write_scope(
         ),
         yes,
     )?;
-    let settled = super::update_pi::settle_scope(env, scope, pending)?;
+    let settled = super::update_pi::settle_scope(env, scope, pending, options)?;
     let mut after = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)?
@@ -451,6 +483,7 @@ pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
         &args.target,
         args.verbose,
         args.yes,
+        args.catalog(),
         args.discard_edits,
     )
 }
@@ -461,6 +494,7 @@ pub fn run(
     target: &crate::flags::ProjectTargetFlag,
     verbose: bool,
     yes: bool,
+    catalog: Catalog,
     discard_edits: bool,
 ) -> CliResult {
     let mut refreshed_anything = false;
@@ -471,7 +505,7 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let prepared = prepare_scopes(env, filter, target, verbose, yes, discard_edits)?;
+    let prepared = prepare_scopes(env, filter, target, verbose, yes, catalog, discard_edits)?;
 
     for prepared in prepared {
         let scope = prepared.scope;
@@ -503,7 +537,7 @@ pub fn run(
         // carrying a refusal is never passed over. A scope that settles is
         // reported off the plan derived after its settle.
         if pending.is_empty() {
-            defer_process_installs(env, &scope, &mut report)?;
+            defer_process_installs(env, &scope, &prepared.options, &mut report)?;
             attention = print_attention(env, &report, listing(verbose));
             let reported = refresh_failures(&report);
             let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
@@ -533,7 +567,7 @@ pub fn run(
             yes,
             |after| {
                 prepared.synced.suppress_busy_pending(&mut after.notes);
-                defer_process_installs(env, &scope, after)?;
+                defer_process_installs(env, &scope, &prepared.options, after)?;
                 attention = print_attention(env, after, listing(verbose));
                 Ok(())
             },

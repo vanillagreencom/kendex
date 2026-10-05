@@ -165,27 +165,30 @@ pub(super) struct RecordReadings {
 /// Reads every declared source and set for the record. A source no item
 /// named, one only a Pi extension names among them, has no resolution in
 /// the pass and is read from its mirror alone, so its entry is held to the
-/// declaration like any other.
+/// declaration like any other; where `kept` is given, its entry for such a
+/// source is recorded again instead ([`kept_source`]).
 pub(super) fn record_readings(
     env: &Env,
     manifest: &Manifest,
     state: &DesiredState,
+    kept: Option<&Lock>,
 ) -> RecordReadings {
     let sources = manifest
         .sources
         .keys()
         .map(|name| {
             let reading = match repository(manifest, name) {
-                Some((repo, rev)) => {
-                    match commit_reading(env, repo, rev, state.sources.get(name)) {
+                Some((repo, rev)) => match kept_source(kept, state, name, repo, rev) {
+                    Some(recorded) => Reading::Fresh(recorded.clone()),
+                    None => match commit_reading(env, repo, rev, state.sources.get(name)) {
                         Ok(commit) => Reading::Fresh(SourceRev {
                             repo: repo.to_owned(),
                             rev: rev.map(str::to_owned),
                             commit,
                         }),
                         Err(stood_in) => Reading::StoodIn(stood_in),
-                    }
-                }
+                    },
+                },
                 None => Reading::Unrecorded,
             };
             (name.clone(), reading)
@@ -219,6 +222,24 @@ pub(super) fn record_readings(
         })
         .collect();
     RecordReadings { sources, sets }
+}
+
+/// The entry `kept` records for a source this pass read nothing at the
+/// source's own revision of, where that entry was written for the
+/// repository and revision declared now: a redeclared source is read
+/// afresh, since the record speaks for another declaration.
+fn kept_source<'a>(
+    kept: Option<&'a Lock>,
+    state: &DesiredState,
+    name: &str,
+    repo: &str,
+    rev: Option<&str>,
+) -> Option<&'a SourceRev> {
+    if state.sources.contains_key(name) {
+        return None;
+    }
+    let recorded = kept?.sources.get(name)?;
+    (recorded.repo == repo && recorded.rev.as_deref() == rev).then_some(recorded)
 }
 
 /// The repository and revision an enabled repository source is declared
