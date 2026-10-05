@@ -22,6 +22,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from api import MARKDOWN_LIMIT
 from refusals import Refusal, keyed, notice
+from secret import pattern as secret_pattern
 
 TOKEN = re.compile(r"<([^<>]*)>")
 # These are literal regions in owner-authored Markdown and Slack mrkdwn.
@@ -180,11 +181,13 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     Files always take mrkdwn.
     """
     pieces = [text] if isinstance(text, str) else list(text)
+    # Expansion must not hide a match from the caller's refusal check.
+    preserve = secret_pattern().search("".join(_render(piece, mrkdwn=False) for piece in pieces).encode()) is not None
     tracker = TRACKERS.get(root)
     references = TRACKERS.references(root)
     parts: List[Part] = []
     for piece in pieces:
-        if isinstance(piece, Verbatim):
+        if isinstance(piece, Verbatim) or preserve:
             parts.append(piece)
         else:
             parts.extend(_linked(piece, tracker, references))

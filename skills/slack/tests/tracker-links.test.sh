@@ -78,6 +78,42 @@ SHORT="${COMMIT:0:7}"
 sk_run -- post --root "$GH" --channel C777 --text "repo#2 $SHORT unknown#3"
 assert_eq "$RC=$(sk_state '.messages.C777[-1].text')" "0=[repo#2](https://github.com/org/repo/pull/2) [$SHORT](https://github.com/org/repo/commit/$COMMIT) unknown#3" 'post delivers PR and commit links with unresolved text'
 assert_eq "$(printf '%s\n' "$ERR" | grep -c '^slack: reference-link-unavailable=unknown#3 ')" '1' 'post reports the unresolved reference on stderr'
+
+# The detector fixture is not an authenticated credential. Its commit suffix
+# must stay intact so both callers refuse the original secret-pattern match.
+sk_bind "$GH"
+sk_poll "$GH"
+GH_CH="$(sk_channel "$GH")"
+for mode in original control; do
+  if [ "$mode" = control ]; then
+    sk_mutant pre-expansion markup.py '    preserve = secret_pattern\(\)\.search\([^\n]+\) is not None' '    preserve = False'
+  fi
+  for edge in post notice; do
+    BEFORE="$(sk_state ".messages.$GH_CH | length")"
+    case "$edge" in
+      post)
+        sk_run -- post --root "$GH" --text "xoxb-$COMMIT"
+        GOT="$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")=$(sk_state ".messages.$GH_CH | length")"
+        WANT="2=slack: secret-value=text=$BEFORE"
+        ;;
+      notice)
+        sk_lm "$GH" notice --item overseer --to owner --file "$(sk_text "commit-secret-$mode" "xoxb-$COMMIT")" > "$SK_TMP/notice.out"
+        ID="$(sed 's/^id=//' "$SK_TMP/notice.out")"
+        sk_poll "$GH"
+        STATE="$(jq -r --arg id "$ID" 'select(.t == "out" and .id == $id and .state != "inflight") | [.state, (.reason // "")] | join(" ")' "$(sk_journal "$GH")")"
+        GOT="$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")=$STATE=$(sk_state ".messages.$GH_CH | length")"
+        WANT="0=slack: secret-value=id=$ID=refused secret-value=$BEFORE"
+        ;;
+    esac
+    if [ "$mode" = original ]; then
+      assert_eq "$GOT" "$WANT" "$edge refuses a matching value before commit expansion"
+    else
+      sk_assert_red "$GOT" "$WANT" "control: $edge refusal fails when expansion hides the match"
+    fi
+  done
+done
+sk_bin_reset
+
 NONE="$(sk_tracker_root none '' '')"
 sk_run -- post --root "$NONE" --channel C777 --text 'KEN-1 #2'
 assert_eq "$RC=$(sk_state '.messages.C777[-1].text')" '0=KEN-1 #2' 'post with no tracker remains unchanged'
