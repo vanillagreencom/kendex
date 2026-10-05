@@ -73,29 +73,32 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
 
-# Columns: label|action|consumer gate|caller PR_COPILOT_REQUESTS|base PR_COPILOT_REQUESTS|gh pr edit exit|rc|stdout|requests
+# Columns: label|action|consumer gate|caller PR_COPILOT_REQUESTS|base PR_COPILOT_REQUESTS|gh pr edit exit|rc|stdout|requests|stderr line the caller copies into its notice
 for row in \
-  'disabled request|--request-review|"off"|||0|0|off|0' \
-  'disabled resolution|--resolve-mode|"off"|||0|0|off|0' \
-  'enabled request|--request-review|"enforce"|||0|0|approval|1' \
-  'unknown policy|--request-review|"junk"|||0|2||0' \
-  'empty policy|--request-review|""|||0|2||0' \
-  'unreadable policy|--request-review|["off"]|||0|2||0' \
-  'refused GitHub request|--request-review|"enforce"|||8|0|fallback|1' \
-  'Copilot requests off|--request-review|"enforce"|off||0|0|fallback|0' \
-  'Copilot requests off on an off gate|--request-review|"off"|off||0|0|off|0' \
-  'Copilot requests off at resolution|--resolve-mode|"enforce"|off||0|0|approval|0' \
-  'base checkout cannot turn Copilot requests off|--request-review|"enforce"||off|0|0|approval|1' \
-  'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0' \
-  'Copilot route with requests on|--copilot-route|"enforce"|||0|0|approval|0' \
-  'Copilot route with requests off|--copilot-route|"enforce"|off||0|0|fallback|0' \
-  'Copilot route on an off gate|--copilot-route|"off"|||0|0|off|0'; do
-  IFS='|' read -r label action setting caller_copilot base_copilot request_exit want_rc want_out want_requests <<< "$row"
+  'disabled request|--request-review|"off"|||0|0|off|0|' \
+  'disabled resolution|--resolve-mode|"off"|||0|0|off|0|' \
+  'enabled request|--request-review|"enforce"|||0|0|approval|1|' \
+  'unknown policy|--request-review|"junk"|||0|2||0|' \
+  'empty policy|--request-review|""|||0|2||0|' \
+  'unreadable policy|--request-review|["off"]|||0|2||0|' \
+  'refused GitHub request|--request-review|"enforce"|||8|0|fallback cause=refused exit=8|1|approval-wait: copilot-request-refused pr=42 repo=consumer/repo exit=8' \
+  'Copilot requests off|--request-review|"enforce"|off||0|0|fallback cause=off|0|' \
+  'Copilot requests off on an off gate|--request-review|"off"|off||0|0|off|0|' \
+  'Copilot requests off at resolution|--resolve-mode|"enforce"|off||0|0|approval|0|' \
+  'unknown Copilot request setting at resolution|--resolve-mode|"enforce"|junk||0|0|approval|0|' \
+  'base checkout cannot turn Copilot requests off|--request-review|"enforce"||off|0|0|approval|1|' \
+  'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0|' \
+  'unreadable Copilot request setting|--request-review|"enforce"|\"off||0|2||0|' \
+  'Copilot route with requests on|--copilot-route|"enforce"|||0|0|approval|0|' \
+  'Copilot route with requests off|--copilot-route|"enforce"|off||0|0|fallback cause=off|0|' \
+  'Copilot route on an off gate|--copilot-route|"off"|||0|0|off|0|'; do
+  IFS='|' read -r label action setting caller_copilot base_copilot request_exit want_rc want_out want_requests want_err <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
   write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
   run_action "$RUN" "$request_exit" "$action" --base-checkout "$BASE"
   assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$EXECUTION_LOG")" "$want_rc|$want_out|$want_requests|" "$label without base execution" "$ERR"
   [[ "$setting" != '"off"' ]] || assert_eq "$(cat "$QUERY_LOG")" '' "$label reads no native gate" "$ERR"
+  [[ -z "$want_err" ]] || assert_contains "$(cat "$ERR")" "$want_err" "$label names its cause on stderr" "$ERR"
 done
 write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
 write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
@@ -121,10 +124,12 @@ for row in \
   'base-directory~"off"~~~0~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
   'stacked-base-execution~"enforce"~~~0~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
   'stdout-isolation~"enforce"~~~0~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1' \
-  'copilot-off~"enforce"~off~~0~    if [[ "$COPILOT_REQUESTS" == off ]]; then~    if false; then~0~fallback~0' \
-  'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback~1' \
+  'copilot-off~"enforce"~off~~0~    if [[ "$COPILOT_REQUESTS" == off ]]; then~    if false; then~0~fallback cause=off~0' \
+  'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback cause=refused exit=8~1' \
   'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
   'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0' \
+  'copilot-setting-unreadable~"enforce"~\"off~~0~PR_COPILOT_REQUESTS on)" || exit 2~PR_COPILOT_REQUESTS on)" || COPILOT_REQUESTS=on~2~~0' \
+  'copilot-setting-at-resolution~"enforce"~junk~~0~if $REQUEST_REVIEW; then~if true; then~0~approval~0~--resolve-mode' \
   'route-only~"enforce"~~~0~    elif ! $ROUTE_ONLY; then~    elif true; then~0~approval~0~--copilot-route'; do
   IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests action <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"

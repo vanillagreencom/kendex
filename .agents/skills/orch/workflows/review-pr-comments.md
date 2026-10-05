@@ -415,7 +415,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
 
-  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head, start no wait, and send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval.
+  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head, start no wait, and send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval.
 
   ```bash
   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'

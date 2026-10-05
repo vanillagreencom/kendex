@@ -47,17 +47,17 @@ ORCH_ROUND_PRUNE_DISK_PCT = "75"
 # wait named on the command line always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# Whether orch asks Copilot for a review or re-review. "off" sends no
-# request and asks the overseer for the head approval at once instead; set it
-# when the Copilot review budget is spent.
-# values: on | off
-PR_COPILOT_REQUESTS = "on"
-
 # What happens when that wait runs out. "proceed" goes ahead only where no
 # reviewer engaged and no thread is open. "block" stops and waits for a
 # person.
 # values: proceed | block
 PR_REVIEW_ON_TIMEOUT = "proceed"
+
+# Whether orch asks Copilot for a review or re-review. "off" sends no
+# request and asks the overseer for the head approval at once instead; set it
+# when the Copilot review budget is spent.
+# values: on | off
+PR_COPILOT_REQUESTS = "on"
 
 # Seconds to keep waiting for the build to start before treating its
 # absence as a failure. Raise it where a build needs approval before it
