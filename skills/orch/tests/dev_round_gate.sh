@@ -252,7 +252,7 @@ done
 # dev-artifact-check's one must-fail control: the recorded comparison dropped
 # from a private copy of the measurement, so the tracker edit decides the cut.
 MUTANT_SCRIPTS="$(mutant_scripts cut-comparison-mutant lib/branch-growth.sh)" || exit 1
-mutate_file "$MUTANT_SCRIPTS/lib/branch-growth.sh" 'cut_args=(--cut-from-round "$4")' 'cut_args=()'
+mutate_file "$MUTANT_SCRIPTS/lib/branch-growth.sh" 'checker_args=(--cut-from-round "$4")' 'checker_args=()'
 write_allowance "$cut_wt" issue-1165 '**Expected delta**: 100 lines'
 LIVE_CHECK="$CHECK"
 CHECK="$MUTANT_SCRIPTS/dev-artifact-check"

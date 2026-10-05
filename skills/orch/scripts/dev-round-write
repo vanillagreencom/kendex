@@ -426,7 +426,7 @@ cut_comparison=null
 if [[ "$cut" == true ]]; then
   if [[ "$cut_from_round_given" == true ]]; then
     [[ -n "$cut_from_round" ]] || die required --cut-from-round
-    branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "$cut_from_round" "$state_dir" || {
+    branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "$cut_from_round" || {
       measured=$?
       message growth-unmeasured >&2
       exit "$measured"

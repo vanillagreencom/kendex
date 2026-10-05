@@ -148,34 +148,39 @@ BRANCH_ALLOWANCE_TEST_LIMIT=""
 # Delegate parsing, measurement, and the verdict to branch-size-check. Its
 # JSON is the contract shared by launch, round minting, and cut acceptance.
 # Return the checker's exit code. Every measured verdict succeeds.
-# Cut acceptance supplies its round record as the comparison source. A caller
-# given a state directory passes it fifth, and workflow-state resolves it by
-# the same rule as its own --state-dir; empty leaves that rule to the
-# environment and project settings.
+# Cut acceptance supplies its round record as the comparison source. That
+# comparison writes no workflow state, so it resolves no state directory, which
+# a hosted lane's acceptance has no way to name. A measurement that writes
+# pr.size_check takes the caller's state directory fifth, and workflow-state
+# resolves it by the same rule as its own --state-dir; empty leaves that rule
+# to the environment and project settings.
 branch_allowance_check() {
   local worktree="$1" issue="$2" script_dir="$3" output rc record verdict fields state_dir captured diagnostic
-  local cut_args=() state_args=()
-  [[ -z "${4:-}" ]] || cut_args=(--cut-from-round "$4")
-  [[ -z "${5:-}" ]] || state_args=(--state-dir "$5")
+  local checker_args=() state_args=()
+  if [[ -n "${4:-}" ]]; then
+    checker_args=(--cut-from-round "$4")
+  else
+    [[ -z "${5:-}" ]] || state_args=(--state-dir "$5")
+    state_dir="$("$script_dir/workflow-state" ${state_args[@]+"${state_args[@]}"} path "$issue")" || {
+      branch_growth_fail "caller workflow state directory could not be resolved"
+      return 2
+    }
+    checker_args=(--state-dir "${state_dir%/*}")
+  fi
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
-  state_dir="$("$script_dir/workflow-state" ${state_args[@]+"${state_args[@]}"} path "$issue")" || {
-    branch_growth_fail "caller workflow state directory could not be resolved"
-    return 2
-  }
-  state_dir="${state_dir%/*}"
   captured="$(
-    diagnostic_file="$(mktemp "$state_dir/.branch-allowance.XXXXXX" 2>/dev/null)" || exit 2
+    diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/branch-allowance.XXXXXX" 2>/dev/null)" || exit 2
     trap 'rm -f "$diagnostic_file"' EXIT
     checker_rc=0
     checker_output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
-      --state-dir "$state_dir" --json ${cut_args[@]+"${cut_args[@]}"} 2>"$diagnostic_file")" || checker_rc=$?
+      --json ${checker_args[@]+"${checker_args[@]}"} 2>"$diagnostic_file")" || checker_rc=$?
     checker_error="$(cat -- "$diagnostic_file")" || exit 2
     jq -n --arg output "$checker_output" --arg diagnostic "$checker_error" \
       --argjson rc "$checker_rc" '{output: $output, diagnostic: $diagnostic, rc: $rc}'
   )" || {
-    branch_growth_fail "checker output could not be captured under '$state_dir'"
+    branch_growth_fail "checker output could not be captured under '${TMPDIR:-/tmp}'"
     return 2
   }
   output="$(jq -r '.output' <<<"$captured")" || return 2

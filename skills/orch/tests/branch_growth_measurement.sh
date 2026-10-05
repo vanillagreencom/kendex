@@ -132,7 +132,7 @@ assert_eq "$separate_rc $(jq -r '.size_check.verdict' "$RENDER_WT/tmp/dev-round-
 head_sha="$(git -C "$RENDER_WT" rev-parse HEAD)" || exit 1
 "$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 4-4 --branch growth --commit "$head_sha" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-renderwt-4-4-1" "$RENDER_WT" KEN-GROWTH 4-4)" --item 1 Applied cut >/dev/null
 cut_rc=0; cut="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-artifact-check" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --expect-items-from-round 2>/dev/null)" || cut_rc=$?
-cut_reason="$(jq -r '.reason' <<<"$cut")" || exit 1; assert_eq "$cut_rc $cut_reason" "1 cut_not_shrunk" "cut acceptance reads caller state"
+cut_reason="$(jq -r '.reason' <<<"$cut")" || exit 1; assert_eq "$cut_rc $cut_reason" "1 cut_not_shrunk" "cut acceptance from a separate caller measures the branch"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
