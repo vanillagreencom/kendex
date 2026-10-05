@@ -129,6 +129,14 @@ lane_context_shape() {
 # environment cannot be read, as on a host without /proc, so the caller names
 # no account it did not read. Status 2 is a process table that could not be
 # read.
+#
+# This read stands in for the session's own sessionStart row
+# (hooks/session-start-row.sh through lib/session-rows.sh session_rows_write),
+# the one documented source of its account, since Copilot reports a running
+# session's account to nothing outside it. That row cannot answer here: a
+# session started before the hook install, or with no overseer mailbox
+# directory, writes none, and lib/overseer-launch.sh ol_caller_known keeps
+# only a row naming claude or codex.
 LANE_PANE_SHAPE="" LANE_PANE_ACCOUNT=""
 lane_context_pane_shape() { # CMD PANE_PID
   local table name_re found pid var copilot_home="" home=""

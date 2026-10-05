@@ -356,9 +356,11 @@
 #                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --harness H      The harness this overseer runs, claude, codex, copilot or
-#                    pi, where its pane cannot say: a Codex or Copilot CLI pane
-#                    reports node and a pi pane pi, which the pane reader maps
-#                    to no one harness, and the turn-end reading that would
+#                    pi, where its pane cannot say: a Codex pane reports node
+#                    and a pi pane pi, which the pane reader maps to no one
+#                    harness, and a Copilot CLI pane names its harness only
+#                    where the process table reads (lib/lane-context.sh
+#                    lane_context_pane_shape); the turn-end reading that would
 #                    name it does not exist before the first turn end. It
 #                    answers after the launch record and the session's
 #                    SessionStart row and ahead of the pane and the reading;
