@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from itertools import chain
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from api import MARKDOWN_LIMIT
-from refusals import Refusal, notice
+from refusals import Refusal, keyed, notice
 
 TOKEN = re.compile(r"<([^<>]*)>")
 # These are literal regions in owner-authored Markdown and Slack mrkdwn.
@@ -34,6 +35,7 @@ SKIP_ZONES = {
 LITERAL = re.compile("|".join(SKIP_ZONES.values()), re.MULTILINE)
 METADATA_SECONDS = 86400
 Tracker = Tuple[re.Pattern, Callable[[str], str]]
+REFERENCES = re.compile(r"(?<![\w/#])(?:[\w.-]+(?:/[\w.-]+)?)?#[0-9]+\b|\b[0-9a-fA-F]{4,64}\b")
 
 
 class TrackerMetadata:
@@ -46,6 +48,7 @@ class TrackerMetadata:
     def __init__(self, clock: Callable[[], float] = time.time) -> None:
         self.clock = clock
         self.cache: Dict[Path, Tuple[float, Optional[Tracker]]] = {}
+        self.repositories: Dict[Path, Tuple[float, str]] = {}
         self.warned: set = set()
 
     def _read(self, root: Path, argv: list) -> str:
@@ -53,6 +56,56 @@ class TrackerMetadata:
         if proc.returncode != 0:
             raise ValueError(f"{argv[0]} exit={proc.returncode}")
         return proc.stdout.strip()
+
+    def repository(self, root: Path) -> str:
+        cached = self.repositories.get(root)
+        now = self.clock()
+        if cached is not None and now - cached[0] < METADATA_SECONDS:
+            return cached[1]
+        try:
+            repo = json.loads(self._read(root, ["gh", "repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
+            if not isinstance(repo, str) or re.fullmatch(r"[\w.-]+/[\w.-]+", repo) is None:
+                repo = ""
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            repo = ""
+        self.repositories[root] = (now, repo)
+        return repo
+
+    def references(self, root: Path) -> Tuple[re.Pattern, Callable[[str], Optional[str]]]:
+        resolved: Dict[str, Optional[str]] = {}
+
+        def url(identifier: str) -> Optional[str]:
+            if identifier in resolved:
+                return resolved[identifier]
+            repo = self.repository(root) if "/" not in identifier else ""
+            target = None
+            cause = "repository-unknown"
+            if "#" in identifier:
+                project, _, number = identifier.partition("#")
+                if "/" in project:
+                    target = f"https://github.com/{project}/pull/{number}"
+                elif repo and (not project or project.casefold() == repo.split("/")[1].casefold()):
+                    target = f"https://github.com/{repo}/pull/{number}"
+            elif repo:
+                cause = "commit-unresolved"
+                try:
+                    env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+                    proc = subprocess.run(["git", "rev-parse", "--disambiguate=" + identifier.lower()],
+                                          cwd=root, env=env, capture_output=True, text=True, timeout=30, check=False)
+                    commit = proc.stdout.strip()
+                    if proc.returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", commit):
+                        proc = subprocess.run(["git", "cat-file", "-t", commit], cwd=root, env=env,
+                                              capture_output=True, text=True, timeout=30, check=False)
+                        if proc.returncode == 0 and proc.stdout.strip() == "commit":
+                            target = f"https://github.com/{repo}/commit/{commit}"
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            if target is None:
+                print(keyed("reference-link-unavailable", f"{identifier} root={root} cause={cause}"), file=sys.stderr, flush=True)
+            resolved[identifier] = target
+            return target
+
+        return REFERENCES, url
 
     def get(self, root: Path) -> Optional[Tracker]:
         """Resolve through orch-env in this root, never the relay's checkout."""
@@ -76,18 +129,6 @@ class TrackerMetadata:
                     raise ValueError("teams keys keys=invalid")
                 pattern = re.compile(r"\b(?:" + "|".join(re.escape(key) for key in sorted(keys, key=len, reverse=True)) + r")-[0-9]+\b")
                 tracker = (pattern, lambda identifier: f"https://linear.app/{slug}/issue/{identifier}")
-            else:
-                # No repository is an expected state, not a linking failure.
-                try:
-                    repo = json.loads(self._read(root, ["gh", "repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
-                except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
-                    repo = ""
-                if isinstance(repo, str) and re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
-                    pattern = re.compile(r"(?<![\w/#])(?:[\w.-]+/[\w.-]+)?#[0-9]+\b")
-                    def issue_url(identifier: str) -> str:
-                        project, _, number = identifier.partition("#")
-                        return f"https://github.com/{project or repo}/issues/{number}"
-                    tracker = (pattern, issue_url)
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as err:
             if root not in self.warned:
                 notice("tracker-links-unavailable", f"{root} cause={err}")
@@ -140,12 +181,13 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     """
     pieces = [text] if isinstance(text, str) else list(text)
     tracker = TRACKERS.get(root)
+    references = TRACKERS.references(root)
     parts: List[Part] = []
     for piece in pieces:
         if isinstance(piece, Verbatim):
             parts.append(piece)
         else:
-            parts.extend(_linked(piece, tracker))
+            parts.extend(_linked(piece, tracker, references))
     markdown = "".join(_render(part, mrkdwn=False) for part in parts)
     input_size = sum(len(piece) if isinstance(piece, str) else len(piece.markdown()) for piece in pieces)
     mrkdwn = file_comment or len(markdown) > MARKDOWN_LIMIT and (fallback or input_size <= MARKDOWN_LIMIT)
@@ -154,20 +196,22 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     return "".join(_render(part, mrkdwn=True) for part in parts), "text"
 
 
-def _linked(text: str, tracker: Optional[Tracker]) -> List[Part]:
+def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern, Callable[[str], Optional[str]]]) -> List[Part]:
     """`text` as plain runs and bare tracker ids with their URLs; literal
     regions are never linked."""
     parts: List[Part] = []
     pos = 0
-    if tracker is not None:
-        pattern, url = tracker
-        for start, end in chain(((literal.start(), literal.end()) for literal in LITERAL.finditer(text)), [(len(text), len(text))]):
-            for match in pattern.finditer(text, pos, start):
-                parts.append(text[pos:match.start()])
-                parts.append((match.group(), url(match.group())))
-                pos = match.end()
-            parts.append(text[pos:end])
-            pos = end
+    reference_pattern, reference_url = references
+    pattern = re.compile(reference_pattern.pattern + ("|" + tracker[0].pattern if tracker is not None else ""))
+    for start, end in chain(((literal.start(), literal.end()) for literal in LITERAL.finditer(text)), [(len(text), len(text))]):
+        for match in pattern.finditer(text, pos, start):
+            identifier = match.group()
+            target = reference_url(identifier) if reference_pattern.fullmatch(identifier) else tracker[1](identifier)
+            parts.append(text[pos:match.start()])
+            parts.append((identifier, target) if target is not None else identifier)
+            pos = match.end()
+        parts.append(text[pos:end])
+        pos = end
     parts.append(text[pos:])
     return parts
 

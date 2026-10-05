@@ -48,12 +48,12 @@ LONG="$(python3 -c 'print("x " * 5980 + "KEN-1", end="")')"
 sk_markup "$ROOT" outbound "$LONG" markdown
 assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")=$(jq -r '.result[0] | endswith("<https://linear.app/workspace/issue/KEN-1|KEN-1>")' <<<"$OUT")" '0=text=true' 'expansion selects mrkdwn before rendering'
 sk_markup "$GH" outbound '#2 org/other#3 KEN-1 x#4' markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=[#2](https://github.com/org/repo/issues/2) [org/other#3](https://github.com/org/other/issues/3) KEN-1 x#4' 'GitHub local and qualified issues use their own repositories'
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=[#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3) KEN-1 x#4' 'GitHub local and qualified PRs use their own repositories'
 sk_markup "$NONE" outbound 'KEN-1 #2' markdown
 assert_eq "$RC=$(jq -c '[.result[0],.notices]' <<<"$OUT")" '0=["KEN-1 #2",[]]' 'no tracker leaves text unchanged without notice'
 # One process sees every root independently, even while a Linear cache is warm.
 sk_markup "$ROOT" roots "$ROOT" "$GH" "$NONE"
-assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 org/other#3","KEN-1 [#2](https://github.com/org/repo/issues/2) [org/other#3](https://github.com/org/other/issues/3)","KEN-1 #2 org/other#3"]' 'one process selects each root tracker'
+assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 [org/other#3](https://github.com/org/other/pull/3)","KEN-1 [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)","KEN-1 #2 [org/other#3](https://github.com/org/other/pull/3)"]' 'one process selects each root tracker'
 : > "$ROOT/linear.calls"
 sk_markup "$ROOT" lifetime refresh
 assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,1,1,2,2' 'metadata reads once then refreshes at one day'
@@ -93,12 +93,12 @@ url|https://example.test/KEN-1
 code|`KEN-1`
 fence|fenced
 ROWS
-sk_mutant cache markup.py 'now - cached\[0\] < METADATA_SECONDS' 'now - cached[0] < 0'
+sk_mutant cache markup.py '(cached = self.cache.get\(root\)\n        if cached is not None and )now - cached\[0\] < METADATA_SECONDS' '\1now - cached[0] < 0'
 : > "$ROOT/linear.calls"
 sk_markup "$ROOT" lifetime refresh
 assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,2,3,4,5' 'control: without cache lifetime every call reads'
 sk_bin_reset
-sk_mutant expiry markup.py 'now - cached\[0\] < METADATA_SECONDS' 'True'
+sk_mutant expiry markup.py '(cached = self.cache.get\(root\)\n        if cached is not None and )now - cached\[0\] < METADATA_SECONDS' '\1True'
 : > "$ROOT/linear.calls"
 sk_markup "$ROOT" lifetime refresh
 assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,1,1,1,1' 'control: without expiry metadata never refreshes'
@@ -142,14 +142,67 @@ assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=KEN-1' 'control: without team
 sk_bin_reset
 sk_mutant roots markup.py 'cached = self.cache.get\(root\)' 'cached = next(iter(self.cache.values()), None)'
 sk_markup "$ROOT" roots "$ROOT" "$GH"
-assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 org/other#3' 'control: without per-root cache selection GitHub uses Linear metadata'
+assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=[KEN-1](https://linear.app/workspace/issue/KEN-1) [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)' 'control: without per-root cache selection GitHub uses Linear metadata'
 sk_bin_reset
 sk_mutant linear-boundary markup.py 're.compile\(r"\\b\(\?:"' 're.compile(r"(?:"'
 sk_markup "$ROOT" outbound 'xKEN-1' markdown
 assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=x[KEN-1](https://linear.app/workspace/issue/KEN-1)' 'control: without the Linear boundary an embedded id links'
 sk_bin_reset
 sk_mutant github-boundary markup.py '\(\?<!\[\\w/#\]\)' ''
-sk_markup "$GH" outbound 'x#2' markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=x[#2](https://github.com/org/repo/issues/2)' 'control: without the GitHub boundary an embedded id links'
+sk_markup "$GH" outbound 'x/#2' markdown
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=x/[#2](https://github.com/org/repo/pull/2)' 'control: without the GitHub boundary an embedded id links'
+sk_bin_reset
+
+REFS="$(sk_tracker_root references Team org/kendex)"
+git -C "$REFS" -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty --no-gpg-sign -qm fixture || exit 1
+FULL="$(git -C "$REFS" rev-parse HEAD)" || exit 1
+SHORT="${FULL:0:7}"
+while IFS='|' read -r label input expected; do
+  input="${input//@SHORT@/$SHORT}"; input="${input//@FULL@/$FULL}"
+  expected="${expected//@SHORT@/$SHORT}"; expected="${expected//@FULL@/$FULL}"
+  sk_markup "$REFS" outbound "$input" markdown
+  assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$expected" "$label"
+done <<'ROWS'
+PRs under Linear|kendex#2 #3 KEN-1|[kendex#2](https://github.com/org/kendex/pull/2) [#3](https://github.com/org/kendex/pull/3) [KEN-1](https://linear.app/workspace/issue/KEN-1)
+short and full commits|@SHORT@ @FULL@|[@SHORT@](https://github.com/org/kendex/commit/@FULL@) [@FULL@](https://github.com/org/kendex/commit/@FULL@)
+every mention|kendex#2 kendex#2 @SHORT@ @SHORT@|[kendex#2](https://github.com/org/kendex/pull/2) [kendex#2](https://github.com/org/kendex/pull/2) [@SHORT@](https://github.com/org/kendex/commit/@FULL@) [@SHORT@](https://github.com/org/kendex/commit/@FULL@)
+literal references|`kendex#2` `@SHORT@` [kendex#2](https://example.test/pr)|`kendex#2` `@SHORT@` [kendex#2](https://example.test/pr)
+unresolved references|unknown#2 deadbeef unknown#2 deadbeef|unknown#2 deadbeef unknown#2 deadbeef
+ROWS
+# The relay and post logs consume this keyed diagnostic; English text is unpinned.
+assert_eq "$(printf '%s\n' "$ERR" | grep -c '^slack: reference-link-unavailable=')" '2' 'one stderr warning per unresolved reference'
+assert_has "$ERR" 'reference-link-unavailable=unknown#2 ' 'unknown repo warning identifies its input'
+assert_has "$ERR" 'reference-link-unavailable=deadbeef ' 'missing commit warning identifies its input'
+sk_markup "$REFS" outbound "kendex#2 $SHORT" file
+assert_eq "$RC=$(jq -r '.result | join(" ")' <<<"$OUT")" "0=<https://github.com/org/kendex/pull/2|kendex#2> <https://github.com/org/kendex/commit/$FULL|$SHORT> text" 'PRs and commits render as file comment links'
+# Two real Git objects share a prefix, so a hash cannot identify either one.
+AMBIGUOUS="$(python3 - "$REFS" <<'PY'
+import hashlib, os, subprocess, sys
+seen = {}
+for number in range(65537):
+    data = str(number).encode()
+    prefix = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()[:4]
+    if prefix in seen:
+        for body in (seen[prefix], data):
+            subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=sys.argv[1], input=body,
+                           env={key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ},
+                           stdout=subprocess.PIPE, check=True)
+        print(prefix)
+        break
+    seen[prefix] = data
+else:
+    sys.exit(1)
+PY
+)" || exit 1
+sk_markup "$REFS" outbound "$AMBIGUOUS $AMBIGUOUS" markdown
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$AMBIGUOUS $AMBIGUOUS" 'ambiguous hash stays literal at every mention'
+assert_eq "$(printf '%s\n' "$ERR" | grep -c '^slack: reference-link-unavailable=')" '1' 'ambiguous hash reports one stderr warning'
+sk_mutant pr-link markup.py 'target = f"https://github.com/\{repo\}/pull/\{number\}"' 'target = None'
+sk_markup "$REFS" outbound 'kendex#2' markdown
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=kendex#2' 'control: current bare PR form fails the linked result'
+sk_bin_reset
+sk_mutant commit-link markup.py 'target = f"https://github.com/\{repo\}/commit/\{commit\}"' 'target = None'
+sk_markup "$REFS" outbound "$SHORT" markdown
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" "0=$SHORT" 'control: removing commit links fails the linked result'
 sk_bin_reset
 sk_summary

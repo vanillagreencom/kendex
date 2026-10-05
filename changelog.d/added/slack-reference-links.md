@@ -1,0 +1,1 @@
+- Slack messages link bare pull requests and resolvable commit hashes. Unresolved references stay visible with a warning.

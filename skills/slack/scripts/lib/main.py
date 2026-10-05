@@ -94,6 +94,8 @@ mailbox posts and --status shows held-by=master. A root naming no file has
 no hold. README.md says what posts on resume.
 
 Non-fatal diagnostics on stderr:
+  reference-link-unavailable=REFERENCE root=ROOT cause=CAUSE
+    A PR repository or commit hash cannot be resolved. The text is sent unchanged.
   envelope-field=ROOT id=ID field=FIELD
     Missing or invalid line/count fields disable master-read suppression.
     Other invalid fields skip that envelope. The relay continues.
