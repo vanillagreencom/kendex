@@ -4,7 +4,9 @@
 # reaches the output; under a diff scope only a finding on an added line
 # counts, and a range judges each commit it holds against that commit's
 # parents; the repository cannot switch a finding off through gitleaks' own
-# allowlists, nor through its own exclusion list under --policy-root; a
+# allowlists, nor through its own exclusion list under --policy-root, which
+# still refuses that list or its setting when malformed, and refuses a policy
+# root it cannot enter or that is no git repository; a
 # missing or too-old gitleaks is a gap notice that passes, except under CI on
 # a range or --all scan; a gitleaks run that fails, or a report the lane
 # cannot read, is exit 2. Each row builds a fresh repository
@@ -289,6 +291,26 @@ ROWS
 POLICY_SUBJECT="$R"
 row "a policy root that cannot be entered refuses" \
   "rc=2 secrets: policy-root=$TMP/no-checkout" "$R" --policy-root "$TMP/no-checkout"
+NOT_REPO="$TMP/not-a-repo"
+mkdir -p "$NOT_REPO"
+row "a policy root outside any git repository refuses" \
+  "rc=2 secrets: policy-root=$NOT_REPO" "$R" --policy-root "$NOT_REPO"
+
+echo "=== --policy-root still refuses a malformed setting or list in the judged repository ==="
+# Once merged the judged repository's list is the policy root's, so a
+# malformed one would fail every later scan, the repairing pull request's too.
+while IFS='|' read -r name setting list expect; do
+  repo "$name"
+  [ -z "$setting" ] || put .kendex/settings.toml "[env]\nCOMMIT_GUARDS_SECRETS_EXCLUDES = \"$setting\"\n"
+  [ -z "$list" ] || put tools/secrets-excludes "$list"
+  put ok.txt "nothing to see\n"
+  row "$name" "$expect" "$R" --policy-root "$POLICY"
+done <<'ROWS'
+a well-formed judged list is validated and the scan runs||docs/*\tgenerated prose\n|rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0
+a judged setting the lane cannot use refuses|/abs/excludes||rc=2 secrets: path-absolute=excludes:/abs/excludes
+a judged row without a reason refuses||docs/*\n|rc=2 secrets: exclusion-reason=tools/secrets-excludes:1
+ROWS
+BAD_JUDGED_LIST="$R"
 
 echo "=== the tool: missing or too old is a gap outside CI and on --staged, a refusal on a CI range or --all ==="
 NO_TOOL_PATH="$TMP/no-tool-bin"
@@ -425,9 +447,21 @@ git -C "$MERGE" checkout -q evil
 gg_mutant LANE secrets 'grep -Fxq -- "$COMMIT" "$shallow"' 'grep -Fxq -- "$COMMIT" /dev/null'
 row "control: a shallow boundary read as a root commit judges every line it holds" \
   "rc=1 secrets: secret=key.pem:1:private-key" "$SHALLOW" --against HEAD^1
-gg_mutant LANE secrets 'cd -- "$POLICY_ROOT" 2>/dev/null' 'true'
+gg_mutant LANE secrets 'cd -- "$POLICY_ROOT" 2>"$GG_TMP/policy-root.err"' 'true'
 row "control: a lane that stays in the judged repository reads its own row" \
   "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$POLICY"
+gg_mutant LANE secrets 'cd -- "$START_DIR" || gg_fail repository-cd' 'true || gg_fail repository-cd'
+row "control: a lane that never returns to the judged repository scans the policy root and passes" \
+  "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$POLICY"
+gg_mutant LANE secrets '|| gg_fail_cause policy-root "$POLICY_ROOT" "$GG_TMP/policy-root.err" "cannot enter the policy root"' '|| true'
+row "control: a lane that ignores an unenterable policy root reads the judged repository's own row" \
+  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$TMP/no-checkout"
+gg_mutant LANE secrets 'git rev-parse --show-toplevel >/dev/null 2>"$GG_TMP/policy-root.err"' 'true'
+row "control: without the repository check a non-git policy root fails under the wrong key" \
+  "rc=2 secrets: repository-root=1" "$POLICY_SUBJECT" --policy-root "$NOT_REPO"
+gg_mutant LANE secrets 'gg_load_excludes "$JUDGED_EXCLUDES"' 'true'
+row "control: a lane that skips the judged list passes its malformed row" \
+  "rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0" "$BAD_JUDGED_LIST" --policy-root "$POLICY"
 gg_mutant LANE secrets '--config "$GG_TMP/gitleaks.toml"' '--log-level warn'
 row "control: without the config flag the environment's configuration allowlists the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$ENV_TOML" "$ENV_CONFIG"
