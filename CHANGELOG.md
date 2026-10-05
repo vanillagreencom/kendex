@@ -27,6 +27,8 @@ change came from an outside contributor.
 
 - skill-load-check counts a Codex skill read whose text arrived whole in a `functions.exec` output that Codex truncated, and still refuses a read the cut reached.
 - skill-load-check counts a Codex skill read batched with other calls in one `functions.exec` when its own command succeeds, and its refusal names the read that passes.
+- `linear.sh sync --reconcile` handles a workspace-sized cache: no `Argument list too long` failure, and cached issues past the first 2500 are checked instead of pruned as deleted.
+- `oversee register` finds an installed `lane-mail-check` in the `kendex list` output instead of reporting `turn-end-hook=missing`.
 
 ## [1.9.0] - 2026-10-04
 
