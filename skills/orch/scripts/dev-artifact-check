@@ -161,7 +161,8 @@ skills/orch/schemas/dev-round.md § Protected additions.
 A kind fix receipt checked against its round record also carries the mode a
 fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
 range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
-the pull request CI validates. Any other recorded mode is
+the pull request CI validates, on a round whose record names the source
+pr-comments (dev-round-write --source). Any other recorded mode is
 reason=mode_mismatch; a null mode, a failing round that started no run, is
 not judged. A resolution that cannot be read exits 2.
 
@@ -739,7 +740,14 @@ validate_artifact() {
     else
       message mode-unresolved >&2; return 2
     fi
-    if [[ "$recorded_mode" != "$round_mode" && "$recorded_mode" != ci ]]; then
+    # A ci run leaves the round to its pull request's CI, which only a round
+    # on that pull request's comments has, as the orchestrator's record says.
+    local mode_ok=false
+    case "$recorded_mode" in
+      ci) if jq -e '.source == "pr-comments"' "$round_record" >/dev/null 2>&1; then mode_ok=true; fi ;;
+      "$round_mode") mode_ok=true ;;
+    esac
+    if [[ "$mode_ok" == false ]]; then
       message mode-mismatch >&2
       emit false "$file" "mode_mismatch"
       return 1

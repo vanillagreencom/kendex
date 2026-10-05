@@ -20,7 +20,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-#     [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH]
+#     [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -64,6 +64,7 @@
 #     "cut": false,                          // required, true for a declared cut
 #     "size_check": {"verdict": "pass", "…": "…"}, // branch-size-check record
 #     "cut_comparison": null,              // comparison report for a cut
+#     "source": "pr-comments",             // the round's Source:, or null
 #     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
@@ -215,7 +216,7 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-    [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH]
+    [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints that path. One --item per delegated review
@@ -256,6 +257,9 @@ recorded allowance, or its recorded production and test counts when unsized.
 --cut-from-round PATH declares a cut retry using the earlier round's comparison.
 size_check always records the current report; cut_comparison preserves the cut
 target across retries.
+--source records the delegation's Source: line, null when absent;
+dev-artifact-check accepts a ci validation run only on a round whose source
+is pr-comments. It takes the --issue grammar below.
 --issue is the workflow-state key, whose forms `workflow-state --help` § Keys
 lists. A `pr-N` or `local-` key names no issue and so measures under the
 allowance_missing verdict. workflow-state stores the key as passed and
@@ -270,7 +274,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--cut-from-round|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--cut-from-round|--source|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -339,6 +343,8 @@ issue_given=false
 round_id_given=false
 items_file_given=false
 adds_given=false
+source_given=false
+source_name=""
 
 while (( $# > 0 )); do
   case "$1" in
@@ -348,6 +354,7 @@ while (( $# > 0 )); do
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --adds) need "$1" $# "${2:-}"; no_dup "$1" "$adds_given"; adds_given=true; adds="$2"; shift 2 ;;
     --cut) cut=true; shift ;;
+    --source) need "$1" $# "${2:-}"; no_dup "$1" "$source_given"; source_given=true; source_name="$2"; shift 2 ;;
     --cut-from-round) need "$1" $# "${2:-}"; no_dup "$1" "$cut_from_round_given"; cut_from_round_given=true; cut=true; cut_from_round="$2"; shift 2 ;;
     --item)
       # Consumes exactly 3 args: N TEXT REACH.
@@ -386,6 +393,11 @@ done
 [[ -d "$worktree" ]] || die not-directory "$@"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
+source_json=null
+if [[ "$source_given" == true ]]; then
+  check_id_token --source "$source_name"
+  source_json="$(jq -n --arg s "$source_name" '$s')"
+fi
 # Taken when the invocation starts. A retry keeps the first invocation's time:
 # the identity comparison below leaves it out, so the round's start is when it
 # was first delegated.
@@ -507,6 +519,7 @@ jq -n \
   --argjson cut "$cut" \
   --argjson size_check "$size_check" \
   --argjson cut_comparison "$cut_comparison" \
+  --argjson source "$source_json" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
@@ -518,6 +531,7 @@ jq -n \
      cut: $cut,
      size_check: $size_check,
      cut_comparison: $cut_comparison,
+     source: $source,
      items: $items
    }' > "$tmp"
 

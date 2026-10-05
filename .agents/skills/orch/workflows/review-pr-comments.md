@@ -247,7 +247,7 @@ Decide whether this fix round may add protected files. [`../schemas/dev-round.md
 When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
 
 ```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
 Every measured size verdict permits delegation. Use the round's `size_check` report for the cut decision in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4. Exit 3 means malformed allowance text. Other nonzero exits name a usage or environment failure. Report either failure and stop. A `pr-[PR_NUMBER]` key names no issue, so the checker measures the branch and records `allowance_missing`.

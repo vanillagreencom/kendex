@@ -93,14 +93,15 @@ new_round() { # NAME ISSUE RID EXIT
 # allowance the fix then exceeds. Unless COMMITTED is no, the round then
 # commits its fix, growing the branch, so HEAD_SHA is one commit past
 # ROUND_SHA.
-new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT]
-  local cut=() allowance="100 lines, 100 test lines"
+new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT] [SOURCE]
+  local cut=() source=() allowance="100 lines, 100 test lines"
   new_round "$1" "issue-$2" "$3" "$4"
   mkdir -p "$WT/.cache/linear"
   [[ "${6:-no}" == yes ]] && cut=(--cut) && allowance="1 line, 1 test line"
+  [[ -z "${7:-}" ]] || source=(--source "$7")
   printf '[{"identifier":"issue-%s","description":"**Expected delta**: %s"}]\n' "$2" "$allowance" \
     > "$WT/.cache/linear/issues.json"
-  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} \
+  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} ${source[@]+"${source[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
   # The record's delegation time is the state's, fifty seconds ago, so the
   # run new_round started since then belongs to this round.
@@ -290,9 +291,9 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
-# A ci run passed at once and left the round to the pull request CI: a pass
-# beside it recovers the round.
-new_fix_round fix-ci 782 5-9 none
+# A ci run passed at once and left a pr-comments round to the pull request
+# CI: a pass beside it recovers the round.
+new_fix_round fix-ci 782 5-9 none yes no pr-comments
 add_run "$WT" 1 10 0 "$DEAD_PID" ci
 transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
 run --worktree "$WT" --issue issue-782 --round-id 5-9 --transcript "$TMP_ROOT/fix-ci.jsonl"

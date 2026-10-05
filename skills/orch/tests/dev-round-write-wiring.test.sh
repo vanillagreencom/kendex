@@ -140,18 +140,25 @@ run_workflow_round_command() { # WORKFLOW ROUND
   line="${line//\[WORKTREE_PATH\]/$WT}"
   line="${line//\[ISSUE_ID\]/issue-826}"
   line="${line//\[DEV_ROUND_ID\]/$2}"
+  line="${line//\[SOURCE\]/pr-review}"
   line="${line/\[--adds/--adds}"
   line="${line/\[REPO_RELATIVE_PATHS\]/$ADDS_PATHS}"
   line="${line/\"]/\"}"
   "$STATE" --state-dir "$WT/tmp" set issue-826 dev_round_id "$2" >/dev/null
   env ORCH_STATE_DIR="$WT/tmp" bash -c "$line"
 }
+# The source dev-artifact-check reads: the delegation's own Source: for
+# dev-fix, filled here as pr-review, and pr-comments for review-pr-comments,
+# whose rounds alone may leave validation to the pull request CI.
 rid=40
-for workflow in dev-fix review-pr-comments; do
+for row in dev-fix:pr-review review-pr-comments:pr-comments; do
+  workflow="${row%%:*}"
   printf '%s' '[{"n":1,"text":"workflow item","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-$rid-$rid.json"
   run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/$workflow.md" "$rid-$rid" >/dev/null
   assert_eq "$(jq -c '.adds' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" '["tools/future-helper.sh","skills/x/scripts/future-check"]' \
     "$workflow: the live command executes and binds its Adds path list"
+  assert_eq "$(jq -r '.source' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "${row#*:}" \
+    "$workflow: the live command records the round's source"
   rid=$((rid + 1))
 done
 INERT="$TMP_ROOT/inert-workflow.md"

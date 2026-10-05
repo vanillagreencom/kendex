@@ -118,12 +118,17 @@
 #          with the origin base branch.
 #   ci     a post-open fix round's run, which the pull request's CI on the
 #          pushed head validates. It runs no command and passes at once, with
-#          a zero-second wall time. It runs as range does, and records the
-#          mode that ran, where HEAD holds no file under .github/workflows or
-#          that tree cannot be read, so no pull request CI is known to run,
-#          and for a class other than micro, small or standard, a docs-only
-#          diff, or a class the classifier did not measure or fell back to,
-#          since harness-ci may stand CI's checks down for it.
+#          a zero-second wall time, only where the base branch's CI is shown
+#          to run the validation: a workflow file directly under
+#          .github/workflows at the origin base branch's tip, outside its
+#          comment lines, carries a pull_request trigger, the project's
+#          DEV_VALIDATE_CMD text, and a name: line equal to one of the
+#          contexts REVIEW_GATE_STANDARD_CONTEXTS says the base requires.
+#          Anywhere else it runs as range does, and records the mode that
+#          ran: where no such workflow exists or the base cannot be read, and
+#          for a class other than micro, small or standard, a docs-only diff,
+#          or a class the classifier did not measure or fell back to, since
+#          harness-ci may stand CI's checks down for it.
 #
 # Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
@@ -433,6 +438,41 @@ resolve_range_mode() {
   fi
 }
 
+# Whether the base branch's pull request CI runs the project's validation under
+# a check the base requires, as --help's ci mode states it; the current
+# directory's project is the one read. Not a YAML parser: each test is a line
+# match, and a workflow they miss leaves the run to range, which validates
+# locally. A base that cannot be read is no proof.
+ci_runs_validation() {
+  local validate_cmd contexts base_branch ref listing path text names context
+  local -a required
+  validate_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")" \
+    || die unreadable-setting setting=DEV_VALIDATE_CMD
+  contexts="$("$SCRIPT_DIR/orch-env" REVIEW_GATE_STANDARD_CONTEXTS "")" \
+    || die unreadable-setting setting=REVIEW_GATE_STANDARD_CONTEXTS
+  [[ -n "${validate_cmd//[[:space:]]/}" && -n "${contexts//[[:space:];]/}" ]] || return 1
+  IFS=';' read -r -a required <<<"$contexts"
+  base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>/dev/null)" || return 1
+  ref="refs/remotes/origin/$base_branch"
+  listing="$(git ls-tree --name-only --full-tree "$ref" -- .github/workflows/ 2>/dev/null)" || return 1
+  while IFS= read -r path; do
+    case "$path" in *.yml|*.yaml) ;; *) continue ;; esac
+    text="$(git show "$ref:$path" 2>/dev/null | grep -Ev '^[[:space:]]*#')" || continue
+    LC_ALL=C grep -Eq '^[[:space:]]*(-[[:space:]]+)?pull_request[[:space:]]*(:.*)?$|^[[:space:]]*["'\'']?on["'\'']?[[:space:]]*:(.*[^_[:alnum:]])?pull_request([^_[:alnum:]]|$)' <<<"$text" \
+      && grep -Fq -- "$validate_cmd" <<<"$text" || continue
+    names="$(sed -nE 's/^[[:space:]]*name:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' <<<"$text" \
+      | sed -E "s/^\"(.*)\"\$/\\1/; s/^'(.*)'\$/\\1/")"
+    for context in "${required[@]}"; do
+      context="${context#"${context%%[![:space:]]*}"}"
+      context="${context%"${context##*[![:space:]]}"}"
+      if [[ -n "$context" ]] && grep -Fxq -- "$context" <<<"$names"; then
+        return 0
+      fi
+    done
+  done <<<"$listing"
+  return 1
+}
+
 # --- Resolve: the mode a range run records here, read-only -------------------
 if [[ "$mode" == resolve ]]; then
   cd "$worktree"
@@ -459,9 +499,10 @@ if [[ "$mode" == start ]]; then
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci ]]; then
     validate_mode=range
-    workflows="$(git ls-tree -r --full-tree --name-only HEAD -- .github/workflows 2>/dev/null)" || workflows=""
-    if [[ -n "$workflows" && -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]]; then
-      case "$class" in micro|small|standard) validate_mode=ci ;; esac
+    if [[ -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]]; then
+      case "$class" in
+        micro|small|standard) if ci_runs_validation; then validate_mode=ci; fi ;;
+      esac
     fi
   fi
   if [[ "$validate_mode" != full ]]; then

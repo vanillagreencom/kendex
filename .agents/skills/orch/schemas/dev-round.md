@@ -26,6 +26,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
   "adds": ["tools/refresh-fixture"],
   "cut": false,
   "cut_comparison": null,
+  "source": "pr-comments",
   "size_check": {
     "base_sha": "0123456789abcdef0123456789abcdef01234567",
     "head_sha": "0123456789abcdef0123456789abcdef01234567",
@@ -54,6 +55,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `size_check` | Yes | captured from `branch-size-check` | The current report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |
 | `cut_comparison` | Yes | `--cut` or `--cut-from-round PATH` | A cut's comparison report; null for other rounds. A retry preserves the earlier comparison while `size_check` records current counts |
+| `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent. `dev-artifact-check` accepts a receipt's `ci` validation mode only where it is `pr-comments` |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.

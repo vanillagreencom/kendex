@@ -410,48 +410,64 @@ assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 
 
 echo "=== a fix receipt carries the mode its round runs ==="
 # A fix round runs range, or full where the project sets no range command;
-# a receipt recording the other mode names a run that is not the round's.
-# `label^project's range command^recorded mode^expect`, over one receipt
-# the writer produced from the round's own range run.
+# a receipt recording the other mode names a run that is not the round's. A
+# ci run is the round's only where its record names the pr-comments source.
+# `label^project's range command^recorded mode^round record^expect`, over one
+# receipt the writer produced from the round's own range run and one record
+# the round writer produced with --source pr-comments.
 MW="$(new_repo modes issue-50 seed 1000000)"
-round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --source pr-comments --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+MODE_RECORD="$MW/tmp/dev-round-issue-50-1-1.json"
+MODE_RECORD_WRITTEN="$(cat "$MODE_RECORD")"
+assert_eq "$(jq -r '.source' <<<"$MODE_RECORD_WRITTEN")" "pr-comments" "the round writer records the source it is given"
 "$WRITE" --worktree "$MW" --kind fix --issue issue-50 --round-id 1-1 --branch b --commit "$(git -C "$MW" rev-parse HEAD)" \
   --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-mw-1-1" "$MW" issue-50 1-1 range)" --item 1 Applied done >/dev/null
 MODE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1.json"
 MODE_WRITTEN="$(cat "$MODE_RECEIPT")"
 MODE_HEAD="$(git -C "$MW" rev-parse HEAD)"
 MODE_FAKE_SHA="${MODE_HEAD:0:8}00000000000000000000000000000000"
-mode_row() { # RANGE_CMD MODE_FILTER — the project's setting and the receipt's mode
+mode_row() { # RANGE_CMD MODE_FILTER [RECORD_FILTER] — the project's setting, the receipt's mode, the round's record
   rm -f "$MW/kendex.settings.toml"
   [[ -z "$1" ]] || printf '[env]\nDEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" > "$MW/kendex.settings.toml"
   jq -c "$2" <<<"$MODE_WRITTEN" > "$MODE_RECEIPT"
+  jq "${3:-.}" <<<"$MODE_RECORD_WRITTEN" > "$MODE_RECORD"
 }
 MODE_ROWS=(
-  "a range run in a project with a range command is valid^tools/guard --range x^.^rc=0 verdict=accept reason=valid validate_mode=range"
-  "a full run in a project with a range command is refused, naming both modes^tools/guard --range x^.validate_mode=\"full\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
-  "a full run in a project with no range command is valid^^.validate_mode=\"full\"^rc=0 reason=valid validate_mode=full"
-  "a range run in a project with no range command is refused^^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
-  "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^rc=0 verdict=retry reason=valid validate_mode=null"
-  "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^rc=1 reason=mode_mismatch"
-  "a ci run, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run is valid where the round runs full^^.validate_mode=\"ci\"^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a range run in a project with a range command is valid^tools/guard --range x^.^.^rc=0 verdict=accept reason=valid validate_mode=range"
+  "a full run in a project with a range command is refused, naming both modes^tools/guard --range x^.validate_mode=\"full\"^.^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
+  "a full run in a project with no range command is valid^^.validate_mode=\"full\"^.^rc=0 reason=valid validate_mode=full"
+  "a range run in a project with no range command is refused^^.^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
+  "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^.^rc=0 verdict=retry reason=valid validate_mode=null"
+  "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^.^rc=1 reason=mode_mismatch"
+  "a ci run, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci run is valid where the round runs full^^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci run on a round whose record names another source is refused^tools/guard --range x^.validate_mode=\"ci\"^.source=\"internal-review\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
+  "a ci run on a round whose record names no source is refused^^.validate_mode=\"ci\"^.source=null^rc=1 verdict=retry reason=mode_mismatch"
 )
 for row in "${MODE_ROWS[@]}"; do
-  IFS='^' read -r label range_cmd filter expect <<<"$row"
-  mode_row "$range_cmd" "$filter"
+  IFS='^' read -r label range_cmd filter record_filter expect <<<"$row"
+  mode_row "$range_cmd" "$filter" "$record_filter"
   run_check --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
-# Control: a mode gate that judges a ci run against the round's own mode.
-mode_row "tools/guard --range x" ".validate_mode=\"ci\""
-CI_MODE_CHECK="$(mutant_scripts ci-mode dev-artifact-check)/dev-artifact-check" || exit 1
-mutate_file "$CI_MODE_CHECK" ' && "$recorded_mode" != ci ]]' ' ]]'
-set +e
-OUT="$("$CI_MODE_CHECK" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/ci-mode.err")"; RC=$?
-set -e
-ERR="$TMP_ROOT/ci-mode.err"
-assert_eq "$(observe "rc=1 reason=mode_mismatch")" "rc=1 reason=mode_mismatch" \
-  "control: without the ci exception a ci run is a mode mismatch" "$ERR"
+# Controls, one per rule of the ci exception: a gate that judges a ci run
+# against the round's own mode refuses the pr-comments round, and one that
+# reads no source accepts a round of another.
+ci_mode_control() { # NAME LABEL ANCHOR REPLACEMENT RECORD_FILTER EXPECT
+  local check
+  mode_row "tools/guard --range x" ".validate_mode=\"ci\"" "$5"
+  check="$(mutant_scripts "$1" dev-artifact-check)/dev-artifact-check" || exit 1
+  mutate_file "$check" "$3" "$4"
+  set +e
+  OUT="$("$check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/$1.err")"; RC=$?
+  set -e
+  ERR="$TMP_ROOT/$1.err"
+  assert_eq "$(observe "$6")" "$6" "control: $2" "$ERR"
+}
+ci_mode_control ci-mode "without the ci exception a pr-comments ci run is a mode mismatch" \
+  '      ci) if' '      no-ci) if' "." "rc=1 reason=mode_mismatch"
+ci_mode_control ci-source "with the source unread a ci run on another source's round is valid" \
+  "'.source == \"pr-comments\"'" "'true'" '.source="internal-review"' "rc=0 reason=valid validate_mode=ci"
 # The mode is read from the resolver's stdout alone: what the project env
 # prints on stderr does not unresolve it.
 mode_row "tools/guard --range x" "."

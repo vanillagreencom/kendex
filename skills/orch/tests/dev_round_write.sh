@@ -168,8 +168,8 @@ WRITE_BEFORE="$(date +%s)"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 WRITE_AFTER="$(date +%s)"
 FIRST="$OUT"
-E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=true .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
-assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the delegation time, the adds list and one numbered item per --item" "$ERR"
+E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=true .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .source=null .items|length=2 .items[0].n=1 .items[0].n|type=number"
+assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the delegation time, the adds list, no source and one numbered item per --item" "$ERR"
 assert_eq "$(rec '.items[1].text')" "$ITEM2" "an item's formatted block is preserved verbatim, multi-line" "$ERR"
 assert_eq "$([[ -e "$WT/.git/kendex" ]] && echo yes || echo no)" "no" "nothing is written outside the worktree"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
@@ -273,6 +273,8 @@ table \
   "--item with too few arguments|--worktree $WT --issue i --round-id 1-1 --item 1|rc=2" \
   "a duplicate item number: a set, not a list|--worktree $WT --issue i --round-id 1-1 --item 1 a $OKR --item 1 b $OKR|rc=2" \
   "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--issue=true" \
+  "a path-unsafe --source|--worktree $WT --issue i --round-id 1-1 --source pr/comments --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-id+arg1=--source+arg2=pr/comments=true" \
+  "a duplicate --source: no silent last-wins|--worktree $WT --issue i --round-id 1-1 --source a --source b --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--source=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
 run_write -h
