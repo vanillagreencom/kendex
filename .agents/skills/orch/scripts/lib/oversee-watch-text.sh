@@ -618,9 +618,9 @@ Options:
                       no server at the socket among them, as tmux-failed
                       naming that socket
   --harness H         the OVERSEER's harness, claude, codex, copilot or pi,
-                      handed to each oversee-succeed call; a Codex or Copilot
-                      CLI pane reads node and a pi pane pi, which the pane
-                      reader maps to no one harness
+                      handed to each oversee-succeed call, whose help states
+                      when a pane needs it (`oversee-succeed --help`,
+                      --harness)
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
