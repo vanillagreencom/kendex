@@ -242,10 +242,8 @@ The long pass's events, checked and reported in this order:
                              and %25 a percent sign; a code scanning
                              alert its rule; a secret its type and, where
                              GitHub checks it, its validity. A private
-                             repository is read for Dependabot alone, code
-                             and secret scanning being paid products there;
-                             a failed visibility read keeps all three kinds.
-                             Reported once;
+                             repository gets Dependabot alone unless its
+                             visibility read fails. Reported once;
                              a first-repository baseline row keeps it quiet,
                              a record or the alert closing clears the row.
                              ORCH_SECURITY_ALERTS=off lists nothing
@@ -263,9 +261,7 @@ The long pass's events, checked and reported in this order:
                              exit-<N> for any other failure; or invalid.
                              Printed on every long pass a read fails, and
                              ends the run only when the set of failed reads
-                             changes. A private repository's code and
-                             secret scanning are not read, so never named
-                             here. The rows of a failed source stand
+                             changes. The rows of a failed source stand
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -800,9 +796,8 @@ Environment:
                               overseer, or by the fleet worker for a local
                               one, for vanillagreen-overseer, with alert
                               read and write permissions. No default. Read once each long
-                              pass; only the repository visibility read,
-                              alert REST lists and the GraphQL alert-to-PR
-                              link use it through GH_TOKEN.
+                              pass; only the visibility read, alert REST lists and
+                              the GraphQL alert-to-PR link use it through GH_TOKEN.
                               Other watch reads keep their current credential.
                               An unset, unreadable, empty or whitespace-bearing
                               token produces security-alerts-unread with cause

@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # The security-alert pass of oversee-watch: every open Dependabot, code
-# scanning and secret scanning alert in each --repo, a private one's
-# Dependabot alerts alone, reported once until the overseer records its
-# verdict in the fleet state's `alerts_triaged`. Sourced
+# scanning and secret scanning alert in each --repo (Dependabot alone on a
+# private one), reported once until the
+# overseer records its verdict in the fleet state's `alerts_triaged`. Sourced
 # by oversee-watch, and like the rest of its lib/ it reads that script's
 # globals (REPOS, PW_SEEN, WORK_DIR, WORKFLOW_STATE, WORKFLOW_STATE_ARGS) and
 # calls its `die`, `ow_message` and lane-row helpers.
@@ -180,9 +180,8 @@ check_security_alerts() {
   recorded=$'\n'"$(awk -F'\t' 'NF == 3 { print $1 "#" $2 "/" $3 }' <<<"$recorded")"$'\n'
 
   for repo in "${REPOS[@]}"; do
-    # Code and secret scanning on a private repository are paid products the
-    # fleet does not buy, so there they can only answer feature-off. A failed
-    # visibility read keeps all three reads, whose own failures are reported.
+    # Code and secret scanning on a private repository are paid products that
+    # can only answer feature-off; a failed visibility read keeps all three.
     kinds="$SECURITY_KINDS"
     [[ "$(GH_TOKEN="$token" gh api "repos/$repo" --jq .private 2>/dev/null)" != true ]] || kinds=dependabot
     for kind in $kinds; do
