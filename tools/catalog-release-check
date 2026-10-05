@@ -6,9 +6,11 @@ The fresh leg installs CATALOG into a new project. With --prior, the upgrade
 leg installs PRIOR with every package it ships declared, then refreshes that
 project to CATALOG through the same declared source, as a consumer's refresh
 does after a catalog merge.
-Report protocol: catalog-release: version=JSON leg=NAME feature=JSON on
-failure, catalog-release: version=JSON result=pass legs=NAMES on success. The
-feature value is the engine's diagnostic, not a second feature classifier.
+Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
+catalog-release: remedy=KEY on failure, catalog-release: version=JSON
+result=pass legs=NAMES on success, and catalog-release: upgrade=skip
+cause=prior-uninstallable feature=JSON before a pass on the fresh leg alone.
+The feature value is the engine's diagnostic, not a second feature classifier.
 Core owns declared-hook delivery and catalog validation rules.
 """
 
@@ -21,6 +23,13 @@ import tempfile
 
 REFRESH = ["refresh", "--scope", "project", "--yes", "--leave"]
 VERIFY = ["verify", "--scope", "project"]
+# Each leg's remedy: a stable key, then what to do. A third-party catalog can
+# neither release kendex nor read its app-deploy skill, so the upgrade remedy
+# is stated in full here.
+REMEDIES = {
+    "fresh": ("release-engine", "Release an engine that supports this catalog before merging it. See the kendex app-deploy skill § Catalog compatibility."),
+    "upgrade": ("keep-package", "The refresh from the base commit's catalog failed above. Where a package that catalog shipped is gone or renamed here, every existing install that declares it fails the same way: keep the package, a stub is enough, until a released kendex retires it."),
+}
 
 
 def arguments(argv):
@@ -87,7 +96,7 @@ def main():
     binary, catalog, strict, prior = arguments(sys.argv[1:])
     binary = str(Path(binary).resolve(strict=True))
     catalog = Path(catalog).resolve(strict=True)
-    catalogs = [catalog] if prior is None else [catalog, Path(prior).resolve(strict=True)]
+    prior = None if prior is None else Path(prior).resolve(strict=True)
     # All writes, including project registration, belong to this one scratch
     # lifetime.
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP")) as scratch:
@@ -96,13 +105,14 @@ def main():
         # enclosing checkout's ignored tmp/ directory. A catalog's own
         # repository remains discoverable, including its ignore rules; git
         # resolves the upgrade leg's source link to the catalog it names.
-        ceilings = os.pathsep.join((*(str(path.parent) for path in catalogs), str(root)))
+        ceilings = os.pathsep.join((str(catalog.parent), str(root)))
         fresh = leg(binary, root / "fresh", ceilings)
         version = fresh(["--version"], check=True).stdout.strip().removeprefix("kendex ")
 
         def failed(name, diagnostic):
+            key, remedy = REMEDIES[name]
             print(f"catalog-release: version={json.dumps(version)} leg={name} feature={json.dumps(diagnostic)}")
-            print("Release an engine that settles this catalog, fresh and over the prior one, before merging it. See the app-deploy skill § Catalog compatibility.")
+            print(f"catalog-release: remedy={key}\n{remedy}")
             return 1
 
         diagnostic = settle(fresh, [
@@ -118,16 +128,21 @@ def main():
             # reaches the candidate through the one declaration, as a
             # consumer's subscription does across a catalog merge.
             source = root / "upgrade" / "catalog"
-            source.symlink_to(catalogs[1], target_is_directory=True)
+            source.symlink_to(prior, target_is_directory=True)
             diagnostics = []
             diagnostic = settle(upgrade, [install(source)], diagnostics)
-            if diagnostic is None:
+            if diagnostic is not None:
+                # The released engine cannot build the install this leg
+                # models, and failing here would also hold back the change
+                # that repairs that base.
+                print(f"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(diagnostic)}")
+            else:
                 source.unlink()
                 source.symlink_to(catalog, target_is_directory=True)
                 diagnostic = settle(upgrade, [REFRESH, VERIFY], diagnostics)
-            if diagnostic is not None:
-                return failed("upgrade", diagnostic)
-            legs.append("upgrade")
+                if diagnostic is not None:
+                    return failed("upgrade", diagnostic)
+                legs.append("upgrade")
         print(f"catalog-release: version={json.dumps(version)} result=pass legs={','.join(legs)}")
         return 0
 

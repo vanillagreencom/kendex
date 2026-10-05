@@ -29,9 +29,13 @@
 #
 # The render step installs the catalog with the latest released engine
 # twice: into a fresh project, and over the catalog as the caller's base
-# commit held it, the way a consumer's refresh meets a catalog merge. An
-# event with no base commit, a first push, or a base without the catalog
-# path runs the fresh install alone and prints why.
+# commit held it, the way a consumer's refresh meets a catalog merge. The
+# base install declares every package by name, as consumers do, so a change
+# that drops or renames a package the base shipped fails until a released
+# kendex retires that name: keep the package meanwhile, a stub is enough.
+# An event with no base commit, a first push, a base without the catalog
+# path, or a base the released engine cannot install runs the fresh install
+# alone and prints why.
 name: catalog-check
 
 on:

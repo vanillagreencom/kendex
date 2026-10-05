@@ -208,29 +208,104 @@ fn catalog_of(home: &Path, name: &str, skills: &[&str]) -> std::path::PathBuf {
     catalog
 }
 
+/// Every `key=value` the checker's report lines carry, in order, after its
+/// exit status; the version and the engine's diagnostic are left out.
+fn outcome(output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let fields = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("catalog-release: "))
+        .filter_map(|line| line.split(" feature=").next())
+        .flat_map(|line| line.split(' '))
+        .filter(|field| field.contains('=') && !field.starts_with("version="))
+        .collect::<Vec<_>>();
+    format!("exit={:?} {}", output.status.code(), fields.join(" "))
+}
+
 /// The upgrade leg installs the prior catalog with each of its packages
 /// declared, then refreshes that project to the candidate. A candidate the
-/// engine settles in that project passes; one dropping a declared package
-/// fails there, after the fresh leg passed. Two controls: swallowing the
-/// verdict, and refreshing against the prior catalog instead of the
-/// candidate, each let the dropping candidate pass.
+/// engine settles there passes. One dropping a declared package fails there,
+/// after the fresh leg passed, and names the keep-package remedy. A prior the
+/// engine will not install skips the leg and passes on the fresh leg. A
+/// wrapper around the built binary plants that refusal, because the built
+/// engine's `add --all` installs every catalog shape tried.
+///
+/// Each control edits a disposable copy of the checker and must reach the
+/// stated outcome: swallowing the verdict, or refreshing against the prior
+/// catalog in place of the candidate, lets the dropping candidate pass;
+/// failing on a refused prior turns the skip red.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
     let original = std::fs::read_to_string(&tool).unwrap();
-    for (name, candidate, exit) in [
-        ("settles", &["review", "plan", "audit"][..], 0),
-        ("drops", &["review"][..], 1),
+    let dropped_passes = "exit=Some(0) result=pass legs=fresh,upgrade";
+    for (name, candidate, refuse_prior, expected, controls) in [
+        (
+            "settles",
+            &["review", "plan", "audit"][..],
+            false,
+            "exit=Some(0) result=pass legs=fresh,upgrade",
+            &[][..],
+        ),
+        (
+            "drops",
+            &["review"][..],
+            false,
+            "exit=Some(1) leg=upgrade remedy=keep-package",
+            &[
+                (
+                    "if rendered.returncode != 0:",
+                    "if False and rendered.returncode != 0:",
+                    dropped_passes,
+                ),
+                (
+                    "source.symlink_to(catalog, target_is_directory=True)",
+                    "source.symlink_to(prior, target_is_directory=True)",
+                    dropped_passes,
+                ),
+            ][..],
+        ),
+        (
+            "prior refused",
+            &["review"][..],
+            true,
+            "exit=Some(0) upgrade=skip cause=prior-uninstallable result=pass legs=fresh",
+            &[(
+                "print(f\"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(diagnostic)}\")",
+                "return failed(\"upgrade\", diagnostic)",
+                "exit=Some(1) leg=upgrade remedy=keep-package",
+            )][..],
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let prior = catalog_of(&home, "prior", &["review", "plan"]);
         let catalog = catalog_of(&home, "candidate", candidate);
+        let binary = if refuse_prior {
+            let wrapper = home.join("refusing-kendex");
+            std::fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = add ] && [ \"$(readlink -f \"$2\")\" = '{}' ]; then\n  echo 'refused: planted' >&2\n  exit 1\nfi\nexec '{}' \"$@\"\n",
+                    prior.display(),
+                    env!("CARGO_BIN_EXE_kendex"),
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(
+                &wrapper,
+                std::os::unix::fs::PermissionsExt::from_mode(0o755),
+            )
+            .unwrap();
+            wrapper
+        } else {
+            std::path::PathBuf::from(env!("CARGO_BIN_EXE_kendex"))
+        };
         let run = |script: &Path| {
             Command::new("python3")
                 .arg(script)
-                .arg(env!("CARGO_BIN_EXE_kendex"))
+                .arg(&binary)
                 .arg(&catalog)
                 .arg("--prior")
                 .arg(&prior)
@@ -242,40 +317,15 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
                 .unwrap()
         };
         let output = run(&tool);
-        assert_eq!(output.status.code(), Some(exit), "{name}: {output:?}");
-        let record = String::from_utf8_lossy(&output.stdout);
-        let first = record.lines().next().unwrap();
-        assert!(first.starts_with("catalog-release: version="), "{record}");
-        if exit == 0 {
-            assert!(
-                first.ends_with(" result=pass legs=fresh,upgrade"),
-                "{record}"
-            );
-            continue;
-        }
-        assert!(first.contains(" leg=upgrade feature="), "{record}");
-        for (target, replacement) in [
-            (
-                "if rendered.returncode != 0:",
-                "if False and rendered.returncode != 0:",
-            ),
-            (
-                "source.symlink_to(catalog, target_is_directory=True)",
-                "source.symlink_to(catalogs[1], target_is_directory=True)",
-            ),
-        ] {
-            assert_eq!(original.matches(target).count(), 1);
+        assert_eq!(outcome(&output), expected, "{name}: {output:?}");
+        for (target, replacement, reached) in controls {
+            assert_eq!(original.matches(target).count(), 1, "{target}");
             let mutant = original.replace(target, replacement);
             assert_ne!(mutant, original);
             let path = home.join("mutant-check");
             std::fs::write(&path, mutant).unwrap();
             let control = run(&path);
-            assert_eq!(control.status.code(), Some(0), "{target}: {control:?}");
-            assert!(
-                String::from_utf8_lossy(&control.stdout)
-                    .contains(" result=pass legs=fresh,upgrade"),
-                "{target}: {control:?}"
-            );
+            assert_eq!(outcome(&control), *reached, "{name} {target}: {control:?}");
         }
     }
 }

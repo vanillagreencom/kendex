@@ -23,10 +23,22 @@ fn repo() -> PathBuf {
 
 #[allow(clippy::unwrap_used)]
 fn check(binary: &Path, script: &Path, catalog: &Path, root: &Path) -> Output {
+    check_options(binary, script, catalog, root, &[])
+}
+
+#[allow(clippy::unwrap_used)]
+fn check_options(
+    binary: &Path,
+    script: &Path,
+    catalog: &Path,
+    root: &Path,
+    options: &[&OsStr],
+) -> Output {
     Command::new("python3")
         .arg(script)
         .arg(binary)
         .arg(catalog)
+        .args(options)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RUNNER_TEMP", root)
@@ -128,18 +140,30 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
         let output = check(binary, script, &catalog, &ignored);
         if directory == root {
             assert!(output.status.success(), "ignored snapshot: {output:?}");
-            let target = "        ceilings = os.pathsep.join((*(str(path.parent) for path in catalogs), str(root)))\n";
+            // The upgrade leg reaches the same ignored catalog through its
+            // source link; only `check --catalog`, in the fresh leg, turns
+            // an inherited ignore into a verdict, so the control fails there.
+            let prior = [OsStr::new("--prior"), catalog.as_os_str()];
+            let output = check_options(binary, script, &catalog, &ignored, &prior);
+            assert!(output.status.success(), "ignored prior: {output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains(" legs=fresh,upgrade"),
+                "{output:?}"
+            );
+            let target = "        ceilings = os.pathsep.join((str(catalog.parent), str(root)))\n";
             assert_eq!(text.matches(target).count(), 1);
             let mutated = text.replace(target, "        ceilings = \"\"\n");
             assert_ne!(text, mutated);
             let mutant = root.join("unbounded-git.py");
             fs::write(&mutant, mutated).unwrap();
-            let output = check(binary, &mutant, &catalog, &ignored);
-            assert_eq!(output.status.code(), Some(1), "{output:?}");
-            assert!(
-                String::from_utf8_lossy(&output.stdout).contains("tracked-output"),
-                "{output:?}"
-            );
+            for options in [&[][..], &prior[..]] {
+                let output = check_options(binary, &mutant, &catalog, &ignored, options);
+                assert_eq!(output.status.code(), Some(1), "{output:?}");
+                assert!(
+                    String::from_utf8_lossy(&output.stdout).contains("tracked-output"),
+                    "{output:?}"
+                );
+            }
         } else {
             // The catalog's own ignore policy is real authoring input.
             assert_eq!(output.status.code(), Some(1), "{output:?}");
@@ -262,11 +286,41 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
 
 const RENDER_COMMAND: &str = "python3 kendex/tools/catalog-release-check \"$HOME/.local/bin/kendex\" \"$CATALOG_PATH\" ${{ !inputs.strict && '--allow-advisories' || '' }} ${PRIOR_PATH:+--prior \"$PRIOR_PATH\"}";
 
+/// The trimmed value of the first `key` line in a step.
+fn step_value<'a>(lines: &[&'a str], key: &str) -> &'a str {
+    lines
+        .iter()
+        .find_map(|line| line.trim().strip_prefix(key))
+        .map(str::trim)
+        .unwrap_or_else(|| panic!("no {key} line"))
+}
+
 /// What the prior-catalog steps hand the checker, each run as bash runs
-/// them: the base commit the caller's event names, or a `catalog-release:
-/// upgrade=skip cause=` line and no `--prior`.
+/// them: the base commit the caller's event names, checked out where the
+/// render step looks for it, or a `catalog-release: upgrade=skip cause=`
+/// line and no `--prior`.
 #[allow(clippy::unwrap_used)]
 fn assert_prior_selection(workflow: &str) {
+    let checkout = step(workflow, "name: Check out the prior catalog");
+    assert_eq!(
+        step_value(&checkout, "if:"),
+        "steps.prior.outputs.sha != ''"
+    );
+    assert_eq!(
+        step_value(&checkout, "ref:"),
+        "${{ steps.prior.outputs.sha }}"
+    );
+    let checked_out = step_value(&checkout, "path:");
+    let render_step = step(
+        workflow,
+        "name: Render the catalog with the released engine",
+    );
+    assert_eq!(
+        step_value(&render_step, "PRIOR_PATH:"),
+        format!(
+            "${{{{ steps.prior.outputs.sha && format('{checked_out}/{{0}}', inputs.path || '.') || '' }}}}"
+        )
+    );
     let find = step(workflow, "name: Find the prior catalog");
     assert!(find.iter().any(|line| line.trim()
         == "PRIOR_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}"));
@@ -301,25 +355,30 @@ fn assert_prior_selection(workflow: &str) {
         assert_eq!(skipped.as_deref(), said, "{prior}: {run:?}");
     }
 
-    // A stand-in python3 prints the checker's arguments, one per line.
-    let render = run_script(&step(
-        workflow,
-        "name: Render the catalog with the released engine",
-    ))
-    .replace("${{ !inputs.strict && '--allow-advisories' || '' }}", "");
+    assert_render_hands_on(&render_step, checked_out);
+}
+
+/// The render step's arguments to the checker for each `PRIOR_PATH`: a
+/// stand-in python3 prints them, one per line.
+#[allow(clippy::unwrap_used)]
+fn assert_render_hands_on(render_step: &[&str], checked_out: &str) {
+    let render =
+        run_script(render_step).replace("${{ !inputs.strict && '--allow-advisories' || '' }}", "");
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let root = root.as_path();
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    fs::create_dir_all(root.join("prior/present")).unwrap();
+    let present = format!("{checked_out}/present");
+    let absent = format!("{checked_out}/absent");
+    fs::create_dir_all(root.join(&present)).unwrap();
     let python = bin.join("python3");
     fs::write(&python, "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\n").unwrap();
     fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
     for (prior, handed, said) in [
         ("", None, None),
-        ("prior/present", Some("prior/present"), None),
-        ("prior/absent", None, Some("path-absent")),
+        (present.as_str(), Some(present.as_str()), None),
+        (absent.as_str(), None, Some("path-absent")),
     ] {
         let run = Command::new("bash")
             .args(["-e", "-c", &render])
@@ -356,8 +415,9 @@ fn assert_prior_selection(workflow: &str) {
 
 /// The caller's base commit reaches the checker as `--prior`, and each case
 /// with no prior catalog skips by name. Controls: an all-zero `before` taken
-/// as a commit, and a base without the catalog path handed on, each fail the
-/// assertion.
+/// as a commit, a base without the catalog path handed on, a checkout
+/// elsewhere than the render step looks, and a checkout of the candidate's
+/// own commit each fail the assertion.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_hands_the_callers_base_catalog_to_the_upgrade_leg() {
@@ -368,6 +428,11 @@ fn catalog_ci_hands_the_callers_base_catalog_to_the_upgrade_leg() {
         (
             "if [ -n \"$PRIOR_PATH\" ] && [ ! -d \"$PRIOR_PATH\" ]; then",
             "if false; then",
+        ),
+        ("          path: prior\n", "          path: base\n"),
+        (
+            "          ref: ${{ steps.prior.outputs.sha }}",
+            "          ref: ${{ github.sha }}",
         ),
     ] {
         assert_eq!(text.matches(target).count(), 1, "{target}");
