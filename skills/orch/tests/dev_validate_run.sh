@@ -1063,6 +1063,32 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) 
   "render render measured=true cause=renders-match-their-sources" \
   "an uncommitted render diff the proof passes runs as render" "$ERR"
 
+# --- A range request is classified from its own base --------------------------
+# A branch whose first commit changes code and whose fix round, from that
+# commit, changes one document. The project sets no range command, so the
+# range request runs the whole battery, which still reads the round's own
+# docs verdict and paths through the real classifier, while the run records
+# full. The control classifies from the base branch and reads the code commit.
+proj_round="$(make_proj proj-round 'echo ${DEV_VALIDATE_DOCS_ONLY-unset} $(cat ${DEV_VALIDATE_PATHS-/dev/null})' 20)"
+printf 'tmp/\n' > "$proj_round/.gitignore"
+git -C "$proj_round" add -A
+git -C "$proj_round" -c user.name=t -c user.email=t@example.com commit -q -m base
+git -C "$proj_round" update-ref refs/remotes/origin/main HEAD
+orphan_commit "$proj_round" app.sh
+round_base="$(git -C "$proj_round" rev-parse HEAD)"
+mkdir -p "$proj_round/docs"
+orphan_commit "$proj_round" docs/note.md
+run_script "$RUN" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 true docs/note.md full" \
+  "a docs-only round on a branch with an earlier code commit classifies docs-only against the round base" "$ERR"
+mutant mutant-round-base 'class_base="$base_sha"' 'class_base=""'
+# The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
+RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"
+run_script "$MUTANT" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
+RUN_PATH=""
+assert_eq "$RC $(output_of "$OUT")" "0 false app.sh docs/note.md" \
+  "control: classified from the base branch, the round reads the branch's code commit" "$ERR"
+
 
 # label|arguments after the worktree or run directory|refusal's first line
 proj_refuse="$(make_mode_proj proj-mode-refuse "$RANGE_CMD")"

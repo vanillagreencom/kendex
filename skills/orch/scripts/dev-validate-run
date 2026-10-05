@@ -13,7 +13,8 @@
 #
 # The runner hands the command what the shipped change classifier says about
 # the diff from the base branch to the worktree as it stands, committed or not,
-# read through lib/change-class.sh, which owns that call:
+# or for a range request from its --base commit, read through
+# lib/change-class.sh, which owns that call:
 #   DEV_VALIDATE_CLASS      the class: render, trivial, micro, small or standard
 #   DEV_VALIDATE_DOCS_ONLY  the docs verdict for the same range: true or false
 #   DEV_VALIDATE_PATHS      a file of the changed paths that verdict read, one
@@ -116,7 +117,10 @@
 #          run records full, the mode that ran. A REF a rebase left off the
 #          branch is recorded as the validate-base-orphaned= line of start in
 #          either mode, and a range run then runs from the merge base of HEAD
-#          with the origin base branch.
+#          with the origin base branch. In either mode a range request hands
+#          the command the class, docs verdict and paths of the changes since
+#          its base, a fix round's own, or for an orphaned base those of the
+#          whole branch.
 #   ci     a post-open fix round's run, which the pull request's CI on the
 #          pushed head validates. It runs no command and passes at once, with
 #          a zero-second wall time, only where the project names the status
@@ -291,7 +295,8 @@ write_verdict() { # STARTED-AT ENDED-AT SECONDS SENTINEL-LINE
   mv "$run_dir/exit.part" "$run_dir/exit"
 }
 
-# The worktree's diff against the base branch, read once by lib/change-class.sh
+# The worktree's diff against the base branch, or against the round's base
+# commit where the caller names one, read once by lib/change-class.sh
 # for everything the command is handed: class, docs_only (the docs verdict for
 # the same range) and the changed paths in class_scratch/paths. Where any of
 # them cannot be read, class is standard, docs_only false, the paths file is
@@ -314,14 +319,17 @@ class=standard
 docs_only=false
 class_fallback=""
 class_scratch=""
-classify() {
-  local base index objects
+classify() { # [ROUND_BASE] — a commit; the origin base branch where empty
+  local base="${1:-}" index objects
   class_scratch="$(mktemp -d)" || die scratch-unavailable
   trap 'rm -rf -- "$class_scratch"' EXIT
   : > "$class_scratch/class.log"
   : > "$class_scratch/paths"
-  base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
-    || { class_fallback=base-unresolved; return 0; }
+  if [[ -z "$base" ]]; then
+    base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
+      || { class_fallback=base-unresolved; return 0; }
+    base="origin/$base"
+  fi
   index="$(git -C "$worktree" rev-parse --path-format=absolute --git-path index 2>/dev/null)" \
     && objects="$(git -C "$worktree" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" \
     && mkdir -- "$class_scratch/objects" \
@@ -342,8 +350,8 @@ classify_snapshot() { # BASE — the snapshot and its two reads, in the scratch 
     class_fallback=worktree-unrecorded
     return 0
   fi
-  if ! change_class_read "origin/$1" "$head" "$worktree" "$log" \
-    || ! change_class_docs "origin/$1" "$head" "$worktree" "$class_scratch/paths" "$log"; then
+  if ! change_class_read "$1" "$head" "$worktree" "$log" \
+    || ! change_class_docs "$1" "$head" "$worktree" "$class_scratch/paths" "$log"; then
     class_fallback="$CHANGE_CLASS_CAUSE"
     : > "$class_scratch/paths"
     return 0
@@ -517,9 +525,24 @@ if [[ "$mode" == start ]]; then
   base_sha=""
   orphaned_sha=""
   cmd=""
+  if [[ "$validate_mode" != full ]]; then
+    base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
+    # A base a rebase left off the branch is recorded whichever mode runs: a
+    # fix round's receipt names the run through it once the round's base is no
+    # longer in HEAD.
+    ancestor_rc=0
+    git merge-base --is-ancestor "$base_sha" HEAD || ancestor_rc=$?
+    (( ancestor_rc <= 1 )) || die ancestry-unreadable "base=$base_sha"
+    (( ancestor_rc == 0 )) || orphaned_sha="$base_sha"
+  fi
   # Read before the run directory exists, since that directory sits inside the
-  # worktree the class judges.
-  classify
+  # worktree the class judges. A range request is judged from its base, so a
+  # fix round's command reads the round's changes even where the project's
+  # range command is unset and the run is full; a ci request is judged over
+  # the whole branch, as the pull request CI judges it.
+  class_base=""
+  [[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base="$base_sha"
+  classify "$class_base"
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci ]]; then
@@ -532,14 +555,6 @@ if [[ "$mode" == start ]]; then
     fi
   fi
   if [[ "$validate_mode" != full ]]; then
-    base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
-    # A base a rebase left off the branch is recorded whichever mode runs: a
-    # fix round's receipt names the run through it once the round's base is no
-    # longer in HEAD.
-    ancestor_rc=0
-    git merge-base --is-ancestor "$base_sha" HEAD || ancestor_rc=$?
-    (( ancestor_rc <= 1 )) || die ancestry-unreadable "base=$base_sha"
-    (( ancestor_rc == 0 )) || orphaned_sha="$base_sha"
     [[ "$validate_mode" == ci ]] || resolve_range_mode
     if [[ "$validate_mode" == full ]]; then
       base_sha=""
