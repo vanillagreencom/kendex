@@ -7,8 +7,10 @@
 # read from gpt-6.1-sol. The TLK-33 projection kept only its event's status
 # fields; its aggregated_output is the printed text, which arrived uncut, as
 # every measured CommandExecution event carries the command's output there.
-# Script completed appears even when cat exits 1, so
-# only the adjacent CommandExecution event proves shell success. The
+# Script completed appears even when cat exits 1, so in a rollout that
+# writes events only the adjacent CommandExecution event proves shell
+# success; a Legacy rollout's proof is the exit code text(await ...) prints
+# in the statement's own result object. The
 # output-field capture is a sandbox run whose hooks added context around the
 # read and whose agent printed text((await ...).output). The batched capture
 # is one wrapper of three printed statements, a skill read, a failed read and
@@ -400,7 +402,7 @@ exec_failed_row() {
 exec_batched_row() { exec_rows batched; }
 exec_batched_failed_row() { exec_rows batched-failed; }
 exec_aligned_row() { exec_rows wrong-command; exec_rows batched-misaligned; }
-exec_script_end_row() { exec_rows compound-js; }
+exec_script_end_row() { exec_rows compound-js; exec_rows legacy-compound-js; }
 # A duplicated event leaves no printed text after the events, so the
 # whole-output rule refuses it too; another call's output there, printing the
 # same text, reaches the position rule alone.
@@ -428,6 +430,7 @@ legacy_row() { exec_rows legacy; exec_rows legacy-batched; exec_rows legacy-esca
 legacy_failed_row() { exec_rows legacy-failed; }
 legacy_cut_row() { exec_rows legacy-cut; }
 legacy_parse_row() { exec_rows missing-event; truncated_reads_rows legacy-whole; }
+legacy_guard_row() { exec_rows captured-failed; }
 exec_rows
 truncated_reads_rows
 
@@ -451,7 +454,7 @@ skill_load_control exec-alignment "$HOOK" '            else null end] == $cmds)'
   'functions.exec batched events out of step'
 skill_load_control exec-script-end "$HOOK" '      | [match($statement; "g")] as $statements' \
   '      | ($statements[-1] | .offset + .length) as $end' HOOK exec_script_end_row \
-  'functions.exec compound JavaScript'
+  'functions.exec compound JavaScript' 'functions.exec compound JavaScript in a Legacy rollout'
 skill_load_control exec-script-start "$HOOK" '      | select($statements[0].offset == 0)' \
   '        // true' HOOK exec_script_start_row 'functions.exec batched JavaScript before the first statement'
 skill_load_control exec-contiguous "$HOOK" '          $statements[.].offset == $statements[. - 1].offset + $statements[. - 1].length))' \
@@ -527,6 +530,14 @@ skill_load_control legacy-field-cut "$HOOK" '          and (.output | type == "s
 skill_load_control legacy-parse "$HOOK" '      or ($legacy and any($texts[$at + 1]' \
   '          | sub("^(?s).*"; "{\"exit_code\":0,\"output\":\"\"}")' HOOK legacy_parse_row \
   'functions.exec without shell completion' 'functions.exec truncated output with no events'
+# Lets another statement's printed success stand in for a failed read.
+skill_load_control legacy-alignment "$HOOK" '    | select($kind == "function_call"' \
+  '      or ($legacy and any($texts[1:][] | fromjson? | objects; .exit_code == 0))' HOOK legacy_failed_row \
+  'functions.exec batched failed read in a Legacy rollout'
+# Counts a wrapper with events by its printed exit code alone.
+skill_load_control legacy-guard "$HOOK" '    | select($kind == "function_call"' \
+  '      or any($texts[$at + 1] | fromjson? | objects; .exit_code == 0)' HOOK legacy_guard_row \
+  'functions.exec captured failed read'
 
 # Codex exec --ephemeral's PreToolUse producer always emits transcript_path,
 # null when Session::hook_transcript_path has no live_thread. Missing is not
