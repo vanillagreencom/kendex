@@ -97,8 +97,8 @@ for mode in original control; do
         WANT="2=slack: secret-value=text=$BEFORE"
         ;;
       notice)
-        sk_lm "$GH" notice --item overseer --to owner --file "$(sk_text "commit-secret-$mode" "xoxb-$COMMIT")" > "$SK_TMP/notice.out"
-        ID="$(sed 's/^id=//' "$SK_TMP/notice.out")"
+        sk_lm "$GH" notice --item overseer --to owner --file "$(sk_text "commit-secret-$mode" "$mode xoxb-$COMMIT")" > "$SK_TMP/notice.out"
+        ID="$(field "$(cat "$SK_TMP/notice.out")" id)"
         sk_poll "$GH"
         STATE="$(jq -r --arg id "$ID" 'select(.t == "out" and .id == $id and .state != "inflight") | [.state, (.reason // "")] | join(" ")' "$(sk_journal "$GH")")"
         GOT="$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")=$STATE=$(sk_state ".messages.$GH_CH | length")"
