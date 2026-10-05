@@ -281,7 +281,7 @@ MUTANT_PATH=""
 # A lane whose mailbox holds nothing, so each row below judges the marks alone.
 # The mailbox directory is what `write_lane_marker` makes at launch beside the
 # marker, so a lane nobody has messaged still carries the name the hook
-# resolves the marks by; open-terminal-lane.sh asserts the launcher makes it.
+# resolves the marks by; open-terminal-lane-pick.sh asserts the launcher makes it.
 # The lane reports a step before each turn end, so the idle judge after the
 # marks passes it; the idle rows clear REPORT_ITEM.
 new_handoff_lane() { # NAME ITEM

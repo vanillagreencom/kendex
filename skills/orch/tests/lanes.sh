@@ -5,7 +5,7 @@
 # the rows that exercise the real curl calls, through a `curl` shim first on
 # PATH, so every row here runs offline against fixed responses; a chooser tested
 # against live accounts would assert whatever today's usage happens to be. open-terminal's --lane wiring is
-# open-terminal-lane.sh.
+# open-terminal-lane-pick.sh, open-terminal-lane-hosted.sh and open-terminal-lane.sh.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. Every run gets its own empty claim store unless the

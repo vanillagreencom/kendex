@@ -1,16 +1,17 @@
 # shellcheck shell=bash
 #
 # The stub commands an open-terminal suite puts ahead of PATH: worktree, gh,
-# tmux and ghostty. Each logs what the launcher asked of it and answers as the
+# tmux, sleep and ghostty. Each logs what the launcher asked of it and answers as the
 # real command would, so a row reads the windows a launch opened, the lines it
-# typed and the worktrees it created without opening a real window. The two
-# suites that drive open-terminal through lanes and hosts, open-terminal-lane.sh
-# and open-terminal-brief-file.sh, share them.
+# typed and the worktrees it created without opening a real window. The
+# suites that drive open-terminal through lanes and hosts share them: the
+# open-terminal-lane suites, open-terminal-brief-file.sh and the others that
+# call ot_stub_bin.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run.
 
-# ot_stub_bin DIR — writes the four stubs into DIR, which it creates.
+# ot_stub_bin DIR — writes the five stubs into DIR, which it creates.
 ot_stub_bin() {
 mkdir -p "$1"
 # `worktree create` hands back a fresh directory beside its log, under the
@@ -188,6 +189,17 @@ case "${1:-}" in
 esac
 exit 0
 STUBEOF
+# sleep: the launcher's tmux waits poll the pane above once per `sleep 1`,
+# and the pane is replayed from the log, never timed, so with
+# $OT_SLEEP_INSTANT set a whole-second sleep returns at once and every wait
+# makes the same looks in no wall time. Unset, and for any other argument,
+# it is the real sleep, which a row racing a real process keeps.
+real_sleep="$(command -v sleep)" || { echo "ot_stub_bin: no sleep on PATH" >&2; return 1; }
+cat > "$1/sleep" <<STUBEOF
+#!/usr/bin/env bash
+if [[ -n "\${OT_SLEEP_INSTANT:-}" && "\${1:-}" =~ ^[0-9]+\$ && "\$#" -eq 1 ]]; then exit 0; fi
+exec "$real_sleep" "\$@"
+STUBEOF
 # ghostty is where open_gui ends: $OT_CAPTURE, when a row sets it, receives the
 # command it hands `bash -lc`, its last argument.
 cat > "$1/ghostty" <<'STUBEOF'
@@ -195,7 +207,7 @@ cat > "$1/ghostty" <<'STUBEOF'
 [[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" > "$OT_CAPTURE"
 exit 0
 STUBEOF
-chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty"
+chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty" "$1/sleep"
 }
 
 # Read the remote command from a pane log and remove the two shell-quote

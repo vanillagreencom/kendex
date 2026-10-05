@@ -61,7 +61,7 @@ CHECKOUT=""
 ROWS=""
 HOOK_HOME=.claude/hooks
 new_checkout() { # NAME [HOOK_HOME]
-  local wrapper
+  local hook
   HOOK_HOME="${2:-.claude/hooks}"
   CHECKOUT="$TMP_ROOT/$1"
   mkdir -p "$CHECKOUT"
@@ -73,8 +73,10 @@ new_checkout() { # NAME [HOOK_HOME]
   ln -s "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
   ln -s ../../.agents/skills/orch "$CHECKOUT/.claude/skills/orch"
   cp "$HOOK" "$CHECKOUT/$HOOK_HOME/lane-mail-check.sh"
-  for wrapper in session-start-row session-end-row stop-failure-row; do
-    cp "$HOOKS/$wrapper.sh" "$CHECKOUT/$HOOK_HOME/$wrapper.sh"
+  # Each hook by its own path, which is how tools/guard --range finds this
+  # suite for a change to one of them.
+  for hook in "$HOOKS/session-start-row.sh" "$HOOKS/session-end-row.sh" "$HOOKS/stop-failure-row.sh"; do
+    cp "$hook" "$CHECKOUT/$HOOK_HOME/${hook##*/}"
   done
   ROWS="$CHECKOUT/tmp/lane-mail/overseer/session-7000-9.jsonl"
 }

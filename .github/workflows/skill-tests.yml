@@ -73,8 +73,8 @@ name: Skill Tests
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
 # steps says so. Two legs are that case. `orch-terminal` is the first: its
-# largest suite, open-terminal-lane, is on run-all.sh's ALONE list and runs
-# after the others, so the leg's wall time is that suite's seconds plus the
+# suite open-terminal-lane, which races a real process tree, is on
+# run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
 # pooled rest, and the orch shard comment gives the figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
 # `rest`; `rest` lands
@@ -731,8 +731,8 @@ jobs:
       # step's wall time is now below its sum and its log carries these
       # figures fresh. Splitting
       # orch-terminal in turn would have to name individual suites rather
-      # than a name prefix, since open-terminal-lane alone is 229s of its
-      # 597s, so that is where a name partition stops.
+      # than a name prefix, since open-terminal-lane alone was 229s of its
+      # 597s on that run, so that is where a name partition stops.
       #
       # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
       # and was cancelled at 15m16s on PR #2902, inside
