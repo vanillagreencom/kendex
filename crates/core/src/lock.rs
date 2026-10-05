@@ -52,6 +52,14 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// and run `kendex apply`. The old managed ignore rule enables that recovery,
 /// and the moved record proves ownership only where its `renderedHash`
 /// matches the destination. Every other destination remains a conflict.
+///
+/// Version 11 gained [`Lock::shims`] without a bump. A build that predates
+/// it drops the field when it writes the record again, which leaves a
+/// later retirement no record of the shim. That loss is recovered rather
+/// than refused: where the project has its own `.git`, the inventory
+/// listing the shim's file seeds the record again at retirement
+/// (`engine::instruction_shims::retire`); elsewhere an apply with the
+/// shim's harness still listed writes it again.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -92,9 +100,6 @@ pub struct Lock {
     /// found already in sync while the harness was installed. A key has no
     /// bytes of its own to prove whose it is; how a retirement reads this
     /// record is `engine::instruction_shims::retire`'s.
-    ///
-    /// Additive, so [`LOCK_VERSION`] stays: a build that predates the field
-    /// drops it when it writes the record again.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub shims: BTreeSet<KeyedShim>,
 }
