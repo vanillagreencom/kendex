@@ -6,7 +6,7 @@
 //! The answer describes the package, never the machine: it reads the
 //! capability table and the package's own header, and nothing a scope or
 //! a carrier registration decides. A hook's reach on each tool is
-//! [`crate::hook::hook_reach`], the judgement [`crate::hook::delivery`]
+//! [`crate::hook::hook_reach`], the judgement [`crate::hook::delivery()`]
 //! makes for one installation, fed the capability table's enforcement in
 //! place of the machine's. A hook whose required companion is withheld on
 //! a tool it reaches is not judged here: `crates/core/tests/hooks_readme.rs`
