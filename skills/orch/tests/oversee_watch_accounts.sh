@@ -144,7 +144,8 @@ assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
 # where the pass is a heartbeat. A held reading under the status the last
 # unmeasured reading had is no news and leaves the row on the measured reading
 # before it; a new unmeasured status is news, and so is the measured reading
-# after it.
+# after it. An expired reading after a measured one is news every time, but a
+# repeated expired pass is not.
 HELD_FLAP=(
   "ok room 80 2099-01-01T00:00:00Z|-"
   "held unmeasured - -|change=status,headroom was=ok/room"
@@ -156,6 +157,11 @@ HELD_FLAP=(
   "held unmeasured - -|-"
   "expired unmeasured - -|change=status,headroom was=ok/walled"
   "held unmeasured - -|change=status was=expired/unmeasured"
+  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=held/unmeasured"
+  "expired unmeasured - -|change=status,headroom was=ok/room"
+  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=expired/unmeasured"
+  "expired unmeasured - -|change=status,headroom was=ok/room"
+  "expired unmeasured - -|-"
 )
 
 # held_flap_run CASE — runs the HELD_FLAP passes under WATCH_BIN and sets
@@ -184,17 +190,26 @@ for ((i = 0; i < ${#HELD_FLAP[@]}; i++)); do FLAP_WANT+="$((i + 1)): ${HELD_FLAP
 held_flap_run held_flap
 assert_eq "$FLAP_GOT" "$FLAP_WANT" \
   "a held credential's alternation is news once, a measured change and a new unmeasured status are news, and the quiet passes are heartbeats" "$ERR"
-assert_eq "$(awk -F'\t' '$1 == "account" { print $3 }' "$STATE_DIR/owner_repo__none")" "held|unmeasured|-|held" \
+assert_eq "$(awk -F'\t' '$1 == "account" { print $3 }' "$STATE_DIR/owner_repo__none")" "expired|unmeasured|-|expired" \
   "the row holds the last reading compared and the status of the last unmeasured one"
 
 # Control: a disposable copy that never skips a repeated unmeasured status
 # reports the alternation on every pass again.
 FLAP_MUTANT="$(mutant_scripts flap-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/flap-mutant/github"
-mutate_file "$FLAP_MUTANT" '[[ "$status" != "$unmeasured" ]] || continue' ':'
+mutate_file "$FLAP_MUTANT" '[[ "$status" == expired || "$status" != "$unmeasured" ]] || continue' ':'
 WATCH_BIN="$FLAP_MUTANT" held_flap_run held_flap_control
 assert_contains "$FLAP_GOT" $'\n4: change=status,headroom was=ok/room\n' \
   "control: comparing every held reading reports the repeated held pass again" "$ERR"
+
+# Control: a disposable copy without the expired exemption stays silent on a
+# login that dies again after a measured pass.
+EXPIRY_MUTANT="$(mutant_scripts expiry-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/expiry-mutant/github"
+mutate_file "$EXPIRY_MUTANT" '"$status" == expired ||' '"$status" == never-expired ||'
+WATCH_BIN="$EXPIRY_MUTANT" held_flap_run expiry_control
+assert_contains "$FLAP_GOT" $'\n14: -\n' \
+  "control: without the exemption the second expiry is no news" "$ERR"
 
 # A baseline reset no date can read settles no reset, is noted once, and the
 # status and headroom changes beside it are still reported.

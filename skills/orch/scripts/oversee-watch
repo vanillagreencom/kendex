@@ -3486,10 +3486,8 @@ account_roster_read() {
 # last one measured. A hosted provider holding a credential while a lane runs
 # on it reads unmeasured on alternate passes; were each alternation news,
 # --max-loops quiet passes, and so the heartbeat, would never come.
-# The first unmeasured reading under a new status word is still news, which is
-# how a login that died reaches the overseer as `status=expired`; that it died
-# again after a measured pass reaches the heartbeat's roster alone, since
-# nothing here tells it from a held credential's next alternation.
+# `status=expired` is exempt: only the operator renews a dead login, so each
+# expiry after a measured reading is news.
 check_accounts() {
   local key value fields prior state="${PW_SEEN[0]}" change row
   local was_status was_verdict was_resets was_unmeasured status verdict resets reset_epoch unmeasured
@@ -3503,7 +3501,7 @@ check_accounts() {
     IFS='|' read -r status verdict resets <<<"$value"
     unmeasured="${was_unmeasured:--}"
     if [[ "$verdict" == unmeasured ]]; then
-      [[ "$status" != "$unmeasured" ]] || continue
+      [[ "$status" == expired || "$status" != "$unmeasured" ]] || continue
       unmeasured="$status"
     fi
     row="$value|$unmeasured"

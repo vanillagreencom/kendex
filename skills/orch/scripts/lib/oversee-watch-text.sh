@@ -406,8 +406,9 @@ The long pass's events, checked and reported in this order:
                              measured reading is compared with the last one
                              measured, so a hosted credential the provider
                              holds while a lane runs on it, unmeasured on
-                             alternate passes, is news once. `was=` is the
-                             reading compared with
+                             alternate passes, is news once. status=expired
+                             is exempt: each expiry after a measured reading
+                             is news. `was=` is the reading compared with
   EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the
