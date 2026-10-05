@@ -184,8 +184,11 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
-                 resolve through --base-checkout each time: off skips; approval requests Copilot.
-                 Print the mode on success; failure is nonzero and authorizes no wait or retry.
+                 resolve through --base-checkout each time. An off gate prints off
+                 and sends no request. An approval gate requests Copilot and prints
+                 approval, or prints a fallback line when no request went out
+                 (below). A resolution or PR_COPILOT_REQUESTS failure is nonzero
+                 and authorizes no wait or retry.
                  Print a fallback line, exit 0, when an approval gate sends no
                  request, its first word fallback and then its cause:
                    fallback cause=off              PR_COPILOT_REQUESTS is off
