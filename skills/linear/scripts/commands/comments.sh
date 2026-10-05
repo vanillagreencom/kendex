@@ -25,12 +25,14 @@ List:
 Bulk List:
   comments.sh bulk-list <ID1> <ID2> ... [--stdin] [--format=safe|raw]
                         One object keyed by identifier, each value that
-                        issue's comment list ([] when it has none), read in
-                        one request per 50 issues. An identifier Linear has
-                        no issue for refuses the whole read with a `missing`
-                        list; a lookup that fails any other way (a quota, a
-                        5xx) fails it with no `missing`. --stdin reads one
-                        identifier per line.
+                        issue's comment list ([] when it has none). Issues
+                        are read 50 to a request; an issue whose comments
+                        run past one page, or an identifier that request
+                        leaves unanswered, takes further requests. An
+                        identifier Linear has no issue for refuses the whole
+                        read with a `missing` list; a lookup that fails any
+                        other way (a quota, a 5xx) fails it with no
+                        `missing`. --stdin reads one identifier per line.
 
 Create Options:
   --body <text>         Comment body (required unless --body-file or --attach is set)
@@ -124,8 +126,8 @@ list_comments() {
     esac
 }
 
-# The comments of several issues, keyed by identifier, read in one request per
-# 50 issues; archived issues are included, since their comments still answer a
+# The comments of several issues, keyed by identifier, read 50 issues to a
+# request; archived issues are included, since their comments still answer a
 # history read.
 bulk_list_comments() {
     local identifiers=() line

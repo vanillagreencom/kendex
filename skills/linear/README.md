@@ -18,7 +18,7 @@ kendex add vanillagreencom/kendex --skill linear
 
 ## How it works
 
-You configure credentials and the target team. Each command sends its reads and writes to Linear's GraphQL API and keeps nothing on disk. A read follows every page of each collection it asks for. A rate-limited request reports the time the request quota refills.
+You configure credentials and the target team. Each command sends its reads and writes to Linear's GraphQL API and keeps no tracker data on disk. Client-pair authentication keeps its OAuth token in a per-user cache file, described under § Settings. A read follows every page of each collection it asks for. A rate-limited request reports the time the request quota refills.
 
 ## Setup
 
