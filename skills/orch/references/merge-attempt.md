@@ -12,7 +12,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts
 
 The lane owns this approved-head wait. Read its completion file. `status=complete verdict=pass` takes the direct attempt without overseer direction, on the first green poll after pending CI (`ci-wait --help`).
 
-Start `[CI_PENDING_COUNT]=0` for `[PREPARED_HEAD]`. On `status=timeout verdict=pending`, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase the count and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending timeout. Exit `5` follows the mail route without consuming this count.
+Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; a re-entry on that same head keeps both counts. On `status=timeout verdict=pending`, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[CI_PENDING_COUNT]` and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending timeout. Exit `5` follows the mail route without consuming this count.
 
 Other results take the attempt: the wait counts every red check, the attempt only required checks. `--expected-head` refuses a moved head.
 
@@ -38,4 +38,12 @@ Exit `0` merged the prepared head: continue to step 2.
 
 Exit `75` means GitHub queued or armed the PR: take merge-pr.md § 5 step 1's queue-wait block below the `--auto` arm.
 
-Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and return to § 3.2 with its cause and detail.
+Exit `1` BLOCKED → classify the refusal:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]
+```
+
+A `retry: same-head` line names a refusal no change to the head fixes: GitHub still computing mergeability, or a gate that has cleared since the attempt. Re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[MERGE_RETRY_COUNT]` and re-enter § Direct attempt, its CI wait included, while below `[MERGE_RETRY_LIMIT]=3`. At the limit, record `merge-refusal-retry-limit`, gate `merge`, with the head, each attempt's exit and stderr and each classifier output. Unarm by § 1 before handing back. Such a refusal never returns to § 3.2.
+
+Without that line, the cause needs a change or a reader, such as a merge conflict, a failed required check or a review reply: return to § 3.2 with its cause and detail.

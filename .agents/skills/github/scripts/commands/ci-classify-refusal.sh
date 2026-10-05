@@ -17,6 +17,11 @@
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
+#   retry: same-head       (none and computing only) the refusal clears
+#                          with no change to the head: retry the merge on
+#                          that same head, bounded, rather than routing it
+#                          as a blocker. Every other cause needs a change
+#                          or a reader, and prints no retry: line
 #   ci_optional_failed: ...  red checks the base branch does not require,
 #                          which block nothing. Printed under every
 #                          non-terminal cause, `none` included: a PR blocked
@@ -142,6 +147,13 @@ jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
 # cause branching so a red optional check is named even when nothing blocks.
 # The terminal causes returned above it: their check data is meaningless.
 jq -r "$SANITIZE_JQ"' .warnings[]? | clean | select(startswith("ci_optional_failed:"))' <<<"$check_json"
+
+# The direct merge refuses while GitHub still computes mergeability, and by
+# the time this runs that computation has often finished (`none`): neither
+# is fixed by a push, a rebase or a review reply.
+case "$cause" in
+none | computing) echo "retry: same-head" ;;
+esac
 
 if [ "$cause" = "none" ]; then
     echo "note: checks pass now — the refusal did not come from these gates (or has cleared); re-run the refusing command"
