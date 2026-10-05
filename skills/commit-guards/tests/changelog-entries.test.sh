@@ -414,7 +414,8 @@ echo "=== a configured version bump matches its release's entries ==="
 # The expected field is an exit status or the refusal key; a minor or patch
 # refusal's preview line is the first offending entry, and every fixture spells
 # its Added entry as ADD and its Breaking one as BREAK. The fragment section is
-# the last field, changed when empty.
+# the last field, changed when empty. A package.json beside the record is the
+# app's version file (app-package rows); one elsewhere is a package (package-).
 BREAK='- **Breaking:** Rename the mode setting; replace mode with profile.'
 ADD='- Add a profile setting.'
 for row in \
@@ -451,7 +452,10 @@ for row in \
   "package-unnamed|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix a typo.\n||major-breaking" \
   "package-named|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
   "package-released|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### 2.0.0\n\n$BREAK\n\n### 1.9.0\n||0" \
-  "package-root|package.json|1.9.0|2.0.0||CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
+  "app-package-patch-added|package.json|1.0.0|1.0.1|$ADD||||patch-added|added" \
+  "app-package-record-added|package.json|1.0.0|1.0.1||CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n||patch-added" \
+  "app-package-major|package.json|0.10.0|1.0.0|$BREAK||||0" \
+  "app-package-package-heading|package.json|1.9.0|2.0.0||CHANGELOG.md|### Unreleased\n\n$BREAK\n||major-breaking" \
   "package-historic|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n### 1.9.0\n\n$BREAK\n||major-breaking" \
   "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||major-breaking" \
   "committed-base|app.json|1.9.0|2.0.0||||--base base|major-breaking" \
@@ -563,6 +567,13 @@ assert_eq 'version discovery defaults off' "rc=0 $NOMATCH" "$(run '' '')"
 # The staged major stays unnamed even if the working tree holds a call-out.
 put changelog.d/changed/unstaged.md "$BREAK\n"
 assert_eq 'unstaged call-out cannot justify a staged major' "rc=1 ${ERR}major-breaking=app.json:1.0.0:2.0.0;$(summary 1 0)" "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '')"
+
+# With the record off, a root package.json is a package judged by its own
+# CHANGELOG.md at ### headings, as the app-package rows are not.
+repo version-package-record-off
+put package.json '{"version":"1.9.0"}\n'; stage; git -C "$R" commit -qm base
+put package.json '{"version":"2.0.0"}\n'; put CHANGELOG.md "### Unreleased\n\n$BREAK\n"; stage
+assert_eq 'a root package without a record reads its own changelog' "rc=0 $NOMATCH" "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=package.json,COMMIT_GUARDS_CHANGELOG_RECORD= '')"
 
 echo "=== the usage is answered ==="
 repo help

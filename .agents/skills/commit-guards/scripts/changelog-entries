@@ -420,20 +420,20 @@ if [ -n "$version_paths" ]; then
       none) continue ;;
       *) gg_fail version-compare "$(gg_shown "$f"):$bump" "The version comparison returned an unknown increase." ;;
     esac
-    case "${f##*/}" in
-      package.json)
-        case "$f" in */*) local_record="${f%/*}/CHANGELOG.md" ;; *) local_record=CHANGELOG.md ;; esac
-        : >"$GG_TMP/evidence"
-        record_entries "$local_record" 3 "$new"
-        ;;
-      *)
-        cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
-          || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
-        if [ -n "$RECORD" ] && { [ "$bump" != major ] || ! first_entry breaking >/dev/null; }; then
-          record_entries "$RECORD" 2 "$new"
-        fi
-        ;;
-    esac
+    version_dir=.; case "$f" in */*) version_dir="${f%/*}" ;; esac
+    record_dir=.; case "$RECORD" in */*) record_dir="${RECORD%/*}" ;; esac
+    # A package.json beside the configured record is the app's version file,
+    # judged like any other; elsewhere it is a package with its own record.
+    if [ "${f##*/}" = package.json ] && { [ -z "$RECORD" ] || [ "$version_dir" != "$record_dir" ]; }; then
+      : >"$GG_TMP/evidence"
+      record_entries "${f%package.json}CHANGELOG.md" 3 "$new"
+    else
+      cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
+        || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
+      if [ -n "$RECORD" ] && { [ "$bump" != major ] || ! first_entry breaking >/dev/null; }; then
+        record_entries "$RECORD" 2 "$new"
+      fi
+    fi
     value="$(gg_shown "$f"):$old:$new"
     case "$bump" in
       major)

@@ -1,0 +1,1 @@
+- commit-guards: a root `package.json` beside the changelog record is judged as the app version from `changelog.d` fragments and that record.
