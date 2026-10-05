@@ -306,6 +306,14 @@ The long pass's events, checked and reported in this order:
                              digest. Reported once
                              and again every ORCH_OVERSEER_MARK_REPEAT passes
                              while it stands; a change starts a fresh window
+  EVENT lane-long <item> age=<secs> stage=<step>
+                             a running or parked --state record is
+                             ORCH_WATCH_LANE_AGE_SECS past its launched_at, the
+                             item's first launch, which relaunches and
+                             handoffs keep. stage= is the Step line of its
+                             status file, `parked`, `unread` where its read
+                             failed, or `none`. Reported once per
+                             launched_at
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
                              the line: the remedy is one relaunch, which
                              reads the item's worktree and PR, not a screen
@@ -910,6 +918,9 @@ Environment:
                               lane-stalled goes out, a positive whole number,
                               default 3600, provisional until a cloud lane run
                               measures one
+  ORCH_WATCH_LANE_AGE_SECS    seconds after a record's launched_at a running
+                              or parked lane is reported lane-long, a positive
+                              whole number, default 14400
 USAGE
 }
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
@@ -1010,6 +1021,7 @@ ow_message() { # REASON FIELD=VALUE...
     root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
     host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
+    lane-age-secs-invalid) text='ORCH_WATCH_LANE_AGE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-secs-invalid) text='ORCH_WATCH_LANE_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-unread) text='The digest of a lane pull request body could not be taken, so whether the lane moved is unknown. The watch stops rather than report a stall it did not measure.' ;;
     pr-read-failed) text='The open pull request on the item branch could not be listed, so this pass settles nothing about a lane whose kind writes no file this watch reads: no start-stalled or lane-stalled goes out for it and its rows stand. gh'"'"'s own words follow.' ;;

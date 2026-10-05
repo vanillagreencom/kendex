@@ -6,7 +6,8 @@
 # judgement of a lane whose kind declares status=none, which no process read
 # reaches. Sourced by oversee-watch, and like the rest of its lib/ it reads
 # that script's globals (SCRIPT_DIR, HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN,
-# PASS_NOW, MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message`,
+# PASS_NOW, MARK_REPEAT, LANE_STALL_SECS, LANE_AGE_SECS, LANE_AGES,
+# RECORDED_ITEMS) and calls its `die`, `ow_message`,
 # `lane_failure_set` and lane row helpers, and those of lib/lane-gitfile.sh and
 # lib/lane-capabilities.sh, which that script sources before this file.
 
@@ -264,4 +265,53 @@ check_lane_stall() {
   done
   rows="$(lane_row_prune lane-stalled "$rows" ${items[@]+"${items[@]}"})"
   lane_row_commit "$rows"
+}
+
+# A running or parked lane LANE_AGE_SECS past its first launch, its record's
+# launched_at, is reported lane-long once per launched_at, its stage the Step
+# line of its status file.
+check_lane_long() {
+  local entry item launched age prior rows="${PW_SEEN[0]}"
+  for entry in ${LANE_AGES[@]+"${LANE_AGES[@]}"}; do
+    item="${entry%%=*}"
+    launched="${entry#*=}"
+    age=$((PASS_NOW - launched))
+    (( age >= LANE_AGE_SECS )) || continue
+    if ! prior="$(lane_row_get lane-long "$rows" "$item")"; then
+      die state-read-failed "" "item=$item" "row=lane-long"
+    fi
+    [[ "$prior" != "$launched" ]] || continue
+    lane_step "$item"
+    echo "EVENT lane-long $item age=$age stage=$LANE_STEP"
+    PASS_EVENT=1
+    rows="$(lane_row_set lane-long "$rows" "$item" "$launched")"
+  done
+  # Pruned only once no record names the item, so the gap a relaunch or a
+  # handoff leaves between running records never reports the lane again.
+  rows="$(lane_row_prune lane-long "$rows" ${RECORDED_ITEMS[@]+"${RECORDED_ITEMS[@]}"})"
+  lane_row_commit "$rows"
+}
+
+# The Step line of ITEM's status file as LANE_STEP: `parked` for a parked lane,
+# whose disk is stopped, `unread` where its read failed, and `none` where
+# the lane writes no file or its file names no step.
+lane_step() { # ITEM
+  local file
+  LANE_STEP=parked
+  ! item_parked "$1" || return 0
+  LANE_STEP=none
+  hosted_root "$1"
+  local_root "$1"
+  if item_in "$1" ${FILELESS[@]+"${FILELESS[@]}"}; then return 0
+  elif [[ -n "$HOSTED_ROOT" ]]; then
+    file="$WORK_DIR/status-probe"
+    ORCH_LANE_HOST="$HOSTED_HOST" lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT/tmp/lane-status-$1.md" \
+      "$file" "$WORK_DIR/host.err" || { [[ $? -eq 1 ]] || LANE_STEP=unread; return 0; }
+  elif [[ -n "$LOCAL_ROOT" ]]; then file="$LOCAL_ROOT/tmp/lane-status-$1.md"
+  else return 0
+  fi
+  [[ -f "$file" ]] || return 0
+  if ! LANE_STEP="$(awk 'tolower($0) ~ /^step:/ { sub(/^[^:]*:[ \t]*/, ""); print; exit }' "$file")"; then LANE_STEP=unread
+  elif [[ -z "$LANE_STEP" ]]; then LANE_STEP=none
+  fi
 }

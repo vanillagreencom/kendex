@@ -270,6 +270,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
+#   lane-long<TAB><item><TAB><launched_at epoch it was reported under>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
@@ -424,6 +425,11 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 # lane-stalled goes out. Provisional: the first cloud acceptance run sets it.
 LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
+# How long after an item's first launch in this fleet, its record's
+# launched_at, which relaunches and handoffs keep, a running or parked lane is
+# reported once as lane-long for the overseer to name the cause.
+LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-14400}"
+[[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from
 # the rows its own hook writes (lib/session-rows.sh), and `<item>=<epoch it went
@@ -431,6 +437,10 @@ LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 # under.
 PI_LANES=()
 LAUNCHES=()
+# `<item>=<launched_at epoch>` for each running or parked record, which
+# lane-long ages, and every item any record names, which keeps its row.
+LANE_AGES=()
+RECORDED_ITEMS=()
 # What argv itself gave, kept before the first state read rebuilds the four
 # arrays: every merge adds the command line's own entries to the records the
 # state names, so the baseline has to outlive the set a loop carries.
@@ -578,7 +588,8 @@ LANE_ROWS_FILTER="$LANE_RUNNING_JQ"'
     (.[] | select(running)
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
   | [.item, (.window // ""), (.host // "local"), (.mail_root // ""),
-     (.harness // ""), ((.running_at // .launched_at) | if . == null then "" else (fromdateiso8601 | tostring) end)]
+     (.harness // ""), ((.running_at // .launched_at) | if . == null then "" else (fromdateiso8601 | tostring) end),
+     (.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)]
   | join("\u001f"))'
 
 # The preparation records of lanes open-terminal handed to a background job,
@@ -606,7 +617,7 @@ PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
     elif ((.parked.pr? | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
-    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)" end'
+    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)\u001f\(.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
 
@@ -628,18 +639,24 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window host root harness running kept carried parked
+  local state rows dropped line item window host root harness running launched kept carried parked recorded
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
   PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
   parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
+  recorded="$(jq -r '(.lanes // [])[] | objects | .item | strings' <<<"$state" 2>&1)" \
+    || die state-invalid "$recorded" "option=--state" "path=$STATE_FILE"
+  RECORDED_ITEMS=()
+  while IFS= read -r item; do [[ -z "$item" ]] || RECORDED_ITEMS+=("$item"); done <<<"$recorded"
   PARKED_ITEMS=()
   PARKED_KEYS=()
-  while IFS=$'\x1f' read -r item kept; do
+  LANE_AGES=()
+  while IFS=$'\x1f' read -r item kept launched; do
     [[ -n "$item" ]] || continue
     PARKED_ITEMS+=("$item")
     PARKED_KEYS+=("$kept")
+    [[ -z "$launched" ]] || LANE_AGES+=("$item=$launched")
   done <<<"$parked"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
@@ -651,7 +668,7 @@ fleet_merge() { # [quiet]
   PI_LANES=()
   LAUNCHES=()
   host_routes_reset
-  while IFS=$'\x1f' read -r item window host root harness running; do
+  while IFS=$'\x1f' read -r item window host root harness running launched; do
     [[ -n "$item" ]] || continue
     host_route "$item" "$host" "$root"
     ITEMS+=("$item")
@@ -659,6 +676,7 @@ fleet_merge() { # [quiet]
     [[ -z "$window" ]] || item_in "$item" ${STATUSLESS[@]+"${STATUSLESS[@]}"} || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
     [[ -z "$running" || -z "$root" ]] || LAUNCHES+=("$item=$running")
+    [[ -z "$launched" ]] || LANE_AGES+=("$item=$launched")
   done <<<"$rows"
   for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || item_parked "$line" || ITEMS+=("$line"); done
   for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do window_listed "$line" || LANES+=("$line"); done
@@ -3810,6 +3828,7 @@ long_pass() {
     check_prepare
     check_start_stall
     check_lane_stall
+    check_lane_long
     check_lanes
     check_accounts
     check_report

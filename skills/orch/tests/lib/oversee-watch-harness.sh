@@ -757,6 +757,9 @@ shortened_ceiling_watch() {
 # rather than unset: its default is on, and a fleet state whose lanes launched
 # more than an interval ago would put report-due into every case's block. The
 # report cases pass ORCH_REPORT=on, which the later assignment makes win.
+# ORCH_WATCH_LANE_AGE_SECS is set past any fixture's age for the same reason:
+# fixtures stamp launched_at at fixed dates, so every case would carry
+# lane-long. The lane-long cases set their own bound after it.
 # The report's helper paths, OVERSEE_WATCH_REPORT and every OVERSEE_REPORT_*
 # override oversee-report reads, are unset for the same reason; a case that
 # names one sets it after the clear.
@@ -798,6 +801,7 @@ run_watch() {
            ORCH_SECURITY_ALERT_TOKEN_FILE="$STUB_DIR/alert-token" \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ORCH_WATCH_MAIL_INTERVAL=0 \
+           ORCH_WATCH_LANE_AGE_SECS=999999999 \
            ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
