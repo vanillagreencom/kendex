@@ -380,6 +380,7 @@ worktree_head() {
   if [[ "$head" == "$PRE" ]]; then printf 'pre'
   elif [[ "$head" == "$BASE" ]]; then printf 'base'
   elif [[ "$head" == "$END" ]]; then printf 'end'
+  elif [[ -n "$EXTERNAL" && "$head" == "$EXTERNAL" ]]; then printf 'external'
   elif git -C "$WT" merge-base --is-ancestor "$BASE" "$head"; then printf 'rebased'
   else printf 'other'
   fi
@@ -575,7 +576,8 @@ remote movement after authorization fails the exact lease|clean reuse move-remot
 a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 --keep-on-conflict over a clean rebase rebases as --reuse does|plain|create topic --reuse --keep-on-conflict|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
-reuse over a clean tree behind its remote fast-forwards to the remote, then rebases onto the advanced main|cloud move-remote advance-main|create topic --reuse|0|wt|fast-forward+map:1x|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,main-advanced-twice.txt:advanced twice,other.txt:orig restack=remote:origin,branch:topic,expected:external,authorized:head remote=external map=1x
+reuse over a clean tree behind its remote fast-forwards to the remote and keeps that head unrebased over the advanced main|cloud move-remote advance-main|create topic --reuse|0|wt|fast-forward|engine=none branch=topic head=external ahead=1 dirty=- tree=file.txt:orig,other.txt:orig restack=- remote=external map=-
+--restack over a clean tree behind its remote fast-forwards to the remote, then rebases onto the advanced main|cloud move-remote advance-main|create topic --restack|0|wt|fast-forward+map:1x|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,main-advanced-twice.txt:advanced twice,other.txt:orig restack=remote:origin,branch:topic,expected:external,authorized:head remote=external map=1x
 dirty reuse refreshes the worktree without rebasing its uncommitted work|plain dirty-other|create topic --reuse|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
@@ -770,6 +772,59 @@ ff_mutant_rc=0
 assert_eq "$ff_mutant_rc" "1" "control: the mutant fails the reuse"
 assert_eq "$(grep -c '^worktree-restack-remote-uncontained: ' "$ROOT/ff-mutant.err" || true)" "1" \
   "control: the mutant refuses the remote its tree does not contain"
+
+echo
+echo "=== a landing reuse over a cloud-pushed head leaves nothing that blocks its removal ==="
+
+# A claude-cloud item's landing lane reuses the tree the cloud session pushed
+# to, merges that remote head and removes the tree. The reuse must leave no
+# rebase map, which remove refuses on, and the tree's tip must be the merged
+# head, so the branch goes with it.
+build handoff cloud move-remote advance-main reuse merged-pr
+handoff_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" remove "$ISSUE" >"$ROOT/handoff.out" 2>"$ROOT/handoff.err") || handoff_rc=$?
+assert_eq "$handoff_rc" "0" "the landing removal succeeds"
+assert_eq "$(message_records <"$ROOT/handoff.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "0" \
+  "the landing removal meets no rebase map"
+assert_eq "$(message_records <"$ROOT/handoff.err" | grep -c '^worktree-branch-deleted: topic$' || true)" "1" \
+  "the landing removal deletes the merged branch"
+assert_eq "$([[ -e "$WT" ]] && echo present || echo absent)" "absent" "the landing removal removes the tree"
+
+echo
+echo "=== must-fail control: with either clause of the kept-head arm cut, its row's reuse goes the other way ==="
+
+# The rows above pin that a fast-forwarded --reuse stays at the remote head and
+# a fast-forwarded --restack still rebases. The defect planted per row is one
+# clause of that arm, on a private package copy: a --reuse whose arm can no
+# longer hold rebases and leaves the map the landing removal refuses on, and a
+# --restack whose arm lost its exception stays at the remote head.
+kept_arm='if [[ "$REUSE_FAST_FORWARDED" == true && "$RESTACK" != true ]]'
+# command|guard with that row's clause cut|head after the mutant|map after the mutant|removal exit|removal's map refusals
+KEPT_CLAUSES='create topic --reuse|if false && [[ "$RESTACK" != true ]]|rebased|1x|1|1
+create topic --restack|if [[ "$REUSE_FAST_FORWARDED" == true ]]|external|-|0|0'
+k=0
+while IFS='|' read -r command kept_cut want_head want_map want_remove_rc want_refusals; do
+  k=$((k + 1))
+  build "kept-mutant-$k" cloud move-remote advance-main
+  mkdir -p "$ROOT/pkg"
+  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+  kept_mutant="$ROOT/pkg/worktree/scripts/worktree"
+  assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "1" "control finds the kept-head arm [$command]"
+  F="$kept_arm" T="$kept_cut" perl -0pi -e 's/\Q$ENV{F}\E/$ENV{T}/' -- "$kept_mutant"
+  assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "0" "control cuts the clause only in its private copy [$command]"
+  kept_got="$(WORKTREE_SCRIPT="$kept_mutant" run "$command")"
+  assert_eq "${kept_got%% *}" "rc=0" "control: the mutant completes the reuse [$command]"
+  assert_eq "$(worktree_head)" "$want_head" "control: the mutant moves the head the other way [$command]"
+  assert_eq "$(restack_map)" "$(map_file_text "$want_map")" "control: the mutant flips the map [$command]"
+  # The tip a merge of the remote head would leave, so the removal's refusal is
+  # the map's alone.
+  { printf '%s\n42\n' "$(git -C "$WT" rev-parse HEAD)"; git -C "$MAIN" rev-parse origin/main; } >"$ROOT/gh-state"
+  kept_remove_rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" remove "$ISSUE" >"$ROOT/kept-remove.out" 2>"$ROOT/kept-remove.err") || kept_remove_rc=$?
+  assert_eq "$kept_remove_rc" "$want_remove_rc" "control: the removal follows the map [$command]"
+  assert_eq "$(message_records <"$ROOT/kept-remove.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "$want_refusals" \
+    "control: the removal refuses on the map alone [$command]"
+done <<<"$KEPT_CLAUSES"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

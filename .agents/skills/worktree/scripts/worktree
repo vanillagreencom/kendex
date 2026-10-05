@@ -2667,7 +2667,11 @@ case "${1:-}" in
         # Commits pushed to the branch from another machine, as a Claude cloud
         # session pushes its own, leave this tree at an ancestor of the remote,
         # which the containment guard below refuses. A clean tree takes them
-        # by fast-forward, which drops no local commit.
+        # by fast-forward, which drops no local commit. A --reuse then keeps
+        # that published head unrebased: a rebase here would leave a map no
+        # merge of that head consumes, and `remove` refuses on it. Only
+        # --restack, which asks for the rebase, goes on to it.
+        REUSE_FAST_FORWARDED=false
         if [[ -n "$REUSE_EXPECTED_OID" && -z "$REUSE_STATUS" ]] \
           && [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$REUSE_EXPECTED_OID" ]] \
           && git -C "$WT_PATH" merge-base --is-ancestor HEAD "$REUSE_EXPECTED_OID" 2>/dev/null; then
@@ -2677,8 +2681,11 @@ case "${1:-}" in
             exit 1
           fi
           worktree_message reuse-fast-forward "$REUSE_REMOTE/$CURRENT_BRANCH" "Fast-forwarded '$CURRENT_BRANCH' to the remote's $REUSE_EXPECTED_OID." >&2
+          REUSE_FAST_FORWARDED=true
         fi
-        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+        if [[ "$REUSE_FAST_FORWARDED" == true && "$RESTACK" != true ]]; then
+          : # kept at the remote head; the next push rebases it
+        elif git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
         elif REUSE_MERGED_COMMIT="$(merged_branch_commit "$CURRENT_BRANCH")"; then
           # The work landed. A squash merge rewrites the branch into a fresh

@@ -245,9 +245,11 @@ Options:
                   own lease in place, and skips the rebase for a tree with
                   uncommitted work. A clean tree whose branch is an ancestor
                   of its remote branch, whose commits another machine pushed,
-                  first fast-forwards to it (worktree-reuse-fast-forward). A
-                  clean tree rebases onto origin/<default>
-                  and refreshes setup. The target must be registered to this
+                  fast-forwards to it (worktree-reuse-fast-forward) and
+                  stays at that published head, unrebased, until the next
+                  push rebases it; --restack rebases it as well. Any other
+                  clean tree rebases onto origin/<default>. A clean tree
+                  also refreshes setup. The target must be registered to this
                   repository; incomplete directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution
                   instead of aborting the rebase
