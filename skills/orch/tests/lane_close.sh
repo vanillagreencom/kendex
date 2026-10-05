@@ -63,7 +63,7 @@ mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
   "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
-  "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -290,6 +290,9 @@ case "$1" in
       awk -F'\t' '{print $3}' "$LANE_CLOSE_ROWS"
     elif [[ "${*: -1}" == '#{pane_id} #{pane_pid} #{pane_current_command}' ]]; then
       awk -F'\t' '{print $3 " " $4 " " $5}' "$LANE_CLOSE_ROWS"
+    elif [[ "${*: -1}" == '#{pid} #{start_time} #{pane_id}' ]]; then
+      # The stub's server is pid 999, the one start_local_harness records.
+      awk -F'\t' '{print "999 1 " $3}' "$LANE_CLOSE_ROWS"
     else
       cat -- "$LANE_CLOSE_ROWS"
     fi ;;
@@ -471,6 +474,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   ln -s "$FIXTURE/skills/worktree" "$dir/skills/worktree"
   ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
   ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
+  ln -s "$SCRIPTS/lib/tmux-server.sh" "$dir/skills/orch/scripts/lib/tmux-server.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -1428,6 +1432,32 @@ if proc_table_readable; then
   assert_eq "$STALE_WINDOWLESS_GOT" 'rc=1 stale=1 unread=0 wait=0 removed=0 status=running' \
     'control: a windowless stop kept to records naming no identity refuses a stale one'
 fi
+# A window renamed, as pi-qol renames a Pi lane's to its session name, leaves
+# the record's launch pane listed on the server its launch recorded: the lane
+# may run there, and a record naming no live identity would stop nothing, so
+# the close refuses. `ps` names the recorded server pid tmux.
+SERVER_PS_BIN="$TMP_ROOT/server-ps-bin"
+mkdir -p "$SERVER_PS_BIN"
+REAL_PS="$(command -v ps)" || { printf 'lane-close-test: no-ps\n' >&2; exit 1; }
+cat >"$SERVER_PS_BIN/ps" <<EOF
+#!/usr/bin/env bash
+[[ "\$*" != '-o comm= -p 999' ]] || { printf 'tmux\\n'; exit 0; }
+exec "$REAL_PS" "\$@"
+EOF
+chmod +x "$SERVER_PS_BIN/ps"
+renamed_windowless() { # SCRIPT
+  write_state running pi ''
+  jq '.lanes[0].launch = {pane: "%7", server: 999, pid: null, start: null}' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
+  printf 'kendex\tπ session\t%%7\t999\tpi\n' >"$ROWS"; printf '\n' >"$SCREEN"
+  PATH="$SERVER_PS_BIN:$PATH" run_close "$1"
+  RENAMED_WINDOWLESS_GOT="rc=$RC renamed=$(grep -c -x 'lane-close: pane-missing item=KEN-1 window=KEN-1 pane=%7 cause=renamed' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+renamed_windowless "$SCRIPT"
+assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=1 renamed=1 kill=0 removed=0 status=running' \
+  'a local record whose launch pane its server still lists under another window name refuses pane-missing cause=renamed'
+renamed_windowless "$(mutant renamed-unread '  tmux_pane_live "$server" "" "$pane" || rc=$?' '  rc=1')"
+assert_eq "$RENAMED_WINDOWLESS_GOT" 'rc=0 renamed=0 kill=0 removed=1 status=done' \
+  'control: without the launch pane read a renamed lane closes with nothing stopped'
 for args in '--park --pr 7' --keep-sandbox; do
   write_state running claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
   # shellcheck disable=SC2086  # the row's options are several words
@@ -1714,7 +1744,7 @@ MUTANT="$(mutant windowless-open "$WINDOWLESS" '[[ "$PARK" == false && "$KEEP_SA
 write_state running claude /host; : >"$ROWS"
 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: without the terminal-item gate a hosted record with no pane closes an open item'
-MUTANT="$(mutant windowless-unread '    0) state=windowless ;;' '    0|2) state=windowless ;;')"
+MUTANT="$(mutant windowless-unread '    0) [[ -n "$host" ]] || refuse_listed_launch_pane; state=windowless ;;' '    0|2) [[ -n "$host" ]] || refuse_listed_launch_pane; state=windowless ;;')"
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
 LANE_CLOSE_TRACKER_FAIL=3 run_close "$MUTANT"
 assert_eq "$(windowless_unread)" 'rc=0 read=0 missing=0 host=2 status=done' 'control: a failed tracker read taken as terminal closes a hosted record with no pane'

@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
+source "$SCRIPT_DIR/lib/tmux-server.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field
@@ -29,9 +30,13 @@ message() { # REASON FIELD=VALUE...
     missing-value) printf '%s\n' 'The option requires a value.' ;;
     record-missing) printf '%s\n' 'No fleet lane record names this item.' ;;
     record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
-    pane-missing) printf '%s\n' 'No tmux pane carries the recorded window name.' ;;
+    pane-missing)
+      printf '%s\n' 'No tmux pane carries the recorded window name.' \
+        'cause=renamed is a local record whose launch pane, pane=, the tmux server its launch recorded still lists under another window name: the lane may still run there. Rename that window back to the recorded name and close again.' ;;
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
-    pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
+    pane-read-failed)
+      printf '%s\n' 'The lane pane could not be read.' \
+        'server= is the tmux server a local record'"'"'s launch names, which runs a tmux this close does not reach, or whose pane list could not be read.' ;;
     lane-live)
       printf '%s\n' 'The lane is not finished. Close-out changed nothing.' \
         'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading, taken for the model the record names, or over the whole account where it names none, and run under the record'"'"'s host, so a hosted lane'"'"'s reading is the provider'"'"'s where its accounts row carries one:' \
@@ -168,7 +173,9 @@ tracker answers terminal, closes with no lane state read and no exit wait: a
 hosted harness is stopped through lane-host stop and the host closed, and a
 local one by the launch identity the record names where that process still
 runs; with no pane to read an identity off, a record naming none, or a stale
-one, has no harness left to stop.
+one, has no harness left to stop. A local record whose launch pane the tmux
+server its launch recorded still lists refuses as pane-missing cause=renamed:
+its window was renamed, not closed.
 A record whose host kind declares stop=none (lane-host capabilities), a Claude
 cloud session, has no harness or sandbox this machine can stop: the close
 removes the item's files as below, then kills the record's window where a
@@ -784,6 +791,27 @@ resolve_window() {
   esac
 }
 
+# A window name no pane carries does not prove the pane gone: pi-qol renames a
+# Pi lane's window to its session name, and an operator may rename one by hand.
+# Where the tmux server the launch recorded still lists the record's launch
+# pane, the lane may run there unread, so the close refuses. Records keep no
+# server start, so that pane is never adopted for the state read and the stop:
+# a later server handed the same pid and pane id would have its own harness
+# stopped as the lane's.
+refuse_listed_launch_pane() {
+  local pane server rc=0
+  pane="$(jq -r '.launch.pane // empty' <<<"$record")" \
+    && server="$(jq -r '.launch.server // empty' <<<"$record")" \
+    || { message record-invalid "item=$ITEM" "field=launch" >&2; exit 1; }
+  [[ -n "$pane" && -n "$server" ]] || return 0
+  tmux_pane_live "$server" "" "$pane" || rc=$?
+  case "$rc" in
+    0) message pane-missing "item=$ITEM" "window=$window_name" "pane=$pane" "cause=renamed" >&2; exit 1 ;;
+    1) ;;
+    *) message pane-read-failed "item=$ITEM" "pane=$pane" "server=$server" >&2; exit 1 ;;
+  esac
+}
+
 # The record's host kind declares whether this machine can stop its lane. A
 # stop=none kind, a Claude cloud session, has no harness or sandbox to reach
 # and no mailbox to ask: the close removes the item's files, then closes the
@@ -886,7 +914,7 @@ else
   # off. A park or a kept sandbox is a lane still wanted, and reads as open.
   tracker_rc=0; [[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?
   case "$tracker_rc" in
-    0) state=windowless ;;
+    0) [[ -n "$host" ]] || refuse_listed_launch_pane; state=windowless ;;
     1) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;
     *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
   esac
