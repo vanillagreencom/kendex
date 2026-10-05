@@ -910,7 +910,7 @@ sk_bin_reset
 
 for retry in poll delivery; do
   case "$retry" in
-    poll) sk_mutant same-poll relay.py '(                self\.catch_up\(bot_user\)\n            except Refusal as err:\n                if err\.key != "slack-rate-limited":\n                    raise\n                print_refusal\(err\)\n)' '\1        self.mark_seen(self.state.delivered)\n' ;;
+    poll) sk_mutant same-poll relay.py '(                print_refusal\(err\)\n                self\.catch_up_at = self\.clock\(\) \+ err\.retry_after\n)' '\1        self.mark_seen(self.state.delivered)\n' ;;
     delivery) sk_mutant delivery-sweep relay.py '(        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)\n)        self.mark_seen\(\[ts\]\)' '\1        self.mark_seen(self.state.delivered)' ;;
   esac
   RETRY_ROOT="$(sk_new_root "retry-$retry")"

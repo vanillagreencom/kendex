@@ -160,9 +160,10 @@ ROWS
 done
 
 # A temporary conversations.replies refusal leaves catch-up due on the same
-# RootRelay, and outbound mail still posts on the first poll. A cut read leaves
-# the other thread to that poll; a rate-limited one ends the catch-up there,
-# and the next poll reads both threads.
+# RootRelay, and outbound mail still posts on the first poll. The newer thread
+# is read first, so both faults leave it to that poll; the next poll reads the
+# refused one. The rate control re-raises every refusal out of the poll's
+# catch-up, as a slack-rate-limited one must not be.
 for mode in normal control; do
 while read -r parent fault want; do
   ROOT="$(sk_new_root "read-$mode-$parent-$fault")"
@@ -187,7 +188,7 @@ while read -r parent fault want; do
   esac
   if [ "$mode" = control ]; then
     case "$fault" in
-      rate) sk_mutant rate-ends relay.py 'if err\.key in \("slack-auth-failed", "slack-rate-limited"\):' 'if err.key == "slack-auth-failed":' ;;
+      rate) sk_mutant rate-poll relay.py 'if err\.key != "slack-rate-limited":\n                    raise' 'if True:\n                    raise' ;;
       cut) sk_mutant thread-retry relay.py '        return missing' '        return True' ;;
     esac
   fi
@@ -197,16 +198,68 @@ while read -r parent fault want; do
     assert_eq "$GOT" "$want" "$parent/$fault: same-instance catch-up retries the refused read while the first poll posts outbound mail"
     assert_eq "$(jq -s --arg d "$CH:$REPLY" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")|$(asks "$CH" 'Read retry outbound.')" '1|1' "$parent/$fault: read recovery delivers the reply and outbound notice once"
   else
-    sk_assert_red "$GOT" "$want" "$parent/$fault: completing a refused catch-up, or reading past a rate limit, breaks same-instance recovery"
+    sk_assert_red "$GOT" "$want" "$parent/$fault: completing a refused catch-up, or failing the poll on a rate limit, breaks same-instance recovery"
   fi
   sk_bin_reset
 done <<'ROWS'
-known rate ["",false,false,true,true,true,true]
+known rate ["",false,true,true,true,true,true]
 known cut ["",false,true,true,true,true,true]
-unknown rate ["",false,false,true,true,true,true]
+unknown rate ["",false,true,true,true,true,true]
 unknown cut ["",false,true,true,true,true,true]
 ROWS
 done
+
+# More threads hold an offline reply than Slack's allowance lets the catch-up
+# read in one window. Each window's 429 ends that poll's catch-up with nothing
+# slept; a poll inside the Retry-After reads nothing; the next window resumes
+# past the threads already read, newest first, until the oldest reply lands
+# and the catch-up completes, every reply once. ALLOW 2 puts the 429 on a
+# thread read, 3 on a directive thread's parent read. Each control breaks one
+# rule: the resume, the order, the hold, the rate limit ending the catch-up,
+# and the parent read allowing no retry.
+WANT='["",[],0,true,false,true,true]'
+while read -r allow control; do
+  ROOT="$(sk_new_root "allowance-$allow-$control")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  TOPICS=()
+  for n in 1 2 3 4 5; do TOPICS+=("$(sk_inject "$CH" U001 "Allowance topic $n.")"); done
+  sk_poll "$ROOT"
+  REPLIES=()
+  for n in 1 2 3 4 5; do REPLIES+=("$(sk_inject "$CH" U001 "Offline reply $n." "${TOPICS[$((n - 1))]}")"); done
+  case "$control" in
+    resume) sk_mutant resume relay.py '\} - due, key=float' '}, key=float' ;;
+    order) sk_mutant newest-first relay.py 'key=float, reverse=True\)' 'key=float)' ;;
+    hold) sk_mutant hold relay.py 'self\.clock\(\) >= self\.catch_up_at' 'True' ;;
+    rate-ends) sk_mutant rate-ends relay.py 'if err\.key in \("slack-auth-failed", "slack-rate-limited"\):' 'if err.key == "slack-auth-failed":' ;;
+    parent-retry) sk_mutant parent-retry relay.py 'retries=0 if path == "catch-up" else RETRIES' 'retries=RETRIES' ;;
+  esac
+  sk_recovery "$ROOT" allowance "$allow"
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr --arg new "${REPLIES[4]}" --arg old "${REPLIES[0]}" '[
+    .error,
+    [.polls[].slept[]],
+    ([.polls | to_entries[] | select(.key % 2 == 1) | .value.replies] | add),
+    (.polls[0].delivered | index($new) != null),
+    (.polls[0].delivered | index($old) != null),
+    (.polls[-1].delivered | index($old) != null),
+    .polls[-1].caught_up]')"
+  ONCE="$(for r in "${REPLIES[@]}"; do jq -s --arg d "$CH:$r" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl"; done | sort -u | tr '\n' ' ')"
+  if [ "$control" = none ]; then
+    assert_eq "$GOT|$ONCE" "$WANT|1 " "allow $allow: a rate-limited catch-up holds for Retry-After and resumes newest first until every offline reply lands once"
+  else
+    sk_assert_red "$GOT" "$WANT" "allow $allow: the $control control breaks the resumed catch-up"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+2 none
+3 none
+2 resume
+2 order
+2 hold
+2 rate-ends
+3 parent-retry
+ROWS
 
 # An acknowledged live reply whose parent is deleted remains in pending_live
 # after its first refusal, then is dropped once on poll without blocking posts.

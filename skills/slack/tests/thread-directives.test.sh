@@ -108,7 +108,7 @@ sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_tex
 sk_poll "$ROOT"
 assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Thread only.\") | .reply_broadcast")" "true" "control: broadcasting a ref notice breaks the thread-only assertion"
 sk_bin_reset
-sk_mutant pointer relay.py 'parent = self.parent_context\(thread_ts\) if thread_ts != ts else None' 'parent = None'
+sk_mutant pointer relay.py 'parent = self\.parent_context\(thread_ts, retries=0 if path == "catch-up" else RETRIES\) if thread_ts != ts else None' 'parent = None'
 DROP="$(sk_inject "$CH" U001 'Lost context.' "$PARENT")"
 sk_event "$ROOT" "$CH" "$DROP"
 assert_eq "$(jq -r --arg d "$CH:$DROP" 'select(.delivery_id == $d) | has("parent")' "$(sk_box "$ROOT")/to-lane.jsonl")" "false" "control: dropping the pointer breaks the envelope assertion"

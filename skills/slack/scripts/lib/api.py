@@ -1,10 +1,10 @@
 """The Slack Web API client: one method per call, honouring 429.
 
 Every call is counted with its time so `--status` can print the calls used
-in the last minute. A 429 is honoured by `Retry-After` up to the call's
-`retries`, RETRIES by default, then refused `slack-rate-limited`; an
-`ok: false` answer names Slack's error; an auth error is its own key because
-its remedy is a new token and nothing else.
+in the last minute. A 429 is honoured by `Retry-After` up to RETRIES times,
+or a call's own `retries`, then refused carrying it;
+an `ok: false` answer names Slack's error; an auth error is its own key
+because its remedy is a new token and nothing else.
 
 A network failure is one of two keys, by where urllib raised it. urllib wraps
 every error of the request phase, the connect, the TLS handshake and the
@@ -112,12 +112,13 @@ class Slack:
                 body = self._open(req, method)
                 break
             except urllib.error.HTTPError as err:
+                header = err.headers.get("Retry-After", "1")
+                retry_after = float(header) if header.replace(".", "", 1).isdigit() else 1.0
                 if err.code == 429 and attempt < retries:
-                    retry_after = err.headers.get("Retry-After", "1")
-                    self.sleep(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 1.0)
+                    self.sleep(retry_after)
                     continue
                 if err.code == 429:
-                    raise Refusal("slack-rate-limited", method) from err
+                    raise Refusal("slack-rate-limited", method, retry_after=retry_after) from err
                 raise Refusal("slack-api-failed", f"{method} http={err.code}") from err
         try:
             answer = json.loads(body)

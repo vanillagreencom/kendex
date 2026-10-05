@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exercise the real relay with failed storage, a process stop, or live retries.
+"""Exercise the real relay with failed storage, a process stop, live retries
+or Slack's rate limit.
 The shell harness supplies a private root, API, environment and runtime copy.
 """
 
@@ -9,6 +10,7 @@ import json
 import os
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
@@ -61,7 +63,7 @@ try:
             return original(method, **params)
         api.get = traced
         for index in range(2):
-            relay.caught_up = False
+            relay.due = set()
             relay.poll("UBOT")
             polls.append(calls[:])
             calls.clear()
@@ -72,8 +74,37 @@ try:
     elif mode == "catchup-retry":
         for _ in range(2):
             relay.poll("UBOT")
-            polls.append({"caught_up": relay.caught_up, "delivered": sorted(relay.state.delivered),
+            polls.append({"caught_up": relay.due is None, "delivered": sorted(relay.state.delivered),
                           "carried": sorted(relay.state.carried)})
+    elif mode == "allowance":
+        # Slack lets the given count of conversations.replies calls through
+        # per window, then answers 429 with a 60-second Retry-After. A second
+        # poll falls inside it; the relay's clock then moves past it. A
+        # running relay's reconnect reads history from the saved position.
+        relay.discovered = True
+        skew = 0.0
+        relay.clock = lambda: time.time() + skew
+        slept, replies = [], []
+        api.sleep = slept.append
+        original = api.get
+        def counted(method, **params):
+            if method == "conversations.replies":
+                replies.append(params.get("ts"))
+            return original(method, **params)
+        api.get = counted
+        fault = {"method": "conversations.replies", "status": 429, "retry_after": 60, "after": int(sys.argv[4])}
+        for _ in range(8):
+            for path, body in (("faults-reset", {}), ("fault", fault)):
+                urllib.request.urlopen(urllib.request.Request(f"{settings.api_url}/_test/{path}", json.dumps(body).encode()))
+            for _ in range(2):
+                relay.poll("UBOT")
+                polls.append({"caught_up": relay.due is None, "delivered": sorted(relay.state.delivered),
+                              "replies": len(replies), "slept": slept[:]})
+                replies.clear()
+                slept.clear()
+            if relay.due is None:
+                break
+            skew += 61
     elif mode == "download":
         api.download(sys.argv[4], None, io.BytesIO())
     else:
@@ -88,5 +119,5 @@ try:
             relay.poll("UBOT")
 except (Refusal, OSError, http.client.HTTPException) as err:
     error = err.key if isinstance(err, Refusal) else type(err).__name__
-print(json.dumps({"error": error, "caught_up": relay.caught_up, "pending": len(relay.pending_live),
+print(json.dumps({"error": error, "caught_up": relay.due is None, "pending": len(relay.pending_live),
                   "unknown": sorted(relay.state.unknown), "polls": polls, "injected": injected}))

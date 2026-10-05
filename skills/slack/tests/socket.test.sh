@@ -482,11 +482,11 @@ ROWS
 # --- a reconnect's catch-up under Slack's rate limit ---------------------------------------
 # The drop withholds a reply's envelope, so the reconnect's catch-up alone can
 # land it. In the `rate` row Slack answers that catch-up's history read, then
-# its thread read, with 429 and a Retry-After far past the poll interval. Each
+# its thread read, with 429 and a Retry-After past the poll interval. Each
 # ends its poll's catch-up, so the poll after the reconnect records ok and
 # connected within one interval, a live message lands from its event, and the
-# third poll lands the reply. `none` reconnects with no limit; `control`
-# waits out the Retry-After again.
+# first poll past the second Retry-After lands the reply. `none` reconnects
+# with no limit; `control` waits out the Retry-After again.
 reconnect_polled() { # ROOT — yes once an ok record names the reconnect as its connection's start
   local at
   at="$(jq -r 'select(.t == "reconnect") | .at' "$(sk_journal "$1")")"
@@ -504,8 +504,8 @@ for row in rate none control; do
   landed "$RATE" "$RC_CH:$TOPIC" >/dev/null
   sleep 1 # The record names the connect's second until a poll after the reconnect, which must differ.
   if [ "$row" != none ]; then
-    sk_ctl /_test/fault '{"method":"conversations.history","status":429,"retry_after":60}' >/dev/null
-    sk_ctl /_test/fault '{"method":"conversations.replies","status":429,"retry_after":60}' >/dev/null
+    sk_ctl /_test/fault '{"method":"conversations.history","status":429,"retry_after":5}' >/dev/null
+    sk_ctl /_test/fault '{"method":"conversations.replies","status":429,"retry_after":5}' >/dev/null
   fi
   sk_ctl /_test/fault '{"method": "socket", "drop": true}' >/dev/null
   OFFLINE="$(sk_inject "$RC_CH" U001 'Reply while dropped.' "$TOPIC")"
@@ -606,7 +606,7 @@ sk_relay_stop
 sk_bin_reset
 
 
-sk_mutant catch-up relay.py 'root\.journal\.append\(t=kind, at=self\.since\)\n            root\.caught_up = False' 'root.journal.append(t=kind, at=self.since)'
+sk_mutant catch-up relay.py 'root\.journal\.append\(t=kind, at=self\.since\)\n            root\.due = set\(\)' 'root.journal.append(t=kind, at=self.since)'
 EPS="$(sk_new_root eps)"
 sk_bind "$EPS"
 drop_one "$EPS" 30
@@ -614,7 +614,7 @@ assert_eq "$LOST_TEXT" "" "control: no history read on a connect, the lost envel
 sk_relay_stop
 sk_bin_reset
 
-sk_mutant read-due relay.py '        horizon = self\.settings\.horizon\(self\.clock\(\)\)\n        position = self\.state\.seen_ts' '        self.caught_up = True\n        horizon = self.settings.horizon(self.clock())\n        position = self.state.seen_ts'
+sk_mutant read-due relay.py '        horizon = self\.settings\.horizon\(self\.clock\(\)\)\n        position = self\.state\.seen_ts' '        self.due = None\n        horizon = self.settings.horizon(self.clock())\n        position = self.state.seen_ts'
 refused_read 30
 assert_eq "$KAPPA_TEXT" "" "control: the read marked done before Slack answers, the refused reconnect's message does not land within the short bound"
 sk_relay_stop
