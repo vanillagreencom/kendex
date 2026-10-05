@@ -9,11 +9,14 @@
 //! keeps it as an edit, so the verify that follows fails on every push to
 //! `main` until a later change repairs it.
 //!
-//! This is the check that refuses that state before the merge. It plans a
-//! copy of what a commit of this checkout carries the way
-//! `refresh --discard-edits` does, and writes nothing into the checkout.
+//! This is the check that refuses that state before the merge. It plans
+//! this checkout the way `refresh --discard-edits` does and writes nothing.
 //! The planner decides which inventory paths it would write, and the check
-//! reports them: it reads no render and compares no bytes of its own.
+//! reports them: it reads no render and compares no bytes of its own. A
+//! file Git ignores in a render tree, such as the `__pycache__` a run of a
+//! skill's scripts leaves, is no difference to the planner
+//! ([`crate::hash::RenderedIdentity::matches`]), so a checkout's leftovers
+//! never name a render.
 //!
 //! Not on Windows, for the reason `own_inventory.rs` gives: the tree a
 //! Windows checkout holds is not the tree that was committed.
@@ -34,8 +37,14 @@ const NAME: &str = "render-bytes";
 enum Finding {
     /// The checkout could not be planned, so what it renders is unknown.
     Unplanned { root: String, cause: String },
-    /// Inventory paths the plan would not leave as they are committed.
-    Differs { paths: Vec<String> },
+    /// Inventory paths the plan would not leave as they are committed:
+    /// those it writes, and those it holds back as a conflict or a file
+    /// kendex did not write, which a refresh with edits discarded leaves as
+    /// they are.
+    Differs {
+        written: Vec<String>,
+        held: Vec<String>,
+    },
 }
 
 /// Whether every committed render is the bytes this checkout renders.
@@ -62,21 +71,40 @@ fn refusal(finding: &Finding) -> String {
             text.push_str(cause);
             text.push('\n');
         }
-        Finding::Differs { paths } => {
-            text.push_str(&line("differs", &paths.len().to_string()));
-            text.push_str(
-                "a refresh of this checkout with edits discarded writes these tracked \
-                 paths, or refuses to, so the committed bytes are not the ones it \
-                 renders; the refresh after the merge keeps each as an edit and \
-                 `kendex verify` on main fails on it:\n",
-            );
-            for path in paths {
-                text.push_str(&format!("  {path}\n"));
+        Finding::Differs { written, held } => {
+            let count = written.len() + held.len();
+            text.push_str(&line("differs", &count.to_string()));
+            if !written.is_empty() {
+                text.push_str(
+                    "a refresh of this checkout with edits discarded writes these tracked \
+                     paths, so the committed bytes are not the ones it renders; the \
+                     refresh after the merge keeps each as an edit and `kendex verify` \
+                     on main fails on it:\n",
+                );
+                for path in written {
+                    text.push_str(&format!("  {path}\n"));
+                }
+                text.push_str(
+                    "change the source so it renders the committed bytes, or commit the \
+                     bytes `kendex refresh --discard-edits` writes at a checkout that may \
+                     run it\n",
+                );
             }
-            text.push_str(
-                "change the source so it renders the committed bytes, or commit the bytes \
-                 `kendex refresh --discard-edits` writes at a checkout that may run it\n",
-            );
+            if !held.is_empty() {
+                text.push_str(
+                    "a refresh holds these tracked paths back, with edits discarded or \
+                     not, as a conflict or a file kendex did not write, so their bytes \
+                     were never compared with what this checkout renders:\n",
+                );
+                for path in held {
+                    text.push_str(&format!("  {path}\n"));
+                }
+                text.push_str(
+                    "run `kendex refresh` at a checkout that may run it and settle the row \
+                     it reports for each, deleting a file kendex did not write where a \
+                     render goes, then refresh again and commit the bytes it writes there\n",
+                );
+            }
         }
     }
     text
@@ -96,7 +124,8 @@ fn refusal(finding: &Finding) -> String {
 ///
 /// A render the plan holds back, such as a file kendex never wrote sitting
 /// where a render goes, is a refusal discarding edits does not lift: its
-/// bytes were never compared, so it is named the same.
+/// bytes were never compared, so it is named too, apart from the writes
+/// because settling the refresh's row for it is the way out.
 ///
 /// The record is taken out of the set judged: the plan writes it whenever a
 /// branch's sources move, and a pull request leaves it as `main` holds it
@@ -104,26 +133,32 @@ fn refusal(finding: &Finding) -> String {
 fn judge(report: &EngineReport, root: &Path) -> Standing {
     let mut inventory = report.generated.relative(root);
     inventory.remove(LOCK_FILE);
+    let relative =
+        |path: &std::path::PathBuf| path.strip_prefix(root).ok().map(crate::paths::slashed);
     let reached: Vec<String> = report
         .plan
         .ops
         .iter()
         .flat_map(|planned| planned.op.touched())
-        .chain(report.generated.held.iter().cloned())
-        .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
+        .filter_map(|path| relative(&path))
         .collect();
-    let paths: Vec<String> = inventory
+    let holds: Vec<String> = report.generated.held.iter().filter_map(relative).collect();
+    let under = |listed: &String, paths: &[String]| {
+        paths
+            .iter()
+            .any(|path| path == listed || within(listed, path))
+    };
+    let (held, rest): (Vec<String>, Vec<String>) = inventory
         .into_iter()
-        .filter(|listed| {
-            reached
-                .iter()
-                .any(|path| path == listed || within(listed, path))
-        })
+        .partition(|listed| under(listed, &holds));
+    let written: Vec<String> = rest
+        .into_iter()
+        .filter(|listed| under(listed, &reached))
         .collect();
-    if paths.is_empty() {
+    if written.is_empty() && held.is_empty() {
         Standing::Current
     } else {
-        Standing::Refused(Finding::Differs { paths })
+        Standing::Refused(Finding::Differs { written, held })
     }
 }
 
@@ -182,67 +217,14 @@ fn record(env: &Env, root: &Path) -> Result<Lock, String> {
     }
 }
 
-/// A copy of the files a commit of `root` carries: every tracked file and
-/// every untracked one git does not ignore, as the working tree holds it.
-///
-/// The planner reads every file in a render tree, so an ignored file there,
-/// such as the `__pycache__` a run of a skill's Python scripts leaves, makes
-/// it plan the tree over again. No commit carries that file, and no clone
-/// `tools/lock-record` refreshes holds it, so the check judges this copy
-/// and leaves the checkout's leftovers out.
-///
-/// The copy holds no `.git`, so its plan writes no inventory, which
-/// `own_inventory.rs` judges, and keeps every position it holds back where
-/// a checkout keeps only those its committed inventory lists.
-fn committed_copy(root: &Path) -> Result<tempfile::TempDir, String> {
-    let tmp = tempfile::tempdir().map_err(|error| format!("scratch directory: {error}"))?;
-    let copy = crate::test_util::rooted(&tmp);
-    let listed = crate::test_util::git(
-        root,
-        &[
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ],
-    );
-    for carried in listed.split('\0').filter(|carried| !carried.is_empty()) {
-        let from = root.join(carried);
-        let meta = match std::fs::symlink_metadata(&from) {
-            Ok(meta) => meta,
-            // A tracked file deleted in the working tree is not carried.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("read {carried}: {error}")),
-        };
-        let to = copy.join(carried);
-        let copied = to
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| match meta.file_type().is_symlink() {
-                true => std::fs::read_link(&from)
-                    .and_then(|target| std::os::unix::fs::symlink(target, &to)),
-                false => std::fs::copy(&from, &to).map(|_| ()),
-            });
-        copied.map_err(|error| format!("copy {carried}: {error}"))?;
-    }
-    Ok(tmp)
-}
-
-/// A checkout held to its own declaration and record, read off a copy of
-/// what a commit of it carries.
+/// A checkout held to its own declaration and record.
 fn check(root: &Path) -> Standing {
     let env = match Env::detect() {
         Ok(env) => env,
         Err(error) => return unplanned(root, error.to_string()),
     };
-    let tmp = match committed_copy(root) {
-        Ok(tmp) => tmp,
-        Err(cause) => return unplanned(root, cause),
-    };
-    let copy = crate::test_util::rooted(&tmp);
-    match (declaration(&env, &copy), record(&env, &copy)) {
-        (Ok(declared), Ok(lock)) => check_against(&env, &copy, &declared, &lock),
+    match (declaration(&env, root), record(&env, root)) {
+        (Ok(declared), Ok(lock)) => check_against(&env, root, &declared, &lock),
         (Err(cause), _) | (_, Err(cause)) => unplanned(root, cause),
     }
 }
@@ -270,29 +252,86 @@ fn instructed_skill(declared: &Manifest) -> String {
         .clone()
 }
 
-/// What a control plants its defect into: the host environment, a copy of
-/// this checkout as [`check`] plans it, and that copy's declaration and
-/// record, to change in memory before the plan.
+/// What a control plants its defect into: the host environment, a
+/// checkout as [`check`] plans it, and its declaration and record, to
+/// change in memory before the plan.
 struct Planted {
     env: Env,
-    _tmp: tempfile::TempDir,
-    copy: std::path::PathBuf,
+    _tmp: Option<tempfile::TempDir>,
+    root: std::path::PathBuf,
     declared: Manifest,
     lock: Lock,
 }
 
 impl Planted {
+    /// This checkout itself, for a control that changes only the
+    /// declaration or the record.
+    fn here() -> Self {
+        Self::at(crate::test_util::checkout_root(), None)
+    }
+
+    /// A scratch repository holding this checkout's files as a commit of it
+    /// would carry them, for a control that changes a file: every tracked
+    /// file and every untracked one Git does not ignore, as the working tree
+    /// holds them, all staged so the planner's Git discovery reads the copy
+    /// as it reads the checkout.
     #[allow(clippy::expect_used)]
-    fn new() -> Self {
-        let env = Env::detect().expect("the host environment is readable");
-        let tmp = committed_copy(&crate::test_util::checkout_root()).expect("the checkout copies");
+    fn copied() -> Self {
+        let root = crate::test_util::checkout_root();
+        let tmp = tempfile::tempdir().expect("a scratch directory");
         let copy = crate::test_util::rooted(&tmp);
-        let declared = declaration(&env, &copy).expect("the copy's manifest reads");
-        let lock = record(&env, &copy).expect("the copy's install record reads");
+        let listed = crate::test_util::git(
+            &root,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+        );
+        // Git lists an untracked nested repository, such as a linked
+        // worktree, as its directory with a trailing slash: none of its files
+        // is this checkout's.
+        let carried = listed
+            .split('\0')
+            .filter(|carried| !carried.is_empty() && !carried.ends_with('/'));
+        for carried in carried {
+            let from = root.join(carried);
+            let meta = match std::fs::symlink_metadata(&from) {
+                Ok(meta) => meta,
+                // A tracked file deleted in the working tree is not carried.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => panic!("read {carried}: {error}"),
+            };
+            let to = copy.join(carried);
+            std::fs::create_dir_all(to.parent().expect("a carried file has a parent"))
+                .expect("the copy's directory is writable");
+            match meta.file_type().is_symlink() {
+                true => std::os::unix::fs::symlink(
+                    std::fs::read_link(&from).expect("the link reads"),
+                    &to,
+                )
+                .expect("the link copies"),
+                false => {
+                    std::fs::copy(&from, &to).expect("the file copies");
+                }
+            }
+        }
+        crate::test_util::git(&copy, &["init", "-q"]);
+        crate::test_util::git(&copy, &["add", "-A", "-f"]);
+        Self::at(copy, Some(tmp))
+    }
+
+    #[allow(clippy::expect_used)]
+    fn at(root: std::path::PathBuf, tmp: Option<tempfile::TempDir>) -> Self {
+        let env = Env::detect().expect("the host environment is readable");
+        let declared = declaration(&env, &root).expect("the manifest reads");
+        let lock = record(&env, &root).expect("the install record reads");
         Planted {
             env,
             _tmp: tmp,
-            copy,
+            root,
             declared,
             lock,
         }
@@ -309,11 +348,11 @@ impl Planted {
             .push_str("\nA line no committed render carries.\n");
     }
 
-    /// The paths the check names over the planted copy; any standing but a
+    /// The paths the check names, written and held; any standing but a
     /// differs refusal fails the test.
-    fn named(&self) -> Vec<String> {
-        match check_against(&self.env, &self.copy, &self.declared, &self.lock) {
-            Standing::Refused(Finding::Differs { paths }) => paths,
+    fn named(&self) -> (Vec<String>, Vec<String>) {
+        match check_against(&self.env, &self.root, &self.declared, &self.lock) {
+            Standing::Refused(Finding::Differs { written, held }) => (written, held),
             other => panic!("expected a differs refusal, got {other:?}"),
         }
     }
@@ -326,13 +365,13 @@ impl Planted {
 /// spelled independently of the renderer.
 #[test]
 fn a_render_its_source_no_longer_renders_is_refused() {
-    let mut planted = Planted::new();
+    let mut planted = Planted::here();
     let skill = instructed_skill(&planted.declared);
     planted.grow(&skill);
 
-    let paths = planted.named();
+    let (written, _) = planted.named();
     let render = format!(".agents/skills/{skill}/SKILL.md");
-    assert!(paths.contains(&render), "{render} not in {paths:?}");
+    assert!(written.contains(&render), "{render} not in {written:?}");
 }
 
 /// A render the record holds no entry for, as on a branch that adds a
@@ -342,7 +381,7 @@ fn a_render_its_source_no_longer_renders_is_refused() {
 /// taken out in memory.
 #[test]
 fn a_render_the_record_does_not_hold_is_refused() {
-    let mut planted = Planted::new();
+    let mut planted = Planted::here();
     let skill = instructed_skill(&planted.declared);
     planted.grow(&skill);
     let before = planted.lock.entries.len();
@@ -355,9 +394,9 @@ fn a_render_the_record_does_not_hold_is_refused() {
         "the record held {skill}"
     );
 
-    let paths = planted.named();
+    let (_, held) = planted.named();
     let render = format!(".agents/skills/{skill}/SKILL.md");
-    assert!(paths.contains(&render), "{render} not in {paths:?}");
+    assert!(held.contains(&render), "{render} not in {held:?}");
 }
 
 /// A render tree holding a file the render does not write, as a hand sync
@@ -365,14 +404,42 @@ fn a_render_the_record_does_not_hold_is_refused() {
 /// bytes it renders.
 #[test]
 fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
-    let planted = Planted::new();
+    let planted = Planted::copied();
     let skill = instructed_skill(&planted.declared);
     let tree = format!(".agents/skills/{skill}");
-    let extra = planted.copy.join(&tree).join("not-rendered.md");
+    let extra = planted.root.join(&tree).join("not-rendered.md");
     assert!(!extra.exists(), "the render already holds {extra:?}");
     std::fs::write(&extra, "copied by hand\n").expect("the planted file is writable");
 
-    let paths = planted.named();
+    let (written, _) = planted.named();
     let render = format!("{tree}/SKILL.md");
-    assert!(paths.contains(&render), "{render} not in {paths:?}");
+    assert!(written.contains(&render), "{render} not in {written:?}");
+}
+
+/// A nested instruction shim deleted while its `AGENTS.md` stays: the
+/// planner finds nested instruction files through Git, so this holds the
+/// copy to the discovery the checkout gets. The shim is read off the
+/// copy's own tracked files rather than named here.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_nested_instruction_shim_deleted_is_refused() {
+    let planted = Planted::copied();
+    let listed = crate::test_util::git(&planted.root, &["ls-files", "-z", "--", "*/CLAUDE.md"]);
+    let shim = listed
+        .split('\0')
+        .find(|path| {
+            !path.is_empty()
+                && !path.starts_with('.')
+                && planted
+                    .root
+                    .join(path)
+                    .with_file_name("AGENTS.md")
+                    .is_file()
+        })
+        .expect("the checkout tracks a nested CLAUDE.md beside an AGENTS.md")
+        .to_owned();
+    std::fs::remove_file(planted.root.join(&shim)).expect("the planted shim is removable");
+
+    let (written, _) = planted.named();
+    assert!(written.contains(&shim), "{shim} not in {written:?}");
 }

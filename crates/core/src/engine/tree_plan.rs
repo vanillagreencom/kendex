@@ -22,6 +22,9 @@ use crate::model::Scope;
 
 mod link;
 
+#[cfg(test)]
+mod tests;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_tree(
     env: &Env,
