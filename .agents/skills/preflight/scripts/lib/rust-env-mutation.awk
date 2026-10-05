@@ -38,18 +38,34 @@ function code_line(s,    out, c, pair, n, token) {
     rest = substr(code, i)
     if (match(rest, /^#[[:space:]]*\[[[:space:]]*(cfg[[:space:]]*\([[:space:]]*test[[:space:]]*\)|test)[[:space:]]*\]/)) {
       pending_test = 1
+      sig_parens = sig_brackets = sig_angles = sig_braces = 0
       i += RLENGTH - 1
       continue
     }
     c = substr(code, i, 1)
     if (c == "{") {
       depth++
-      if (pending_test && !test_depth) test_depth = depth
-      pending_test = 0
+      if (pending_test) {
+        # Const expressions in a signature are not the attributed item body.
+        if (sig_parens || sig_brackets || sig_angles || sig_braces) sig_braces++
+        else {
+          if (!test_depth) test_depth = depth
+          pending_test = 0
+        }
+      }
     } else if (c == "}") {
+      if (pending_test && sig_braces) sig_braces--
       if (test_depth == depth) test_depth = 0
       depth--
-    } else if (c == ";") pending_test = 0
+    } else if (pending_test && !sig_braces) {
+      if (c == "(") sig_parens++
+      else if (c == ")") sig_parens--
+      else if (c == "[") sig_brackets++
+      else if (c == "]") sig_brackets--
+      else if (c == "<") sig_angles++
+      else if (c == ">" && sig_angles && substr(code, i - 1, 1) != "-") sig_angles--
+      else if (c == ";" && !sig_parens && !sig_brackets && !sig_angles) pending_test = 0
+    }
     if ((file_test || test_depth) && (i == 1 || substr(code, i - 1, 1) !~ /[[:alnum:]_:]/) &&
         rest ~ /^(std[[:space:]]*::[[:space:]]*)?env[[:space:]]*::[[:space:]]*(set_var|remove_var)[[:space:]]*\(/) hit = 1
   }

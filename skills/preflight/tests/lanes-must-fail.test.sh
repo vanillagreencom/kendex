@@ -207,6 +207,17 @@ pf_world() {
     rusttestfn)
       printf '#[test]\nfn case() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/src/lib.rs"
       ;;
+    rustsignature)
+      local error_type
+      case "$2" in
+        array) error_type='[(); 1]' ;;
+        block) error_type='[(); { 1 }]' ;;
+        generic) error_type='Error<{ 1 }>' ;;
+        *) return 1 ;;
+      esac
+      # These error types implement Debug, so Rust accepts the test signature.
+      printf '#[derive(Debug)]\nstruct Error<const N: usize>;\n#[test]\nfn case() -> Result<(), %s> {\n    unsafe { std::env::set_var("KEY", "value"); }\n    Ok(())\n}\nfn production() { unsafe { std::env::set_var("KEY", "value"); } }\n' "$error_type" >"$R/src/lib.rs"
+      ;;
     # Written from the shell, never with cat reading a file: a cat-fed
     # fixture pushes several hundred KB before it blocks, so it passes
     # either way.
@@ -283,6 +294,12 @@ IFS= read -r -d '' rows <<'ROWS' || :
 Rust test files cannot set the process environment|rustenv|-|-|1|tests/env.rs:2: [rust-test-env-mutation]|-
 Rust inline test modules cannot remove process environment|rustremove|-|-|1|src/lib.rs:4: [rust-test-env-mutation]|-
 Rust test functions cannot mutate process environment|rusttestfn|--staged|-|1|src/lib.rs:2: [rust-test-env-mutation]|-
+Rust array return types retain staged test scope|rustsignature array|--staged|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
+Rust array return types retain all-file test scope|rustsignature array|--all|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
+Rust array const blocks retain staged test scope|rustsignature block|--staged|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
+Rust array const blocks retain all-file test scope|rustsignature block|--all|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
+Rust generic const blocks retain staged test scope|rustsignature generic|--staged|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
+Rust generic const blocks retain all-file test scope|rustsignature generic|--all|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
 an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
 an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
 a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155
