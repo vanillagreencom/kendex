@@ -146,7 +146,7 @@ Read when opened. The format, templates, and workflows are the `decider` skill's
 
 ### `CHANGELOG.md` and `changelog.d/`
 
-The `changelog-entries` lane owns the shape, and its [release-version rule](../commit-guards/CHECKS.md#release-versions) owns the version and the fragment section. Follow the repository's `changelog.d/README.md`.
+The `changelog-entries` lane owns the shape, and its release-version rule, the commit-guards skill's CHECKS.md § Release versions, owns the version and the fragment section. Follow the repository's `changelog.d/README.md`.
 
 ## Format
 
