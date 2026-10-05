@@ -26,4 +26,4 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `skill-load-record`: Remembers which skills each Copilot agent has loaded, so the skill-load check can let that agent's edits and Linear commands through once it has.
 - `stop-failure-row`: Writes down that a turn stopped on an error such as a usage limit, so a fleet's overseer that hits its limit is seen to be stuck without anyone reading its screen.
 - `task-completed-check`: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
-- `worktree-session-claim`: Marks a git worktree the worktree skill created or adopted as the session's when a session starts in it, so cleanup does not delete a worktree someone opened by hand and is still working in.
+- `worktree-session-claim`: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.
