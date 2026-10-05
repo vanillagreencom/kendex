@@ -34,7 +34,7 @@ Linear lets the fleet's one app token write in every team, whatever team access 
 
 - `LINEAR_TEAM_PASSED` holds the references the guard let through in this invocation, so `update_issue` called by another verb, in a subshell that inherits it, sends no second read and prints no second inactive line.
 - An identifier's team is its prefix, upper-cased. Any other reference, a UUID, is read for `issue.team.key`; a failed read refuses as `refused=cross-team-unread`.
-- A prefix equal to `LINEAR_TEAM` passes with no request. Otherwise `linear_own_team` resolves `LINEAR_TEAM` once per invocation through `resolve_team_node`, since the setting may name the team rather than key it, and the prefix must equal that key. A create compares team ids.
+- `linear_own_team` resolves `LINEAR_TEAM` once per invocation through `resolve_team_node`, since the setting may name the team rather than key it, and the prefix must equal that key. A prefix equal to the raw setting is resolved too: one team's key can be another team's name, and only `resolve_team_node` refuses that ambiguity. A create compares team ids.
 - The refusal is the keyed `linear: refused=cross-team ... route=peer-mail` line, then a `fix=` line naming `lane-mail peer send --repo`. With no `LINEAR_TEAM`, both guards print `linear: cross-team-guard=inactive action=<verb> cause=no-team` and let the write through.
 - An identifier moved to another team keeps resolving in Linear under its old prefix; the guard judges the prefix it was given.
 

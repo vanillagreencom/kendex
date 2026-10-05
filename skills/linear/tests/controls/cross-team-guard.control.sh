@@ -62,23 +62,25 @@ control_replace scripts/commands/issues.sh 1 \
 # How the guard judges an issue's team and its own.
 control_expect "a team configured by name resolves to its key and refuses"
 control_replace scripts/lib/common.sh 1 \
-    '        if [[ "$team" != "$DEFAULT_TEAM" ]]; then' \
+    '        if [[ "$team" != "$(jq -r '"'"'.key'"'"' <<<"$LINEAR_OWN_TEAM")" ]]; then' \
     '        if false; then'
-
-control_expect "update of an own team issue writes with no guard request"
-control_replace scripts/lib/common.sh 1 \
-    '        if [[ "$team" != "$DEFAULT_TEAM" ]]; then' \
-    '        if true; then'
 
 control_expect "an own team issue passes with the team configured by name"
 control_replace scripts/lib/common.sh 1 \
-    '            if [[ "$team" != "$(jq -r '"'"'.key'"'"' <<<"$LINEAR_OWN_TEAM")" ]]; then' \
-    '            if true; then'
+    '        if [[ "$team" != "$(jq -r '"'"'.key'"'"' <<<"$LINEAR_OWN_TEAM")" ]]; then' \
+    '        if true; then'
 
 control_expect "a configured team that matches no team refuses the write"
 control_replace scripts/lib/common.sh 1 \
-    '            linear_own_team || return 1' \
-    '            linear_own_team || continue'
+    '        linear_own_team || return 1' \
+    '        linear_own_team || continue'
+
+# A prefix equal to the raw setting passing unresolved lets an ambiguous
+# LINEAR_TEAM through.
+control_expect "a configured team that is one team key and another team name refuses an update with that prefix"
+control_replace scripts/lib/common.sh 1 \
+    '        linear_own_team || return 1' \
+    '        [[ "$team" != "$DEFAULT_TEAM" ]] || { LINEAR_TEAM_PASSED+="$ref "; continue; }; linear_own_team || return 1'
 
 control_expect "bulk-update reads a team configured by name once"
 control_replace scripts/lib/common.sh 1 \

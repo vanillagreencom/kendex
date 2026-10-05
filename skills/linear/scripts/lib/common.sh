@@ -832,8 +832,9 @@ LINEAR_TEAM_PASSED=" "
 
 # Refuse, before any write, a write to an issue outside this checkout's team.
 # An identifier's team is its prefix, judged with no request; any other
-# reference (a UUID) is read for its team. A prefix equal to LINEAR_TEAM
-# passes with no request; otherwise LINEAR_TEAM is resolved to its key.
+# reference (a UUID) is read for its team. LINEAR_TEAM is always resolved to
+# its key, even when it equals the prefix: one team's key can be another
+# team's name, and only resolve_team_node refuses that ambiguity.
 # Usage: linear_guard_issue_team ACTION REF... || return 1
 linear_guard_issue_team() {
     local action="$1" ref team vars result refs=()
@@ -859,12 +860,10 @@ linear_guard_issue_team() {
                 return 1
             fi
         fi
-        if [[ "$team" != "$DEFAULT_TEAM" ]]; then
-            linear_own_team || return 1
-            if [[ "$team" != "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]]; then
-                linear_cross_team_refusal "$action" "$team" "$ref"
-                return 1
-            fi
+        linear_own_team || return 1
+        if [[ "$team" != "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]]; then
+            linear_cross_team_refusal "$action" "$team" "$ref"
+            return 1
         fi
         LINEAR_TEAM_PASSED+="$ref "
     done

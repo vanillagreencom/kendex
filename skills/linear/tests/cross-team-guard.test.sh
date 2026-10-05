@@ -10,8 +10,9 @@
 # mutations sent in order, and the guard's first stderr line, `-` for none.
 #
 # Fixture teams: KEN (named kendex) and VGS (named vsys), each also reachable
-# by its team UUID. KEN-1 and VGS-1 are one issue in each, also reachable by
-# their UUIDs.
+# by its team UUID, and OPS, named VGS, so that a LINEAR_TEAM of VGS is one
+# team's key and another's name. KEN-1 and VGS-1 are one issue in KEN and VGS,
+# also reachable by their UUIDs.
 
 set -euo pipefail
 
@@ -48,7 +49,8 @@ jq -cj '
   def page($nodes): {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes};
   def teams: [
     {id: "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d", key: "KEN", name: "kendex"},
-    {id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d", key: "VGS", name: "vsys"}];
+    {id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d", key: "VGS", name: "vsys"},
+    {id: "4e3d2c1b-0a9f-4e8d-b7c6-5a4b3c2d1e0f", key: "OPS", name: "VGS"}];
   def issue($ref):
     ($ref | ascii_upcase) as $r
     | (if ($r | startswith("VGS")) or $r == "0B5F6C1E-2D3A-4B7C-8E9F-1A2B3C4D5E6F"
@@ -118,7 +120,8 @@ refused() { # ACTION ISSUE TEAM OWN — the keyed refusal line
 # label|team|calls|args|rc|writes|guard
 # calls is the expected count, or `-` where it is not asserted. A refusal
 # reads LINEAR_TEAM's key once, since the setting may name the team rather
-# than key it, and an issue named by UUID once for its team. guard is
+# than key it, and an issue named by UUID once for its team; a pass reads it
+# too, even when the prefix equals the setting. guard is
 # `-`, `inactive ACTION`, `unread ACTION ISSUE`, or `refused ACTION ISSUE
 # TEAM OWN` (ISSUE `-` for a create), or `error TEXT` for no guard line and
 # TEXT on stderr, the cause of a refusal before or inside the guard.
@@ -136,19 +139,20 @@ delete of another team issue is refused as trash|KEN|1|issues delete VGS-1|1|-|r
 an issue named by UUID is read for its team and refused|KEN|2|issues update VGS_UUID --state Done|1|-|refused update VGS_UUID VGS KEN
 an issue whose team cannot be read is refused|KEN|1|issues update DEAD_UUID --title t|1|-|unread update DEAD_UUID
 a configured team that matches no team refuses the write|ghost|1|issues update VGS-1 --title t|1|-|error Team not found: ghost
+a configured team that is one team key and another team name refuses an update with that prefix|VGS|1|issues update VGS-1 --title t|1|-|error Ambiguous team: VGS matches
 an unreadable attach path refuses before the guard reads the team|kendex|0|issues update KEN-1 --attach /nonexistent/file.png|1|-|error --attach path not readable
 bulk-update refuses an unreadable attach path before the guard reads the team|kendex|0|issues bulk-update KEN-1 KEN-2 --attach /nonexistent/file.png|1|-|error --attach path not readable
 a team configured by name resolves to its key and refuses|kendex|1|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
 create in another team is refused|KEN|2|issues create --team vsys --title t|1|-|refused create - VGS KEN
 create in another team named by UUID is refused|KEN|2|issues create --team VGS_TEAM_UUID --title t|1|-|refused create - VGS KEN
-update of an own team issue writes with no guard request|KEN|2|issues update KEN-1 --title t|0|issueUpdate|-
+update of an own team issue resolves the configured team and writes|KEN|3|issues update KEN-1 --title t|0|issueUpdate|-
 an own team issue named by UUID passes|KEN|-|issues update KEN_UUID --title t|0|issueUpdate|-
 an own team issue passes with the team configured by name|kendex|-|issues update KEN-1 --title t|0|issueUpdate|-
 an own team issue passes with the team configured by UUID|KEN_TEAM_UUID|-|issues update KEN-1 --title t|0|issueUpdate|-
 bulk-update of own team issues writes each|KEN|-|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
 bulk-update reads a team configured by name once|kendex|5|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
-archive of an own team issue passes|KEN|2|issues archive KEN-1|0|issueArchive|-
-trash of an own team issue passes|KEN|2|issues trash KEN-1|0|issueDelete|-
+archive of an own team issue passes|KEN|3|issues archive KEN-1|0|issueArchive|-
+trash of an own team issue passes|KEN|3|issues trash KEN-1|0|issueDelete|-
 create under the own team by another spelling passes|kendex|-|issues create --team KEN --title t|0|issueCreate|-
 block of an own team issue by another team issue passes|KEN|-|issues block KEN-1 --by VGS-1|0|issueUpdate,issueRelationCreate,commentCreate|-
 comments create on another team issue passes|KEN|-|comments create VGS-1 --body hello|0|commentCreate|-
