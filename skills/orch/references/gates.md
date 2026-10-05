@@ -13,7 +13,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` to a checkout of the target pull request's consume
 
 Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because orch's own merge gates refuse an open thread: submit-pr's gate 3 and merge-pr's thread read ([thread-read.md](thread-read.md)). A base rule refuses one too where it requires thread resolution.
 
-The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT` and `PR_REVIEW_WAIT_SECS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`.
+The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_WAIT_SECS` and `PR_COPILOT_REQUESTS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`.
 
 ## Copilot requests
 
@@ -23,7 +23,7 @@ Every first or repeated Copilot request uses the mode owner:
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-`off` ends the request path without a request or a wait. `approval` confirms that the request succeeded. A nonzero exit is no successful request: report it and stop. `approval-wait --help` owns the action contract.
+`off` ends the request path without a request or a wait. `approval` confirms that the request succeeded. `fallback` means no request went out, because `PR_COPILOT_REQUESTS` is `off` or GitHub refused it: start no Copilot wait, and in a lane send the `copilot-fallback` notice for the current head at once, as [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends it, so the overseer approves the head. A nonzero exit is no mode: report it and stop. `approval-wait --help` owns the action contract.
 
 ## Which waiter answers which state
 
@@ -50,7 +50,7 @@ Work the chain in this order:
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
    ```
 
-   On `approval`, re-run the wait. The request works on a base the automatic-review ruleset does not target.
+   On `approval`, re-run the wait. On `fallback`, route as [Copilot requests](#copilot-requests) says, then re-run the wait. The request works on a base the automatic-review ruleset does not target.
 
 2. Merge the bottom of the stack. GitHub retargets the next PR onto the new base, but a retarget is not a documented review trigger: request the review by hand as in step 1, or push a new head where the rule's `review_on_push` is on, then re-run the wait.
 3. Fallback, only when the manual request draws nothing: close the PR and open a fresh one against the default branch. Close-and-open, never reopen — reopening re-arms the reviewer only on a PR it has already reviewed once, and does nothing for one it never reviewed.

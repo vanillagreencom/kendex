@@ -51,6 +51,12 @@ REQUEST_LOG="$TMP_ROOT/requests"
 QUERY_LOG="$TMP_ROOT/queries"
 EXECUTION_LOG="$TMP_ROOT/executions"
 
+# write_settings FILE GATE COPILOT: COPILOT empty leaves PR_COPILOT_REQUESTS unset.
+write_settings() {
+  printf '[env]\nREVIEW_GATE_MODE = %s\n' "$2" > "$1"
+  [[ -z "$3" ]] || printf 'PR_COPILOT_REQUESTS = "%s"\n' "$3" >> "$1"
+}
+
 run_action() { # SCRIPT REQUEST_EXIT ARGS...
   local script="$1" request_exit="$2"
   shift 2
@@ -67,20 +73,30 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
 
+# Columns: label|action|consumer gate|caller PR_COPILOT_REQUESTS|base PR_COPILOT_REQUESTS|gh pr edit exit|rc|stdout|requests
 for row in \
-  'disabled request|--request-review|"off"|0|0|off|0' \
-  'disabled resolution|--resolve-mode|"off"|0|0|off|0' \
-  'enabled request|--request-review|"enforce"|0|0|approval|1' \
-  'unknown policy|--request-review|"junk"|0|2||0' \
-  'empty policy|--request-review|""|0|2||0' \
-  'unreadable policy|--request-review|["off"]|0|2||0' \
-  'failed GitHub request|--request-review|"enforce"|8|8||1'; do
-  IFS='|' read -r label action setting request_exit want_rc want_out want_requests <<< "$row"
-  printf '[env]\nREVIEW_GATE_MODE = %s\n' "$setting" > "$BASE/kendex.settings.toml"
+  'disabled request|--request-review|"off"|||0|0|off|0' \
+  'disabled resolution|--resolve-mode|"off"|||0|0|off|0' \
+  'enabled request|--request-review|"enforce"|||0|0|approval|1' \
+  'unknown policy|--request-review|"junk"|||0|2||0' \
+  'empty policy|--request-review|""|||0|2||0' \
+  'unreadable policy|--request-review|["off"]|||0|2||0' \
+  'refused GitHub request|--request-review|"enforce"|||8|0|fallback|1' \
+  'Copilot requests off|--request-review|"enforce"|off||0|0|fallback|0' \
+  'Copilot requests off on an off gate|--request-review|"off"|off||0|0|off|0' \
+  'Copilot requests off at resolution|--resolve-mode|"enforce"|off||0|0|approval|0' \
+  'base checkout cannot turn Copilot requests off|--request-review|"enforce"||off|0|0|approval|1' \
+  'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0'; do
+  IFS='|' read -r label action setting caller_copilot base_copilot request_exit want_rc want_out want_requests <<< "$row"
+  write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
+  write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
   run_action "$RUN" "$request_exit" "$action" --base-checkout "$BASE"
   assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$EXECUTION_LOG")" "$want_rc|$want_out|$want_requests|" "$label without base execution" "$ERR"
   [[ "$setting" != '"off"' ]] || assert_eq "$(cat "$QUERY_LOG")" '' "$label reads no native gate" "$ERR"
 done
+write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
+write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
+run_action "$RUN" 0 --request-review --base-checkout "$BASE"
 assert_eq "$(cat "$REQUEST_LOG")" "$BASE|pr edit 42 --repo consumer/repo --add-reviewer @copilot" \
   'the request names the consumer repository, not the inherited catalog' "$ERR"
 assert_contains "$(cat "$QUERY_LOG")" "$BASE|api repos/consumer/repo/rules/branches/feature%2Fbase --paginate" \
@@ -94,20 +110,26 @@ for action in --request-review --resolve-mode; do
     assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '2||0||' "$action refuses unavailable context [$context] before native reads" "$ERR"
   done
 done
+# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests
 for row in \
-  'off-gate~"off"~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
-  'settings-failure~["off"]~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0' \
-  'unknown-policy~"junk"~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
-  'base-directory~"off"~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
-  'stacked-base-execution~"enforce"~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
-  'stdout-isolation~"enforce"~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1'; do
-  IFS='~' read -r label setting old new want_rc want_out want_requests <<< "$row"
-  printf '[env]\nREVIEW_GATE_MODE = %s\n' "$setting" > "$BASE/kendex.settings.toml"
+  'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
+  'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0' \
+  'unknown-policy~"junk"~~~0~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
+  'base-directory~"off"~~~0~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
+  'stacked-base-execution~"enforce"~~~0~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
+  'stdout-isolation~"enforce"~~~0~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1' \
+  'copilot-off~"enforce"~off~~0~    if [[ "$COPILOT_REQUESTS" == off ]]; then~    if false; then~0~fallback~0' \
+  'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback~1' \
+  'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
+  'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0'; do
+  IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests <<< "$row"
+  write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
+  write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
   scripts="$(mutant_scripts "$label/orch" approval-wait)"
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$label/github"
   ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/$label/review-gate"
   mutate_file "$scripts/approval-wait" "$old" "$new"
-  run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+  run_action "$scripts/approval-wait" "$request_exit" --request-review --base-checkout "$BASE"
   if [[ "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$EXECUTION_LOG")" == "$want_rc|$want_out|$want_requests|" ]]; then
     fail "$label control did not turn its behavioral assertion red"
   else

@@ -20,7 +20,7 @@ The target set is per-repo configuration, not GitHub behaviour. In `vanillagreen
 
 | Situation | Action |
 |---|---|
-| The base is outside the target set | when orch is present, request the reviewer through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests. An `off` answer ends the request path with no request. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
+| The base is outside the target set | when orch is present, request the reviewer through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
 | The request, after an `approval` answer or made directly, draws nothing | close the pull request and open a fresh one against the default branch |
 | The reviewer already reviewed this pull request once and a new review is needed | reopen it, which re-arms the reviewer |
 | The reviewer never reviewed this pull request | reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one |

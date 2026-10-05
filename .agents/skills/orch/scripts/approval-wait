@@ -3,8 +3,8 @@
 # gate mode from consumer policy and native approval. Contract: --help.
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
 # merge-pr and ci-fix. --request-review prints the same enum after skipping
-# an off gate or requesting Copilot. --json stdout is consumed by their
-# gate routing.
+# an off gate or requesting Copilot, or fallback when no request went out.
+# --json stdout is consumed by their gate routing.
 # The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
 
@@ -105,6 +105,14 @@ approval_message() {
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
       printf '%s\n' "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block"
       ;;
+    copilot-requests-invalid)
+      printf 'approval-wait: copilot-requests-invalid value=%q\n' "$COPILOT_REQUESTS"
+      printf '%s\n' 'PR_COPILOT_REQUESTS must be on or off.'
+      ;;
+    copilot-request-refused)
+      printf 'approval-wait: copilot-request-refused pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$request_rc"
+      printf '%s\n' "GitHub did not take the Copilot review request for PR #$PR_NUM in $REPO; the caller asks the overseer for the head approval instead."
+      ;;
     result-failed)
       printf 'approval-wait: result-failed pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$rc"
       printf '%s\n' "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)"
@@ -175,6 +183,10 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --request-review
                  resolve through --base-checkout each time: off skips; approval requests Copilot.
                  Print the mode on success; failure is nonzero and authorizes no wait or retry.
+                 Print fallback, exit 0, when an approval gate sends no request:
+                 PR_COPILOT_REQUESTS is off, or GitHub refused the request
+                 (copilot-request-refused on stderr). The caller then asks the
+                 overseer for the head approval and starts no Copilot wait.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -219,6 +231,11 @@ Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
   PR_REVIEW_WAIT_SECS   total review-wait budget in seconds, read only
                         when no max_wait positional is passed (default
                         900)
+  PR_COPILOT_REQUESTS   on | off — whether --request-review asks Copilot
+                        for a review (default on). Read from the caller's
+                        project, as auth is, never from --base-checkout:
+                        Copilot spend is the caller's account's. Any other
+                        value exits 2
 
 Timeout (PR_REVIEW_ON_TIMEOUT / --on-timeout): when the gate signal never
 arrives before the deadline, "block" reports "timeout" (exit 1) and the
@@ -326,7 +343,8 @@ Long waiter launch:
 
 Exit codes:
   0  approved / proceeded (deadline reached under
-     PR_REVIEW_ON_TIMEOUT=proceed); --resolve-mode printed a mode
+     PR_REVIEW_ON_TIMEOUT=proceed); --resolve-mode printed a mode;
+     --request-review printed off, approval or fallback
   1  changes requested, unresolved comments pending, timeout,
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
@@ -410,6 +428,15 @@ if $REQUEST_REVIEW || $RESOLVE_MODE || [[ -n "$BASE_CHECKOUT" ]]; then
     approval_message action-options >&2
     exit 2
   fi
+fi
+# Read before the move into the base checkout, so it is the caller's setting.
+COPILOT_REQUESTS=on
+if $REQUEST_REVIEW; then
+  COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2
+  case "$COPILOT_REQUESTS" in
+    on|off) ;;
+    *) approval_message copilot-requests-invalid >&2; exit 2 ;;
+  esac
 fi
 if [[ -n "$BASE_CHECKOUT" ]]; then
   if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
@@ -727,10 +754,20 @@ resolve_gate_mode() {
 
 if $RESOLVE_MODE || $REQUEST_REVIEW; then
   resolve_gate_mode || exit 2
+  answer="$GATE_MODE"
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
-    gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || exit $?
+    if [[ "$COPILOT_REQUESTS" == off ]]; then
+      answer=fallback
+    else
+      request_rc=0
+      gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
+      if [[ "$request_rc" -ne 0 ]]; then
+        approval_message copilot-request-refused >&2
+        answer=fallback
+      fi
+    fi
   fi
-  printf '%s\n' "$GATE_MODE"
+  printf '%s\n' "$answer"
   exit 0
 fi
 

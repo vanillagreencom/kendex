@@ -11,12 +11,12 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C [
 Approve only on exit `0` whose `head=` starts with the SHA. Any other result approves nothing, writes no `use1` row and wakes the lane with the lines it printed, or on exit `2` its first stderr line: a `suppressed-entry` is a finding Copilot wrote only in a review body, which no thread carries.
 
 - `copilot-declined-unchanged` → when the notice lists every thread `github.sh pr-threads [N]` gives with `author` `copilot-pull-request-reviewer` and each reply holds at that head, and lists each body finding with the comment answering it, post one comment saying why each decline holds, then approve the head at once as the overseer's app with `overseer-approve`, with no Copilot re-review. Otherwise direct the lane on what does not hold and approve nothing.
-- `copilot-fallback` → approve the moved head as the app with `overseer-approve` when the lane's own review of it passed with no open blocker; otherwise wake the lane with what its review left open.
+- `copilot-fallback` → approve the head as the app with `overseer-approve` when the lane's own review of it passed with no open blocker; otherwise wake the lane with what its review left open.
 - `copilot-approved-on-rerequest` → Copilot approved the head; approve nothing.
 
 ## Fallback approval
 
-An `awaiting-stale` line means no approval reached the head within the quiet period. When the owning lane's own review of that head passed with no open blocker, approve the head as the overseer's GitHub App with `overseer-approve`, whose approval the base's rules count like Copilot's, and send one notice naming the pull request and the head, to the master while one runs. No ruleset or setting changes. Otherwise, use the [Copilot request owner](gates.md#copilot-requests), with `[PR_NUMBER]` set to `[N]` and `[REVIEW_BASE_CHECKOUT]` bound per that reference. Route its answer before any review wait. Wake the lane with what its review left open. A head that a `copilot-declined-unchanged` notice names takes that notice's rule instead.
+An `awaiting-stale` line means no approval reached the head within the quiet period. When the owning lane's own review of that head passed with no open blocker, approve the head as the overseer's GitHub App with `overseer-approve`, whose approval the base's rules count like Copilot's, and send one notice naming the pull request and the head, to the master while one runs. No ruleset or setting changes. Otherwise, use the [Copilot request owner](gates.md#copilot-requests), with `[PR_NUMBER]` set to `[N]` and `[REVIEW_BASE_CHECKOUT]` bound per that reference. Route its answer before any review wait; a `fallback` answer sent no request and leaves no Copilot review to wait for. Wake the lane with what its review left open. A head that a `copilot-declined-unchanged` notice names takes that notice's rule instead.
 
 ## Use 1 rows
 
