@@ -204,8 +204,8 @@ configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
 trivial-docs-one-over|small|dirty|docs/guide.md:21
 trivial-product-read-docs-past-the-ceiling|small|dirty|docs/authoring/README.md:100
-trivial-plan-past-the-ceiling|trivial|dirty|docs/plans/v2.md:400
-trivial-plan-beside-other-docs-past-the-ceiling|small|dirty|docs/plans/v2.md:90 docs/guide.md:10
+docs-only-past-small-is-standard|standard|dirty|docs/plans/v2.md:400
+docs-only-past-the-ceiling-within-small|small|dirty|docs/plans/v2.md:90 docs/guide.md:10
 micro-at-ceiling|micro|dirty|runtime/product.ts:20
 micro-counts-production-not-total|micro|dirty|runtime/product.ts:10 runtime/tests/product.test.sh:200
 micro-one-over|small|dirty|runtime/product.ts:21
@@ -1113,7 +1113,7 @@ PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_M
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # With no configured ceiling the allowlist takes the shipped one, and it
-# replaces the plan exemption as well as the documentation set.
+# replaces the documentation set.
 # label | expected | file:lines
 allowlist_rows=0
 while IFS='|' read -r label expected spec; do
@@ -1129,7 +1129,7 @@ while IFS='|' read -r label expected spec; do
 done <<'CASES'
 allowlisted-at-the-default-ceiling|trivial|runtime/product.ts:20
 allowlisted-one-over-the-default-ceiling|small|runtime/product.ts:21
-plan-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
+docs-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
 CASES
 require_rows change-class-allowlist-table "$allowlist_rows"
 
@@ -1439,7 +1439,7 @@ assert_eq "and branch-size-check ranks the two files the same way" "0,30" \
 
 # The settings are the base endpoint's, never the merge base's: the author
 # picks the merge base by choosing where to fork. Main allowlists src/ after
-# the fork point, which takes away the plan exemption, so a 500-line plan
+# the fork point, which takes away the documentation set, so a 10-line doc
 # forked before that commit is classed as one forked at the tip is.
 forked="$(new_repo change-class-fork-point)"
 commit_paths "$forked" baseline seed.txt
@@ -1451,19 +1451,19 @@ fork_rows=0
 while IFS='|' read -r label fork_at; do
   fork_rows=$((fork_rows + 1))
   git -C "$forked" checkout -q -B "case-$fork_rows" "$fork_at"
-  write_lines "$forked" docs/plans/p.md 500
+  write_lines "$forked" docs/guide.md 10
   git -C "$forked" add -A
-  git -C "$forked" commit -q -m "a long plan"
+  git -C "$forked" commit -q -m "a short doc"
   fork_err="$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
     -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
     "$CHANGE_CLASS" --repo "$forked" --event pull_request --base "$fork_tip" \
     --head HEAD 2>&1 >/dev/null)" || true
   assert_eq "$label" \
-    "class: class=standard measured=true cause=production-past-small production=500" \
+    "class: class=micro measured=true cause=production-within-micro production=10" \
     "$(printf '%s\n' "$fork_err" | grep '^class: ')"
 done <<FORKS
-a plan forked at the tip is classed under the tip's allowlist|$fork_tip
-a plan forked before main tightened it is classed the same way|$fork_old
+a doc forked at the tip is classed under the tip's allowlist|$fork_tip
+a doc forked before main tightened it is classed the same way|$fork_old
 FORKS
 require_rows change-class-fork-point "$fork_rows"
 

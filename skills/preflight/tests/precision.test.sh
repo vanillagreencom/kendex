@@ -148,7 +148,7 @@ printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey =
   printf 'Another repo is not ours: `foo/bar`.\n'
   printf 'A URL is not a path: `https://example.com/a/b`.\n'
   printf 'A real file: `docs/guide.md`.\n'
-  printf 'A location, not a file: `docs/plans/`.\n'
+  printf 'A location, not a file: `docs/runbooks/`.\n'
   printf 'A relative form: `./elsewhere/thing.md` and `../up/thing.md`.\n'
   printf 'TODO: tracked as #123.\n'
   printf 'FIXME: tracked as ABC-123.\n'

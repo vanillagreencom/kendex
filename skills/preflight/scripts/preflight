@@ -928,8 +928,8 @@ doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that
   # files is where this lane would earn its false positives.
   if [ -n "$subtree" ] && [ "${tok%%/*}" != "$subtree" ]; then return 1; fi
   # The token's own parent directory must already hold tracked files. A doc
-  # describing where a consuming repo will keep something (`docs/plans/<file>.md`
-  # in a repo with no docs/plans) is prose about elsewhere; only a path
+  # describing where a consuming repo will keep something (`docs/runbooks/<file>.md`
+  # in a repo with no docs/runbooks) is prose about elsewhere; only a path
   # inside a directory this repo really has is this repo's claim to keep true.
   parent="${tok%/*}"
   if ! grep -qxF -- "$parent" "$TMP/trackeddirs"; then return 1; fi

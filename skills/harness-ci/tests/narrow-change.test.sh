@@ -130,7 +130,6 @@ a nested AGENTS.md edit is held to small|class=small measured=true cause=instruc
 a SKILL.md edit is held to small|class=small measured=true cause=instruction-file|skills/orch/SKILL.md=3
 a root SKILL.md edit is held to small|class=small measured=true cause=instruction-file|SKILL.md=3
 an AGENTS.md edit an allowlist takes is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10|HARNESS_CI_TRIVIAL_PATHS=*.md
-a plan-directory AGENTS.md past the trivial ceiling is held to small|class=small measured=true cause=instruction-file|docs/plans/AGENTS.md=30
 an instruction edit past small stays standard|class=standard measured=true cause=production-past-small|skills/orch/SKILL.md=200
 ROWS
 ROW_ENV=""
