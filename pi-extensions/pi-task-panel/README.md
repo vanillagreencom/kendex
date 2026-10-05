@@ -2,6 +2,13 @@
 
 A task list above the Pi editor. The agent updates it through a tool, and you can edit it through the tasks command.
 
+## Features
+
+- Show active, pending and completed tasks.
+- Group tasks by phase and show task notes.
+- Edit, import and export the task list.
+- Restore tasks when the session resumes.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-task-panel`.
@@ -14,13 +21,6 @@ source = "kendex"
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-## Features
-
-- Show active, pending and completed tasks.
-- Group tasks by phase and show task notes.
-- Edit, import and export the task list.
-- Restore tasks when the session resumes.
-
 ## How it works
 
 The agent sends tasks to the tasks_write tool. The extension saves the list with the session and displays it above the editor. Tool calls or your edits update task status and notes. Resuming the session restores the saved list. A list over 64 KiB is saved in a file beside the session rather than in it. The newest 20 such lists are kept, so moving to an older point with `/tree` restores the list from that point. Where that file is gone, as in a fork or past the 20, the panel shows the last list the session holds and warns.
@@ -29,7 +29,7 @@ The agent sends tasks to the tasks_write tool. The extension saves the list with
 
 The visible panel keeps one rendered layout of at most 65,536 characters. It keeps sorted order for lists of at most 256 tasks. Larger lists sort when layout changes. A task change replaces these caches. Session shutdown removes the widget.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-task-panel"]`.
 
@@ -42,3 +42,7 @@ Open `/extensions:settings`; settings appear under the **Task Panel** tab. Proje
 - `showWorkflowReminder`, `showIncompleteReminder`: the hidden reminders to the agent.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

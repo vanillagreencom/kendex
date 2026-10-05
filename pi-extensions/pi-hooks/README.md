@@ -2,18 +2,6 @@
 
 A Pi extension that runs hooks installed by kendex. It checks tool calls, hands hook output to the agent after a tool call, at the end of a turn and at session start, and can report Rust errors and installation drift to the agent. It also starts a turn in an idle session that the lane-mail hooks hand mail to: an orch lane when its overseer's mail lands, or a session reading its checkout's overseer mailbox.
 
-## Install
-
-- npm: `pi install npm:@vanillagreen/pi-hooks`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
-
-```toml
-[pi-extensions."@vanillagreen/pi-hooks"]
-source = "kendex"
-```
-
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
-
 ## Features
 
 - Run installed PreToolUse hooks before Pi tool calls and give their additionalContext to the agent in interactive and headless sessions.
@@ -25,6 +13,18 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Report installation drift through the native check's `kendex-drift` message in lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
 - In a lane, report installation-repair suggestions as item counts and send a worktree notice even when the install is current. The overseer refreshes the base checkout after merge. A refresh lane, one whose launch wrote orch's refresh record, gets a notice that `kendex refresh` and `kendex apply` run there only with `--lane-refresh`, and its report whole. If lane detection fails, report the unknown status without drift details.
 - Wake an idle session the lane-mail hooks hand mail to.
+
+## Install
+
+- npm: `pi install npm:@vanillagreen/pi-hooks`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+
+```toml
+[pi-extensions."@vanillagreen/pi-hooks"]
+source = "kendex"
+```
+
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
 
 ## How it works
 
@@ -61,7 +61,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 - A session that is busy gets its mail from the lane-mail hooks at its next tool call or turn end.
 - A subagent is never woken, and the `enabled` setting turns the wake off with the hooks.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-hooks"]`.
 
@@ -73,3 +73,7 @@ Open `/extensions:settings`; settings appear under the **Hooks** tab. Project se
 - `clippyTimeoutMs`, `driftCheckTimeoutMs`: the time budgets of the two native checks. The end-of-turn clippy check runs beside Pi, so typing and other extensions keep working while it compiles, and ending the turn stops it; the next turn's check covers the edits of the turn that was ended. One clippy run at a time runs for each user on a host: a Pi session that finds another session's run in progress waits for it inside its own budget. A registered hook runs to the `timeout` its registration declares, 60 seconds where it declares none, and one past its budget refuses the call.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

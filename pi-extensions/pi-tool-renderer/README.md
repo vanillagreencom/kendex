@@ -4,6 +4,13 @@ Tool and message displays for Pi. It provides compact output, optional file diff
 
 ![tool_batch composite result with Read/grep/Bash rows](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-tool-renderer/assets/tool-batch.png) ![Edit tool with side-by-side diff renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-tool-renderer/assets/edit-diff.png)
 
+## Features
+
+- Show compact tool rows with expandable output.
+- Display file changes with side-by-side and word-level diffs.
+- Group independent read operations into one result.
+- Configure message layout and terminal symbols.
+
 ## Install
 
 Requires Pi 0.99.0 or later for guarded batch execution.
@@ -17,13 +24,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
-
-## Features
-
-- Show compact tool rows with expandable output.
-- Display file changes with side-by-side and word-level diffs.
-- Group independent read operations into one result.
-- Configure message layout and terminal symbols.
 
 ## How it works
 
@@ -40,7 +40,7 @@ Pi runs a tool and gives its call and result to the display extension. The exten
 - A write diff reads at most 700 KB of the old file and builds no diff for more than 700 KB of new content; past either limit the row says the diff was skipped. A write row keeps the old file's text only until the write finishes or the agent run ends.
 - An edit's result diff comes from the patch Pi's edit tool returns, so the renderer reads no file for it. A patch over 700 KB is not shown, and the row says the diff was skipped.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-tool-renderer"]`.
 
@@ -58,3 +58,7 @@ Open `/extensions:settings`; settings appear under the **Tool Renderer** tab. Pr
 - `stackToolCalls`, `stackChildDisplay`, `hideStackChildRows`: the stacking of consecutive native tool calls. `stackChildDisplay` stays `rows` because it has no effect while `stackToolCalls` is off, which is its default.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

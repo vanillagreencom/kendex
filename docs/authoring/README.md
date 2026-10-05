@@ -57,7 +57,7 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 ## What each kind needs
 
 - Skill: `skills/<name>/SKILL.md` with frontmatter `name` (matching the folder) and `description`; extra files in the folder ship with it.
-- Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional `model`, `color`, tool allow and deny lists, and `tracked-outputs`, file paths it commits (`docs/plans/<slug>.md`); `kendex verify` warns when an installing project ignores one.
+- Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional `model`, `color`, tool allow and deny lists, and `tracked-outputs`, file paths it commits (`reports/<slug>.md`); `kendex verify` warns when an installing project ignores one.
 - Hook: `hooks/<name>.sh` with a comment header naming `event`, an optional `matcher`, and a `description`.
 - Command: `commands/<name>.md` with frontmatter `description`.
 - MCP server: `mcp/<name>.toml` describing the invocation.

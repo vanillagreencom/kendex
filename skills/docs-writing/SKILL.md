@@ -1,7 +1,7 @@
 ---
 name: docs-writing
 description: "Load to write, rewrite, or review repository markdown or documentation HTML: README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md."
-summary: "Writing rules and templates for repository markdown and documentation HTML, with a blank-page rewrite workflow."
+summary: "The writing standard, the repository layout, what each document holds, and a finished example per file type, with a blank-page rewrite workflow."
 license: MIT
 user-invocable: true
 dependencies:
@@ -11,15 +11,15 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.0.0"
+  version: "3.0.0"
 tags: [docs]
 ---
 
 # Docs Writing
 
-A repository's markdown holds what the code cannot show: invariants, layer boundaries, decisions with their reason, conventions that differ from tool defaults, and pointers to canonical code and to the test that proves a claim. Everything else lives in the code, the tests, and git history.
+A repository's markdown holds what the code cannot show: the principle behind a design, the rule an agent could break without noticing, a decision with its reason, a convention that differs from a tool default, and a pointer to the canonical code. Everything else lives in the code, its comments, the tests and git history.
 
-This skill governs repository markdown and documentation HTML. It states one writing standard, then what each file type is for and what it must not carry.
+This skill governs repository markdown and documentation HTML. It states one writing standard, one repository layout, what each file type holds, and the finished example an author reads before writing one.
 
 Two exclusions hold in every file: a list a declaration file or a checker already holds is not copied into prose, and a claim that a checker enforces something names the checker.
 
@@ -43,92 +43,62 @@ Two exclusions hold in every file: a list a declaration file or a checker alread
 | One place your whole setup finally lives, in harmony across every tool. | kendex installs packages into the directories each tool reads. |
 | It is generally recommended that callers should probably check the result. | Check the result. |
 
+## Layout
+
+Every repository converges on this layout. A rewrite moves what it finds onto it.
+
+| Path | Reader | Holds | Required |
+|---|---|---|---|
+| `README.md` | a person choosing or using it | the sections § `README.md` orders | yes |
+| `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and one "Read when" line per principle doc | yes |
+| `CLAUDE.md` | Claude Code | one import line, written by kendex | yes, written by kendex |
+| `DEVELOPMENT.md` | a maintainer | build, run, test and debug: only what the tooling does not show | where needed |
+| `LICENSE` | a person | the licence | yes |
+| `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
+| `<dir>/AGENTS.md`, with its `<dir>/CLAUDE.md` import line | an agent working in that folder | the folder's commands, its do and never rules, and the principle doc that governs it | where a folder has its own rules |
+| `docs/architecture/<name>.md` | an agent about to do the work the doc governs | one principle: the approach, why, the rules, one code example | where a principle exists |
+| `docs/decisions/INDEX.md` and `D###-<slug>.md` | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
+| `docs/images/` | a reader of a README or doc | the screenshots and images those files show | when used |
+| `docs/runbook.md` | an operator | step-by-step procedures for a running system | operated systems |
+| `.github/instructions/*.instructions.md` | the Copilot review bot | review rules per path, written by kendex | yes, written by kendex |
+
+Nothing else lives under `docs/`. A plan, a research report, a measurement or a handoff is tracker or `tmp/` content (§ Plans and research). Product content a repository ships to its users, such as a help site, legal pages or an adapter reference, stays and is named in that repository's `AGENTS.md`. A skill's reference docs stay in its `references/`.
+
+### Reference rules
+
+- The root `AGENTS.md` lists each principle doc with its trigger, one line each: "Before writing a plugin: `docs/architecture/plugins.md`".
+- A nested `AGENTS.md` names the principle doc for its folder. Codex reads every `AGENTS.md` on the path to the working directory, Claude Code reads the nested `CLAUDE.md` import, and Copilot reads the nested file when it opens files there.
+- The Copilot review instruction files point the review bot at the same principle docs for the matching paths; the bot-instructions skill renders them.
+- Decision records are not listed in `AGENTS.md`. Review and dev workflows find them by keyword with `decisions search`, and a code comment cites a decision ID only where that code carries out the choice.
+- A code comment holds a local reason or an external cause at its site, per the code-quality skill's SKILL.md § Comments and Prose, and nothing points to it.
+- A README links to a doc only when a person needs it, such as "Writing a plugin".
+
 ## Per file type
 
-Each list says who reads the file, what it holds, and what it excludes. A file carries only what its list permits.
+Each section says who reads the file, what it holds, and what it never carries. The finished example for each type is under [examples/](examples/); read it before writing one. Each example ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
 
 ### `README.md`
 
-Read by a person choosing or using the package or repo.
+Read by a person choosing or using the repository, package, skill, plugin or Pi extension. Its sections, in this order, each only where the thing needs it:
 
-- What it is and who it is for, in two or three sentences.
-- Install: the one command, or a bullet or table row per platform or method where more than one exists.
-- One section named Features, with one plain feature per bullet. No Guarantees or What you can count on section. Use plain noun headings throughout, such as Install, Features, How it works, Supported tools, and Settings.
-- How it works: three to six plain sentences or bullets naming the parts the user meets and what happens in order. Every sentence must make sense without reading the code.
-- Where to customise: the settings a reader sets, and the file each is set in.
-- Excluded: internal vocabulary, coined phrases, metaphors, product voice, invariants, detailed internals, rationale, history, and a command listing `--help` already gives.
+1. A brief description: what it is and who it is for.
+2. A screenshot, where the thing has a screen.
+3. Features: one direct line each.
+4. Install: one or two paste lines per route, no prose.
+5. How it works: high level, in plain words, with no engineering terms.
+6. Sub-packages, where they exist: a table, one line each.
+7. Setup or customise: only the must-know settings.
+8. Licence.
 
-### `DEVELOPMENT.md`
-
-Read by a maintainer, human or agent, working on the package itself.
-
-- The mechanics a maintainer needs and the layout of the code.
-- Ordering and compatibility constraints the code cannot show.
-- How to run, test, and debug the package.
-- The test strategy: what each suite proves.
-- Excluded: anything the code, the tests, `--help`, or the README already states, and any architecture narration.
-- A file left with nothing load-bearing is deleted, and any surviving line moves to the README.
-
-### `docs/architecture/overview.md`
-
-Read by an agent or maintainer before structural work. One per repository.
-
-- The one idea every part projects, in one paragraph.
-- Vocabulary: one line per term the code uses with a meaning a reader could get wrong.
-- Layer boundaries: what each layer may depend on and what it may never contain.
-- Invariants, one line each, with the test or check that enforces it.
-- An index of the topic files, each with the condition that sends a reader there.
-- Excluded: directory layouts, file-by-file descriptions, behaviour walkthroughs, command listings, CI topology, and step-by-step flows.
-
-### `docs/architecture/<topic>.md`
-
-Read on demand for one subsystem. The `doc-drift-check` hook names it when covered code changes.
-
-- A `Covers:` line naming the paths it describes. A plain repo-relative path covers that file or directory. A shell glob matches the full path, with `*` crossing `/`.
-- The same content kinds as the overview, for one subsystem.
-- A topic file exists only where a subsystem has invariants or boundaries of its own. A subsystem with none is a line in the overview.
-
-### Reference docs
-
-Read by an agent or maintainer looking up one value. Any lookup document: `references/`, `schemas/`, `patterns/`, a named file such as `CHECKS.md`, or one under `docs/`.
-
-- Tables and lists. One row per item.
-- The value or the shape the contract fixes, its meaning, and its default.
-- The semantics a reader needs to produce or consume that shape, and no more.
-- Excluded: rationale, and narrative that defines nothing.
-- A file under `references/` exists only where a named workflow loads it on demand.
-
-### Documentation HTML
-
-Read by an agent or maintainer who needs repository documentation in a browser-native format.
-
-- An offline page under `docs/` that opens directly without a build step.
-- The standard and the content rules of the equivalent Markdown file type.
-- Local styles that the document needs. No framework or external asset.
-- Inline SVG is available when a diagram explains a relationship more clearly than prose.
-- A `title` attribute is available when a short hover definition helps the reader.
-- Excluded: pages served from a web root or built by an application bundler. Those are product files, not repository documentation.
-
-### `SKILL.md`, `workflows/*.md`, `agents/*.md`
-
-Read by an agent on every load.
-
-- The shortest unambiguous rule, and the commands.
-- Excluded: mechanics, rationale, history, and worked examples.
-- A rule another file owns is cited, never restated.
-- Rationale moves to `DEVELOPMENT.md` or a decision record.
+Another section only where the thing needs it. Never: internal vocabulary, invariants, internals, rationale, history, engineering detail, or a command listing `--help` already gives. Example: [examples/readme.md](examples/readme.md).
 
 ### `AGENTS.md`
 
-Read by every harness at the start of every session, at the repository root.
+Read by every harness at the start of every session. What the repo is in two or three sentences; the commands not discoverable from the tooling; the conventions that differ from a tool default or a language norm; one "Read when" line per principle doc and per nested `AGENTS.md`. Codex reads only the root-to-cwd chain of `AGENTS.md` files, so everything a Codex session must know is on that chain. Never: anything derivable from the code, rationale, history. Example: [examples/root-agents.md](examples/root-agents.md).
 
-- A map, not a manual: what the repo is in two or three sentences.
-- Everything a Codex session must know, because Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap.
-- The commands that are not discoverable from the tooling itself.
-- The conventions that differ from a tool default or a language norm.
-- One line per deeper doc, saying when to read it.
-- A nested `AGENTS.md` holds the conventions and invariants local to its directory, and stays small.
-- Excluded: anything derivable from the code.
+### `<dir>/AGENTS.md`
+
+Read by an agent working in that folder. The folder's own commands and its do and never rules, with no rationale, and the principle doc behind them. Claude Code does not read it itself: kendex writes a `<dir>/CLAUDE.md` import line beside it. Folder rules live here; a cross-folder idea with its why lives in `docs/architecture/`. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
 
 ### `CLAUDE.md`
 
@@ -137,28 +107,59 @@ The harness shim. kendex writes it, and its whole content is one import line.
 - Never hand-write it, a `.claude/rules` file, or any other harness-specific instruction file.
 - `kendex apply`, `kendex refresh` and `kendex verify` write and check it, and it is committed.
 
+### `docs/architecture/<name>.md`
+
+Optional. Read by an agent about to do the work the doc governs. One cross-folder idea, a principle or contract that governs named work; a subsystem boundary qualifies. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, and when to read it. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
+
+The contrast, a journal paragraph against the principle it should be:
+
+| Journal | Principle |
+|---|---|
+| `trash.rs::move_to_trash` is the one writer: the apply engine's `Trash` op, the project restore and a Pi package's replacement land through it, under a name that opens with the moment it was moved. Enforced by the tests `a_name_is_dated_by_the_stamp_it_opens_with` and `a_listing_reports_name_age_and_bytes_newest_first` in `trash/tests.rs`. | Removal never deletes. Every removed file goes to the trash through one writer, `trash::move_to_trash`, so a person can get it back; a second writer would be a removal nobody can undo. |
+
+Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), [examples/architecture-design-system.md](examples/architecture-design-system.md).
+
 ### Decision records
 
-Read when opened. The format, templates, and workflows are the `decider` skill's.
+Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's; this skill ships no second format. A principle doc cites a decision by ID and never restates it. Example: [examples/decision.md](examples/decision.md).
 
-- Follow [`../decider/SKILL.md`](../decider/SKILL.md). This skill ships no second template and states no second format.
-- Architecture docs cite a decision by ID and never restate it.
+### `DEVELOPMENT.md`
+
+Read by a maintainer, human or agent, working on the package itself. How to build, run, test and debug it, and only what the tooling does not show. Never: anything the code, the tests, `--help` or the README state, and architecture narration. A file left with nothing load-bearing is deleted. Example: [examples/development.md](examples/development.md).
+
+### `SKILL.md`, `workflows/*.md`, `agents/*.md`
+
+Read by an agent on every load. The shortest unambiguous rule, and the commands. A rule another file owns is cited, never restated. Never: mechanics, rationale, history, worked examples. Rationale moves to a decision record or a comment at the code. Example: [examples/skill.md](examples/skill.md).
+
+### Reference docs
+
+Read by an agent or maintainer looking up one value: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Tables and lists, one row per item; the value or the shape the contract fixes, its meaning, and its default; the semantics a reader needs to produce or consume that shape, and no more. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named workflow loads it on demand. Example: [examples/reference.md](examples/reference.md).
+
+### Documentation HTML
+
+Read in a browser. An offline page a skill or repository ships beside its markdown, opening with no build step, under the rules of the equivalent markdown type, with local styles only and no framework or external asset. Inline SVG is available where a diagram shows a relationship more clearly than prose. Never: a page served from a web root or built by an application bundler; that is a product file.
 
 ### `CHANGELOG.md` and `changelog.d/`
 
 The `changelog-entries` lane owns the shape, and its release-version rule, the commit-guards skill's CHECKS.md § Release versions, owns the version and the fragment section. Follow the repository's `changelog.d/README.md`.
 
+## Maintenance
+
+- Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
+- A constraint without an enforcer names review, an operator step, or the gap.
+- No document has a byte, line or count limit. The doc-limits check measures the files a harness loads every turn, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
+
+## Plans and research
+
+A plan, a research report, a measurement or a handoff is not repository content. Write it under `tmp/` and attach it to the tracker issue it serves. Research that is the evidence behind a constraint still in force is attached to that constraint's issue, verified readable, and the constraint links to it; every other research file is deleted when its work lands.
+
 ## Format
 
-- Docs change in the same commit as the code they describe. The `doc-drift-check` hook names the unchanged covering docs to the agent and blocks that stop once per set.
-- One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it and `md-reflow` converts a file once.
+- One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
 - Agent-loaded markdown carries no history. The `prose` lane checks it.
-- Document byte limits and exceptions follow the doc-limits skill's references/policy.md. Bring a document over its limit under it in this order: cut restated content first; split only at a real subject boundary; never delete a rule to fit.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md), which writes each file from a blank page. Both follow § Per file type.
-
-Templates: [README.md](templates/README.md), [DEVELOPMENT.md](templates/DEVELOPMENT.md), [overview.md](templates/overview.md), [topic.md](templates/topic.md), [reference.md](templates/reference.md), [document.html](templates/document.html), [agent-SKILL.md](templates/agent-SKILL.md), [root-AGENTS.md](templates/root-AGENTS.md), [nested-AGENTS.md](templates/nested-AGENTS.md).
+A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md), which extracts what is unique, then writes each file from a blank page. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [skill.md](examples/skill.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).

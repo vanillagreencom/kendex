@@ -99,7 +99,7 @@ done
 
 # The package's default surfaces reach every route a repo surface reaches,
 # though the canonical TOML declares none of them. The expected set is read
-# off the spec copy, floored at one and required to hold `docs-plans`, so an
+# off the spec copy, floored at one and required to hold `docs-architecture`, so an
 # emptied section fails as a broken fixture rather than passing as no work.
 if python3 -B - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PY'; then
 from pathlib import Path
@@ -108,7 +108,7 @@ sys.path.insert(0, sys.argv[1] + "/scripts")
 from lib import spec, tree
 defaults = spec.load(tree.Worktree(sys.argv[1]), "SKILL.md", "schemas/renders.md").surfaces
 names = [d["name"] for d in defaults]
-assert "docs-plans" in names, f"the spec copy's default surfaces lost docs-plans: {names}"
+assert "docs-architecture" in names, f"the spec copy's default surfaces lost docs-architecture: {names}"
 repo = Path(sys.argv[2])
 for d in defaults:
     copilot = (repo / f".github/instructions/{d['name']}.instructions.md").read_text()
@@ -129,7 +129,7 @@ taken="$(bi_new_repo default-name-taken)" || exit 1
 cat >>"$taken/kendex.toml" <<'TOML'
 
 [[bot-instructions.surface]]
-name = "docs-plans"
+name = "docs-architecture"
 globs = ["docs/**"]
 instructions = """
 A repo's own plan rules.
@@ -156,7 +156,7 @@ if bi_must_adopt --repo "$bare_surfaces" && bi_must render --repo "$bare_surface
     bad "copilot-instructions.md points at the path rules with only default surfaces"
   fi
   printf '\n[bot-instructions.budgets]\nqodo_best_practices_lines = 1\n' >>"$bare_surfaces/kendex.toml"
-  expect_clause qodo-best-practices "Largest surfaces — docs-plans: 1" \
+  expect_clause qodo-best-practices "Largest surfaces — docs-architecture: 1" \
     "a Qodo budget finding names the default surfaces when the repo declares none" \
     render --dry-run --repo "$bare_surfaces"
 fi

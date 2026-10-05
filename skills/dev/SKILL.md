@@ -59,7 +59,7 @@ For an item spanning domains, split the delegation by domain. If the selected ag
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule.
   - A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table.
   - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
-- Docs move with the code they describe; the `docs-writing` skill states the rule and the `doc-drift-check` hook names the docs that may need an update.
+- A doc claim the change makes false is updated in the same change; a code change alone owes no doc change. The `docs-writing` skill states what each document holds.
 - Once a commit has been reported to the orchestrator, in a return artifact or in a message naming it, later work adds a commit and never amends, whatever the branch push state. The one exception is a head the orchestrator states is unread: there the kendex-issues fix cycle may amend, only to refresh a required check that cannot be rerun.
 - A push that prints `rebase-map:` lines has rewritten the shas the PR's `Fixed in <sha>` replies name: before holding, re-reply each such thread with the new sha, or post the map as one PR comment naming old and new per line; a sha the map reports as `dropped` gets a reply that the fix commit no longer exists on the branch.
 
@@ -101,7 +101,7 @@ A command that can outlast the harness's tool-call limit never runs as one block
 
 ## Reflect
 
-**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again: architecture docs when an invariant, boundary or decision changed (the `docs-writing` skill says what belongs there), or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. A config edit takes effect only once it is rendered, which you cannot do from a worktree, so name it, and anything else you cannot update yourself, in your return as `[process]` discovered work.
+**Skip if** nothing recurred and nothing surprised you. Otherwise a lesson goes to the authoritative place only where it is a durable constraint: a regression test, a reason comment at the code, an `AGENTS.md` convention, a decision record under the decider bar, or a principle doc where the `docs-writing` skill admits one. Add nothing when the repository already holds it. A rule for the managing project alone goes in its kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. A config edit takes effect only once it is rendered, which you cannot do from a worktree, so name it, and anything else you cannot update yourself, in your return as `[process]` discovered work.
 
 ## Configuration
 

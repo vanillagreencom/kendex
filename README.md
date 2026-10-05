@@ -1,25 +1,10 @@
-# kendex <a href="https://daytona.io" target="_blank" rel="noopener"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/daytona-startup-grid-dark-transparent.svg"><img src="docs/img/daytona-startup-grid-light-transparent.svg" alt="Daytona Startup Grid" height="36" align="absmiddle"></picture></a>
+# kendex <a href="https://daytona.io" target="_blank" rel="noopener"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/daytona-startup-grid-dark-transparent.svg"><img src="docs/images/daytona-startup-grid-light-transparent.svg" alt="Daytona Startup Grid" height="36" align="absmiddle"></picture></a>
 
-kendex is a desktop app and command-line tool (CLI) for AI coding tools such as Claude Code, Codex and Cursor. It manages agents, skills, hooks and other customizations. You set them up once and use them across your tools and projects.
+kendex is a desktop app and command-line tool (CLI) for people who use AI coding tools such as Claude Code, Codex and Cursor. It manages agents, skills, hooks and other customizations: you set them up once and use them across your tools and projects.
 
-<p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"> <img src="docs/img/harness-antigravity.png" alt="Antigravity" height="20"></p>
+<p><img src="docs/images/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/images/harness-codex.png" alt="Codex" height="20"> <img src="docs/images/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/images/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/images/harness-pi.png" alt="Pi" height="20"> <img src="docs/images/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/images/harness-copilot.png" alt="GitHub Copilot" height="20"> <img src="docs/images/harness-antigravity.png" alt="Antigravity" height="20"></p>
 
-![kendex](docs/img/tour.gif)
-
-## Install
-
-```sh
-curl -fsSL https://kendex.ai/install.sh | sh
-```
-
-| Platform | Install |
-|---|---|
-| Linux | the script above installs the app and the CLI |
-| Arch Linux | `yay -S kendex-bin` for the prebuilt app and CLI; `kendex`, `kendex-git` and `kendex-cli-git` build from source |
-| macOS | the script above installs the CLI; `brew install vanillagreencom/kendex/kendex` installs the app |
-| Windows | the installer at [kendex.ai/download](https://kendex.ai/download), which also lists the CLI-only packages |
-
-A package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
+![kendex](docs/images/tour.gif)
 
 ## Features
 
@@ -27,7 +12,7 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 - Convert agent and skill files into the formats each tool reads.
 - Preview package changes before applying them.
 - Keep personal settings and a separate setup for each project.
-- Move or rename a project folder, then point kendex at where it is now: everything installed there stays as it is.
+- Move or rename a project folder, then point kendex at where it is now; everything installed there stays as it is.
 - Adopt customizations you already set up yourself: kendex keeps your files and starts managing them.
 - Browse the [community marketplace](https://kendex.ai) for packages to install.
 - Subscribe to a package repository so you can install from it too.
@@ -37,6 +22,22 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 - Give one agent different settings in each tool.
 - Enable, disable or remove installed customizations.
 - See where an installed package came from.
+
+## Install
+
+```sh
+curl -fsSL https://kendex.ai/install.sh | sh
+```
+
+```sh
+yay -S kendex-bin
+```
+
+```sh
+brew install vanillagreencom/kendex/kendex
+```
+
+Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app; the other package channels are in [packaging](packaging/README.md).
 
 ## Supported tools
 
@@ -74,26 +75,26 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 - kendex records what it installed, and where each package came from, in a lock file, so it can update it or take it away later.
 - Delete a package from your list and the next apply removes its files, except ones you edited by hand and Pi extensions, which kendex keeps and reports.
 
-## Settings
+## Packages
+
+This repository is also the default catalog. Its agents, skills, hooks and Pi extensions are listed at the [default catalog](https://kendex.ai/m/vanillagreencom/kendex) page; each Pi extension is also on npm under `@vanillagreen/`.
+
+| Package | What it is |
+|---|---|
+| [agents/](agents/) | Implementation, review and planning agents for coding harnesses. |
+| [skills/](skills/) | Workflow and guard skills: orchestration, review, commit guards, docs writing and more. |
+| [hooks/](hooks/README.md) | Hook scripts that run at a harness's events. |
+| [pi-extensions/](pi-extensions/) | Pi extensions: hooks, session tools, background tasks and more. |
+
+## Setup
 
 - Use `kendex.toml` to declare a project setup and add instructions or options for each tool.
 - Package settings apply per project only; change them in the package's Customize tab or that project's `kendex.settings.toml`.
 - Keep private settings and secrets in `.env.local`.
 - If a formatter such as Biome or Prettier checks JSON at the project root, add `.kendex-lock.json` and `.kendex-generated.json` to its ignore list. kendex writes both files in its own layout whenever what they record changes.
 
-## Catalog agents
+Writing a package of your own: [docs/authoring](docs/authoring/README.md). Working on kendex itself: [DEVELOPMENT.md](DEVELOPMENT.md).
 
-The default catalog includes implementation and maintenance agents:
+## Licence
 
-- [runtime](agents/runtime.md): non-UI runtime code in shell, Python, TypeScript and Go.
-- [rust](agents/rust.md): non-Iced Rust implementation and performance work.
-- [iced](agents/iced.md): Iced desktop UI implementation.
-- [frontend](agents/frontend.md): declarative web, mobile and terminal UI, including React and Quickshell QML/JavaScript.
-- [swift](agents/swift.md): SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests.
-- [maintainer](agents/maintainer.md): documentation, references and configuration organization.
-
-## Documentation
-
-- [Package authoring](docs/authoring/README.md)
-- [Development guide](docs/DEVELOPMENT.md)
-- [Default catalog](https://kendex.ai/m/vanillagreencom/kendex)
+[MIT](LICENSE)

@@ -4,6 +4,15 @@ A Pi extension for session controls, prompt editing and notifications. Users can
 
 ![QOL extension settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/settings-panel.png) ![Session search popup](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/session-search.gif) ![/context usage breakdown](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/context-usage.png)
 
+## Features
+
+- Show repository, model and context information beside the editor, with the working spinner before the project name.
+- Name and search sessions.
+- Schedule prompts and prepare handoff drafts.
+- Ask before configured shell commands run.
+- Send terminal and desktop notifications.
+- Configure summaries and compaction for long sessions.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-qol`.
@@ -15,15 +24,6 @@ source = "kendex"
 ```
 
 Requires Pi 0.86.0 or newer. Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
-
-## Features
-
-- Show repository, model and context information beside the editor, with the working spinner before the project name.
-- Name and search sessions.
-- Schedule prompts and prepare handoff drafts.
-- Ask before configured shell commands run.
-- Send terminal and desktop notifications.
-- Configure summaries and compaction for long sessions.
 
 ## How it works
 
@@ -42,7 +42,7 @@ The extension reads your enabled features when Pi starts. It adds their editor c
 
 At session start, the extension deletes budget handoff files whose recorded working directory no longer exists. It also deletes files older than 5 days. Both timestamped snapshots and `latest.json` follow this rule.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-qol"]`.
 
@@ -63,3 +63,7 @@ Open `/extensions:settings`; settings appear under the **QOL** tab. Project sett
 **Show model provider** displays a readable provider name before the model, such as `Copilot / GPT 6 Astra`. It is on by default; changes apply on the next render without reloading. Disabling the QOL statusline leaves Pi's standalone working indicator in place.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

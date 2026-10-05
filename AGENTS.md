@@ -13,31 +13,42 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 ## Conventions
 
 - Before writing or changing code, load the code-quality skill.
-- Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`.
+- Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`. A plan, a research report or a measurement is an attachment on its Linear issue or a file under `tmp/`, never a tracked file under `docs/`.
 - A lane or research run that records another repository's data writes it to that repository's own tracker, never into the kendex tree.
 - A change under `crates/` or `ui/` ships a changelog fragment, one consumer-facing list item in `changelog.d/<section>/<name>.md` per `changelog.d/README.md`, or says `[no-changelog]` in the subject; the commit-guards commit-msg gate holds it, and `changelog-entries --collate` folds the fragments in at release.
 - A source with a tracked render (`skills/`, `agents/<n>.md`, `hooks/<n>`) lands the render in the same commit; the rule is in `skills/AGENTS.md`.
 - `kendex-local.toml` is this repository's own manifest. A rule for kendex alone, not for every install of a catalog skill, goes in its `[skill-instructions]`, which the render writes into `.agents/skills/<name>/SKILL.md`; `skills/` ships to every install.
 - Review bots follow `.github/instructions/code-review.md`, which Code Review Rules below points them at, and `.github/instructions/*.instructions.md`; engineering rules are the code-quality skill, round scope the dev skill, finding dispositions `skills/orch/references/finding-disposition.md`.
+- A doc under `docs/architecture/` is one principle; update it when a change makes a claim in it false, never beside a code change that falsifies nothing. A decision record exists only under the decider skill's bar.
 
-## Read next
+## Read when
 
-- `docs/architecture/overview.md`: before structural work; its § Topics indexes the per-subsystem files.
-- `crates/AGENTS.md`: when writing a test under `crates/`.
-- `crates/core/AGENTS.md`: when working under `crates/core/`.
-- `crates/app/AGENTS.md`: when working under `crates/app/`.
-- `crates/cli/AGENTS.md`: when working under `crates/cli/`.
-- `ui/AGENTS.md`: when working under `ui/`.
-- `skills/AGENTS.md`: when working under `skills/`, `agents/` or `hooks/`.
-- `hooks/AGENTS.md`: when writing or changing a hook script.
-- `pi-extensions/AGENTS.md`: when working under `pi-extensions/`.
-- `tools/AGENTS.md`: when working under `tools/`.
-- `.github/AGENTS.md`: when changing a workflow or a review-bot instruction file.
-- `docs/DEVELOPMENT.md`: building from source and where a debug build writes.
-- `docs/RELEASING.md`: cutting a release.
+- Before changing planning, apply, the manifest, the lock, ownership, take-over or forks: `docs/architecture/engine.md`.
+- Before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier: `docs/architecture/harnesses.md`; the per-harness on-disk facts are `docs/adapters/README.md`.
+- Before changing the source store, discovery, browsing, subscriptions, bundles or the drift snapshot: `docs/architecture/sources.md`.
+- Before changing project resolution, the worktree guard or in-place packages: `docs/architecture/in-place.md`.
+- Before changing the generated-file inventory, verification, workflow adoption or tracked outputs: `docs/architecture/generated-paths.md`.
+- Before removing or replacing files kendex wrote, or changing the trash: `docs/architecture/trash.md`.
+- Before changing a safety or quality rule: `docs/architecture/scoring.md`.
+- Before changing the release feed, signing, digests or self-replace: `docs/architecture/updates.md`.
+- Before changing the community directory, sign-in or the skills.sh lead: `docs/architecture/registry.md`.
+- Before changing CI, the review gate, the merge route or consumer refresh: `docs/architecture/merge-rail.md`.
+- Before changing repository effects, the arming record or a package's declared checks: `docs/architecture/repo-effects.md`.
+- Before changing the commit, push or pull-request offer: `docs/architecture/commit-offer.md`.
+- Before adding an event, notice, badge, toast or dialog to the desktop app: `docs/architecture/attention.md`.
+- Before reversing a choice a principle doc cites: `docs/decisions/INDEX.md`, found by keyword with the decider skill's `decisions search`.
+- When changing what a catalog may declare: `docs/authoring/README.md`, the product reference the app shows.
+- When working under `crates/`: `crates/AGENTS.md`, then `crates/core/AGENTS.md`, `crates/app/AGENTS.md` or `crates/cli/AGENTS.md`.
+- When working under `ui/`: `ui/AGENTS.md`.
+- When working under `skills/`, `agents/` or `hooks/`: `skills/AGENTS.md`, and `hooks/AGENTS.md` for a hook script.
+- When working under `pi-extensions/`: `pi-extensions/AGENTS.md`.
+- When working under `tools/`: `tools/AGENTS.md`.
+- When changing a workflow or a review-bot instruction file: `.github/AGENTS.md`.
+- Building from source, the debug sandbox and the commit chain: `DEVELOPMENT.md`.
+- Cutting a release: the app-deploy skill, `.agents/skills/app-deploy/SKILL.md`.
 
 ## Code Review Rules
 
-<!-- generated by bot-instructions 2.4.0 from kendex.toml, kendex-local.toml, .kendex-generated.json, SKILL.md, schemas/renders.md, AGENTS.md. Edit [bot-instructions] in the effective manifest or the spec copy, then re-render. -->
+<!-- generated by bot-instructions 2.5.0 from kendex.toml, kendex-local.toml, .kendex-generated.json, SKILL.md, schemas/renders.md, AGENTS.md. Edit [bot-instructions] in the effective manifest or the spec copy, then re-render. -->
 
 If you are a review agent reviewing code, read .github/instructions/code-review.md before you comment.

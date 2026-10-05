@@ -1,10 +1,10 @@
 ---
-description: Cut a kendex release — version bump, tag, draft review — per docs/RELEASING.md
+description: Cut a kendex release — version bump, tag, draft review — per the app-deploy skill
 argument-hint: "[patch|minor|major]"
 ---
 Cut a kendex release. Optional bump: `$ARGUMENTS` (default: the bump the pending entries call for under `changelog.d/README.md` § Release standard).
 
-The `app-deploy` skill is the procedure and `docs/RELEASING.md` holds what a release carries; this prompt only sequences them.
+The `app-deploy` skill is the procedure and holds what a release carries; this prompt only sequences it.
 
 ## Rules
 
@@ -21,5 +21,5 @@ The `app-deploy` skill is the procedure and `docs/RELEASING.md` holds what a rel
 4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json CHANGELOG.md changelog.d`, carrying the collation declaration: `COMMIT_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"`. That declaration is what makes `CHANGELOG.md` count as this commit's changelog entry — the version bump under `crates/` obliges one and the fragments were just deleted — so the `commit-msg` lane refuses the commit without it. Then open the release pull request and merge it as `app-deploy` step 3 says.
 5. Tag the merge commit on `main` that passes the `app-deploy` step 3 check, never the local branch: run `git fetch origin`, run that check on the release pull request's merge commit, and take that step's follow-up when the check lists any other entry. Then `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`. The tag starts `.github/workflows/release.yml`, which builds every target and creates a **draft** release. Do not call `gh release create`.
 6. `gh run watch` the release workflow. When it finishes, `gh release view vX.Y.Z` — the draft must list one `kendex-<target>` per target, the app bundles, and `feed.json`. Missing asset → fix the workflow, re-tag only after deleting the failed draft and tag.
-7. Publish the draft: `gh release edit vX.Y.Z --draft=false`. Confirm `releases/latest/download/feed.json` serves the new version. A pre-release tag (`v1.0.0-rc1`) skips this — the workflow publishes it and repoints the `prerelease` channel itself (docs/RELEASING.md).
+7. Publish the draft: `gh release edit vX.Y.Z --draft=false`. Confirm `releases/latest/download/feed.json` serves the new version. A pre-release tag (`v1.0.0-rc1`) skips this — the workflow publishes it and repoints the `prerelease` channel itself (app-deploy § Pre-releases).
 8. Report: tag, assets, anything skipped.

@@ -4,6 +4,13 @@ A Pi extension that asks the model to use shorter replies. Users can choose a re
 
 ![/caveman command autocomplete](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-caveman/assets/command-autocomplete.png)
 
+## Features
+
+- Select lite, full, ultra or micro response styles.
+- Toggle the style with the caveman command.
+- Keep a session's selected style when it resumes.
+- Configure which kinds of output use normal English.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-caveman`.
@@ -16,18 +23,11 @@ source = "kendex"
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-## Features
-
-- Select lite, full, ultra or micro response styles.
-- Toggle the style with the caveman command.
-- Keep a session's selected style when it resumes.
-- Configure which kinds of output use normal English.
-
 ## How it works
 
 You select a style in the settings or with a session command. Before the next model turn, the extension adds that style's instructions to the system prompt. The model uses those instructions when it writes a reply. The extension saves the session choice for later resumes.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-caveman"]`.
 
@@ -42,3 +42,7 @@ Open `/extensions:settings`; settings appear under the **Caveman** tab. Project 
 With `pi-claude-bridge` as the provider the directive reaches Claude only when the bridge's `includeCavemanHook` setting is on; it is off by default, and caveman warns once at session start while it is off. Native Pi providers need nothing.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

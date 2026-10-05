@@ -38,9 +38,9 @@ You do not edit production code: not source, tests, configs, migrations, generat
 
 ### Plan Artifacts
 
-Write a file only when asked. Given no path, a technical plan goes to `docs/plans/<topic-slug>.md`. Roadmap plans are not yours. They belong to the project-management roadmap flow under `docs/roadmaps/`; reference your `docs/plans/` file from the TPM handoff instead of writing one.
+Write a file only when asked. Given no path, a technical plan goes to `tmp/plans/<topic-slug>.md`, and the caller attaches it to the tracker issue it serves. Roadmap plans are not yours. They belong to the project-management roadmap flow; reference your plan file from the TPM handoff instead of writing one.
 
-This section is the one home of that default, and it holds for every plan or research report any agent writes whose caller named no path, in any repository, public or private: `docs/plans/<slug>.md` for a plan and `docs/plans/<slug>-research.md` for a research report, so the two never share a file. Either is tracked and never ignored, so it outlives the session; both are this agent's `tracked-outputs`, and `kendex verify` warns on a project that installs this agent and whose ignore rules cover either, failing it only under `--strict`. Progress reports and handoffs are session state and stay where orch keeps them (`tmp/progress-reports/`, `tmp/handoffs/`).
+This section is the one home of that default, and it holds for every plan or research report any agent writes whose caller named no path, in any repository, public or private: `tmp/plans/<slug>.md` for a plan and `tmp/plans/<slug>-research.md` for a research report, so the two never share a file. Neither is committed: a plan, a research report or a measurement lives in the tracker issue as an attachment, or under `tmp/`, never under a tracked `docs/` path. Progress reports and handoffs are session state and stay where orch keeps them (`tmp/progress-reports/`, `tmp/handoffs/`).
 
 ## Required Skills
 

@@ -2,6 +2,15 @@
 
 A Pi extension for assigning work to other agents. You can follow each agent in a tmux pane or let it run in the background.
 
+## Features
+
+- Assign a task, parallel tasks or a sequence of tasks.
+- Select agents from project or user agent files.
+- Send corrections, read results and stop running agents.
+- Follow status and transcripts in the agents dashboard.
+- Reuse background memory below its context threshold. Above it, a fresh agent receives the new task and prior final result.
+- Resolve child model classes through kendex against the locally refreshed Pi model registry before either launch form starts.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-agents-tmux`.
@@ -13,15 +22,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
-
-## Features
-
-- Assign a task, parallel tasks or a sequence of tasks.
-- Select agents from project or user agent files.
-- Send corrections, read results and stop running agents.
-- Follow status and transcripts in the agents dashboard.
-- Reuse background memory below its context threshold. Above it, a fresh agent receives the new task and prior final result.
-- Resolve child model classes through kendex against the locally refreshed Pi model registry before either launch form starts.
 
 ## How it works
 
@@ -44,7 +44,17 @@ Streamed tool rows keep only the static call preview in the transcript. Follow l
 - The dashboard caches one activity line of at most 180 characters per retained transcript, including its last-progress time. It reads appended records outside rendering and keeps no argument history.
 - Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`, and full outputs too long for a tool result in `.../pi-agents-tmux/outputs/`. Each directory is deleted once the session's working directory is gone (a merged worktree), and any file in it older than 5 days is deleted. Pi applies both rules when a session starts. Pi applies them only to a directory that holds the ownership record this package writes from 3.2.0 on. A transcript directory an earlier version wrote gets that record when its session next starts; until then Pi deletes nothing in it.
 
-## Settings
+## Agent files
+
+The `model` field accepts a class, `inherit`, a provider-qualified family such as `anthropic/sonnet`, or an exact Pi model id. An exact id can contain `/` after the provider, as in `openrouter/anthropic/claude-sonnet-4`. Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session. kendex must be on Pi's PATH for class and family resolution. With kendex absent, only inherit and one uniquely authenticated exact registry match can start. Other requests refuse before child startup.
+
+An absent agent model or `subagentModelSource` set to `parent` requests inheritance. The parent model remains in runtime context. `/agents:start` and `/agents:send` use the same authenticated registry as tool dispatch.
+
+An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the selected raw model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Core-selected model ids have no effort suffix. The child receives their effort through `--thinking`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
+
+kendex generates `allowed-subagents: scout` for engineer-role agents and denies `delegate_subagent` for every other role; override per agent under `[agent-frontmatter.pi]` in `kendex.toml`, where an explicit empty list turns delegation off.
+
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-agents-tmux"]`.
 
@@ -61,12 +71,6 @@ Open `/extensions:settings`; settings appear under the **Agents (tmux)** tab. Pr
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Agent files
+## Licence
 
-The `model` field accepts a class, `inherit`, a provider-qualified family such as `anthropic/sonnet`, or an exact Pi model id. An exact id can contain `/` after the provider, as in `openrouter/anthropic/claude-sonnet-4`. Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session. kendex must be on Pi's PATH for class and family resolution. With kendex absent, only inherit and one uniquely authenticated exact registry match can start. Other requests refuse before child startup.
-
-An absent agent model or `subagentModelSource` set to `parent` requests inheritance. The parent model remains in runtime context. `/agents:start` and `/agents:send` use the same authenticated registry as tool dispatch.
-
-An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the selected raw model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Core-selected model ids have no effort suffix. The child receives their effort through `--thinking`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
-
-kendex generates `allowed-subagents: scout` for engineer-role agents and denies `delegate_subagent` for every other role; override per agent under `[agent-frontmatter.pi]` in `kendex.toml`, where an explicit empty list turns delegation off.
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

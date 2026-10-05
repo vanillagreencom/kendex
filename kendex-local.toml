@@ -1234,7 +1234,7 @@ reply-contract = '''
 A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
 '''
 severity = '''
-Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. Use 1 of `docs/plans/review-gate-platform.md` § Copilot-down fallback states the conditions for that approval.
+Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are the KEN-2067 design note, attached to that issue, § Copilot-down fallback.
 '''
 declined = '''
 Accepted rationale can appear in settings comments, engine comments, or `skills/review-gate/references/`.

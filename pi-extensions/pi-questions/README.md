@@ -2,6 +2,13 @@
 
 A Pi extension for questions with selectable answers and free text. The agent receives your choices as the result of its question tool call.
 
+## Features
+
+- Ask several questions in one questionnaire.
+- Support single selections, multiple selections and typed answers.
+- Show questions in the editor or a floating popup.
+- Optionally accept answers through pi-session-bridge.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-questions`.
@@ -14,13 +21,6 @@ source = "kendex"
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-## Features
-
-- Ask several questions in one questionnaire.
-- Support single selections, multiple selections and typed answers.
-- Show questions in the editor or a floating popup.
-- Optionally accept answers through pi-session-bridge.
-
 ## How it works
 
 The agent sends questions and choices to the question tool. The extension displays them in Pi's editor area or the host's available dialogs. You select or type answers and submit them. The tool returns the answers to the agent. A connected session bridge can also complete a pending questionnaire. Interrupting the agent cancels its open question and closes the questionnaire or Pi's own dialog. On an RPC host, the client's dialog closes only if the client honours the request's `timeout` or tracks the interrupt itself.
@@ -29,7 +29,17 @@ The agent sends questions and choices to the question tool. The extension displa
 
 Each question result keeps one rendered layout of at most 65,536 characters. Resizing or theme invalidation replaces it. The result component owns the cache, so disposing the session UI releases it.
 
-## Settings
+## Bridge control
+
+With `pi-session-bridge` installed, from any shell:
+
+```bash
+pi-bridge questions
+pi-bridge answer --request-id que_example --answers '[["Stop here"]]'
+pi-bridge reject --request-id que_example
+```
+
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-questions"]`.
 
@@ -43,12 +53,6 @@ Open `/extensions:settings`; settings appear under the **Questions** tab. Projec
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Bridge control
+## Licence
 
-With `pi-session-bridge` installed, from any shell:
-
-```bash
-pi-bridge questions
-pi-bridge answer --request-id que_example --answers '[["Stop here"]]'
-pi-bridge reject --request-id que_example
-```
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

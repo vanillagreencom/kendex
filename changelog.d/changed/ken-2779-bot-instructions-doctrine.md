@@ -1,0 +1,1 @@
+- bot-instructions 2.5.0: review doctrine asks for no doc beside code and no decision record below the decider bar; its shipped review surface covers `docs/architecture`.

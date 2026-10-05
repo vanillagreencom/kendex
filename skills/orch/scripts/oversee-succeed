@@ -168,7 +168,7 @@
 #        `pi-account-unknown`. No permission posture crosses to or from pi,
 #        whose row names no permission word. Unset, the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE, the default README.md
-#        § Settings states; set to empty, it names no entry. Every launch on a measured account but one goes
+#        § Setup states; set to empty, it names no entry. Every launch on a measured account but one goes
 #        through `lanes pick
 #        --harness --model --min-headroom-pct`, the headroom trigger itself,
 #        so every successor's account clears it by step 2's rule, and among

@@ -24,7 +24,7 @@
   --border: oklch(0.92 0.005 260);
   --input: oklch(0.88 0.006 260);
   --ring: oklch(0.5 0.19 255 / 60%);
-  /* The state tokens, one per attention class (docs/design/attention.md):
+  /* The state tokens, one per attention class (docs/architecture/attention.md):
      critical is a Problem or a failed Result, warning a Decision, notice a
      Notice, info an Update, good done or healthy. A marker counting several
      items takes the tone of the most severe. Surfaces reach them through

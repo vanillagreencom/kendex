@@ -39,7 +39,7 @@ pub fn print_synced(synced: &kendex_core::remote::Synced) {
 }
 
 /// The pass a writing verb closes on; the call sites are the list and
-/// `docs/architecture/trash.md` § Boundaries owns it. The trash is brought
+/// `docs/architecture/trash.md` § Rules owns it. The trash is brought
 /// within its bounds (`kendex_core::trash::retain`) once the verb's own
 /// writes are done, and what went is said in the verb's own output, so a
 /// person who never runs `kendex trash` still learns that kendex is

@@ -68,7 +68,7 @@ def main():
             if rendered.returncode != 0:
                 diagnostic = "\n".join(diagnostics)
                 print(f"catalog-release: version={json.dumps(version)} feature={json.dumps(diagnostic)}")
-                print("Release an engine that supports this catalog before merging it. See docs/RELEASING.md.")
+                print("Release an engine that supports this catalog before merging it. See the app-deploy skill § Catalog compatibility.")
                 return 1
         print(f"catalog-release: version={json.dumps(version)} result=pass")
         return 0

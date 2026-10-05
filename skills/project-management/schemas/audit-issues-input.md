@@ -10,7 +10,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
   "worktree": "/path/to/worktree",
   "blocked_issues": ["PROJ-456"],
   "research_issue": "PROJ-123",
-  "research_ref": "docs/research/PROJ-123/findings.md",
+  "research_ref": "tmp/research/PROJ-123/findings.md",
   "decision_ref": "D017",
   "hierarchy_contract": {
     "mode": "decompose-under-parent",

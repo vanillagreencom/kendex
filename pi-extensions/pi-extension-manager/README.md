@@ -4,6 +4,13 @@ A package browser for Pi and oh-my-pi (OMP). It includes a settings editor for k
 
 ![Extension Manager browser and settings editor](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-extension-manager/assets/extension-manager.gif)
 
+## Features
+
+- Browse installed Pi packages or native OMP plugins, including disabled plugins.
+- Enable or disable packages. On OMP this controls the whole plugin, including its non-extension contributions.
+- Update or uninstall Pi packages and notify you about available updates.
+- Edit kendex package settings on Pi, or the manager's own settings on OMP.
+
 ## Install
 
 - Pi: `pi install npm:@vanillagreen/pi-extension-manager`.
@@ -16,13 +23,6 @@ source = "kendex"
 ```
 
 Restart the host after installation.
-
-## Features
-
-- Browse installed Pi packages or native OMP plugins, including disabled plugins.
-- Enable or disable packages. On OMP this controls the whole plugin, including its non-extension contributions.
-- Update or uninstall Pi packages and notify you about available updates.
-- Edit kendex package settings on Pi, or the manager's own settings on OMP.
 
 ## How it works
 
@@ -42,7 +42,7 @@ On OMP the manager cannot toggle a plugin's modules, update or uninstall a plugi
 - Each npm version request has a total 4-second deadline and a 256 KiB response limit. Closing the package browser cancels requests it started. Session shutdown cancels startup requests.
 - The session keeps one inventory with at most 10,000 package and extension rows. Opening a popup or completing a package action refreshes it. Completion labels, package children and scoped setting values reuse that snapshot. Shutdown releases it. Reopen settings to read a change made outside the manager.
 
-## Settings
+## Setup
 
 Open `/extensions:settings` on Pi or `/kendex:extensions:settings` on OMP. Values are stored under `kendex.extensionManager.config["@vanillagreen/pi-extension-manager"]`.
 
@@ -54,3 +54,7 @@ Pi uses user and project `settings.json` files. OMP uses the active agent direct
 - `glyphStyle`: Unicode or ASCII symbols. On Pi, the Tool Renderer tab's `globalGlyphStyleOverride` can override this setting.
 
 On Pi, editing a value supplied by a package's own config file writes a manager override. Resetting that value names its source file instead, because no manager override exists to delete. See [DEVELOPMENT.md](DEVELOPMENT.md) for the external config resolver contract and host integration boundaries.
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

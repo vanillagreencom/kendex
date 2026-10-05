@@ -22,12 +22,12 @@
 | 2026-09-30 | D018 | KEN-2067 | GitHub enforces review requirements; the package keeps review operations | Platform approvals replace a separately published review status | A served repository lacks Copilot approvals or GitHub rulesets | Active | [Full](D018-platform-review-requirements.md) |
 | 2026-10-02 | D019 | KEN-2490 | A Copilot overseer walks the stated preference, keeps its own seat at the context mark, and proves its successor's first turn from its context record | The preference is the owner's model order; a context mark is no account problem; the pane is Copilot's only first-turn reading, and `session.usage_info` is its documented per-model-call signal | The owner puts harness continuity above the ladder, or Copilot changes `session.usage_info` | Active | [Full](D019-copilot-overseer-succession.md) |
 | 2026-10-02 | D020 | KEN-2589 | Lane hosts become host kinds declaring capabilities; lanes pick spends the allowance expiring first | A managed cloud offers no SSH or file verbs; an expiring grant is lost whole | A cloud offers file access or a session stop, or an allowance both expires and refills | Active | [Full](D020-lane-host-kinds.md) |
-| 2026-10-01 | D021 | [KEN-2466](../plans/model-class-resolution.md) | Default to standard; justify top per item; resolve classes in core | Shared policy prevents size promotion; unknown facts keep native default | Remaining loaders gain callbacks, Claude changes mods or owner changes policy | Active | [Full](D021-runtime-model-classes.md) |
+| 2026-10-01 | D021 | [KEN-2466](https://linear.app/vanillagreen/issue/KEN-2466) | Default to standard; justify top per item; resolve classes in core | Shared policy prevents size promotion; unknown facts keep native default | Remaining loaders gain callbacks, Claude changes mods or owner changes policy | Active | [Full](D021-runtime-model-classes.md) |
 
 ---
 
 ## Format Reference
 
-Log: technology selections with alternatives, performance trade-offs, path choices whose conditions may change. Do not log: variable names, small refactors, bug fixes, choices with no realistic alternative, standard pattern applications.
+A record exists only for a choice that governs work beyond one site or that a reviewer would otherwise reverse, and whose reason the code cannot show; the bar is the decider skill's `SKILL.md` § What warrants a decision record, and why. A local choice is a comment at the code.
 
 Status values: `Active`, `Active ([COMPONENTS] → [DECISION_ID])`, `Superseded by [DECISION_ID]`, `Revisited`. Row format and cross-reference forms are in the decider skill's `schemas/decision-format.md`.

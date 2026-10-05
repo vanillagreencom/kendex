@@ -4,6 +4,14 @@ A Pi extension for shell commands that run while the conversation continues. It 
 
 ![Spawning background tasks](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/spawn-tasks.png) ![Inline mini-dashboard](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/inline-dashboard.png)
 
+## Features
+
+- Start, inspect and stop background commands.
+- Move configured blocking commands into background tasks.
+- Notify the agent when a task exits or produces selected output.
+- Read recent output and task history in the dashboard. Open the task's Log file for full output.
+- Run tasks at lower priority: CPU and disk on Linux, CPU only on macOS. On Windows tasks run unchanged and a session warns once.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-background-tasks`.
@@ -15,14 +23,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
-
-## Features
-
-- Start, inspect and stop background commands.
-- Move configured blocking commands into background tasks.
-- Notify the agent when a task exits or produces selected output.
-- Read recent output and task history in the dashboard. Open the task's Log file for full output.
-- Run tasks at lower priority: CPU and disk on Linux, CPU only on macOS. On Windows tasks run unchanged and a session warns once.
 
 ## How it works
 
@@ -37,7 +37,7 @@ The agent starts a command with the background task tool. The extension runs the
 - Logs live in one directory per session in the `lanes/` folder of the task directory (`taskDir`, default the system temporary directory's `kendex-pi-bg`). A session's directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted. Pi applies both rules when a session starts, to `lanes/` only, and only to directories the package made there.
 - A log written before 2.1.0 stays directly in the task directory. The prune, `clear` and the 50-task bound do not delete it; a task restored with such a log is removed from the list without its log.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-background-tasks"]`.
 
@@ -52,3 +52,7 @@ Open `/extensions:settings`; settings appear under the **Background Tasks** tab.
 - Storage: `taskDir`; the `PI_BG_TASK_DIR` environment variable overrides it.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md). The package is kendex's own, based on the MIT-licensed `@ifi/pi-background-tasks`; see `THIRD_PARTY_NOTICES.md`.
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

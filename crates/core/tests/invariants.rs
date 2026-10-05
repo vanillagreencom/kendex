@@ -1,4 +1,4 @@
-//! The first eight invariants of docs/architecture/overview.md § Invariants,
+//! The first eight rules of docs/architecture/engine.md § Rules,
 //! exercised end-to-end on a fixture
 //! project.
 #![cfg(unix)]

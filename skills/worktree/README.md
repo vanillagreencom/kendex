@@ -2,14 +2,6 @@
 
 A CLI for separate Git working copies. Teams can work on independent issues while each copy receives the project's configured files, links and Git identity.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill worktree
-```
-
-Run from the main checkout of a Git repository with an origin remote. Claiming work requires authenticated gh and flock. Bash 3.2 is supported.
-
 ## Features
 
 - Create or resume a worktree for an issue.
@@ -18,11 +10,19 @@ Run from the main checkout of a Git repository with an origin remote. Claiming w
 - Remove merged worktrees and repair configured links.
 - Protect active worktrees with Git worktree locks.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill worktree
+```
+
 ## How it works
 
 You give the CLI an issue identifier. It checks existing worktrees, branches and PRs before creating a working copy. It adds the configured links, copied files and scratch directories. The worktree holds a separate branch for the assigned change. Push and cleanup commands use the recorded branch state to complete the work.
 
-## Settings
+## Setup
+
+Run from the main checkout of a Git repository with an origin remote. Claiming work requires authenticated gh and flock. Bash 3.2 is supported.
 
 Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.local` wins for secrets and personal overrides, and a `.env` file is never read.
 
@@ -51,3 +51,7 @@ Worktree setup does nothing when the checkout is both the source and the destina
 Point `WORKTREE_SYMLINKS` only at paths git does not carry: an entry does nothing when git carries every path under it, and a directory holding tracked files stays a real directory with only its untracked children linked. Each key's full semantics: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
 Wiring the Codex Desktop and Claude Code worktree hooks: [references/hooks.md](references/hooks.md).
+
+## Licence
+
+MIT, in the repository's LICENSE file.

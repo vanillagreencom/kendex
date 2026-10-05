@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 /// data dir.
 const DEV_HOME_DIR: &str = "kendex-dev";
 
-/// Selects the system home or an explicit root (docs/DEVELOPMENT.md).
+/// Selects the system home or an explicit root (DEVELOPMENT.md).
 const REAL_HOME_VAR: &str = "KENDEX_REAL_HOME";
 
 /// The value that selects the system home rather than an explicit root.

@@ -1,6 +1,14 @@
 # Docs Writing
 
-Writing rules and templates for repository markdown and documentation HTML. Authors and reviewers use the same requirements for each kind of document.
+Writing rules and finished examples for repository markdown and documentation HTML. Authors and reviewers use the same requirements for each kind of document.
+
+## Features
+
+- Supply a plain writing standard with examples.
+- State the repository layout every repository converges on.
+- Define the purpose and contents of each document type, and ship one finished example per type with a contrast drawn from a real failure.
+- Guide a focused edit to existing text, and a rewrite that extracts first and then writes from a blank page.
+- Link decision-record work to the decider skill.
 
 ## Install
 
@@ -10,20 +18,14 @@ kendex add vanillagreencom/kendex --skill docs-writing
 
 kendex also installs decider, which supplies the decision-record format.
 
-## Features
-
-- Supply a plain writing standard with examples.
-- Define the purpose and contents of each document type.
-- Provide templates for package, developer, agent and reference documents.
-- Provide writing rules and a template for offline documentation HTML.
-- Guide a focused edit to existing text, and a rewrite from a blank page when a document is converted or restructured.
-- Link decision-record work to the decider skill.
-
 ## How it works
 
-The author identifies the document type and reads its rules in [SKILL.md](SKILL.md). The author checks existing claims against the code. A focused change edits only the affected text; a rewrite takes its structure from the matching template. Installed markdown guards check formatting and references after the change.
+The author identifies the document type and reads its rules and its example in [SKILL.md](SKILL.md). The author checks existing claims against the code. A focused change edits only the affected text; a rewrite extracts what is unique, then writes from a blank page. Installed markdown guards check formatting and references after the change.
 
-## Settings
+## Setup
 
-- Add repository writing instructions in `kendex.toml` under `[skill-instructions]`. kendex includes them in the installed skill.
-- Set `DOC_LIMITS_CLASSES` in `kendex.settings.toml` under `[env]` when the project needs different file limits. The doc-limits skill's README.md § Path classes defines the format.
+Add repository writing instructions in `kendex.toml` under `[skill-instructions]`. kendex includes them in the installed skill.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

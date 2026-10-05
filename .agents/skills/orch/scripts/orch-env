@@ -31,7 +31,7 @@
 set -euo pipefail
 
 # The package default for ORCH_USER_MODE, used by the resolution below when the
-# settings ladder names no mode. ../README.md § Settings publishes the same value
+# settings ladder names no mode. ../README.md § Setup publishes the same value
 # for a caller passing it as DEFAULT.
 USER_MODE_DEFAULT=ceo
 

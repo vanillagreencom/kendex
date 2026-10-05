@@ -4,6 +4,13 @@ A Pi extension that limits large tool results and repeated model output. It save
 
 ![Output Policy settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-output-policy/assets/settings-panel.png)
 
+## Features
+
+- Stop model responses that exceed configured size or repetition limits.
+- Show a preview of large tool results and save the full output.
+- Reduce common shell output while retaining errors and summaries.
+- Report saved output paths and the amount removed from the preview.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-output-policy`.
@@ -16,13 +23,6 @@ source = "kendex"
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-## Features
-
-- Stop model responses that exceed configured size or repetition limits.
-- Show a preview of large tool results and save the full output.
-- Reduce common shell output while retaining errors and summaries.
-- Report saved output paths and the amount removed from the preview.
-
 ## How it works
 
 The extension watches model output and completed tool results. It checks them against the selected policy and your overrides. Large tool results become previews with a link to the full saved text. A model response that crosses a configured limit stops with a warning.
@@ -31,7 +31,7 @@ The extension watches model output and completed tool results. It checks them ag
 
 At session start, the extension deletes saved full outputs whose recorded working directory no longer exists. It also deletes files older than 5 days. This applies to the per-session artifact directory and the temporary-directory fallback.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-output-policy"]`.
 
@@ -45,3 +45,7 @@ Open `/extensions:settings`; settings appear under the **Output Policy** tab. Pr
 - Shell minimizer: `shellMinimizer.enabled`, `shellMinimizer.only`, `shellMinimizer.except`, `shellMinimizer.maxCaptureBytes`.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

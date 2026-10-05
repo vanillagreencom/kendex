@@ -2,14 +2,6 @@
 
 A shell CLI for Linear issues, projects and planning data. Every read and write goes to the Linear API as it runs.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill linear
-```
-
-Requires Bash 4.0 or newer, curl and jq. Set the credentials in the project's private env file and `LINEAR_TEAM` in `kendex.settings.toml`. A personal key can also be set in the kendex app, on this package's Customize tab. Run the installed `scripts/linear.sh auth-check --strict`.
-
 ## Features
 
 - Read and change issues, projects, comments and planning data.
@@ -18,11 +10,19 @@ Requires Bash 4.0 or newer, curl and jq. Set the credentials in the project's pr
 - Check configured issue requirements during creation and completion.
 - Apply and create only the labels the repository's label taxonomy declares, and list the labels that drift from it.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill linear
+```
+
 ## How it works
 
 You configure credentials and the target team. Each command sends its reads and writes to Linear's GraphQL API and keeps nothing on disk. A read follows every page of each collection it asks for. A rate-limited request reports the time the request quota refills.
 
-## Settings
+## Setup
+
+Requires Bash 4.0 or newer, curl and jq. Set the credentials in the project's private env file and `LINEAR_TEAM` in `kendex.settings.toml`. A personal key can also be set in the kendex app, on this package's Customize tab. Run the installed `scripts/linear.sh auth-check --strict`.
 
 Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key list with each default and what leaving it unset means is [kendex.settings.toml.example](kendex.settings.toml.example).
 
@@ -53,3 +53,7 @@ Application tokens attribute issue creation, comments and state changes to the a
 `KENDEX_USER_EMAIL` is kendex's own setting, not this skill's: the app's Customize tab writes it to the private env file (`.env.local` unless `KENDEX_ENV_FILE` names another), never to `kendex.settings.toml`. Use the address your Linear account signs in with; it is matched whole and without regard to case. Empty or absent assigns nobody. A worktree whose `WORKTREE_SYMLINKS` lists `.env.local` links that file to its main checkout, and a hosted lane receives a copy of the checkout's `.env.local` each time it is created, so a value set there reaches every lane of that checkout. A value exported only in the shell that starts the lanes does not: a local lane's tmux pane takes its environment from the tmux server, not from that shell.
 
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

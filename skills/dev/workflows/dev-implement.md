@@ -66,7 +66,7 @@ Ad-hoc: no tracker reads.
 
 Read the issue description — `.description` from the read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
 
-Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
+Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
 
 For a missing planning or research path in a Linear brief, follow the linear skill's SKILL.md § Resolve a cited artifact before classifying the context as missing.
 
@@ -146,9 +146,9 @@ For every callee whose call the change deletes, run `git grep -n -F --untracked 
 
 ### 4.3 Update Documentation And Decisions
 
-Update docs when the implementation changes a documented API or architecture.
+Update a doc when the implementation makes a claim in it false. A code change alone owes no doc change.
 
-**Skip decision recording if** no alternatives were considered and no trade-offs made. Otherwise follow the decider skill's create-decision workflow: `.agents/skills/decider/scripts/decisions next-id`, a template from `templates/decision-entry.md`, the file per `schemas/decision-format.md`, the INDEX.md row per `templates/index-row.md`, `// REVISIT(DXXX):` markers in code where applicable, and the decision ID cited in the § 9 summary.
+**Skip decision recording if** the choice governs one site, or nobody would reverse it: that reason is a comment at the code. Otherwise, where the choice governs work beyond one site or a reviewer would re-litigate it, follow the decider skill's create-decision workflow: `.agents/skills/decider/scripts/decisions next-id`, the file per `schemas/decision-format.md` from `templates/decision-entry.md`, the INDEX.md row per `templates/index-row.md`, `// REVISIT(DXXX):` markers in code where applicable, and the decision ID cited in the § 9 summary.
 
 ### 4.4 Reflect
 

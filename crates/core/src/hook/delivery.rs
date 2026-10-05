@@ -2,7 +2,7 @@
 //! decided here by capability, never by which author wrote it, and every
 //! surface — the engine, the agent renderer, the editor preview, the
 //! package's supported-tools row — reads the same decision
-//! (docs/architecture/harnesses.md § Boundaries): [`hook_reach`] judges the
+//! (docs/architecture/harnesses.md § Rules): [`hook_reach`] judges the
 //! hook against one harness's enforcement, and [`delivery`] adds what one
 //! installation's scope and machine decide.
 

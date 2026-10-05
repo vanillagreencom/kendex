@@ -34,9 +34,10 @@ An answer ending `cause=classifier class=trivial`, a measured trivial branch, go
 
 ```bash
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
+.agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded or revisited binds only what its status leaves active. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]

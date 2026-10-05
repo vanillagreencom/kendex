@@ -43,7 +43,7 @@ A consumer with the retired gate package needs a one-time trusted removal PR bef
    ```
 
 2. Commit the package update, retired workflow deletion and inventory removal in a normal PR. It takes the surviving CI checks, a final-head Copilot approval and resolved review threads. It does not use the automatic render-only route. An edited, symlinked or unrecorded workflow stops adoption and needs an owner decision.
-3. With those checks met, the repository's overseer sends the owner one line that the removal PR is ready to arm. The owner removes `Review gate` from that repository's required-checks ruleset and binds its other contexts to GitHub Actions (`integration_id` 15368). The target layout is [review-gate-platform.md § Target](https://github.com/vanillagreencom/kendex/blob/main/docs/plans/review-gate-platform.md#target).
+3. With those checks met, the repository's overseer sends the owner one line that the removal PR is ready to arm. The owner removes `Review gate` from that repository's required-checks ruleset and binds its other contexts to GitHub Actions (`integration_id` 15368). The target layout is the KEN-2067 design note § Target, attached to that Linear issue.
 4. After the owner replies done, arm the removal PR. The required-check transition precedes writer removal, or later PRs wait for a status no workflow posts. Once the removal PR merges, automatic refresh starts from the fully migrated default branch.
 
 ## Automatic consumer refresh

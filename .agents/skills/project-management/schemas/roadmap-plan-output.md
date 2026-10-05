@@ -5,7 +5,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
 ```json
 {
   "feature": "Feature name",
-  "research_path": "docs/research/[ISSUE_ID]/findings.md",
+  "research_path": "tmp/research/[ISSUE_ID]/findings.md",
   "hierarchy_recommendation": {
     "type": "children_of_origin",
     "origin_issue": "[ISSUE_ID]",
@@ -26,10 +26,10 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
   "declined": [{"title": "...", "reason": "no user-visible effect"}],
   "context": {
     "source": "roadmap-create",
-    "research_path": "docs/research/[ISSUE_ID]/findings.md",
+    "research_path": "tmp/research/[ISSUE_ID]/findings.md",
     "research_source_issue": "[ISSUE_ID]",
     "origin_issue": "[ISSUE_ID]",
-    "plan_path": "docs/roadmaps/roadmap-feature-name.md"
+    "plan_path": "tmp/roadmaps/roadmap-feature-name.md"
   },
   "summary": {"total_issues": 5, "bundles": 1, "critical_path_issues": 2, "gaps_to_include": 1,
               "duplicates_found": 0, "conflicts_found": 0, "declined": 0, "existing_closed": 0}

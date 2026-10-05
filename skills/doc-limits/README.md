@@ -2,14 +2,6 @@
 
 A byte-size check for the Markdown documents a coding harness loads at every turn. It reports each document that exceeds its path class.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill doc-limits
-```
-
-Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3.2 is supported. The commit-guards pre-commit and pre-push hooks run the installed check.
-
 ## Features
 
 - Check document sizes against byte limits.
@@ -18,14 +10,26 @@ Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3
 - Check staged documents with staged policy.
 - Fail the check for a document over its limit.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill doc-limits
+```
+
 ## How it works
 
 The checker selects the tracked Markdown documents a size class names, each by its first matching class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
 
-## Settings
-
-Set project values in `kendex.settings.toml` under `[env]`. Local overrides use `.kendex/settings.toml` or `.env.local`. Process values have priority. `doc-limits --help` lists the settings and flags.
-
 ## Path classes
 
 Set `DOC_LIMITS_CLASSES` to override document limits. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.
+
+## Setup
+
+Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3.2 is supported. The commit-guards pre-commit and pre-push hooks run the installed check.
+
+Set project values in `kendex.settings.toml` under `[env]`. Local overrides use `.kendex/settings.toml` or `.env.local`. Process values have priority. `doc-limits --help` lists the settings and flags.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

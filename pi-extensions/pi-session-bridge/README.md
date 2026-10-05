@@ -4,6 +4,13 @@ A local connection to a running Pi session. The pi-bridge CLI lets another termi
 
 ![Session bridge CLI flow](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-session-bridge/assets/session-bridge-cli.png)
 
+## Features
+
+- Find running Pi sessions and select a target.
+- Send prompts, corrections and follow-up messages.
+- Read recent events or subscribe to live activity.
+- Answer pending questions when pi-questions is installed.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-session-bridge`.
@@ -15,13 +22,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. kendex links the CLI at `.pi/bin/pi-bridge` for a project or `~/.pi/agent/bin/pi-bridge` for user scope. Add that directory to `PATH` or run the CLI by path.
-
-## Features
-
-- Find running Pi sessions and select a target.
-- Send prompts, corrections and follow-up messages.
-- Read recent events or subscribe to live activity.
-- Answer pending questions when pi-questions is installed.
 
 ## How it works
 
@@ -40,7 +40,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - `pi-bridge stream` stops reading from the bridge while its own output is not yet written. When the bridge closes the stream (the session ended, or the reader was disconnected), it prints `bridge-stream-closed` and exits 1.
 - The activity list keeps at most 100 events, 1,048,576 characters of serialized events, and nothing older than one hour. One event larger than the character bound is still kept, alone. The list is shared by every session in one Pi process and is not cleared at session end; these bounds are what release it.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-session-bridge"]`.
 
@@ -54,3 +54,7 @@ Open `/extensions:settings`; settings appear under the **Session Bridge** tab. P
 The socket triggers real agent work in the owning Pi process. Keep `PI_BRIDGE_DIR` private to your user, and never expose it to other users or untrusted containers.
 
 Protocol and broker details for client authors and maintainers are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

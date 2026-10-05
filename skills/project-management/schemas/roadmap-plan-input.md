@@ -5,10 +5,10 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 ```json
 {
   "feature": "Feature name",
-  "research_path": "docs/plans/feature-plan.md",
+  "research_path": "tmp/plans/feature-plan.md",
   "research_read_path": "tmp/feature-plan.md",
   "research_source_issue": "PROJ-123",
-  "spec_path": "docs/plans/feature-plan.md",
+  "spec_path": "tmp/plans/feature-plan.md",
   "origin_issue": {
     "id": "PROJ-136",
     "title": "Layout Shell & Navigation",
@@ -17,7 +17,7 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
     "children": ["PROJ-137", "PROJ-138"]
   },
   "planner_handoff": {
-    "plan_path": "docs/plans/feature-plan.md",
+    "plan_path": "tmp/plans/feature-plan.md",
     "summary": "Technical plan summary from the planner",
     "recommended_phases": ["Phase 1", "Phase 2"],
     "tpm_questions": ["Should this become a roadmap or child issues under PROJ-136?"]

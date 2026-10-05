@@ -15,7 +15,7 @@
 # The staged lane judges a file a commit CHANGES, not only one it adds, so
 # every oversized file this repo still edits needs its own row.
 CHANGELOG.md	append-only release record, read by release rather than as agent instructions
-docs/img/tour.gif	the README tour recording — binary media, replaced whole when the tour changes
+docs/images/tour.gif	the README tour recording — binary media, replaced whole when the tour changes
 pi-extensions/pi-agents-tmux/assets/agents-tmux-demo.gif	extension demo recording — binary media
 pi-extensions/pi-agents-tmux/assets/agents-tmux-demo.mp4	the same demo as video — binary media
 pi-extensions/pi-background-tasks/assets/dashboard.png	extension screenshot — binary media

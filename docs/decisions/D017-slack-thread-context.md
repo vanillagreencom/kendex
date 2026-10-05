@@ -6,16 +6,14 @@
 
 **Status**: Active
 
-**Research**: —
+**Research**: KEN-2206
 
-**Refines**: [D009](D009-slack-relay.md) and [D014](D014-slack-socket-mode.md): only identifiers-only journal storage and age-limited live replies. Their other choices and D009's transport/topology replacements remain active.
+**Refines**: [D009](D009-slack-relay.md) and [D014](D014-slack-socket-mode.md), their identifiers-only journal storage and age-limited live replies only
 
-**Decision**: The [journal schema](../../skills/slack/schemas/journal.md) owns parent fields and retention. Live owner replies route under any parent at any age. Reconnect reads and pruning remain bounded; `Binding.bound_at` owns the retained channel/journal lifetime, not delivery progress.
+**Decision**: The journal schema, `skills/slack/schemas/journal.md`, owns parent fields and retention. A live owner reply routes under any parent at any age. Reconnect reads and pruning stay bounded, and `Binding.bound_at` owns the retained channel and journal lifetime, not delivery progress.
 
-**Rationale**: Identifiers alone lose conversation context. A live age limit drops an owner's reply in an ongoing conversation.
+**Why**: Identifiers alone lose the conversation an owner is continuing, and a live age limit drops an owner's reply in an ongoing conversation.
 
-**Revisit When**: Slack changes event delivery or journal retention needs change.
+**Rejected**: Keeping the age limit and asking the owner to open a new thread: the owner replies where the question was asked.
 
-**Verification**: `skills/slack/tests/socket.test.sh` proves live any-age delivery; `thread-directives.test.sh` proves cached parent context and relay-root provenance; `listen.test.sh` proves stable binding lifetime and bounded reconnect reads.
-
-**References**: KEN-2206.
+**Revisit when**: Slack changes event delivery, or journal retention needs change.

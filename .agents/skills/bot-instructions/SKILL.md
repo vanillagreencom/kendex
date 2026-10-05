@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.4.0"
+  version: "2.5.0"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -125,7 +125,7 @@ Approve the pull request when the review reports no finding, and when every find
 
 ### no-preferences
 
-Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment. Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap. Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin. Review a diff that changes only documentation for correctness alone: a claim the code contradicts, a reference that does not resolve, a broken link. Wording there is the file's content, not a defect.
+Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment. Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap. Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin. Review a diff that changes only documentation for correctness alone: a claim the code contradicts, a reference that does not resolve, a broken link. Wording there is the file's content, not a defect. Do not ask for a document to change beside a code change; a document changes only where the change makes a claim in it false. Do not ask for a decision record for a choice that governs one site or that nobody would reverse; a decision record exists only for a choice that governs work beyond one site or that a reviewer would otherwise re-litigate, and a local reason is a comment at the code. Do not ask for a plan, a research report or a measurement to be committed under `docs/`; those live in the tracker.
 
 ### declined
 
@@ -153,10 +153,10 @@ Every render adds the surfaces in the block below to the repo's own `[[bot-instr
 
 ```toml
 [[surface]]
-name = "docs-plans"
-globs = ["docs/plans/**"]
+name = "docs-architecture"
+globs = ["docs/architecture/**"]
 reviewer_only = true
 instructions = """
-A file here is a plan: a design written ahead of the work it describes. It names tracker issues that are still open, and files, settings and behavior that do not exist yet, by design. Neither is a defect, and a reviewer cannot see the tracker. Raise a thread only where the plan contradicts the code it cites as that code stands at this head: a path, symbol, setting or behavior the plan states as current that the code does not bear out. Do not raise wording, structure, sequencing, scope or feasibility.
+A file here is a principle doc: one cross-folder idea, with the approach, why, the rules and one canonical code example, written for an agent about to do the work it governs. Raise a thread only where it contradicts the code it describes as that code stands at this head: a path, symbol, setting, rule or enforcing check the doc states that the code does not bear out. Do not raise wording, structure or length, and do not ask it to walk through code, list files or tests, or record history, dates or measurements; those do not belong here. Do not ask for a doc here to change beside a code change unless the change makes a claim in it false.
 """
 ```

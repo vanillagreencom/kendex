@@ -4,6 +4,14 @@ Web search, page retrieval and research tools for Pi. The agent can search provi
 
 ![Web Tools settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/settings-panel.png) ![Exa web_search results renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/web-search.png)
 
+## Features
+
+- Search the web through a selected provider.
+- Read pages, repositories, PDFs and supported videos.
+- Read saved result text without another fetch.
+- Produce research reports through Exa.
+- Use optional Exa answer, similar-page and code search tools.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-web-tools`.
@@ -15,14 +23,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
-
-## Features
-
-- Search the web through a selected provider.
-- Read pages, repositories, PDFs and supported videos.
-- Read saved result text without another fetch.
-- Produce research reports through Exa.
-- Use optional Exa answer, similar-page and code search tools.
 
 ## How it works
 
@@ -46,7 +46,19 @@ The extension enables tools for the configured providers and available credentia
 - A browser cookie read kills each `sqlite3` run after 4 seconds and each keyring or DPAPI helper (`security`, `secret-tool`, PowerShell) after 60 seconds. A keychain or keyring unlock prompt left open past 60 seconds fails the read. A YouTube Gemini Web attempt runs this read before its 120-second query, so the read's time adds to the query's.
 - Each `git` command of a GitHub clone keeps its own timeout, 60 seconds by default.
 
-## Settings
+## API keys
+
+Set these as environment variables, in the project's `.env` or `.env.local`, or in a private JSON file named by `PI_WEB_TOOLS_CONFIG_FILE`. The process environment wins over files, and a project file is read only once Pi marks the workspace trusted.
+
+- `EXA_API_KEY`
+- `PERPLEXITY_API_KEY`
+- `GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
+
+A value may be a 1Password reference such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. A reference that does not resolve within the startup timeout is treated as unset so Pi starts anyway; `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS` changes that timeout.
+
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-web-tools"]`.
 
@@ -62,14 +74,6 @@ Open `/extensions:settings`; settings appear under the **Web Tools** tab. Projec
 
 The Exa endpoints each tool calls and what each stores are in [EXA.md](EXA.md). Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## API keys
+## Licence
 
-Set these as environment variables, in the project's `.env` or `.env.local`, or in a private JSON file named by `PI_WEB_TOOLS_CONFIG_FILE`. The process environment wins over files, and a project file is read only once Pi marks the workspace trusted.
-
-- `EXA_API_KEY`
-- `PERPLEXITY_API_KEY`
-- `GEMINI_API_KEY`
-- `OPENAI_API_KEY`
-- `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
-
-A value may be a 1Password reference such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. A reference that does not resolve within the startup timeout is treated as unset so Pi starts anyway; `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS` changes that timeout.
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

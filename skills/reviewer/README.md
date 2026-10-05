@@ -2,14 +2,6 @@
 
 Review workflows and finding formats for AI review agents. Projects using orch can collect specialist reviews in a shared format.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill reviewer
-```
-
-kendex also installs orch, github, code-quality and docs-writing. Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
-
 ## Features
 
 - Review a change or audit existing code.
@@ -17,10 +9,22 @@ kendex also installs orch, github, code-quality and docs-writing. Add linear for
 - Record verified findings with their causes and effects.
 - Return a structured report to the primary agent.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill reviewer
+```
+
 ## How it works
 
 The primary agent assigns a review to a specialist. The specialist reads the change and verifies possible defects against the code. It writes findings using [schemas/review-finding.md](schemas/review-finding.md). The primary agent reads that report and routes required fixes.
 
-## Settings
+## Setup
+
+kendex also installs orch, github, code-quality and docs-writing. Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
 
 Set project review instructions in `kendex.toml` under `[skill-instructions]`. Add instructions for a review agent under `[agent-additional-instructions]` in the same file.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

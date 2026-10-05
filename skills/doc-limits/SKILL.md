@@ -5,7 +5,7 @@ summary: "Byte limits for the Markdown a harness loads at every turn: an AGENTS.
 license: MIT
 user-invocable: true
 dependencies:
-  required: [commit-guards, docs-writing]
+  required: [commit-guards]
 metadata:
   author: vanillagreen
   source: kendex

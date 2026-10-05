@@ -2,14 +2,6 @@
 
 A CLI for GitHub pull requests, reviews and CI results. Coding agents can read PR state, reply to findings and submit permitted changes from the shell.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill github
-```
-
-Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess starts through perl. The `op` CLI is required only for credentials stored as 1Password references.
-
 ## Features
 
 - Read PR files, comments and review threads.
@@ -20,11 +12,19 @@ Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess star
 - Compare PR branches for conflicts and dependencies.
 - Run Git over HTTPS with the caller's GitHub authentication.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill github
+```
+
 ## How it works
 
 You run a command through `scripts/github.sh`. The CLI reads your project settings and selects the configured GitHub credentials. It calls GitHub and returns the requested result. Write commands report the outcome of the requested action.
 
-## Settings
+## Setup
+
+Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess starts through perl. The `op` CLI is required only for credentials stored as 1Password references.
 
 Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in `.env.local`. A value set in the parent process wins over project files.
 
@@ -43,3 +43,7 @@ Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in 
 The three timeouts are read to one decimal place; `0` means no bound, and a finer figure is refused rather than rounded.
 
 Auto-detect builds and tests a Rust workspace on its `agent` Cargo profile when the root manifest declares `[profile.agent]` and `python3` with `tomllib` is on the host; otherwise it keeps `--release`.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

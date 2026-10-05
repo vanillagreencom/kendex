@@ -2,14 +2,6 @@
 
 A changed-file check for CI. It lets CI skip selected checks when a change contains only recorded generated files or only documentation files.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill harness-ci
-```
-
-Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Pin the version that runner installs to one whose `kendex verify --json` prints a version 1 document: the `render` proof reads that document and nothing else kendex prints, so a build without it, or with another version of it, answers `standard` instead. Every release before that document, the v5.0.1 release included, answers `standard` on every diff. The pin also has to take `kendex verify --at-record`, which the classifier always passes: a build without it rejects the flag and answers `standard cause=verify-refused`. A local run, such as orch's `dev-validate-run` or the github skill's `pr-merge`, uses the `kendex` on the local PATH, so a release without the flag, v1.0.1 included, answers `standard` there too. A diff whose only changed path is `.kendex-lock.json` runs the executable `HARNESS_CI_LOCK_KENDEX` names instead, where the classifier's environment sets it. Follow [references/wiring.md](references/wiring.md) for workflow setup.
-
 ## Features
 
 - Compare the files a change touched with the list of files kendex generated.
@@ -19,6 +11,12 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - Validate skipped jobs before a required-context aggregator reports success.
 - Name the kind of a change: a re-rendered install, a trivial edit, a micro or small change, or anything else.
 - Ship a CI workflow template that reports one `CI` check, the aggregate context every repository under the standard reports, and runs the same checks on a merge queue as on the pull request.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill harness-ci
+```
 
 ## How it works
 
@@ -37,9 +35,15 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - A change of generated files alone whose re-render proof fails, or that touches a generated file no passing record covers, answers `standard` outright and never reaches the size rules, so only a change that touches a file kendex did not generate reaches the size rules at all.
 - The files a harness itself executes as configuration are never trivial, micro or small, whoever wrote them: the settings, hook registries and MCP server lists under `.claude/`, `.codex/`, `.cursor/`, `.agents/`, `.pi/` and `.github/`, the repository root `.mcp.json` and opencode's root config file: one entry per harness kendex knows other than Gemini, whose settings file is named at the end of this bullet. Their keys decide which hooks run and which servers may be started. kendex writes entries in those files and never the whole file, so a re-render of one counts as a render only where kendex itself reports that nothing else in the file changed since the range's base; the Gemini settings file, whose record vouches for one key alone, is refused ahead of everything else as a changed configuration source.
 
-## Settings
+## Setup
+
+Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Pin the version that runner installs to one whose `kendex verify --json` prints a version 1 document: the `render` proof reads that document and nothing else kendex prints, so a build without it, or with another version of it, answers `standard` instead. Every release before that document, the v5.0.1 release included, answers `standard` on every diff. The pin also has to take `kendex verify --at-record`, which the classifier always passes: a build without it rejects the flag and answers `standard cause=verify-refused`. A local run, such as orch's `dev-validate-run` or the github skill's `pr-merge`, uses the `kendex` on the local PATH, so a release without the flag, v1.0.1 included, answers `standard` there too. A diff whose only changed path is `.kendex-lock.json` runs the executable `HARNESS_CI_LOCK_KENDEX` names instead, where the classifier's environment sets it. Follow [references/wiring.md](references/wiring.md) for workflow setup.
 
 The harness and docs checkers have no project settings. The change classifier reads three. `HARNESS_CI_QUEUE_PATHS` names the repository's own queue-only paths, its CI inputs outside `.github/` such as a test harness or a CI aggregator script, as blank-separated globs; set it empty where the shipped list already names them all. It has no default: unset, every change is queue-only, with one warning per run naming the key. The other two each have a shipped default: `HARNESS_CI_TRIVIAL_PATHS`, the repository's own low-blast allowlist as blank-separated globs (empty, the default, uses the documentation path set: `docs/`, `changelog.d/` and root Markdown files, so a root `README.md` edit under the ceiling counts as trivial while `CLAUDE.md` and every configuration source are refused ahead of it, and an `AGENTS.md` or `SKILL.md` edit that earns trivial answers `small` with `cause=instruction-file`), and `HARNESS_CI_TRIVIAL_MAX_LINES`, the line ceiling under which those paths count as trivial (default 20). With `HARNESS_CI_TRIVIAL_PATHS` empty, a diff only under `docs/plans/` is trivial at any size, since a plan is prose ahead of the work that nothing builds from; a configured allowlist replaces that exemption too. The classifier reads these and the two below from `kendex.settings.toml` and `.kendex/settings.toml`, the second winning, as the commit `--base` names holds them (the pull request's base tip or a merge group's base, never the merge base), never from the branch being judged and never from the private env file. A value in its environment wins for every one but `HARNESS_CI_QUEUE_PATHS`, which is the base's alone. Two further inputs are orch's measurement settings: `ORCH_SIZE_RENDER_ROOTS`, the harness directories a render mirrors a source into, and `ORCH_SIZE_TEST_PATHS`, the globs that mark a file as a test rather than as product code. The classify step of [Shape 4](references/wiring.md#shape-4--one-change-class-for-every-reader) sets `ORCH_SIZE_RENDER_ROOTS`. A consumer whose test files live outside orch's default globs sets `ORCH_SIZE_TEST_PATHS` in its default branch's `kendex.settings.toml`, which CI and a lane's own classifier run both read. The CI call supplies the mode, event, and commit identifiers. A check that must apply its own policy rules to the exact changed-path set reads it from `harness-only --paths-output`, where that set is derived. Use `harness-only --help`, `change-class --help` and `aggregate-needs --help` for all arguments.
 
 
 Workflow setup: [references/wiring.md](references/wiring.md). Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
+
+## Licence
+
+MIT, in the repository's LICENSE file.

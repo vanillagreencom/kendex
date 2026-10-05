@@ -6,6 +6,14 @@ Image and patch tools for Pi sessions using OpenAI or Codex models. It adds imag
 
 ![image_generation lifecycle](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-codex-minimal-tools/assets/image-generation.gif)
 
+## Features
+
+- Generate or edit images and display the saved output.
+- Run image generation in the background.
+- Show a local image to the model.
+- Apply patches that add, change, move or delete files.
+- Inspect tool availability for the current model.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-codex-minimal-tools`.
@@ -17,14 +25,6 @@ source = "kendex"
 ```
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
-
-## Features
-
-- Generate or edit images and display the saved output.
-- Run image generation in the background.
-- Show a local image to the model.
-- Apply patches that add, change, move or delete files.
-- Inspect tool availability for the current model.
 
 ## How it works
 
@@ -42,7 +42,7 @@ The extension checks the selected model and enables supported tools. An image re
 - A WebSocket response may hold at most 33,554,432 characters of received events that the reader has not taken yet, counted as each event arrives and before it is decoded; a binary frame counts its bytes. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
 - Generated-image previews are read from disk in the background the first time a message shows them, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached; the least recently shown previews are dropped. One preview larger than that bound by itself is still cached until the next preview loads. The cache is cleared when a session starts or ends.
 
-## Settings
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]`.
 
@@ -56,3 +56,7 @@ Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** t
 - `glyphStyle`: Unicode or ASCII symbols; `pi-tool-renderer`'s global override wins when set.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Licence
+
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

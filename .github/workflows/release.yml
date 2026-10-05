@@ -280,7 +280,7 @@ jobs:
       # parser, and holding the tag to it is a real verdict rather than a
       # second opinion about one.
       #
-      # It is also the check docs/RELEASING.md asks for and nothing
+      # It is also the check the app-deploy skill asks for and nothing
       # enforced. A tag naming a version no artifact carries publishes a
       # feed pointing at downloads that are not there, which every install
       # reads as a release it cannot fetch.
@@ -430,7 +430,7 @@ jobs:
           mv dist/feed.complete.json dist/feed.json
           cat dist/feed.json
       # A full release lands as a draft to review before publishing makes it
-      # "latest" (docs/RELEASING.md). A pre-release cannot: its assets are
+      # "latest" (the app-deploy skill). A pre-release cannot: its assets are
       # unreachable while it is a draft, so nothing could install it, and
       # testing the update path end to end is the whole reason a tag like
       # v1.0.0-rc2 is cut. Publishing it reaches nobody who is not already
@@ -464,7 +464,7 @@ jobs:
   # and the last
   # and drops every repoint in between; outside it, every tag publishes. So a
   # burst costs repoints and never a release, and pushing the newest tag again
-  # moves the channel to it, which is what docs/RELEASING.md records.
+  # moves the channel to it, which is what the app-deploy skill records.
   channel:
     needs: publish
     if: needs.publish.outputs.channel != ''

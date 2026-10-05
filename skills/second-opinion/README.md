@@ -2,14 +2,6 @@
 
 Code review and consultation through another AI CLI. It lets a project request an independent model's analysis of a change, design or question.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill second-opinion
-```
-
-Requires jq, perl and a logged-in external CLI, claude or codex, or another CLI a settings entry names. kendex also installs github, which carries the shared helper that starts each CLI in its own process group.
-
 ## Features
 
 - Review a branch diff or audit selected code.
@@ -17,11 +9,19 @@ Requires jq, perl and a logged-in external CLI, claude or codex, or another CLI 
 - Ask a focused technical question.
 - Collect reviews from multiple configured models.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill second-opinion
+```
+
 ## How it works
 
 You select a review, audit, challenge or question. The script identifies the current session model and chooses an eligible external CLI. That CLI reads the requested context and returns its analysis. Reviews and audits are saved in the shared finding format; other modes return text. A review or audit whose CLI fails or is killed keeps a failure record; [SKILL.md § Error Handling](SKILL.md#error-handling) says what it holds.
 
-## Settings
+## Setup
+
+Requires jq, perl and a logged-in external CLI, claude or codex, or another CLI a settings entry names. kendex also installs github, which carries the shared helper that starts each CLI in its own process group.
 
 Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`; nothing is marked required, so an arrival writes no settings. Every key, its default and the built-in `claude` and `codex` command lines: `second-opinion --help`. The ones most projects touch:
 
@@ -33,3 +33,7 @@ Set shared values in `kendex.settings.toml` under `[env]` and personal overrides
 - `SECOND_OPINION_<NAME>_ROOM_CMD`: a command judging whether the account an entry spends has room, such as orch's `lanes pick`. A walled entry is skipped for the next one, so a Copilot entry can stand in while the Codex seats are walled, and the entry runs on the account the check names.
 - `SECOND_OPINION_<NAME>_INLINE_DIFF`: set to `1` for an entry that cannot run git, such as Pi on read-only file tools; its review prompt then carries the diff, up to the cap `second-opinion --help` names.
 - `SECOND_OPINION_CURRENT_MODEL`: the session model, required in Pi, OpenCode, Cursor, Copilot or an undetected shell; never store it in a project file.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

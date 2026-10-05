@@ -73,7 +73,7 @@ COVERED_EXTRA="tools"
 # repository refuses. On a developer machine that means `tools/guard --full`
 # cannot complete without a container runtime — which is why tools/guard
 # takes this lane in --full and not in the commit chain, where a machine
-# without one would be unable to commit at all. docs/DEVELOPMENT.md § The
+# without one would be unable to commit at all. DEVELOPMENT.md § The
 # commit chain names that prerequisite where a contributor reads it.
 #
 # Each list is tried in order, and what a candidate ANSWERS decides it, never

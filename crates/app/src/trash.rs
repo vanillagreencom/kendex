@@ -1,6 +1,6 @@
 //! The pass the desktop's writes close on, the mirror of the terminal's
 //! `tidy_trash`. Where it runs and where its lines go is
-//! `docs/architecture/trash.md` § Boundaries.
+//! `docs/architecture/trash.md` § Rules.
 
 use kendex_core::env::Env;
 

@@ -1,5 +1,5 @@
 // Catalog responses captured in ui-marketplaces-packages-cold-0.json from
-// the evidence archive linked in docs/plans/app-loading-performance-research.md.
+// the evidence archive linked in the app loading performance research attached to KEN-2779.
 // Split by catalog and item kind to keep fixture files below the byte ceiling.
 import type { AvailablePackage, MarketplaceRow } from "@/bindings";
 import agentskills from "./packages/agent-skills.json";

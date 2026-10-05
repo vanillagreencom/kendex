@@ -397,7 +397,7 @@ fn the_classifier_reads_a_binary_the_release_stages() {
     );
 }
 
-/// A full release is still the draft `docs/RELEASING.md` describes, and a
+/// A full release is still the draft the app-deploy skill describes, and a
 /// candidate is published outright. Published is the whole point: a draft's
 /// assets are unreachable, so a candidate nobody can download tests
 /// nothing. Marked pre-release is what keeps it away from everyone else,

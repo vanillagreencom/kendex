@@ -10,13 +10,7 @@ Change an existing decision's status when a newer one displaces it or conditions
 
 ## 1. Decision file
 
-Set `**Status**:` to the value above. For a revisit, append the outcome:
-
-```markdown
-## Revisit Outcome ([DATE])
-
-[REVISIT_OUTCOME]
-```
+Set `**Status**:` to the value above. For a revisit, rewrite the `**Decision**:`, `**Why**:` and `**Revisit when**:` lines to the re-assessed choice; the record states the current policy, and git history holds the earlier wording.
 
 ## 2. INDEX row
 

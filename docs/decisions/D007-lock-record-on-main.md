@@ -6,77 +6,14 @@
 
 **Status**: Revisited
 
-**Research**: —
+**Research**: KEN-1877
 
 **Refines**: [D001](D001-portable-lock.md), [D003](D003-one-merge-path.md)
 
-**Applies to**: `.kendex-lock.json` in this repository, `tools/lock-record`, `.github/workflows/lock-record.yml`, `skills/AGENTS.md`, `docs/DEVELOPMENT.md` § The self-install
+**Decision**: A pull request never re-records `.kendex-lock.json`. After each push to `main`, `.github/workflows/lock-record.yml` builds kendex from that tree and runs `tools/lock-record`: where `kendex verify --scope project` reports the record stale, it re-records with `kendex refresh`, commits on the rolling branch `kendex/lock`, opens or updates the one pull request for that branch and arms auto-merge with the lanes app's token. A branch re-records only when the kendex it builds cannot read the record on `main`, which is a change to the lock's own format. In a checkout whose HEAD is not the default branch, `kendex check` writes nothing to the committed record, and every session-start hook runs `kendex check --quiet --report-only`, which never writes a tracked file anywhere. The rolling pull request's render proof runs the rolling main build, selected by `REVIEW_GATE_LOCK_KENDEX = "main"`, because a pinned release cannot read a record written by a kendex built from `main`. kendex stays excluded from consumer refresh while its record depends on the kendex build that writes it.
 
-## Summary
+**Why**: Two open pull requests changing one package each rewrote the same lock rows, and whichever merged first ejected every other from the queue, with the cost growing as the square of the open pull requests on one package. The record is a function of the merged tree, so only a record written after the merge can be current, and the queue admits no direct commit to `main`.
 
-A pull request never re-records `.kendex-lock.json`. After each push to `main`, `.github/workflows/lock-record.yml` builds kendex from that tree and runs `tools/lock-record`. Where `kendex verify --scope project` reports the record stale, the script re-records it with `kendex refresh`, commits what refresh wrote on the rolling branch `kendex/lock`, force-pushes it, opens the one pull request for that branch or updates it, and arms auto-merge with the lanes app's token. The merge queue lands it like every other change. A branch re-records the lock only when the kendex it builds cannot read the record on `main`, which is a change to the lock's own format.
+**Rejected**: Laying the lock out one entry per line so git merges it: the conflict is in the values, not the layout, and a check cannot amend a merge group's commit. A workflow committing straight to `main`: refused by the zero-bypass ruleset, and a bypass reopens the mixed merge path.
 
-## Context
-
-Since KEN-1862, every change that moved what `kendex refresh` records re-recorded the lock in its own pull request, and CI failed the `record` row otherwise. Two open pull requests changing one package each rewrote the same `skill:<name>:<harness>` rows, and the lock's `sources.kendex.commit` line moved on every re-record. Whichever merged first made every other one a base conflict on `.kendex-lock.json`: the merge queue ejected it, and its lane restacked, rebuilt kendex, re-recorded, waited for the gate and CI again, and re-armed. PR 2935 was ejected three times on 2026-09-26 on that file alone, 30 to 40 minutes per ejection, and the cost grows with the square of the open pull requests on one package.
-
-The record is a function of the merged tree. A copy written on a branch is stale the moment another branch on the same package lands ahead of it, so only a record written after the merge can be current.
-
-## Decision
-
-1. **Who records.** `tools/lock-record`, run by `.github/workflows/lock-record.yml` on every push to `main` and on `workflow_dispatch`, with a kendex built from the pushed tree, because the kendex code that hashes, renders and records is part of what moves the record. The run refreshes the source mirrors, judges the record with `kendex verify --scope project`, and stops with `current=<sha>` when the record matches. A stale record is re-recorded with `kendex refresh --scope project --yes --leave`, verified again, and committed with every path refresh wrote.
-2. **How it lands.** On the rolling branch `kendex/lock`, force-pushed from the head just judged, as one pull request against `main` that the lanes app arms for the merge queue. A pull request already open on the branch is updated by the push. The workflow's token comes from the `kendex` environment's `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` through `actions/create-github-app-token`, scoped to this repository, as D003 step 2 prescribes for a consumer's refresh workflow. Nothing pushes to `main`: the organization ruleset takes every change through the queue with no bypass actor.
-3. **What a pull request does.** It leaves `.kendex-lock.json` as `main` holds it. The `record` row check on pull requests is removed from `skill-tests.yml`; the workflow's second `kendex verify`, after the refresh, is the record row check, and it runs on `main`. A pull request that changes the lock format re-records in its own branch, because a kendex that cannot read the record on `main` can neither judge nor refresh it.
-4. **Convergence.** The push the rolling pull request's merge makes runs the workflow again, which finds the record current and writes nothing. `kendex verify` holds the record to its entries and to the mirror serving the declared source commit, not to the `sources.<name>.commit` value itself, so a refresh that would only move that line is never opened. A merge landing while a rolling pull request is open runs the script again, which judges that pull request by the one judge before it refreshes: its commit is cherry-picked onto the head, which applies the change it made to the head it was recorded from as the queue's squash merge would and needs no history behind the head the workflow's checkout lacks, and `kendex verify` asked; a pass means it records this tree, so the script stands down and arms it where it was not, and the queue merges it onto the newer head. A byte compare of the refresh against that commit would never match here, because the record's `sources.kendex.commit` line moves to the tip on every refresh. A conflict or a failed verify means the pull request is stale: the script disarms and dequeues it, as a restack does, force-pushes the new record from `main`'s head, which never conflicts with `main`, and arms it again.
-
-## Rationale
-
-- Two branches re-recording one package's rows conflict by construction. A record written after each merge cannot.
-- The queue and the ruleset admit no direct commit to `main` (D003), so the rolling pull request is the one route a post-merge record has. It changes who commits the record, from each lane to the lanes app, without a new credential or a bypass.
-- Building kendex from the pushed tree keeps the KEN-1862 property that the record is judged by the code that would write it.
-- The verify-first gate keeps the workflow from opening a pull request over a `sources` commit line alone, which would loop through the queue after every merge.
-
-## Alternatives Considered
-
-| Alternative | Why rejected |
-| --- | --- |
-| Keep the record on the pull request and lay the lock out one entry per line so git merges it | Two pull requests on one package change the same entry's line, and the `sources.kendex.commit` line moves on every record; the conflict is in the values, not the layout. CI cannot regenerate rows inside a merge group, because a check cannot amend the group's commit. |
-| A workflow that commits the record straight to `main` | The organization ruleset requires the merge queue on the default branch with zero bypass actors (D003 step 3); a direct push is refused, and a bypass for it reopens the mixed merge path D003 retired. |
-| Record the lock in the merge queue's own run | The queue run is a check on a commit GitHub built; it can fail the group, not change it. |
-| Drop the in-place entries' hashes from the committed record and derive them on read | Changes what every clone reads as its record (D001) for a cost the post-merge route already removes. |
-
-## Impact
-
-- The KEN-1862 property becomes: `kendex verify` on `main` reads no stale row once the rolling pull request that follows a merge has merged, one queue cycle after that merge rather than inside its CI run. Between the two, a verify on `main` reports the rows the merge moved, and nothing on `main` runs `kendex verify` in that window: the push-to-`main` CI run stands its shards down, and the overseer's `post-merge` script refreshes its base checkout before it verifies.
-- The overseer's base checkout keeps the committed record: `post-merge` refreshes to judge, verifies, then restores the tracked paths the refresh wrote and removes the untracked paths it created, so the next `sync-base` reads a clean checkout and the rolling pull request's merge fast-forwards over it, landing a render the merge only declared; the hosted `merged` step in `oversee-events.md` runs `post-merge --refresh-only`, the refresh and that restore alone.
-- A branch's `kendex verify --scope project` reports the rows it moved as stale until its merge lands, and the session drift notice in a worktree says the same; neither is acted on there.
-- The consumer refresh workflow KEN-1779 adds is the same shape with the latest stable kendex release selected at run time; this repository builds its own because its record is judged by the code it changes. kendex must not adopt that workflow, and the dispatch D003 step 2 gives it must skip this repository, until the third Revisit When condition holds, the record no longer depending on the kendex build: two rolling pull requests recording one file from a release and from the tree would differ whenever `main` is ahead of the release. This decision requires that exclusion; D003 step 2 and the consumer template preserve it.
-- `tools/ci-job-set` no longer selects the `rest` shard for a path the install record covers, because that shard no longer judges the record.
-
-**Revisit When**: the rolling pull request classifies `standard` and stalls at the review gate rather than merging as `render` or `small`, which the render proof's pinned kendex or the class ceiling decides; GitHub admits a workflow commit to a queue-protected branch without a bypass actor; or the record stops depending on the kendex build that writes it, at which point the consumer template's latest stable kendex release selected at run time can record this repository too.
-
-**Verification**: `crates/cli/tests/lock_record.rs`: two branches that each change one script of one package, merged in sequence with `tools/lock-record` recording after each, produce no conflict on the second and a record a fresh clone of `main` verifies clean. `tools/tests/ci-class-job-set.test.sh` holds the shard selection without the install-record rule.
-
-**References**: KEN-1877, KEN-1862, KEN-1779, [D001](D001-portable-lock.md), [D003](D003-one-merge-path.md)
-
-## Revisit Outcome (2026-09-28)
-
-The decision stands, and decision 3 now covers `kendex check` as well as the pull request. KEN-1983 found the gap: in a checkout on a branch that adds packages to its install manifest, the session-drift-check hook ran `kendex check` at every session and subagent start, and the check recorded each new render it proved against its source into `.kendex-lock.json`. That is the behaviour D001 gives a clone that carries renders and no record. On that branch it rewrote the lock by more than a thousand lines, and every reviewer artifact written while the change stood was refused as a moving tree.
-
-- **The branch D007 records on.** It is the repository's default branch: the branch the `origin` remote's HEAD names (`refs/remotes/origin/HEAD`), else `main` where the clone records no remote HEAD. The rule keys on the branch the checkout has checked out, not on whether the checkout is a linked worktree, so a standalone clone on a branch is covered. A detached HEAD is not on that branch.
-- **D001's settle does not run on a branch checkout.** In a checkout of a Git repository whose HEAD is not the default branch, `kendex check` writes nothing to the project's committed install record. A render that matches its source and has no record is reported as unrecorded, with no fix to run on the branch: the post-merge record on `main` records it. A render that differs is still reported as stale. The machine half under `.cache/kendex/` and kendex's own cache may still be written, so the memo keeps the next check fast.
-- **The session hook records nothing on any branch.** A hook run at agent spawn never writes a tracked file in a checkout, the default branch included (owner requirement on KEN-1989). Every session-start carrier runs `kendex check --quiet --report-only`: the session-drift-check hook, its Pi port in pi-hooks, and the kendex-drift hook `kendex drift-hook` installs. A render the record has no row for is reported with its path, `recorded hash none` and the rendered hash (a registration that writes no file, such as a plugin or an MCP server, names the settings file it is registered in), and the record is left as the checkout holds it; a recorded row whose hash is stale is `kendex verify`'s to report, as the Impact section states. A kendex too old to know the flag is reported as a check that could not run, never answered by the check without the flag. Recording stays with `tools/lock-record` on `main` through the rolling pull request.
-- **Where D001 still holds.** On the default branch, and in a project outside Git, a `kendex check` run by hand settles an unrecorded clone as D001 states. The global scope's record is not committed and is unchanged.
-- **Verification.** A test holds that a session start in a checkout whose manifest adds a package leaves `git status --porcelain` empty, on a branch and on the default branch.
-
-## Revisit Outcome (2026-09-29)
-
-The first Revisit When condition fired on PR 3105: the rolling pull request classified `standard` and stalled at the review gate, because the render proof's pinned kendex release refused a record written by a kendex built from `main`'s tree. The decision stands. KEN-2081 changed only which kendex proves that pull request's class.
-
-- **The rolling pull request's render proof runs the rolling main build.** This repository sets `REVIEW_GATE_LOCK_KENDEX = "main"` in `kendex.settings.toml`. With it set, the review-gate writer's install step also installs kendex's rolling main build into a directory of its own and hands its path to `skills/harness-ci/scripts/change-class` as `HARNESS_CI_LOCK_KENDEX`. `change-class` runs that build for a diff whose only changed path is `.kendex-lock.json`.
-- **Every other class keeps the pinned release.** Any other diff, and a lock-only diff whose main build failed to install, is proved by the pinned release as before.
-- **Nothing else in this decision changes.**
-
-## Revisit Outcome (2026-09-30)
-
-KEN-2281 records the owner's approved choice to select the latest stable kendex release at run time for consumer refresh, with no release version or installer SHA literal in the consumer workflow. The Impact description and consumer-template clause in Revisit When now reflect that choice. A released engine can still lag `main`, so kendex remains excluded from consumer adoption and dispatch. This repository still builds its recorder from the pushed `main` tree. The rolling pull request, branch record rule, separate writer's pinned release and rolling-main render proof, and earlier revisit outcomes remain unchanged.
+**Revisit when**: The rolling pull request stalls at the review gate, GitHub admits a workflow commit to a queue-protected branch without a bypass actor, or the record stops depending on the kendex build that writes it.

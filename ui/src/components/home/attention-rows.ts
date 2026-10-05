@@ -49,7 +49,7 @@ import type { Problem } from "@/stores/problems";
 import { isRead, type ReadNotices } from "@/stores/read-notices";
 
 /** What an item asks of the person. The classes, and the rule for each,
- *  are docs/design/attention.md. */
+ *  are docs/architecture/attention.md. */
 export type AttentionClass = "problem" | "decision" | "notice" | "update";
 
 /** Each class's tone, the one table every surface reads its colour from.

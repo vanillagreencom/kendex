@@ -4,6 +4,14 @@ A session browser for Pi. You can search saved conversations, resume them, renam
 
 ![Session Manager overlay and model-change confirmation](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-session-manager/assets/session-manager.gif)
 
+## Features
+
+- Browse sessions for the current project or all projects.
+- Search by words, quoted phrases or regular expressions.
+- View related sessions as a tree.
+- Choose the saved or current model when resuming.
+- Delete with confirmation and optional trash support.
+
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-session-manager`.
@@ -16,21 +24,19 @@ source = "kendex"
 
 Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-## Features
-
-- Browse sessions for the current project or all projects.
-- Search by words, quoted phrases or regular expressions.
-- View related sessions as a tree.
-- Choose the saved or current model when resuming.
-- Delete with confirmation and optional trash support.
-
 ## How it works
 
 The browser reads Pi's saved session files and displays their names and details. You search or select a session. Resume opens that session through Pi. Delete tries the trash command when configured, then uses permanent deletion if trash is unavailable.
 
 Delete refuses a session that another running Pi has open, such as another lane's, and names that Pi's working directory and process id. Each Pi running this package records the session it has open in `~/.pi/agent/kendex/pi-session-manager/live/`, one small file that it removes when the session ends. A Pi without this package, or with it disabled, records nothing, so its session is not protected.
 
-## Settings
+## Memory
+
+The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when the pattern runs past 250 ms on the prompts of one session.
+
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-session-manager"]`.
 
@@ -42,8 +48,6 @@ Open `/extensions:settings`; settings appear under the **Session Manager** tab. 
 - `visibleRows`, `overlayWidth`: overlay size.
 - `deleteUsesTrash`: try `trash` before a permanent unlink. A `trash` that runs past 5 seconds is stopped, with any helper it started. If the session file is still in place, the delete fails and keeps it; it never falls back to a permanent unlink.
 
-## Memory
+## Licence
 
-The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when the pattern runs past 250 ms on the prompts of one session.
-
-Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

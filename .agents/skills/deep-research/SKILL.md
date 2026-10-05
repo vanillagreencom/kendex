@@ -32,7 +32,7 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 ## Rules
 
 - Exa is the research source. Substitute a general web search only when Exa is unavailable and the user approves the fallback.
-- Write `findings.md` to the path the caller requested, exactly. Given no path, write it to `docs/plans/<slug>-research.md`, tracked; the full rule, with its roadmap exception, is `agents/planner.md` § Plan Artifacts.
+- Write `findings.md` to the path the caller requested, exactly. Given no path, write it to `tmp/plans/<slug>-research.md`, never under a tracked `docs/` path; the full rule is `agents/planner.md` § Plan Artifacts. The report reaches other sessions as an attachment on its tracker issue.
 - Research on building against another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
 - Cite sources for material claims. Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline. Sanitize evidence excerpts: source-page headings must not render as headings.
 - Once the report and its sidecar exist, run `validate` and stop. No local reproduction, benchmarks, tests, code inspection, or implementation unless the caller asked for it.

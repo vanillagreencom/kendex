@@ -13,7 +13,7 @@ Canonical constraints for decision documents and their index.
 
 Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell must name the decision document. Rows are append-only, never re-sorted. Row format: `../templates/index-row.md`.
 
-Below the table: a Format Reference section listing what to log, what not to log, and the status values in use.
+Below the table: a Format Reference section naming the status values in use and pointing at the bar in the decider `SKILL.md`.
 
 ## Decision document
 
@@ -25,12 +25,13 @@ File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`
 | Index back-link | `[← Decision Index](INDEX.md)`, immediately after the title |
 | Date | `**Date**: YYYY-MM-DD` |
 | Status | `**Status**: [VALUE]` — see below |
-| Research | `**Research**: [REF]`, or `—` when none |
-| Decision | What was chosen, stated explicitly |
-| Rationale | Why — bullets, table, or section |
-| Revisit When | Conditions for re-evaluation |
+| Research | `**Research**: [REF]`: the issue or evidence link, or `—` when none |
+| Decision | `**Decision**:` what was chosen, stated explicitly |
+| Why | `**Why**:` the reason, one short paragraph or a few bullets |
+| Rejected | `**Rejected**:` the main alternative and why it lost |
+| Revisit when | `**Revisit when**:` the condition that re-opens the choice |
 
-Optional metadata lines: `**Applies to**:` (scoped decisions), `**Refines**:` (extends prior decisions), `**API Contract**:` (defines or changes one). Optional sections: `## Summary`, `## Context`, `## Pattern`, `## Verification`, `## Alternatives Considered`, `## Impact`, `## Appendices`.
+Optional metadata lines, each one line: `**Supersedes**:` or `**Refines**:` naming the earlier decision and the scope taken from it, and `**Applies to**:` for a scoped decision. Nothing else: no summary, context, design, verification, impact or appendix section. A measurement, a test name or a run order belongs to the issue, the test or the code.
 
 ## Status values
 
@@ -48,7 +49,7 @@ Optional metadata lines: `**Applies to**:` (scoped decisions), `**Refines**:` (e
 | From → to | Format |
 |-----------|--------|
 | Decision → decision | `[DECISION_ID](DECISION_ID-descriptor.md)` |
-| Decision → research | `[RESEARCH-ID](../research/RESEARCH-ID/findings.md)` |
+| Decision → issue or evidence | the tracker link, or the attachment on that issue |
 | Decision → code | `` `path/to/file.rs` `` or a relative link |
-| Code → decision | `// REVISIT([DECISION_ID]): [reason]` |
+| Code → decision | `// REVISIT([DECISION_ID]): [reason]`, only where that code carries out the choice |
 | Issue → decision | `**Decision [DECISION_ID]**: [path/to/DECISION_ID-descriptor.md]` |

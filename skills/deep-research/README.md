@@ -2,14 +2,6 @@
 
 A research CLI that sends questions to Exa Deep Search. It writes a findings report with source links and saves the provider response beside it.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill deep-research
-```
-
-Requires Node 18 or newer and `EXA_API_KEY`. Set the key in the kendex app, on this package's Customize tab: it goes to the project's private env file, which is `.env.local` unless `KENDEX_ENV_FILE` names another. Setting it by hand in that file works too. Use `scripts/deep-research doctor` to check the setup.
-
 ## Features
 
 - Produce research reports from a question.
@@ -17,11 +9,23 @@ Requires Node 18 or newer and `EXA_API_KEY`. Set the key in the kendex app, on t
 - Validate a report against its saved provider response.
 - Return the provider response as JSON.
 
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill deep-research
+```
+
 ## How it works
 
 You give the CLI a question and a research mode. It sends the request to Exa. It writes the findings to markdown and saves the response in a JSON file. The validation command checks the report against that saved response.
 
-## Settings
+## Setup
+
+Requires Node 18 or newer and `EXA_API_KEY`. Set the key in the kendex app, on this package's Customize tab: it goes to the project's private env file, which is `.env.local` unless `KENDEX_ENV_FILE` names another. Setting it by hand in that file works too. Use `scripts/deep-research doctor` to check the setup.
 
 - `EXA_API_KEY`: the only setting; it lives in the project's private env file, not in committed configuration.
 - Domain, date, result-count and context flags are per call, listed by `scripts/deep-research help`.
+
+## Licence
+
+MIT, in the repository's LICENSE file.

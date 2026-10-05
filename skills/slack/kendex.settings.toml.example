@@ -3,7 +3,7 @@
 # SLACK — the relay between an overseer's mailbox and a private Slack channel.
 # Nothing below is marked `# required`, so installing this skill writes
 # nothing into <project>/kendex.settings.toml. The defaults are what the
-# owner runs. Full key reference: slack README.md § Settings.
+# owner runs. Full key reference: slack README.md § Setup.
 
 # The email addresses of the people whose messages steer, comma-separated.
 # Anyone else in a channel can read but not steer. After a change, run

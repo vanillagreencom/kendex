@@ -82,7 +82,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
 });
 
 // The rows of the design's state table that decide which segments the
-// offer draws, `docs/design/post-refresh-commit-flow.md` § State table.
+// offer draws, the post-refresh commit flow design attached to KEN-1027, § State table.
 describe("the choices an offer carries", () => {
   it("offers the routes allowed by each offer", () => {
     const rows: { name: string; offer: ProjectOffer; routes: string[] }[] = [

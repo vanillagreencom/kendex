@@ -228,7 +228,7 @@ impl std::fmt::Display for ExecuteError {
 ///
 /// The trash pass closes the write here too: once the plan is on disk,
 /// `crate::trash::tidy` runs and its lines join the account
-/// (`docs/architecture/trash.md` § Boundaries).
+/// (`docs/architecture/trash.md` § Rules).
 ///
 /// Once `execute` has returned, everything a command reads back is
 /// enrichment — `after_writing` is how that read's failure carries the

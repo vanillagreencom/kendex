@@ -30,7 +30,7 @@ import {
   uncommittedNoBranch,
 } from "./copy-commit-offer";
 
-// The design's example values, `docs/design/post-refresh-commit-flow.md`
+// The design's example values, the post-refresh commit flow design attached to KEN-1027,
 // § App: every string below is the one its table prints for them.
 const FILES = 12;
 const OTHERS = 4;

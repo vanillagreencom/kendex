@@ -2,14 +2,6 @@
 
 A relay between an overseer's mailbox and one private Slack channel. Session owners steer the overseer from Slack and read its questions, rulings and reports.
 
-## Install
-
-```bash
-kendex add vanillagreencom/kendex --skill slack
-```
-
-Requires Python 3.8+ and the orch skill, which the install adds.
-
 ## Features
 
 - Create or adopt one private channel per checkout and invite its owners by email.
@@ -21,6 +13,12 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Post an alert or a file to any channel from a script, with `--mention` for the owners.
 - Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill slack
+```
 
 ## How it works
 
@@ -88,14 +86,6 @@ For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to 
 
 The app must be a member of every channel it posts to. `setup` creates or adopts a channel the app is in; for an alert channel, invite the app in Slack.
 
-## Setup
-
-1. Set `KENDEX_USER_EMAIL` in the private env file if unset; `SLACK_OWNERS` defaults to it.
-2. Put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in the private env file.
-3. Run `slack setup` in the checkout. It prints `slack: bound=CHANNEL_ID root=... name=... owners=N`.
-4. Run `slack install --root <checkout>` on a host with systemd, or `slack listen --root <checkout>` in a terminal. To add a checkout later, run `slack install` again with every `--root`; it restarts the running relay on the new list.
-5. Write in the channel. The overseer's reply lands in the thread.
-
 ## The master hold
 
 Each root reads the presence pair from its own settings and private env files, with caller exports taking precedence. An empty or absent `SLACK_MASTER_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. `slack listen --status` shows `held-by=master` while held.
@@ -127,7 +117,13 @@ A question answered in the overseer's chat shows in its Slack thread as "Answere
 - Owner files stay in `tmp/slack/files/` until the checkout's user removes them.
 - Anyone in the channel reads what the overseer posts. Only the owners steer.
 
-## Settings
+## Proof
+
+The [suites](https://github.com/vanillagreencom/kendex/tree/main/skills/slack/tests) use a fake Slack API and the real `lane-mail`. [Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof) covers checks that need the owner's Slack app and channel.
+
+## Setup
+
+Requires Python 3.8+ and the orch skill, which the install adds.
 
 Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens in its private env file. Nothing is required, so an arrival writes nothing; [kendex.settings.toml.example](kendex.settings.toml.example) comments each key.
 
@@ -143,6 +139,6 @@ Other Slack settings are process-wide and use the launch checkout, the first `--
 | `SLACK_MASTER_FILE` | Per root: the master's presence file; while fresh it holds that root's mailbox posts | empty: no hold |
 | `SLACK_MASTER_MAX_AGE` | Per root: seconds after the file's last touch that it still holds posts | `600` |
 
-## Proof
+## Licence
 
-The [suites](https://github.com/vanillagreencom/kendex/tree/main/skills/slack/tests) use a fake Slack API and the real `lane-mail`. [Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof) covers checks that need the owner's Slack app and channel.
+MIT, in the repository's LICENSE file.

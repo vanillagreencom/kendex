@@ -126,7 +126,7 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
         "agent_label": "agent:[TYPE]",
         "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
         "is_bundle_parent": false,
-        "source_path": "docs/roadmaps/roadmap-feature.md"
+        "source_path": "tmp/roadmaps/roadmap-feature.md"
       },
       "supersedes": [{"identifier": "[ISSUE_ID]", "title": "...", "reason": "Scope fully covered by this issue"}],
       "obsolete": {"evidence": {}, "confidence": 100},

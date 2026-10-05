@@ -40,8 +40,8 @@
 #   scratch=mktemp-failed      no scratch directory could be made (exit 1)
 #   lookup=<name[@version]>    npm view failed other than with E404 (exit 1)
 #   first-release=<name>       npm serves no version of the package; its first
-#                              publish is by hand, docs/RELEASING.md § Pi
-#                              packages on npm (exit 1)
+#                              publish is by hand, the npm-deploy skill's
+#                              § Trusted publishing (exit 1)
 #   served=<name@version>      npm already serves it; nothing is published (exit 0)
 #   moved=<tag>                pi-extensions/<dir> at the checkout's HEAD differs
 #                              from the tag's; it needs a new version (exit 1)
@@ -195,7 +195,7 @@ lookup "$name" name "$name"
 # guard first-release: begin
 if [[ "$status" -eq 1 ]]; then
   say first-release "$name" "npm serves no version of $name, and npm trusted publishing cannot make a package's first publish." \
-    "An npm organization admin publishes it once by hand and adds its trusted publisher (docs/RELEASING.md § Pi packages on npm); nothing was published" >&2
+    "An npm organization admin publishes it once by hand and adds its trusted publisher (the npm-deploy skill § Trusted publishing); nothing was published" >&2
   exit 1
 fi
 # guard first-release: end

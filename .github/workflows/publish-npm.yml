@@ -9,7 +9,7 @@ run-name: publish-npm ${{ inputs.tag || github.ref_name }}
 # kendex environment, which deploys from main only (D003), so only main's
 # reviewed copy of this file and of tools/publish-npm can publish. The
 # npm-side settings, and what renaming this file breaks, are
-# docs/RELEASING.md § Pi packages on npm; tools/publish-npm holds every check.
+# the npm-deploy skill § Trusted publishing; tools/publish-npm holds every check.
 
 on:
   push:
