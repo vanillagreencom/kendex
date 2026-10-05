@@ -67,17 +67,21 @@ pub struct SealedSource {
 /// three answers to "what is not content" that drift are three different
 /// ideas of what a package contains.
 pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-/// Names tools keep their own state under, wherever in a tree they run:
-/// never part of a skill's source, and never part of an installed render's
-/// identity (`hash::RenderedIdentity::from_path`), so a cache a skill's own
-/// script leaves in its render reads as neither content nor an edit.
-pub(crate) const TOOL_STATE: [&str; 5] = [
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".venv",
-];
+/// Caches a tool regenerates wherever in a tree it runs, such as the
+/// `__pycache__` a skill's own Python script writes beside the module it
+/// imports. Never part of a skill's source, and never part of an installed
+/// render's identity (`hash::RenderedIdentity::from_path`), so a cache in
+/// a render reads as neither content nor an edit.
+pub(crate) const TOOL_CACHES: [&str; 2] = ["__pycache__", ".pytest_cache"];
+
+/// What a skill's source leaves out at every depth: the caches, and the
+/// repository, dependency and environment trees a tool keeps there. Only
+/// the caches leave a render's identity: a `.git`, `node_modules` or
+/// `.venv` inside a render is a person's, and keeps the edit hold.
+const TOOL_STATE: [&str; 5] = {
+    let [pycache, pytest] = TOOL_CACHES;
+    [".git", "node_modules", ".venv", pycache, pytest]
+};
 
 /// The entries at a skill's own top level that a render leaves out: the
 /// package's test suites, its evaluation sets and its maintainer notes. An

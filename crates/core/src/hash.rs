@@ -183,7 +183,7 @@ impl RenderedIdentity {
     /// Identity for a file or tree already on disk.
     ///
     /// A tree's identity leaves out the tool caches a skill's source
-    /// leaves out ([`crate::source_read::TOOL_STATE`]): the render was
+    /// leaves out ([`crate::source_read::TOOL_CACHES`]): the render was
     /// written without them, and a skill's own script writes them back on
     /// every run.
     ///
@@ -472,7 +472,7 @@ fn collect_plain_files(
             let Some(name) = entry.file_name() else {
                 continue;
             };
-            if crate::source_read::TOOL_STATE
+            if crate::source_read::TOOL_CACHES
                 .iter()
                 .any(|cache| name == std::ffi::OsStr::new(cache))
             {
