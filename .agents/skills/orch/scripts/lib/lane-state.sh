@@ -627,11 +627,15 @@ lane_stop_identity() { # PID START HARNESS
 # restarted by hand in its pane runs under a pid the record never named, and a
 # record written before launch identities were recorded names none. The turn
 # is stopped by the record's wake, WAKE_PID and WAKE_START (lane_stop_wake).
-# On status 0 LANE_STOP_COUNT is how many harness processes were signalled and
+# A harness stop that fails still stops the turn, and still returns the
+# harness's failure: a retry of a stop that ended the harness but not the turn
+# finds no harness, and would otherwise never reach the turn. On status 0
+# LANE_STOP_COUNT is how many harness processes were signalled and
 # LANE_STOP_IDENTITY says which identity stopped them, `recorded` or `pane`; a
 # harness the pane named that exited before its signal is a stop of 0. On
-# status 1 LANE_STOP_TARGET is `harness` or `wake`, the stop that failed, and
-# LANE_STOP_CAUSE is lane_stop_identity's, or for the harness one of:
+# status 1 LANE_STOP_TARGET is `harness` or `wake`, the first stop that
+# failed, and LANE_STOP_CAUSE is lane_stop_identity's, or for the harness one
+# of:
 #   identity-unread       the record names no identity and no harness runs
 #                         under the pane
 #   identity-stale        the record's identity is stale and no harness runs
@@ -640,9 +644,14 @@ lane_stop_identity() { # PID START HARNESS
 LANE_STOP_IDENTITY=""
 LANE_STOP_TARGET=""
 lane_stop_local() { # PANE_PID PID START WAKE_PID WAKE_START HARNESS
-  local count
+  local count cause pid
   LANE_STOP_TARGET=harness
-  lane_stop_launch "$1" "$2" "$3" "$6" || return 1
+  if ! lane_stop_launch "$1" "$2" "$3" "$6"; then
+    count="$LANE_STOP_COUNT" cause="$LANE_STOP_CAUSE" pid="$LANE_STOP_PID"
+    lane_stop_wake "$4" "$5" "$6" || :
+    LANE_STOP_TARGET=harness LANE_STOP_COUNT="$count" LANE_STOP_CAUSE="$cause" LANE_STOP_PID="$pid"
+    return 1
+  fi
   count="$LANE_STOP_COUNT"
   lane_stop_wake "$4" "$5" "$6" || return 1
   LANE_STOP_COUNT="$count"
