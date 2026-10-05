@@ -110,11 +110,8 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   next-alert-token
 #                 after the GraphQL read, atomically replaces alert-token,
 #                 as the control VM's token mint renews the supplied file
-#   repo.json     the repository `api repos/<repo>` answers, repo.<SLUG>.json
-#                 per repo (default: {"private":false}), run through the
-#                 call's own --jq filter; repo-fail present → that call fails
-# Every `auth status`, `pr list`, `run`, `api repos/`, `api --paginate` and
-# `api graphql` call is logged to gh.calls.
+# Every `auth status`, `pr list`, `run`, `api --paginate` and `api graphql`
+# call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -179,16 +176,6 @@ case "${1:-} ${2:-}" in
     if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"
     elif [[ "$list" == workflows ]]; then jq -rn "{workflows: []} | ${filter:-.}"
     else jq -rn "[] | ${filter:-.}"; fi
-    exit ;;
-  "api repos/"*)
-    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
-    [[ ! -f "$STUB_DIR/repo-fail" ]] || { echo "HTTP 502: bad gateway" >&2; exit 1; }
-    filter=""
-    [[ "${3:-}" == --jq ]] && filter="$4"
-    slug="$(printf '%s' "${2#repos/}" | tr -c 'A-Za-z0-9._-' '_')"
-    src="$STUB_DIR/repo.$slug.json"
-    [[ -f "$src" ]] || src="$STUB_DIR/repo.json"
-    if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"; else jq -rn "{private: false} | ${filter:-.}"; fi
     exit ;;
   "api graphql")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"

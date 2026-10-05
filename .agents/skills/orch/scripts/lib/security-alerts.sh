@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # The security-alert pass of oversee-watch: every open Dependabot, code
-# scanning and secret scanning alert in each --repo (Dependabot alone on a
-# private one), reported once until the
+# scanning and secret scanning alert in each --repo, reported once until the
 # overseer records its verdict in the fleet state's `alerts_triaged`. Sourced
 # by oversee-watch, and like the rest of its lib/ it reads that script's
 # globals (REPOS, PW_SEEN, WORK_DIR, WORKFLOW_STATE, WORKFLOW_STATE_ARGS) and
@@ -19,7 +18,8 @@
 # name with a space stays one word; a source is `<repo>/<kind>`,
 # `<repo>/dependabot-prs` (the alert-to-pull-request link) or
 # `alerts_triaged` or `installation-token`; a cause is one of
-# security_read_cause's, `invalid` or `credential`.
+# security_read_cause's, `invalid` or `credential`, never `feature-off` for
+# code or secret scanning, whose source is then off.
 
 # ORCH_SECURITY_ALERTS, read once at start: `on` (the default) runs the pass,
 # `off` lists nothing, and any other value is refused rather than guessed.
@@ -140,8 +140,8 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
-  local recorded="" reported repo kinds kind out prs line key number severity subject_key subject
-  local manifest scope advisory validity url pr fields row alerts source query token keys=() fix_keys=() fix_rows=""
+  local recorded="" reported repo kind out prs line key number severity subject_key subject
+  local manifest scope advisory validity url pr fields row alerts source query token cause keys=() fix_keys=() fix_rows=""
   SECURITY_UNREAD=""
   # The fleet renews the installation token in this file: the control VM for
   # a hosted overseer, the fleet worker for a local one. Read once per
@@ -180,11 +180,7 @@ check_security_alerts() {
   recorded=$'\n'"$(awk -F'\t' 'NF == 3 { print $1 "#" $2 "/" $3 }' <<<"$recorded")"$'\n'
 
   for repo in "${REPOS[@]}"; do
-    # Code and secret scanning on a private repository are paid products that
-    # can only answer feature-off; a failed visibility read keeps all three.
-    kinds="$SECURITY_KINDS"
-    [[ "$(GH_TOKEN="$token" gh api "repos/$repo" --jq .private 2>/dev/null)" != true ]] || kinds=dependabot
-    for kind in $kinds; do
+    for kind in $SECURITY_KINDS; do
       rc=0 source="$repo/$kind" query="state=open&per_page=100"
       # A secret's plaintext value is in the list unless GitHub is told to
       # leave it out, and the check never reads it.
@@ -201,7 +197,13 @@ check_security_alerts() {
       fi
       if [[ "$rc" != 0 ]]; then
         if [[ "$rc" == invalid ]]; then security_unread "$source" invalid
-        else security_unread "$source" "$(security_read_cause "$errf" "$rc")" "$errf"; fi
+        else
+          cause="$(security_read_cause "$errf" "$rc")"
+          # Code and secret scanning answer feature-off on every repository
+          # without GitHub's paid security products: the source is off, not
+          # unread, and its rows stand as for a failed read.
+          [[ "$cause" == feature-off && "$kind" != dependabot ]] || security_unread "$source" "$cause" "$errf"
+        fi
         while IFS= read -r key; do
           [[ -z "$key" ]] || keys+=("$key")
         done < <(awk -F'\t' -v p="$repo#$kind/" '$1 == "security-alert" && index($2, p) == 1 { print $2 }' <<<"$state")

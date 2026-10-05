@@ -241,9 +241,7 @@ The long pass's events, checked and reported in this order:
                              repository path percent-encoded, %20 a space
                              and %25 a percent sign; a code scanning
                              alert its rule; a secret its type and, where
-                             GitHub checks it, its validity. A private
-                             repository gets Dependabot alone unless its
-                             visibility read fails. Reported once;
+                             GitHub checks it, its validity. Reported once;
                              a first-repository baseline row keeps it quiet,
                              a record or the alert closing clears the row.
                              ORCH_SECURITY_ALERTS=off lists nothing
@@ -256,12 +254,15 @@ The long pass's events, checked and reported in this order:
                              A cause is permission, vanillagreen-overseer
                              lacking that alert permission; credential, its
                              supplied token file unavailable or invalid;
-                             feature-off, the alert feature
-                             turned off on that repository; http-<status> or
+                             feature-off, Dependabot alerts turned off on
+                             that repository; http-<status> or
                              exit-<N> for any other failure; or invalid.
                              Printed on every long pass a read fails, and
                              ends the run only when the set of failed reads
-                             changes. The rows of a failed source stand
+                             changes. Code or secret scanning answering
+                             feature-off, as on a repository without GitHub's
+                             paid security products, is off: no line, on
+                             stdout or stderr. The rows of a failed source stand
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -796,8 +797,8 @@ Environment:
                               overseer, or by the fleet worker for a local
                               one, for vanillagreen-overseer, with alert
                               read and write permissions. No default. Read once each long
-                              pass; only the visibility read, alert REST lists and
-                              the GraphQL alert-to-PR link use it through GH_TOKEN.
+                              pass; only alert REST lists and the GraphQL
+                              alert-to-PR link use it through GH_TOKEN.
                               Other watch reads keep their current credential.
                               An unset, unreadable, empty or whitespace-bearing
                               token produces security-alerts-unread with cause
@@ -989,7 +990,7 @@ ow_message() { # REASON FIELD=VALUE...
     outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     security-alerts-invalid) text='ORCH_SECURITY_ALERTS takes on or off.' ;;
-    security-alerts-read-failed) text='A read the security-alert check needs failed, so the named source is not judged this pass and its baseline rows stand. Cause permission means vanillagreen-overseer lacks that alert permission; the owner adds it to the app and accepts it on each installation. Cause credential means ORCH_SECURITY_ALERT_TOKEN_FILE supplies no usable installation token; the control VM must supply and renew it for a hosted overseer, the fleet worker for a local one. Cause feature-off means the alert feature is off on that repository. The failed reader'"'"'s own words follow where it printed any.' ;;
+    security-alerts-read-failed) text='A read the security-alert check needs failed, so the named source is not judged this pass and its baseline rows stand. Cause permission means vanillagreen-overseer lacks that alert permission; the owner adds it to the app and accepts it on each installation. Cause credential means ORCH_SECURITY_ALERT_TOKEN_FILE supplies no usable installation token; the control VM must supply and renew it for a hosted overseer, the fleet worker for a local one. Cause feature-off means Dependabot alerts are off on that repository. The failed reader'"'"'s own words follow where it printed any.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
     time-failed) text='The current UTC time could not be read.' ;;
