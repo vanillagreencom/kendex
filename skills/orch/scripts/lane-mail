@@ -531,7 +531,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
     draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
-    recommend-required) text='An owner ask names its choices with --options and what its deadline does: --recommend names the option that stands there, for a decision a default may close; --reserved marks an owner-reserved decision, which no default closes. The owner can still answer outside the choices, through send --re.' ;;
+    recommend-required) text='An owner ask names what its deadline does by its form, --recommend, --reserved or --draft; the owner-channel ask help states each. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
@@ -1774,8 +1774,8 @@ case "$VERB" in
     # relay, the report and pending all read; one with none reaches nobody.
     [ "$ITEM" != overseer ] || [ -n "$TO" ] || refuse option-required --to
     # An owner ask names what its deadline does, by its form (the
-    # owner-channel ask help states each); one naming neither --recommend
-    # nor --reserved says nothing, so it is refused. `ask:overseer` is
+    # owner-channel ask help states each); one naming no form (--recommend,
+    # --reserved or --draft) says nothing, so it is refused. `ask:overseer` is
     # always an owner ask, the audience check above having refused every
     # other.
     if [ "$VERB:$ITEM" = ask:overseer ]; then
