@@ -96,7 +96,7 @@ matrix_expr() { # WORKFLOW KEY [JOB]
   local raw
   raw="$(awk -v job="${3:-skill-suites-shard}:" -v key="$2:" '
     /^  [A-Za-z0-9_-]+:/ { active = ($1 == job) }
-    active && /^        / && $1 == key { sub(/^        [^:]+: /, ""); print }
+    active && /^        [^[:space:]]/ && $1 == key { sub(/^        [^:]+: /, ""); print }
   ' "$1")"
   case "$raw" in
     '&'*) raw="${raw#* }" ;;
