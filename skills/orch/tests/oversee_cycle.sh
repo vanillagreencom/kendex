@@ -297,7 +297,7 @@ PR_ROUNDS="$PR_ROUNDS" timeline 1500 300 500
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
@@ -308,6 +308,22 @@ assert_eq "$(state '[.lanes[] | select(.item != "KEN-2") | has("cycle")] | any')
 assert_eq "$(state '.fleet_log | map(.kind + ":" + .item) | join(",")')" '"cycle:KEN-2"' "one cycle row joins the fleet log"
 assert_eq "$(state '.fleet_log[0].text')" "\"$(sed 's/^rc=0 //' <<<"$(record KEN-2 micro)")\"" \
   "and its text is the printed line"
+
+echo "=== a negative round interval is refused at write ==="
+# negative_write NAME: a case for a met micro whose review round reads -40 s,
+# as pr-timeline gives a head whose first check suite postdates its review.
+negative_write() {
+  new_case "$1"
+  printf micro > "$CASE/class"
+  PR_ROUNDS='[{"kind":"review","head":"a","start":"s1","end":"e1","secs":-40},{"kind":"fix","head":"a","start":"e1","end":"s2","secs":1200}]' timeline 1000
+}
+negative_write negative-write
+got="$(record KEN-1 micro)"
+assert_eq "$(field verdict "$got") $(field pr_rounds "$got")" "verdict=met pr_rounds=1" "the record is written and its review round still counts"
+assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.pr_rounds | map(.secs)')" '[null,1200]' \
+  "the negative seconds are written as none, the others kept"
+assert_eq "$(grep '^oversee-cycle: negative-interval' "$CASE/err")" \
+  "oversee-cycle: negative-interval item=KEN-1 kind=review head=a secs=-40" "and the refused interval is named on stderr"
 assert_eq "$(head -n 1 "$CASE/github.calls")" "pr-timeline 7" "pr-timeline is asked for the PR alone when the record names no repo"
 
 printf 'not json' > "$REPO/tmp/workflow-state-KEN-2.json"
@@ -456,8 +472,8 @@ overlapping pauses count once and a standing park runs to the gate|100 1400|400 
 a review before the gap opens it on the lane|1400|110 1500|-|-|3200|phase=gate_green cause=thread_fix bot_wait=100 thread_fix=2780 paused=0
 no push and no review is all bot wait|-|-|-|-|3200|phase=gate_green cause=bot_wait bot_wait=2880 thread_fix=0 paused=0
 a fix pushed between two reviews and a rebase pushed after them are both bot waits|900 2500|400 2000|-|-|3200|phase=gate_green cause=bot_wait bot_wait=1880 thread_fix=1000 paused=0
-another phase names no cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=- bot_wait=380 thread_fix=2500 paused=0
-null push times split nothing|null|400 1500 2000|-|-|3200|phase=gate_green cause=- bot_wait=- thread_fix=- paused=-
+another phase is the miss's cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=merged bot_wait=380 thread_fix=2500 paused=0
+null push times split nothing and leave the miss its phase|null|400 1500 2000|-|-|3200|phase=gate_green cause=gate_green bot_wait=- thread_fix=- paused=-
 ROWS
 new_case split-record
 printf micro > "$CASE/class"
@@ -488,8 +504,29 @@ rounds pushed after the PR opened are work|3500|work
 a final push early in the gap leaves the checks the larger part|400|ci
 a final push before the gap opened leaves it all ci|110|ci
 work wins a tie|2150|work
-a push after ci_green splits nothing|4050|-
-no last push splits nothing|null|-
+a push after ci_green splits nothing and leaves the miss its phase|4050|ci_green
+no last push splits nothing|null|ci_green
+ROWS
+
+echo "=== a miss always records a cause ==="
+# A miss's cause is the wait its phase reads, else its phase, else unread
+# where a missing stamp leaves no phase; a met record names none.
+#   label|merged|ci_green|line|cause written
+miss_cause_case() { # NAME MERGED CI_GREEN
+  new_case "$1"
+  printf micro > "$CASE/class"
+  timeline "$2"
+  [[ "$3" != null ]] || edit_json "$CASE/timeline.json" '.stamps.ci_green = null'
+}
+while IFS='|' read -r label merged ci want stored; do
+  miss_cause_case "miss-cause-${label// /-}" "$merged" "$ci"
+  got="$(record KEN-1 micro)"
+  assert_eq "$(field verdict "$got") $(field phase "$got") $(field cause "$got")" "$want" "$label"
+  assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.cause')" "$stored" "$label: the record carries it"
+done <<'ROWS'
+a miss with a stamp missing reads no phase and records unread|5000|null|verdict=miss phase=- cause=unread|"unread"
+a miss on merged records its phase|5000|360|verdict=miss phase=merged cause=merged|"merged"
+a met record names no cause|800|360|verdict=met phase=merged cause=-|null
 ROWS
 
 echo "=== refusals ==="
@@ -553,12 +590,12 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
   done
   grep '^repeat-miss' <<<"$got" || true
 }
-REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-
+REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=merged,merged,merged
 met-record|m:1 m:2 m:3 ok:4|
 met-not-counted|ok:1 m:2 m:3|
 other-phase|m:1 m:2 p:3|
 pre-open|p:1 p:2 p:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=bot_wait,bot_wait,bot_wait
-post-merge|a:1 a:2 a:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-
+post-merge|a:1 a:2 a:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=merged,merged,merged
 unnamed-phase|n:1 n:2 n:3|
 recorded-again|m:1 m:2 m:3 m:3|
 fourth|m:1 m:2 m:3 m:4|
@@ -571,7 +608,15 @@ while IFS='|' read -r name sequence want; do
   assert_eq "$(repeat_row "repeat-$name" "$sequence")" "$want" "repeat bar, $name: $sequence"
 done <<<"$REPEAT_ROWS"
 repeat_row repeat-log "m:1 m:2 m:3" >/dev/null
-assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-"' "the fleet log carries the bar line"
+assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=merged,merged,merged"' "the fleet log carries the bar line"
+new_case repeat-legacy-cause
+printf micro > "$CASE/class"
+timeline 5000
+record KEN-1 micro >/dev/null
+record KEN-2 micro >/dev/null
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).cycle.cause = null'
+assert_eq "$(record KEN-3 micro | grep '^repeat-miss' || true)" "repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=merged,merged,merged" \
+  "a miss written with no cause reads its phase on the bar"
 
 # --- the rollup --------------------------------------------------------------
 echo "=== the rollup counts each class, its median and p90 ==="
@@ -606,6 +651,22 @@ rm -f -- "${CASE:?}/state/workflow-state-oversee.json"
 rc=0; out="$(rollup)" || rc=$?
 assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out= files=" "with no fleet state yet the rollup prints nothing, writes nothing and exits 0"
 assert_eq "$(record KEN-1 micro) $(head -n 1 "$CASE/err")" "rc=1  oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" "while a record refuses"
+
+echo "=== a negative interval written before the refusal enters no aggregate ==="
+# A record on disk with a negative launch-to-merge and negative round seconds.
+NEG_ROUNDS="[$(pr_round review 300),$(pr_round review -40),$(pr_round fix -10),$(pr_round fix 200)]"
+negative_rollup() {
+  new_case "$1"
+  jq -n --argjson c "[$(cycle '"micro"' 100 met null false false "$NEG_ROUNDS"),$(cycle '"micro"' -50 met null false false)]" \
+    '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
+    > "$CASE/state/workflow-state-oversee.json"
+  local line
+  line="$(rollup)"
+  printf '%s %s %s %s %s' "$(field median "$line")" "$(field p90 "$line")" "$(field round_median "$line")" \
+    "$(field fix_median "$line")" "$(field rounds_untimed "$line")"
+}
+assert_eq "$(negative_rollup rollup-negative)" "median=100 p90=100 round_median=300 fix_median=200 rounds_untimed=2" \
+  "negative seconds enter neither median nor p90, and a negative round counts as untimed"
 
 echo "=== --help prints the targets the verdict and the reader of the rollup use ==="
 assert_eq "$("$BIN" --help | tail -n 2)" "Targets, open-to-merge seconds: render 300, trivial 300, micro 1200, small 1800, standard 5400
@@ -673,7 +734,7 @@ assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
   "control: judged on launch to merge, a slow launch to PR opened records a miss"
 
 control m-phase oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at <= $m)]'
-assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
+assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened items=KEN-1,KEN-2,KEN-3 causes=pr_opened,pr_opened,pr_opened" \
   "control: without the lower bound, a CI green before the PR opened charges the miss to CI green to PR opened"
 
 control m-phase-end oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at >= $o)]'
@@ -696,7 +757,7 @@ jq -n --argjson c "[$(cycle '"micro"' 100 met null false false),$(cycle '"micro"
   > "$CASE/state/workflow-state-oversee.json"
 assert_eq "$(rollup | grep -o 'p90=[0-9]*')" "p90=400" "control: a floor rank reports a p90 below the slowest tenth"
 
-control m-rollup-rounds oversee-cycle 'select(.kind == "fix") | .secs // empty] | nr(0.5))' 'select(.kind == "review") | .secs // empty] | nr(0.5))'
+control m-rollup-rounds oversee-cycle 'select(.kind == "fix") | .secs | interval // empty] | nr(0.5))' 'select(.kind == "review") | .secs | interval // empty] | nr(0.5))'
 new_case c-rollup-rounds
 jq -n --argjson c "[$(cycle '"micro"' 100 met null false false "$P1")]" \
   '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
@@ -715,8 +776,21 @@ new_case c-split; printf micro > "$CASE/class"
 gate_timeline "100 1400" "400 1500 2000" 3200
 pauses KEN-1 600-1000 -
 got="$(record KEN-1 standard)"
-assert_eq "$(field phase "$got") $(field cause "$got") $(field paused "$got")" "phase=gate_green cause=- paused=-" \
-  "control: without the split the gate_green phase stays undivided and names no cause"
+assert_eq "$(field phase "$got") $(field cause "$got") $(field paused "$got")" "phase=gate_green cause=gate_green paused=-" \
+  "control: without the split the gate_green phase stays undivided and names no wait"
+
+control m-interval oversee-cycle 'def interval: if type == "number" and . < 0 then null else . end;' 'def interval: .;'
+negative_write c-interval-write
+record KEN-1 micro >/dev/null
+assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.pr_rounds | map(.secs)')" '[-40,1200]' \
+  "control: without the interval rule the record writes the negative seconds"
+assert_eq "$(negative_rollup c-interval-rollup)" "median=-50 p90=100 round_median=-40 fix_median=-10 rounds_untimed=0" \
+  "control: without the interval rule the negative seconds lead the medians"
+
+control m-miss-cause oversee-cycle 'def miss_cause: .cause // .phase // "unread";' 'def miss_cause: .cause;'
+miss_cause_case c-miss-cause 5000 null
+assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=-" \
+  "control: without the fallback a miss with a stamp missing records no cause"
 RUN_BIN=""
 
 echo

@@ -92,7 +92,10 @@
 #             final head, or ci, the final head's checks after its push;
 #             work wins a tie, a push before the gap opened leaves it all
 #             ci, and the cause is null where last_push is null or after
-#             ci_green. Null on any other phase
+#             ci_green. Null on any other phase, except on a miss: there a
+#             cause still null is the phase, the stamp its longest wait ended
+#             at, or `unread` where no phase is read, so no miss is recorded
+#             without one
 #   escaped   a micro tier whose merged class is small or standard, or a small
 #             tier whose merged class is standard
 #   tier_inputs  the launch record's {estimate, delta, paths}, null on old records
@@ -110,12 +113,18 @@
 #             which is pr-timeline's `rounds`: each review round and fix round
 #             GitHub saw, with its start, end and seconds. review, fix, bot
 #             and full_validations count the lane's local rounds, read from
-#             its workflow state, which GitHub never sees
+#             its workflow state, which GitHub never sees. A negative interval
+#             measures nothing: a round whose seconds read negative, which
+#             pr-timeline gives where a head's first check suite postdates its
+#             review, records null seconds and prints
+#             `oversee-cycle: negative-interval item=ITEM kind=K head=H secs=S`
+#             on stderr
 # When this record makes the third miss on one phase among the fleet's
 # records, it also prints and logs
 #   repeat-miss phase=P items=A,B,C causes=W,W,W
 # which is the bar for filing a CI or process issue in that repository;
-# causes names each item's cause in the order of items. A ci_green miss
+# causes names each item's cause in the order of items, read by the miss
+# rule under cause above for a record that carries none. A ci_green miss
 # counts toward the bar only where its cause is ci. A record that was
 # already a counting miss on that phase does not make it again.
 #
@@ -135,6 +144,8 @@
 # rounds_untimed counts their rounds with no seconds. A person compares
 # pr_rounds and round_median to the review-stage targets `--help` prints; the
 # rollup gives no verdict on them, and the owner names no fix-round target.
+# A negative interval enters no median or p90, in a record written before
+# the record refused it too; such a round counts as untimed.
 #
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
@@ -158,6 +169,10 @@ TARGETS='{"render":300,"trivial":300,"micro":1200,"small":1800,"standard":5400}'
 # and seconds per review round.
 ROUND_TARGETS='{"micro":1,"small":1,"standard":2}'
 ROUND_SECS_TARGET=600
+# The rules every program below reads a record through: a negative interval
+# is no measure, and a miss's cause falls back to its phase, then `unread`.
+CYCLE_DEFS='def interval: if type == "number" and . < 0 then null else . end;
+  def miss_cause: .cause // .phase // "unread";'
 
 usage() {
   awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
@@ -206,7 +221,7 @@ log_row() { # ITEM TEXT
 
 if [[ "$VERB" == rollup ]]; then
   [[ $# -eq 0 ]] || usage_error "$1"
-  lines="$(jq -r --argjson targets "$TARGETS" '
+  lines="$(jq -r --argjson targets "$TARGETS" "$CYCLE_DEFS"'
     def nr($p): sort as $a | ($a | length) as $n
       | if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;
     def n: if . == null then "-" else tostring end;
@@ -217,8 +232,8 @@ if [[ "$VERB" == rollup ]]; then
     | [$c[] | .rounds // empty] as $r
     | def sum(f): [$r[] | f] | add;
       "rollup class=\($class) items=\($c | length)"
-      + " median=\([$c[] | .actual // empty] | nr(0.5))"
-      + " p90=\([$c[] | .actual // empty] | nr(0.9))"
+      + " median=\([$c[] | .actual | interval // empty] | nr(0.5))"
+      + " p90=\([$c[] | .actual | interval // empty] | nr(0.9))"
       + " misses=\([$c[] | select(.verdict == "miss")] | length)"
       + " review=\(sum(.review) | n) fix=\(sum(.fix) | n) bot=\(sum(.bot) | n)"
       + " full_validations=\(sum(.full_validations) | n)"
@@ -229,9 +244,9 @@ if [[ "$VERB" == rollup ]]; then
       + " refixed=\([$c[] | select(.refixed == true)] | length)"
       + " pr_rounds=\([$c[] | .pr_rounds // empty | [.[] | select(.kind == "review")] | length] | nr(0.5))"
       + " pr_rounds_unread=\([$c[] | select(.pr_rounds == null)] | length)"
-      + " round_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "review") | .secs // empty] | nr(0.5))"
-      + " fix_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "fix") | .secs // empty] | nr(0.5))"
-      + " rounds_untimed=\([$c[] | .pr_rounds // empty | .[] | select(.secs == null)] | length)"
+      + " round_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "review") | .secs | interval // empty] | nr(0.5))"
+      + " fix_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "fix") | .secs | interval // empty] | nr(0.5))"
+      + " rounds_untimed=\([$c[] | .pr_rounds // empty | .[] | select((.secs | interval) == null)] | length)"
   ' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -368,9 +383,13 @@ pauses="$(jq -c '[(.pauses // [])[] | {from: (.from | fromdate), to: (if .to == 
   + (if .parked.at == null then [] else [{from: (.parked.at | fromdate), to: null}] end)' <<<"$lane" 2>"$WORK/pauses.err")" \
   || refuse pauses-unreadable "$ITEM" "$WORK/pauses.err"
 
+negatives="$(jq -r --arg item "$ITEM" "$CYCLE_DEFS"'.rounds // [] | .[] | select(.secs != (.secs | interval))
+  | "oversee-cycle: negative-interval item=\($item) kind=\(.kind) head=\(.head) secs=\(.secs)"' <<<"$timeline")" \
+  || refuse timeline-failed "${PR:-$COMMIT}"
+
 cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson pauses "$pauses" \
   --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" \
-  --arg class_reason "$class_reason" --arg evidence "$class_evidence" '
+  --arg class_reason "$class_reason" --arg evidence "$class_evidence" "$CYCLE_DEFS"'
   # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
   # covers is paused, any other is the wait the latest push or bot review at
   # or before it opened, bot_wait where neither came yet. A push and a bot
@@ -427,7 +446,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
              elif $dominant.phase == "ci_green" then $ci_cause
              else null end),
      missing: $missing, rounds: $rounds,
-     pr_rounds: $t.rounds,
+     pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),
      escaped: (if $class == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))
                  or ($tier == "small" and $class == "standard") end),
@@ -436,7 +455,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | .escape_cause = (if .escaped != true then null
       elif $class_reason == "several-subsystems" or ($evidence | test("(^| )path=")) then "path-miss"
       elif ($class_reason | startswith("production-")) then "estimate-miss"
-      else null end)')" \
+      else null end)
+  | if .verdict == "miss" then .cause = miss_cause else . end')" \
   || refuse timeline-failed "${PR:-$COMMIT}"
 
 "$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} update oversee --arg item "$ITEM" --argjson cycle "$cycle" \
@@ -464,13 +484,14 @@ if [[ -n "$rounds_unread" ]]; then
   printf 'oversee-cycle: rounds-unread item=%s\n' "$ITEM" >&2
   cat -- "$rounds_unread" >&2
 fi
+[[ -z "$negatives" ]] || printf '%s\n' "$negatives" >&2
 
 # The bar fires on the record that makes the third miss: one that was
 # already a counting miss on this phase, recorded again, makes nothing new.
 # One conjunct per line: this record is a miss that counts, as the header
 # states, on a named phase, that it was not already; the fleet's records that
 # are misses that count, on that phase, are exactly three.
-repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // null' <<<"$lane")" '
+repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // null' <<<"$lane")" "$CYCLE_DEFS"'
   def counts: .verdict == "miss" and (.phase != "ci_green" or .cause == "ci");
   if ($cycle | counts | not)
      or $cycle.phase == null
@@ -480,7 +501,7 @@ repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // nul
                | select(.cycle.phase == $cycle.phase)]
     | select(length == 3)
     | "repeat-miss phase=\($cycle.phase) items=\(map(.item) | join(","))"
-      + " causes=\(map(.cycle.cause // "-") | join(","))" end' "$STATE_FILE")" \
+      + " causes=\(map(.cycle | miss_cause) | join(","))" end' "$STATE_FILE")" \
   || refuse state-unreadable "$STATE_FILE"
 if [[ -n "$repeat" ]]; then
   log_row "$ITEM" "$repeat"
