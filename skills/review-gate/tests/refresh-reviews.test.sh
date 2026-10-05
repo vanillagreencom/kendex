@@ -42,7 +42,7 @@ fault=w.get('report', {})
 mode=fault.get('mode') if str(fault.get('pr'))==sys.argv[2] else None
 if mode=='error': sys.exit(1)
 out=[{'root': r['root'], 'note': ('No single kendex package claims this path' if r['root'] in unclaimed
-                               else 'Issues token unavailable' if r['root'] in unfiled else 'Filed'),
+                               else 'Issues token unavailable' if r['root'] in unfiled else f"Note {r['root']}"),
       'issue': None if r['root'] in unfiled + unclaimed else f"https://github.com/vanillagreencom/kendex/issues/{r['root']}"}
      for r in rows]
 if mode=='missing-root': out=out[1:]
@@ -79,7 +79,8 @@ for number, state, merged, branch in [(1,'open',None,'kendex/refresh'),(2,'close
         'base':{'sha':base},
         'head':{'ref':branch,'sha':heads[number-1],'repo':{'full_name':'acme/repo'}},'user':bot,
         'threads':[{'id':f'T{number}','root':root,'resolved':False},{'id':f'H{number}','root':root+1,'resolved':False}],
-        'comments':[{'id':root,'body':'Rendered source defect.','path':'.agents/skill.sh','html_url':f'https://github.com/acme/repo/pull/{number}#discussion_r{root}','user':reviewer},
+        'comments':[{'id':root,'body':'Rendered source defect.','path':'.agents/skill.sh','html_url':f'https://github.com/acme/repo/pull/{number}#discussion_r{root}','user':reviewer,
+                     'line':root+3,'start_line':root+1,'side':'RIGHT','start_side':'RIGHT'},
                     {'id':root+1,'body':'Human request.','path':'.agents/skill.sh','user':human}]})
 json.dump({'prs':prs,'writes':[]},open(out,'w'))
 PY
@@ -108,16 +109,19 @@ MUTATE
 }
 
 # Filed and resolved: each automatic thread on the open and the merged rolling
-# pull request is filed, answered with a reply naming its issue, then resolved.
-# Human threads and other pull requests stay untouched.
+# pull request is filed with the lines its comment names, answered with a
+# reply naming its issue and the reporter's note, then resolved. Human threads
+# and other pull requests stay untouched.
 filed_and_resolved() {
   [ "$RC" -eq 0 ] && jq -e '
     ([.writes[] | [.kind, .pr]] | sort) == [["reply",1],["reply",2],["resolve",1],["resolve",2]]
     and .proofs == [1,2] and ([.reports[].root] == [10,20])
     and all(.prs[0:2][]; .threads[0].resolved and (.threads[1].resolved | not))
     and all(.prs[2:][]; all(.threads[]; .resolved | not))
-    and ([.writes[] | select(.kind == "reply") | .body | capture("^Filed upstream as (?<u>[^ ]+)\\. ").u]
-      == ["https://github.com/vanillagreencom/kendex/issues/10", "https://github.com/vanillagreencom/kendex/issues/20"])
+    and ([.writes[] | select(.kind == "reply") | .body | capture("^Filed upstream as (?<u>[^ ]+)\\. (?<n>Note [0-9]+)\\. ")]
+      == [{u:"https://github.com/vanillagreencom/kendex/issues/10",n:"Note 10"},
+          {u:"https://github.com/vanillagreencom/kendex/issues/20",n:"Note 20"}])
+    and ([.reports[] | [.line, .start_line, .side, .start_side]] == [[13,11,"RIGHT","RIGHT"],[23,21,"RIGHT","RIGHT"]])
     ' "$FIXTURE" >/dev/null
 }
 # A failed filing: PR 1's finding is not filed, so its thread gets no reply
@@ -480,12 +484,18 @@ CLASSES
 
 # Must-fail controls. Each keeps its needle's text, removes one rule, and
 # must turn the named case above red.
-mutant filed-mutant 'reply="$REPLY_PREFIX$issue$REPLY_TAIL"' 'reply="$REPLY_PREFIX${issue:+x}$REPLY_TAIL" # $issue'
-cp "$BASE" "$FIXTURE"
-run_writer
-if ! filed_and_resolved; then
-  ok 'must-fail control: a reply that does not name the filed issue fails the filed-and-resolved case'
-else bad 'filed-and-resolved control did not detect the planted defect' "$OUT"; fi
+while IFS='|' read -r name needle replacement; do
+  mutant "$name" "$needle" "$replacement"
+  cp "$BASE" "$FIXTURE"
+  run_writer
+  if ! filed_and_resolved; then
+    ok "must-fail control: $name fails the filed-and-resolved case"
+  else bad "$name control did not detect the planted defect" "$OUT"; fi
+done <<'FILED'
+filed-mutant|reply="$REPLY_PREFIX$issue. $note$REPLY_TAIL"|reply="$REPLY_PREFIX${issue:+x}. $note$REPLY_TAIL" # $issue
+note-mutant|reply="$REPLY_PREFIX$issue. $note$REPLY_TAIL"|reply="$REPLY_PREFIX$issue$REPLY_TAIL" # $note
+lines-mutant|url: $root.html_url, line: $root.line, start_line: $root.start_line,|url: $root.html_url, line: null, start_line: $root.start_line,
+FILED
 mutant unfiled-mutant 'if [ -z "$issue" ]; then' 'if false; then # [ -z "$issue" ]'
 jq '.unfiled=[10]' "$BASE" >"$FIXTURE"
 run_writer

@@ -8,7 +8,8 @@
 # is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
-# refresh-report.py, answered with a reply naming that issue, then resolved.
+# refresh-report.py, answered with a reply naming that issue and the
+# reporter's note, then resolved. An issue already closed upstream answers it.
 # An outdated thread is not reported. The reporter files a live finding in
 # vanillagreencom/kendex only where kendex report routes its one package there
 # with a package label. An outdated thread gets a keyed skip, a not-filed
@@ -151,7 +152,8 @@ while IFS= read -r pr; do
       | if $root == null then "thread root missing from comments\n" | halt_error($root_missing) else . end
       | select($root.user | automatic_author)
       | {id, root: .root, resolved: .isResolved, outdated: .isOutdated, path: $root.path, body: $root.body,
-          url: $root.html_url,
+          url: $root.html_url, line: $root.line, start_line: $root.start_line,
+          side: $root.side, start_side: $root.start_side,
           answered: any($comments[]; .in_reply_to_id == $thread.root
             and .user.login == $author and (.body | startswith($prefix) or startswith($not_filed)))}]' \
     <<<"$threads"$'\n'"$review_comments")" || actions_status=$?
@@ -169,7 +171,8 @@ while IFS= read -r pr; do
     continue
   fi
   # This is the reporter's unanswered live set, shared with the skip warning.
-  findings="$(jq -c '[.[] | select((.answered | not) and (.outdated | not)) | {root, path, body, url}]' <<<"$actions")" || exit 1
+  findings="$(jq -c '[.[] | select((.answered | not) and (.outdated | not))
+  | {root, path, body, url, line, start_line, side, start_side}]' <<<"$actions")" || exit 1
 
   # The classifier reads both endpoints from this checkout's object store. A
   # merged pull request's head survives only under its pull-request ref.
@@ -268,7 +271,10 @@ while IFS= read -r pr; do
           continue
         else
           printf 'upstream-filed pr=%s finding=%s issue=%s\n' "$PR_NUMBER" "$root_id" "$issue"
-          reply="$REPLY_PREFIX$issue$REPLY_TAIL"
+          # The note says whether the issue is new, open or already closed
+          # upstream, the answer a closed one carries.
+          note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
+          reply="$REPLY_PREFIX$issue. $note$REPLY_TAIL"
         fi
       fi
       result="$(gh api -X POST "repos/$GH_REPO/pulls/$PR_NUMBER/comments/$root_id/replies" -f body="$reply")" \
