@@ -153,12 +153,11 @@ outputs:
     value: ${{ steps.classify.outputs.proof_record }}
   lane_verdicts:
     description: >-
-      One lane_<name>=true|false line per lane the declaration names: false
-      wherever lanes is false; otherwise true where a changed path matches
-      one of the lane's globs, true for every lane where a changed path no
-      lane claims is outside the docs set or where no changed path was read,
-      and false everywhere else. Empty where no declaration was read. A workflow republishes the lines as step outputs of its
-      own, since a composite action publishes only the outputs it declares.
+      One lane_<name>=true|false line per lane the declaration names, decided
+      as skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
+      Empty where no declaration was read. A workflow republishes the lines as
+      step outputs of its own, since a composite action publishes only the
+      outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
