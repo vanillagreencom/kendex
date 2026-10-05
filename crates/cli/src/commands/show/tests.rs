@@ -1,8 +1,8 @@
-use super::{detail, file_list, metadata, supported_tools};
+use super::{Coverage, coverage, detail, file_list, metadata};
 use crate::ui::testing::{plain, rich, tagged};
 use crate::width::visible_width;
 use kendex_core::model::HarnessId;
-use kendex_core::package::support::{FallbackTool, RecordSupport, UnsupportedTool};
+use kendex_core::package::support::{RecordSupport, UnsupportedTool};
 
 #[test]
 fn inspection_show_snapshots() {
@@ -132,75 +132,32 @@ fn inspection_show_wraps_links_and_file_paths() {
     );
 }
 
-/// The one supported-tools line `kendex show` prints from core's answer:
-/// each row is one shape that answer takes.
+/// How the supported-tools line collapses core's unsupported list: each row
+/// is one shape that list takes and the branch it lands in.
 #[test]
-fn the_supported_tools_line_names_each_gap_and_the_advisory_tools() {
+fn the_unsupported_list_collapses_to_all_except_or_none() {
     use HarnessId::*;
     let gap = |tool, reason: Option<&str>| UnsupportedTool {
         tool,
         reason: reason.map(str::to_owned),
     };
     let every = |reason: Option<&str>| HarnessId::ALL.map(|tool| gap(tool, reason)).to_vec();
-    let note = |tool, reason: &str| FallbackTool {
-        tool,
-        reason: reason.to_owned(),
-    };
-    let read = |unsupported, advisory, fallback| RecordSupport::Read {
-        unsupported,
-        advisory,
-        fallback,
-    };
-    // Two reasons, each given by tools that are not neighbours.
-    let alternating = HarnessId::ALL
+    let partial = vec![gap(Pi, Some("a reason")), gap(Gemini, None)];
+    // Two reasons, each given by tools that are not neighbours: an adjacent
+    // dedup would keep every one of them.
+    let alternating: Vec<UnsupportedTool> = HarnessId::ALL
         .into_iter()
         .enumerate()
         .map(|(at, tool)| gap(tool, Some(if at % 2 == 0 { "first" } else { "second" })))
         .collect();
-    let rows: [(RecordSupport, &str); 9] = [
-        (read(vec![], vec![], vec![]), "all"),
-        (
-            read(
-                vec![gap(Pi, Some("it has no Stop event")), gap(Gemini, None)],
-                vec![],
-                vec![],
-            ),
-            "all except Pi (it has no Stop event), Gemini CLI",
-        ),
-        (
-            read(vec![], vec![Opencode, Cursor], vec![]),
-            "all; advisory on OpenCode, Cursor",
-        ),
-        (
-            read(
-                vec![gap(Antigravity, Some("not named"))],
-                vec![Opencode],
-                vec![],
-            ),
-            "all except Antigravity (not named); advisory on OpenCode",
-        ),
-        (
-            read(
-                vec![gap(Gemini, None)],
-                vec![Cursor],
-                vec![note(Codex, "a watcher reads its pane")],
-            ),
-            "all except Gemini CLI; advisory on Cursor; fallback on Codex (a watcher reads its pane)",
-        ),
-        (read(every(None), vec![], vec![]), "none"),
-        (
-            read(every(Some("its script could not be read")), vec![], vec![]),
-            "none (its script could not be read)",
-        ),
-        (read(alternating, vec![], vec![]), "none (first; second)"),
-        (
-            RecordSupport::Unread {
-                cause: "source 'cat' is disabled".to_owned(),
-            },
-            "unknown (source 'cat' is disabled)",
-        ),
+    let rows: [(Vec<UnsupportedTool>, Coverage); 5] = [
+        (vec![], Coverage::All),
+        (partial.clone(), Coverage::Except(&partial)),
+        (every(None), Coverage::None(vec![])),
+        (every(Some("shared")), Coverage::None(vec!["shared"])),
+        (alternating, Coverage::None(vec!["first", "second"])),
     ];
-    for (support, expected) in rows {
-        assert_eq!(supported_tools(&support), expected);
+    for (unsupported, expected) in rows {
+        assert_eq!(coverage(&unsupported), expected, "{unsupported:?}");
     }
 }

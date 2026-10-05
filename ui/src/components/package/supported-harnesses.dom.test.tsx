@@ -5,6 +5,14 @@
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { HarnessId } from "@/bindings";
+import {
+  SUPPORTED_ADVISORY_ON,
+  SUPPORTED_ALL,
+  SUPPORTED_ALL_EXCEPT,
+  SUPPORTED_FALLBACK_ON,
+  SUPPORTED_NONE,
+} from "@/lib/copy-library";
+import { harnessName } from "@/lib/labels";
 import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
 import { type HarnessSupport, SupportedHarnesses } from "./supported-harnesses";
@@ -40,7 +48,7 @@ const lines = (host: HTMLElement): string[] =>
 
 describe("the supported harnesses row", () => {
   const rows: [string, HarnessSupport, string[]][] = [
-    ["every harness", support({}), ["All"]],
+    ["every harness", support({}), [SUPPORTED_ALL]],
     [
       "unsupported, with and without a reason",
       support({
@@ -49,12 +57,17 @@ describe("the supported harnesses row", () => {
           { tool: "gemini", reason: null },
         ],
       }),
-      ["All except: Pi it has no Stop event; Gemini CLI"],
+      [
+        `${SUPPORTED_ALL_EXCEPT}: ${harnessName("pi")} it has no Stop event; ${harnessName("gemini")}`,
+      ],
     ],
     [
       "advisory on the harnesses that run no hooks",
       support({ advisory: ["opencode", "cursor"] }),
-      ["All", "Advisory on: OpenCode; Cursor"],
+      [
+        SUPPORTED_ALL,
+        `${SUPPORTED_ADVISORY_ON}: ${harnessName("opencode")}; ${harnessName("cursor")}`,
+      ],
     ],
     [
       "a fallback, with its reason",
@@ -64,9 +77,9 @@ describe("the supported harnesses row", () => {
         fallback: [{ tool: "codex", reason: "a watcher reads its pane" }],
       }),
       [
-        "All except: Gemini CLI",
-        "Advisory on: Cursor",
-        "Fallback on: Codex a watcher reads its pane",
+        `${SUPPORTED_ALL_EXCEPT}: ${harnessName("gemini")}`,
+        `${SUPPORTED_ADVISORY_ON}: ${harnessName("cursor")}`,
+        `${SUPPORTED_FALLBACK_ON}: ${harnessName("codex")} a watcher reads its pane`,
       ],
     ],
     [
@@ -74,7 +87,7 @@ describe("the supported harnesses row", () => {
       support({
         unsupported: EVERY.map((tool) => ({ tool, reason: null })),
       }),
-      ["None"],
+      [SUPPORTED_NONE],
     ],
     [
       "no harness, the shared reason said once",
@@ -84,7 +97,7 @@ describe("the supported harnesses row", () => {
           reason: "its script could not be read",
         })),
       }),
-      ["None: its script could not be read"],
+      [`${SUPPORTED_NONE}: its script could not be read`],
     ],
   ];
 
@@ -109,9 +122,9 @@ describe("the supported harnesses row", () => {
         />,
       );
       const chip = host.querySelector<HTMLButtonElement>(
-        'button[aria-label="Pi"]',
+        `button[aria-label="${harnessName("pi")}"]`,
       );
-      if (!chip) throw new Error("no chip named Pi");
+      if (!chip) throw new Error("no chip for pi");
       await userEvent.click(chip);
       expect(opened).toEqual([{ harness: "pi" }]);
     } finally {

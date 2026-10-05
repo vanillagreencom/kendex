@@ -80,6 +80,34 @@ fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
     )
 }
 
+/// How the supported-tools line collapses core's unsupported list.
+#[derive(Debug, PartialEq)]
+enum Coverage<'a> {
+    /// No tool is unsupported.
+    All,
+    /// Some tools are unsupported, each named with its own reason.
+    Except(&'a [UnsupportedTool]),
+    /// Every tool is unsupported: each distinct reason once, in the order
+    /// the tools first give it, rather than once per tool.
+    None(Vec<&'a str>),
+}
+
+fn coverage(unsupported: &[UnsupportedTool]) -> Coverage<'_> {
+    if unsupported.is_empty() {
+        return Coverage::All;
+    }
+    if unsupported.len() != HarnessId::ALL.len() {
+        return Coverage::Except(unsupported);
+    }
+    let mut reasons: Vec<&str> = Vec::new();
+    for reason in unsupported.iter().filter_map(|gap| gap.reason.as_deref()) {
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+    }
+    Coverage::None(reasons)
+}
+
 /// The package's supported tools in one value: every tool, less the ones
 /// core names unsupported, each with its reason where the package states
 /// one, then the tools that take it only as advice, then the tools where a
@@ -97,23 +125,14 @@ fn supported_tools(support: &RecordSupport) -> String {
         Some(reason) => format!("{} ({reason})", gap.tool.display_name()),
         None => gap.tool.display_name().to_owned(),
     };
-    let mut value = if unsupported.is_empty() {
-        "all".to_owned()
-    } else if unsupported.len() == HarnessId::ALL.len() {
-        // Each reason once, in the order the tools first give it.
-        let mut reasons: Vec<&str> = Vec::new();
-        for reason in unsupported.iter().filter_map(|gap| gap.reason.as_deref()) {
-            if !reasons.contains(&reason) {
-                reasons.push(reason);
-            }
+    let mut value = match coverage(unsupported) {
+        Coverage::All => "all".to_owned(),
+        Coverage::Except(gaps) => {
+            let gaps: Vec<String> = gaps.iter().map(named).collect();
+            format!("all except {}", gaps.join(", "))
         }
-        match reasons.as_slice() {
-            [] => "none".to_owned(),
-            reasons => format!("none ({})", reasons.join("; ")),
-        }
-    } else {
-        let gaps: Vec<String> = unsupported.iter().map(named).collect();
-        format!("all except {}", gaps.join(", "))
+        Coverage::None(reasons) if reasons.is_empty() => "none".to_owned(),
+        Coverage::None(reasons) => format!("none ({})", reasons.join("; ")),
     };
     if !advisory.is_empty() {
         let tools: Vec<&str> = advisory.iter().map(|tool| tool.display_name()).collect();

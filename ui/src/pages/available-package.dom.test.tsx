@@ -17,6 +17,7 @@ import {
   MARKETPLACE_NOT_DOWNLOADED,
   unreadableRecordsLine,
 } from "@/lib/copy-marketplaces";
+import { harnessName } from "@/lib/labels";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -303,7 +304,9 @@ describe("the harnesses the available package runs on", () => {
     const chips = [...row.querySelectorAll("button")].map((chip) =>
       chip.getAttribute("aria-label"),
     );
-    expect(chips).toEqual(["Pi", "Gemini CLI", "OpenCode", "Codex"]);
+    expect(chips).toEqual(
+      (["pi", "gemini", "opencode", "codex"] as const).map(harnessName),
+    );
     expect(row.textContent).toContain("it has no Stop event");
     expect(row.textContent).toContain("a watcher reads its pane");
   });

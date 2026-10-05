@@ -9,6 +9,7 @@ import {
   SUPPORTED_UNKNOWN,
 } from "@/lib/copy-library";
 import type { ItemGroup } from "@/lib/derive";
+import { harnessName } from "@/lib/labels";
 import { useProvenanceStore } from "@/stores/provenance";
 import { mount } from "@/test/dom";
 import { observed } from "@/test/observed";
@@ -86,7 +87,9 @@ describe("the harnesses an installed package runs on", () => {
     const chips = [...row.querySelectorAll("button")].map((chip) =>
       chip.getAttribute("aria-label"),
     );
-    expect(chips).toEqual(["Pi", "Gemini CLI", "OpenCode", "Codex"]);
+    expect(chips).toEqual(
+      (["pi", "gemini", "opencode", "codex"] as const).map(harnessName),
+    );
     expect(row.textContent).toContain("it has no Stop event");
     expect(row.textContent).toContain("a watcher reads its pane");
   });
