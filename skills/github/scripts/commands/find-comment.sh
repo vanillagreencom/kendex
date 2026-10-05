@@ -1,6 +1,6 @@
 #!/bin/bash
 # GitHub API - Find a PR comment by pattern and author
-# Usage: find-comment.sh <PR-number> --pattern <regex> [--author <login>]
+# Usage: find-comment.sh <PR-number> --pattern <regex> [--author <login> | --self]
 
 set -euo pipefail
 
@@ -11,7 +11,7 @@ show_help() {
     cat << 'EOF'
 Find PR Comment
 
-Usage: find-comment.sh <PR-number> [--pattern <regex>] [--review-summary] [--author <login>]
+Usage: find-comment.sh <PR-number> [--pattern <regex>] [--review-summary] [--author <login> | --self]
 
 Arguments:
   PR-number          PR number (required)
@@ -23,8 +23,14 @@ Options:
                      comment by author). Mutually exclusive with --pattern;
                      usually combined with --author.
   --author <login>   Filter by author login
+  --self             Filter to comments by the identity the selected token
+                     acts as, matched by account id: a person for a user
+                     token, the app's bot account for a GitHub App
+                     installation token. Mutually exclusive with --author.
 
-Exactly one of --pattern or --review-summary is required.
+Exactly one of --pattern or --review-summary is required. Every page of the
+PR's comments is read. An unreadable comment list or identity is an error,
+never an empty result.
 
 Output:
 {
@@ -40,8 +46,8 @@ Returns last matching comment for --pattern (or the picked one for
 --review-summary). Empty object {} if no match.
 
 Examples:
-  # Summary comment by current user
-  find-comment.sh 23 --pattern "Recommendations.*Processed" --author "\$(gh api user -q .login)"
+  # Summary comment this token's identity posted
+  find-comment.sh 23 --pattern "Recommendations.*Processed" --self
 
   # Pull a review bot's summary (no pattern needed)
   find-comment.sh 23 --author "review-bot[bot]" --review-summary
@@ -53,6 +59,7 @@ find_comment() {
     local pattern=""
     local author=""
     local review_summary="false"
+    local self="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -81,6 +88,10 @@ find_comment() {
                 review_summary="true"
                 shift
                 ;;
+            --self)
+                self="true"
+                shift
+                ;;
             *)
                 if [ -z "$pr_num" ]; then
                     pr_num="$1"
@@ -106,6 +117,10 @@ find_comment() {
         github_error '--pattern and --review-summary are mutually exclusive'
         exit 1
     fi
+    if [ -n "$author" ] && [ "$self" = "true" ]; then
+        github_error '--author and --self are mutually exclusive'
+        exit 1
+    fi
 
     # Get repo info
     local repo_info
@@ -114,9 +129,27 @@ find_comment() {
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
 
-    # Fetch comments
+    # Every page, merged into one array: the first page alone is the oldest
+    # comments, so a busy PR's latest match would read as no match, or as an
+    # older one.
     local comments
-    comments=$(gh_rest "repos/$owner/$repo/issues/$pr_num/comments") || exit 1
+    comments=$(gh_rest "repos/$owner/$repo/issues/$pr_num/comments?per_page=100" --paginate) || exit 1
+    comments=$(jq -s 'if (length > 0) and all(type == "array") then add else error("pages are not arrays") end' <<<"$comments" 2>/dev/null) || {
+        github_error 'Comment list read returned pages that are not arrays'
+        exit 1
+    }
+
+    # Matched by account id: GitHub's REST and GraphQL readers spell an app's
+    # login with and without its [bot] suffix.
+    if [ "$self" = "true" ]; then
+        local viewer viewer_id
+        viewer=$(gh_viewer) || exit 1
+        viewer_id=$(jq -er '.databaseId | numbers | select(. > 0 and . == floor)' <<<"$viewer" 2>/dev/null) || {
+            github_error 'Viewer identity read named no account id'
+            exit 1
+        }
+        comments=$(jq -c --argjson id "$viewer_id" '[.[] | select(.user.id == $id)]' <<<"$comments")
+    fi
 
     if [ "$review_summary" = "true" ]; then
         # Selection priority lives in github-api.sh so sticky-comment and

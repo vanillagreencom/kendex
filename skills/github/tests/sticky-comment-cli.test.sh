@@ -54,7 +54,7 @@ gh_stub_answer 'api-repos/{owner}/{repo}/issues/123/comments' \
   "$(cat "$FIXTURES/mixed_bot_comments.json")"
 gh_stub_answer 'api-repos/owner/repo/issues/123/comments' \
   "$(cat "$FIXTURES/mixed_bot_comments.json")"
-gh_stub_answer 'api-repos/owner/repo/issues/124/comments' \
+gh_stub_answer 'api-repos/owner/repo/issues/124/comments?per_page=100' \
   "$(cat "$FIXTURES/codex_own_comment.json")"
 
 export PATH="$TMPDIR:$PATH"

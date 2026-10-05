@@ -524,9 +524,11 @@ echo "=== must-fail controls ==="
 # setup's live verdict is pinned in a section above; with its rule's line
 # replaced, the same setup answers what the row names instead. A refusal
 # prints nothing on stdout, so its first stderr line joins what it answered.
-mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR AUTHOR]
+# FILE names a lib the rule lives in instead of the checker.
+mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR_AUTHOR [FILE]]
   local script got
-  script=$(mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" commands/check-review-replies.sh)
+  mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" "${8:-commands/check-review-replies.sh}" >/dev/null
+  script="$TMP_ROOT/$2/skills/github/scripts/commands/check-review-replies.sh"
   world "${7:-author}"
   eval "$5"
   got=$(run "$script")
@@ -617,9 +619,9 @@ mutant_row "with the Bot id fragment cut, the thread read reaches no verdict" th
   "                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } } authorAssociation body } }' 2>\"\$READ_ERR\") ||" \
   'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED"
 mutant_row "with the viewer id selection cut, the viewer read reaches no verdict" viewer-id \
-  "viewer_json=\$(gh_graphql 'query { viewer { login databaseId } }' 2>\"\$READ_ERR\") ||" \
-  "viewer_json=\$(gh_graphql 'query { viewer { login } }' 2>\"\$READ_ERR\") ||" \
-  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED"
+  "    data=\$(gh_graphql 'query { viewer { login databaseId } }') || return 1" \
+  "    data=\$(gh_graphql 'query { viewer { login } }') || return 1" \
+  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED" author lib/github-api.sh
 mutant_row "with every association a member, a NONE-association Fixed in clears the claim" member-open \
   '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: true;' \
   'threads_set "$(thread_node author "Out of scope, tracked." stranger "Fixed in 1a2b3c4")"' "$PASSED"

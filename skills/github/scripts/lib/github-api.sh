@@ -213,6 +213,17 @@ gh_graphql() {
     done
 }
 
+# The identity the selected token acts as, the GraphQL viewer, as
+# {login, databaseId}. It answers for a user token and an app installation
+# token alike; REST `/user` refuses an installation token. For an
+# installation token databaseId is the app's bot account id, the one REST
+# writes as `.user.id` on the app's comments and GraphQL on its Bot author.
+gh_viewer() {
+    local data
+    data=$(gh_graphql 'query { viewer { login databaseId } }') || return 1
+    jq -c '.viewer' <<<"$data"
+}
+
 # True when a captured `gh api` failure is GitHub answering "no such resource".
 # For a caller that ACTS on not-found, deciding whether to send its request
 # somewhere else rather than only telling the user what went wrong.

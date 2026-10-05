@@ -533,14 +533,9 @@ author_read=$(jq -r "$ACCOUNT_DEF"'.user | account(.id)' <<<"$pr_json" 2>/dev/nu
 AUTHOR_ACCOUNT="${author_read%%$'\n'*}"
 AUTHOR_NAMED="${author_read#*$'\n'}"
 
-# GraphQL `viewer` answers for a user token and an app installation token
-# alike; REST `/user` refuses an installation token. For an installation
-# token the viewer is typed User, and its databaseId is the app's bot
-# account id, the one REST writes on the app's comments and GraphQL on its
-# Bot author.
-viewer_json=$(gh_graphql 'query { viewer { login databaseId } }' 2>"$READ_ERR") ||
+viewer_json=$(gh_viewer 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the viewer identity read failed: $(reader_said)"
-viewer_read=$(jq -r "$ACCOUNT_DEF"'.viewer | account(.databaseId)' <<<"$viewer_json" 2>/dev/null) ||
+viewer_read=$(jq -r "$ACCOUNT_DEF"'account(.databaseId)' <<<"$viewer_json" 2>/dev/null) ||
   refuse "read-malformed" "$PR_NUMBER" "the viewer identity read named no account id"
 VIEWER_ACCOUNT="${viewer_read%%$'\n'*}"
 VIEWER_NAMED="${viewer_read#*$'\n'}"
