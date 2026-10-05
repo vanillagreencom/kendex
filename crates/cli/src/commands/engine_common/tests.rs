@@ -72,6 +72,21 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         ]
     );
 
+    // A message keyed by its own target is the line itself in both looks:
+    // the consumer refresh report (KEN-2797) reads `doc-drift-check: ` from
+    // the first byte of a `2>&1` capture, so nothing may print before the
+    // key, no glyph and no indent included.
+    let keyed = "doc-drift-check: retired hook, entry skipped; delete [hooks.doc-drift-check] from kendex.toml";
+    let retired = [ItemWarning {
+        kind: ItemKind::Hook,
+        name: "doc-drift-check".into(),
+        harness: None,
+        message: keyed.into(),
+        remediation: None,
+    }];
+    assert_eq!(warning_lines(&plain(), &retired), [keyed]);
+    assert_eq!(tagged(&warning_lines(&rich(120), &retired)), [keyed]);
+
     // desired_custom_hooks supplies prose remediation, not a command.
     let remedy = "set agents = \"all\" to make it run for everything, or keep it as instructions";
     changed.warnings[0].remediation = Some(remedy.into());

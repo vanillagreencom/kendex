@@ -101,7 +101,10 @@ fn remove_scope(
         if ui::report::is_run_model_warning(&warning.message) {
             continue;
         }
-        warn(&format!("warning: {}: {}", warning.name, warning.message));
+        match super::engine_common::keyed_by_target(&warning.name, &warning.message) {
+            true => warn(&warning.message),
+            false => warn(&format!("warning: {}: {}", warning.name, warning.message)),
+        }
     }
     if !takes_anything(&report) {
         return Ok(None);

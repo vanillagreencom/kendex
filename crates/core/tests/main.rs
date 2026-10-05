@@ -98,6 +98,7 @@ mod quality;
 mod refresh_stale;
 mod registry;
 mod repo_effects_leaving;
+mod retired_hook_route;
 mod review_fixes;
 mod sealed_source;
 mod secret_destination;
