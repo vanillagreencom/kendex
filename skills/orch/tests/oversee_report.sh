@@ -448,6 +448,26 @@ a CRLF description still yields its Done-when line|$(awk -F' [|] ' '/^\| KEN-1/ 
 an owner question with a newline is one list line, and one with no recommendation names none|$(awk '/^- Question for you/' <<<"$OUT")|- Question for you: line one line two
 ROWS
 
+echo "=== render: a reserved owner ask names no default and reads overdue from its deadline ==="
+new_case reserved_ask
+report -60
+fleet '' "$(lane KEN-1 running)"
+jq -n '{title: "Title 1", description: "## Done when\n* Outcome 1\n"}' > "$CASE/linear-KEN-1.json"
+printf '%s\n' \
+  '{"id":"1790000000-0-c","kind":"ask","to":"owner","text":"Cut 2.0.0?","options":["cut","hold"],"reserved":true,"wait":60,"deadline":"2026-09-21T14:13:20Z"}' \
+  '{"id":"1790000000-0-d","kind":"ask","to":"owner","text":"Delete the bucket?","options":["delete","keep"],"reserved":true,"wait":60,"deadline":"2026-09-21T14:13:21Z"}' \
+  > "$CASE/pending-overseer.jsonl"
+RESERVED_WANT="- Question for you: Cut 2.0.0? (reserved, no default; overdue since 2026-09-21T14:13:20Z)
+- Question for you: Delete the bucket? (reserved, no default; due 2026-09-21T14:13:21Z)"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^- Question for you/' <<<"$OUT")" "0|$RESERVED_WANT" \
+  "a reserved ask names no default, reads overdue at its deadline and due a second short of it"
+RESERVED_MUTANT="$(mutant_scripts reserved-overdue/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/reserved-overdue/github"
+mutate_file "$RESERVED_MUTANT" '(.deadline | fromdateiso8601) <= $now' 'false'
+REPORT_UNDER_TEST="$RESERVED_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_not_contains "$OUT" "$RESERVED_WANT" "control: without the deadline comparison no reserved ask reads overdue"
+
 echo "=== render: a hosted lane's stop is read from its clone ==="
 new_case hosted_stop
 report -60

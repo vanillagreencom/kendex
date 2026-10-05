@@ -5,8 +5,11 @@
 # is one fenced block longer than any backtick run in it; past the
 # markdown_text cap it is one mrkdwn block with Slack's control characters
 # escaped, and a text mrkdwn cannot hold in a block is refused. The question
-# keeps its tracker links; the draft is never linked. An ask with no draft is
-# listen.test.sh's. Each rule has its own control on a copy of the scripts.
+# keeps its tracker links; the draft is never linked. A reserved ask is posted
+# naming no default, and once more in its thread on the first poll past its
+# deadline while it stays open, never again; one first posted past its
+# deadline is its own reminder. Any other ask is listen.test.sh's. Each rule
+# has its own control on a copy of the scripts.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -91,6 +94,71 @@ sk_assert_red "$POSTED" "text|$MRKDWN_WANT" "control: an unescaped mrkdwn draft 
 sk_mutant not-literal markup.py 'if "```" in self\.text:' 'if "```" in self.text and False:'
 draft_ask control-not-literal "$FENCED_DRAFT"
 sk_assert_red "$JOURNALED" "refused text-not-literal" "control: a draft posted past its backtick run fails the refusal assertion"
+sk_bin_reset
+
+echo "=== slack reserved ask ==="
+# reserved_ask NAME WAIT — a reserved ask posted from a fresh root, then
+# polled once more. Sets ROOT, ASK, ASK_TS and POSTED, the ask's text.
+reserved_ask() {
+  ROOT="$(sk_tracker_root "$1" Team '')"
+  sk_bind "$ROOT"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "$1" 'Cut the 2.0.0 release?')" --options cut,hold --reserved --wait "$2")"
+  ASK="${ASK#id=}"
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state ".messages.$(sk_channel "$ROOT")[] | select(.text | contains(\"Cut the 2.0.0 release?\")) | .ts")"
+  POSTED="$(sk_state ".messages.$(sk_channel "$ROOT")[] | select(.ts == \"$ASK_TS\") | .text")"
+  sk_poll "$ROOT"
+}
+# past_deadline: the ask's deadline moved into the past in the fixture's own
+# mailbox, then two polls, each a fresh relay reading the journal.
+past_deadline() {
+  local box
+  box="$(sk_box "$ROOT")"
+  jq -c --arg id "$ASK" 'if .id == $id then .deadline = "2000-01-01T00:00:00Z" else . end' "$box/to-overseer.jsonl" > "$SK_TMP/box.jsonl"
+  mv "$SK_TMP/box.jsonl" "$box/to-overseer.jsonl"
+  sk_poll "$ROOT"
+  sk_poll "$ROOT"
+}
+# The relay's posts in the ask's thread that mention the owner past the deadline.
+reminders() { sk_state "[.messages.$(sk_channel "$ROOT")[] | select(.thread_ts == \"$ASK_TS\" and (.text | startswith(\"<@\") and contains(\"Past its deadline\")))] | length"; }
+
+reserved_ask reserved 30
+assert_has "$POSTED" "Options: cut, hold. This decision is yours alone and has no default; reply in this thread by <!date^" \
+  "a reserved ask posts its options and no default"
+assert_eq "$(reminders)" "0" "before its deadline the reserved ask is posted once"
+past_deadline
+assert_eq "$(reminders)" "1" "past its deadline the open reserved ask is posted once more in its thread, and never again"
+
+reserved_ask reserved-closed 30
+sk_lm "$ROOT" resolve --item overseer --id "$ASK" --text "$(sk_text closed 'hold')" >/dev/null
+past_deadline
+assert_eq "$(reminders)" "0" "a reserved ask the owner answered is not posted again past its deadline"
+
+reserved_ask reserved-late 0
+assert_eq "$(reminders)" "0" "a reserved ask first posted past its deadline is its own reminder"
+
+sk_mutant reserved-tail relay.py 'if envelope.get\("reserved"\) is True:' 'if False:'
+reserved_ask control-tail 30
+assert_lacks "$POSTED" "has no default" "control: without the reserved tail the ask reads as one with a default"
+
+sk_mutant reserved-early relay.py '\n\s+and at_epoch\(str\(envelope\["deadline"\]\)\) <= self\.clock\(\)\):' '):'
+reserved_ask control-early 30
+sk_assert_red "$(reminders)" "0" "control: without the deadline rule the reminder posts before the deadline"
+
+sk_mutant reserved-again relay.py '\n\s+and overdue_id\(env_id\) not in state\.carried' ''
+reserved_ask control-again 30
+past_deadline
+sk_assert_red "$(reminders)" "1" "control: without the journal rule the reminder posts on every poll"
+
+sk_mutant reserved-closed relay.py 'state\.carried and env_id not in closed' 'state.carried'
+reserved_ask control-closed 30
+sk_lm "$ROOT" resolve --item overseer --id "$ASK" --text "$(sk_text control-closed-a 'hold')" >/dev/null
+past_deadline
+sk_assert_red "$(reminders)" "0" "control: without the closed rule an answered reserved ask is posted again"
+
+sk_mutant reserved-late relay.py 'if envelope\.get\("reserved"\) is True and at_epoch' 'if False and at_epoch'
+reserved_ask control-late 0
+sk_assert_red "$(reminders)" "0" "control: without the first-post rule a late reserved ask is posted twice"
 sk_bin_reset
 
 sk_summary

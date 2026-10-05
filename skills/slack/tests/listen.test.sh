@@ -993,7 +993,7 @@ assert_eq "$RC=${ERR1%% id=*}=$(sk_state "[.messages.${ZETA_CH}[] | select(.text
   "1=slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long=0" "control: the text fallback gone, Slack refuses a notice past the cap and it never lands"
 sk_bin_reset
 
-sk_mutant deadline relay.py 'local_time\(str\(envelope\[.deadline.\]\)\)' 'envelope["deadline"]'
+sk_mutant deadline relay.py 'It stands at \{local_time\(str\(envelope\[.deadline.\]\)\)\}' 'It stands at {envelope["deadline"]}'
 sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q11 'Zulu deadline?')" --options a,b --recommend a >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text | contains(\"Zulu deadline?\")) | .text | contains(\"<!date^\")")" "false" \

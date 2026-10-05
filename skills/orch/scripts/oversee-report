@@ -191,7 +191,9 @@ Rows:
   Waiting on you  each owner ask no answer has closed, from `lane-mail
                   pending --item overseer --to owner`, as `Question for you:
                   <text>`, with its recommendation and the time after which
-                  it becomes the default where the ask carries them,
+                  it becomes the default where the ask carries them; a
+                  reserved ask says it has no default and when it is due,
+                  or that it is overdue once that time has passed,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
@@ -863,9 +865,11 @@ render() {
   if ! list="$("$LANE_MAIL" pending --item overseer --to owner 2>"$WORK_DIR/mail.err")"; then
     refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi
-  if ! list="$(jq -r -R 'fromjson? | objects
+  if ! list="$(jq -r -R --argjson now "$NOW" 'fromjson? | objects
     | "- Question for you: \(.text // "" | gsub("\n"; " "))"
-      + (if .recommend then " (recommended \(.recommend); \(if .deadline then "defaults to it after \(.deadline)" else "no deadline" end))" else "" end)' \
+      + (if .reserved == true
+          then " (reserved, no default; \(if (.deadline | fromdateiso8601) <= $now then "overdue since" else "due" end) \(.deadline))"
+        elif .recommend then " (recommended \(.recommend); \(if .deadline then "defaults to it after \(.deadline)" else "no deadline" end))" else "" end)' \
     <<<"$list" 2>"$WORK_DIR/mail.err")"; then
     refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi

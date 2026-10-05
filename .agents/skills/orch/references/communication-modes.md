@@ -83,8 +83,14 @@ The owner can answer more than once. Each answer lands through `send --item over
 
 - The overseer closes the ask when it has its ruling: `resolve --item overseer --id [ASK_ID]`. The close is a separate record, reported as `owner-ask-closed`.
 - **The chat-answer rule.** Record each chat answer with `send --re` before acting. `resolve --text` records a chat answer and closes together only when the overseer already has its ruling.
-- At the deadline the watch runs `resolve --default`. An answered ask closes without a recommendation answer; an unanswered ask takes its recommendation.
+- At the deadline the watch runs `resolve --default`. An answered ask closes without a recommendation answer; an unanswered ask takes its recommendation. A reserved ask has no deadline default.
 - After closing, later text arrives as a directive. A repeated delivery still names its original answer.
+
+A decision the owner's authority rule reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, and an x.0 release of kendex or an app. It takes `--reserved` in place of `--recommend`, so no option stands at its deadline. The watch never closes it, `resolve --default` refuses it, and only the owner's answer in text closes it. Past its deadline it stays in `pending --item overseer --to owner`, "Waiting on you" marks it overdue, and the Slack relay posts it once more in its thread.
+
+```bash
+.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --reserved --file [PATH]
+```
 
 An ask for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`. The [lane-mail owner-channel contract](../scripts/lane-mail) states the draft's fields and its `text_hash`. Send only when the approval for that ask id names the `text_hash` that `pending --item overseer --to owner` prints. An edited draft is a new ask.
 

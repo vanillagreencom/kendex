@@ -151,7 +151,8 @@ Overseer side:
               names that audience and prints no directive, so the report's
               "Waiting on you" and the owner relay read one field and
               never infer the audience; --due keeps the asks whose deadline
-              has passed by this clock, the ones the watch resolves. Either
+              has passed by this clock, the ones the watch resolves, and
+              never a reserved ask, which no deadline closes. Either
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
   events --item ITEM
@@ -189,6 +190,15 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               text_hash, the lowercase hex SHA-256 of text's UTF-8 bytes
               that lane-mail computes. The master sends only when the
               approval it holds for that ask id names the same text_hash
+  ask --item overseer --to owner --file PATH --options a,b --reserved
+              [--wait MINUTES] [--ref MSGID]
+              an owner-reserved decision, which only the owner's answer in
+              text closes. The record carries `reserved: true` and a
+              deadline but no recommendation, and --recommend or --draft
+              beside it is refused `option-conflict`. pending --due never
+              lists it, so the watch's deadline step leaves it open, and
+              resolve --default refuses it `ask-reserved`; past its
+              deadline it stays in pending --to owner
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
@@ -213,9 +223,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               Prints `lane-mail: resolved id=<MSGID> by=<by> answer=<id>`,
               where answer names the close record. A second close is refused
               `resolved-already`, unless its delivery-id repeats that close.
-              An id naming no owner ask is `ask-unknown`; --default on an ask
-              line carrying no recommendation, which `ask` never writes, is
-              `recommend-missing`
+              An id naming no owner ask is `ask-unknown`; --default on a
+              reserved ask is `ask-reserved`, and on an ask line carrying no
+              recommendation, which `ask` never writes, `recommend-missing`
   send --item overseer --directive ... --thread-ts TS --parent PATH
               Slack's relay supplies both fields on a threaded owner directive.
               PATH holds one JSON object: ts (equal to TS), author (owner or
@@ -314,6 +324,7 @@ Options:
   --recommend a ask --to owner only: the option that stands by default
   --wait N      ask --to owner only: minutes until that default stands
   --draft PATH  ask --to owner only: the message the owner approves
+  --reserved    ask --to owner only: a decision no deadline closes
   --due         pending only: asks whose deadline has passed
   --text PATH   resolve only: the owner's answer, read as --file is
   --default     resolve only: close at deadline; recommend only if unanswered
@@ -339,6 +350,7 @@ re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
 draft (a draft ask only: recipient, medium, text and text_hash),
+reserved (true on a reserved ask only),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -417,7 +429,7 @@ option-conflict, missing-value, option-required, item-invalid, after-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
 recommend-invalid, recommend-missing, recommend-required, draft-field,
 draft-medium, attach-outside,
-ask-unknown, resolved-already, delivery-repeated, owner-notice-repeated,
+ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -520,6 +532,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
+    ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Only the owner'"'"'s answer in text closes it, through resolve --text or send --re.' ;;
     ask-unknown) text='No owner ask in the overseer mailbox carries that id. send --re answers owner asks and resolve closes them.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
@@ -592,6 +605,7 @@ DUE=0
 DEFAULT=0
 DELIVERY_ID=""
 DRAFT=""
+RESERVED=0
 DRAFT_RECORD=/dev/null
 THREAD_TS=""
 PARENT=""
@@ -628,6 +642,7 @@ while [ "$#" -gt 0 ]; do
     --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
     --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
     --draft) need_val "$@"; DRAFT="$2"; shift 2 ;;
+    --reserved) RESERVED=1; shift ;;
     --due) DUE=1; shift ;;
     --text) need_val "$@"; FILE="$2"; shift 2 ;;
     --default) DEFAULT=1; shift ;;
@@ -690,7 +705,7 @@ for given in $OPTS_GIVEN; do
       esac ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
     --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
-    --recommend | --wait | --draft) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
+    --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
     --after)
       case "$VERB" in
@@ -1367,6 +1382,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
+    --arg reserved "$RESERVED" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
     --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -1377,6 +1393,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $attach == "" then {} else {attach: $attach} end)
       + (if $recommend == "" then {} else {recommend: $recommend} end)
+      + (if $reserved == "1" then {reserved: true} else {} end)
       + (if $wait == "" then {} else {wait: ($wait | tonumber), deadline: (($now + ($wait | tonumber) * 60) | todate)} end)
       + (if $delivery == "" then {} else {delivery_id: $delivery} end)
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
@@ -1758,27 +1775,33 @@ case "$VERB" in
     # the owner would ever close it; `ask:overseer` is always an owner ask,
     # the audience check above having refused every other.
     if [ "$VERB:$ITEM" = ask:overseer ]; then
-      # A draft's choices are fixed so its deadline never approves a send
-      # made as the owner; the checks below then run on those values.
-      if [ -n "$DRAFT" ]; then
+      # A reserved decision has no option safe to stand at its deadline, so
+      # it names none. A draft's choices are fixed so its deadline never
+      # approves a send made as the owner; the checks below then run on them.
+      if [ "$RESERVED" -eq 1 ]; then
+        [ -z "$RECOMMEND" ] || refuse option-conflict '--reserved,--recommend'
+        [ -z "$DRAFT" ] || refuse option-conflict '--reserved,--draft'
+      elif [ -n "$DRAFT" ]; then
         [ -z "$OPTIONS" ] || refuse option-conflict '--draft,--options'
         [ -z "$RECOMMEND" ] || refuse option-conflict '--draft,--recommend'
         OPTIONS=approve,deny
         RECOMMEND=deny
         lm_draft
       fi
-      [ -n "$RECOMMEND" ] || refuse recommend-required "$TO"
+      [ -n "$RECOMMEND" ] || [ "$RESERVED" -eq 1 ] || refuse recommend-required "$TO"
       [ -n "$OPTIONS" ] || refuse option-required --options
       # The envelope records --options split on commas, so a value holding a
       # comma spans two choices and is none of them; without one, a match
       # between the delimiters is exactly one of those choices.
-      case "$RECOMMEND" in
-        *,*) refuse recommend-invalid "$RECOMMEND" ;;
-      esac
-      case ",$OPTIONS," in
-        *",$RECOMMEND,"*) ;;
-        *) refuse recommend-invalid "$RECOMMEND" ;;
-      esac
+      if [ -n "$RECOMMEND" ]; then
+        case "$RECOMMEND" in
+          *,*) refuse recommend-invalid "$RECOMMEND" ;;
+        esac
+        case ",$OPTIONS," in
+          *",$RECOMMEND,"*) ;;
+          *) refuse recommend-invalid "$RECOMMEND" ;;
+        esac
+      fi
       lm_wait_minutes
     fi
     if [ -n "$REF" ]; then
@@ -1879,6 +1902,8 @@ case "$VERB" in
     lm_owner_ask "$MSGID"
     if [ "$DEFAULT" -eq 1 ]; then
       BY=default
+      RESERVED_ASK="$(jq -r '.reserved == true' <<<"$ASK_JSON")" || refuse file-unreadable "$TO_OVERSEER"
+      [ "$RESERVED_ASK" = false ] || refuse ask-reserved "$MSGID"
       # The recommendation is the answer's text, crossing the file every
       # text crosses: nothing here builds an envelope from an argument.
       jq -r '.recommend // empty' <<<"$ASK_JSON" >"$WORK_DIR/default.txt" ||
@@ -2189,7 +2214,7 @@ case "$VERB" in
     # An answered ask is not news again; `pending` is what is still owed a
     # reply. --to keeps one audience's asks and --due the ones past their
     # deadline by this clock, the one deadline judge the watch resolves its
-    # owner asks by.
+    # owner asks by; a reserved ask is never due, since no default closes it.
     NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
     lm_objects "$WORK_DIR/lane.jsonl" | jq -r "$MAILBOX_CLASS_JQ"'select(overseer_mail_class == "close") | .re' >"$WORK_DIR/closed" ||
       refuse file-unreadable "$TO_LANE"
@@ -2203,7 +2228,8 @@ case "$VERB" in
       | select($envelope.kind != "ask" or
           ((if $envelope.to == "owner" then $closed else $done end) | index($envelope.id) | not))
       | select($to == "" or $envelope.to == $to)
-      | select($due == 0 or (($envelope.deadline // "" | at_epoch) as $d | $d != null and $d <= $now))'
+      | select($due == 0 or ($envelope.reserved != true
+          and (($envelope.deadline // "" | at_epoch) as $d | $d != null and $d <= $now)))'
     if [ "$VERB" = pending ] && [ "$LISTS_DIRECTIVES" -eq 1 ]; then
       jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
         refuse file-unreadable "$TO_LANE"

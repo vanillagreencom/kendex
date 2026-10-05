@@ -10,7 +10,9 @@
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
 # recommendation, the cursor `events` refuses, the reply's delivery id, the
-# referenced mailbox's read lock, and a draft's medium, fields and text hash.
+# referenced mailbox's read lock, a draft's medium, fields and text hash, and
+# a reserved ask's field, its two conflicts, its --due exclusion and its
+# --default refusal.
 # The owner notice's day-long text rule keeps its controls beside its rows.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -379,6 +381,9 @@ ask --item overseer --to owner --file $F|2=lane-mail: recommend-required=owner
 ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: recommend-required=owner
 ask --item overseer --to owner --recommend a --file $F|2=lane-mail: option-required=--options
 ask --item overseer --to owner --options a,b --recommend a --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
+ask --item overseer --to owner --options a,b --recommend a --reserved --file $F|2=lane-mail: option-conflict=--reserved,--recommend
+ask --item overseer --to owner --reserved --file $F|2=lane-mail: option-required=--options
+ask --item KEN-1 --options a,b --reserved --file $F|2=lane-mail: option-unknown=--reserved
 notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--ref
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
@@ -593,9 +598,38 @@ ask --item overseer --to owner~["r","email","x"]~2=lane-mail: file-unreadable=$D
 ask --item overseer --to owner~$TWO_DRAFTS~2=lane-mail: file-unreadable=$D
 ask --item overseer --to owner --options approve,deny~VALID~2=lane-mail: option-conflict=--draft,--options
 ask --item overseer --to owner --recommend deny~VALID~2=lane-mail: option-conflict=--draft,--recommend
+ask --item overseer --to owner --options approve,deny --reserved~VALID~2=lane-mail: option-conflict=--reserved,--draft
 ask --item KEN-1~VALID~2=lane-mail: option-unknown=--draft
 notice --item overseer --to owner~VALID~2=lane-mail: option-unknown=--draft
 ROWS
+
+# --- the reserved ask ----------------------------------------------------------
+# An owner-reserved decision names no default, so its deadline closes nothing:
+# --due leaves it out, resolve --default refuses it, and the owner's text
+# answer closes it.
+reserved_ask() { # [ARGS...] — sets ASK to the id.
+  lm ask --item overseer --to owner --file "$(text q 'Cut kendex 2.0.0?')" --options cut,hold --reserved "$@"
+  ASK="${OUT#id=}"
+}
+default_answers() {
+  if [[ -f "$BOX/to-lane.jsonl" ]]; then jq -rs '[.[] | select(.by == "default")] | length' "$BOX/to-lane.jsonl"; else echo 0; fi
+}
+new_repo reserved
+reserved_ask --wait 0
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[.reserved, has("recommend"), has("deadline")] | map(tostring) | join(" ")')" \
+  "0=true false true" "a reserved ask records reserved and a deadline, and no recommendation"
+lm pending --item overseer --to owner --due
+assert_eq "$RC=$OUT" "0=" "--due leaves out a reserved ask past its deadline"
+lm pending --item overseer --to owner
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "past its deadline the reserved ask stays pending"
+lm resolve --item overseer --id "$ASK" --default
+assert_eq "$RC=$ERR=$(default_answers)" "2=lane-mail: ask-reserved=$ASK=0" \
+  "resolve --default refuses the reserved ask and writes no default answer"
+lm resolve --item overseer --id "$ASK" --text "$(text a 'hold until Monday')"
+ANSWER="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
+assert_eq "$RC=$OUT" "0=lane-mail: resolved id=$ASK by=text answer=$ANSWER" "the owner's text answer closes the reserved ask"
+lm pending --item overseer --to owner
+assert_eq "$RC=$OUT" "0=" "the answered reserved ask is no longer pending"
 
 # --- resolve, exactly once ----------------------------------------------------
 new_repo resolve
@@ -1071,6 +1105,33 @@ CONTROL_OUT="$(
   [[ "$FAIL" -eq 0 ]]
 )" || CONTROL_RC=$?
 assert_eq "$RC=$CONTROL_RC" "0=1" "control: a hash over the text less its trailing newline turns the draft text row red"
+
+new_repo control_reserved_field
+mutant reserved-field '{reserved: true}' '{}'
+reserved_ask --wait 0
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'has("reserved")')" "0=false" "control: without the field a reserved ask records nothing reserved"
+
+new_repo control_reserved_recommend
+mutant reserved-recommend-any "|| refuse option-conflict '--reserved,--recommend'" "|| : refuse option-conflict '--reserved,--recommend'"
+reserved_ask --recommend cut
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.recommend')" "0=cut" "control: without the --recommend conflict rule a reserved ask carries a default"
+
+new_repo control_reserved_draft
+mutant reserved-draft-any "|| refuse option-conflict '--reserved,--draft'" "|| : refuse option-conflict '--reserved,--draft'"
+reserved_ask --draft "$(draft_file d "$DRAFT_JSON")"
+assert_eq "$RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1" "control: without the --draft conflict rule a reserved draft ask lands"
+
+new_repo control_reserved_due
+LANE_MAIL_BIN="$LANE_MAIL" reserved_ask --wait 0
+mutant reserved-due '($envelope.reserved != true' '(true'
+lm pending --item overseer --to owner --due
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "control: without the reserved rule --due lists the reserved ask for the watch to close"
+
+new_repo control_reserved_default
+LANE_MAIL_BIN="$LANE_MAIL" reserved_ask --wait 0
+mutant reserved-default-any '[ "$RESERVED_ASK" = false ] || refuse ask-reserved "$MSGID"' ':'
+lm resolve --item overseer --id "$ASK" --default
+assert_eq "$RC=$ERR" "2=lane-mail: recommend-missing=$ASK" "control: without the reserved refusal --default falls to the missing recommendation"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

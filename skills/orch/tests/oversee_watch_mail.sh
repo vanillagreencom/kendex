@@ -382,6 +382,19 @@ out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_contains "$out" "EVENT owner-ask-closed $ASK by=default" "the watch closes the answered deadline" "$err"
 assert_eq "$(jq -rs '[.[] | select(.kind == "answer" and .by == "default")] | length' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")" "0" "the watch adds no recommendation answer" "$err"
 
+# A reserved ask has no default: past its deadline the watch closes nothing,
+# reports nothing and fails no pass, and the ask stays open for the owner.
+new_case mail_owner_reserved_deadline
+mail_reset overseer
+printf 'Cut 2.0.0?\n' > "$TMP_ROOT/ask.txt"
+ASK="$(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" ask --item overseer --to owner --options cut,hold --reserved --wait 0 --file "$TMP_ROOT/ask.txt")"
+ASK="${ASK#id=}"
+err="$TMP_ROOT/ask-reserved"
+rc=0
+out="$(run_watch -- --max-loops 1 2>"$err")" || rc=$?
+assert_eq "$rc|$(head -1 <<<"$out")|$(owner_pending)|$(test -f "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" && echo written || echo none)" \
+  "0|$HEARTBEAT|$ASK|none" "past its deadline a reserved ask stays open and the watch writes no default for it" "$err"
+
 # The deadline step's three refusal arms, driven through a lane-mail wrapper
 # that answers one call by the arm STUB_DIR/ask-arm names and hands every
 # other call to the real script: the due listing failing, a resolve refused
