@@ -25,7 +25,7 @@ Either case beside a re-review block declares the pass unscoped: open § 3's art
 
 ## 2. Review
 
-Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos, reading from the worktree as needed (a deleted path is inspected via the diff or git history; research documents are excluded). Findings respect the delegation's listed decisions, each read in full with its status; one marked superseded or revisited binds only what its status leaves active. If a listed decision file does not exist, do not hunt for it; note the broken reference in your report and review without it.
+Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos, reading from the worktree as needed (a deleted path is inspected via the diff or git history; research documents are excluded). Findings respect the delegation's listed decisions, each read in full with its status; one marked superseded binds only what its status leaves active, and a retired one binds nothing. If a listed decision file does not exist, do not hunt for it; note the broken reference in your report and review without it.
 
 Mutation-validating a test as evidence commits you to the skill's Mutation-Stability Pairing.
 

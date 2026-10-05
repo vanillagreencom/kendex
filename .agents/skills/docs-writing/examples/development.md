@@ -15,7 +15,7 @@ bun run start -- --once    # one sample, then exit: a quick read of a change
 ```sh
 bun test                   # the unit suites
 bun test --filter cgroup   # one suite
-sudo bun run test:root     # the suites that need a real control group; skipped otherwise
+bun run test:root          # the suites that need a real control group, as root; skipped otherwise
 ```
 
 ## Debug

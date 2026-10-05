@@ -1,3 +1,6 @@
+The repository's `README.md`:
+
+````markdown
 # vsys
 
 A Linux terminal dashboard for people who run several AI coding agents on one machine. It shows each agent with its control group, build processes and resource use, and can freeze or stop an agent you choose.
@@ -16,7 +19,7 @@ A Linux terminal dashboard for people who run several AI coding agents on one ma
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash
+bun install -g vsys
 ```
 
 ```sh
@@ -42,6 +45,7 @@ Settings live in `~/.config/vsys/config.toml`. Edit them from the Settings scree
 ## Licence
 
 [MIT](LICENSE)
+````
 
 ---
 

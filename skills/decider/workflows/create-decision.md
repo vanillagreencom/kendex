@@ -24,7 +24,7 @@ Link related decisions as `[DECISION_ID](DECISION_ID-descriptor.md)`, and add `*
 
 ## 3. Add the INDEX row
 
-Append a row per `templates/index-row.md` at the end of the table, before the `---` separator. Cells are 5-15 word summaries; the Link cell names the file just written.
+Append a row per `templates/index-row.md` at the end of the table, before the `---` separator. Each cell holds what that template names; the Link cell names the file just written.
 
 ## 4. Restate partially superseded decisions
 

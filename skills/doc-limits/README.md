@@ -18,11 +18,11 @@ kendex add vanillagreencom/kendex --skill doc-limits
 
 ## How it works
 
-The checker selects the tracked Markdown documents a size class names, each by its first matching class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
+The checker measures every tracked `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, each under its first matching class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
 
 ## Path classes
 
-Set `DOC_LIMITS_CLASSES` to override document limits. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.
+Set `DOC_LIMITS_CLASSES` to override the limit of a measured file. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.
 
 ## Setup
 

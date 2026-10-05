@@ -92,7 +92,7 @@ Read by a person choosing or using the repository, package, skill, plugin or Pi 
 1. A brief description: what it is and who it is for.
 2. A screenshot, where the thing has a screen.
 3. Features: one direct line each.
-4. Install: one or two paste lines per route, no prose.
+4. Install: paste lines per route, no prose.
 5. How it works: high level, in plain words, with no engineering terms.
 6. Sub-packages, where they exist: a table, one line each.
 7. Setup or customise: only the must-know settings.
@@ -117,7 +117,7 @@ The harness shim. kendex writes it, and its whole content is one import line.
 
 ### `docs/architecture/<name>.md`
 
-Optional. Read by an agent about to do the work the doc governs. One cross-folder idea, a principle or contract that governs named work; a subsystem boundary qualifies. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, and when to read it. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
+Optional. Read by an agent about to do the work the doc governs. One cross-folder idea, a principle or contract that governs named work; a subsystem boundary qualifies. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
 
 The contrast, a journal paragraph against the principle it should be:
 
@@ -137,11 +137,11 @@ Read by a maintainer, human or agent, working on the package itself. How to buil
 
 ### `SKILL.md`, `workflows/*.md`, `agents/*.md`
 
-Read by an agent on every load. The shortest unambiguous rule, and the commands. A rule another file owns is cited, never restated. Never: mechanics, rationale, history, worked examples. Rationale moves to a decision record or a comment at the code. Example: [examples/skill.md](examples/skill.md).
+Read by an agent on every load. The shortest unambiguous rule, and the commands. A rule another file owns is cited, never restated. Never: mechanics, rationale, history, worked examples. Rationale moves to a decision record or a comment at the code. Example: [examples/skill-entry.md](examples/skill-entry.md).
 
 ### Reference docs
 
-Read by an agent or maintainer looking up one value: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Tables and lists, one row per item; the value or the shape the contract fixes, its meaning, and its default; the semantics a reader needs to produce or consume that shape, and no more. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named workflow loads it on demand. Example: [examples/reference.md](examples/reference.md).
+Read by an agent or maintainer looking up one value: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Tables and lists, one row per item; the value or the shape the contract fixes, its meaning, and its default; the semantics a reader needs to produce or consume that shape, and no more. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named reader loads it: a skill, an agent, a workflow or a maintainer task that names the file. Example: [examples/reference.md](examples/reference.md).
 
 ### Documentation HTML
 
@@ -165,9 +165,9 @@ A plan, a research report, a measurement or a handoff is not repository content.
 
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
-- Agent-loaded markdown carries no history. The `prose` lane checks it.
+- Instruction markdown states the rule that holds now; a date, an issue number or the story of a change goes to the commit. The commit-guards `prose` lane checks the load-point files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`; review holds the rule everywhere else.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md), which extracts what is unique, then writes each file from a blank page. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [skill.md](examples/skill.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
+A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).

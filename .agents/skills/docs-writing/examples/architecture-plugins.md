@@ -21,16 +21,22 @@ A core that holds features lets a change to one surface break another, and grows
 
 ## The canonical example
 
-`shell/plugins/clock/` is the smallest complete plugin: `manifest.json` names its kind and the bar host, `Clock.qml` draws into the slot the host gives it, `service.py` publishes the time over IPC, and `tests/` proves the manifest loads and the service answers. Copy it.
+`shell/plugins/clock/` is the smallest complete plugin: a manifest that declares its kind and the one host it needs, a surface drawn into the slot that host gives it, and a service reached only over IPC. Copy it.
 
 ## Revisit when
 
 A feature needs a surface no host can give and the host cannot be added without a core rewrite, or the core grows past what one agent holds in context.
 
+## Not governed
+
+What a plugin does inside its slot, and the design of a host's own API; the first is the plugin's tests, the second is `shell/hosts/AGENTS.md`.
+
 ---
 
 ## Not this
 
-> `shell/plugins/clock/service.py::publish` is called by `shell/hosts/bar.py::tick` every second (`BAR_TICK_MS = 1000`, set in LUM-412 on 2026-09-21, after the 1.4 refactor moved `tick` out of `main.py`); `tests/test_clock.py::test_publishes_every_tick` enforces the interval and `test_manifest_loads` covers the manifest. The earlier timer in `main.py` is gone.
+```markdown
+`shell/plugins/clock/service.py::publish` is called by `shell/hosts/bar.py::tick` every second (`BAR_TICK_MS = 1000`, set in LUM-412 on 2026-09-21, after the 1.4 refactor moved `tick` out of `main.py`); `tests/test_clock.py::test_publishes_every_tick` enforces the interval and `test_manifest_loads` covers the manifest. The earlier timer in `main.py` is gone.
+```
 
 It narrates call order, a test row, a date and task history: an agent reads it and learns no rule it could break, while every name in it goes stale at the next rename.

@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-26
 
-**Status**: Revisited
+**Status**: Active
 
 **Research**: KEN-1877
 

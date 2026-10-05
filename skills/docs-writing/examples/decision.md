@@ -13,7 +13,7 @@ The file `docs/decisions/<ID>-one-dismiss-pattern.md`, with its INDEX row append
 
 **Decision**: Every sheet, dialog and toast closes through `dismiss()` in `ui/lib/dismiss.ts`, which owns Escape, the close control and the backdrop click.
 
-**Why**: Three screens wired Escape by hand and two of them lost the backdrop click. One owner keeps the three ways to close in agreement, and a component that cannot call it cannot ship.
+**Why**: One owner keeps the three ways to close in agreement, and a component that cannot call it cannot ship.
 
 **Rejected**: Each component owning its close handling, with a lint rule for Escape. The lint cannot see a missing backdrop handler, so the two paths drift again.
 

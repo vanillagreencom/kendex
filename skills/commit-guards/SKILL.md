@@ -50,10 +50,10 @@ repo-effects:
 | Check | Verdict |
 |---|---|
 | **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
-| **byte-ceiling** | A new tracked file over the configured ceiling fails; an existing oversized file may hold or shrink but may not grow; lockfiles are exempt. |
+| **byte-ceiling** | A new tracked file over the configured ceiling fails; an existing oversized file may hold or shrink but may not grow; Markdown files and lockfiles are exempt. |
 | **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
-| **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `COMMIT_GUARDS_CHANGELOG_CAP` characters. |
+| **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section. |
 | **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
 | **md-refs** | Dead references in consumer-authored citing files fail; lock-listed citing files warn unless `--strict` is set. Skipped sources are one count per reason on the summary line, with a path named only where a judged reference lands on it. `COMMIT_GUARDS_MD_REFS_PATHS` selects documents; `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` selects source comments and TOML strings for `§` citations. The supported forms are in [CHECKS.md § md-refs](CHECKS.md#md-refs). |
@@ -100,7 +100,6 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
 | `COMMIT_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
 | `COMMIT_GUARDS_SECRETS_EXCLUDES` | `tools/secrets-excludes` | secrets exclusion list, the lane's only allowlist. |
-| `COMMIT_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
 | `COMMIT_GUARDS_CHANGELOG_PATHS` | `changelog.d/*/*.md` | Space-separated globs naming the changelog fragments, matched against the full repo-relative path (`*` crosses `/`). |
 | `COMMIT_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collation destination; empty disables collation. |
 | `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` | *(empty)* | JSON version-file globs for the [version-bump check](CHECKS.md#version-bumps); empty disables it. |

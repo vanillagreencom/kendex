@@ -24,6 +24,6 @@ Run the document byte-ceiling check before review and in CI. The commit-guards p
 .agents/skills/doc-limits/scripts/doc-limits --staged
 ```
 
-A document over its limit fails the check. [references/policy.md § Path classes](references/policy.md#path-classes) names the classes.
+The check measures `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, at the root and at any depth, and no other file. A document over its limit fails the check. [references/policy.md § Path classes](references/policy.md#path-classes) says how a class sets a ceiling among those files.
 
 A document that must stay whole gets a row in the configured excludes file with its reason. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `doc-limits --help`.

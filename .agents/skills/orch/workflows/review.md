@@ -41,7 +41,7 @@ No changes → report "No changes to review" and **END**.
 .agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded or revisited binds only what its status leaves active. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded binds only what its status leaves active, and a retired one binds nothing. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]

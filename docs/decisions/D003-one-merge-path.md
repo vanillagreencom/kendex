@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Revisited
+**Status**: Active (merge path → D013, break-glass → D016, review requirements → D018)
 
 **Research**: KEN-1776; the consumer refresh design is attached to KEN-2601
 

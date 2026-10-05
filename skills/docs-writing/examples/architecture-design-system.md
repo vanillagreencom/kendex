@@ -15,17 +15,21 @@ One token file is the only place a value changes, so a palette or spacing change
 - Do build from `Button`, `TextField`, `ListItem`, `Dialog` and the other shared components. Compose them; never restyle one in a screen.
 - Do take every value from the token file. A literal colour, pixel size or duration in a component is refused by the `no-literal-style` lint lane.
 - Do add a gallery entry for a new component, with each state it can draw.
-- Do close a sheet, a dialog and a toast through `dismiss()` from `ui/lib/dismiss.ts`, so Escape, the close control and a backdrop click agree.
+- Do close a sheet, a dialog and a toast through `dismiss()` from `ui/lib/dismiss.ts`, per `docs/decisions/D012-one-dismiss-pattern.md`.
 - Do draw every component in light, dark and reduced motion. The gallery renders all three, and `npm test -- gallery` fails a component missing one.
 - Never ship a component only one screen can use. Promote it to `ui/components/` or keep it in that screen's file.
 
 ## The canonical example
 
-`ui/components/Badge.tsx`: it reads `tokens.badge` for its size and padding and `tokens.color` for its tones, draws its label through the shared `Text` role, and `ui/gallery/badge.tsx` shows it in each tone, light and dark. Copy it.
+`ui/components/Badge.tsx`: every value from the token file, its label through the shared `Text` role, and a gallery entry for each tone. Copy it.
 
 ## Revisit when
 
 A platform the shell must draw on cannot read the token file, or a screen needs a state the gallery cannot render.
+
+## Not governed
+
+What a screen says and where it places the components; a screen composes them as it needs, and copy follows the strings rule in `AGENTS.md`.
 
 ---
 

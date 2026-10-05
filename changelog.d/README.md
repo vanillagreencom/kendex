@@ -15,7 +15,7 @@ This standard applies to kendex, its apps, Pi packages, GitHub releases, and the
 
 ## Checks
 
-- Fragment sections, content shape, and length limits are defined in [the changelog check](../skills/commit-guards/CHECKS.md#changelog-entries).
+- Fragment sections and content shape are defined in [the changelog check](../skills/commit-guards/CHECKS.md#changelog-entries).
 - Follow [the release procedure](../.agents/skills/app-deploy/SKILL.md) to combine accepted fragments into the pending release section of `CHANGELOG.md`. The collator validates the destination before writing and deletes the fragments after replacement.
 - Ordinary checks permit wording and heading edits in the combined release notes.
 - The [version-bump check](../skills/commit-guards/CHECKS.md#version-bumps) compares the prior version with the staged version after the release edits. That section states which bumps it refuses and which entries it reads. The app JSON version represents the kendex release; `crates/cli/tests/compat.rs` checks that it equals the Cargo workspace version.

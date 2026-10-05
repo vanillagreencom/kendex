@@ -2,18 +2,18 @@
 
 ## Path classes
 
-- The check measures tracked regular Markdown files that a class names.
-- `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first matching entry sets the document's byte ceiling.
+- The measured set is the tracked regular files named `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or `SKILL.md`, at the root and at any depth. No other file is measured, whatever a class names.
+- `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first entry matching a measured file sets that file's byte ceiling. An entry that can match no file in the measured set sets nothing.
 - An entry is `pattern=Nk`, where `N` is a positive integer and `k` means 1024 bytes. Semicolons separate entries. Whitespace around entries and `=` is ignored.
 - Patterns match the full repository-relative path. `*` crosses directory separators.
-- `SHIPPED_CLASSES` in [scripts/doc-limits](../scripts/doc-limits) declares the shipped classes and their limits: the documents a harness loads at every turn.
-- An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A document with no matching class has no limit.
+- `SHIPPED_CLASSES` in [scripts/doc-limits](../scripts/doc-limits) declares the shipped classes and their limits.
+- An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A measured file with no matching class has no limit.
 - A document over its limit fails the check, whichever class set that limit.
 
 ## Exclusion list
 
 - Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the exclusions file.
-- An absent inventory is an empty one: nothing is excluded and every tracked document is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none. An unreadable or malformed inventory fails with exit `2`; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders. A malformed inventory's refusal then carries the shared reader's status, jq version, cause and fix. With no jq on PATH the inventory cannot be read, and the refusal starts `host-error=jq-missing`; install jq.
+- An absent inventory is an empty one: nothing is excluded and every file in the measured set is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none. An unreadable or malformed inventory fails with exit `2`; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders. A malformed inventory's refusal then carries the shared reader's status, jq version, cause and fix. With no jq on PATH the inventory cannot be read, and the refusal starts `host-error=jq-missing`; install jq.
 - The default mode reads the worktree inventory, falling back to its index copy when absent. Staged mode reads the tracked index copy; an inventory staged for deletion is absent. An untracked inventory reads from the worktree.
 - `DOC_LIMITS_EXCLUDES` selects the repository-relative file. Its default is `tools/doc-limits-excludes`. `--excludes FILE` overrides it.
 - Each row is `pattern<TAB>reason`. A missing pattern or reason is a configuration error. Blank lines and lines starting with `#` are ignored.

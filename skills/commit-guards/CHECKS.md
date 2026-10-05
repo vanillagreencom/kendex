@@ -17,7 +17,7 @@ Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker immediately preceded by 
 
 ## byte-ceiling
 
-A tracked file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`, `.kendex-lock.json`. Asset trees go in `COMMIT_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
+A tracked file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt: every file whose basename ends `.md`, at any depth, from the ceiling and the `near-ceiling` notice alike, and by exact basename `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`, `.kendex-lock.json`. Asset trees go in `COMMIT_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
 
 A file not over the ceiling but at or above `COMMIT_GUARDS_BYTE_WARN_PCT` percent of it prints `near-ceiling` naming the path, its bytes, the ceiling in bytes and the percent reached, and does not fail: the round that comes within reach of the wall is the one that can still plan the split cheaply. The percent must be 1-100; above 100 the threshold would sit past the ceiling and switch the notice off silently, so it is a configuration error like any other.
 
@@ -60,8 +60,7 @@ Every tracked path `COMMIT_GUARDS_CHANGELOG_PATHS` matches must be:
 
 - a real text file (a symlink, gitlink or binary blob is refused);
 - placed by a pattern: a pattern is `<root...>/<section>/<name>`, its last two segments say where the section sits and its depth which paths it places, and the section directory is one of `added`, `changed`, `deprecated`, `removed`, `fixed`, `security`. `changelog.d/*/*.md` matches a deeper path but places only one at its own depth;
-- exactly one Markdown list item: the first non-blank line opens with a hyphen and a space and says something, and every later non-blank line indents under it;
-- within `COMMIT_GUARDS_CHANGELOG_CAP` characters.
+- exactly one Markdown list item: the first non-blank line opens with a hyphen and a space and says something, and every later non-blank line indents under it.
 
 A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.md` roots at `changelog.d`); a glob-free pattern names one file and roots nowhere. Every tracked path under a root that no pattern matches is a violation, except a `README.md` directly under a root and the configured record. No matching file is a clean pass; switch the check off by dropping it from `COMMIT_GUARDS_CHECKS`.
 
@@ -99,18 +98,14 @@ A repository that releases chooses each version by this rule. Where `COMMIT_GUAR
 - The compatibility policy belongs to the consuming repository's release standard, not this configurable catalog check.
 - [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, a 0.x patch, a patch whose own release section leaves an added fragment pending under `--against` and refuses it otherwise, a patch refused under `--base` for a pending record Added entry beside its own release section, and a major whose own release section holds no Breaking entry beside a Breaking fragment, and a `package.json` judged as the app's version file beside a root or nested record and as a package with the record off.
 
-### Measuring one entry
-
-Lines joined with CR stripped, whitespace runs collapsed to one space, trimmed, counted in characters (one per UTF-8 sequence). A long entry is named with its file, length and first line, C0 controls except tab, and DEL, replaced.
-
 ## prose
 
 A calendar date (`20YY-MM-DD`) or a three- or four-digit issue number after `#` in a scanned markdown file fails. Ordinary words do not trigger this check. The issue-number shape takes no leading boundary (`<file>.md#1204` fires), and the character after the digits must be neither a digit nor a hex letter (`#12345`, `#1234ab`, `#0088cc` pass). A decision ID (`D042`) carries no `#` and never fires.
 
-Scope is `COMMIT_GUARDS_PROSE_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, the exclusion list the markdown lanes read, so a vendored skill under a render tree is carved out with a reason rather than by narrowing the scan. `docs/architecture/*.md` joins the default only under `COMMIT_GUARDS_MD_SCOPE=all`, the switch a repository flips once its markdown is rewritten; an explicit path list is used as given. The default, each name spelled twice because `*` crosses `/` but never stands in for the separator:
+Scope is `COMMIT_GUARDS_PROSE_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, the exclusion list the markdown lanes read, so a vendored skill under a render tree is carved out with a reason rather than by narrowing the scan. An explicit path list is used as given. The default is the load-point files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md` at any depth, each name spelled twice because `*` crosses `/` but never stands in for the separator:
 
 ```
-SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md
+SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md
 ```
 
 The `no tracked file matches` verdict prints only when nothing was skipped.

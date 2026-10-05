@@ -148,7 +148,7 @@ For every callee whose call the change deletes, run `git grep -n -F --untracked 
 
 Update a doc when the implementation makes a claim in it false. A code change alone owes no doc change.
 
-**Skip decision recording if** the choice governs one site, or nobody would reverse it: that reason is a comment at the code. Otherwise, where the choice governs work beyond one site or a reviewer would re-litigate it, follow the decider skill's create-decision workflow: `.agents/skills/decider/scripts/decisions next-id`, the file per `schemas/decision-format.md` from `templates/decision-entry.md`, the INDEX.md row per `templates/index-row.md`, `// REVISIT(DXXX):` markers in code where applicable, and the decision ID cited in the § 9 summary.
+**Skip decision recording if** the choice is below the decider bar, the decider skill's `SKILL.md` § What warrants a decision record, and why: that reason is a comment at the code. Otherwise follow the decider skill's create-decision workflow: `.agents/skills/decider/scripts/decisions next-id`, the file per `schemas/decision-format.md` from `templates/decision-entry.md`, the INDEX.md row per `templates/index-row.md`, `// REVISIT(DXXX):` markers in code where applicable, and the decision ID cited in the § 9 summary.
 
 ### 4.4 Reflect
 

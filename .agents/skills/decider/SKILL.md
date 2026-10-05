@@ -31,7 +31,7 @@ Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`
 
 Actions (`search`, `search --issue`, `list`, `next-id`, `get`, `check`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISIONS_BASE_REF` / `DECISION_ID_*` environment: `decisions --help`. There is no bare `issue` action; use `search --issue`.
 
-Read the full decision file and its status before acting on a hit. An active decision binds design policy; a suggestion contradicting it is invalid unless the decision itself is flawed. One marked superseded or revisited binds only what its status leaves active.
+Read the full decision file and its status before acting on a hit. An active decision binds design policy; a suggestion contradicting it is invalid unless the decision itself is flawed. One marked superseded binds only what its status leaves active; a retired one binds nothing.
 
 ## What warrants a decision record, and why
 
@@ -50,7 +50,7 @@ Not warranted:
 - A choice no one would revisit: a file format version field, a naming scheme.
 - A record of what was done: git history holds it.
 
-A record is short: the choice, why, the main rejected alternative, the revisit trigger, with its ID, status, issue or evidence link and partial-supersession scope. Shortening a record keeps its ID and status; moving a reason into code is not a reversal. Before deleting a record, update the INDEX, every link and every code marker, and leave a pointer where the ID is still cited. Supersede only changed policy.
+A record is short: the choice, why, the main rejected alternative, the revisit trigger, with its ID, status, issue or evidence link and partial-supersession scope. Shortening a record keeps its ID and status; moving a reason into code is not a reversal. A record is never deleted: one withdrawn with no replacement is retired per `workflows/update-decision.md`, which keeps its row and a one-line document so the ID stays reserved and a citation still resolves. Supersede only changed policy.
 
 ## Workflows
 
