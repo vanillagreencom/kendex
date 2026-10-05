@@ -149,8 +149,9 @@ jobs:
   # job per lane, each declared in .github/ci-lanes.conf, marked
   # `:event-uniform` there where it does the same work on every event,
   # `:queue` where it is slow enough to run in the merge group alone, which
-  # keeps the pull request that defers it off the admin merge, and
-  # published as a
+  # keeps the pull request that defers it off the admin merge once the
+  # default branch's kendex refresh carries a harness-ci that reads the
+  # mark, and published as a
   # `lane_<name>` output above, given this `needs:` and this `if:` with its
   # own output, named in CI's `needs:` and aggregate step as they name
   # `test`. A lane that reads a file under docs/ or changelog.d/, or a root

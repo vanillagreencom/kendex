@@ -50,8 +50,11 @@
 #      to. One mutant copy per rule must fail the row the rule decides, the
 #      copy of classify or of the shipped lanes lib it reads, whichever
 #      holds the rule. Beside them, the queue mark: a lane marked `:queue`
-#      its own glob reaches stands down on a pull request and on no other
-#      event, a merge group runs it whatever the proof says, and the
+#      its own glob reaches stands down on a pull request where the
+#      classifier answered queue_only=true and the lanes-from checkout
+#      holds the installed reader of the mark, runs where either is
+#      missing, and stands down on no other event; a merge group runs the
+#      event-uniform queue lane whatever the proof says, and the
 #      classifier's queue_only line reaches the step's outputs.
 #   6. the proof: what a proof's record stands down, with and without a
 #      declaration, per what it covers, a declared lane only where the
@@ -95,6 +98,7 @@ printf 'change-class %s\n' "$*" >>"$STUB_LOG"
 [ "${STUB_CLASS_EXIT:-0}" -eq 0 ] || exit "$STUB_CLASS_EXIT"
 [ -z "${GITHUB_OUTPUT:-}" ] ||
   printf 'change_class=%s\nqueue_only=%s\n' "$STUB_CLASS" "${STUB_QUEUE:-false}" >>"$GITHUB_OUTPUT"
+[ -z "${STUB_OUTPUT_UNREADABLE:-}" ] || chmod 200 "$GITHUB_OUTPUT"
 printf 'change_class=%s\n' "$STUB_CLASS"
 STUB
 cat >"$STUBS/skills/harness-ci/scripts/harness-only" <<'STUB'
@@ -202,12 +206,18 @@ declare_lanes bad-leading 'check src/*
 declare_lanes bad-mark-only ':event-uniform src/*
 '
 # `queued` marks `bench` on its first line alone, so its second line's glob
-# defers too, and `nightly` carries both marks, the queue mark last.
-declare_lanes queued 'check:event-uniform src/*
+# defers too, and `nightly` carries both marks, the queue mark last. Its
+# root holds the installed render's reader of the mark, which a deferral
+# needs; `queued-no-reader` is the same declaration in a root without it.
+QUEUED='check:event-uniform src/*
 bench:queue benches/*
 bench Cargo.lock
 nightly:event-uniform:queue nightly/*
 '
+declare_lanes queued "$QUEUED"
+declare_lanes queued-no-reader "$QUEUED"
+mkdir -p "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib"
+cp "$LANES_LIB" "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
 mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
   "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
@@ -225,6 +235,7 @@ ROW_CLASSIFIER=""
 run_in_place() { # SCRIPT [NAME=VALUE]...
   local script="$1" status=0
   shift
+  [ ! -e "$OUT" ] || chmod u+rw "$OUT"
   : >"$OUT"
   : >"$LOG"
   (cd "$CWD" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
@@ -414,7 +425,7 @@ refusal_rows=0
 while IFS='|' read -r cause assignments; do
   refusal_rows=$((refusal_rows + 1))
   case "$assignments" in
-    *STUB_PATHS_UNREADABLE=*)
+    *STUB_PATHS_UNREADABLE=* | *STUB_OUTPUT_UNREADABLE=*)
       if [ "$(id -u)" -eq 0 ]; then
         printf '  skip  refusal %s: root reads a mode-000 file\n' "$cause"
         continue
@@ -432,6 +443,7 @@ missing-repo|REPO=
 missing-output-file|GITHUB_OUTPUT=
 classifier-failed status=2|STUB_CLASS_EXIT=2
 verdict-unreadable class-line=change_class=enormous|STUB_CLASS=enormous
+queue-only-unreadable path=$OUT|STUB_OUTPUT_UNREADABLE=1
 path-reader-failed status=2|STUB_PATHS_EXIT=2 STUB_PATHS=a
 docs-verdict-unreadable docs-line=harness_only=true|STUB_DOCS_LINE=harness_only=true STUB_PATHS=a
 class-without-paths class=micro|STUB_CLASS=micro STUB_PATHS=
@@ -445,7 +457,7 @@ lanes-reader-unreadable root=$TMP/no-lanes-lib|LANES_FROM=$TMP/decl/good CLASSIF
 proof-failed status=2|STUB_PROOF_EXIT=2
 proof-unreadable lines=tree= workflow=.github/workflows/ci.yml reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
 ROWS
-[ "$refusal_rows" -eq 19 ] ||
+[ "$refusal_rows" -eq 20 ] ||
   { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
 
 # A classify with no proof beside it is a broken action, refused before
@@ -733,27 +745,32 @@ check "must-fail: a classify reading lanes from the judged tree is not refused" 
 # --- 5b. The queue mark ------------------------------------------------------
 
 # A lane marked `:queue` that one of its own globs reaches stands down on a
-# pull request alone; every other event runs it as an unmarked lane, and a
-# queue lane only an unclaimed path reached runs on the pull request too.
-# ROW|EVENT|PATHS (each outside the docs set)|EXPECTED: the lane_verdicts
-# value and the lanes the step's `lane:` lines name queue-deferred.
+# pull request alone, and there only where the classifier answered
+# queue_only=true and the declaration's root holds the reader of the mark;
+# every other event runs it as an unmarked lane, and a queue lane only an
+# unclaimed path reached runs on the pull request too.
+# ROW|EVENT|DECLARATION|QUEUE_ONLY|PATHS (each outside the docs set)|
+# EXPECTED: the lane_verdicts value and the lanes the step's `lane:` lines
+# name queue-deferred.
 queue_rows() {
   cat <<'ROWS'
-pr-deferred|pull_request|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
-pr-second-line|pull_request|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
-pr-both-marks|pull_request|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
-pr-unclaimed|pull_request|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
-pr-unclaimed-and-claimed|pull_request|Makefile benches/b.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=true deferred=bench
-merge-group|merge_group|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
-push|push|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
+pr-deferred|pull_request|queued|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
+pr-second-line|pull_request|queued|true|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
+pr-both-marks|pull_request|queued|true|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
+pr-unclaimed|pull_request|queued|true|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-and-claimed|pull_request|queued|true|Makefile benches/b.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=true deferred=bench
+pr-unconfirmed|pull_request|queued|false|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+pr-reader-absent|pull_request|queued-no-reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+merge-group|merge_group|queued|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+push|push|queued|true|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
 ROWS
 }
 queue_answer() { # SCRIPT ROW — the row's answer, or `crashed`
-  local line name event paths expected
+  local line name event decl queue paths expected
   line="$(queue_rows | grep -m1 "^$2|")" || { echo "no queue row named $2" >&2; exit 1; }
-  IFS='|' read -r name event paths expected <<<"$line"
-  if [ "$(run "$1" EVENT="$event" LANES_FROM="$TMP/decl/queued" STUB_PATHS="$paths" \
-    STUB_OUTSIDE="$paths")" != 0 ]; then
+  IFS='|' read -r name event decl queue paths expected <<<"$line"
+  if [ "$(run "$1" EVENT="$event" LANES_FROM="$TMP/decl/$decl" STUB_QUEUE="$queue" \
+    STUB_PATHS="$paths" STUB_OUTSIDE="$paths")" != 0 ]; then
     echo crashed
     return 0
   fi
@@ -761,27 +778,53 @@ queue_answer() { # SCRIPT ROW — the row's answer, or `crashed`
     "$(sed -n 's/^lane: name=\([^ ]*\) verdict=false cause=queue-deferred .*/\1/p' "$TMP/err" | tr '\n' ' ' | sed 's/ $//')"
 }
 rows=0
-while IFS='|' read -r name event paths expected; do
+while IFS='|' read -r name event decl queue paths expected; do
   rows=$((rows + 1))
   check "queue row $name" "$expected" "$(queue_answer "$CLASSIFY" "$name")"
 done < <(queue_rows)
-[ "$rows" -eq 7 ] || { echo "the queue table read $rows rows" >&2; exit 1; }
-check "a deferred lane's line names the path and glob that deferred it" \
-  "lane: name=bench verdict=false cause=queue-deferred path=benches/b.rs glob=benches/*" \
-  "$(queue_answer "$CLASSIFY" pr-deferred >/dev/null; grep '^lane: name=bench ' "$TMP/err")"
+[ "$rows" -eq 9 ] || { echo "the queue table read $rows rows" >&2; exit 1; }
+# The lane: line's cause, per row that reaches each branch of the deferral,
+# and the one annotation a missing reader raises on the step's stdout.
+for row in pr-deferred pr-unconfirmed pr-reader-absent; do
+  case "$row" in
+    pr-deferred) want="lane: name=bench verdict=false cause=queue-deferred path=benches/b.rs glob=benches/*" ;;
+    pr-unconfirmed) want="lane: name=bench verdict=true cause=queue-unconfirmed queue_only=false path=benches/b.rs glob=benches/*" ;;
+    pr-reader-absent) want="lane: name=bench verdict=true cause=queue-reader-absent path=benches/b.rs glob=benches/*" ;;
+  esac
+  check "the $row row's lane line names its cause, path and glob" "$want" \
+    "$(queue_answer "$CLASSIFY" "$row" >/dev/null; grep '^lane: name=bench ' "$TMP/err")"
+  case "$row" in
+    pr-reader-absent) want='::warning title=queue lane not deferred::' ;;
+    *) want='' ;;
+  esac
+  check "the $row row's annotation" "$want" \
+    "$(sed -n 's/^\(::warning title=[^:]*::\).*/\1/p' "$TMP/stdout")"
+done
 check "the step forwards the classifier's queue_only line as it wrote it" "queue_only=true" \
   "$(run "$CLASSIFY" STUB_QUEUE=true STUB_PATHS=src/main.rs >/dev/null; grep '^queue_only=' "$OUT")"
 
-# The merge group after a pull request that deferred `bench`: that run's
-# record says bench did not run, so the proof stands down `check`, which
-# it ran and `queued` marks event-uniform, and never `bench`.
-run "$CLASSIFY" EVENT=merge_group LANES_FROM="$TMP/decl/queued" \
-  STUB_PATHS="benches/b.rs src/main.rs" STUB_OUTSIDE="benches/b.rs src/main.rs" \
-  STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 \
-  STUB_RECORD="$(printf 'covers=lanes\nlane_check=true\nlane_bench=false\nlane_nightly=false')" >/dev/null
-check "a merge group runs the lane its pull request deferred, whatever the proof" \
-  "lanes=true lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false" \
-  "$(outputs | tr ' ' '\n' | grep -E '^(lanes|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')"
+# The merge group after a pull request that deferred `nightly`: that run's
+# record says nightly did not run, so the proof stands down `check`, which
+# it ran, and never `nightly`, though `queued` marks both event-uniform.
+mg_after_deferral() { # SCRIPT — the merge group's lanes and lane_verdicts
+  run "$1" EVENT=merge_group LANES_FROM="$TMP/decl/queued" STUB_QUEUE=true \
+    STUB_PATHS="nightly/run.sh src/main.rs" STUB_OUTSIDE="nightly/run.sh src/main.rs" \
+    STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 \
+    STUB_RECORD="$(printf 'covers=lanes\nlane_check=true\nlane_bench=false\nlane_nightly=false')" >/dev/null
+  outputs | tr ' ' '\n' | grep -E '^(lanes|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//'
+}
+MG_AFTER_DEFERRAL="lanes=true lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=true"
+check "a merge group runs the event-uniform lane its pull request deferred, whatever the proof" \
+  "$MG_AFTER_DEFERRAL" "$(mg_after_deferral "$CLASSIFY")"
+plant classify \
+  'if [ "${proven[$index]}" = true ] && [ "${lane_uniform[$index]}" = true ]; then' \
+  'if { [ "${proven[$index]}" = true ] || [ "${lane_queue[$index]}" = true ]; } && [ "${lane_uniform[$index]}" = true ]; then'
+answer="$(mg_after_deferral "$PLANTED")"
+if [ "$answer" = "$MG_AFTER_DEFERRAL" ]; then
+  bad "must-fail: a proof that stands a queue lane down unrecorded still runs the deferred lane"
+else
+  ok "must-fail: a proof that stands a queue lane down unrecorded stands the deferred lane down"
+fi
 
 # One copy per queue rule, the rule planted wrong and every other line kept.
 # NEEDLE@REPLACEMENT@ROW@TARGET, as the lane table above.
@@ -800,12 +843,14 @@ done <<'ROWS'
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
  && [ -n "${lane_hits[$index]}" ]; then@; then@pr-unclaimed@classify
+    if [ ! -f "$queue_reader" ]; then@    if false; then@pr-reader-absent@classify
+    elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify
 *:queue) queue=true name=@*:queue) queue=false name=@pr-deferred@lib
     [ "$queue" = false ] || lane_queue[$index]=true@    lane_queue[$index]="$queue"@pr-second-line@lib
     while :; do@    for _ in once; do@pr-both-marks@lib
 ROWS
 ROW_CLASSIFIER=""
-[ "$mutants" -eq 6 ] || { echo "the queue mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 8 ] || { echo "the queue mutant table read $mutants rows" >&2; exit 1; }
 
 # --- 6. The proof -------------------------------------------------------------
 
@@ -889,7 +934,7 @@ pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs 
 pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
 pr-decl-gated|pull_request|good|standard|false|src/main.rs docs/guide.md|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=true,changed_path=src/main.rs,changed_path=docs/guide.md
 mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=true,changed_path=src/main.rs
-pr-queue-deferred|pull_request|queued|standard|false|benches/b.rs src/main.rs|benches/b.rs src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_bench=false,lane_nightly=false,changed_path=benches/b.rs,changed_path=src/main.rs
+pr-queue-deferred|pull_request|queued|standard|false|benches/b.rs src/main.rs|benches/b.rs src/main.rs|false||$COVERS_ALL STUB_QUEUE=true|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_bench=false,lane_nightly=false,changed_path=benches/b.rs,changed_path=src/main.rs
 push|push|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|absent
 ROWS
 }

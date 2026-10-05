@@ -46,7 +46,8 @@
 #                      whether the change must run in a merge group before
 #                      it lands, the value of its `queue-only:` line, whose
 #                      statement is change-class's header. Absent where the
-#                      classifier root predates the output.
+#                      classifier root predates the output, and where the
+#                      step fails before change-class answers.
 #   docs_only          true|false, written by the shipped `harness-only --mode
 #                      docs` itself. It answers false where harness-only
 #                      cannot read the diff (an unsupported event, a missing
@@ -95,17 +96,24 @@
 # paths. A workflow forwards it rather than spelling a class, so a change to
 # which diffs run the lanes reaches every consumer with no workflow edit.
 #
-# A lane verdict is lanes narrowed by the paths the lane declares it reads:
-# false wherever lanes is false; otherwise true where a changed path matches
-# one of the lane's globs, true for every lane where a changed path no lane
-# claims lies outside the docs set or where no changed path was read, and
-# false everywhere else, save on a pull request, where a lane the
-# declaration marks `:queue` and one of its own globs reaches is false with
-# the cause queue-deferred: it runs in the merge group, which reuses no
-# proof for it because this run's record says it did not run, and
-# change-class answers queue_only=true off the same globs. A glob is a
-# shell pattern, so `*` also matches `/`. The declaration's grammar and
-# reader are the classifier's lib/ci-lanes.sh.
+# A lane verdict is lanes narrowed by the paths the lane declares it reads,
+# in this order: false wherever lanes is false; then, on a pull request,
+# false with the cause queue-deferred for a lane the declaration marks
+# `:queue` and one of its own globs reaches, where this run's change-class
+# answered queue_only=true and LANES_FROM holds the installed harness-ci
+# render that reads the mark; then true for every lane where a changed path
+# no lane claims lies outside the docs set or where no changed path was
+# read; then true where a changed path matches one of the lane's globs, and
+# false everywhere else. A deferred lane runs in the merge group, which
+# reuses no proof for it because this run's record says it did not run.
+# The deferral needs the queue_only answer as well as the lane's own glob,
+# so no lane is deferred on a pull request change-class reads as free to
+# take the admin merge. That answer is this run's: github.sh pr-merge
+# asks it again at merge time through the repository's installed harness-ci
+# render, so where LANES_FROM's .agents/skills holds no render that reads
+# the mark, nothing is deferred (cause=queue-reader-absent, with a warning)
+# and the lane runs. A glob is a shell pattern, so `*` also matches `/`. The
+# declaration's grammar and reader are the classifier's lib/ci-lanes.sh.
 # The declaration is read from LANES_FROM, the default branch's copy, because
 # the author of the diff under judgement could edit the tree's own copy to
 # stand a lane down. An absent or malformed declaration is not a refusal:
@@ -191,6 +199,7 @@ PROOF="$(dirname "$0")/proof"
   "GITHUB_OUTPUT is unset, so no caller could read a verdict"
 
 declaration=""
+queue_reader=""
 if [ -n "${LANES_FROM:-}" ]; then
   lanes_root="$(cd "$LANES_FROM" 2>/dev/null && pwd -P)" ||
     die "lanes-from-unreadable root=$LANES_FROM" \
@@ -201,6 +210,10 @@ if [ -n "${LANES_FROM:-}" ]; then
     die "lanes-from-judged-tree root=$LANES_FROM" \
       "lanes-from names the tree under judgement, whose author could stand a lane down"
   declaration="$lanes_root/.github/ci-lanes.conf"
+  # The installed render github.sh pr-merge reads queue_only through, as the
+  # harness-ci template's render-reach step finds it in the same checkout.
+  # Its lanes lib is what reads the `:queue` mark.
+  queue_reader="$lanes_root/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
   # The declaration's reader ships beside the classifier, so change-class's
   # queue-only line and these verdicts read one grammar.
   # shellcheck source=../../../skills/harness-ci/scripts/lib/ci-lanes.sh
@@ -228,6 +241,12 @@ case "$verdict" in
   *) die "verdict-unreadable class-line=$verdict" \
     "the classifier printed no change_class line this action knows" ;;
 esac
+# The queue_only line change-class appended beside its class, the one answer
+# a `:queue` lane's deferral stands on; empty where the classifier root
+# predates it.
+queue_only="$(sed -n 's/^queue_only=//p' "$GITHUB_OUTPUT")" ||
+  die "queue-only-unreadable path=$GITHUB_OUTPUT" \
+    "could not read back the queue_only line change-class wrote"
 
 # The docs verdict and the paths, from the reader that owns the diff range for
 # every event. It appends `docs_only=` to GITHUB_OUTPUT on its own, as the
@@ -367,19 +386,29 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
 fi
 
 # Each lane's classified verdict and cause, at its index. On a pull request
-# a lane marked `:queue` that one of its own globs reached stands down: it
-# runs in the merge group, and change-class's queue-only line, off the same
-# globs, keeps the pull request off the admin merge. A queue lane only
-# `every` reached runs here, since no glob of its own put the diff in the
-# queue.
+# a lane marked `:queue` that one of its own globs reached stands down only
+# where this run's change-class answered queue_only=true and the default
+# branch's installed render reads the mark, so pr-merge, asking the same
+# question, keeps the pull request off the admin merge. Otherwise it runs,
+# its cause naming which of the two was missing. A queue lane only `every`
+# reached runs here, since no glob of its own put the diff in the queue.
 lane_values=()
 lane_causes=()
+reader_absent=false
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then
-    lane_values[$index]=false lane_causes[$index]="cause=queue-deferred ${lane_hits[$index]#cause=claimed }"
+    hit="${lane_hits[$index]#cause=claimed }"
+    if [ ! -f "$queue_reader" ]; then
+      lane_values[$index]=true lane_causes[$index]="cause=queue-reader-absent $hit"
+      reader_absent=true
+    elif [ "$queue_only" != true ]; then
+      lane_values[$index]=true lane_causes[$index]="cause=queue-unconfirmed queue_only=${queue_only:-absent} $hit"
+    else
+      lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $hit"
+    fi
   elif [ -n "$every" ]; then
     lane_values[$index]=true lane_causes[$index]="$every"
   elif [ -n "${lane_hits[$index]}" ]; then
@@ -389,6 +418,10 @@ while [ "$index" -lt "$lane_count" ]; do
   fi
   index=$((index + 1))
 done
+if [ "$reader_absent" = true ]; then
+  printf '::warning title=queue lane not deferred::%s holds no harness-ci render that reads the :queue mark, so github.sh pr-merge would read this pull request free to take the admin merge; run kendex refresh on the default branch, and until then the lane runs\n' \
+    "$queue_reader"
+fi
 
 # The proof: whether a passing run of this workflow tested this tree, and
 # its record. `proof` decides and never gates, so its lines are read as they

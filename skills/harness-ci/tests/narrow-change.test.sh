@@ -344,10 +344,11 @@ ROW_BASE=""
 # that is not a file is unreadable; and the base's declaration decides where
 # the branch unmarks the lane.
 # A base declaring the empty list and DECLARATION, a directory where it is
-# `-`.
-lanes_base() { # DECLARATION -> prints the base commit
+# `-`; with `unset`, a base whose settings hold no list at all.
+lanes_base() { # DECLARATION [unset] -> prints the base commit
   ROW_BASE="" reset_case
-  printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
+  [ "${2:-}" = unset ] ||
+    printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
   mkdir -p "$repo/.github"
   if [ "$1" = - ]; then
     mkdir -p "$repo/.github/ci-lanes.conf"
@@ -384,6 +385,18 @@ the base's declaration decides where the branch unmarks the lane|queue_only=true
 ROWS
 ROW_BASE=""
 require_rows queue-lane "$lane_rows"
+
+# A queue lane answers ahead of the undeclared list: its cause stands and
+# the list's warning is not printed.
+queued_unset_base="$(lanes_base 'bench:queue benches/*' unset)"
+queue_and_warnings() { # STDERR
+  printf '%s warnings=%s\n' "$(queue_of "$1")" "$(unset_warnings_of "$1")"
+}
+ROW_BASE="$queued_unset_base"
+assert_eq "a queue lane answers before the undeclared list warns" \
+  "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/* warnings=0" \
+  "$(queue_and_warnings "$(run_row "$CHANGE_CLASS" benches/b.rs=2)")"
+ROW_BASE=""
 
 # Every `queue` entry of the shipped list has a row above, read off the list
 # itself. The floor and the one required entry say the reader found the
@@ -565,6 +578,13 @@ control "a classifier that keeps a malformed declaration's lanes holds their pat
   "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*" benches/b.rs=2 \
   queue-lane-malformed change-class \
   '  ci_lanes_read "$work/ci-lanes.conf" || return 0' '  ci_lanes_read "$work/ci-lanes.conf" || :'
+undeclared_first_mutant="$(mutant queue-lane-after-unset change-class \
+  '  if ! queue_lane_of_paths; then' \
+  "  if [ -z \"\${HARNESS_CI_QUEUE_PATHS+x}\" ]; then printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >&2; QUEUE_CAUSE=\"cause=queue-list-undeclared\"; return; fi; if ! queue_lane_of_paths; then")"
+ROW_BASE="$queued_unset_base"
+undeclared_first_answer="$(queue_and_warnings "$(run_row "$undeclared_first_mutant" benches/b.rs=2)")"
+assert_eq "a classifier that judges the undeclared list first loses the queue lane's cause" \
+  "queue_only=true cause=queue-list-undeclared warnings=1" "$undeclared_first_answer"
 ROW_BASE="$unreadable_base"
 control "a classifier that reads an unreadable declaration as not queue-only lets the diff through" \
   "queue_only=false cause=lane-declaration-unreadable" benches/b.rs=2 \
