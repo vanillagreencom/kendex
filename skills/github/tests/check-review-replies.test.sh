@@ -8,8 +8,9 @@
 # and probes are check-review-replies-threads.test.sh's.
 #
 # Each must-fail control runs a copy of the scripts tree with one whole line
-# of check-review-replies.sh replaced, the rest kept (lib/mutant-copy.sh),
-# and the case that line's rule decides flips.
+# of one file replaced, the rest kept (lib/mutant-copy.sh), and the case that
+# line's rule decides flips. The file is check-review-replies.sh unless the
+# control names the lib or router the rule lives in.
 # shellcheck disable=SC2034 # the row tables read their fixtures through eval
 set -euo pipefail
 
@@ -463,7 +464,7 @@ a viewer identity read naming no account id|viewer_set '{"login":"lanes-app[bot]
 a viewer identity read naming a login for an id|viewer_set '{"login":"lanes-app[bot]","databaseId":"lanes-app"}'|check-review-replies: read-malformed pr=7
 a thread read that fails|gh_stub_answer "$THREADS_QUERY" '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
 a reviews read that fails|gh_stub_fail "$REVIEWS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
-a reviews read producing zero bytes|gh_stub_answer "$REVIEWS_PATH" ''|check-review-replies: read-empty pr=7
+a reviews read producing zero bytes|gh_stub_answer "$REVIEWS_PATH" ''|check-review-replies: read-malformed pr=7
 a reviews page that is not an array|gh_stub_answer "$REVIEWS_PATH" '{"message":"Server Error"}'|check-review-replies: read-malformed pr=7
 a comments read that fails while findings stand|gh_stub_fail "$COMMENTS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 ROWS
@@ -644,9 +645,9 @@ mutant_row "with the zero-width strip cut, a Copilot path retains display spaces
   "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"\\u200b\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\");" \
   'at_head "$(body_of copilot)"' "$FAILED | suppressed-findings count=1 | suppressed-entry $(supp_zwsp "$COPILOT_ENTRY")"
 mutant_row "with the page-shape test cut, a non-array reviews page reads as no review" page-shape \
-  "  pages=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null) ||" \
-  "  pages=\$(jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null) ||" \
-  "at_head \"\$(body_of heading)\"; gh_stub_answer \"\$REVIEWS_PATH\" '{\"message\":\"Server Error\"}'" "$PASSED"
+  "    jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null || {" \
+  "    jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null || {" \
+  "at_head \"\$(body_of heading)\"; gh_stub_answer \"\$REVIEWS_PATH\" '{\"message\":\"Server Error\"}'" "$PASSED" author lib/github-api.sh
 mutant_row "with the body scan cut, only thread state is read and a body-only finding passes" body-scan \
   '      | (.body // "") | suppressed_scan' '      | "" | suppressed_scan' \
   'at_head "$(body_of copilot)"' "$PASSED"

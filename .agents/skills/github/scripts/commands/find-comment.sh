@@ -129,15 +129,10 @@ find_comment() {
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
 
-    # Every page, merged into one array: the first page alone is the oldest
-    # comments, so a busy PR's latest match would read as no match, or as an
-    # older one.
+    # Every page: the first page alone is the oldest comments, so a busy PR's
+    # latest match would read as no match, or as an older one.
     local comments
-    comments=$(gh_rest "repos/$owner/$repo/issues/$pr_num/comments?per_page=100" --paginate) || exit 1
-    comments=$(jq -s 'if (length > 0) and all(type == "array") then add else error("pages are not arrays") end' <<<"$comments" 2>/dev/null) || {
-        github_error 'Comment list read returned pages that are not arrays'
-        exit 1
-    }
+    comments=$(gh_rest_all "repos/$owner/$repo/issues/$pr_num/comments?per_page=100") || exit 1
 
     # Matched by account id: GitHub's REST and GraphQL readers spell an app's
     # login with and without its [bot] suffix.

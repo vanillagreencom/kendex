@@ -7,8 +7,9 @@
 # sticky-comment-cli.test.sh's.
 #
 # Each must-fail control runs a copy of the scripts tree with one whole line
-# of find-comment.sh replaced, the rest kept (lib/mutant-copy.sh), and the
-# case that line's rule decides flips.
+# of one file replaced, the rest kept (lib/mutant-copy.sh), and the case that
+# line's rule decides flips. The file is find-comment.sh unless the control
+# names the lib the rule lives in.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,6 +41,7 @@ GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 mkdir -p "$TMP_ROOT/work"
 
 COMMENTS_PATH='api-repos/owner/repo/issues/7/comments?per_page=100'
+COMMENTS_ALL="$COMMENTS_PATH:--paginate"
 VIEWER_QUERY='api-graphql:viewer { login databaseId }'
 
 # One REST issue comment, as `id login account-id updated-at body`.
@@ -58,12 +60,14 @@ IMPOSTOR=$(comment 23 lanes-app 6006 2026-10-02T07:00:00Z $'## Recommendations P
 
 # A world read as the installation token: `gh api user` refuses it the way
 # GitHub does, and the GraphQL viewer is the app's bot account. PAGES are the
-# comment pages `gh api --paginate` prints, one array each.
+# comment pages, one array each: a read without `--paginate` gets the first
+# alone, as GitHub answers it, and one with it every page, as gh prints them.
 world() { # PAGES...
   gh_stub_reset
   gh_stub_fail api-user 1 'gh: Resource not accessible by integration (HTTP 403)'
   gh_stub_answer "$VIEWER_QUERY" '{"data":{"viewer":{"login":"lanes-app[bot]","databaseId":2002}}}'
-  gh_stub_answer "$COMMENTS_PATH" "$(printf '%s\n' "$@")"
+  gh_stub_answer "$COMMENTS_PATH" "$1"
+  gh_stub_answer "$COMMENTS_ALL" "$(printf '%s\n' "$@")"
 }
 PRESENT=("[$OWN_OLD,$OTHER]" "[$OWN_NEW,$QUOTE,$IMPOSTOR]")
 ABSENT=("[$OTHER]" "[$QUOTE,$IMPOSTOR]")
@@ -97,7 +101,7 @@ echo "=== --self under an installation token ==="
 ROWS="\
 a repeat triage finds its own latest summary on the second page|world \"\${PRESENT[@]}\"|$FOUND
 a first triage finds no prior summary|world \"\${ABSENT[@]}\"|rc=0 {}
-a comment list that cannot be read is an error|world; gh_stub_fail \"\$COMMENTS_PATH\" 1 'gh: Not Found (HTTP 404)'|rc=1 error
+a comment list that cannot be read is an error|world \"\${PRESENT[@]}\"; gh_stub_fail \"\$COMMENTS_ALL\" 1 'gh: Not Found (HTTP 404)'|rc=1 error
 a viewer read GitHub refuses is an error|world \"\${PRESENT[@]}\"; gh_stub_answer \"\$VIEWER_QUERY\" '{\"errors\":[{\"type\":\"FORBIDDEN\",\"message\":\"no\"}]}'|rc=1 error
 a viewer read naming no account id is an error|world \"\${PRESENT[@]}\"; gh_stub_answer \"\$VIEWER_QUERY\" '{\"data\":{\"viewer\":{\"login\":\"lanes-app[bot]\"}}}'|rc=1 error"
 before=$((PASS + FAIL))
@@ -108,19 +112,23 @@ done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no --self row was asserted" >&2; exit 2; }
 
 echo "=== must-fail controls ==="
-# A row is `label|name|from line|to line|setup|want with the mutant`.
-mutant_row() { # LABEL NAME FROM TO SETUP WANT
-  local script
-  script=$(mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" commands/find-comment.sh)
+# A row is `label|name|from line|to line|setup|want with the mutant`; FILE
+# names a lib the rule lives in instead of find-comment.sh.
+mutant_row() { # LABEL NAME FROM TO SETUP WANT [FILE]
+  mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" "${7:-commands/find-comment.sh}" >/dev/null
   eval "$5"
-  assert_eq "$(run "$script")" "$6" "must-fail: $1"
+  assert_eq "$(run "$TMP_ROOT/$2/skills/github/scripts/commands/find-comment.sh")" "$6" "must-fail: $1"
 }
-mutant_row "with the id filter cut, a later quote by another account is picked" id-filter \
+mutant_row "with the id filter cut, a later comment by a person whose login is the app's slug is picked" id-filter \
   "        comments=\$(jq -c --argjson id \"\$viewer_id\" '[.[] | select(.user.id == \$id)]' <<<\"\$comments\")" '        true' \
   'world "${PRESENT[@]}"' 'rc=0 23 2026-10-02T07:00:00Z'
 mutant_row "with the page merge cut, each page answers apart" page-merge \
-  "    comments=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$comments\" 2>/dev/null) || {" '    true || {' \
-  'world "${PRESENT[@]}"' $'rc=0 11 2026-10-01T01:00:00Z\n21 2026-10-02T05:00:00Z'
+  "    jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null || {" \
+  "    printf '%s\\n' \"\$raw\" || {" \
+  'world "${PRESENT[@]}"' $'rc=0 11 2026-10-01T01:00:00Z\n21 2026-10-02T05:00:00Z' lib/github-api.sh
+mutant_row "with --paginate cut, only the first page is read" paginate \
+  '    raw=$(gh_rest "$1" --paginate) || return 1' '    raw=$(gh_rest "$1") || return 1' \
+  'world "${PRESENT[@]}"' 'rc=0 11 2026-10-01T01:00:00Z' lib/github-api.sh
 mutant_row "with the account id check cut, a viewer with no id finds nothing" id-check \
   "        viewer_id=\$(jq -er '.databaseId | numbers | select(. > 0 and . == floor)' <<<\"\$viewer\" 2>/dev/null) || {" '        viewer_id=0 || {' \
   "world \"\${PRESENT[@]}\"; gh_stub_answer \"\$VIEWER_QUERY\" '{\"data\":{\"viewer\":{\"login\":\"lanes-app[bot]\"}}}'" 'rc=0 {}'
