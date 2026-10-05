@@ -85,7 +85,7 @@ claude_body() { # LANE FILTER
 }
 claude_body sclaude '.five_hour.utilization = "12"'
 claude_body mclaude 'del(.seven_day.utilization)'
-claude_body nclaude '.limits[0].percent = -5'
+claude_body nclaude '.limits[0].percent = -0.1'
 claude_body oclaude '.limits[1].percent = 1e13'
 claude_body lclaude 'del(.limits) | .seven_day_sonnet = {utilization: 5} | .seven_day_opus = {utilization: "7"}'
 claude_body aclaude '.five_hour = null | del(.limits)'
@@ -122,15 +122,18 @@ table \
   "a negative Codex secondary leaves the lane unmeasured|codex|$(codex_unmeasured ncodex)" \
   "an oversized Codex primary leaves the lane unmeasured|codex|$(codex_unmeasured ocodex)"
 # One control per rule and harness: the type test, the range test, and the
-# rule that one unreadable window unmeasures the rest.
-range='(if (. > 1e12 or . < 0) then'
+# rule that one unreadable window unmeasures the rest. The Claude order control
+# judges the range after `round`, which reads -0.1 as -0 and passes it.
+range='and . >= 0 and . <= 1e12'
 for spec in claude:sclaude:type:round claude:nclaude:range:round codex:scodex:type:floor codex:ncodex:range:floor \
-  claude:sclaude:whole: codex:scodex:whole:; do
+  claude:nclaude:order:round claude:sclaude:whole: codex:scodex:whole:; do
   IFS=':' read -r harness lane rule op <<<"$spec"
   dir="$(mutant_scripts "mutant-pct-$harness-$rule" lib/lane-usage.sh)" || exit 1
   case "$harness:$rule" in
-    *:type) mutate_file "$dir/lib/lane-usage.sh" "$op | $range null else . end) else null end;" "$op | $range null else . end) else 0 end;" ;;
-    *:range) mutate_file "$dir/lib/lane-usage.sh" "$op | $range null" "$op | $range 0" ;;
+    *:type) mutate_file "$dir/lib/lane-usage.sh" "then $op else null end;" "then $op else 0 end;" ;;
+    *:range) mutate_file "$dir/lib/lane-usage.sh" "$range then $op" "then $op" ;;
+    claude:order) mutate_file "$dir/lib/lane-usage.sh" "$range then $op else null end;" \
+      "then $op | (if (. > 1e12 or . < 0) then null else . end) else null end;" ;;
     claude:whole) mutate_file "$dir/lib/lane-usage.sh" 'if $unread then null' 'if false then null' ;;
     codex:whole) mutate_file "$dir/lib/lane-usage.sh" '(if any(.[]; .pct == null) then' '(if false then' ;;
   esac

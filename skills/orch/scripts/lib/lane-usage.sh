@@ -33,7 +33,9 @@ parse_claude_usage() {
 	jq -c '
 		# A missing, non-number or out-of-range percentage is null, the unmeasured
 		# reading lib/lane-model.sh refuses; 0 would read as an empty window.
-		def pct($p): $p | if type == "number" then round | (if (. > 1e12 or . < 0) then null else . end) else null end;
+		# The range is judged before rounding: -0.4 rounds to -0, which no
+		# range check rejects.
+		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12 then round else null end;
 		(.five_hour  // null) as $s
 		| (.seven_day // null) as $w
 		# The parentheses around the whole `//` are LOAD-BEARING, not style.
@@ -108,7 +110,7 @@ parse_claude_usage() {
 parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
-		def pct($p): $p | if type == "number" then floor | (if (. > 1e12 or . < 0) then null else . end) else null end;
+		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12 then floor else null end;
 		def flag: if type == "boolean" then . else null end;
 		def credits:
 			if type != "object" then null
