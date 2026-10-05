@@ -1275,24 +1275,23 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		await sidecarSaves;
 		restore(ctx);
 	});
-	pi.on("context", (event, ctx) => {
-		let latestContextIndex = -1;
-		for (let index = 0; index < event.messages.length; index++) {
-			if ((event.messages[index] as any)?.customType === TASK_CONTEXT_TYPE) latestContextIndex = index;
+	pi.on("before_agent_start", (_event, ctx) => {
+		if (!settingBoolean("showWorkflowReminder", true, ctx.cwd)) return;
+		let previousContent: string | undefined;
+		const branch = ctx.sessionManager.getBranch();
+		for (let index = branch.length - 1; index >= 0; index--) {
+			const entry = branch[index];
+			// Compaction can remove the last task context from the model's history.
+			if (entry.type === "compaction") break;
+			if (entry.type === "custom_message" && entry.customType === TASK_CONTEXT_TYPE) {
+				previousContent = typeof entry.content === "string" ? entry.content : undefined;
+				break;
+			}
 		}
-		const messages = event.messages.filter((message: any, index: number) => {
-			if (message?.customType !== TASK_CONTEXT_TYPE) return true;
-			if (!settingBoolean("showWorkflowReminder", true, ctx.cwd) || remainingCount(state) === 0) return false;
-			return index === latestContextIndex;
-		});
-		return messages.length === event.messages.length ? undefined : { messages };
-	});
-	pi.on("before_agent_start", (event, ctx) => {
-		if (!settingBoolean("showWorkflowReminder", true, ctx.cwd) || remainingCount(state) === 0) return;
-		return {
-			message: { customType: TASK_CONTEXT_TYPE, content: taskContextMessage(state), display: false },
-			systemPrompt: `${event.systemPrompt}\n\n${workflowReminder(state)}`,
-		};
+		if (remainingCount(state) === 0 && previousContent === undefined) return;
+		const content = `${taskContextMessage(state)}\n${workflowReminder(state)}`;
+		if (content === previousContent) return;
+		return { message: { customType: TASK_CONTEXT_TYPE, content, display: false } };
 	});
 	pi.on("agent_end", (_event, ctx) => {
 		if (pendingCompletionMessage && remainingCount(state) === 0) {
