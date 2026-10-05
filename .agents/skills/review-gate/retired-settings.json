@@ -1,0 +1,58 @@
+{
+  "keys": [
+    "PR_APPROVAL_GATE",
+    "PR_REVIEW_CHECK",
+    "PR_REVIEW_GATE",
+    "PR_REVIEW_NUDGE",
+    "PR_REVIEW_NUDGE_SECS",
+    "PR_REVIEW_QUORUM",
+    "REVIEW_GATE_API_ATTEMPTS",
+    "REVIEW_GATE_API_RETRY_DELAY_SECONDS",
+    "REVIEW_GATE_CARRY_FORWARD",
+    "REVIEW_GATE_CARRY_FORWARD_EXCLUDE",
+    "REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC",
+    "REVIEW_GATE_CHECKRUN_SKIP_PATTERNS",
+    "REVIEW_GATE_CLASS_POLICY",
+    "REVIEW_GATE_CLASS_POLICY_DECISION",
+    "REVIEW_GATE_COMMENT_REVIEWERS",
+    "REVIEW_GATE_CONTEXT",
+    "REVIEW_GATE_DOCS_ONLY",
+    "REVIEW_GATE_OVERRIDE_CONTEXT",
+    "REVIEW_GATE_PR_DEADLINE_SECONDS",
+    "REVIEW_GATE_RENDER_PATHS",
+    "REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS",
+    "REVIEW_GATE_REVIEW_OBJECT_MIN_STATE",
+    "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS",
+    "REVIEW_GATE_SHA_PREFIX_FLOOR",
+    "REVIEW_GATE_STATUS_PUBLISHER_REJECT",
+    "REVIEW_GATE_STATUS_SNAPSHOT_FILE",
+    "REVIEW_GATE_THREADS",
+    "REVIEW_GATE_TRUSTED_STATUS_CONTEXTS",
+    "REVIEW_GATE_VENDORED_PATHS",
+    "REVIEW_GATE_WRITER"
+  ],
+  "values": {
+    "COMMIT_GUARDS_CHECKS": [
+      "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs",
+      "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
+    ],
+    "COMMIT_GUARDS_MD_REFS_PATHS": [
+      "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
+    ],
+    "SECOND_OPINION_CLAUDE_CMD": [
+      "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep",
+      "claude -p --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
+    ],
+    "SECOND_OPINION_CODEX_CMD": [
+      "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral",
+      "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral",
+      "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+    ],
+    "SECOND_OPINION_REVIEW_INSTRUCTIONS": [
+      "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+    ],
+    "SECOND_OPINION_TIMEOUT": [
+      "300"
+    ]
+  }
+}

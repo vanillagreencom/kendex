@@ -170,6 +170,8 @@ if [ "$TEST_CLASS_EXIT" -ne 0 ]; then
   printf 'wiring-error: cause=output-unwritable\n' >&2
   exit "$TEST_CLASS_EXIT"
 fi
+# The real classifier prints its setting notes ahead of the class line.
+[ -z "${TEST_CLASS_NOTES:-}" ] || printf '%s\n' "$TEST_CLASS_NOTES" >&2
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
@@ -375,6 +377,84 @@ TOML
   reset_default
   cp "$TMP/models-runner" "$runner"
 done
+cp "$TMP/models-settings" "$repo/kendex.settings.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
+# A consumer holding a retired key, a retired default and no
+# HARNESS_CI_QUEUE_PATHS gets all three named in its refresh pull request
+# body, and the render still arms. Each control drops one runner input.
+cp "$runner" "$TMP/stale-runner"
+for mode in report committed-control notes-control; do
+  reset_default
+  cp "$TMP/stale-runner" "$runner"
+  printf '[env]\nPR_REVIEW_GATE = "on"\nSECOND_OPINION_TIMEOUT = "300"\nSECOND_OPINION_COUNT = "1"\n' >"$repo/kendex.settings.toml"
+  case "$mode" in
+    committed-control)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+        '^    committed\+=\(' 's/^    committed+=(/    : # &/' ;;
+    notes-control)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+        'class_notes\+=\(' 's/class_notes+=("\$line")/:/' ;;
+  esac
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  rm -f -- "$repo/.env.local" "$TMP/state/armed"
+  : >"$TMP/state/calls"
+  CLASS_NOTES=$'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\nqueue-only: queue_only=true cause=queue-list-undeclared'
+  run_refresh "stale-$mode" pass render
+  unset CLASS_NOTES
+  committed_rows=0 note_rows=0
+  for row in '<code>PR_REVIEW_GATE</code>' '<code>SECOND_OPINION_TIMEOUT = &quot;300&quot;</code>'; do
+    ! grep -qF -- "- $row" "$TMP/state/body" || committed_rows=$((committed_rows + 1))
+  done
+  for row in '<code>setting-unset: setting=HARNESS_CI_QUEUE_PATHS</code>' \
+    '<code>queue-only: queue_only=true cause=queue-list-undeclared</code>'; do
+    ! grep -qxF -- "- $row" "$TMP/state/body" || note_rows=$((note_rows + 1))
+  done
+  case "$mode" in
+    report)
+      if refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
+          grep -qxF '## Consumer settings' "$TMP/state/body" && [ "$committed_rows" -eq 2 ] && [ "$note_rows" -eq 2 ] &&
+          ! grep -qF 'SECOND_OPINION_COUNT' "$TMP/state/body" &&
+          [ "$(git --git-dir="$TMP/remote" show refs/heads/kendex/refresh:kendex.settings.toml)" = "$(git --git-dir="$TMP/remote" show main:kendex.settings.toml)" ]; then
+        ok 'retired settings and the unset queue setting appear under Consumer settings and the render still arms'
+      else bad 'consumer settings report' "$OUT"; fi ;;
+    committed-control)
+      if [ "$RC" -eq 0 ] && [ "$committed_rows" -eq 0 ] && [ "$note_rows" -eq 2 ]; then
+        ok 'control: a dropped committed scan turns the retired-setting assertion red'
+      else bad 'committed scan control' "$OUT"; fi ;;
+    notes-control)
+      if [ "$RC" -eq 0 ] && [ "$committed_rows" -eq 2 ] && [ "$note_rows" -eq 0 ]; then
+        ok 'control: dropped classifier notes turn the queue-setting assertion red'
+      else bad 'classifier notes control' "$OUT"; fi ;;
+  esac
+done
+# A report that cannot read the retired list stops before publication or
+# merge changes.
+for mode in refusal refusal-control; do
+  reset_default
+  cp "$TMP/stale-runner" "$runner"
+  rm -f -- "${repo:?}/.agents/skills/review-gate/retired-settings.json"
+  if [ "$mode" = refusal-control ]; then
+    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      'refresh-error=settings-report' '/refresh-error=settings-report/{n;s/exit 1/: # exit 1/;}'
+  fi
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+  : >"$TMP/state/calls"
+  run_refresh "unreadable-$mode" pass render
+  if [ "$mode" = refusal ]; then
+    if refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/.agents/skills/review-gate/scripts/refresh-report.py"; then
+      ok 'an unreadable retired list stops before publication or merge changes'
+    else bad 'unreadable retired list refusal' "$OUT"; fi
+  elif [ "$RC" -eq 0 ] && ! refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/.agents/skills/review-gate/scripts/refresh-report.py"; then
+    ok 'control: a dropped report refusal publishes without the report'
+  else bad 'report refusal control' "$OUT"; fi
+done
+reset_default
+cp "$TMP/stale-runner" "$runner"
+cp "$SKILL_DIR/retired-settings.json" "$repo/.agents/skills/review-gate/retired-settings.json"
 cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main

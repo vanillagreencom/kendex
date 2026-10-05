@@ -29,8 +29,14 @@ Log lines go to stderr.
 --settings formats ol_preference_entries' refused and deprecated arrays from
 refresh-consumer as a pull request Settings section, and its
 deprecated_models array, committed `KEY = "value"` settings that pin Fable or
-Astra, as a Deprecated models section. An absent deprecated_models array
-reads as empty. A clean parse emits no text. It does not parse settings or
+Astra, as a Deprecated models section. Its committed object, every
+committed [env] `KEY = "value"` setting, is matched against the package's
+retired-settings.json: a key listed under keys, or a value listed under
+values for its key, a shipped default since replaced. Those rows and the
+classifier array, the change-class `setting-unset:` and `queue-only:` lines
+refresh-consumer passes once the classifier ran, form a Consumer settings
+section. It reports and changes no setting. An absent array or object reads
+as empty. A clean parse emits no text. It does not parse settings or
 preference entries itself.
 """
 import hashlib
@@ -46,6 +52,7 @@ from tempfile import TemporaryDirectory
 from urllib.parse import urlencode
 
 UPSTREAM = "vanillagreencom/kendex"
+RETIRED = Path(__file__).parent.parent / "retired-settings.json"
 
 
 def settings_report():
@@ -70,6 +77,15 @@ def settings_report():
         sections.append("## Deprecated models\n\n" + "\n".join(models) + "\n\n"
                         "These committed `kendex.settings.toml` settings pin Fable or Astra. "
                         "Remove the pin or name a current model.")
+    retired = json.loads(RETIRED.read_text())
+    committed = entries.get("committed", {})
+    stale = [f"- {code(key)}: retired; no package reads it." for key in committed if key in retired["keys"]]
+    stale += ["- " + code(f'{key} = "{value}"') + ": a former shipped default; unset it to take the current one."
+              for key, value in committed.items() if value in retired["values"].get(key, [])]
+    stale += [f"- {code(line)}" for line in entries.get("classifier", [])]
+    if stale:
+        sections.append("## Consumer settings\n\n" + "\n".join(stale) + "\n\n"
+                        "Report only: the refresh changes no committed `kendex.settings.toml` setting.")
     if sections:
         print("\n\n".join(sections))
 

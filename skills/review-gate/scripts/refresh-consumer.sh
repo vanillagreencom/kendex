@@ -177,7 +177,6 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
-settings_report=""
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
 # Only the running copy of this script, the preserved default-branch copy or
@@ -194,10 +193,12 @@ preference="$(rg_setting ORCH_OVERSEER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$pri
 parse_status=0
 ol_preference_entries "$preference" || parse_status=$?
 [ "$parse_status" -le 1 ] || exit "$parse_status"
-# List committed [env] values that pin Fable or Astra; the report warns and
-# changes no exit. A comment, another table and a private override are not
-# committed [env] values.
+# List committed [env] values that pin Fable or Astra, and every committed
+# [env] setting as key and value pairs for the retired-settings match; the
+# report warns and changes no exit. A comment, another table and a private
+# override are not committed [env] values.
 deprecated_models=()
+committed=()
 if [ -f kendex.settings.toml ]; then
   table="$(rg_env_table kendex.settings.toml)"
   assignment='^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)"'
@@ -205,20 +206,26 @@ if [ -f kendex.settings.toml ]; then
   while IFS= read -r line; do
     [[ $line =~ $assignment ]] || continue
     key="${BASH_REMATCH[1]}" value="${BASH_REMATCH[2]}"
+    committed+=("$key" "$value")
     if [[ $value == *gpt-6-astra* || $value == *fable* ]]; then
       deprecated_models+=("$key = \"$value\"")
     fi
   done <<<"$table"
 fi
 jq -cn --argjson refused_count "${#OL_REFUSED_ENTRIES[@]}" \
-  --argjson deprecated_count "${#OL_DEPRECATED_ENTRIES[@]}" --args \
+  --argjson deprecated_count "${#OL_DEPRECATED_ENTRIES[@]}" \
+  --argjson models_count "${#deprecated_models[@]}" --args \
   '($refused_count + $deprecated_count) as $models_start |
+   ($models_start + $models_count) as $committed_start |
    {refused: $ARGS.positional[:$refused_count],
     deprecated: $ARGS.positional[$refused_count:$models_start],
-    deprecated_models: $ARGS.positional[$models_start:]}' \
+    deprecated_models: $ARGS.positional[$models_start:$committed_start],
+    committed: ($ARGS.positional[$committed_start:] |
+      [range(0; length; 2) as $i | {(.[$i]): .[$i + 1]}] | add // {})}' \
   -- ${OL_REFUSED_ENTRIES[@]+"${OL_REFUSED_ENTRIES[@]}"} \
   ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"} \
-  ${deprecated_models[@]+"${deprecated_models[@]}"}
+  ${deprecated_models[@]+"${deprecated_models[@]}"} \
+  ${committed[@]+"${committed[@]}"}
 SETTINGS_PARSE
   then
     printf 'refresh-error=settings-extraction value=%s\n' "$ROOT/.agents/skills/orch" >&2
@@ -233,10 +240,10 @@ SETTINGS_PARSE
     settings_lines=$((settings_lines + 1))
     if [ "$settings_lines" -ne 1 ] || ! jq -e -s '
       length == 1 and (.[0] | type == "object" and
-        keys == ["deprecated", "deprecated_models", "refused"] and
+        keys == ["committed", "deprecated", "deprecated_models", "refused"] and
         (.refused | type == "array") and (.deprecated | type == "array") and
-        (.deprecated_models | type == "array") and
-        all(.refused[], .deprecated[], .deprecated_models[]; type == "string"))
+        (.deprecated_models | type == "array") and (.committed | type == "object") and
+        all(.refused[], .deprecated[], .deprecated_models[], .committed[]; type == "string"))
     ' <<<"$line" >/dev/null; then
       settings_output=invalid
     fi
@@ -245,10 +252,19 @@ SETTINGS_PARSE
     printf 'refresh-error=settings-output value=%s\n' "$ROOT/.agents/skills/orch" >&2
     exit 1
   fi
-  settings_report="$(python3 "$SCRIPT_DIR/refresh-report.py" --settings <"$TMP/settings.json")"
 else
   printf 'refresh-settings=orch-absent value=%s\n' "$ROOT/.agents/skills/orch"
+  printf '{"refused":[],"deprecated":[],"deprecated_models":[],"committed":{}}\n' >"$TMP/settings.json"
 fi
+# Sets settings_report from the parse, with the classifier's setting notes
+# once it ran. A failed report stops publication and auto-merge.
+report_settings() { # [CLASSIFIER_LINE...]
+  if ! settings_report="$(jq -c --args '. + {classifier: $ARGS.positional}' -- "$@" <"$TMP/settings.json" |
+    python3 "$SCRIPT_DIR/refresh-report.py" --settings)"; then
+    printf 'refresh-error=settings-report value=%s\n' "$SCRIPT_DIR/refresh-report.py" >&2
+    exit 1
+  fi
+}
 kendex verify --scope project
 if ! engine_version="$(kendex --version)"; then
   printf 'refresh-error=read value=engine-version\n' >&2
@@ -257,6 +273,7 @@ fi
 printf -v version_report 'Engine version: `%s`.' "$engine_version"
 git add -A
 if git diff --cached --quiet; then
+  report_settings
   if [ -n "$pr" ]; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
@@ -290,10 +307,12 @@ class_output="$("$SCRIPT_DIR/../../harness-ci/scripts/change-class" --event pull
 printf '%s\n' "$class_output" >&2
 class=""
 class_line=""
+class_notes=()
 while IFS= read -r line; do
   case "$line" in
     change_class=*) class="${line#change_class=}" ;;
     'class: class='*) class_line="$line" ;;
+    'setting-unset: '* | 'queue-only: '*) class_notes+=("$line") ;;
   esac
 done <<<"$class_output"
 # change-class also emits standard as a fallback. Publication requires its
@@ -302,6 +321,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
+report_settings ${class_notes[@]+"${class_notes[@]}"}
 merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then

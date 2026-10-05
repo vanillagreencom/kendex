@@ -22,6 +22,8 @@ The shared workflow `.github/workflows/refresh-consumer.yml` runs these scripts 
 
 `refresh-report.py` routes a finding with the classified commit's inventory and lock record, not the current checkout's provenance. Later package removals must not change that historical route. The upstream Issues token belongs only to the issue API; Git, kendex and the classifier use the consumer environment.
 
+`retired-settings.json` is the one list the refresh report's Consumer settings section reads. A change that retires a settings key a consumer may have committed adds it under `keys`; one that replaces a shipped default adds the old value under `values` for its key.
+
 ## Tests
 
 Run the shell suites under `tests/` through the repository's skill-suite entry point. `tests/adopt-refresh.test.sh` proves refresh updates and retired workflow removal. Its controls disable each ownership guard in a disposable script copy.

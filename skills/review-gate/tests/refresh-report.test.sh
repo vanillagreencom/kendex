@@ -12,6 +12,7 @@ if python3 - "$SKILL_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -57,6 +58,11 @@ for models, rows in [
 both = settings(deprecated=['claude:1:high'], models=[astra])
 assert both.index('## Settings') < both.index('## Deprecated models') and len(model_rows(both)) == 1
 source = reporter.read_text()
+# The settings mode reads the package's retired list beside its scripts
+# directory, so a mutant runs from the same layout.
+mutants = root / 'package/scripts'
+mutants.mkdir(parents=True)
+(root / 'package/retired-settings.json').write_bytes((skill / 'retired-settings.json').read_bytes())
 # A runner installed before deprecated_models emits two arrays to this reporter.
 two_keys = dict(refused=[], deprecated=['claude:1:high'])
 legacy = settings_run(two_keys)
@@ -64,7 +70,7 @@ assert legacy.returncode == 0, legacy.stderr
 assert legacy.stdout.count('ORCH_OVERSEER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
 needle = 'entries.get("deprecated_models", [])'
 assert source.count(needle) == 1
-strict = root / 'strict-report.py'
+strict = mutants / 'strict-report.py'
 strict.write_text(source.replace(needle, 'entries["deprecated_models"]'))
 assert 'KeyError' in settings_run(two_keys, strict).stderr
 for needle, refused, deprecated, models in [
@@ -72,11 +78,45 @@ for needle, refused, deprecated, models in [
  ('    if models:\n', [], [], [astra]),
 ]:
  assert source.count(needle) == 1
- mutant = root / 'settings-report.py'
+ mutant = mutants / 'settings-report.py'
  changed = source.replace(needle, '# ' + needle + '    if False:\n')
  assert changed != source
  mutant.write_text(changed)
  assert settings(refused, deprecated, models, mutant) == ''
+# Consumer settings: a retired key, a retired default under its own key and
+# each classifier note make one row; a current value, a retired value under
+# another key and an unlisted key make none. Rows are untrusted text.
+gate = '- <code>PR_REVIEW_GATE</code>'
+timeout = '- <code>SECOND_OPINION_TIMEOUT = &quot;300&quot;</code>'
+unset = 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS'
+queue = 'queue-only: queue_only=true cause=queue-list-undeclared'
+consumer_rows = [
+ ({}, None, []),
+ ({'PR_REVIEW_GATE': 'on', 'SECOND_OPINION_COUNT': '1', 'PR_REVIEW_GATE_X': 'on'}, [], [gate]),
+ ({'SECOND_OPINION_TIMEOUT': '300', 'SECOND_OPINION_COUNT': '300'}, None, [timeout]),
+ ({'SECOND_OPINION_TIMEOUT': '1080'}, [unset, queue], ['- <code>' + unset + '</code>', '- <code>' + queue + '</code>']),
+ ({'PR_REVIEW_GATE': '<b>`x`</b>'}, ['queue-only: path=a <b> `x` y'],
+  [gate, '- <code>queue-only: path=a &lt;b&gt; &#96;x&#96; y</code>']),
+]
+def consumer(committed, classifier, script=reporter):
+ entries = dict(refused=[], deprecated=[], deprecated_models=[], committed=committed)
+ if classifier is not None: entries['classifier'] = classifier
+ result = settings_run(entries, script)
+ assert result.returncode == 0, result.stderr
+ rows = re.findall(r'^- <code>.*?</code>', result.stdout, re.M)
+ assert (result.stdout == '') == (rows == []) and result.stdout.count('## Consumer settings\n') == (rows != []), result.stdout
+ return rows
+for committed, classifier, rows in consumer_rows:
+ assert consumer(committed, classifier) == rows, (committed, classifier)
+for needle, replacement in [
+ ('if key in retired["keys"]', 'if False'),
+ ('if value in retired["values"].get(key, [])', 'if False'),
+ ('entries.get("classifier", [])', '[]'),
+]:
+ assert source.count(needle) == 1
+ mutant = mutants / 'consumer-report.py'
+ mutant.write_text(source.replace(needle, replacement))
+ assert any(consumer(c, n, mutant) != rows for c, n, rows in consumer_rows), needle
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3
