@@ -55,6 +55,7 @@ list_cycles() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --team)
+                linear_require_team_value "$@" || return 1
                 team="$2"
                 shift 2
                 ;;

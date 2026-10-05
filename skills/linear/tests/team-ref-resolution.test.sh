@@ -129,6 +129,7 @@ while IFS='|' read -r site args; do
     assert "$site: $kind --team sends no request" test ! -s "$TMP_ROOT/$site-$kind.jsonl"
   done
 done <<'ROWS'
+cycles list|cycles list --team VALUE
 issues list|issues list --team VALUE
 projects list|projects list --team VALUE
 labels list|labels list --team VALUE

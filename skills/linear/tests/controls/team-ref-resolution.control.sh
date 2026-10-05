@@ -84,3 +84,11 @@ control_expect "statuses get: dash-led --team sends no request"
 control_replace scripts/lib/common.sh 1 \
     '    -*)' \
     '    -\*)'
+
+# Ignore the refusal on cycles list alone: its empty and dash-led --team bind
+# as the team again while every other reader still refuses.
+control_expect "cycles list: empty --team sends no request"
+control_expect "cycles list: dash-led --team sends no request"
+control_replace scripts/commands/cycles.sh 1 \
+    '                linear_require_team_value "$@" || return 1' \
+    '                linear_require_team_value "$@" || true'
