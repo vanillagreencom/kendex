@@ -1,10 +1,13 @@
 //! Taking the shims back from a project that no longer installs to their
-//! harness. What proves a shim is kendex's is a record of an earlier pass
-//! writing it, and what the position holds: the exact bytes, or the exact
+//! harness. What proves a shim is kendex's is a record that an earlier pass
+//! kept it, and what the position holds: the exact bytes, or the exact
 //! value the shim's edit wrote. Either alone is something a person writes
 //! by hand, and stays. The record of a whole-file shim is the inventory on
 //! disk listing its position; a keyed one's is the install record
 //! ([`crate::lock::Lock::shims`]), which a project outside git has too.
+//! The inventory listing a keyed shim's file seeds that record once, for an
+//! install record written before it was kept or rewritten by a build that
+//! drops it.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -25,7 +28,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// names, with a row for each: orphaned where it goes, a conflict where
 /// the file it sits in cannot be read. `shims` is the keyed shims the
 /// record holds, and loses each one this pass settles; one whose file
-/// refused the retirement stays, for the pass after the repair.
+/// refused the retirement stays, or joins it where only the inventory
+/// listed the file, for the pass after the repair.
 pub(super) fn retire(
     env: &Env,
     scope: &Scope,
@@ -46,27 +50,27 @@ pub(super) fn retire(
     if !harnesses.contains(&HarnessId::Claude) {
         drift.extend(claude(scope, root, &listed, ops)?);
     }
-    shims.retain(|shim| match shim {
-        KeyedShim::GeminiContextFile if harnesses.contains(&HarnessId::Gemini) => true,
-        KeyedShim::GeminiContextFile => {
-            match gemini(
-                &keyed_position(env, scope, *shim),
-                scope,
-                root,
-                config_edits,
-            ) {
-                Retirement::Settled => false,
-                Retirement::Planned(row) => {
-                    drift.push(row);
-                    false
-                }
-                Retirement::Refused(row) => {
-                    drift.push(row);
-                    true
-                }
+    let shim = KeyedShim::GeminiContextFile;
+    let path = keyed_position(env, scope, shim);
+    // The inventory is the record's seed, never its replacement: an install
+    // record from before `Lock::shims`, or one an older build wrote again
+    // without it, has the shim's file listed there all the same.
+    let recorded = shims.contains(&shim) || listed.contains(&relative_name(root, &path));
+    if !harnesses.contains(&HarnessId::Gemini) && recorded {
+        match gemini(&path, scope, root, config_edits) {
+            Retirement::Settled => {
+                shims.remove(&shim);
+            }
+            Retirement::Planned(row) => {
+                drift.push(row);
+                shims.remove(&shim);
+            }
+            Retirement::Refused(row) => {
+                drift.push(row);
+                shims.insert(shim);
             }
         }
-    });
+    }
     Ok(drift)
 }
 
@@ -134,8 +138,8 @@ fn claude(
     Ok(drift)
 }
 
-/// The Gemini settings file at `path`, which the record says an earlier
-/// pass wrote the shim into, where it still holds exactly what the shim's
+/// The Gemini settings file at `path`, where the record says an earlier
+/// pass kept the shim, and where it still holds exactly what the shim's
 /// edit wrote. The value alone is not proof: Gemini's default file and
 /// `AGENTS.md` is also what a person sets by hand to have Gemini read it.
 /// A file that will not read or parse proves nothing either way, so it is

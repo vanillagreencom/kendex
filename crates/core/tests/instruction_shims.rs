@@ -490,16 +490,28 @@ fn gemini_settings_are_edited_around_what_they_already_hold() {
 /// A settings file kendex cannot parse is refused, never rewritten: where
 /// Gemini is declared and the shim would be written, and where kendex
 /// wrote the shim and Gemini has since left the list, so the shim would be
-/// taken back. The refused retirement keeps its record: once the person
-/// repairs the file, the next apply takes the entry out and keeps their
-/// own key.
+/// taken back. The refused retirement keeps its record, or takes it from
+/// the inventory where the install record lacks it as a build from before
+/// the record wrote it: once the person repairs the file, the next apply
+/// takes the entry out and keeps their own key.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unparseable_gemini_settings_are_refused_not_rewritten() {
-    for (harnesses, declared) in [("\"gemini\"", true), ("\"codex\"", false)] {
+    for (harnesses, declared, recorded) in [
+        ("\"gemini\"", true, true),
+        ("\"codex\"", false, true),
+        ("\"codex\"", false, false),
+    ] {
         let f = fixture("\"gemini\"", true);
         if !declared {
             apply_now(&f);
+            if !recorded {
+                let lock_path = f.project.join(".kendex-lock.json");
+                let mut lock: serde_json::Value =
+                    serde_json::from_str(&shim_bytes(&lock_path)).unwrap();
+                lock.as_object_mut().unwrap().remove("shims").unwrap();
+                fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+            }
             commit(&f.project);
             fs::write(
                 f.project.join("kendex.toml"),
@@ -542,13 +554,22 @@ fn unparseable_gemini_settings_are_refused_not_rewritten() {
             .drift
             .iter()
             .find(|row| row.name == ".gemini/settings.json")
-            .unwrap_or_else(|| panic!("the repaired file is not retired: {:?}", report.drift));
-        assert_eq!(row.state, DriftState::Orphaned);
+            .unwrap_or_else(|| {
+                panic!(
+                    "recorded={recorded}: the repaired file is not retired: {:?}",
+                    report.drift
+                )
+            });
+        assert_eq!(row.state, DriftState::Orphaned, "recorded={recorded}");
         assert_eq!(
             gemini_settings(&f),
-            serde_json::from_str::<serde_json::Value>(theirs).unwrap()
+            serde_json::from_str::<serde_json::Value>(theirs).unwrap(),
+            "recorded={recorded}"
         );
-        assert!(plan(&f).plan.is_empty(), "the next pass plans again");
+        assert!(
+            plan(&f).plan.is_empty(),
+            "recorded={recorded}: the next pass plans again"
+        );
     }
 }
 
@@ -732,49 +753,96 @@ fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
     assert_eq!(named(&again), Vec::new());
 }
 
-/// A Gemini shim an earlier build wrote left no install record. While
-/// Gemini is installed, the next apply records the key standing in sync,
-/// so dropping Gemini after that still takes it back, and the record at
-/// `HEAD` keeps the file one kendex writes a key in until that is committed.
+/// The keyed shims `.kendex-lock.json` records, `Null` where it records
+/// none or there is no record.
+#[allow(clippy::unwrap_used)]
+fn recorded_shims(f: &Fixture) -> serde_json::Value {
+    fs::read_to_string(f.project.join(".kendex-lock.json"))
+        .ok()
+        .map_or(serde_json::Value::Null, |text| {
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()["shims"].take()
+        })
+}
+
+/// A Gemini shim an earlier build wrote left no install record, as does a
+/// record an older build wrote again. Dropping Gemini still takes it back
+/// and keeps the person's own keys: in the very next apply, off the
+/// inventory listing the settings file, or after an apply with Gemini
+/// still listed, which records the key standing in sync. Where that apply
+/// was committed, the record at `HEAD` keeps the file one kendex writes a
+/// key in until the retirement is committed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired() {
-    let f = fixture("\"gemini\"", true);
-    apply_now(&f);
-    let lock_path = f.project.join(".kendex-lock.json");
-    let mut lock: serde_json::Value = serde_json::from_str(&shim_bytes(&lock_path)).unwrap();
-    assert_eq!(lock["shims"], serde_json::json!(["gemini-context-file"]));
-    lock.as_object_mut().unwrap().remove("shims");
-    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
-    commit(&f.project);
+    let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
+    for (what, recorded_first) in [
+        ("dropped in the very next apply", false),
+        ("an apply with Gemini still listed between", true),
+    ] {
+        let f = fixture("\"gemini\"", true);
+        let settings = f.project.join(".gemini/settings.json");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, theirs).unwrap();
+        apply_now(&f);
+        let lock_path = f.project.join(".kendex-lock.json");
+        let mut lock: serde_json::Value = serde_json::from_str(&shim_bytes(&lock_path)).unwrap();
+        assert_eq!(
+            lock["shims"],
+            serde_json::json!(["gemini-context-file"]),
+            "{what}"
+        );
+        lock.as_object_mut().unwrap().remove("shims");
+        fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+        commit(&f.project);
 
-    let report = apply_now(&f);
-    assert!(
-        touched(&f, &report).is_empty(),
-        "{:?}",
-        touched(&f, &report)
-    );
-    assert!(shim_bytes(&lock_path).contains("gemini-context-file"));
-    commit(&f.project);
-    fs::write(
-        f.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
-    )
-    .unwrap();
-    let report = apply_now(&f);
-    assert!(touched(&f, &report).contains(&".gemini/settings.json".to_owned()));
-    let row = report
-        .drift
-        .iter()
-        .find(|row| row.name == ".gemini/settings.json")
+        if recorded_first {
+            let report = apply_now(&f);
+            assert!(
+                touched(&f, &report).is_empty(),
+                "{what}: {:?}",
+                touched(&f, &report)
+            );
+            assert_eq!(
+                recorded_shims(&f),
+                serde_json::json!(["gemini-context-file"]),
+                "{what}"
+            );
+            commit(&f.project);
+        }
+        fs::write(
+            f.project.join("kendex.toml"),
+            "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+        )
         .unwrap();
-    assert_eq!(row.state, DriftState::Orphaned);
-    let settings = f.project.join(".gemini/settings.json");
-    let left = fs::read_to_string(&settings).ok();
-    assert!(left.is_none_or(|text| !text.contains("AGENTS.md")));
-    // Uncommitted, a reading after the retirement still takes the file as
-    // one kendex writes a key in, off the record at `HEAD`.
-    assert!(plan(&f).generated.beside(&f.project).contains(&settings));
+        let report = apply_now(&f);
+        assert!(
+            touched(&f, &report).contains(&".gemini/settings.json".to_owned()),
+            "{what}"
+        );
+        let rows: Vec<DriftState> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == ".gemini/settings.json")
+            .map(|row| row.state)
+            .collect();
+        assert_eq!(rows, vec![DriftState::Orphaned], "{what}");
+        assert_eq!(
+            gemini_settings(&f),
+            serde_json::from_str::<serde_json::Value>(theirs).unwrap(),
+            "{what}"
+        );
+        assert_eq!(recorded_shims(&f), serde_json::Value::Null, "{what}");
+        let again = plan(&f);
+        assert!(again.plan.is_empty(), "{what}: {:?}", touched(&f, &again));
+        if recorded_first {
+            // Uncommitted, a reading after the retirement still takes the
+            // file as one kendex writes a key in, off the record at `HEAD`.
+            assert!(
+                again.generated.beside(&f.project).contains(&settings),
+                "{what}"
+            );
+        }
+    }
 }
 
 /// What a retired file holds after the tool leaves.
@@ -798,8 +866,9 @@ enum Left {
 ///
 /// Each guard turns its own row red: the shim's bytes check, the context
 /// entry's exact-value check, the inventory check for the Claude shim, the
-/// install record check for Gemini's, and the emptied-document check for
-/// each document kind.
+/// install record and its inventory seed for Gemini's, and the
+/// emptied-document check for each document kind. A settled Gemini
+/// retirement that kept its record turns the extended-entry row red.
 #[test]
 #[allow(
     clippy::unwrap_used,
@@ -960,6 +1029,9 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
             .map(|one| one.detail.as_str())
             .collect();
         assert!(orphaned.is_empty(), "{what}: {orphaned:?}");
+        // A settled retirement keeps no record, so a value of exactly the
+        // shim's the person sets later is never taken as kendex's.
+        assert_eq!(recorded_shims(&f), serde_json::Value::Null, "{what}");
         let again = dropping();
         assert!(again.plan.is_empty(), "{what}: {:?}", touched(&f, &again));
     }

@@ -228,10 +228,12 @@ pub(crate) fn keyed_position(env: &Env, scope: &Scope, shim: KeyedShim) -> PathB
 ///
 /// `shims`, the keyed shims the record holds, loses each one this pass
 /// takes back and gains each one the plan keeps. A key already naming
-/// `AGENTS.md` while Gemini is installed is recorded as the shim: an
-/// install from before the record was kept is retired the same way, and a
-/// value the person set by hand before Gemini was installed reads the same
-/// as the one kendex wrote.
+/// `AGENTS.md` while Gemini is installed is recorded as the shim, so an
+/// install from before the record was kept is recorded on the next pass,
+/// in a project with no inventory too; a value the person set by hand
+/// before Gemini was installed reads the same as the one kendex wrote.
+/// Where Gemini leaves the list with no pass between, the inventory
+/// listing the settings file seeds the record instead (`retire`).
 ///
 /// Every standing comes back too, in sync ones included: `verify` reports
 /// each shim as a row, which the drift rows alone cannot carry.
