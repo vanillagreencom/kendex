@@ -48,7 +48,7 @@ control_replace scripts/commands/issues.sh 1 \
     '    linear_guard_create_team "$explicit_team" || return 1' \
     '    :'
 
-# The guard runs after the checks that need no request.
+# An unreadable --attach path refuses before any API call.
 control_expect "an unreadable attach path refuses before the guard reads the team"
 control_replace scripts/commands/issues.sh 1 \
     '    local clear_labels="false"' \

@@ -49,7 +49,7 @@ Workflow Actions (composite operations for dev):
 
 Cross-team guard: with LINEAR_TEAM set, update, bulk-update, activate, block,
 unblock, complete, archive and trash|delete refuse an issue of another team
-before any write, after the checks that need no request, with
+before any write, with
 `linear: refused=cross-team action=<verb> issue=<ID> team=<KEY>
 own-team=<KEY> route=peer-mail`. Reads and relations, like comments, reach
 every team. With LINEAR_TEAM unset they run and print

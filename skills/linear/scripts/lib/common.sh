@@ -833,8 +833,7 @@ LINEAR_TEAM_PASSED=" "
 # Refuse, before any write, a write to an issue outside this checkout's team.
 # An identifier's team is its prefix, judged with no request; any other
 # reference (a UUID) is read for its team. A prefix equal to LINEAR_TEAM
-# passes with no request; otherwise LINEAR_TEAM is resolved to its key. A verb
-# calls it after the checks that need no request, before its first request.
+# passes with no request; otherwise LINEAR_TEAM is resolved to its key.
 # Usage: linear_guard_issue_team ACTION REF... || return 1
 linear_guard_issue_team() {
     local action="$1" ref team vars result refs=()
