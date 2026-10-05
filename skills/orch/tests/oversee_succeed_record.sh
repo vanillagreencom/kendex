@@ -306,7 +306,7 @@ harness_row
 assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=5" \
   "--check-marks: the record's harness decides over --harness" "$TMP_ROOT/err"
 HARNESSCTL="$(mutant_scripts harnessctl oversee-succeed)" || exit 1
-mutate_file "$HARNESSCTL/oversee-succeed" '  if [[ -n "$OL_KNOWN_HARNESS" ]]; then' '  if false; then'
+mutate_file "$HARNESSCTL/oversee-succeed" '"${OL_KNOWN_HARNESS:-${HARNESS_ARG:-$LANE_PANE_SHAPE}}"' '"${HARNESS_ARG:-${OL_KNOWN_HARNESS:-$LANE_PANE_SHAPE}}"'
 harness_row "$HARNESSCTL/oversee-succeed"
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a caller that takes --harness over its record judges the record's account as a codex lane" "$TMP_ROOT/err"
