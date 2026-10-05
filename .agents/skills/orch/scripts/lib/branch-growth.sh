@@ -148,15 +148,19 @@ BRANCH_ALLOWANCE_TEST_LIMIT=""
 # Delegate parsing, measurement, and the verdict to branch-size-check. Its
 # JSON is the contract shared by launch, round minting, and cut acceptance.
 # Return the checker's exit code. Every measured verdict succeeds.
-# Cut acceptance supplies its round record as the comparison source.
+# Cut acceptance supplies its round record as the comparison source. A caller
+# given a state directory passes it fifth, and workflow-state resolves it by
+# the same rule as its own --state-dir; empty leaves that rule to the
+# environment and project settings.
 branch_allowance_check() {
   local worktree="$1" issue="$2" script_dir="$3" output rc record verdict fields state_dir captured diagnostic
-  local cut_args=()
+  local cut_args=() state_args=()
   [[ -z "${4:-}" ]] || cut_args=(--cut-from-round "$4")
+  [[ -z "${5:-}" ]] || state_args=(--state-dir "$5")
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
-  state_dir="$("$script_dir/workflow-state" path "$issue")" || {
+  state_dir="$("$script_dir/workflow-state" ${state_args[@]+"${state_args[@]}"} path "$issue")" || {
     branch_growth_fail "caller workflow state directory could not be resolved"
     return 2
   }

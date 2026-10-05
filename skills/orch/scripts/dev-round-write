@@ -20,7 +20,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-#     [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME]
+#     [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME] [--state-dir DIR]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -216,7 +216,7 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-    [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME]
+    [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH] [--source NAME] [--state-dir DIR]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints that path. One --item per delegated review
@@ -264,6 +264,11 @@ is pr-comments. It takes the --issue grammar below.
 lists. A `pr-N` or `local-` key names no issue and so measures under the
 allowance_missing verdict. workflow-state stores the key as passed and
 validates none of it.
+--state-dir DIR is the workflow-state directory the size measurement reads
+and writes pr.size_check in, passed to workflow-state and branch-size-check
+as their own --state-dir; without it, workflow-state's State directory rule
+decides. A lane that keeps its state in its own worktree passes it. The round
+record stays in PATH/tmp either way.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -274,7 +279,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--cut-from-round|--source|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--cut-from-round|--source|--state-dir|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -334,6 +339,8 @@ adds=""
 cut=false
 cut_from_round=""
 cut_from_round_given=false
+state_dir=""
+state_dir_given=false
 item_n=()
 item_text=()
 item_reach=()
@@ -356,6 +363,7 @@ while (( $# > 0 )); do
     --cut) cut=true; shift ;;
     --source) need "$1" $# "${2:-}"; no_dup "$1" "$source_given"; source_given=true; source_name="$2"; shift 2 ;;
     --cut-from-round) need "$1" $# "${2:-}"; no_dup "$1" "$cut_from_round_given"; cut_from_round_given=true; cut=true; cut_from_round="$2"; shift 2 ;;
+    --state-dir) need "$1" $# "${2:-}"; no_dup "$1" "$state_dir_given"; state_dir_given=true; state_dir="$2"; shift 2 ;;
     --item)
       # Consumes exactly 3 args: N TEXT REACH.
       if (( $# < 4 )); then
@@ -398,6 +406,8 @@ if [[ "$source_given" == true ]]; then
   check_id_token --source "$source_name"
   source_json="$(jq -n --arg s "$source_name" '$s')"
 fi
+# Empty would read as absent and measure under the default state directory.
+[[ "$state_dir_given" == false || -n "$state_dir" ]] || die required --state-dir
 # Taken when the invocation starts. A retry keeps the first invocation's time:
 # the identity comparison below leaves it out, so the round's start is when it
 # was first delegated.
@@ -406,7 +416,7 @@ base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" 
   || die missing-head "$@"
 
 measured=0
-branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" || measured=$?
+branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "" "$state_dir" || measured=$?
 if (( measured != 0 )); then
   message growth-unmeasured >&2
   exit "$measured"
@@ -416,7 +426,7 @@ cut_comparison=null
 if [[ "$cut" == true ]]; then
   if [[ "$cut_from_round_given" == true ]]; then
     [[ -n "$cut_from_round" ]] || die required --cut-from-round
-    branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "$cut_from_round" || {
+    branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "$cut_from_round" "$state_dir" || {
       measured=$?
       message growth-unmeasured >&2
       exit "$measured"

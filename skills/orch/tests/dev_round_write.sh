@@ -275,6 +275,7 @@ table \
   "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--issue=true" \
   "a path-unsafe --source|--worktree $WT --issue i --round-id 1-1 --source pr/comments --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-id+arg1=--source+arg2=pr/comments=true" \
   "a duplicate --source: no silent last-wins|--worktree $WT --issue i --round-id 1-1 --source a --source b --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--source=true" \
+  "an empty --state-dir would measure under the default directory|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --state-dir EMPTY|rc=2 stderr~dev-round-write:+required+arg1=--state-dir=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
 run_write -h
@@ -297,6 +298,63 @@ ln -s "$TMP_ROOT/symlink-target.json" "$SYMLINK_RECORD"
 run_write --worktree "$LINKED" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH"
 assert_eq "$(observe "rc=2")" "rc=2" "a record path that is a symlink is refused" "$ERR"
 rm -f "$SYMLINK_RECORD"
+
+echo "=== a lane that keeps its state in its worktree names it with --state-dir ==="
+# A hosted lane keeps workflow state in its worktree's tmp/, and the main
+# checkout it is linked to has no tmp/ at all. The lane runs the writer with no
+# ORCH_STATE_DIR in its environment, so --state-dir alone points the size
+# measurement at the lane's state; without it the measurement has nowhere to
+# write. The first row declares a cut so the second can retry it, which
+# reaches the second measurement call.
+HOSTED_MAIN="$(new_repo hosted-main)"
+HOSTED="$TMP_ROOT/hosted-wt"
+git -C "$HOSTED_MAIN" worktree add -q -b hosted "$HOSTED"
+init_growth_state "$STATE" "$HOSTED" issue-115 seed >/dev/null
+write_allowance "$HOSTED" issue-115 '**Expected delta**: 1000000 lines, 1000000 test lines'
+HOSTED_FIRST="$HOSTED/tmp/dev-round-issue-115-40-1.json"
+# run_lane_write WRITER ARGS... — the writer as such a lane runs it.
+run_lane_write() {
+  local writer="$1"
+  shift
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  mkdir -p "$RUN"
+  ERR="$RUN/stderr"
+  set +e
+  OUT=$(env -u ORCH_STATE_DIR "$writer" "$@" 2>"$ERR")
+  RC=$?
+  set -e
+}
+# `label^round^extra args^expect`; extra args split on spaces.
+lane_rows=(
+  "the lane's own state directory^40-1^--cut --state-dir $HOSTED/tmp^rc=0 written=yes .size_check.verdict=pass .cut=true"
+  "a cut retry measures in the same directory^40-2^--cut-from-round $HOSTED_FIRST --state-dir $HOSTED/tmp^rc=0 written=yes .cut=true .cut_comparison.verdict=pass"
+  "no state directory^40-3^^rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
+)
+for row in "${lane_rows[@]}"; do
+  IFS='^' read -r label rid extra expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'lane: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+  read -r -a extra_args <<<"$extra"
+  run_lane_write "$WRITE_BIN" --worktree "$HOSTED" --issue issue-115 --round-id "$rid" --item 1 lane "$OK_REACH" ${extra_args[@]+"${extra_args[@]}"}
+  assert_eq "$(observe "$expect")" "$expect" "--state-dir: $label" "$ERR"
+done
+assert_eq "$(jq -c '.size_check' "$HOSTED_FIRST")" "$("$STATE" --state-dir "$HOSTED/tmp" get issue-115 '.pr.size_check' | jq -c '.')" "--state-dir: the round and the lane's workflow state carry the same report"
+assert_eq "$([[ -e "$HOSTED_MAIN/tmp" ]] && echo yes || echo no)" "no" "--state-dir: nothing is written under the main checkout"
+# Controls: a writer that drops the directory before either measurement, and
+# a measurement that drops it before workflow-state, each lose the lane's
+# state. `label^file^old^new^extra args`.
+lane_controls=(
+  'the first measurement^dev-round-write^"$SCRIPT_DIR" "" "$state_dir" ||^"$SCRIPT_DIR" "" "" ||^'
+  "the cut retry's measurement^dev-round-write^"'"$cut_from_round" "$state_dir"^"$cut_from_round" ""'"^--cut-from-round $HOSTED_FIRST"
+  'the measurement itself^lib/branch-growth.sh^state_args=(--state-dir "$5")^state_args=()^'
+)
+for control in "${lane_controls[@]}"; do
+  IFS='^' read -r label file old new extra <<<"$control"
+  read -r -a extra_args <<<"$extra"
+  LANE_MUTANT="$(mutant_scripts lane-mutant "$file")" || exit 1
+  mutate_file "$LANE_MUTANT/$file" "$old" "$new"
+  run_lane_write "$LANE_MUTANT/dev-round-write" --worktree "$HOSTED" --issue issue-115 --round-id 41-1 --item 1 lane "$OK_REACH" --state-dir "$HOSTED/tmp" ${extra_args[@]+"${extra_args[@]}"}
+  assert_eq "$(observe "rc=2 written=no stderr~dev-round-write:+growth-unmeasured")" "rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true" "control: $label without the state directory cannot measure the lane" "$ERR"
+done
 
 echo "=== fix rounds record size without refusing ==="
 GW="$(new_repo growth-wt KEN-GROWTH)"
