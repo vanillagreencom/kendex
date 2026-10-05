@@ -184,35 +184,14 @@ if [ -n "$conflict_count" ] || [ "$held_count" -ne 0 ]; then
 fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
-# refresh keeps the files of a declaration deleted from kendex.toml by hand,
-# and verify fails each one with this detail, its only marker in the report.
-# remove --sweep of those names takes them away as diffs of this pull request.
-# verify exits 1 on any failed row, so the report, not the status, is read; a
-# report that cannot be read stops the run.
-verify_status=0
-verify_report="$(kendex verify --scope project --json 2>"$TMP/verify-stderr")" || verify_status=$?
-if ! leftovers="$(jq -r -s '
-    if length != 1 then error("expected one report") else .[0] end |
-    if (.rows | type) != "array" then error("verify report has no rows") else . end |
-    [.rows[] | select(.state == "failed" and
-      .detail == "left over from an earlier setup; nothing needs it anymore") |
-      if (.name | type) == "string" and (.name | length) > 0 then .name
-      else error("leftover row has no name") end] |
-    unique | .[]
-  ' <<<"$verify_report")"; then
-  printf 'refresh-error=verify-report value=%s\n' "$verify_status" >&2
-  cat -- "$TMP/verify-stderr" >&2
+# refresh keeps the files of a declaration deleted from kendex.toml by hand;
+# apply moves them to the trash as diffs of this pull request. A leftover
+# edited on disk is held, not trashed, and the verify below fails on it.
+apply_status=0
+kendex apply --scope project --yes --leave || apply_status=$?
+if [ "$apply_status" -ne 0 ]; then
+  printf 'refresh-error=apply value=%s\n' "$apply_status" >&2
   exit 1
-fi
-if [ -n "$leftovers" ]; then
-  leftover_names=()
-  while IFS= read -r name; do leftover_names+=("$name"); done <<<"$leftovers"
-  sweep_status=0
-  kendex remove --scope project --sweep --leave -- "${leftover_names[@]}" || sweep_status=$?
-  if [ "$sweep_status" -ne 0 ]; then
-    printf 'refresh-error=sweep value=%s\n' "$sweep_status" >&2
-    exit 1
-  fi
 fi
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 # The release-installed parser must judge its own settings, including on a

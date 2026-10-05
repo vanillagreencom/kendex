@@ -107,31 +107,12 @@ case "$1" in
         printf '#!/usr/bin/env bash\nprintf "executed=%%s\\n" "$0" >>"$TEST_STATE/hostile"\nexit 89\n' >".agents/skills/review-gate/scripts/$path"
       done
     fi
-    # Each leftover row is "NAME HARNESS"; remove takes them all away.
-    [ -z "${TEST_LEFTOVERS:-}" ] || printf '%s\n' "$TEST_LEFTOVERS" >"$TEST_STATE/leftovers"
     ;;
-  remove) rm -f -- "$TEST_STATE/leftovers" ;;
-  verify)
-    if [ "${2:-}" = --scope ] && [ "${4:-}" = --json ]; then
-      # The report shape kendex 1.10.1 prints, exit 1 when any row failed.
-      case "${TEST_VERIFY_JSON:-report}" in
-        unreadable) printf 'not a report\n'; exit 1 ;;
-        report) ;;
-        *) exit 2 ;;
-      esac
-      if [ -f "$TEST_STATE/leftovers" ]; then
-        jq -R -s '[split("\n")[] | select(length > 0) | split(" ") |
-          {kind: "hook", name: .[0], harness: .[1], state: "failed",
-           detail: "left over from an earlier setup; nothing needs it anymore", positions: []}] |
-          {version: 1, clean: false, checked: length, failed: length,
-           rows: (. + [{kind: "record", name: ".kendex-lock.json", state: "ok", positions: []}])}' \
-          "$TEST_STATE/leftovers"
-        exit 1
-      fi
-      printf '{"version":1,"clean":true,"checked":0,"failed":0,"rows":[{"kind":"record","name":".kendex-lock.json","state":"ok","positions":[]}]}\n'
-      exit 0
-    fi
-    [ ! -f "$TEST_STATE/leftovers" ] && [ "$TEST_VERIFY" = pass ] ;;
+  # A hand-deleted declaration's file stays after refresh; apply removes it.
+  apply)
+    [ "${TEST_APPLY_EXIT:-0}" -eq 0 ] || exit "$TEST_APPLY_EXIT"
+    rm -f -- .claude/hooks/leftover.sh ;;
+  verify) [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ] ;;
   *) exit 2 ;;
 esac
 SH
@@ -620,75 +601,68 @@ reset_default
 run_refresh bad-verify fail render
 after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -ne 0 ] && [ "$after" = "$first" ]; then ok 'bad-verify refuses before push'; else bad 'bad-verify refuses before push' "$OUT"; fi
-# A declaration deleted from kendex.toml by hand leaves files refresh keeps and
-# verify fails, one row per harness. The runner removes each named leftover
-# once, with --sweep, before the verify that gates publication. The empty
-# registry row is the state kendex 1.10.1 leaves after that remove:
-# .github/hooks/doc-drift-check.json holding only {"version": 1}, which its
-# verify reports nothing about, so nothing is removed and the file stays.
-# A report that cannot be read stops the run before publication.
-cp "$runner" "$TMP/sweep-runner"
-SWEEP_REMOVE='remove --scope project --sweep --leave -- doc-drift-check old-skill'
-for row in sweep sweep-control empty-registry unreadable unreadable-control; do
+# A declaration deleted from kendex.toml by hand leaves a file refresh keeps
+# and verify fails on. The runner's apply after refresh removes it, so the
+# deletion lands in the rolling pull request before the verify that gates
+# publication; the control drops the apply. A failed apply stops the run before
+# publication; its control drops the refusal.
+cp "$runner" "$TMP/apply-runner"
+for row in apply apply-control apply-failure apply-failure-control; do
   reset_default
-  cp "$TMP/sweep-runner" "$runner"
+  cp "$TMP/apply-runner" "$runner"
   case "$row" in
-    sweep-control)
+    apply | apply-control)
+      mkdir -p "$repo/.claude/hooks"
+      printf 'leftover\n' >"$repo/.claude/hooks/leftover.sh" ;;
+    *) rm -f -- "${repo:?}/.claude/hooks/leftover.sh" ;;
+  esac
+  case "$row" in
+    apply-control)
       file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        '^if \[ -n "\$leftovers" \]; then$' 's/^if \[ -n "\$leftovers" \]; then$/if false; then/' ;;
-    empty-registry)
-      mkdir -p "$repo/.github/hooks"
-      printf '{\n  "version": 1\n}\n' >"$repo/.github/hooks/doc-drift-check.json" ;;
-    unreadable-control)
+        '^kendex apply --scope project --yes --leave' 's/^kendex apply /: # &/' ;;
+    apply-failure-control)
       file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        'refresh-error=verify-report' '/refresh-error=verify-report/{n;n;s/exit 1/: # exit 1/;}' ;;
+        'refresh-error=apply' '/refresh-error=apply/{n;s/exit 1/: # exit 1/;}' ;;
   esac
   commit "$repo"
   git -C "$repo" push -q origin main
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
   : >"$TMP/state/calls"
   : >"$TMP/state/kendex"
-  case "$row" in
-    sweep | sweep-control) LEFTOVERS=$'doc-drift-check claude\ndoc-drift-check copilot\nold-skill claude' ;;
-    unreadable | unreadable-control) VERIFY_JSON=unreadable ;;
-  esac
-  run_refresh "sweep-$row" pass render
-  unset LEFTOVERS VERIFY_JSON
+  case "$row" in apply-failure*) APPLY_EXIT=5 ;; esac
+  run_refresh "apply-$row" pass render
+  unset APPLY_EXIT
   after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-  removes="$(grep '^remove ' "$TMP/state/kendex")" || removes=""
-  # The plain verify that gates publication runs after the remove.
-  last_verify="$(grep -n '^verify --scope project$' "$TMP/state/kendex" | tail -1)" || last_verify=""
-  remove_at="$(grep -n '^remove ' "$TMP/state/kendex" | head -1)" || remove_at=""
+  # The kendex calls in order, without their arguments.
+  calls="$(awk '{ print $1 }' "$TMP/state/kendex" | tr '\n' ' ')"
   case "$row" in
-    sweep)
-      if [ "$RC" -eq 0 ] && [ "$removes" = "$SWEEP_REMOVE" ] && [ -n "$last_verify" ] &&
-          [ "${remove_at%%:*}" -lt "${last_verify%%:*}" ] && [ "$after" != "$before" ]; then
-        ok 'leftover rows are removed by name with --sweep before the gating verify'
-      else bad 'leftover sweep' "$OUT"; fi ;;
-    sweep-control)
-      if [ "$RC" -ne 0 ] && [ -z "$removes" ] && [ "$after" = "$before" ]; then
-        ok 'control: a runner without the sweep fails verify on the leftovers'
-      else bad 'sweep control' "$OUT"; fi ;;
-    empty-registry)
-      if [ "$RC" -eq 0 ] && [ -z "$removes" ] &&
-          [ "$(git --git-dir="$TMP/remote" show refs/heads/kendex/refresh:.github/hooks/doc-drift-check.json)" = $'{\n  "version": 1\n}' ]; then
-        ok 'an empty hook registry verify passes is published unchanged, with no remove'
-      else bad 'empty registry' "$OUT"; fi ;;
-    unreadable)
-      if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=verify-report value=1' <<<"$OUT" &&
-          [ -z "$removes" ] && [ "$after" = "$before" ] &&
+    apply)
+      if [ "$RC" -eq 0 ] && [ "$calls" = 'refresh apply verify --version ' ] &&
+          grep -qxF 'apply --scope project --yes --leave' "$TMP/state/kendex" &&
+          [ "$after" != "$before" ] &&
+          ! git --git-dir="$TMP/remote" cat-file -e refs/heads/kendex/refresh:.claude/hooks/leftover.sh 2>/dev/null; then
+        ok 'apply after refresh removes a leftover in the rolling pull request before the gating verify'
+      else bad 'leftover apply' "$OUT"; fi ;;
+    apply-control)
+      if [ "$RC" -ne 0 ] && [ "$after" = "$before" ] &&
           ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
-        ok 'an unreadable verify report stops the run before publication'
-      else bad 'unreadable verify report' "$OUT"; fi ;;
-    unreadable-control)
+        ok 'control: a runner without the apply fails verify on the leftover and publishes nothing'
+      else bad 'apply control' "$OUT"; fi ;;
+    apply-failure)
+      if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=apply value=5' <<<"$OUT" &&
+          [ "$calls" = 'refresh apply ' ] && [ "$after" = "$before" ] &&
+          ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
+        ok 'a failed apply stops the run before publication'
+      else bad 'apply failure' "$OUT"; fi ;;
+    apply-failure-control)
       if [ "$RC" -eq 0 ] && [ "$after" != "$before" ]; then
-        ok 'control: a dropped verify-report refusal publishes'
-      else bad 'verify-report refusal control' "$OUT"; fi ;;
+        ok 'control: a dropped apply refusal publishes'
+      else bad 'apply refusal control' "$OUT"; fi ;;
   esac
 done
 reset_default
-cp "$TMP/sweep-runner" "$runner"
-rm -f -- "${repo:?}/.github/hooks/doc-drift-check.json"
+cp "$TMP/apply-runner" "$runner"
+rm -f -- "${repo:?}/.claude/hooks/leftover.sh"
 commit "$repo"
 git -C "$repo" push -q origin main
 # The body must update with the current class, including when the rolling
