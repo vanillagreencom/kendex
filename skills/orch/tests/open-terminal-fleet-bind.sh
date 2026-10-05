@@ -6,7 +6,8 @@
 # repository, of the launch checkout itself, or in one that directory's
 # ORCH_CONNECTED_REPOS lists by origin OWNER/REPO; any other is refused as
 # overseer-foreign before the state is touched, and one that cannot be judged
-# as overseer-unjudged. The lane record of a launch the list admits carries the
+# as overseer-unjudged, except a launch whose state does not parse, which the
+# fleet cap refuses first as cap-unreadable. The lane record of a launch the list admits carries the
 # listed repository as repo.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state,
@@ -102,6 +103,12 @@ BARE_TARGET="$TMP_ROOT/bare-target"
 new_repo "$BARE_TARGET"
 NO_GIT="$TMP_ROOT/no-git"
 mkdir -p "$NO_GIT"
+# A checkout git cannot read: its .git is a gitfile naming a gitdir that does
+# not exist, which git refuses with the exit it gives a directory in no
+# checkout.
+UNREAD_CHECKOUT="$TMP_ROOT/unread-checkout"
+mkdir -p "$UNREAD_CHECKOUT"
+printf 'gitdir: %s\n' "$TMP_ROOT/missing-gitdir" > "$UNREAD_CHECKOUT/.git"
 
 # connected VALUE — the overseer checkout's ORCH_CONNECTED_REPOS: `absent`
 # writes no settings file, anything else is the value.
@@ -114,14 +121,16 @@ connected() {
 # $TMP_ROOT/state, outside any checkout, whose overseer record names CWD;
 # `bare` one whose overseer record names no directory and `none` no state at
 # all, each at a --state-dir in the overseer's checkout; `bare-outside` and
-# `none-outside` the same at $TMP_ROOT/state.
+# `none-outside` the same at $TMP_ROOT/state; `none-unread` no state at a
+# --state-dir in $UNREAD_CHECKOUT.
 fleet() {
   case "$1" in
     cwd | bare-outside | none-outside) STATE="$TMP_ROOT/state" ;;
     bare | none) STATE="$OVERSEER_REPO/tmp/fleet" ;;
+    none-unread) STATE="$UNREAD_CHECKOUT/tmp/fleet" ;;
     *) echo "open-terminal-fleet-bind: fleet=unknown kind=$1" >&2; exit 1 ;;
   esac
-  rm -rf -- "${TMP_ROOT:?}/state" "${OVERSEER_REPO:?}/tmp"
+  rm -rf -- "${TMP_ROOT:?}/state" "${OVERSEER_REPO:?}/tmp" "${UNREAD_CHECKOUT:?}/tmp"
   [[ "$1" != none* ]] || return 0
   "$WS" --state-dir "$STATE" init oversee >/dev/null
   if [[ "$1" == cwd ]]; then
@@ -245,6 +254,16 @@ unparsable
 run_ot CWD="$TARGET" WAKE CC-1
 assert_eq "rc=$RC unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" "rc=1 unjudged=1" \
   "a wake, which the cap does not count, on a state that does not parse is unjudged"
+fleet cwd "$OVERSEER_REPO"
+unparsable
+run_ot CWD="$TARGET" CC-1
+assert_eq "rc=$RC unreadable=$(grep -cx 'open-terminal: cap-unreadable item=CC-1 source=state' <<<"$ERR" || true) unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" \
+  "rc=1 unreadable=1 unjudged=0" "a launch on a state that does not parse is the fleet cap's cap-unreadable, not overseer-unjudged"
+connected absent
+fleet none-unread
+run_ot CWD="$TARGET" CC-1
+assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-root path=$UNREAD_CHECKOUT" <<<"$ERR" || true) record=$(record CC-1)" \
+  "rc=1 unjudged=1 record=none" "a --state-dir below a .git entry git cannot read is unjudged, never outside any checkout"
 
 # One control per rule, each on a copy of the script that keeps the matched
 # text and drops its behaviour.
@@ -335,6 +354,17 @@ connected absent; fleet cwd "$OVERSEER_REPO"; unparsable
 run_ot SCRIPT="$MUT" CWD="$TARGET" WAKE CC-1
 assert_eq "unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" "unjudged=0" \
   "control: judging a state that does not parse as one with no overseer directory prints no state-read line"
+MUT="$(control cap-first "$BIND" '[[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read' \
+  '[[ "$CAP_GATED" == never ]] || { ot_message overseer-unjudged cause=state-read')"
+connected absent; fleet cwd "$OVERSEER_REPO"; unparsable
+run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
+assert_eq "unreadable=$(grep -cx 'open-terminal: cap-unreadable item=CC-1 source=state' <<<"$ERR" || true) unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" \
+  "unreadable=0 unjudged=1" "control: refusing a launch's unparsable state in the binding prints state-read before the cap reads it"
+MUT="$(control dotgit "$BIND" '[[ ! -e "$at/.git" && ! -L "$at/.git" ]] || return 0' '[[ ! -e "$at/.git" && ! -L "$at/.git" ]] || true')"
+connected absent; fleet none-unread
+run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
+assert_eq "rc=$RC unjudged=$(refused 'overseer-unjudged ') record=$(record CC-1)" "rc=0 unjudged=0 record=repo=null" \
+  "control: without the .git entry test a --state-dir in a checkout git cannot read binds to the launch checkout and admits it"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

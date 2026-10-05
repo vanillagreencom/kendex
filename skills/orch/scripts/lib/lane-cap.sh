@@ -190,6 +190,32 @@ CONNECTED_REPO=""
 LAUNCH_NAME=""
 OVERSEER_NAME=""
 
+# dotgit_above DIR — whether DIR, a physical path, or a directory above it
+# holds a .git entry (a file, a directory or a link, dangling included) where
+# git's own discovery would look: the walk stops below the first
+# GIT_CEILING_DIRECTORIES entry it reaches, as git does, and DIR itself is
+# looked at whatever the ceiling. As in git, an empty entry leaves the entries
+# after it unresolved.
+dotgit_above() {
+  local at="$1" entry ceiling resolve=true ceilings=() parts=()
+  IFS=: read -r -a parts <<<"${GIT_CEILING_DIRECTORIES:-}"
+  for entry in ${parts[@]+"${parts[@]}"}; do
+    [[ -n "$entry" ]] || { resolve=false; continue; }
+    ceiling="${entry%/}"
+    [[ "$resolve" != true ]] || ceiling="$(cd -P -- "$entry" 2>/dev/null && pwd -P)" || ceiling="${entry%/}"
+    ceilings+=("${ceiling:-/}")
+  done
+  while :; do
+    [[ ! -e "$at/.git" && ! -L "$at/.git" ]] || return 0
+    [[ "$at" != / ]] || return 1
+    at="${at%/*}"
+    at="${at:-/}"
+    for ceiling in ${ceilings[@]+"${ceilings[@]}"}; do
+      [[ "$at" != "$ceiling" ]] || return 1
+    done
+  done
+}
+
 # overseer_bind — judges a --state-dir launch on the repository it runs in,
 # before the state is touched: the item check reads the checkout the launch
 # runs from, and nothing there binds that checkout to the fleet it records
@@ -198,7 +224,8 @@ OVERSEER_NAME=""
 # overseer's checkout. A state that records no overseer directory and sits in
 # no checkout names no overseer repository, so the launch binds to its own
 # checkout's and goes ahead: absent input never refuses the overseer's own
-# work. A recorded directory git cannot read refuses. A checkout sharing that
+# work. A recorded directory git cannot read refuses, and so does a state
+# directory git cannot read below a .git entry. A checkout sharing that
 # directory's git common root, as its worktrees do, or whose origin names the
 # same OWNER/REPO, as a second clone does, is own. Any other is connected
 # where ORCH_CONNECTED_REPOS lists its origin OWNER/REPO, compared
@@ -209,7 +236,7 @@ OVERSEER_NAME=""
 # wake, which the cap does not count, refuses on it here. Returns 1 with the
 # refusal printed.
 overseer_bind() {
-  local cwd="" dir root launch_root same connected listed
+  local cwd="" dir physical root launch_root same connected listed
   if "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
     if ! cwd="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.overseer.cwd // empty')"; then
       [[ "$CAP_GATED" == true ]] || { ot_message overseer-unjudged cause=state-read state=oversee >&2; return 1; }
@@ -226,9 +253,20 @@ overseer_bind() {
   else
     dir="$STATE_DIR"
     while [[ ! -d "$dir" ]]; do dir="$(dirname -- "$dir")"; done
-    # git answered for the launch checkout above, so a failure here reads as a
-    # state directory outside any checkout, and git's own line for it is noise.
-    root="$("$SCRIPT_DIR/git-context" common-root "$dir" 2>/dev/null)" || { root="$launch_root"; }
+    physical="$(cd -P -- "$dir" && pwd -P)" \
+      || { ot_message overseer-unjudged cause=overseer-root "path=$dir" >&2; return 1; }
+    dir="$physical"
+    # git exits alike for a directory in no checkout and for a checkout it
+    # cannot read: a .git entry at or above the directory tells them apart.
+    # With one, git's failure refuses, git's own line above the refusal. With
+    # none, git answered for the launch checkout above, so a failure reads as
+    # a state directory outside any checkout, and git's line for it is noise.
+    if dotgit_above "$dir"; then
+      root="$("$SCRIPT_DIR/git-context" common-root "$dir")" \
+        || { ot_message overseer-unjudged cause=overseer-root "path=$dir" >&2; return 1; }
+    else
+      root="$("$SCRIPT_DIR/git-context" common-root "$dir" 2>/dev/null)" || { root="$launch_root"; }
+    fi
   fi
   OVERSEER_BIND=own
   [[ "$root" != "$launch_root" ]] || return 0
