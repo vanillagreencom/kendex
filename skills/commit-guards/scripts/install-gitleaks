@@ -10,8 +10,8 @@
 # `install-gitleaks: <key>=<value>` line; its explanation, or the usage text,
 # follows on unprefixed lines.
 #
-# Exit codes: 0 installed or already current; 1 a step that failed, named on
-# its line; 2 usage.
+# Exit codes: 0 installed, already current, or -h/--help; 1 a step that
+# failed, named on its line; 2 usage.
 set -euo pipefail
 
 VERSION=8.30.1
@@ -29,7 +29,12 @@ sha_for() { # ASSET — its pinned digest on stdout; 1 for an asset with no pin
 say() { printf 'install-gitleaks: %s=%s\n' "$1" "$2"; } # KEY VALUE
 fail() { say "$1" "$2"; printf '%s\n' "$3"; exit 1; } # KEY VALUE EXPLANATION
 
-[ $# -eq 1 ] && [ -n "$1" ] || { say usage "$#"; echo "usage: install-gitleaks DIR"; exit 2; }
+usage() { printf '%s\n' "usage: install-gitleaks DIR" "A DIR that starts with - is refused; write it as ./DIR."; }
+[ $# -eq 1 ] && [ -n "$1" ] || { say usage "$#"; usage; exit 2; }
+case "$1" in
+  -h | --help) usage; exit 0 ;;
+  -*) say usage "$1"; usage; exit 2 ;;
+esac
 dir=$1
 
 current=""

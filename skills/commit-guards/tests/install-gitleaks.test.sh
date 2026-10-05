@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pins scripts/install-gitleaks: it installs the archive its platform maps to
 # only when the archive matches the pinned SHA-256, leaves a current install
-# alone, and refuses an unpinned platform or a failed download. The release
+# alone, and refuses an unpinned platform, a failed download or a dash-led DIR;
+# -h/--help and a dash-led DIR create and download nothing. The release
 # server is a fake curl serving a fixture archive; the rows that install run a
 # disposable copy of the script whose pins name that archive's digest.
 set -euo pipefail
@@ -139,6 +140,21 @@ assert_eq "a failed download is refused" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_FAIL=22)"
 assert_eq "an empty directory argument is a usage error" "rc=2 install-gitleaks: usage=1" "$(run "")"
 
+echo "=== help and a dash-led DIR touch nothing ==="
+# in_cwd DIR ARG: run ARG from an empty working directory DIR, then report the
+# result, what DIR holds and what was fetched.
+in_cwd() {
+  local res
+  mkdir -p -- "$1"
+  res="$(cd -- "$1" && run "$2")" || return 1
+  printf '%s cwd=[%s] fetched=[%s]' "$res" "$(ls -A -- "$1")" "$(cat -- "$CURL_LOG")"
+}
+for row in "-h|rc=0 " "--help|rc=0 " "-gitleaks|rc=2 install-gitleaks: usage=-gitleaks"; do
+  arg=${row%%|*}
+  assert_eq "$arg exits with its code and creates and downloads nothing" \
+    "${row#*|} cwd=[] fetched=[]" "$(in_cwd "$TMP_ROOT/cwd$arg" "$arg")"
+done
+
 echo "=== must-fail controls ==="
 copy no-check '[ "$got" = "$want" ] ||' 'true ||'
 assert_eq "control: without the digest comparison an archive off its pin installs" \
@@ -150,6 +166,15 @@ copy arch-map 'aarch64 | arm64) arch=arm64 ;;' 'aarch64 | arm64) arch=x64 ;;'
 run "$TMP_ROOT/arch-map-dir" UNAME_S=Darwin UNAME_M=arm64 >/dev/null
 assert_eq "control: a wrong architecture map fetches the wrong release" \
   "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz" "$(cat "$CURL_LOG")"
+
+copy no-help '-h | --help) usage; exit 0 ;;' '--never) usage; exit 0 ;;'
+assert_eq "control: without the help case --help is refused as a dash-led DIR" \
+  "rc=2 install-gitleaks: usage=--help cwd=[] fetched=[]" "$(in_cwd "$TMP_ROOT/no-help-cwd" --help)"
+copy no-dash "$LINUX_PIN" "$FIXTURE_SHA" '-*) say usage "$1"' '--never) say usage "$1"'
+in_cwd "$TMP_ROOT/no-dash-cwd" -gitleaks >/dev/null
+assert_eq "control: without the dash-led refusal the DIR is created and the release fetched" \
+  "-gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
+  "$(ls -A -- "$TMP_ROOT/no-dash-cwd") $(cat -- "$CURL_LOG")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
