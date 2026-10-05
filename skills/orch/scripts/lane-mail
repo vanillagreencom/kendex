@@ -1565,7 +1565,7 @@ lm_resolved() { # ASK_ID BY ANSWER_ID
 
 # An owner ask's deadline: --wait as given, else ORCH_ASK_WAIT_MINUTES from
 # the kendex settings ladder, else 120. Read only for an owner ask, whose
-# deadline stands for the recommendation it hands over, and the ladder is
+# deadline the owner-channel ask help gives its meaning, and the ladder is
 # loaded here for the deadline. Record reads use lm_overseer_state, with the
 # peer's settings read as data, never sourcing a file of the peer's.
 lm_wait_minutes() {
@@ -1773,9 +1773,11 @@ case "$VERB" in
     # The overseer's own ask or notice names its audience, the field the
     # relay, the report and pending all read; one with none reaches nobody.
     [ "$ITEM" != overseer ] || [ -n "$TO" ] || refuse option-required --to
-    # An owner ask with no recommendation has no deadline, so nothing but
-    # the owner would ever close it; `ask:overseer` is always an owner ask,
-    # the audience check above having refused every other.
+    # An owner ask names what its deadline does, by its form (the
+    # owner-channel ask help states each); one naming neither --recommend
+    # nor --reserved says nothing, so it is refused. `ask:overseer` is
+    # always an owner ask, the audience check above having refused every
+    # other.
     if [ "$VERB:$ITEM" = ask:overseer ]; then
       # A reserved decision has no option safe to stand at its deadline, so
       # it names none. A draft's choices are fixed so its deadline never
