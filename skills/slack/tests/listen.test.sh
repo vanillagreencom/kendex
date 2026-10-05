@@ -22,7 +22,8 @@
 # append and the journal mark, the second relay refused by the lock, two roots
 # bound to one channel refused at start, reconnect catch-up leaving a thread
 # past SLACK_THREAD_DAYS unread, owner broadcasts routed and non-owner
-# broadcasts refused, a secret value refused, a 429 honoured, a
+# broadcasts refused, a secret value refused, a 429 ending a catch-up
+# unretried and a post's 429 retried after Retry-After, a
 # post Slack refuses failing the poll and made again, a post whose response
 # was lost journaled unknown, a refused history read failing the poll, asks
 # and notices sent as markdown_text, an ask's deadline as Slack's date token,
@@ -335,17 +336,23 @@ LONG_FILE_ID="$(notice_id "$GAMMA" "y$LONG")"
 assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
   "0=file=$((UPLOADS + 1))" "a notice past the cap beside a report uploads with it as the comment, the cap being markdown_text's alone"
 
-# --- a 429 is honoured by Retry-After -------------------------------------------------------
-history_calls() { sk_state '[.calls[] | select(. == "conversations.history")] | length'; }
+# --- a 429 ends a catch-up read unretried; a post's 429 is honoured by Retry-After ----------
+calls_of() { sk_state "[.calls[] | select(. == \"$1\")] | length"; } # METHOD
+delivered() { jq -s --arg d "$2" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$1")/to-lane.jsonl"; } # ROOT ID
 sk_ctl /_test/calls-reset >/dev/null
 sk_ctl /_test/fault '{"method": "conversations.history", "status": 429, "retry_after": 0, "times": 1}' >/dev/null
 L1="$(sk_inject C002 U001 'after the limit')"
 sk_poll "$GAMMA"
-LIMITED_RC="$RC" LIMITED_CALLS="$(history_calls)"
-sk_ctl /_test/calls-reset >/dev/null
+assert_eq "$RC=$ERR1=$(calls_of conversations.history)=$(delivered "$GAMMA" "C002:$L1")" "0=slack: slack-rate-limited=conversations.history=1=0" \
+  "a 429 history read ends the catch-up unretried and the poll exits 0, the message behind it unread"
 sk_poll "$GAMMA"
-assert_eq "$LIMITED_RC=$LIMITED_CALLS" "0=$(($(history_calls) + 1))" "a 429 is retried after Retry-After: one history call more than the same read unrefused"
-assert_eq "$(directives "$GAMMA" | sed -n '4p')" "C002:$L1 after the limit" "the message behind the 429 lands"
+assert_eq "$(delivered "$GAMMA" "C002:$L1")" "1" "the next poll delivers the message behind the 429 once"
+sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text s8 'Posted past the limit.')" >/dev/null
+sk_ctl /_test/calls-reset >/dev/null
+sk_ctl /_test/fault '{"method": "chat.postMessage", "status": 429, "retry_after": 0, "times": 1}' >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=$(calls_of chat.postMessage)=$(asks C002 'Posted past the limit.')" "0=2=1" \
+  "a 429 post is retried after Retry-After in the same poll and lands once"
 
 # --- owners re-resolved from the setting before delivery -----------------------------------
 sk_poll "$GAMMA" SLACK_OWNERS="$OWNER"
@@ -903,7 +910,7 @@ sk_bin_reset
 
 for retry in poll delivery; do
   case "$retry" in
-    poll) sk_mutant same-poll relay.py '(        if not self.caught_up:\n            self.catch_up\(bot_user\)\n)' '\1        self.mark_seen(self.state.delivered)\n' ;;
+    poll) sk_mutant same-poll relay.py '(                self\.catch_up\(bot_user\)\n            except Refusal as err:\n                if err\.key != "slack-rate-limited":\n                    raise\n                print_refusal\(err\)\n)' '\1        self.mark_seen(self.state.delivered)\n' ;;
     delivery) sk_mutant delivery-sweep relay.py '(        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)\n)        self.mark_seen\(\[ts\]\)' '\1        self.mark_seen(self.state.delivered)' ;;
   esac
   RETRY_ROOT="$(sk_new_root "retry-$retry")"
