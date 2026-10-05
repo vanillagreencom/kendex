@@ -8,7 +8,7 @@ Repository checks installed as Git hooks. Maintainers use them to check source f
 kendex add vanillagreencom/kendex --skill commit-guards
 ```
 
-Requires Git, awk, jq and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, a commit from a terminal runs no checks, and an agent session with the `pre-commit-check` hook is refused.
+Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventory) and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, a commit from a terminal runs no checks, and an agent session with the `pre-commit-check` hook is refused.
 
 ## Features
 
