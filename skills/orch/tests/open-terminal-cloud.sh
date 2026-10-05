@@ -11,9 +11,10 @@
 # key sent before claude runs in the pane and nothing pasted after its launch
 # line, the account read back once its composer is up and a refusal there
 # naming the session the CLI already made, the CLI exiting before that as a
-# failed launch unless it printed its session URL, a started session, the
-# session id
-# the claude.ai session URL in the pane carries, and the lane record naming
+# failed launch unless it printed its session URL, a started session, while
+# a claude under a launcher's shell is no exit and an unreadable process table
+# stops the launch, the session id the claude.ai session URL in the pane
+# carries, and the lane record naming
 # the kind, the account, that id and the window, and the standard tier
 # whatever orch words the brief quotes. A kind whose
 # launch this build does not make refuses as kind-unbuilt.
@@ -219,44 +220,29 @@ assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD 
 assert_eq "owed=$(grep -cxF 'open-terminal: cloud-card-owed item=CC-1 session=session_01CLOUD' <<<"$ERR" || true)" "owed=1" \
   "the launch leaves the repository card to the operator and says so"
 
-echo "=== the session words make no arming step mandatory and name the merge gates ==="
-# The words are the cloud session's own instructions, its first message: a
-# cloud machine has no kendex and no tools/setup, so a mandatory arming step
-# there is one the session stops to ask about. The commit-guards script arms
-# the hooks with no kendex, where the checkout carries it. gates LIB — the
-# words lib/lane-launch.sh at LIB closes a brief on, as the count of each
-# kendex-bound arming command, of the script under its condition and of each
-# gate holding the merge.
+echo "=== the session words run no kendex-bound arming command ==="
+# The words are the cloud session's first message, and the session runs the
+# commands they name: a cloud machine has no kendex and no tools/setup, so
+# either one is a step the session stops to ask about, while the commit-guards
+# script arms the hooks with no kendex. arming LIB — the words lib/lane-launch.sh
+# at LIB closes a brief on, as the count of each command they name.
 HOOKS='.agents/skills/commit-guards/scripts/install-git-hooks'
-gates() {
+arming() {
   local text
   text="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")" || { echo "unread"; return; }
-  printf 'setup=%s install=%s hooks=%s conditional=%s ci=%s review=%s second=%s' \
-    "$(grep -c 'tools/setup' <<<"$text" || true)" "$(grep -c 'guard install' <<<"$text" || true)" \
-    "$(grep -cF "$HOOKS" <<<"$text" || true)" "$(grep -cF "Where $HOOKS is present" <<<"$text" || true)" \
-    "$(grep -c 'pull request CI' <<<"$text" || true)" "$(grep -c 'review gate' <<<"$text" || true)" \
-    "$(grep -c 'second-opinion gate' <<<"$text" || true)"
+  printf 'setup=%s install=%s hooks=%s' "$(grep -c 'tools/setup' <<<"$text" || true)" \
+    "$(grep -c 'guard install' <<<"$text" || true)" "$(grep -cF "$HOOKS" <<<"$text" || true)"
 }
-GATES_WANT="setup=0 install=0 hooks=1 conditional=1 ci=1 review=1 second=1"
-assert_eq "$(gates "$SCRIPTS_DIR/lib/lane-launch.sh")" "$GATES_WANT" \
-  "the session words name no kendex-bound arming step, arm through install-git-hooks only where present, and name the three merge gates"
-# One per rule, each a copy of the lib with one sentence edited: NAME|OLD|NEW.
-# The mandatory step restored, the script made unconditional, and the gates
-# dropped.
-GATES_SENTENCE=' Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge.'
-GATES_EDITS=(
-  "arming|$GATES_SENTENCE|$GATES_SENTENCE Before your first commit, run tools/setup where the repository has it, else kendex guard install."
-  "unconditional|Where $HOOKS is present, arm the commit hooks with it|Arm the commit hooks with $HOOKS"
-  "gates|$GATES_SENTENCE|"
-)
-for edit in "${GATES_EDITS[@]}"; do
-  IFS='|' read -r name old new <<<"$edit"
-  lib="$TMP_ROOT/gates-$name"
-  cp -R "$SCRIPTS_DIR/lib" "$lib"
-  mutate_file "$lib/lane-launch.sh" "$old" "$new"
-  assert_eq "red=$([[ "$(gates "$lib/lane-launch.sh")" != "$GATES_WANT" ]] && echo yes || echo no)" "red=yes" \
-    "control: session words with the $name edit fail the merge-gates row"
-done
+ARMING_WANT="setup=0 install=0 hooks=1"
+assert_eq "$(arming "$SCRIPTS_DIR/lib/lane-launch.sh")" "$ARMING_WANT" \
+  "the session words name no kendex-bound arming command and arm through install-git-hooks"
+# The kendex-bound step restored, in a copy of the lib.
+ARMING_SENTENCE=' Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge.'
+lib="$TMP_ROOT/arming-lib"
+cp -R "$SCRIPTS_DIR/lib" "$lib"
+mutate_file "$lib/lane-launch.sh" "$ARMING_SENTENCE" "$ARMING_SENTENCE Before your first commit, run tools/setup where the repository has it, else kendex guard install."
+assert_eq "red=$([[ "$(arming "$lib/lane-launch.sh")" != "$ARMING_WANT" ]] && echo yes || echo no)" "red=yes" \
+  "control: session words restoring the kendex-bound step fail the arming row"
 
 echo "=== a first-run dialog takes one Enter before the session read ==="
 run_ot OT_COMPOSER_ON_ENTER=2 -- "${CLOUD[@]}" CC-14
@@ -397,6 +383,27 @@ assert_eq "$LATE" "rc=0 session=session_01CLOUD" \
 assert_eq "$UNSEEN" "rc=1 unseen=1 keys=1 record=null null null null null null null null" \
   "a claude never seen in the pane stops with its own line, no key past the launch line's Enter and no record" "$TMP_ROOT/err"
 
+echo "=== a claude under a pane reading as its shell is not an exited CLI ==="
+# A launcher that runs claude as its child leaves its interpreter as the
+# pane's command for the whole session. The stub pane's command reads bash
+# throughout, a process named claude runs below the pane's pid, and the
+# composer takes one nudge.
+CHILD_BIN="$TMP_ROOT/child-bin"
+mkdir -p "$CHILD_BIN"
+cp "$(command -v sleep)" "$CHILD_BIN/claude"
+child_row() { # SCRIPT ITEM — the launch, its result in CHILD
+  local child
+  "$CHILD_BIN/claude" 30 & child=$!
+  run_ot SCRIPT="$1" OT_HARNESS_LATE=99 OT_COMPOSER_ON_ENTER=2 -- "${CLOUD[@]}" "$2"
+  kill "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+  CHILD="rc=$RC account=$(grep -c "^open-terminal: lane-unobserved item=$2 reason=pane-pid\$" <<<"$ERR" || true) session=$(record "$2" | cut -d' ' -f4)"
+}
+CHILD_WANT="rc=0 account=1 session=session_01CLOUD"
+child_row "$OT" CC-32
+assert_eq "$CHILD" "$CHILD_WANT" \
+  "a claude below a pane reading as its shell is nudged to its composer, its account read and its session recorded" "$TMP_ROOT/err"
+
 echo "=== a pane showing no claude.ai session URL stops there ==="
 # The session id bare, outside the URL the anchored read takes.
 UNREAD_SCREEN='Started session_01CLOUD'
@@ -480,11 +487,31 @@ done
 
 echo "=== a CLI that exits before its composer is a failed launch ==="
 # The CLI runs for one pane read, then the pane is back at its shell showing
-# no session URL.
-run_ot OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
-assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true) prompt=$(typed 2) record=$(record CC-21)" \
-  "rc=1 refused=1 prompt=none record=null null null null null null null null" \
-  "a CLI refusing its arguments ends claude in the pane, which stops the launch as cloud-launch-failed" "$TMP_ROOT/err"
+# no session URL, where the pane writer would refuse a nudge.
+exited_row() { # SCRIPT ITEM — the launch, its result in EXITED
+  run_ot SCRIPT="$1" OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" "$2"
+  EXITED="rc=$RC failed=$(grep -cxF "open-terminal: cloud-launch-failed item=$2" <<<"$ERR" || true) refused=$(grep -c -e '^pane-write: ' -e '^open-terminal: pane-refused ' <<<"$ERR" || true) prompt=$(typed 2) record=$(record "$2")"
+}
+EXITED_WANT="rc=1 failed=1 refused=0 prompt=none record=null null null null null null null null"
+exited_row "$OT" CC-21
+assert_eq "$EXITED" "$EXITED_WANT" \
+  "a CLI refusing its arguments ends claude in the pane, which stops the launch as cloud-launch-failed with no nudge sent" "$TMP_ROOT/err"
+
+echo "=== a process table that cannot be read stops the launch under its own line ==="
+# The CLI exits after one pane read and ps fails, so whether a claude runs
+# under the shell is unknown: neither an exited CLI nor one to nudge.
+PS_BIN="$TMP_ROOT/ps-bin"
+mkdir -p "$PS_BIN"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$PS_BIN/ps"
+chmod +x "$PS_BIN/ps"
+process_row() { # SCRIPT ITEM — the launch, its result in PROCESS
+  run_ot SCRIPT="$1" PATH="$PS_BIN:$BIN:$OT_BIN:$PATH" OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" "$2"
+  PROCESS="rc=$RC unseen=$(grep -cxF "open-terminal: cloud-cli-unseen item=$2 reason=process-read-failed" <<<"$ERR" || true) refused=$(grep -c -e '^pane-write: ' -e '^open-terminal: pane-refused ' <<<"$ERR" || true) record=$(record "$2")"
+}
+PROCESS_WANT="rc=1 unseen=1 refused=0 record=null null null null null null null null"
+process_row "$OT" CC-34
+assert_eq "$PROCESS" "$PROCESS_WANT" \
+  "a failed process read after the composer wait began names itself, with no nudge sent and no record" "$TMP_ROOT/err"
 
 echo "=== a CLI that prints its session and exits is a started session ==="
 # Claude Code's detached --cloud path: the session's View URL printed, no
@@ -567,7 +594,7 @@ assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD 
 PROBE='    if [[ -n "$prompt" ]]; then
       rc=0
       cloud_cli_detached "$pane" "$prompt" || rc=$?
-      case "$rc" in 0) return 5 ;; 2) return 1 ;; 3) return 4 ;; esac
+      case "$rc" in 0) return 5 ;; 2) return 1 ;; 3) return 4 ;; 4) return 6 ;; esac
     fi
 '
 # shellcheck disable=SC2016
@@ -660,12 +687,34 @@ assert_eq "late=$([[ "$LATE" == "rc=0 session=session_01CLOUD" ]] && echo held |
 mutant print 'cmd="claude --model' 'cmd="claude -p --model'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-10
 assert_eq "print-words=$(print_words)" "print-words=1" "control: a launch line restoring -p fails the print row" "$TMP_ROOT/err"
-# The classification removed: a CLI that exited reads as cloud-launch-failed no more.
+# One per exited-CLI rule, each removed in turn: the exited row fails. NAME|OLD
+# -> NEW: the exit read, and the composer wait's stop at a shell showing no
+# URL, without which its nudge meets the shell and is refused.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+EXITED_EDITS=(
+  'exit read|if ! lane_pane_by_id "$1" || ! is_bare_shell "$LANE_PANE_CMD"; then return 1; fi -> if true; then return 1; fi'
+  'shell stop| 2) return 1 ;; 3) return 4 ;; ->  3) return 4 ;;'
+)
+for i in "${!EXITED_EDITS[@]}"; do
+  edit="${EXITED_EDITS[$i]#*|}"
+  mutant "exited-$i" "${edit%% -> *}" "${edit#* -> }"
+  exited_row "$MUTANT" "CC-9$i"
+  assert_eq "red=$([[ "$EXITED" != "${EXITED_WANT}" ]] && echo yes || echo no)" "red=yes" \
+    "control: without the ${EXITED_EDITS[$i]%%|*} the exited row fails" "$TMP_ROOT/err"
+done
+# The child check dropped: the pane reads as an exited CLI showing no URL.
+mutant child-check '    0) return 1 ;;
+    1) rc=0 ;;' '    0 | 1) rc=0 ;;'
+child_row "$MUTANT" CC-33
+assert_eq "red=$([[ "$CHILD" != "$CHILD_WANT" ]] && echo yes || echo no)" "red=yes" \
+  "control: without the child check the launcher-child row fails" "$TMP_ROOT/err"
+# The failed process read taken as a claude still running: the process-read row's
+# pane is nudged and the launch fails under another line.
 # shellcheck disable=SC2016
-mutant cli-exit 'if ! lane_pane_by_id "$1" || ! is_bare_shell "$LANE_PANE_CMD"; then return 1; fi' 'if true; then return 1; fi'
-run_ot SCRIPT="$MUTANT" OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=99 -- "${CLOUD[@]}" CC-21
-assert_eq "refused=$(grep -cxF 'open-terminal: cloud-launch-failed item=CC-21' <<<"$ERR" || true)" "refused=0" \
-  "control: without the exit read the refused-arguments row is not cloud-launch-failed" "$TMP_ROOT/err"
+mutant process-unread '*) CLOUD_CLI_UNSEEN=process-read-failed; return 4 ;;' '*) CLOUD_CLI_UNSEEN=process-read-failed; return 1 ;;'
+process_row "$MUTANT" CC-35
+assert_eq "red=$([[ "$PROCESS" != "$PROCESS_WANT" ]] && echo yes || echo no)" "red=yes" \
+  "control: a failed process read taken as a running claude fails the process-read row" "$TMP_ROOT/err"
 # The exited CLI's URL left unread: both detached rows fail.
 # shellcheck disable=SC2016
 mutant detached-read '  cloud_session_read "$1" "$2" 0 || rc=$?' '  rc=1'

@@ -1769,12 +1769,13 @@ launch_write() { # OPERATION TITLE PANE EXPECT ACTION VALUE
 #   3  a nudge did not land, which launch_write has already reported
 #   4  a capture failed, which tmux_launch_verify reads as it reads 1
 #   5  the cloud CLI exited showing its session URL: send nothing
+#   6  the process table cloud_cli_detached reads could not be read
 # An empty BRIEF is a caller with no brief to send, a cloud session whose
 # brief is its launch line's description: the wait is then the readiness half alone and never returns 2.
 # PROMPT, that description, is given by the cloud caller alone: each pass asks
 # cloud_cli_detached first, since a nudge into a pane back at its shell is
-# refused and reported as a failed write. A shell with no session URL is the
-# dead pane, 1.
+# refused and reported as a failed write. A shell with no claude under it and
+# no session URL is the dead pane, 1.
 # The loop READS before it decides whether it may still nudge, so the Enter of
 # the final pass is observed like every other: a dialog it dismissed or a draft
 # it submitted lands after the last nudge, and testing the budget before the
@@ -1797,7 +1798,7 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT [PROMPT]
     if [[ -n "$prompt" ]]; then
       rc=0
       cloud_cli_detached "$pane" "$prompt" || rc=$?
-      case "$rc" in 0) return 5 ;; 2) return 1 ;; 3) return 4 ;; esac
+      case "$rc" in 0) return 5 ;; 2) return 1 ;; 3) return 4 ;; 4) return 6 ;; esac
     fi
     (( waited < TMUX_VERIFY_SECS )) || return 1
     launch_write nudge "$title" "$pane" "$expect" key Enter || return 3
@@ -2882,12 +2883,21 @@ cloud_session_read() { # PANE PROMPT [BOUND]
 # Whether the pane is back at its shell showing the session URL the CLI
 # printed, into CLOUD_SESSION. Claude Code 2.1.289 with its remote backend off
 # creates the session, prints its View URL and exits 0, drawing no composer,
-# so an exited CLI is a started session wherever that URL shows. Status 0 for
-# a session, 1 for a pane not at its shell, 2 for a shell showing no URL, 3 for
-# a capture that failed.
+# so an exited CLI is a started session wherever that URL shows. A launcher
+# that runs claude as its child leaves its interpreter as the pane's command,
+# so the CLI has exited only where no claude runs under the pane either, the
+# test cloud_cli_wait asks. Status 0 for a session, 1 for a pane not at its
+# shell, 2 for a shell showing no URL, 3 for a capture that failed, 4 for a
+# process table that could not be read, CLOUD_CLI_UNSEEN naming it.
 cloud_cli_detached() { # PANE PROMPT
   local rc=0
   if ! lane_pane_by_id "$1" || ! is_bare_shell "$LANE_PANE_CMD"; then return 1; fi
+  lane_pane_runs "$LANE_PANE_CMD" "$LANE_PANE_PID" claude || rc=$?
+  case "$rc" in
+    0) return 1 ;;
+    1) rc=0 ;;
+    *) CLOUD_CLI_UNSEEN=process-read-failed; return 4 ;;
+  esac
   cloud_session_read "$1" "$2" 0 || rc=$?
   case "$rc" in 0) return 0 ;; 1) return 2 ;; *) return 3 ;; esac
 }
@@ -2900,7 +2910,7 @@ cloud_cli_detached() { # PANE PROMPT
 # runs claude; 1 otherwise, CLOUD_CLI_UNSEEN naming why: bound, the bound
 # spent with no claude in the pane, pane-gone, the window closed, or
 # pane-read-failed and process-read-failed, a tmux pane list or a process
-# table this machine could not read.
+# table this machine could not read, the latter also cloud_cli_detached's.
 CLOUD_CLI_UNSEEN=""
 cloud_cli_wait() { # PANE
   local rc waited=0
@@ -2987,6 +2997,7 @@ cloud_session_launch() {
     case "$rc" in
       0) ;;
       5) detached=true ;;
+      6) ot_message cloud-cli-unseen "item=$item" "reason=$CLOUD_CLI_UNSEEN" >&2; return 1 ;;
       1 | 3)
         # A refused nudge has printed its own line.
         cloud_cli_detached "$pane" "$prompt" || exit_rc=$?
@@ -2994,6 +3005,7 @@ cloud_session_launch() {
           0) detached=true ;;
           2) ot_message cloud-launch-failed "item=$item" >&2; return 1 ;;
           3) ot_message tmux-failed "operation=capture-pane" "item=$item" >&2; return 1 ;;
+          4) ot_message cloud-cli-unseen "item=$item" "reason=$CLOUD_CLI_UNSEEN" >&2; return 1 ;;
           *) [[ "$rc" -eq 3 ]] || ot_message cloud-composer-stuck "item=$item" >&2; return 1 ;;
         esac ;;
       4) ot_message tmux-failed "operation=capture-pane" "item=$item" >&2; return 1 ;;
