@@ -751,6 +751,7 @@ mod tests {
                 entries: BTreeMap::from([("agent:scout:claude".to_owned(), proven)]),
                 sources: BTreeMap::new(),
                 bundles: BTreeMap::new(),
+                shims: BTreeSet::new(),
             },
             registrations: Vec::new(),
         }

@@ -16,7 +16,7 @@ use crate::error::Result;
 use crate::model::Scope;
 
 use super::desired::{Artifact, DesiredState, Owns};
-use super::instruction_shims::{ShimStanding, ShimState};
+use super::instruction_shims::{ShimStanding, keyed_position};
 
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
@@ -54,11 +54,12 @@ pub fn companions(root: &Path) -> [PathBuf; 2] {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedPaths {
     /// Files kendex writes end to end: rendered agents, skill trees and
-    /// their links, registration scripts, instruction shims.
+    /// their links, registration scripts, `CLAUDE.md` shims.
     pub whole: BTreeSet<PathBuf>,
     /// Shared configuration files kendex writes one key in — the
-    /// `Registration` edit targets. `desired.rs` states why kendex edits
-    /// rather than renders them: every unrelated key in them stays intact.
+    /// `Registration` edit targets and Gemini's instruction shim.
+    /// `desired.rs` states why kendex edits rather than renders them: every
+    /// unrelated key in them stays intact.
     pub shared: BTreeSet<PathBuf>,
     /// Shared configuration files this pass edits keys in or, where its
     /// edits leave nothing in one, takes away. A removal reverses a
@@ -298,25 +299,23 @@ fn collect(
         generated.whole.extend(whole);
         generated.shared.extend(shared);
     }
-    generated.whole.extend(
-        shims
-            .iter()
-            .filter(|shim| {
-                matches!(
-                    shim.state,
-                    ShimState::InSync | ShimState::Missing | ShimState::Stale
-                )
-            })
-            .map(|shim| shim.path.clone()),
-    );
+    for shim in shims.iter().filter(|shim| shim.kept()) {
+        let position = shim.position();
+        match position.owns {
+            Owns::File => generated.whole.insert(position.path),
+            Owns::Keys => generated.shared.insert(position.path),
+            Owns::Tree => unreachable!("a shim is a file or a key in one, never a tree"),
+        };
+    }
     generated
 }
 
 /// The shared configuration files the install record at `HEAD` has kendex
 /// writing keys in: the file each registration it records is reversed in
 /// ([`super::owned::installed`]), the one answer to what an installation
-/// wrote. Read at `HEAD` and not off the record on disk, which an
-/// uncommitted removal has already taken the entry out of.
+/// wrote, and the file each keyed shim it records sits in. Read at `HEAD`
+/// and not off the record on disk, which an uncommitted removal has
+/// already taken the entry out of.
 ///
 /// A scope that is not a project, a project outside git, an unborn `HEAD`
 /// and one holding neither a record nor an inventory listing paths name
@@ -358,6 +357,12 @@ pub(super) fn recorded(env: &Env, scope: &Scope, lock: &crate::lock::Lock) -> Re
         let edits = super::owned::installed(env, scope, entry).edits?;
         recorded.extend(edits.into_iter().map(|(path, _)| path));
     }
+    recorded.extend(
+        at_head
+            .shims
+            .iter()
+            .map(|shim| keyed_position(env, scope, *shim)),
+    );
     Ok(Recorded::Known(recorded))
 }
 

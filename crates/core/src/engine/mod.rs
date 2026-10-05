@@ -191,8 +191,7 @@ pub fn plan_scope(
     let safety = scoring::run(scope, &state);
     let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
     let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state);
-    let mut written = written::Written::default();
-    let mut kept = item_plan::KeptAsIs::default();
+    let (mut written, mut kept) = (written::Written::default(), item_plan::KeptAsIs::default());
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
@@ -218,6 +217,7 @@ pub fn plan_scope(
         &manifest,
         &mut state,
         options,
+        &mut new_lock.shims,
         &mut drift,
         &mut ops,
         &mut config_edits,
@@ -399,6 +399,7 @@ fn plan_scope_files(
     manifest: &Manifest,
     state: &mut desired::DesiredState,
     options: &PlanOptions,
+    shims: &mut BTreeSet<crate::lock::KeyedShim>,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
@@ -410,12 +411,13 @@ fn plan_scope_files(
     // The shims a project owes its instruction files, read off the
     // harness list the manifest declares: committed files, never lock
     // entries, so they are planned beside the settings file rather than
-    // through the item model.
+    // through the item model. The record keeps only the keyed ones.
     let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
         env,
         scope,
         &manifest.install.harnesses,
         options,
+        shims,
         ops,
         config_edits,
     )?;
@@ -593,6 +595,9 @@ fn fresh_lock(
             .collect(),
         sources: readings.source_revisions(lock),
         bundles: readings.bundle_revisions(lock),
+        // Carried until the shim pass settles them: the record of a write
+        // stands until a pass takes the write back.
+        shims: lock.shims.clone(),
     };
     (fresh, readings)
 }

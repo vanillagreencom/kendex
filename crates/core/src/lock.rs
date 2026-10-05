@@ -87,6 +87,27 @@ pub struct Lock {
     /// A lock written before this was recorded simply has none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bundles: BTreeMap<String, BundleRev>,
+    /// The instruction shims this scope wrote as a key in a settings
+    /// document whose other keys are the person's. A shim that is a whole
+    /// file needs no record here: its bytes are constant and the inventory
+    /// lists it. A key has no bytes of its own to prove whose it is, so this
+    /// is what takes it back once its harness leaves the list, in a project
+    /// outside git as in one inside it. A retirement refused over a file that
+    /// will not parse keeps its record, so the apply after the repair retires
+    /// it.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub shims: BTreeSet<KeyedShim>,
+}
+
+/// One instruction shim written as a key into a document whose other keys
+/// are the person's. Where that document sits follows from the scope, as a
+/// hook registration's registry does, so the record names no path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeyedShim {
+    /// `context.fileName` in the project's Gemini settings, naming
+    /// `AGENTS.md` beside Gemini's own default file.
+    GeminiContextFile,
 }
 
 /// One source's resolution at the last write.

@@ -377,6 +377,7 @@ pub(super) fn plan_lock_write(
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let entries_unchanged = new_lock.entries == lock.entries
+        && new_lock.shims == lock.shims
         && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty());
     let provenance_unchanged = new_lock.sources == lock.sources && new_lock.bundles == lock.bundles;
     // Whether a file sits at the path is the one question left, and it is

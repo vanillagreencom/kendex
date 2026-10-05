@@ -6,16 +6,18 @@
 //! `CLAUDE.md` holding one import line. Gemini reads whichever file names
 //! its `context.fileName` setting lists, so the project's Gemini settings
 //! name `AGENTS.md` beside Gemini's own default. Both are committed files
-//! the consumer's repository carries; nothing here is machine state, so
-//! nothing here is recorded in the lock.
+//! the consumer's repository carries.
 //!
-//! A shim's bytes are constant, which makes ownership a question of
-//! content: exact bytes are kendex's to rewrite, anything else at the
-//! position is the person's and a conflict (invariant 6). The same plan that
-//! writes the root shim retires a `.claude/CLAUDE.md` link at the root
+//! A `CLAUDE.md` shim's bytes are constant, which makes ownership a question
+//! of content: exact bytes are kendex's to rewrite, anything else at the
+//! position is the person's and a conflict (invariant 6). Gemini's shim is a
+//! key in a file of the person's, with no bytes of its own to prove it, so
+//! the install record keeps it ([`crate::lock::Lock::shims`]). The same plan
+//! that writes the root shim retires a `.claude/CLAUDE.md` link at the root
 //! `AGENTS.md`, and a project that stops installing to a harness has that
 //! harness's shims taken back (`retire`).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod observe;
@@ -28,6 +30,7 @@ use super::{DriftRow, DriftState, PlanOptions};
 use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
+use crate::lock::KeyedShim;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// The whole content of a Claude Code shim: one import, one newline.
@@ -85,14 +88,14 @@ impl ShimStanding {
         self.state != ShimState::InSync
     }
 
-    /// The edit this shim is, where it is a key in a settings document
-    /// whose other keys are the person's: Gemini's, which `gemini_edit`
-    /// upserts. `None` for a shim that is the whole file `write_shim` lays
-    /// down. Stated per harness, so a shim added for another one has to
-    /// say which it is here before anything owns its position.
-    pub fn edit(&self) -> Option<crate::configedit::ConfigEdit> {
+    /// The record this shim is kept under, where it is a key in a settings
+    /// document whose other keys are the person's: Gemini's. `None` for a
+    /// shim that is the whole file `write_shim` lays down. Stated per
+    /// harness, so a shim added for another one has to say which it is here
+    /// before anything owns its position.
+    pub fn keyed(&self) -> Option<KeyedShim> {
         match self.harness {
-            HarnessId::Gemini => Some(gemini_edit()),
+            HarnessId::Gemini => Some(KeyedShim::GeminiContextFile),
             HarnessId::Claude => None,
             HarnessId::Codex
             | HarnessId::Opencode
@@ -102,6 +105,28 @@ impl ShimStanding {
             | HarnessId::Antigravity => {
                 unreachable!("no instruction shim is derived for {}", self.harness.name())
             }
+        }
+    }
+
+    /// The edit this shim is, where it is a key: the one `gemini_edit`
+    /// upserts for Gemini's.
+    pub fn edit(&self) -> Option<crate::configedit::ConfigEdit> {
+        self.keyed().map(|shim| match shim {
+            KeyedShim::GeminiContextFile => gemini_edit(),
+        })
+    }
+
+    /// Whether the position stands as the shim the plan keeps: in sync, or
+    /// to be written or edited this pass. What the inventory lists and the
+    /// install record keeps; every other state leaves the position to the
+    /// person or to a later pass.
+    pub(crate) fn kept(&self) -> bool {
+        match self.state {
+            ShimState::InSync | ShimState::Missing | ShimState::Stale => true,
+            ShimState::Foreign
+            | ShimState::Symlinked
+            | ShimState::OldLink
+            | ShimState::Refused(_) => false,
         }
     }
 
@@ -186,6 +211,13 @@ pub fn observe(env: &Env, scope: &Scope, harnesses: &[HarnessId]) -> Result<Vec<
     Ok(standings)
 }
 
+/// Where a keyed shim's document sits in this scope.
+pub(crate) fn keyed_position(env: &Env, scope: &Scope, shim: KeyedShim) -> PathBuf {
+    match shim {
+        KeyedShim::GeminiContextFile => crate::harness::gemini::settings::settings_file(env, scope),
+    }
+}
+
 /// Plan every shim the scope owes: writes for the missing ones, the edit
 /// for Gemini's settings, the trash for the retired link, the retirement of
 /// a shim whose harness the list no longer names, and a drift row for
@@ -194,6 +226,13 @@ pub fn observe(env: &Env, scope: &Scope, harnesses: &[HarnessId]) -> Result<Vec<
 /// bound to the bytes read here and the shim lands after it (invariants 6
 /// and 7).
 ///
+/// `shims`, the keyed shims the record holds, loses each one this pass
+/// takes back and gains each one the plan keeps. A key already naming
+/// `AGENTS.md` while Gemini is installed is recorded as the shim: an
+/// install from before the record was kept is retired the same way, and a
+/// value the person set by hand before Gemini was installed reads the same
+/// as the one kendex wrote.
+///
 /// Every standing comes back too, in sync ones included: `verify` reports
 /// each shim as a row, which the drift rows alone cannot carry.
 pub(super) fn plan_instruction_shims(
@@ -201,11 +240,18 @@ pub(super) fn plan_instruction_shims(
     scope: &Scope,
     harnesses: &[HarnessId],
     options: &PlanOptions,
+    shims: &mut BTreeSet<KeyedShim>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut super::config_edits::ConfigEditPlan,
 ) -> Result<(Vec<ShimStanding>, Vec<DriftRow>)> {
     let standings = observe(env, scope, harnesses)?;
-    let mut drift = retire::retire(env, scope, harnesses, ops, config_edits)?;
+    let mut drift = retire::retire(env, scope, harnesses, shims, ops, config_edits)?;
+    shims.extend(
+        standings
+            .iter()
+            .filter(|shim| shim.kept())
+            .filter_map(ShimStanding::keyed),
+    );
     // The old link goes only once the root shim is planned or in sync: a
     // root position the plan cannot settle keeps its link, so Claude Code
     // keeps reading the root file one way or the other.
