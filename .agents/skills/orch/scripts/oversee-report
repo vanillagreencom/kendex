@@ -42,6 +42,7 @@ message() { # KEY VALUE [CAUSE]
       args) echo "oversee-report takes due, render or write, then --state PATH and one --repo OWNER/REPO or more; write also takes --summary-file PATH and --succession. See --help." ;;
       state) echo "The fleet state file could not be read as workflow-state JSON, so no report is judged or rendered from a partial fleet." ;;
       setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
+      setting-read) echo "orch-env could not read the setting, so which repositories the report reads is unknown. Its own words are below." ;;
       clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
       sort) echo "sort failed over the landed rows, so their order is unknown." ;;
       auth-helper) echo "The shared GitHub auth helper could not be loaded, so no GitHub credential can be chosen:" ;;
@@ -96,6 +97,8 @@ the owner progress report record schemas/workflow-state.md § Recording policy
 states: its directory and its names are `workflow-state progress-report-path`'s,
 and this script reads and writes them through that verb alone. The newest
 report there is the last written report: its age is what the cadence measures.
+--repo names each repository the GitHub lists read, the watch's own --repo
+values; ORCH_CONNECTED_REPOS, under Settings, adds each one it lists after them.
 Report contents start at the last report sent to the owner, identified by
 its attachment in `lane-mail events --item overseer`. A quiet report sends
 no notice and does not advance that owner baseline. With no retained sent
@@ -147,7 +150,8 @@ write    prints the rows and writes the same bytes to the path
 Rows:
   Landed          each fleet item, a lanes[] record of any status, whose own
                   branch, the key lower-cased, has a pull request merged since
-                  the last report, in any --repo: one merged search per repo,
+                  the last report, in any --repo or ORCH_CONNECTED_REPOS
+                  entry: one merged search per repo,
                   matched against every item. The issue cell carries the
                   PR number and the merge commit.
   Escapes         one line under Landed: pull requests merged to the base
@@ -223,6 +227,12 @@ Settings, read through the kendex settings ladder:
                              `issue,what it is,why it matters`
   ORCH_REPORT_SUMMARY_LINES  positive line cap for write's summary, default 15;
                              counts blank lines, excluding trailing blanks
+  ORCH_CONNECTED_REPOS       blank-separated OWNER/REPO list, read through
+                             orch-env in this checkout as oversee-watch reads
+                             it: each entry, lowercased, is read after the
+                             --repo values by every list a --repo is, an
+                             entry they already name in any casing skipped.
+                             Unreadable refuses as setting-read
   OVERSEE_REPORT_TRACKER     path to the Linear CLI
   OVERSEE_REPORT_GITHUB      path to the github skill's github.sh
   OVERSEE_REPORT_LANE_MAIL, OVERSEE_REPORT_LANE_HOST,
@@ -308,6 +318,12 @@ source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
 # which this sources, reads the same skill.
 # shellcheck source=lib/escapes.sh
 source "$SCRIPT_DIR/lib/escapes.sh"
+# The repositories ORCH_CONNECTED_REPOS lists, after the --repo values, as the
+# watch whose report-due event runs this reads them: a merge there can make a
+# report due, so the report lists it.
+CONNECTED="$(orch_connected_repos "${REPOS[@]}")" || refuse setting-read ORCH_CONNECTED_REPOS
+IFS=$'\n' read -ra CONNECTED_REPOS -d '' <<<"$CONNECTED" || true
+REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})
 
 # github_auth — the auth ladder oversee-watch runs (references/gates.md §
 # Waiter auth ladder): a stale env token yields to the keyring, and where
@@ -502,7 +518,7 @@ fi
 # --- what landed --------------------------------------------------------------
 
 # LANDED holds `item<TAB>number<TAB>sha` per fleet item whose own pull
-# request merged at or after LANDED_SINCE and before NOW, in any --repo, oldest
+# request merged at or after LANDED_SINCE and before NOW, in any REPOS entry, oldest
 # merge first. Each repository is read once, as one search for pull requests
 # merged since then, and every lanes[] item is matched against that one list by
 # lib/lane-state.sh's LANE_MERGED_JQ, the filter oversee-watch's merged check
@@ -787,7 +803,7 @@ render() {
   escapes_row
   echo
 
-  # Open PRs as `branch<TAB>number`, across every --repo.
+  # Open PRs as `branch<TAB>number`, across every REPOS entry.
   for repo in "${REPOS[@]}"; do
     if ! list="$(gh pr list --repo "$repo" --state open --limit "$PR_PAGE" --json number,headRefName 2>"$WORK_DIR/gh.err")"; then
       refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"

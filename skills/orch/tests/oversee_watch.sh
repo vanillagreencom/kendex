@@ -77,8 +77,9 @@
 #   8d. ORCH_CONNECTED_REPOS: each listed repository is read by the merged
 #       lookup and the heartbeat's open pull request list after the --repo
 #       values or the resolved default, in repeat mode too, once and in one
-#       spelling, with one must-fail control per rule; a setting orch-env
-#       cannot read exits 2 before any pass, with its control
+#       spelling, with the append's control; a setting orch-env cannot read
+#       exits 2 before any pass, in repeat mode with no --repo too, each with
+#       its control
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -1701,7 +1702,8 @@ done
 # repository first, and an entry a --repo already names is read once. The
 # reads proven are the merged lookup for the item and the heartbeat's open
 # pull request list. The repeat row hands its pass a --repo for every
-# repository the wrapper settled, and that pass reads the setting again.
+# repository the wrapper settled, and that pass reads the setting again and
+# skips what those already name.
 # connected_case NAME SETTING MODE [WATCH] — MODE is `repo` (--repo owner/repo),
 # `default` (no --repo, `gh repo view` answering owner/repo) or `repeat`
 # (--repo owner/repo under --repeat over one running record for issue-5, the
@@ -1740,40 +1742,64 @@ for row in \
   connected_case "$name" "$setting" "$mode"
   assert_eq "rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN" "rc=$want_rc merged=$want open=$want" "$label" "$err"
 done
-# One must-fail control per rule, each turning the first row's assertion red:
-# the entry added, an entry --repo names skipped, and the entry lowercased.
-connected_control() { # NAME OLD NEW LABEL
-  local scripts got
-  scripts="$(mutant_scripts "$1/orch" oversee-watch)" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
-  mutate_file "$scripts/oversee-watch" "$2" "$3"
-  connected_case "$1" "Other/Repo owner/repo" repo "$scripts/oversee-watch"
-  got="rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN"
-  assert_eq "red=$([[ "$got" != "rc=0 merged=owner/repo other/repo open=owner/repo other/repo" ]] && echo yes || echo no)" \
-    "red=yes" "control: $4 ($got)" "$err"
-}
-connected_control connected-add '    REPOS+=("$repo")' '    :' "the add removed"
-connected_control connected-skip '    if grep -qxF -- "$repo" <<<"$repos_seen"; then continue; fi' '    :' "the skip removed"
-connected_control connected-case "    repo=\"\$(printf '%s' \"\$repo\" | tr '[:upper:]' '[:lower:]')\"" '    :' "the lowercasing removed"
+# The control for the append: the entries are still read and printed, and
+# none joins the watched set, so the run reads the --repo alone. Each listed
+# entry's spelling and the skip are lib/gh-repo.sh's orch_connected_repos
+# rules, whose controls are in connected-repos.test.sh.
+CONNECTED_MUTANT_DIR="$TMP_ROOT/connected-add"
+CONNECTED_MUTANT="$(mutant_scripts connected-add/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$CONNECTED_MUTANT_DIR/github"
+mutate_file "$CONNECTED_MUTANT" '  REPOS+=(${connected_list[@]+"${connected_list[@]}"})' '  true || REPOS+=(${connected_list[@]+"${connected_list[@]}"})'
+connected_case connected-add "Other/Repo owner/repo" repo "$CONNECTED_MUTANT"
+assert_eq "rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN" "rc=0 merged=owner/repo open=owner/repo" \
+  "control: without the append only the --repo is read" "$err"
 # A setting orch-env refuses to read ends the watch before any pass rather than
 # watching fewer repositories: ORCH_CONSUMER_REPOS is the retired setting
-# orch-env refuses on every read.
-connected_unread_case() { # NAME [WATCH]
+# orch-env refuses on every read. MODE is `single` (--repo owner/repo, one run)
+# or `repeat` (no --repo, --repeat 0 over one running record, the sleep stub
+# counting each repeat delay in slept and taking the state away, so a wrapper
+# that reached a pass ends on the next read).
+connected_unread_case() { # NAME MODE [WATCH]
+  local args=(--repo owner/repo) env_args=()
   new_case "$1"
+  if [[ "$2" == repeat ]]; then
+    printf 'owner/repo\n' > "$STUB_DIR/repoview.txt"
+    write_state "$STUB_DIR/state.json" "$(lane_record issue-5 '' '' /w/issue-5 running)"
+    repeat_sleep_stub 'echo x >> "$STUB_DIR/slept"' 'unlink "$STUB_DIR/state.json"'
+    env_args=(PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH")
+    args=(--no-repo --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json")
+  fi
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch ORCH_CONSUMER_REPOS=x/y -- --repo owner/repo 2>"$err" </dev/null)" && rc=0 || rc=$?
+  out="$(WATCH_BIN="${3:-}" run_watch ${env_args[@]+"${env_args[@]}"} ORCH_CONSUMER_REPOS=x/y -- "${args[@]}" 2>"$err" </dev/null)" && rc=0 || rc=$?
   CONNECTED_UNREAD="$(grep -c '^oversee-watch: connected-repos-unread setting=ORCH_CONNECTED_REPOS$' "$err" || true)"
+  CONNECTED_SLEPT="$(grep -c . "$STUB_DIR/slept" 2>/dev/null || true)"
+  CONNECTED_SLEPT="${CONNECTED_SLEPT:-0}"
 }
-connected_unread_case connected_unread
-assert_eq "rc=$rc unread=$CONNECTED_UNREAD out=$out" "rc=2 unread=1 out=" \
-  "a setting orch-env cannot read exits 2 naming it, with no pass run" "$err"
+for row in \
+  "connected_unread|single|a setting orch-env cannot read exits 2 naming it, with no pass run" \
+  "connected_unread_repeat|repeat|in repeat mode with no --repo the wrapper exits 2 naming it, before any pass"; do
+  IFS='|' read -r name mode label <<<"$row"
+  connected_unread_case "$name" "$mode"
+  assert_eq "rc=$rc unread=$CONNECTED_UNREAD slept=$CONNECTED_SLEPT out=$out" "rc=2 unread=1 slept=0 out=" "$label" "$err"
+done
 UNREAD_MUTANT_DIR="$TMP_ROOT/connected-unread-mutant"
 UNREAD_MUTANT="$(mutant_scripts connected-unread-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$UNREAD_MUTANT_DIR/github"
 mutate_file "$UNREAD_MUTANT" '    || die connected-repos-unread' '    || true || die connected-repos-unread'
-connected_unread_case connected_unread_control "$UNREAD_MUTANT"
+connected_unread_case connected_unread_control single "$UNREAD_MUTANT"
 assert_eq "rc=$rc unread=$CONNECTED_UNREAD" "rc=0 unread=0" \
   "control: with the refusal removed the watch runs on without the setting" "$err"
+# The repeat row's control: with the read after the empty-set return, the
+# wrapper reads nothing, and the pass refuses the setting and sleeps before
+# the read that ends the run.
+EARLY_MUTANT_DIR="$TMP_ROOT/connected-early-mutant"
+EARLY_MUTANT="$(mutant_scripts connected-early-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$EARLY_MUTANT_DIR/github"
+mutate_file "$EARLY_MUTANT" '  connected="$(orch_connected_repos' '  [[ ${#REPOS[@]} -gt 0 ]] || return 0
+  connected="$(orch_connected_repos'
+connected_unread_case connected_unread_repeat_control repeat "$EARLY_MUTANT"
+assert_eq "rc=$rc unread=$CONNECTED_UNREAD slept=$CONNECTED_SLEPT" "rc=2 unread=1 slept=1" \
+  "control: with the read after the empty-set return the wrapper sleeps after a refused pass" "$err"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

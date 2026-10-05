@@ -229,9 +229,10 @@ dotgit_above() {
 # directory's git common root, as its worktrees do, or whose origin names the
 # same OWNER/REPO, as a second clone does, is own. Any other is connected
 # where ORCH_CONNECTED_REPOS lists its origin OWNER/REPO, compared
-# case-insensitively, read in the overseer's directory with the launcher's own
-# value and private-file selector dropped: those are the settings of the
-# checkout the launcher is installed in, which can be the target's. A state
+# case-insensitively, read by lib/gh-repo.sh's orch_connected_repos in the
+# overseer's directory with the launcher's own value and private-file selector
+# dropped: those are the settings of the checkout the launcher is installed in,
+# which can be the target's. A state
 # that does not parse is the cap count's cap-unreadable on the first item; a
 # wake, which the cap does not count, refuses on it here. Returns 1 with the
 # refusal printed.
@@ -285,15 +286,13 @@ overseer_bind() {
     [[ "$same" != true ]] || return 0
   fi
   OVERSEER_BIND=foreign
-  connected="$(cd -- "$dir" && env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env" ORCH_CONNECTED_REPOS "")" \
+  connected="$(cd -- "$dir" && unset ORCH_CONNECTED_REPOS KENDEX_ENV_FILE && orch_connected_repos)" \
     || { ot_message overseer-unjudged cause=setting "path=$dir" >&2; return 1; }
-  if [[ -n "${connected//[[:space:]]/}" ]]; then
+  if [[ -n "$connected" ]]; then
     [[ -n "$LAUNCH_NAME" ]] || { ot_message overseer-unjudged cause=origin "path=$CLAIM_ROOT" >&2; return 1; }
-    listed="$(jq -n --arg repo "$LAUNCH_NAME" --arg list "$connected" \
-      '($repo | ascii_downcase) as $r | any($list | ascii_downcase | splits("\\s+"); . == $r)')" \
-      || { ot_message overseer-unjudged cause=setting "path=$dir" >&2; return 1; }
+    listed="$(printf '%s' "$LAUNCH_NAME" | tr '[:upper:]' '[:lower:]')"
     # shellcheck disable=SC2034  # read by open-terminal's item loop and lane_record_write
-    [[ "$listed" != true ]] || { OVERSEER_BIND=connected; CONNECTED_REPO="$LAUNCH_NAME"; }
+    if grep -qxF -- "$listed" <<<"$connected"; then OVERSEER_BIND=connected; CONNECTED_REPO="$LAUNCH_NAME"; fi
   fi
   OVERSEER_NAME="${OVERSEER_NAME:-$root}"
   LAUNCH_NAME="${LAUNCH_NAME:-$launch_root}"

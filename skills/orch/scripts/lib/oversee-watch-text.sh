@@ -801,11 +801,20 @@ Environment:
                               API call. With ORCH_SECURITY_ALERTS=off it is
                               not read
   ORCH_CONNECTED_REPOS        blank-separated OWNER/REPO list, read through
-                              orch-env in this checkout: each entry is a
-                              watched repository after the --repo values, an
-                              entry they already name skipped. Each one adds
-                              its reads to every long pass, as a --repo does.
-                              An unreadable setting exits 2
+                              orch-env in this checkout, an inherited value
+                              and KENDEX_ENV_FILE honored, since the watch
+                              runs in the overseer's own checkout: each entry
+                              is a watched repository after the --repo values,
+                              an entry they already name skipped. Each one
+                              adds its reads to every long pass, as a --repo
+                              does. After a change, restart the watch: its
+                              start exports the value it loaded, which every
+                              repeat pass inherits. An unreadable setting
+                              exits 2, in repeat mode before the first pass.
+                              open-terminal reads it in the overseer's
+                              directory without those two: open-terminal
+                              --help. oversee-report reads it as this watch
+                              does
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,

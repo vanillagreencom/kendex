@@ -100,6 +100,8 @@ OVERSEER_CLONE="$TMP_ROOT/overseer-clone"
 new_repo "$OVERSEER_CLONE" https://github.com/Own/Fleet.git
 TARGET="$TMP_ROOT/target"
 new_repo "$TARGET" https://github.com/acme/target.git
+UPPER_TARGET="$TMP_ROOT/upper-target"
+new_repo "$UPPER_TARGET" https://github.com/ACME/Target.git
 BARE_TARGET="$TMP_ROOT/bare-target"
 new_repo "$BARE_TARGET"
 NO_GIT="$TMP_ROOT/no-git"
@@ -190,6 +192,7 @@ rows=(
   "cwd|absent|$TARGET||rc=1 record=none foreign=1|another repository's clone refuses overseer-foreign with the setting absent"
   "cwd|other/repo acme/target-web|$TARGET||rc=1 record=none foreign=1|a clone whose repository the setting does not list, beside one it prefixes, refuses overseer-foreign"
   "cwd|other/repo ACME/Target|$TARGET||rc=0 record=repo=acme/target foreign=0|a listed repository passes, matched case-insensitively, and its lane record carries it as repo"
+  "cwd|acme/target|$UPPER_TARGET||rc=0 record=repo=ACME/Target foreign=0|a listed repository passes whatever casing the launch checkout's origin spells it in"
   "cwd|absent|$TARGET|ORCH_CONNECTED_REPOS=acme/target|rc=1 record=none foreign=1|a setting the target checkout or the launcher's own environment holds admits nothing"
   "cwd|absent|$TARGET|KENDEX_ENV_FILE=alt.env|rc=1 record=none foreign=1|the launcher's own private-file selector does not pick the overseer's private file"
   "none|absent|$OVERSEER_WT||rc=0 record=repo=null foreign=0|with no state yet a worktree of the overseer's repository passes, bound by the --state-dir"
@@ -354,17 +357,22 @@ connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
   "control: reading the setting in the launch checkout lets the target's own setting admit it"
-MUT="$(control env-file "$BIND" 'env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"' 'env -u ORCH_CONNECTED_REPOS "$SCRIPT_DIR/orch-env"')"
+MUT="$(control env-file "$BIND" 'unset ORCH_CONNECTED_REPOS KENDEX_ENV_FILE && orch_connected_repos' 'unset ORCH_CONNECTED_REPOS && orch_connected_repos')"
 connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" ENV=KENDEX_ENV_FILE=alt.env CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
   "control: keeping the launcher's private-file selector lets the overseer's other private file admit the target"
-MUT="$(control listed "$BIND" '[[ "$listed" != true ]] ||' '[[ "$listed" == "$listed" ]] ||')"
+MUT="$(control listed "$BIND" 'if grep -qxF -- "$listed" <<<"$connected"; then' 'if false && grep -qxF -- "$listed" <<<"$connected"; then')"
 connected 'other/repo ACME/Target'; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
   "control: without the list match a listed repository is refused"
-MUT="$(control inherited "$BIND" 'env -u ORCH_CONNECTED_REPOS -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"' 'env -u KENDEX_ENV_FILE "$SCRIPT_DIR/orch-env"')"
+MUT="$(control launch-case "$BIND" "listed=\"\$(printf '%s' \"\$LAUNCH_NAME\" | tr '[:upper:]' '[:lower:]')\"" "listed=\"\$LAUNCH_NAME\"; : \"\$(printf '%s' \"\$LAUNCH_NAME\" | tr '[:upper:]' '[:lower:]')\"")"
+connected acme/target; fleet cwd "$OVERSEER_REPO"
+run_ot SCRIPT="$MUT" CWD="$UPPER_TARGET" CC-1
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
+  "control: without lowercasing the launch checkout's origin a listed repository spelled in capitals is refused"
+MUT="$(control inherited "$BIND" 'unset ORCH_CONNECTED_REPOS KENDEX_ENV_FILE && orch_connected_repos' 'unset KENDEX_ENV_FILE && orch_connected_repos')"
 connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$TARGET" ENV=ORCH_CONNECTED_REPOS=acme/target CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \

@@ -307,6 +307,62 @@ run -- render --state "$CASE/state.json" --repo owner/a --repo owner/b
 assert_eq "$RC|$(grep -c -- '--state merged' "$CASE/gh.calls")|$(grep -c -- '--head' "$CASE/gh.calls" || true)" "0|2|0" \
   "five lane records over two repositories take two merged searches and no per-branch read"
 
+# ORCH_CONNECTED_REPOS: each listed repository is read after --repo by the
+# merged search and the open pull request list, once and in one spelling, so a
+# merge there lands in the report and an open pull request there runs; a
+# setting orch-env cannot read refuses. KEN-1 merged as other/repo#31 and
+# KEN-2 is open there as #32. SETTING `absent` sets none and `retired` sets
+# ORCH_CONSUMER_REPOS, which orch-env refuses on every read. Sets CONNECTED to
+# the exit, the repositories each list read in order, the KEN- cells, and the
+# first stderr line of a refusal.
+connected_report() { # NAME SETTING [REPORT]
+  local envs=()
+  new_case "$1"
+  report -3600
+  fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 running)"
+  issue KEN-1 "Title 1" "Outcome 1"
+  issue KEN-2 "Title 2" "Outcome 2"
+  merged_pr 31 ken-1 -60 3131313aaa other | jq -s . > "$CASE/merged.other_repo.json"
+  echo '[{"number": 32, "headRefName": "ken-2"}]' > "$CASE/open.other_repo.json"
+  case "$2" in
+    absent) ;;
+    retired) envs=(ORCH_CONSUMER_REPOS=x/y) ;;
+    *) envs=("ORCH_CONNECTED_REPOS=$2") ;;
+  esac
+  REPORT_UNDER_TEST="${3:-}" run ${envs[@]+"${envs[@]}"} -- render --state "$CASE/state.json" --repo owner/repo
+  CONNECTED="rc=$RC"
+  if [[ "$RC" -eq 0 ]]; then
+    CONNECTED+=" merged=$(awk '/--state merged/ { for (i = 1; i < NF; i++) if ($i == "--repo") { printf "%s%s", sep, $(i + 1); sep = "," } }' "$CASE/gh.calls")"
+    CONNECTED+=" open=$(awk '/--state open/ { for (i = 1; i < NF; i++) if ($i == "--repo") { printf "%s%s", sep, $(i + 1); sep = "," } }' "$CASE/gh.calls")"
+    CONNECTED+=" cells=$(grep -o '^| KEN-[0-9]* ([^)]*)' <<<"$OUT" | sed 's/^| //' | paste -sd, -)"
+  else
+    CONNECTED+=" err=$(first_err)"
+  fi
+}
+CONNECTED_ABSENT="rc=0 merged=owner/repo open=owner/repo cells=KEN-2 (no PR, running)"
+for row in \
+  "connected_listed|Other/Repo OWNER/repo|rc=0 merged=owner/repo,other/repo open=owner/repo,other/repo cells=KEN-1 (#31, 3131313),KEN-2 (#32, running)|a listed repository is read after --repo, once, in one spelling, and its merge and open pull request are reported" \
+  "connected_absent|absent|$CONNECTED_ABSENT|with no setting only --repo is read" \
+  "connected_unread|retired|rc=2 err=oversee-report: setting-read=ORCH_CONNECTED_REPOS|a setting orch-env cannot read refuses as setting-read"; do
+  IFS='|' read -r name setting want label <<<"$row"
+  connected_report "$name" "$setting"
+  assert_eq "$CONNECTED" "$want" "$label"
+done
+# One control per rule: without the append the listed repository is read by
+# nothing, and without the refusal the run goes on to workflow-state's report
+# path, whose own orch-env read refuses the same retired setting.
+CONNECTED_MUTANT="$(mutant_scripts connected-add/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/connected-add/github"
+mutate_file "$CONNECTED_MUTANT" 'REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})' 'true || REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})'
+connected_report connected_add_control "Other/Repo OWNER/repo" "$CONNECTED_MUTANT"
+assert_eq "$CONNECTED" "$CONNECTED_ABSENT" "control: without the append only --repo is read"
+UNREAD_MUTANT="$(mutant_scripts connected-unread/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/connected-unread/github"
+mutate_file "$UNREAD_MUTANT" '|| refuse setting-read ORCH_CONNECTED_REPOS' '|| true || refuse setting-read ORCH_CONNECTED_REPOS'
+connected_report connected_unread_control retired "$UNREAD_MUTANT"
+assert_eq "$CONNECTED" "rc=2 err=oversee-report: report-path=--succession" \
+  "control: without the refusal the run reads on past the setting, to the next reader orch-env refuses"
+
 # A first report inside the 7-day lookback reaches the fleet start, whatever
 # the minutes setting says.
 new_case landed_first_report

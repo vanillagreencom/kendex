@@ -468,12 +468,14 @@ fi
 # in, after every --repo so the items repository stays first. An entry a --repo
 # already names is skipped rather than refused: a launch line written before
 # the setting names them by hand, and repeat mode hands its pass the set this
-# check settled. With no --repo the set is still unresolved and gains nothing
-# here; the call below the default resolution adds them.
+# check settled. The setting is read even with no --repo, so the repeat
+# wrapper, which resolves no default, refuses an unreadable one once rather
+# than each pass refusing it after every sleep; the set itself is still
+# unresolved there and gains nothing, and the call below the default
+# resolution adds the entries.
 check_repo_set() {
-  local repo_i repo_raw repos_seen="" connected repo connected_list=()
-  [[ ${#REPOS[@]} -gt 0 ]] || return 0
-  for repo_i in "${!REPOS[@]}"; do
+  local repo_i repo_raw repos_seen="" connected connected_list=()
+  for repo_i in ${REPOS[@]+"${!REPOS[@]}"}; do
     repo_raw="${REPOS[$repo_i]}"
     REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
     if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
@@ -481,15 +483,11 @@ check_repo_set() {
     fi
     repos_seen+="${REPOS[$repo_i]}"$'\n'
   done
-  connected="$("$SCRIPT_DIR/orch-env" ORCH_CONNECTED_REPOS "")" \
+  connected="$(orch_connected_repos ${REPOS[@]+"${REPOS[@]}"})" \
     || die connected-repos-unread "" "setting=ORCH_CONNECTED_REPOS"
-  read -ra connected_list -d '' <<<"$connected" || true
-  for repo in ${connected_list[@]+"${connected_list[@]}"}; do
-    repo="$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
-    if grep -qxF -- "$repo" <<<"$repos_seen"; then continue; fi
-    REPOS+=("$repo")
-    repos_seen+="$repo"$'\n'
-  done
+  [[ ${#REPOS[@]} -gt 0 ]] || return 0
+  IFS=$'\n' read -ra connected_list -d '' <<<"$connected" || true
+  REPOS+=(${connected_list[@]+"${connected_list[@]}"})
 }
 
 # The --item and --hosted checks, run by a single run and by every repeat pass
