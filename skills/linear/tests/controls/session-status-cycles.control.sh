@@ -16,3 +16,9 @@ control_expect 'ended unfinished cycle: cycle is null'
 control_replace scripts/lib/cycle-dates.sh 1 \
     "        '[.[] | select(.startsAt <= \$today and .endsAt > \$today)]" \
     "        '[.[] | select(.startsAt <= \$today and .progress < 1)]"
+# Progress for the start too: a running cycle whose issues are all done stops
+# being the working cycle before its end.
+control_expect 'finished running cycle: cycle is the started one'
+control_replace scripts/lib/cycle-dates.sh 1 \
+    "        '[.[] | select(.startsAt <= \$today and .endsAt > \$today)]" \
+    "        '[.[] | select(.startsAt <= \$today and .endsAt > \$today and .progress < 1)]"

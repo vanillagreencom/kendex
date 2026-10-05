@@ -245,11 +245,12 @@ chmod +x "$TMP_BASE/after/bin/sleep"
 run_linear "$TMP_BASE/after" statuses list >/dev/null 2>&1 || true
 assert_eq "a rate-limited answer waits out its Retry-After" "$(tr '\n' ' ' <"$TMP_BASE/after/slept")" "5 5 "
 
-echo "=== a 5xx or unanswered mutation is sent once ==="
+echo "=== a 5xx or unanswered query is retried; such a mutation is sent once ==="
 # The stub answers every request alike, so the count of requests it saw is the
-# count the library sent. The mutation document opens with a newline and an
-# indent, as the commands' heredoc documents do.
+# count the library sent. Both documents open with a newline and an indent, as
+# the commands' heredoc documents do.
 MUTATION=$'\n    mutation CreateComment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }'
+QUERY=$'\n    query Q { viewer { id } }'
 request_once() { # root, document: graphql_request's combined output
   local root="$1"
   (cd "$root" && env PATH="$root/bin:$PATH" LINEAR_RETRY_BASE_DELAY=0 bash -c '
@@ -260,18 +261,22 @@ request_once() { # root, document: graphql_request's combined output
     graphql_request "$1" "{}"
   ' "$root" "$2" 2>&1)
 }
-for row in "wserver|502|{}|1|a mutation answered 5xx is sent once" \
-  "wnoanswer|none||1|an unanswered mutation is sent once" \
-  "wrl|400|$RL_BODY|3|a rate-limited mutation is retried"; do
-  IFS='|' read -r env code body want label <<<"$row"
+for row in "wserver|MUTATION|502|{}|1|a mutation answered 5xx is sent once" \
+  "wnoanswer|MUTATION|none||1|an unanswered mutation is sent once" \
+  "wrl|MUTATION|400|$RL_BODY|3|a rate-limited mutation is retried" \
+  "rserver|QUERY|502|{}|3|an indented query answered 5xx is sent three times" \
+  "rnoanswer|QUERY|none||3|an unanswered indented query is sent three times"; do
+  IFS='|' read -r env document code body want label <<<"$row"
   make_env "$TMP_BASE/$env" "$code" "$body"
   : >"$TMP_BASE/$env/calls"
-  write_rc=0
-  out="$(request_once "$TMP_BASE/$env" "$MUTATION")" || write_rc=$?
-  assert_ne "$label: the call fails" "$write_rc" 0
+  request_rc=0
+  out="$(request_once "$TMP_BASE/$env" "${!document}")" || request_rc=$?
+  assert_ne "$label: the call fails" "$request_rc" 0
   assert_eq "$label" "$(wc -l <"$TMP_BASE/$env/calls" | tr -d ' ')" "$want"
   if [[ "$want" == 1 ]]; then
     # The key line an agent reads before deciding whether to send the write again.
     assert_contains "$label: names the write unconfirmed" "$out" "linear-http: write=unconfirmed code=${code/none/000}"
+  else
+    assert_not_contains "$label: names no unconfirmed write" "$out" "linear-http: write=unconfirmed"
   fi
 done

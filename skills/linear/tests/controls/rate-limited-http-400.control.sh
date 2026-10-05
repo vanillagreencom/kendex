@@ -47,6 +47,13 @@ control_replace scripts/lib/common.sh 1 \
     "    local read_pattern='^[[:space:]]*(query[^_[:alnum:]]|\\{)'" \
     "    local read_pattern='^\$'"
 
+# Read a query at column 0 alone, so a command's indented heredoc query is a
+# write and fails on its first 5xx or unanswered try.
+control_expect "an indented query answered 5xx is sent three times"
+control_replace scripts/lib/common.sh 1 \
+    "    local read_pattern='^[[:space:]]*(query[^_[:alnum:]]|\\{)'" \
+    "    local read_pattern='^(query[^_[:alnum:]]|\\{)'"
+
 # Only a non-200 answer is read for the RATELIMITED code.
 control_expect "a RATELIMITED body on HTTP 200 reports the rate limit"
 control_replace scripts/lib/common.sh 1 \

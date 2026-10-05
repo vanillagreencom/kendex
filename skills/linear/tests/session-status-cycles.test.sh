@@ -53,6 +53,14 @@ assert_jq "running cycle: cycle is the started one" "$out" '.cycle.id == "curren
 assert_jq "running cycle: prev is the latest earlier cycle" "$out" '.prev_cycle.id == "recent"'
 assert_jq "running cycle: next is the earliest later cycle" "$out" '.next_cycle.id == "future"'
 
+# A team that finishes its issues early: the running cycle reaches progress 1
+# before its end and is still the working cycle.
+finished=$(jq -cs . <<<"$(cycle future 21600 1231200 0)$(cycle old -2592000 -1296000 1)$(cycle current -3600 1206000 1)$(cycle recent -1296000 -3600 1)")
+out=$(status "$finished")
+assert_jq "finished running cycle: cycle is the started one" "$out" '.cycle.id == "current"'
+assert_jq "finished running cycle: prev is the latest earlier cycle" "$out" '.prev_cycle.id == "recent"'
+assert_jq "finished running cycle: next is the earliest later cycle" "$out" '.next_cycle.id == "future"'
+
 idle=$(jq -cs . <<<"$(cycle future 21600 1231200 0)$(cycle old -2592000 -1296000 1)$(cycle recent -1296000 -3600 1)")
 out=$(status "$idle")
 assert_jq "no cycle running: cycle is null" "$out" '.cycle == null'
