@@ -25,7 +25,7 @@ kendex distribution is independent of npm. `kendex update-pi` installs the catal
 - README or documentation edits, unless the gallery copy needs them.
 - Repository-only files: tests, fixtures, tooling.
 
-Choose the bump and write breaking-change entries under the [release standard](https://github.com/vanillagreencom/kendex/blob/main/changelog.d/README.md#release-standard). It also defines compatibility and owner approval.
+Choose the bump by the [release-version rule](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/CHECKS.md#release-versions). Write breaking-change entries under the [release standard](https://github.com/vanillagreencom/kendex/blob/main/changelog.d/README.md#release-standard), which also defines compatibility.
 
 ## Audit
 

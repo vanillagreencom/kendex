@@ -82,7 +82,9 @@ A repository that releases chooses each version by this rule. The [version-bump 
 - From 1.0, fixes, internal changes, refactors, tests and docs are a patch. A minor needs a new user-facing capability or a consumer-visible setting. A breaking change is a major and needs the owner's approval.
 - Before 1.0, a minor marks a break and a patch holds everything else.
 - An `added/` fragment names only something a consumer of the repository uses. Internal tooling and tests go under `changed/`, or carry no fragment where [commit-msg](#commit-msg) owes none.
-- Releases are batched: cut one when a consumer waits for a fix or user-facing capabilities have built up, never one per merge day.
+- A critical fix (broken install, data loss, security, a blocked consumer) ships promptly and is never held for a batch.
+- When several critical fixes are open or in flight, they land together in one release, not one release each.
+- Otherwise, cut at most one release a day, batching what has merged.
 
 ### Version bumps
 
