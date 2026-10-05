@@ -445,8 +445,8 @@ if [ -n "$version_paths" ]; then
         refuse_entry breaking minor-breaking "$value" "A minor release holds no Breaking entry." "$breaking_remedy"
         ;;
       patch)
-        refuse_entry added patch-added "$value" "A patch release holds fixes only, and this one adds." "Release the addition as a minor."
-        refuse_entry breaking patch-breaking "$value" "A patch release holds fixes only, and this one breaks." "$breaking_remedy"
+        refuse_entry added patch-added "$value" "A patch release adds no new capability, and this one adds." "Release the addition as a minor."
+        refuse_entry breaking patch-breaking "$value" "A patch release breaks nothing, and this one breaks." "$breaking_remedy"
         ;;
     esac
   done <"$GG_TMP/versions.z"
