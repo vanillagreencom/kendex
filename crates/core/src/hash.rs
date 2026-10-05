@@ -156,28 +156,6 @@ pub fn hash_files(files: &[(std::path::PathBuf, Vec<u8>)]) -> String {
 pub struct RenderedIdentity {
     exact: String,
     persisted: String,
-    /// Set for a tree read off disk, for [`Self::matches`].
-    ignored_aside: Option<IgnoredAside>,
-}
-
-/// A tree read off disk, and its identity with the files Git ignores in it
-/// left out. Read the first time the whole tree does not match, so a tree
-/// that matches costs no Git process, and kept for every later comparison
-/// against another record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct IgnoredAside {
-    root: PathBuf,
-    checkout: Checkout,
-    identity: std::sync::OnceLock<Option<(String, String)>>,
-}
-
-impl IgnoredAside {
-    fn matches(&self, recorded: &str) -> bool {
-        self.identity
-            .get_or_init(|| beside_ignored(&self.root, self.checkout))
-            .as_ref()
-            .is_some_and(|(exact, persisted)| exact == recorded || persisted == recorded)
-    }
 }
 
 impl RenderedIdentity {
@@ -206,23 +184,14 @@ impl RenderedIdentity {
     ///
     /// `owned_untracked` is for a kendex output whose destination Git does
     /// not track, such as a Pi package copied from tracked catalog text.
-    ///
-    /// A tree also matches a record without the files Git ignores in it:
-    /// running a skill's scripts leaves files such as a `__pycache__` in
-    /// its installed tree, which no render writes and no commit carries.
     pub fn from_path(path: &Path, owned_untracked: bool) -> Result<Self> {
         let mut files = Vec::new();
         collect_plain_files(path, Path::new(""), 0, &mut files)?;
-        let checkout = Checkout::observed(owned_untracked);
-        let mut identity = Self::under(path, &files, checkout);
-        if path.is_dir() {
-            identity.ignored_aside = Some(IgnoredAside {
-                root: path.to_path_buf(),
-                checkout,
-                identity: std::sync::OnceLock::new(),
-            });
-        }
-        Ok(identity)
+        Ok(Self::under(
+            path,
+            &files,
+            Checkout::observed(owned_untracked),
+        ))
     }
 
     fn under(root: &Path, files: &[(PathBuf, Vec<u8>)], checkout: Checkout) -> Self {
@@ -231,11 +200,7 @@ impl RenderedIdentity {
             return identity;
         }
         let persisted = checkout_hash(root, files, checkout).unwrap_or_else(|| exact.clone());
-        Self {
-            exact,
-            persisted,
-            ignored_aside: None,
-        }
+        Self { exact, persisted }
     }
 
     pub fn exact(&self) -> &str {
@@ -246,51 +211,9 @@ impl RenderedIdentity {
         &self.persisted
     }
 
-    /// Whether these bytes are the render `recorded` names. A tree read
-    /// off disk also matches when only files Git ignores set it apart. A
-    /// render that writes an ignored file still counts that file: the whole
-    /// tree is compared first, and a tree without the file matches neither
-    /// identity. Such a tree with another ignored file beside it matches
-    /// neither as well, since a record is a hash and names no files.
     pub fn matches(&self, recorded: &str) -> bool {
-        self.exact == recorded
-            || self.persisted == recorded
-            || self
-                .ignored_aside
-                .as_ref()
-                .is_some_and(|aside| aside.matches(recorded))
+        self.exact == recorded || self.persisted == recorded
     }
-}
-
-/// The identity of the tree at `root` without the files Git ignores in it,
-/// or `None` when Git ignores none of them or cannot say: the whole tree's
-/// identity is then the only one it has.
-fn beside_ignored(root: &Path, checkout: Checkout) -> Option<(String, String)> {
-    let listed = git_stdout(
-        root,
-        &[
-            "ls-files",
-            "-z",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "--",
-            ".",
-        ],
-    )?;
-    let ignored: std::collections::BTreeSet<String> = listed
-        .split(|byte| *byte == 0)
-        .filter(|row| !row.is_empty())
-        .map(|row| String::from_utf8_lossy(row).into_owned())
-        .collect();
-    if ignored.is_empty() {
-        return None;
-    }
-    let mut files = Vec::new();
-    collect_plain_files(root, Path::new(""), 0, &mut files).ok()?;
-    files.retain(|(relative, _)| !ignored.contains(&crate::paths::slashed(relative)));
-    let kept = RenderedIdentity::under(root, &files, checkout);
-    Some((kept.exact, kept.persisted))
 }
 
 /// Git's portable form can differ only where CRLF becomes LF. When no file
@@ -300,7 +223,6 @@ fn exact_without_git(files: &[(PathBuf, Vec<u8>)], exact: String) -> Option<Rend
     (!git_can_convert(files)).then(|| RenderedIdentity {
         persisted: exact.clone(),
         exact,
-        ignored_aside: None,
     })
 }
 
@@ -314,7 +236,7 @@ fn normalization_eligible(bytes: &[u8]) -> bool {
     !bytes.contains(&0) && bytes.windows(2).any(|pair| pair == b"\r\n")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Checkout {
     /// Planned rendered bytes. The destination can be absent or replaced.
     Rendered,

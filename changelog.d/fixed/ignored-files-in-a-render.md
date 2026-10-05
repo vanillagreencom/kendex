@@ -1,1 +1,0 @@
-- A skill tree holding files Git ignores, such as the `__pycache__` its scripts leave, no longer reads as edited on disk.
