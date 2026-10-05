@@ -50,7 +50,7 @@ A host with no Pi session (`extensionApi` undefined) gets no entry and cannot te
 
 `src/config.ts::loadConfig` layers, lowest first, `<piUserDir>/claude-bridge.json`, a trusted project's `.pi/claude-bridge.json`, then extension-manager config in `settings.json`; isolated mode keeps only the first. `legacyFileConfig` reads each file in both the nested shape (`provider.*`, `promptContext.*`) and the manager's flat keys, nested winning within one file. Provider values are normalized once over the merged result, so an invalid value in a higher layer still clears a valid one below.
 
-`resolveExternalConfigValue` reports what those files alone resolve for one manifest key and which file supplied it, sharing `loadConfig`'s layering and normalization so the two cannot drift. `registerExternalConfigResolver` publishes it under the resolver contract stated in [pi-extension-manager/DEVELOPMENT.md](../pi-extension-manager/DEVELOPMENT.md), before the `config.enabled === false` early return, because a bridge disabled by a file is the case the settings editor has to explain.
+`resolveExternalConfigValue` reports what those files alone resolve for one manifest key and which file supplied it, sharing `loadConfig`'s layering and normalization so the two cannot drift. `registerExternalConfigResolver` publishes it under the resolver contract stated in pi-extension-manager's DEVELOPMENT.md, § External config resolvers, before the `config.enabled === false` early return, because a bridge disabled by a file is the case the settings editor has to explain.
 
 ## Embedding hosts
 

@@ -19,8 +19,10 @@
 # (the markdown beside them documents the directory) and one agent file
 # directly under agents/. What it ships: a skill everything its render
 # carries, which leaves out the top-level entries named on the command line;
-# a Pi package what its package.json `files` list names, or everything with
-# no list; a hook or an agent its own file.
+# a Pi package every path kendex's install copies, which leaves out a path
+# with any component PI_SKIPPED names, and of which the npm tarball its
+# package.json `files` list selects is a subset; a hook or an agent its own
+# file.
 #
 # A decision ID is D and at least three digits bounded by non-alphanumerics,
 # the scheme docs/decisions spells. It is read in markdown prose outside
@@ -31,7 +33,8 @@
 # comments of a file with no family there, .awk and .txt among them; and
 # front matter. An ID passes only where the package ships a `<ID>-*.md`
 # record. A markdown link is md-refs' link reader's relative destination,
-# resolved against the citing file; it passes where it lands in the citing
+# resolved against the citing file, in a heading as in any other block; it
+# passes where it lands in the citing
 # package or, from a skill, in a skill that skill's SKILL.md lists under
 # dependencies.required as lib/skill-requirements.awk reads it.
 #
@@ -59,6 +62,9 @@ gg_tmpdir
 ID_PREFIX=D
 ID_WIDTH=3
 ROOTS="skills hooks agents pi-extensions"
+# The names crates/core/src/pi_ext/files.rs SKIPPED holds, which
+# copy_package leaves out at any depth of a Pi package.
+PI_SKIPPED="node_modules .git .turbo .next .cache build out coverage .pi .test-output"
 
 explain() { # KEY — the English for one key, and the whole of it
   case "$1" in
@@ -111,11 +117,28 @@ stage == "classify" {
   next
 }
 
+# md-blocks puts a setext heading's H record on its underline, after T
+# records for the lines above it that already carry its text; reading both
+# would cite each reference twice. Source lines are read once per file.
+function setext_underline(n,   line, rc) {
+  if (!source_read) {
+    while ((rc = (getline line < src)) > 0) source[++source_lines] = line
+    if (rc < 0) { print "cannot read " src > "/dev/stderr"; exit 2 }
+    close(src)
+    source_read = 1
+  }
+  line = source[n]
+  sub(/^[ \t>]*/, "", line)
+  return line ~ /^(=+|-+)[ \t]*$/
+}
+
 # Markdown arrives as md-blocks' "kind<TAB>line<TAB>text" records; content
 # follows two protocol tabs and can hold more of its own. Code spans are
-# names, not citations. Links are read as md-refs reads them. IDs are read
-# with no link masked, the HTML-block reading, because a linked decision is
-# still a record the install does not hold.
+# names, not citations. Links are read as md-refs reads them, and in
+# headings too, which md-refs reads only as anchors: a heading link opens
+# the same dead path a paragraph link does. IDs are read with no link
+# masked, the HTML-block reading, because a linked decision is still a
+# record the install does not hold.
 stage == "extract" && carrier == "markdown" {
   first = index($0, "\t")
   if (!first) next
@@ -124,9 +147,10 @@ stage == "extract" && carrier == "markdown" {
   second = index(rest, "\t")
   line_no = substr(rest, 1, second - 1)
   text = substr(rest, second + 1)
+  if (block_kind == "H" && setext_underline(line_no)) next
   split_spans(text)
   plain = outside
-  if (block_kind != "H" && block_kind != "X") emit_links(outside, text)
+  if (block_kind != "X") emit_links(outside, text)
   emit_ids(plain, "X")
   next
 }
@@ -202,27 +226,6 @@ run_awk() { # STAGE [AWK-ARGS...] — the stage over its input
 run_awk classify "$GG_TMP/tracked" >"$GG_TMP/packages" 2>"$GG_TMP/err" ||
   refuse unreadable "package classification" "$(cat -- "$GG_TMP/err")"
 
-# The Pi package whose `files` patterns are loaded, and those patterns: one
-# package at a time, since ls-files lists each package's paths together.
-pi_package=""
-pi_patterns=""
-pi_ships() { # PACKAGE REL — 0 when the package's npm tarball carries REL
-  local entry
-  if [ "$1" != "$pi_package" ]; then
-    pi_patterns=$(jq -r 'if has("files") then .files[] else "*" end' "$1/package.json" 2>"$GG_TMP/err") ||
-      refuse unreadable "$1/package.json" "$(cat -- "$GG_TMP/err")"
-    pi_package=$1
-  fi
-  while IFS= read -r entry; do
-    entry=${entry%/}
-    [ -n "$entry" ] || continue
-    # Unquoted on purpose: a `files` entry is a pattern npm matches.
-    # shellcheck disable=SC2254
-    case $2 in $entry | $entry/*) return 0 ;; esac
-  done <<<"$pi_patterns"
-  return 1
-}
-
 : >"$GG_TMP/shipped"
 while IFS="$GG_TAB" read -r pkg path; do
   [ -e "$path" ] || [ -L "$path" ] || continue # deleted from the tree, nothing to read
@@ -233,7 +236,12 @@ while IFS="$GG_TAB" read -r pkg path; do
         [ "${rel%%/*}" != "$name" ] || continue 2
       done
       ;;
-    pi-extensions/*) pi_ships "$pkg" "$rel" || continue ;;
+    pi-extensions/*)
+      IFS=/ read -ra parts <<<"$rel"
+      for part in "${parts[@]}"; do
+        case " $PI_SKIPPED " in *" $part "*) continue 2 ;; esac
+      done
+      ;;
   esac
   printf 'S\t%s\t%s\n' "$pkg" "$path" >>"$GG_TMP/shipped"
 done <"$GG_TMP/packages"

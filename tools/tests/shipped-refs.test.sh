@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # The proof for tools/shipped-refs: a catalog of three skills (alpha
 # requiring beta, gamma optional, alpha shipping one decision record), a hook,
-# an agent and two Pi packages, one with a `files` list and one without. Each
-# row plants one file and runs the real script over the fixture, reading its
-# exit status and keyed first line; the controls run edited copies of the
-# script, one per rule.
+# an agent and two Pi packages, one whose package.json `files` list names less
+# than kendex's install copies, so its unlisted files show the list narrows
+# nothing. Each row plants one file and runs the real script over the fixture,
+# reading its exit status and keyed first line; the controls run edited copies
+# of the script, one per rule.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -119,7 +120,10 @@ pass|skills/alpha/evals/case.md|D016
 pass|skills/AGENTS.md|D016
 pass|hooks/README.md|D016
 pass|docs/notes.md|D016
-pass|pi-extensions/pi-demo/DEVELOPMENT.md|D016
+decision|pi-extensions/pi-demo/DEVELOPMENT.md|D016
+decision|pi-extensions/pi-demo/tests/case.md|D016
+pass|pi-extensions/pi-demo/node_modules/dep/README.md|D016
+pass|pi-extensions/pi-demo/extensions/coverage/report.md|D016
 pass|skills/alpha/scripts/rule.sh|#!/usr/bin/env bash\necho "decisions get D017"
 pass|skills/alpha/data.json|{"decision_ref": "D017"}
 link|skills/alpha/README.md|[optional](../gamma/SKILL.md)
@@ -131,12 +135,16 @@ link|skills/alpha/workflows/run.md|[section](../../gamma/SKILL.md#usage) § Usag
 link|skills/beta/README.md|[back](../alpha/SKILL.md)
 link|agents/demo.md|[skill](../skills/beta/SKILL.md)
 link|pi-extensions/pi-demo/README.md|[sibling](../pi-other/README.md)
+link|pi-extensions/pi-demo/DEVELOPMENT.md|[sibling](../pi-other/README.md)
+link|skills/alpha/README.md|## [optional](../gamma/SKILL.md)
+link|skills/alpha/README.md|The [optional](../gamma/SKILL.md) one\n===
 pass|skills/alpha/README.md|[own](scripts/run.md) and [anchor](#usage)
 pass|skills/alpha/README.md|[required](../beta/SKILL.md#usage)
 pass|skills/alpha/workflows/run.md|[required](../../beta/SKILL.md) and [root](../)
 pass|skills/alpha/README.md|[web](https://example.com/x.md) and `../gamma/SKILL.md`
 pass|skills/alpha/tests/case.md|[optional](../../gamma/SKILL.md)
-pass|pi-extensions/pi-demo/DEVELOPMENT.md|[sibling](../pi-other/README.md)
+pass|skills/alpha/README.md|## [required](../beta/SKILL.md)
+pass|pi-extensions/pi-demo/build/notes.md|[sibling](../../pi-other/README.md)
 unreadable|skills/alpha/README.md|```text\nD016
 unreadable|skills/alpha/scripts/rule.sh|#!/usr/bin/env bash\n# D015\necho "open
 ROWS
@@ -163,13 +171,6 @@ if mutant '[ -z "$manifest" ] || refuse manifest' 's/\[ -z "\$manifest" \] || re
 else
   bad "control: the manifest refusal was not changed in the script copy"
 fi
-reset_world
-printf '{"files": [\n' >"$W/pi-extensions/pi-demo/package.json"
-git -C "$W" add -A
-run
-[ "$RC" -eq 2 ] && [[ "$OUT" == "shipped-refs: unreadable=pi-extensions/pi-demo/package.json"* ]] \
-  && ok "a package.json jq cannot read refuses its package" \
-  || bad "a package.json jq cannot read refuses its package" "rc=$RC out=$OUT"
 
 echo "=== controls ==="
 reset_world
@@ -190,6 +191,35 @@ if mutant 'printf "link\t' 's/printf "link\\t/if (0) &/'; then
     || bad "control: without the link finding the optional link passes" "rc=$RC out=$OUT"
 else
   bad "control: the link finding was not changed in the script copy"
+fi
+reset_world
+plant skills/alpha/README.md '## [optional](../gamma/SKILL.md)'
+if mutant 'if (block_kind != "X") emit_links' 's/if (block_kind != "X") emit_links/if (block_kind != "H" \&\& block_kind != "X") emit_links/'; then
+  run "$MUTANT"
+  [ "$RC" -eq 0 ] && ok "control: with headings unread for links the heading link passes" \
+    || bad "control: with headings unread for links the heading link passes" "rc=$RC out=$OUT"
+else
+  bad "control: the heading link reading was not changed in the script copy"
+fi
+reset_world
+plant skills/alpha/README.md 'The [optional](../gamma/SKILL.md) one\n==='
+if mutant '&& setext_underline(line_no)) next' 's/if (block_kind == "H" \&\& setext_underline(line_no)) next//'; then
+  run "$MUTANT"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"shipped-refs: links=2"* ]] \
+    && ok "control: reading a setext heading's record cites its link twice" \
+    || bad "control: reading a setext heading's record cites its link twice" "rc=$RC out=$OUT"
+else
+  bad "control: the setext heading skip was not changed in the script copy"
+fi
+reset_world
+plant pi-extensions/pi-demo/node_modules/dep/README.md 'D016'
+if mutant 'PI_SKIPPED="' 's/^PI_SKIPPED=.*/PI_SKIPPED=""/'; then
+  run "$MUTANT"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == "shipped-refs: decisions="* ]] \
+    && ok "control: with no Pi copy exclusion a node_modules file is judged" \
+    || bad "control: with no Pi copy exclusion a node_modules file is judged" "rc=$RC out=$OUT"
+else
+  bad "control: the Pi copy exclusion was not changed in the script copy"
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"
