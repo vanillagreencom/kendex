@@ -16,7 +16,7 @@ use crate::error::Result;
 use crate::model::Scope;
 
 use super::desired::{Artifact, DesiredState, Owns};
-use super::instruction_shims::{ShimStanding, keyed_position};
+use super::instruction_shims::{ShimStanding, keyed_position, recorded_shims};
 
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
@@ -313,9 +313,10 @@ fn collect(
 /// The shared configuration files the install record at `HEAD` has kendex
 /// writing keys in: the file each registration it records is reversed in
 /// ([`super::owned::installed`]), the one answer to what an installation
-/// wrote, and the file each keyed shim it records sits in. Read at `HEAD`
-/// and not off the record on disk, which an uncommitted removal has
-/// already taken the entry out of.
+/// wrote, and the file each keyed shim it records sits in, the inventory at
+/// `HEAD` seeding a record that lacks one as the retirement's does
+/// ([`recorded_shims`]). Read at `HEAD` and not off the record on disk,
+/// which an uncommitted removal has already taken the entry out of.
 ///
 /// A scope that is not a project, a project outside git, an unborn `HEAD`
 /// and one holding neither a record nor an inventory listing paths name
@@ -357,11 +358,16 @@ pub(super) fn recorded(env: &Env, scope: &Scope, lock: &crate::lock::Lock) -> Re
         let edits = super::owned::installed(env, scope, entry).edits?;
         recorded.extend(edits.into_iter().map(|(path, _)| path));
     }
+    let shims = recorded_shims(env, scope, root, &at_head.shims, || {
+        crate::commit_offer::committed_inventory(root).map_err(git_failed(
+            "read committed generated inventory",
+            "inventory",
+        ))
+    })?;
     recorded.extend(
-        at_head
-            .shims
-            .iter()
-            .map(|shim| keyed_position(env, scope, *shim)),
+        shims
+            .into_iter()
+            .map(|shim| keyed_position(env, scope, shim)),
     );
     Ok(Recorded::Known(recorded))
 }

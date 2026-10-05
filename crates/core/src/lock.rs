@@ -57,10 +57,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// build that predates the field. That build drops the field when it
 /// writes the record again, which leaves a later retirement no record of
 /// the shim; where retirement still finds it is
-/// `engine::instruction_shims::retire`'s. And its `kendex verify` lays a
-/// record that carries the field out again without it (`attest::record`),
-/// so it fails the record row as not laid out as kendex writes it until
-/// the verifying build is one that knows the field.
+/// `engine::instruction_shims::recorded_shims`'s, and a build that knows
+/// the field fails the record row of its `kendex verify` by the shim's
+/// name until an apply records it again (`attest::record`). And the older
+/// build's own `kendex verify` lays a record that carries the field out
+/// again without it, so it fails the record row as not laid out as kendex
+/// writes it until the verifying build is one that knows the field.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -99,8 +101,9 @@ pub struct Lock {
     /// The instruction shims this scope keeps as a key in a settings
     /// document whose other keys are the person's, written by a pass or
     /// found already in sync while the harness was installed. A key has no
-    /// bytes of its own to prove whose it is; how a retirement reads this
-    /// record is `engine::instruction_shims::retire`'s.
+    /// bytes of its own to prove whose it is; how the retirement and the
+    /// commit offer read this record is
+    /// `engine::instruction_shims::recorded_shims`'s.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub shims: BTreeSet<KeyedShim>,
 }
@@ -114,6 +117,15 @@ pub enum KeyedShim {
     /// `context.fileName` in the project's Gemini settings, naming
     /// `AGENTS.md` beside Gemini's own default file.
     GeminiContextFile,
+}
+
+impl KeyedShim {
+    /// The shim as the record spells it, for a reader naming it.
+    pub fn spelled(self) -> &'static str {
+        match self {
+            KeyedShim::GeminiContextFile => "gemini-context-file",
+        }
+    }
 }
 
 /// One source's resolution at the last write.

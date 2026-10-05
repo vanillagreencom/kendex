@@ -768,9 +768,9 @@ fn recorded_shims(f: &Fixture) -> serde_json::Value {
 /// record an older build wrote again. Dropping Gemini still takes it back
 /// and keeps the person's own keys: in the very next apply, off the
 /// inventory listing the settings file, or after an apply with Gemini
-/// still listed, which records the key standing in sync. Where that apply
-/// was committed, the record at `HEAD` keeps the file one kendex writes a
-/// key in until the retirement is committed.
+/// still listed, which records the key standing in sync. The record at
+/// `HEAD`, or the inventory there where that record lacks the shim, keeps
+/// the file one kendex writes a key in until the retirement is committed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired() {
@@ -834,14 +834,44 @@ fn a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired() {
         assert_eq!(recorded_shims(&f), serde_json::Value::Null, "{what}");
         let again = plan(&f);
         assert!(again.plan.is_empty(), "{what}: {:?}", touched(&f, &again));
-        if recorded_first {
-            // Uncommitted, a reading after the retirement still takes the
-            // file as one kendex writes a key in, off the record at `HEAD`.
-            assert!(
-                again.generated.beside(&f.project).contains(&settings),
-                "{what}"
-            );
-        }
+        // Uncommitted, a reading after the retirement still takes the file
+        // as one kendex writes a key in: off the record at `HEAD`, or off
+        // the inventory there where that record lacks the shim. A deletion
+        // of it is then the person's, which neither a restore nor a commit
+        // takes as a render's.
+        assert!(
+            again.generated.beside(&f.project).contains(&settings),
+            "{what}"
+        );
+        fs::remove_file(&settings).unwrap();
+        let after = plan(&f);
+        let chosen: std::collections::BTreeSet<String> =
+            [".gemini/settings.json".to_owned()].into_iter().collect();
+        let restored =
+            kendex_core::commit_offer::restore(&f.env, &f.scope, &after.generated, &chosen)
+                .unwrap();
+        assert_eq!(restored.restored, Vec::<String>::new(), "{what}");
+        assert_eq!(
+            restored.dropped,
+            vec![".gemini/settings.json".to_owned()],
+            "{what}"
+        );
+        assert!(!settings.exists(), "{what}");
+        let committed = kendex_core::commit_offer::commit(
+            &f.project,
+            &after.generated,
+            "renders",
+            &kendex_core::commit_offer::Selection::Only(chosen),
+            &kendex_core::commit_offer::Before::Untaken,
+        )
+        .unwrap();
+        assert_eq!(
+            committed,
+            kendex_core::commit_offer::Committed::Nothing {
+                dropped: vec![".gemini/settings.json".to_owned()],
+            },
+            "{what}"
+        );
     }
 }
 

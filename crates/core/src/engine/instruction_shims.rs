@@ -218,6 +218,33 @@ pub(crate) fn keyed_position(env: &Env, scope: &Scope, shim: KeyedShim) -> PathB
     }
 }
 
+/// The keyed shims kendex keeps in `root`'s project by the evidence: each
+/// one `record`, an install record, holds, and each one whose file the
+/// inventory beside it lists. The inventory seeds a record written before
+/// [`crate::lock::Lock::shims`], or again by a build that drops it. `listed`
+/// reads that inventory, and runs only where the record lacks a shim.
+/// The retirement reads the record and inventory on disk; the commit offer
+/// reads both at `HEAD`.
+pub(crate) fn recorded_shims(
+    env: &Env,
+    scope: &Scope,
+    root: &Path,
+    record: &BTreeSet<KeyedShim>,
+    listed: impl FnOnce() -> Result<BTreeSet<String>>,
+) -> Result<BTreeSet<KeyedShim>> {
+    let mut shims = record.clone();
+    let shim = KeyedShim::GeminiContextFile;
+    if !shims.contains(&shim)
+        && listed()?.contains(&observe::relative_name(
+            root,
+            &keyed_position(env, scope, shim),
+        ))
+    {
+        shims.insert(shim);
+    }
+    Ok(shims)
+}
+
 /// Plan every shim the scope owes: writes for the missing ones, the edit
 /// for Gemini's settings, the trash for the retired link, the retirement of
 /// a shim whose harness the list no longer names, and a drift row for

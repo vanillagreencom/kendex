@@ -172,3 +172,51 @@ fn a_foreign_shim_fails_verify_and_blocks_apply() {
         "@AGENTS.md\n"
     );
 }
+
+/// A record laid out as kendex writes it but without the Gemini shim, as a
+/// build predating the field writes it again while Gemini is installed and
+/// in sync, fails the record row by the shim's name; the next apply
+/// records the shim and the row passes. Nothing else fails: the shim and
+/// every other position stand as before.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_that_lost_its_gemini_shim_fails_verify_until_apply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"gemini\"]\n",
+    )
+    .unwrap();
+    let output = kendex(&home, &project, &["apply", "--yes"]);
+    assert!(output.status.success(), "{}", said(&output));
+    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+    assert!(output.status.success(), "{}", said(&output));
+
+    let lock_path = project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    assert_eq!(lock["shims"], serde_json::json!(["gemini-context-file"]));
+    lock.as_object_mut().unwrap().remove("shims");
+    fs::write(
+        &lock_path,
+        format!("{}\n", serde_json::to_string_pretty(&lock).unwrap()),
+    )
+    .unwrap();
+
+    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+    let text = said(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("shim gemini-context-file: kept, and the record does not carry it"),
+        "{text}"
+    );
+    assert!(!text.contains("not laid out as kendex writes it"), "{text}");
+    assert!(text.contains("1 other row failed"), "{text}");
+
+    let output = kendex(&home, &project, &["apply", "--yes"]);
+    assert!(output.status.success(), "{}", said(&output));
+    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+    assert!(output.status.success(), "{}", said(&output));
+}

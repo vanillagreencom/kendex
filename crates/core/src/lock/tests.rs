@@ -72,6 +72,18 @@ fn lock_round_trips_and_missing_file_is_empty() {
     assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
 }
 
+/// A reader names a shim as the record spells it: `spelled` is held to
+/// the serialized form, so the two cannot drift apart.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_shim_is_named_as_the_record_spells_it() {
+    let shim = KeyedShim::GeminiContextFile;
+    assert_eq!(
+        serde_json::to_value(shim).unwrap(),
+        serde_json::Value::from(shim.spelled())
+    );
+}
+
 #[test]
 fn timestamps_are_iso8601() {
     let ts = crate::clock::timestamp();

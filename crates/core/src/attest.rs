@@ -338,7 +338,10 @@ pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
 /// the pass records nothing for (undeclared, disabled, or read from a
 /// path), and one the pass would record that the record does not carry,
 /// are each named, so a provenance entry deleted by hand fails the row
-/// as a planted one does. Each recorded commit
+/// as a planted one does. A keyed shim the pass keeps that the record does
+/// not carry is named too, as a build predating the field leaves the
+/// record; one recorded that the pass does not keep is one it retires,
+/// which the drift rows name. Each recorded commit
 /// — an entry's source commit, a source's, a set's — must be the one the
 /// declaration resolves to or on that commit's history in the mirror: an
 /// honest record is behind a moving branch and stays honest, and a commit
@@ -441,6 +444,12 @@ pub fn record(
                 "set {name}: declared, and the record does not carry it"
             ));
         }
+    }
+    for shim in planned.shims.difference(&lock.shims) {
+        problems.push(format!(
+            "shim {}: kept, and the record does not carry it",
+            shim.spelled()
+        ));
     }
     Ok(Some(Standing { path, problems }))
 }

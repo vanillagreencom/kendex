@@ -5,17 +5,18 @@
 //! by hand, and stays. The record of a whole-file shim is the inventory on
 //! disk listing its position; a keyed one's is the install record
 //! ([`crate::lock::Lock::shims`]), which a project with no `.git` of its
-//! own has too. An inventory listing a keyed shim's file seeds that record
-//! where it lacks the shim: written before the field, or again by a build
-//! that drops it. Only a project with its own `.git` has an inventory, so
-//! elsewhere such a record holds the shim again only after an apply with
-//! its harness still listed.
+//! own has too, seeded by the inventory where it lacks the shim
+//! ([`super::recorded_shims`]). Only a project with its own `.git` has an
+//! inventory, so elsewhere such a record holds the shim again only after
+//! an apply with its harness still listed.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::observe::{agents_files, gemini_retirement, relative_name, uncomparable};
-use super::{AGENTS_FILE, CLAUDE_SHIM, CLAUDE_SHIM_FILE, GEMINI_KEY, keyed_position};
+use super::{
+    AGENTS_FILE, CLAUDE_SHIM, CLAUDE_SHIM_FILE, GEMINI_KEY, keyed_position, recorded_shims,
+};
 use crate::apply::{Description, PlannedOp};
 use crate::engine::config_edits::ConfigEditPlan;
 use crate::engine::generated_paths::{INVENTORY, inventory_paths};
@@ -54,7 +55,7 @@ pub(super) fn retire(
     }
     let shim = KeyedShim::GeminiContextFile;
     let path = keyed_position(env, scope, shim);
-    let recorded = shims.contains(&shim) || listed.contains(&relative_name(root, &path));
+    let recorded = recorded_shims(env, scope, root, shims, || Ok(listed.clone()))?.contains(&shim);
     if !harnesses.contains(&HarnessId::Gemini) && recorded {
         match gemini(&path, scope, root, config_edits) {
             Retirement::Settled => {
