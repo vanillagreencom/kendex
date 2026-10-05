@@ -1,1 +1,0 @@
-- skill-load-check counts a Codex skill read batched with other calls in one `functions.exec` when its own command succeeds, and its refusal names the read that passes.

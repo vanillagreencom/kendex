@@ -8,6 +8,26 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-05
+
+### Added
+
+- `kendex add --setting KEY=VALUE` writes a declared project setting into `kendex.settings.toml`; a key the file already assigns keeps its value.
+- commit-guards declares `COMMAND_SAFETY_DENY_PATTERN`, so the Customize tab and `kendex add --setting` can set the command-safety hook's pattern.
+- review-gate's `provision-environment.sh --repo ORG/NAME` provisions the standard's environment in one repository, after the same organization checks.
+
+### Changed
+
+- Installing `lane-mail-check` also installs `session-start-row`, `session-end-row` and `stop-failure-row`, so the fleet overseer reads session rows.
+- `session-start-row`, `session-end-row` or `stop-failure-row` pinned to fewer harnesses than `lane-mail-check`, or removed, now withholds `lane-mail-check` there; widen the pin or restore the hook.
+- Commit-guards refusals in an unarmed clone name the tracked installer before `kendex guard install`. Re-arm each clone once: until then, hook checks report the helper outdated.
+- A consumer refresh pull request of any change class now arms auto-merge and merges once its required approval, thread resolution and checks pass. Before, only `render` armed.
+
+### Fixed
+
+- skill-load-check counts a Codex skill read whose text arrived whole in a `functions.exec` output that Codex truncated, and still refuses a read the cut reached.
+- skill-load-check counts a Codex skill read batched with other calls in one `functions.exec` when its own command succeeds, and its refusal names the read that passes.
+
 ## [1.9.0] - 2026-10-04
 
 ### Added
@@ -1498,7 +1518,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.0
 [1.9.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.9.0
 [1.8.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.8.0
 [1.7.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.7.0

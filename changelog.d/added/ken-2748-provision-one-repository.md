@@ -1,1 +1,0 @@
-- review-gate's `provision-environment.sh --repo ORG/NAME` provisions the standard's environment in one repository, after the same organization checks.

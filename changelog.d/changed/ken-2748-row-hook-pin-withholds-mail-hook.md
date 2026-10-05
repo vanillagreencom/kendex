@@ -1,1 +1,0 @@
-- `session-start-row`, `session-end-row` or `stop-failure-row` pinned to fewer harnesses than `lane-mail-check`, or removed, now withholds `lane-mail-check` there; widen the pin or restore the hook.
