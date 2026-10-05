@@ -648,6 +648,7 @@ check "ci-job-set selects the shard running each suite for a diff to that suite"
 # a Slack diff, and the suite its selection misses is named.
 mkdir -p "$TMP/owner-tools"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
+cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
 awk '$0 ~ /^    skills\/slack\) want_shard slack ;;$/ { n++; next } { print } END { exit n != 1 }' \
   "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
   { bad "must-fail: the Slack row is no longer one line in $JOB_SET"; }

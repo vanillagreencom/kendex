@@ -269,6 +269,7 @@ the measurement's settings reader is queue-only|queue_only=true cause=queue-path
 the measurement's base resolver is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch|skills/orch/scripts/resolve-base-branch=2
 the job selection is queue-only|queue_only=true cause=queue-path path=tools/ci-job-set glob=tools/ci-job-set|tools/ci-job-set=2
 the Rust reads the job selection takes are queue-only|queue_only=true cause=queue-path path=tools/rust-reads glob=tools/rust-reads|tools/rust-reads=2
+the skill requirements the job selection takes are queue-only|queue_only=true cause=queue-path path=tools/lib/skill-requirements.awk glob=tools/lib/skill-requirements.awk|tools/lib/skill-requirements.awk=2
 a skill's test library is queue-only|queue_only=true cause=queue-path path=skills/orch/tests/lib/git-env.sh glob=*skills/*/tests/lib/*|skills/orch/tests/lib/git-env.sh=2
 a tools suite is queue-only|queue_only=true cause=queue-path path=tools/tests/ci-aggregate.test.sh glob=tools/tests/*|tools/tests/ci-aggregate.test.sh=2
 the CI test aggregator is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2

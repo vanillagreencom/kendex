@@ -2,13 +2,17 @@
 # What a catalog package ships cites nothing its install lacks.
 #
 # A package under skills/, hooks/, agents/ or pi-extensions/ installs into a
-# repository that holds none of kendex's decision records and, of the other
-# catalog packages, only those it requires. A decision citation in a shipped
-# file therefore names a record the reader cannot open unless the package
-# ships it, and a relative markdown link into a package the citing one lists
-# as optional, or not at all, is dead wherever that package is absent; the
-# consumer's md-refs warns on both at every commit. skills/AGENTS.md states
-# the rule; GitHub cannot judge it, so kendex's commit lane runs this.
+# repository that holds none of kendex's decision records, and where, of the
+# other catalog packages, only those it requires are sure to be installed. A
+# relative markdown link into a package the citing one lists as optional, or
+# not at all, is dead wherever that package is absent, and the consumer's
+# md-refs warns on it at every commit. A decision citation names a record
+# the reader cannot open unless the package ships it: the consumer's md-refs
+# leaves it unjudged where the consumer tracks no decision directory, or
+# where it is linked to a URL or sits in a comment with no § after it, and
+# resolves it to an unrelated local record where the consumer has its own
+# decision directory. skills/AGENTS.md states the rule; GitHub cannot judge
+# it, so kendex's commit lane runs this.
 #
 # A package is the place a path sits in the catalog: skills/<name>/ and
 # pi-extensions/<name>/ directories, one hook script directly under hooks/
@@ -20,14 +24,16 @@
 #
 # A decision ID is D and at least three digits bounded by non-alphanumerics,
 # the scheme docs/decisions spells. It is read in markdown prose outside
-# code spans, linked or not, by md-refs' block and ID readers; in any other
-# shipped file it is read in comment text, which the comments lane's
-# extractor separates, and a file with no comment grammar carries none. It
-# passes only where the package ships a `<ID>-*.md` record. A markdown link
-# is md-refs' link reader's relative destination, resolved against the
-# citing file; it passes where it lands in the citing package or, from a
-# skill, in a skill that skill's SKILL.md front matter lists under
-# dependencies.required as one flow list.
+# code spans and front matter, linked or not, by md-refs' block and ID
+# readers, and in the comment text of any other shipped file whose comment
+# family gg_comment_family knows, which the comments lane's extractor
+# separates. Not read: commands/, which is none of the four roots; the
+# comments of a file with no family there, .awk and .txt among them; and
+# front matter. An ID passes only where the package ships a `<ID>-*.md`
+# record. A markdown link is md-refs' link reader's relative destination,
+# resolved against the citing file; it passes where it lands in the citing
+# package or, from a skill, in a skill that skill's SKILL.md lists under
+# dependencies.required as lib/skill-requirements.awk reads it.
 #
 # Usage: tools/shipped-refs [NAME...]
 #   NAME   a top-level skill entry no render carries; tools/guard hands over
@@ -58,7 +64,7 @@ explain() { # KEY — the English for one key, and the whole of it
   case "$1" in
     decisions) echo "A shipped file cites a decision record its package does not ship, which no install holds. State the decision's rule in the file instead (skills/AGENTS.md). Each citation follows as path:line and ID." ;;
     links) echo "A shipped markdown file links by relative path outside its own package and the skills its SKILL.md lists under dependencies.required, so an install without that package holds a dead link. Name the file and section in plain text instead (skills/AGENTS.md). Each link follows as path:line and destination." ;;
-    manifest) echo "That SKILL.md front matter does not hold dependencies.required as one flow list, [a, b], under dependencies:, so the links out of its skill could not be judged." ;;
+    manifest) echo "That SKILL.md front matter holds a dependencies: block tools/lib/skill-requirements.awk cannot take, which tools/ci-job-set refuses too: a two-space required: or optional: key holding one inline list of bare names, [a, b]. The links out of its skill could not be judged." ;;
     unreadable) echo "That input could not be read, so its references were not judged; the cause follows." ;;
     *) gg_fail key "$1" "explain() holds no text for this key." ;;
   esac
@@ -99,38 +105,6 @@ function record_id(path,   b, q, n) {
   return substr(b, 1, q + n - 1)
 }
 
-# A skill's dependencies.required, read from its SKILL.md front matter once.
-# A missing SKILL.md requires nothing, so every link out of that skill is
-# judged against its own package alone.
-function load_required(p,   file, line, n, in_deps, v, k, items, i) {
-  loaded[p] = 1
-  file = p "/SKILL.md"
-  n = 0
-  in_deps = 0
-  while ((getline line < file) > 0) {
-    n++
-    if (n == 1) { if (line != "---") break; continue }
-    if (line == "---") break
-    if (line ~ /^dependencies:/) {
-      if (line !~ /^dependencies:[ \t]*$/) { printf "E\t%s\n", file; break }
-      in_deps = 1
-      continue
-    }
-    if (line !~ /^[ \t]/) { in_deps = 0; continue }
-    if (!in_deps || line !~ /^[ \t]+required:/) continue
-    v = line
-    sub(/^[ \t]+required:[ \t]*/, "", v)
-    sub(/[ \t]+$/, "", v)
-    if (v !~ /^\[[^][]*\]$/) { printf "E\t%s\n", file; break }
-    k = split(substr(v, 2, length(v) - 2), items, ",")
-    for (i = 1; i <= k; i++) {
-      gsub(/^[ \t"']+|[ \t"']+$/, "", items[i])
-      if (items[i] != "") required[p, "skills/" items[i]] = 1
-    }
-  }
-  close(file)
-}
-
 stage == "classify" {
   p = package_of($0)
   if (p != "") printf "%s\t%s\n", p, $0
@@ -166,6 +140,18 @@ stage == "extract" && carrier == "comment" {
   next
 }
 
+# lib/skill-requirements.awk's rows: a skill's required skill, or the
+# SKILL.md it could not take, judged only where a link out of that skill
+# needs the list.
+stage == "judge" && FILENAME == requirements {
+  if ($1 == "?") {
+    p = $2
+    sub(/\/SKILL\.md$/, "", p)
+    manifest[p] = $2
+  } else required["skills/" $1, "skills/" $2] = 1
+  next
+}
+
 stage == "judge" && $1 == "S" {
   owner[$3] = $2
   known[$2] = 1
@@ -194,7 +180,7 @@ stage == "judge" && $1 == "L" {
   to = ESCAPED ? "" : package_of(target)
   if (to == from) next
   if (to ~ /^skills\// && from ~ /^skills\//) {
-    if (!(from in loaded)) load_required(from)
+    if (from in manifest) { printf "E\t%s\n", manifest[from]; next }
     if ((from, to) in required) next
   }
   printf "link\t%s:%s\t%s\n", src, $3, $4
@@ -286,7 +272,21 @@ while IFS= read -r path; do
     refuse unreadable "$path" "$(cat -- "$GG_TMP/err")"
 done <"$GG_TMP/carriers"
 
-run_awk judge -F '\t' "$GG_TMP/shipped" "$GG_TMP/refs" >"$GG_TMP/verdict" 2>"$GG_TMP/err" ||
+# Each skill's dependencies.required, by the reader tools/ci-job-set runs.
+manifests=()
+while IFS="$GG_TAB" read -r _ _ path; do
+  case $path in skills/*/SKILL.md) ;; *) continue ;; esac
+  [ "${path#skills/*/}" = SKILL.md ] || continue
+  manifests+=("$path")
+done <"$GG_TMP/shipped"
+: >"$GG_TMP/requirements"
+if [ "${#manifests[@]}" -gt 0 ]; then
+  LC_ALL=C awk -f "$TOOLS_DIR/lib/skill-requirements.awk" "${manifests[@]}" >"$GG_TMP/requirements" 2>"$GG_TMP/err" ||
+    refuse unreadable "skill requirements" "$(cat -- "$GG_TMP/err")"
+fi
+
+run_awk judge -F '\t' -v requirements="$GG_TMP/requirements" \
+  "$GG_TMP/shipped" "$GG_TMP/requirements" "$GG_TMP/refs" >"$GG_TMP/verdict" 2>"$GG_TMP/err" ||
   refuse unreadable "reference verdict" "$(cat -- "$GG_TMP/err")"
 
 # One record kind of the verdict, its leading kind field dropped.

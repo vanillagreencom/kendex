@@ -439,11 +439,12 @@ rendered_in_skill() { # REL: a path inside a skill, carried by its render
 }
 
 # A catalog package installs into a repository that holds none of kendex's
-# decision records and only the packages it requires. The rule and what it
-# judges are tools/shipped-refs'; it is handed the skill entries no render
-# carries. Exit 1 is a citation or link, exit 2 a scan that could not run,
-# and neither is a pass. One line on purpose: the must-fail control in
-# tools/tests/guard.test.sh removes this lane by deleting it.
+# decision records, where of the other packages only those it requires are
+# sure to be installed. The rule and what it judges are tools/shipped-refs';
+# it is handed the skill entries no render carries. Exit 1 is a citation or
+# link, exit 2 a scan that could not run, and neither is a pass. One line on
+# purpose: the must-fail control in tools/tests/guard.test.sh removes this
+# lane by deleting it.
 # shellcheck disable=SC2086 # not_rendered is a word list
 "$TOOLS_DIR/shipped-refs" $not_rendered || say shipped-refs "$?"
 

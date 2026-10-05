@@ -167,6 +167,7 @@ ROWS
 # ARGUMENT|EVENT|RECORD (comma-joined, or none)|EXPECTED; an argument other
 # than --event-parity is refused.
 mkdir -p "$TMP/parity/tools"
+cp -R "$ROOT/tools/lib" "$TMP/parity/tools/lib"
 cp "$ROOT/tools/rust-reads" "$TMP/parity/tools/rust-reads"
 sed 's/^      macos_shard "\$shards" || macos=false$/&; [ "$event" = merge_group ] || macos=false/' \
   "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
@@ -205,7 +206,7 @@ lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
 build_names() { # SCRIPT — the names its build list declares
   awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
 }
-SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads"
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads tools/lib/skill-requirements.awk"
 NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
 pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
@@ -219,6 +220,7 @@ while IFS= read -r p; do
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
 done <<<"$sources"
 mkdir -p "$TMP/member/tools"
+cp -R "$ROOT/tools/lib" "$TMP/member/tools/lib"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
 chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
@@ -237,6 +239,7 @@ ROWS
 # runner list from collapsing the matrix in silence. The copy drops one lane
 # from the render row.
 mkdir -p "$TMP/forgot/tools"
+cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 forgot="$TMP/forgot/tools/ci-job-set"
 [ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
@@ -302,6 +305,7 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # The platform lanes run on a standard diff that is not documentation alone,
 # prose included; the control drops that rule.
 mkdir -p "$TMP/standard/tools"
+cp -R "$ROOT/tools/lib" "$TMP/standard/tools/lib"
 cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
 sed '/\[ "\$class:\$docs" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
 chmod +x "$TMP/standard/tools/ci-job-set"
@@ -311,6 +315,7 @@ chmod +x "$TMP/standard/tools/ci-job-set"
 # EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
 # other than EXPECTED.
 mkdir -p "$TMP/rule/tools"
+cp -R "$ROOT/tools/lib" "$TMP/rule/tools/lib"
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 while IFS='|' read -r edit class paths expected; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
@@ -328,7 +333,7 @@ s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legal
 s/if (kind\[r\] != "manifest" .*) build = 1/build = 1/|micro|docs/a.md|$PROSE_ROW
 s/kind\[r\] != "manifest" .. //|micro|tools/x|$TOOL_ROW
 s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
-s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-set.orig|$TOOL_ROW
+s/\(ci-aggregate.rust-reads)\)[$]/\1/|standard|tools/ci-job-set.orig|$TOOL_ROW
 s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
 CONTROLS
 
@@ -484,7 +489,7 @@ while IFS='#' read -r edit path expected; do
     "$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$path")"
 done <<'ROWS'
 s/skills\/worktree) want_shard worktree ;;/skills\/worktree) want_shard worktre ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
-s/^  ' "\$@"$/  ' "$@" \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
+s/^  awk -f "\$TOOLS_DIR\/lib\/skill-requirements.awk" "\$@"$/& \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
 s/files="\$(grep -lE /files="$(grep --no-such-option -lE /#kendex.settings.toml#exit=2 consumers-failed
 s/grep -qE -- "\$SHARD_CITATION"/grep --no-such-option -qE -- "$SHARD_CITATION"/#docs/cite.md#exit=2 citation-read-failed
 ROWS

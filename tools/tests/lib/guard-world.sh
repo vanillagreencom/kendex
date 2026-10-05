@@ -133,6 +133,7 @@ cp "$REPO/tools/test-roster" "$MUTANT_TOOLS/test-roster"
 cp "$REPO/tools/shipped-refs" "$MUTANT_TOOLS/shipped-refs"
 cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
 cp "$REPO/tools/rust-reads" "$MUTANT_TOOLS/rust-reads"
+cp -R "$REPO/tools/lib" "$MUTANT_TOOLS/lib"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"

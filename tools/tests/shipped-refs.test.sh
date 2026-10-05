@@ -60,6 +60,7 @@ run() { # [SCRIPT] — sets OUT and RC
 # package tree it resolves its libraries from.
 ln -s "$REPO/.agents" "$TMP_ROOT/.agents"
 mkdir -p "$TMP_ROOT/tools"
+ln -s "$REPO/tools/lib" "$TMP_ROOT/tools/lib"
 MUTANT="$TMP_ROOT/tools/shipped-refs"
 mutant() { # FIXED-TEXT SED-EXPR — false unless the text occurs once and the edit changed the copy
   local matches
@@ -106,6 +107,7 @@ decision|skills/alpha/scripts/rule.sh|#!/usr/bin/env bash\n# D015 § D015: the r
 decision|skills/alpha/scripts/rule|#!/usr/bin/env bash\n# REVISIT(D015): a usage field\necho rule
 decision|skills/alpha/scripts/rule.py|# per D007\nprint(1)
 decision|hooks/demo.sh|#!/usr/bin/env bash\n# under D002's handoff\necho hooked
+decision|pi-extensions/pi-demo/extensions/index.ts|// per D015\nexport {};
 pass|skills/alpha/README.md|`D016` names an example ID.
 pass|skills/alpha/README.md|```text\nD016\n```
 pass|skills/alpha/README.md|AD016 D016x 1D016 D16 DXXX
@@ -140,13 +142,19 @@ unreadable|skills/alpha/scripts/rule.sh|#!/usr/bin/env bash\n# D015\necho "open
 ROWS
 
 echo "=== the manifest the link rule reads ==="
-reset_world
-plant skills/alpha/SKILL.md '---\nname: alpha\ndependencies:\n  required:\n    - beta\n---\n\n# Alpha'
-plant skills/alpha/README.md '[required](../beta/SKILL.md)'
-run
-[ "$RC" -eq 2 ] && [[ "$OUT" == "shipped-refs: manifest=skills/alpha/SKILL.md"* ]] \
-  && ok "a required list that is not one flow list refuses rather than reading as empty" \
-  || bad "a required list that is not one flow list refuses rather than reading as empty" "rc=$RC out=$OUT"
+# A required list tools/lib/skill-requirements.awk cannot take refuses rather
+# than reading as empty, as tools/ci-job-set refuses it.
+while IFS='|' read -r label required; do
+  reset_world
+  plant skills/alpha/SKILL.md "---\nname: alpha\ndependencies:\n  required:$required\n---\n\n# Alpha"
+  plant skills/alpha/README.md '[required](../beta/SKILL.md)'
+  run
+  [ "$RC" -eq 2 ] && [[ "$OUT" == "shipped-refs: manifest=skills/alpha/SKILL.md"* ]] \
+    && ok "a $label required list refuses" || bad "a $label required list refuses" "rc=$RC out=$OUT"
+done <<'ROWS'
+block|\n    - beta
+quoted-name| ["beta"]
+ROWS
 if mutant '[ -z "$manifest" ] || refuse manifest' 's/\[ -z "\$manifest" \] || refuse manifest/[ -z "$manifest" ] || : manifest/'; then
   run "$MUTANT"
   [ "$RC" -ne 2 ] && [[ "$OUT" != *"manifest="* ]] \

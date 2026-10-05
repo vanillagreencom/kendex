@@ -97,10 +97,10 @@
 #     ui/package.json script, and nothing under ui/ imports or configures a
 #     path outside ui/.
 #   - A diff to what defines the lanes, a path under .github/workflows/ or
-#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate or
-#     tools/rust-reads, runs every lane, so a change to a lane or to its
-#     selection runs on the pull request that makes it. Any path under
-#     .github/ selects every shard.
+#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate,
+#     tools/rust-reads or tools/lib/skill-requirements.awk, runs every
+#     lane, so a change to a lane or to its selection runs on the pull
+#     request that makes it. Any path under .github/ selects every shard.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check and, on a pull request, the
 #     document byte ceilings and the work-marker scan. The classifier
@@ -228,7 +228,7 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them.
-LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$|tools/lib/skill-requirements\.awk$)'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard: the lane sources and the rest of .github/.
@@ -260,14 +260,10 @@ reads() {
   ' <<<"$rows"
 }
 
-# `SKILL<tab>NAME` for each name a skill's SKILL.md frontmatter declares under
-# `dependencies.required`, read from the checkout this script runs in. The
-# kendex engine reads the same key when it installs a skill
-# (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as a
-# two-space `required:` or `optional:` key holding an inline list of bare
-# names. Anything else this reader meets under `dependencies:` prints `?` and
-# its file, a name that is not bare prints `?` too, and the caller refuses
-# both rather than read them as no dependency.
+# `SKILL<tab>NAME` for each name a skill's SKILL.md declares under
+# `dependencies.required`, and `?<tab>FILE` for a dependencies block the
+# reader cannot take, read from the checkout this script runs in by
+# lib/skill-requirements.awk, whose header states the grammar.
 requirements() {
   local f
   set --
@@ -275,30 +271,7 @@ requirements() {
     [ ! -f "$f" ] || set -- "$@" "$f"
   done
   [ "$#" -gt 0 ] || return 0
-  awk '
-    FNR == 1 { front = ($0 == "---"); deps = 0; skill = FILENAME; sub(/\/SKILL\.md$/, "", skill); sub(/^.*\//, "", skill); next }
-    !front { next }
-    $0 == "---" { front = 0; next }
-    /^[^ ]/ {
-      deps = ($0 == "dependencies:")
-      if (!deps && index($0, "dependencies:") == 1) print "?\t" FILENAME
-      next
-    }
-    !deps { next }
-    /^  optional:/ { next }
-    !/^  required:/ { print "?\t" FILENAME; next }
-    {
-      list = $0
-      sub(/^  required:[ ]*/, "", list)
-      if (substr(list, 1, 1) != "[" || substr(list, length(list)) != "]" || index(substr(list, 2, length(list) - 2), "]") > 0) { print "?\t" FILENAME; next }
-      gsub(/[][ ]/, "", list)
-      n = split(list, names, ",")
-      for (i = 1; i <= n; i++) {
-        if (names[i] !~ /^[a-z0-9-]+$/) { print "?\t" FILENAME; continue }
-        print skill "\t" names[i]
-      }
-    }
-  ' "$@"
+  awk -f "$TOOLS_DIR/lib/skill-requirements.awk" "$@"
 }
 
 # Who reads a path: `<package> <how>` for each tracked file naming one of the
