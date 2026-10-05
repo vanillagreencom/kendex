@@ -238,31 +238,31 @@ assert_eq "$(jq -r '.usage.rows' "$TMP_ROOT/writer"/usage/host-accounts-*.json |
 # the two, so the change alone makes the directory newer. A write row takes
 # both before its write; a deleting row takes `age-dir` before its run, and
 # the row after it `age-marker`, since the scan writes the marker before it
-# deletes. Every other row reads real mtimes: a scan row's policy or day
-# decides it, and a skip row follows a scan that wrote its marker after the
-# directory last changed.
+# deletes. `fresh` gives the directory the marker's mtime, so policy and day
+# rows prove their own trigger and skip rows judge an unchanged directory.
 AGED_DIR=200001010000
 AGED_MARKER=200101010000
 scan_ran() { [[ "$(grep -c '' "$TMP_ROOT/cache-reads" || true)" -gt 0 ]] && printf scanned || printf skipped; }
 LANES="$ORIGINAL_LANES"
 state="$TMP_ROOT/marker"
 cache_run "$state" ORCH_LANE_EXCLUDE=sclaude list --json --no-cache > "$TMP_ROOT/out"
-for row in '|ORCH_LANE_EXCLUDE=sclaude||scanned|the first run under a policy scans' \
-  '|ORCH_LANE_EXCLUDE=sclaude||skipped|an unchanged directory under the same policy is not scanned again' \
+for row in 'age-marker|ORCH_LANE_EXCLUDE=sclaude||scanned|the first run under a policy scans' \
+  'fresh|ORCH_LANE_EXCLUDE=sclaude||skipped|an unchanged directory under the same policy is not scanned again' \
   'age-dir age-marker write|ORCH_LANE_EXCLUDE=sclaude||scanned|a write under another policy sends the next run through the scan' \
-  '|ORCH_LANE_EXCLUDE=sclaude||skipped|the scan after that write marks the directory again' \
+  'fresh|ORCH_LANE_EXCLUDE=sclaude||skipped|the scan after that write marks the directory again' \
   'age-dir|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans and deletes the provider record' \
   'age-marker|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|that deletion sends the next run through the scan once more' \
-  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||skipped|the scan after a policy change marks the directory again' \
-  '|ORCH_LANE_EXCLUDE=sclaude,zclaude|2099-01-01|scanned|a day change scans' \
+  'fresh|ORCH_LANE_EXCLUDE=sclaude,zclaude||skipped|the scan after a policy change marks the directory again' \
+  'fresh|ORCH_LANE_EXCLUDE=sclaude,zclaude|2099-01-01|scanned|a day change scans' \
   'age-dir|ORCH_LANE_EXCLUDE=claude||scanned|a tightened policy scans and deletes' \
   'age-marker|ORCH_LANE_EXCLUDE=claude||scanned|a deletion sends the next run through the scan once more' \
-  '|ORCH_LANE_EXCLUDE=claude||skipped|the scan after a deletion marks the directory again'; do
+  'fresh|ORCH_LANE_EXCLUDE=claude||skipped|the scan after a deletion marks the directory again'; do
   IFS='|' read -r prep policy today expected name <<<"$row"
   for step in $prep; do
     case "$step" in
       age-dir) touch -t "$AGED_DIR" "$state/usage" || fail "marker row: cannot backdate $state/usage" ;;
       age-marker) touch -t "$AGED_MARKER" "$state/usage/.pruned" || fail "marker row: cannot backdate $state/usage/.pruned" ;;
+      fresh) touch -r "$state/usage/.pruned" "$state/usage" || fail "marker row: cannot date $state/usage" ;;
       write) cache_run "$state" ORCH_LANE_EXCLUDE= list --local --json --no-cache > "$TMP_ROOT/out" ;;
       *) fail "marker row: unknown prep step $step" ;;
     esac
@@ -286,10 +286,14 @@ marker_control() { # NAME MATCH REPLACEMENT SEED-POLICY [WRITE-POLICY...]
   LANES="$control_dir/lanes"
   cache_run "$state" "$seed" list --json --no-cache > "$TMP_ROOT/out"
   cache_run "$state" "$seed" check "$H/.eclaude" > "$TMP_ROOT/out"
+  touch -t "$AGED_DIR" "$state/usage"
+  touch -t "$AGED_MARKER" "$state/usage/.pruned"
   for write in "$@"; do
     cache_run "$state" "$write" list --local --json --no-cache > "$TMP_ROOT/out"
   done
-  cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out"
+  : > "$TMP_ROOT/cache-reads"
+  cache_run "$state" ORCH_LANE_EXCLUDE=claude check "$H/.eclaude" > "$TMP_ROOT/out"
+  assert_eq "$(scan_ran)" skipped "control: disabling the marker's $name compare defeats the scan assertion"
   assert_eq "$(jq -s '[.[] | select(.config_dir | endswith("/.claude"))] | length' "$state"/usage/*.json)" \
     1 "control: disabling the marker's $name compare leaves removed local usage on disk"
   LANES="$ORIGINAL_LANES"
