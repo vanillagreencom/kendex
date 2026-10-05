@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # open-terminal's overseer binding, lib/lane-cap.sh's overseer_bind: a launch
 # under --state-dir runs in the overseer's repository, the one of the directory
-# the fleet state's overseer record names, else of the --state-dir itself, by
-# git common root or by origin OWNER/REPO, else, where neither names a
+# the fleet state's overseer record names, else of the directory
+# workflow-state resolves the --state-dir to, by git common root or by origin
+# OWNER/REPO, else, where neither names a
 # repository, of the launch checkout itself, or in one that directory's
 # ORCH_CONNECTED_REPOS lists by origin OWNER/REPO; any other is refused as
 # overseer-foreign before the state is touched, and one that cannot be judged
@@ -264,6 +265,36 @@ fleet none-unread
 run_ot CWD="$TARGET" CC-1
 assert_eq "rc=$RC unjudged=$(grep -cx "open-terminal: overseer-unjudged cause=overseer-root path=$UNREAD_CHECKOUT" <<<"$ERR" || true) record=$(record CC-1)" \
   "rc=1 unjudged=1 record=none" "a --state-dir below a .git entry git cannot read is unjudged, never outside any checkout"
+# A workflow-state whose path read fails, planted in a private copy of the
+# scripts: the binding cannot name the state directory it judges.
+PATH_FAILS="$(mutant_scripts path-fails workflow-state)" || exit 1
+mutate_file "$PATH_FAILS/workflow-state" '    path)      shift; cmd_path "$@" ;;' '    path)      shift; exit 1 ;;'
+connected absent
+fleet none
+run_ot SCRIPT="$PATH_FAILS/open-terminal" CWD="$TARGET" CC-1
+assert_eq "rc=$RC unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true) record=$(record CC-1)" "rc=1 unjudged=1 record=none" \
+  "a state directory workflow-state cannot resolve is unjudged"
+
+echo "=== a relative --state-dir binds where workflow-state resolves it ==="
+# workflow-state joins a relative --state-dir to the launch checkout's main
+# root, not to the launcher's cwd: from a subdirectory of the target, the value
+# below names the overseer checkout's state directory, a sibling of the
+# target's, while the same spelling read from the cwd names a directory that
+# does not exist, whose nearest existing ancestor is in the target.
+RELATIVE_STATE=../overseer-repo/tmp/fleet
+mkdir -p "$TARGET/sub"
+# relative_run [SCRIPT=PATH] — one launch from $TARGET/sub with no state yet,
+# under $RELATIVE_STATE; the lane record is read at the directory it names.
+relative_run() {
+  connected absent
+  fleet none
+  STATE="$RELATIVE_STATE"
+  run_ot "$@" CWD="$TARGET/sub" CC-1
+  STATE="$OVERSEER_REPO/tmp/fleet"
+}
+relative_run
+assert_eq "rc=$RC record=$(record CC-1) foreign=$(grep -cxF "$FOREIGN_LINE" <<<"$ERR" || true)" "rc=1 record=none foreign=1" \
+  "a relative --state-dir that names the overseer's state directory refuses another repository's clone launched from a subdirectory"
 
 # One control per rule, each on a copy of the script that keeps the matched
 # text and drops its behaviour.
@@ -286,11 +317,27 @@ connected absent; fleet cwd "$OVERSEER_REPO"
 run_ot SCRIPT="$MUT" CWD="$OVERSEER_CLONE" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=1 foreign=1" \
   "control: without the origin comparison a second clone of the overseer's repository is refused"
-MUT="$(control state-dir "$BIND" '    dir="$STATE_DIR"' '    dir=/')"
+MUT="$(control state-dir "$BIND" '    dir="${dir%/*}"' '    dir=/')"
 connected absent; fleet bare
 run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
 assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
   "control: without the --state-dir binding a state with no overseer directory admits another repository's clone"
+MUT="$(control resolved-state-dir "$BIND" '    dir="${dir%/*}"' '    dir="$STATE_DIR"')"
+relative_run SCRIPT="$MUT"
+assert_eq "rc=$RC foreign=$(refused 'overseer-foreign ')" "rc=0 foreign=0" \
+  "control: reading the raw --state-dir from the cwd binds a relative one to the target's checkout and admits it"
+# The path-read control runs its mutant beside the failing workflow-state: the
+# link mutant_scripts made is replaced by that private copy.
+MUT="$(control path-read "$BIND" 'path oversee)" \
+      || { ot_message overseer-unjudged cause=state-read' 'path oversee)" \
+      || true || { ot_message overseer-unjudged cause=state-read')"
+MUT_DIR="${MUT%/*}"
+rm -- "${MUT_DIR:?}/workflow-state"
+cp -p -- "$PATH_FAILS/workflow-state" "${MUT_DIR:?}/workflow-state"
+connected absent; fleet none
+run_ot SCRIPT="$MUT" CWD="$TARGET" CC-1
+assert_eq "unjudged=$(grep -cxF "$STATE_READ_LINE" <<<"$ERR" || true)" "unjudged=0" \
+  "control: without the path-read refusal a state directory workflow-state cannot resolve prints no state-read line"
 MUT="$(control checkout-fallback "$BIND" '|| { root="$launch_root"; }' '|| { false && root="$launch_root"; }')"
 connected absent; fleet none-outside
 run_ot SCRIPT="$MUT" CWD="$OVERSEER_WT" CC-1

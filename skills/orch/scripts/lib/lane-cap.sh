@@ -220,8 +220,8 @@ dotgit_above() {
 # before the state is touched: the item check reads the checkout the launch
 # runs from, and nothing there binds that checkout to the fleet it records
 # into. The overseer's directory is the state's `.overseer.cwd`, else the
-# nearest existing directory of the state directory, which lives in the
-# overseer's checkout. A state that records no overseer directory and sits in
+# nearest existing directory of the state directory workflow-state resolves
+# --state-dir to, which lives in the overseer's checkout. A state that records no overseer directory and sits in
 # no checkout names no overseer repository, so the launch binds to its own
 # checkout's and goes ahead: absent input never refuses the overseer's own
 # work. A recorded directory git cannot read refuses, and so does a state
@@ -251,7 +251,14 @@ overseer_bind() {
     root="$("$SCRIPT_DIR/git-context" common-root "$dir")" \
       || { ot_message overseer-unjudged cause=overseer-root "path=$cwd" >&2; return 1; }
   else
-    dir="$STATE_DIR"
+    # The state directory is the one workflow-state resolves --state-dir to,
+    # never its raw spelling: a relative value names a directory under the
+    # launch checkout's main root, not under the launcher's cwd. path prints
+    # the file whether or not it exists yet.
+    dir="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" \
+      || { ot_message overseer-unjudged cause=state-read state=oversee >&2; return 1; }
+    dir="${dir%/*}"
+    dir="${dir:-/}"
     while [[ ! -d "$dir" ]]; do dir="$(dirname -- "$dir")"; done
     physical="$(cd -P -- "$dir" && pwd -P)" \
       || { ot_message overseer-unjudged cause=overseer-root "path=$dir" >&2; return 1; }

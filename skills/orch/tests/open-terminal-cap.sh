@@ -680,7 +680,10 @@ refusal() {
       PATH="$ROW/bin:$PATH" launch one 5 --lane "$LANE_A" CC-1 ;;
     path)
       # workflow-state answers every verb but `path oversee`, so the fleet
-      # state exists and only its path cannot be had.
+      # state exists and only its path cannot be had. The state records the
+      # overseer's directory, so the overseer binding judges that directory
+      # and leaves the path read to the cap.
+      "$ws" --state-dir "$STATE" update oversee --arg cwd "$REPO" '.overseer = {cwd: $cwd}' >/dev/null
       # shellcheck disable=SC2016  # the stub's own text, never expanded here.
       mv -- "$ws" "$ws.real"
       printf '%s\n' '#!/usr/bin/env bash' '[[ " $* " != *" path oversee "* ]] || exit 1' 'exec "$0.real" "$@"' > "$ws"
