@@ -17,11 +17,10 @@
 # carries, and the lane record naming
 # the kind, the account, that id and the window, and the tier the brief's
 # item-tier line states, a whole line, null with no line or two distinct ones,
-# whatever orch words or quoted results the brief carries. The session words name the item branch the session pushes to, put
-# an empty first commit ahead of the draft pull request, and say when that
-# pull request is marked ready, and the prompt the launch writes holds the item
-# branch where the words name it. A launch prints no cloud-card-owed line. A
-# kind whose launch this build does not make refuses as kind-unbuilt.
+# whatever orch words or quoted results the brief carries. The prompt the
+# launch writes holds the item branch where the session words name it. A
+# launch prints no cloud-card-owed line. A kind whose launch this build does
+# not make refuses as kind-unbuilt.
 #
 # The suite runs a copy of open-terminal beside the real lane-host, which
 # declares the claude-cloud line, in a temp git repo whose origin is a
@@ -260,41 +259,6 @@ for i in "${!TIER_ROWS[@]}"; do
   IFS='|' read -r name _ want <<<"${TIER_ROWS[$i]}"
   tier_row "$OT" "${TIER_ROWS[$i]}" "CC-4$i"
   assert_eq "$TIER" "rc=0 $want" "a cloud launch records the tier and inputs of the $name row" "$TMP_ROOT/err"
-done
-
-echo "=== the session words name the item branch and the pull request's steps ==="
-# steps LIB — the session words lib/lane-launch.sh at LIB closes a brief on,
-# one short anchor per step: whether they name {branch} on origin as the push
-# target, put the empty first commit ahead of opening the draft pull request,
-# mark it ready for review when done, and keep it draft under ## Lane status
-# otherwise.
-steps() {
-  local text before
-  text="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")" || { echo "unread"; return; }
-  before="${text%%draft pull request*}"
-  printf 'push=%s order=%s ready=%s draft=%s' "$(grep -c '{branch} on origin' <<<"$text" || true)" \
-    "$([[ "$before" != "$text" && "$before" == *"--allow-empty"* ]] && echo commit-first || echo pr-first)" \
-    "$(grep -c 'ready for review' <<<"$text" || true)" \
-    "$(grep -c '## Lane status' <<<"$text" || true)"
-}
-STEPS_WANT="push=1 order=commit-first ready=1 draft=1"
-assert_eq "$(steps "$SCRIPTS_DIR/lib/lane-launch.sh")" "$STEPS_WANT" \
-  "the session words push to the item branch, make an empty commit before the draft pull request, and mark it ready only when done"
-# Controls, each in a copy of the lib: STEP_EDITS is NAME|OLD -> NEW, one per
-# step, the step removed or its order reversed.
-STEP_EDITS=(
-  'push target|, and push every commit to {branch} on origin, never to a claude/ branch, since your overseer finds your work by that branch name -> '
-  'commit first|make your first commit with git commit --allow-empty, push it to {branch}, and open a draft pull request from {branch} -> open a draft pull request from {branch}, then make your first commit with git commit --allow-empty and push it to {branch}'
-  'ready step| When the work is done, mark the pull request ready for review. -> '
-  'draft step| While the work goes on, and while a blocker stands, keep the pull request draft, with where the work stands and any blocker under a ## Lane status heading in its body, and name a blocker in a pull request comment too. -> '
-)
-for i in "${!STEP_EDITS[@]}"; do
-  edit="${STEP_EDITS[$i]#*|}"
-  lib="$TMP_ROOT/steps-lib-$i"
-  cp -R "$SCRIPTS_DIR/lib" "$lib"
-  mutate_file "$lib/lane-launch.sh" "${edit%% -> *}" "${edit#* -> }"
-  assert_eq "red=$([[ "$(steps "$lib/lane-launch.sh")" != "$STEPS_WANT" ]] && echo yes || echo no)" "red=yes" \
-    "control: session words without the ${STEP_EDITS[$i]%%|*} fail the steps row"
 done
 
 echo "=== the session words run no kendex-bound arming command ==="

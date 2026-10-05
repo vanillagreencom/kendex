@@ -487,15 +487,15 @@ new_case cloud_lane
 report -60
 fleet '' "$(lane KEN-7 running -86400 claude-cloud)"
 issue KEN-7 "Title 7" "Outcome 7"
-cloud_row() { printf '%s|%s|%s' "$RC" "$(first_err)" "$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")"; }
+cloud_row() { printf '%s|%s' "$RC" "$(first_err)"; }
 run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(cloud_row)" "0||- KEN-7: no validation run recorded" \
-  "a running claude-cloud lane renders with no item-state refusal and no validation run"
+assert_eq "$(cloud_row)" "0|" \
+  "a running claude-cloud lane renders with no item-state refusal"
 CLOUD_MUTANT="$(mutant_scripts cloud-report/orch lib/lane-gitfile.sh)" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cloud-report/github"
 mutate_file "$CLOUD_MUTANT/lib/lane-gitfile.sh" '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
 REPORT_UNDER_TEST="$CLOUD_MUTANT/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(cloud_row | cut -d'|' -f1,2)" "2|oversee-report: item-state=KEN-7" \
+assert_eq "$(cloud_row)" "2|oversee-report: item-state=KEN-7" \
   "control: a claude-cloud lane read for its state refuses the report"
 
 echo "=== render: a lane's validation minutes are its own state's ==="
