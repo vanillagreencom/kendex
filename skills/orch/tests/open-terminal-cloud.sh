@@ -18,10 +18,10 @@
 # the kind, the account, that id and the window, and the tier the brief's
 # item-tier line states, null with no line, whatever orch words the brief
 # quotes. The session words name the item branch the session pushes to, put
-# the first commit ahead of the draft pull request, and say when that pull
-# request is marked ready, and a launch that observed no card prints no
-# cloud-card-owed line. A kind whose
-# launch this build does not make refuses as kind-unbuilt.
+# an empty first commit ahead of the draft pull request, and say when that
+# pull request is marked ready, and the prompt the launch writes holds the item
+# branch where the words name it. A launch prints no cloud-card-owed line. A
+# kind whose launch this build does not make refuses as kind-unbuilt.
 #
 # The suite runs a copy of open-terminal beside the real lane-host, which
 # declares the claude-cloud line, in a temp git repo whose origin is a
@@ -220,6 +220,16 @@ assert_eq "$(pasted 1)" "$LAUNCH_LINE" \
   "the window runs claude --cloud interactively under the lane's account, the lane's model by its id, the description read from the worktree's git directory, CCR_FORCE_BUNDLE cleared and the #81776 workaround"
 assert_eq "$(described) pasted=$(typed 2)" "cloud=brief ref=0 pasted=none" \
   "claude takes the brief file's text closed by the session words as its --cloud= description, never the mailbox words, with no --ref and nothing pasted after its line"
+# branch_named ITEM BRANCH — the prompt file the launch of ITEM wrote: whether
+# it names BRANCH, which the brief does not, and how many {branch} words it
+# left unfilled.
+branch_named() {
+  local text
+  text="$(cat -- "$TMP_ROOT/wt/$1/.git/cloud-prompt")" || { echo "prompt=unread"; return; }
+  printf 'named=%s unfilled=%s' "$([[ "$text" == *"$2"* ]] && echo yes || echo no)" "$({ grep -oF '{branch}' <<<"$text" || true; } | wc -l | tr -d ' ')"
+}
+assert_eq "$(branch_named CC-1 cc-1)" "named=yes unfilled=0" \
+  "the prompt the launch wrote names the item branch and leaves no {branch} word"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-1 $TMP_ROOT/wt/CC-1 running null" \
   "the record names the host and kind, the account, the session id the pane's URL carries, the window, and no tier, the brief carrying no item-tier line"
 OWED='open-terminal: cloud-card-owed item=CC-1'
@@ -236,29 +246,30 @@ assert_eq "rc=$RC $(tier_record CC-36)" 'rc=0 ["small",{"estimate":12,"delta":40
   "a cloud launch records the tier and inputs the brief's item-tier line states" "$TMP_ROOT/err"
 
 echo "=== the session words name the item branch and the pull request's steps ==="
-# steps LIB — the session words lib/lane-launch.sh at LIB closes a brief on:
-# whether they name {branch} as the push target, put the first commit ahead of
-# opening the draft pull request, mark it ready when done and leave it draft
-# with the blocker otherwise.
+# steps LIB — the session words lib/lane-launch.sh at LIB closes a brief on,
+# one short anchor per step: whether they name {branch} on origin as the push
+# target, put the empty first commit ahead of opening the draft pull request,
+# mark it ready for review when done, and keep it draft under ## Lane status
+# otherwise.
 steps() {
   local text before
   text="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")" || { echo "unread"; return; }
-  before="${text%%open a draft pull request*}"
-  printf 'push=%s order=%s ready=%s draft=%s' "$(grep -c 'push every commit to {branch}' <<<"$text" || true)" \
-    "$([[ "$before" != "$text" && "$before" == *"first commit and push it"* ]] && echo commit-first || echo pr-first)" \
-    "$(grep -c 'When the work is done, mark the pull request ready for review' <<<"$text" || true)" \
-    "$(grep -c 'leave it draft with the blocker under ## Lane status' <<<"$text" || true)"
+  before="${text%%draft pull request*}"
+  printf 'push=%s order=%s ready=%s draft=%s' "$(grep -c '{branch} on origin' <<<"$text" || true)" \
+    "$([[ "$before" != "$text" && "$before" == *"--allow-empty"* ]] && echo commit-first || echo pr-first)" \
+    "$(grep -c 'ready for review' <<<"$text" || true)" \
+    "$(grep -c '## Lane status' <<<"$text" || true)"
 }
 STEPS_WANT="push=1 order=commit-first ready=1 draft=1"
 assert_eq "$(steps "$SCRIPTS_DIR/lib/lane-launch.sh")" "$STEPS_WANT" \
-  "the session words push to the item branch, commit before the draft pull request, and mark it ready only when done"
+  "the session words push to the item branch, make an empty commit before the draft pull request, and mark it ready only when done"
 # Controls, each in a copy of the lib: STEP_EDITS is NAME|OLD -> NEW, one per
-# step, the step removed or put back where the earlier words had it.
+# step, the step removed or its order reversed.
 STEP_EDITS=(
   'push target|, and push every commit to {branch} on origin, never to a claude/ branch, since your overseer finds your work by that branch name -> '
-  'commit first|Make your first commit and push it before you open a pull request, since GitHub opens none on a branch with no commit ahead of its base, then open a draft -> Push the item branch and open a draft pull request as your first step, then open a draft'
+  'commit first|make your first commit with git commit --allow-empty, push it to {branch}, and open a draft pull request from {branch} -> open a draft pull request from {branch}, then make your first commit with git commit --allow-empty and push it to {branch}'
   'ready step| When the work is done, mark the pull request ready for review. -> '
-  'draft step| Until then, and while a blocker stands, leave it draft with the blocker under ## Lane status. -> '
+  'draft step| While the work goes on, and while a blocker stands, keep the pull request draft, with where the work stands and any blocker under a ## Lane status heading in its body, and name a blocker in a pull request comment too. -> '
 )
 for i in "${!STEP_EDITS[@]}"; do
   edit="${STEP_EDITS[$i]#*|}"
@@ -594,16 +605,21 @@ assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: kind-unbuilt kind=codex-cl
   "rc=1 refused=1 made=no" "a kind declaring launch=cloud-task refuses as kind-unbuilt" "$TMP_ROOT/err"
 
 echo "=== controls ==="
-# mutant NAME OLD NEW — a copy of open-terminal with one rule removed, laid
-# out as the suite's copy is, its path in MUTANT.
+# mutant_root NAME — a copy of the suite's scripts laid out as the suite's
+# copy is, its root in MUTANT_ROOT.
+mutant_root() {
+  MUTANT_ROOT="$TMP_ROOT/$1"
+  mkdir -p "$MUTANT_ROOT/scripts"
+  cp -R "$REPO/scripts/." "$MUTANT_ROOT/scripts/"
+  orch_fixture_shared_libs "$MUTANT_ROOT"
+  git -C "$MUTANT_ROOT" init -q
+}
+# mutant NAME OLD NEW — such a copy with one rule of open-terminal removed,
+# its path in MUTANT.
 mutant() {
-  local root="$TMP_ROOT/$1"
-  mkdir -p "$root/scripts"
-  cp -R "$REPO/scripts/." "$root/scripts/"
-  orch_fixture_shared_libs "$root"
-  git -C "$root" init -q
-  mutate_file "$root/scripts/open-terminal" "$2" "$3"
-  MUTANT="$root/scripts/open-terminal"
+  mutant_root "$1"
+  mutate_file "$MUTANT_ROOT/scripts/open-terminal" "$2" "$3"
+  MUTANT="$MUTANT_ROOT/scripts/open-terminal"
 }
 # One per refusal: each removed in turn, its row's launch is refused no more.
 for i in "${!REFUSAL_ROWS[@]}"; do
@@ -835,8 +851,16 @@ assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=1" \
 # shellcheck disable=SC2016
 mutant branch-fill '    prompt+="${words%%\{branch\}*}$branch"' '    prompt+="${words%%\{branch\}*}{branch}"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
-assert_eq "$(described)" "cloud=other ref=0" \
-  "control: session words with {branch} unfilled fail the description row"
+assert_eq "$(described) $(branch_named CC-1 cc-1)" "cloud=other ref=0 named=no unfilled=4" \
+  "control: session words with {branch} unfilled fail the description and prompt rows"
+# Every {branch} gone from the words, in a copy of the lib: the description
+# row, which builds its want from the same words, still passes, and the
+# prompt row fails.
+mutant_root branch-words
+perl -0777 -pi -e 's/\{branch\}//g or die "branch-words: matches=0\n"' -- "$MUTANT_ROOT/scripts/lib/lane-launch.sh"
+run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
+assert_eq "$(branch_named CC-1 cc-1)" "named=no unfilled=0" \
+  "control: session words naming no {branch} fail the prompt row"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

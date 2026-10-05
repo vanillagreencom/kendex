@@ -194,6 +194,13 @@ step() {
       git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
       commit_main file.txt 'already merged plus main follow-up'
       ;;
+    # A branch published at its creation tip, as a cloud launch pushes it
+    # before the session's own commits land on the remote from another
+    # machine (move-remote): this tree is an ancestor of its remote.
+    cloud)
+      make_pair
+      git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+      ;;
     # An unpublished branch with one commit behind an advanced main.
     plain)
       make_pair
@@ -464,6 +471,7 @@ map_lines() {
     unmapped-head) printf 'rebase-unmapped: <head>' ;;
     unmapped-head1) printf 'rebase-unmapped: <head~1>' ;;
     1r) printf 'rebase-map: <pre> <restacked>' ;;
+    1x) printf 'rebase-map: <external> <head>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
     2x) printf 'rebase-map: <pre> <head~1>;rebase-map: <end> <head>' ;;
     *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
@@ -496,6 +504,7 @@ err_text() {
     reuse-merged) printf 'worktree-reuse-merged: <base>' ;;
     merge-unverified) printf 'worktree-merge-unverified: topic' ;;
     reuse-dirty) printf 'worktree-reuse-dirty: <wt>' ;;
+    fast-forward) printf 'worktree-reuse-fast-forward: origin/topic' ;;
     paused) printf 'worktree-rebase-conflicts: <wt>' ;;
     aborted) printf 'worktree-rebase-failed: <wt>' ;;
     unrebased) printf 'worktree-reuse-unrebased: <wt>' ;;
@@ -566,6 +575,7 @@ remote movement after authorization fails the exact lease|clean reuse move-remot
 a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 --keep-on-conflict over a clean rebase rebases as --reuse does|plain|create topic --reuse --keep-on-conflict|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+reuse over a clean tree behind its remote fast-forwards to the remote, then rebases onto the advanced main|cloud move-remote advance-main|create topic --reuse|0|wt|fast-forward+map:1x|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,main-advanced-twice.txt:advanced twice,other.txt:orig restack=remote:origin,branch:topic,expected:external,authorized:head remote=external map=1x
 dirty reuse refreshes the worktree without rebasing its uncommitted work|plain dirty-other|create topic --reuse|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
@@ -739,6 +749,27 @@ while IFS='|' read -r command clause_rc kept_guard; do
   assert_eq "$(grep -c '^worktree-keep-mode-required: ' "$ROOT/err" || true)" "0" \
     "control: the mutant never refuses the mode [$command]"
 done <<<"$KEEP_CLAUSES"
+
+echo
+echo "=== must-fail control: with the fast-forward arm cut, a tree behind its remote is refused ==="
+
+# The row above pins that a clean tree behind its remote branch is brought up
+# to it before the containment guard. The defect planted here disarms that
+# arm on a private package copy: the same reuse then meets the guard.
+build ff-mutant cloud move-remote advance-main
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+ff_mutant="$ROOT/pkg/worktree/scripts/worktree"
+ff_arm='if [[ -n "$REUSE_EXPECTED_OID" && -z "$REUSE_STATUS" ]]'
+assert_eq "$(grep -cF "$ff_arm" "$ff_mutant")" "1" "control finds the fast-forward arm"
+FF_ARM="$ff_arm" perl -0pi -e 's/\Q$ENV{FF_ARM}\E/if false && [[ -n "\$REUSE_EXPECTED_OID" ]]/' -- "$ff_mutant"
+assert_eq "$(grep -cF "$ff_arm" "$ff_mutant")" "0" "control disarms it only in its private copy"
+ff_mutant_rc=0
+(cd "$MAIN" && "$ff_mutant" create "$ISSUE" --reuse \
+  >"$ROOT/ff-mutant.out" 2>"$ROOT/ff-mutant.err") || ff_mutant_rc=$?
+assert_eq "$ff_mutant_rc" "1" "control: the mutant fails the reuse"
+assert_eq "$(grep -c '^worktree-restack-remote-uncontained: ' "$ROOT/ff-mutant.err" || true)" "1" \
+  "control: the mutant refuses the remote its tree does not contain"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

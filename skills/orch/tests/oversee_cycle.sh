@@ -54,7 +54,8 @@ SH
 # where it holds no such file, as a provider answers; `touch` answers.
 # The kinds kendex owns, local and claude-cloud, are the real dispatcher's
 # answers, its refusal of a provider verb included, and any other host
-# declares a provider's files=verb line.
+# declares a provider's files=verb line, but caps-broken, whose line the
+# dispatcher refuses as a provider's line missing a key.
 rm -- "$LAYOUT/orch/scripts/lane-host"
 export OVERSEE_CYCLE_REAL_LANE_HOST="$TEST_DIR/../scripts/lane-host"
 cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
@@ -62,7 +63,9 @@ cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
 printf '%s\n' "$*" >> "$CASE/lane-host.calls"
 case "$ORCH_LANE_HOST" in local | claude-cloud) exec "$OVERSEE_CYCLE_REAL_LANE_HOST" "$@" ;; esac
 case "$1" in
-  capabilities) printf 'kind=ssh\tfiles=verb\n' ;;
+  capabilities)
+    [[ "$ORCH_LANE_HOST" != caps-broken ]] || { echo 'lane-host: capability-invalid key=files value=' >&2; exit 1; }
+    printf 'kind=ssh\tfiles=verb\n' ;;
   cat) [[ -f "$CASE/host$4" ]] || exit 2; cat -- "$CASE/host$4" ;;
   touch) exit 0 ;;
   *) exit 9 ;;
@@ -865,18 +868,18 @@ echo "=== a claude-cloud record: the tier it states, no rounds read ==="
 # The launch records the tier the brief's item-tier line states, or null
 # where none does. Its host kind declares files=none, so no workflow state is
 # read: the dispatcher refuses every provider verb under that kind.
-# cloud_case NAME TIER — KEN-1 as open-terminal records a cloud lane, TIER
-# being its JSON tier.
+# cloud_case NAME TIER [HOST] — KEN-1 as open-terminal records a cloud lane,
+# TIER being its JSON tier, on HOST, claude-cloud by default.
 cloud_case() {
   new_case "$1"; printf standard > "$CASE/class"; timeline 1000
   edit_json "$CASE/state/workflow-state-oversee.json" \
-    "(.lanes[] | select(.item == \"KEN-1\")) += {host: \"claude-cloud\", kind: \"claude-cloud\", mail_root: \"$TMP_ROOT/cloud-wt\", tier: $2, tier_inputs: null}"
+    "(.lanes[] | select(.item == \"KEN-1\")) += {host: \"${3:-claude-cloud}\", kind: \"claude-cloud\", mail_root: \"$TMP_ROOT/cloud-wt\", tier: $2, tier_inputs: null}"
 }
-# cloud_seen TIER — a record of KEN-1 with no --tier: its tier, escape and
-# rounds, and the stderr lines the read printed.
+# cloud_seen TIER [HOST] — a record of KEN-1 with no --tier: its tier, escape
+# and rounds, and the stderr lines the read printed.
 cloud_seen() {
   local got
-  cloud_case "cloud-$1" "$1"
+  cloud_case "cloud-$1-${2:-}" "$1" "${2:-}"
   got="$(record KEN-1 '')"
   printf '%s %s %s %s unread=%s lane-host=%s' "$(cut -d' ' -f1 <<<"$got")" "$(field tier "$got")" "$(field escaped "$got")" \
     "$(field review "$got")" "$(grep -c rounds-unread "$CASE/err" || true)" "$(grep -c '^lane-host: ' "$CASE/err" || true)"
@@ -885,9 +888,17 @@ assert_eq "$(cloud_seen '"small"')" 'rc=0 tier=small escaped=true review=- unrea
   "a cloud record's stated tier stands with no --tier, and a files=none kind reads no rounds and prints nothing"
 assert_eq "$(cloud_seen null)" 'rc=0 tier=- escaped=- review=- unread=0 lane-host=0' \
   "a cloud record that states no tier records none, with no escape judged"
-control m-files-none oversee-cycle 'elif lane_capability files files && [[ "$files" == none ]]; then' 'elif lane_capability files files && false; then'
+# A host whose capability line cannot be read is a read that failed, never a
+# lane with no state.
+assert_eq "$(cloud_seen '"small"' caps-broken)" 'rc=0 tier=small escaped=true review=- unread=1 lane-host=1' \
+  "a host whose capability line is refused records no rounds and prints rounds-unread with the refusal"
+control m-files-none lib/lane-gitfile.sh '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
 assert_eq "$(cloud_seen '"small"')" 'rc=0 tier=small escaped=true review=- unread=1 lane-host=2' \
   "control: a cloud record read for its rounds prints rounds-unread and the dispatcher's refusals"
+control m-caps-unread lib/lane-gitfile.sh 'lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2' \
+  'lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 0'
+assert_eq "$(cloud_seen '"small"' caps-broken | cut -d' ' -f5)" 'unread=0' \
+  "control: a refused capability read taken as no state prints no rounds-unread"
 control m-tier-none oversee-cycle '  none) ;;' '  none) usage_error --tier ;;'
 assert_eq "$(cloud_seen null | cut -d' ' -f1)" 'rc=2' \
   "control: a stated null tier taken as missing refuses the record"

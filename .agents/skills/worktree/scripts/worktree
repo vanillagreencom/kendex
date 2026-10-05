@@ -2664,6 +2664,20 @@ case "${1:-}" in
         fi
         REUSE_EXPECTED_OID="$(remote_branch_oid_discovered "$REUSE_REMOTE" "$CURRENT_BRANCH" 2>/dev/null || true)"
         finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
+        # Commits pushed to the branch from another machine, as a Claude cloud
+        # session pushes its own, leave this tree at an ancestor of the remote,
+        # which the containment guard below refuses. A clean tree takes them
+        # by fast-forward, which drops no local commit.
+        if [[ -n "$REUSE_EXPECTED_OID" && -z "$REUSE_STATUS" ]] \
+          && [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$REUSE_EXPECTED_OID" ]] \
+          && git -C "$WT_PATH" merge-base --is-ancestor HEAD "$REUSE_EXPECTED_OID" 2>/dev/null; then
+          if ! REUSE_FF_OUTPUT="$(git -C "$WT_PATH" merge --ff-only "$REUSE_EXPECTED_OID" 2>&1)"; then
+            worktree_message reuse-fast-forward-failed "$REUSE_REMOTE/$CURRENT_BRANCH" "Error: Could not fast-forward '$CURRENT_BRANCH' in $WT_PATH to $REUSE_EXPECTED_OID:" >&2
+            sed 's/^/  git: /' <<<"$REUSE_FF_OUTPUT" >&2
+            exit 1
+          fi
+          worktree_message reuse-fast-forward "$REUSE_REMOTE/$CURRENT_BRANCH" "Fast-forwarded '$CURRENT_BRANCH' to the remote's $REUSE_EXPECTED_OID." >&2
+        fi
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
         elif REUSE_MERGED_COMMIT="$(merged_branch_commit "$CURRENT_BRANCH")"; then

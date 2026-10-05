@@ -357,9 +357,10 @@ Options:
                     alias as its model id, and DESCRIPTION the brief file's
                     text closed by the session words of
                     lib/lane-launch.sh, which name the item branch as the
-                    one the session pushes to, and which the pane's shell reads from
-                    the worktree's git directory (refused as
-                    cloud-prompt-failed where it cannot be written); the
+                    one the session pushes to. The pane's shell reads
+                    DESCRIPTION from a file in the worktree's git directory
+                    (refused as cloud-prompt-failed where it cannot be
+                    written); the
                     CLI clones the pushed item branch, the worktree's
                     current one, and sends the description as the
                     session's first message.

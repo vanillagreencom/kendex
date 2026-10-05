@@ -11,7 +11,7 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | `kind` | `local`, `ssh`, `claude-cloud`, `codex-cloud` | `open-terminal` writes it into the lane record |
 | `launch` | `window`, `ssh`, `cloud-session`, `cloud-task` | `open-terminal`; `lanes pick`, for repository access |
 | `channel` | `mailbox`, `session`, `task` | `lane-mail send`, the `oversee-watch` mail pass |
-| `files` | `local`, `verb`, `none` | `oversee-watch` status-file, workflow-state and mailbox reads |
+| `files` | `local`, `verb`, `none` | `oversee-watch` status-file, workflow-state and mailbox reads; `lib/lane-gitfile.sh` `lane_item_state`, which reads no state for `none`, for `oversee-cycle record` and `oversee-report` |
 | `status` | `pane`, `verb`, `task`, `none` | `oversee-watch` lane judgement |
 | `stop` | `window`, `verb`, `none` | `lane-close` |
 | `relaunch` | `resume`, `fresh` | read by no caller in this build |

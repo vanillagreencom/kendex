@@ -8,6 +8,7 @@
 # shape, and a lane whose marker lands anywhere else is handed no mail at all.
 
 source "$(dirname -- "${BASH_SOURCE[0]}")/lane-host-slots.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/lane-capabilities.sh"
 
 # Print the absolute worktree git directory a worktree's `.git` file names.
 # Returns 1 on any other content, including a `.git` directory's own bytes and
@@ -109,13 +110,15 @@ lane_hosted_state_path() {
 # at ROOT, read
 # through the probe above with ORCH_LANE_HOST set to HOST. A hosted worktree
 # already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
-# lane until lane-close runs, has no state either. 0 read, the state possibly
+# lane until lane-close runs, has no state either, and nor has a lane whose
+# host kind declares files=none, a Claude cloud session, which keeps none this
+# machine can read. 0 read, the state possibly
 # empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
 # the provider call at its per-home cap (lane-host-busy), SCRATCH/state.err
 # carrying its line.
 LANE_ITEM_STATE=""
 lane_item_state() {
-  local path rc=0
+  local path files rc=0
   LANE_ITEM_STATE=""
   if [[ -z "$5" ]]; then
     if [[ -n "$6" && -d "$6" ]]; then
@@ -127,6 +130,9 @@ lane_item_state() {
     LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
     return 0
   fi
+  lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
+  lane_capability files files
+  [[ "$files" != none ]] || return 0
   ORCH_LANE_HOST="$5" lane_hosted_clone "$2" "$4" "$6" "$7/gitfile" "$7/state.err" || rc=$?
   case "$rc" in
     0) ;;

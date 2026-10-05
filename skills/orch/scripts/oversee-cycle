@@ -37,9 +37,9 @@
 # lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
 # ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
 # read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
-# the reason on stderr. A lane whose host kind declares files=none
-# (lane-host capabilities), a Claude cloud session, keeps no state this
-# machine can read: its rounds are null and nothing is read or printed.
+# the reason on stderr. A lane whose host kind declares files=none, a Claude
+# cloud session, has no state that read reaches: its rounds are null and
+# nothing is printed.
 #
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
@@ -167,8 +167,6 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 source "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
-# shellcheck source=lib/lane-capabilities.sh
-source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # shellcheck source=../../github/scripts/lib/gh-repo.sh
 source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
@@ -309,12 +307,8 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
 LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
 
-rounds=null rounds_unread="" files=""
-if ! lane_capabilities_read "$LANE_HOST" "${LANE_HOST_SPEC:-local}" 2>"$WORK/state.err"; then
-  rounds_unread="$WORK/state.err"
-elif lane_capability files files && [[ "$files" == none ]]; then
-  :
-elif ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+rounds=null rounds_unread=""
+if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
   "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then

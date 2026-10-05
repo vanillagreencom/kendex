@@ -243,7 +243,10 @@ Options:
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
                   own lease in place, and skips the rebase for a tree with
-                  uncommitted work. A clean tree rebases onto origin/<default>
+                  uncommitted work. A clean tree whose branch is an ancestor
+                  of its remote branch, whose commits another machine pushed,
+                  first fast-forwards to it (worktree-reuse-fast-forward). A
+                  clean tree rebases onto origin/<default>
                   and refreshes setup. The target must be registered to this
                   repository; incomplete directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution

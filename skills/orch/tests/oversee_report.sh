@@ -480,6 +480,24 @@ rm -f -- "${CASE:?}/host/w/KEN-7/.git"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"
 
+echo "=== render: a running claude-cloud lane has no state to read ==="
+# Its host kind declares files=none, so no state read reaches the
+# dispatcher's refusal of a provider verb.
+new_case cloud_lane
+report -60
+fleet '' "$(lane KEN-7 running -86400 claude-cloud)"
+issue KEN-7 "Title 7" "Outcome 7"
+cloud_row() { printf '%s|%s|%s' "$RC" "$(first_err)" "$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")"; }
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$(cloud_row)" "0||- KEN-7: no validation run recorded" \
+  "a running claude-cloud lane renders with no item-state refusal and no validation run"
+CLOUD_MUTANT="$(mutant_scripts cloud-report/orch lib/lane-gitfile.sh)" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cloud-report/github"
+mutate_file "$CLOUD_MUTANT/lib/lane-gitfile.sh" '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
+REPORT_UNDER_TEST="$CLOUD_MUTANT/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$(cloud_row | cut -d'|' -f1,2)" "2|oversee-report: item-state=KEN-7" \
+  "control: a claude-cloud lane read for its state refuses the report"
+
 echo "=== render: a lane's validation minutes are its own state's ==="
 # A hosted lane's rounds are read from its clone as its stop is; one round
 # reads singular, and a round list the state cannot sum refuses rather than

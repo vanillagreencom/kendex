@@ -1615,7 +1615,9 @@ check_refresh() {
 # through lane-host, and a read that failed settles nothing: the row stands
 # and the failure is noted. A lane whose kind declares files=none, a cloud
 # session, writes no file this watch can read: its start is the draft pull
-# request it opens on the item branch.
+# request its session words have it open on the item branch at once, after an
+# empty first commit, so no open pull request still means never started. A
+# pull request create the session token is refused reads the same way.
 check_start_stall() {
   local entry item running age prior passes path rc rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
