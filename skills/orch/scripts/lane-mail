@@ -151,8 +151,9 @@ Overseer side:
               names that audience and prints no directive, so the report's
               "Waiting on you" and the owner relay read one field and
               never infer the audience; --due keeps the asks whose deadline
-              has passed by this clock, the ones the watch resolves, and
-              never a reserved ask, which no deadline closes. Either
+              has passed by this clock and whose form lets the deadline
+              close them, as the owner channel's ask below states: the
+              ones the watch resolves. Either
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
   events --item ITEM
@@ -167,39 +168,39 @@ Overseer side:
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
-              --recommend a [--wait MINUTES] [--ref MSGID]
+              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID]
               a question for the owner, appended to to-overseer.jsonl with
-              `to` as a field. --recommend names the option that stands
-              where nobody answers, one of --options, and gives the ask its
+              `to` as a field. Every owner ask, a draft ask too, carries a
               deadline: --wait minutes from now, ORCH_ASK_WAIT_MINUTES
-              (default 120) when --wait is not given. An ask with no
-              --recommend is refused `recommend-required`, since nothing
-              but the owner would ever close it. The owner may still answer
-              outside the options, through send --re. --ref names the
-              envelope the ask answers and copies its delivery_id, as
-              notice's --ref below does
+              (default 120) when --wait is not given. What the deadline
+              does is the ask's form, stated here alone. --recommend names
+              the option that stands there where nobody answers, one of
+              --options: pending --due lists the ask once its deadline
+              passes, and resolve --default closes it with that option.
+              --reserved marks an owner-reserved decision, which no default
+              closes: the record carries `reserved: true` and no
+              recommendation, pending --due never lists it, resolve
+              --default refuses it `ask-reserved`, and it stays in pending
+              --to owner, past its deadline too, until the overseer closes
+              it once it holds the owner's answer. --recommend beside
+              --reserved is refused `option-conflict`, and an ask with
+              neither, and no --draft, is refused `recommend-required`. The
+              owner may still answer outside the options, through send
+              --re. --ref names the envelope the ask answers and copies its
+              delivery_id, as notice's --ref below does
   ask --item overseer --to owner --file PATH --draft PATH [--wait MINUTES]
               an owner ask to approve a message sent as the owner. --file
               is the question the owner reads; --draft names a JSON object
               of exactly recipient, medium (slack-channel, slack-thread or
               email) and text, all strings. The ask's options are
               approve,deny and its recommendation deny, so the deadline
-              never approves a send; --options or --recommend beside it is
-              refused `option-conflict`. The record carries `draft`:
-              those three fields, text exactly as the file holds it, and
+              never approves a send; --options, --recommend or --reserved
+              beside it is refused `option-conflict`. The record carries
+              `draft`: those three fields, text exactly as the file holds
+              it, and
               text_hash, the lowercase hex SHA-256 of text's UTF-8 bytes
               that lane-mail computes. The master sends only when the
               approval it holds for that ask id names the same text_hash
-  ask --item overseer --to owner --file PATH --options a,b --reserved
-              [--wait MINUTES] [--ref MSGID]
-              an owner-reserved decision, which no default closes: the
-              overseer closes it once it holds the owner's answer. The
-              record carries `reserved: true` and a deadline but no
-              recommendation, and --recommend or --draft beside it is
-              refused `option-conflict`. pending --due never
-              lists it, so the watch's deadline step leaves it open, and
-              resolve --default refuses it `ask-reserved`; past its
-              deadline it stays in pending --to owner
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
@@ -322,8 +323,8 @@ Options:
   --ref MSGID   ask and notice --to owner only: the owner note or owner ask
                 answered
   --attach PATH notice --to owner only: the file carried beside the text
-  --recommend a ask --to owner only: the option that stands by default
-  --wait N      ask --to owner only: minutes until that default stands
+  --recommend a ask --to owner only: the option that stands at the deadline
+  --wait N      ask --to owner only: minutes until the ask's deadline
   --draft PATH  ask --to owner only: the message the owner approves
   --reserved    ask --to owner only: a decision no deadline closes
   --due         pending only: asks whose deadline has passed
@@ -530,7 +531,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
     draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
-    recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through send --re.' ;;
+    recommend-required) text='An owner ask names its choices with --options and what its deadline does: --recommend names the option that stands there, for a decision a default may close; --reserved marks an owner-reserved decision, which no default closes. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
