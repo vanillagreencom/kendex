@@ -423,11 +423,10 @@ jobs:
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    # Read as: never on a cancelled run; otherwise run whenever the
-    # classification is missing, and stand down only where it arrived and
-    # selected this lane out. The status function is what lifts the implicit
-    # `success()`, which would stand the shards down on exactly the diffs
-    # nothing classified.
+    # Pull requests and merge groups run Linux shards when classification
+    # is missing or selects shell work with a remaining Linux runner.
+    # Pushes and cancelled runs stand this job down. The status function
+    # lifts the implicit `success()` when classification fails.
     if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false

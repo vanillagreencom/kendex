@@ -714,6 +714,32 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
   sed -n 's/^ci-aggregate: cause=/ /p' "$TMP/aggregate-err" | head -1
 }
 
+# The workflow combines the shard and runner selections for each required
+# shell aggregate. Keep both output names in the control: name coverage
+# alone cannot detect an expression that authorizes every skipped shell job.
+saved_results="$RESULTS"
+RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
+for agg in skill-suites "$CI_JOB"; do
+  expr="$(aggregate_lanes "$WORKFLOW" "$agg" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
+  while IFS='|' read -r row event sel expected_value expected_status; do
+    value="$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$expr")"
+    check "$agg shell selection on $row" "$expected_value" "$value"
+    check "$agg skipped shell result on $row" "$expected_status" \
+      "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
+  done <<ROWS
+selected-linux|pull_request|$one_skill|true|1
+macos-proof-remainder|merge_group|$ORCH_PROOF_ROW|false|0
+unselected|merge_group|$SOURCE_PROOF_ROW|false|0
+ROWS
+  plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
+    "$TMP/wf-shell-false-$agg.yml" "$agg"
+  false_expr="$(aggregate_lanes "$TMP/wf-shell-false-$agg.yml" "$agg" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
+  value="$(gh_eval value "$(context_json pull_request success "$one_skill" "$TMP/published-map")" "$false_expr")"
+  check "must-fail: $agg with selection behavior removed authorizes skipped Linux" "0" \
+    "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
+done
+RESULTS="$saved_results"
+
 check "a lane the class stood down may skip" "0" \
   "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \
     --lane 'true:bot-instructions')"

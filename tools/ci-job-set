@@ -68,28 +68,23 @@
 #     where a build input changed, because their consumer rows use kendex-cli
 #     built from the checkout. A diff that reaches no package selects no shard, and
 #     shell_shards is false exactly where the list is empty.
-#   - The platform lanes (the macOS legs of the shell shards, cargo_macos,
-#     cargo_windows) stand down only on a diff whose every path is prose,
-#     whose content no platform reads differently, and run on any other
-#     diff; a `standard` diff that is not documentation alone runs them
-#     whatever its paths. The macOS legs are the shell shards again on
-#     macOS, so they also stand down where no selected shard is one the
-#     workflow's matrix runs on macOS.
-#   - The event selects nothing: a pull request runs every lane, shard and
-#     runner the merge group runs for the same class, docs verdict and
-#     paths. So the pull request's required checks hold the whole
-#     merge-group job set, and an admin merge, which lands on those checks
-#     alone, lands only on a green run of that set. With --event-parity the
+#   - The platform selections (the macOS shell bit, cargo_macos,
+#     cargo_windows) are false on a diff whose every path is prose,
+#     whose content no platform reads differently, and true on any other
+#     diff; a `standard` diff that is not documentation alone selects them
+#     whatever its paths. The macOS shell bit is also false where every
+#     selected shard belongs to LINUX_ONLY_SHARDS. These are selected
+#     values; .github/workflows/skill-tests.yml owns job execution policy.
+#   - The event selects nothing: a pull request and a merge group receive
+#     the same lane, shard and runner selections for the same class, docs
+#     verdict and paths. With --event-parity the
 #     script derives the selection at both events and refuses
 #     `event-parity` where they differ.
-#   - A proof stands down what its run ran and nothing else. The run's
+#   - A proof stands down the selections its record covers. The run's
 #     selection is re-derived from its record with the rules above, at its
-#     event; each lane it ran stands down here, and the shell shards stand
-#     down per runner: a runner's legs where that run ran them over every
-#     shard this diff selects. A lane that run skipped, or a shard it did
-#     not run, runs here as the rules above select it. So a merge group
-#     whose pull request ran over the same paths runs nothing, and one
-#     whose tree no pull request run tested runs its whole selection.
+#     event; each covered lane stands down here. A shell runner stands down
+#     where that record selected it over every shard this diff selects.
+#     A lane or shard outside that record keeps its current selection.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -115,12 +110,10 @@
 #
 # The lanes:
 #
-#   shell_shards        the skill, hook and tool suites, in the shards the
-#                       `shards=` list names, on the runners the `shell_os=`
-#                       list names: ubuntu-latest, and macos-latest for the
-#                       same suites again under Bash 3.2 and the BSD
-#                       userland. shell_shards is true exactly where both
-#                       lists are non-empty.
+#   shell_shards        true where the remaining `shards=` and `shell_os=`
+#                       lists are non-empty. shell_os names the unproven
+#                       runners. .github/workflows/skill-tests.yml owns the
+#                       jobs and events that consume these values.
 #   bot_instructions    the rendered review-bot instruction files and the root
 #                       AGENTS.md region they own and, on a pull request,
 #                       the document byte ceilings and the index-wide
@@ -147,8 +140,8 @@ set -euo pipefail
 
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# A selection is one `name=value` word per lane: the two runners the shell
-# shards run on, LEGS, then one per gated job, JOBS, then `shards=`. The
+# A selection is one `name=value` word per lane: the two shell runner bits,
+# LEGS, then one per gated job, JOBS, then `shards=`. The
 # emitted lines are shell_shards and shell_os in place of the legs, then the
 # jobs and the shards.
 LEGS="linux macos"
@@ -158,9 +151,9 @@ LANES="shell_shards shell_os $JOBS"
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
 SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear worktree rest slack node pi-claude-bridge"
-# The shards the matrix never runs on macOS, nothing in them being bash: its
+# The shards the main-push matrix never runs on macOS, nothing in them being bash: its
 # `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
-# this list. A macOS leg over these alone would expand to no combination.
+# this list. The selector uses them for its macOS runner arithmetic.
 LINUX_ONLY_SHARDS="node pi-claude-bridge"
 
 die() { # CAUSE MESSAGE
@@ -581,8 +574,7 @@ select_row() { # CLASS DOCS PATHS EVENT
       shell=true
       [ "$shards" != "[]" ] || shell=false
       macos=$platform
-      # A macOS leg over no shard the matrix runs there, no shard at all
-      # included, would expand to nothing.
+      # The runner arithmetic uses the main-push macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
       printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build shards=$shards"
       ;;
@@ -618,11 +610,10 @@ fi
 
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$EVENT")" || exit 2
 
-# Event parity: the pull request selects every lane and shard the merge group
-# selects for the same class, docs verdict and paths, the macOS legs
-# included, so its required checks hold the whole merge-group job set and an
-# admin merge lands only on a green run of that set. A rule that reads the
-# event breaks that and is refused here, before any proof stands a lane down.
+# Event parity: pull requests and merge groups receive equal lane, shard and
+# runner selections for the same class, docs verdict and paths. A rule that
+# reads the event breaks that and is refused before any proof stands a lane
+# down. .github/workflows/skill-tests.yml owns runner and event placement.
 # Each other event costs a whole selection again, so only --event-parity
 # pays it.
 if [ "$parity" = true ]; then
@@ -634,10 +625,8 @@ if [ "$parity" = true ]; then
   done
 fi
 
-# A lane the proving run ran stands down; one it skipped runs as selected.
-# The shell shards' legs stand down per runner, and only where that run ran
-# every shard this diff selects; a shard it did not run keeps every leg it
-# selects.
+# A proof clears the lane selections its source row covers. Shell runner
+# bits also require that source row to include every current shard.
 now_shards="$(sel_get "$now" shards)"
 was_shards=""
 [ -z "$was" ] || was_shards="$(sel_get "$was" shards)"
@@ -660,8 +649,8 @@ for lane in $LEGS $JOBS; do
     value=false
     printf 'ci-job-set: proof=reused lane=%s\n' "$lane" >&2
   fi
-  # The runners the shards run on: none where no shard is selected, since
-  # select_row lights no leg then; shell_shards is true exactly where a leg is.
+  # The remaining runner bits become shell_os; shell_shards is true only
+  # where this list is non-empty.
   case "$lane:$value" in
     linux:true) legs="${legs:+$legs,}\"ubuntu-latest\"" ;;
     macos:true) legs="${legs:+$legs,}\"macos-latest\"" ;;
