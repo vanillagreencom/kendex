@@ -89,18 +89,12 @@ pub struct Lock {
     pub bundles: BTreeMap<String, BundleRev>,
     /// The instruction shims this scope keeps as a key in a settings
     /// document whose other keys are the person's, written by a pass or
-    /// found already in sync while the harness was installed. A shim that is
-    /// a whole file needs no record here: its bytes are constant and the
-    /// inventory lists it. A key has no bytes of its own to prove whose it
-    /// is, so this is what takes it back once its harness leaves the list,
-    /// in a project outside git as in one inside it. A retirement refused
-    /// over a file that will not parse keeps its record, so the apply after
-    /// the repair retires it.
+    /// found already in sync while the harness was installed. A key has no
+    /// bytes of its own to prove whose it is; how a retirement reads this
+    /// record is `engine::instruction_shims::retire`'s.
     ///
     /// Additive, so [`LOCK_VERSION`] stays: a build that predates the field
-    /// drops it when it writes the record again, and the inventory it writes
-    /// beside lists the shim's file, which seeds the record on the
-    /// retirement (`engine::instruction_shims::retire`).
+    /// drops it when it writes the record again.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub shims: BTreeSet<KeyedShim>,
 }

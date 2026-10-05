@@ -232,8 +232,6 @@ pub(crate) fn keyed_position(env: &Env, scope: &Scope, shim: KeyedShim) -> PathB
 /// install from before the record was kept is recorded on the next pass,
 /// in a project with no inventory too; a value the person set by hand
 /// before Gemini was installed reads the same as the one kendex wrote.
-/// Where Gemini leaves the list with no pass between, the inventory
-/// listing the settings file seeds the record instead (`retire`).
 ///
 /// Every standing comes back too, in sync ones included: `verify` reports
 /// each shim as a row, which the drift rows alone cannot carry.

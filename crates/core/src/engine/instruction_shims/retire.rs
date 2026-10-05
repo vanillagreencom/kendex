@@ -4,10 +4,12 @@
 //! value the shim's edit wrote. Either alone is something a person writes
 //! by hand, and stays. The record of a whole-file shim is the inventory on
 //! disk listing its position; a keyed one's is the install record
-//! ([`crate::lock::Lock::shims`]), which a project outside git has too.
-//! The inventory listing a keyed shim's file seeds that record once, for an
-//! install record written before it was kept or rewritten by a build that
-//! drops it.
+//! ([`crate::lock::Lock::shims`]), which a project with no `.git` of its
+//! own has too. An inventory listing a keyed shim's file seeds that record
+//! where it lacks the shim: written before the field, or again by a build
+//! that drops it. Only a project with its own `.git` has an inventory, so
+//! elsewhere such a record holds the shim again only after an apply with
+//! its harness still listed.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -52,9 +54,6 @@ pub(super) fn retire(
     }
     let shim = KeyedShim::GeminiContextFile;
     let path = keyed_position(env, scope, shim);
-    // The inventory is the record's seed, never its replacement: an install
-    // record from before `Lock::shims`, or one an older build wrote again
-    // without it, has the shim's file listed there all the same.
     let recorded = shims.contains(&shim) || listed.contains(&relative_name(root, &path));
     if !harnesses.contains(&HarnessId::Gemini) && recorded {
         match gemini(&path, scope, root, config_edits) {

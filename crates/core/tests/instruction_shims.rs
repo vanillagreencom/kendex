@@ -865,10 +865,13 @@ enum Left {
 /// installed the tool for, two of them holding exactly what the shim would.
 ///
 /// Each guard turns its own row red: the shim's bytes check, the context
-/// entry's exact-value check, the inventory check for the Claude shim, the
-/// install record and its inventory seed for Gemini's, and the
-/// emptied-document check for each document kind. A settled Gemini
-/// retirement that kept its record turns the extended-entry row red.
+/// entry's exact-value check, the inventory check for the Claude shim and
+/// the emptied-document check for each document kind. A settled Gemini
+/// retirement that kept its record turns the extended-entry row red. The
+/// Gemini record's two halves are pinned apart: the install record by
+/// `the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own`,
+/// the inventory seed by
+/// `a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired`.
 #[test]
 #[allow(
     clippy::unwrap_used,
