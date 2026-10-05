@@ -221,51 +221,71 @@ fn a_record_that_lost_its_gemini_shim_fails_verify_until_apply() {
     assert!(output.status.success(), "{}", said(&output));
 }
 
-/// Gemini off the list in a project with no repository of its own, after
-/// the person already took the shim's entry out of the settings file: the
-/// retirement has nothing to take, so no drift row names it, and the
-/// record that still carries the shim fails the record row by the shim's
-/// name until the next apply writes the record again.
+/// Gemini off the list in a project with no repository of its own, the
+/// record still carrying the shim: whether the retirement still has the
+/// shim's entry to take (`planned`) or the person already took it out
+/// (`settled`), the record row alone fails verify, by the shim's name,
+/// until the next apply writes the record again and leaves the person's
+/// own keys.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_carrying_a_retired_gemini_shim_fails_verify_until_apply() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = home.join("outside/app");
-    fs::create_dir_all(project.join(".gemini")).unwrap();
-    fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
-    let declare = |harnesses: &str| {
-        fs::write(
-            project.join("kendex.toml"),
-            format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
-        )
-        .unwrap();
-    };
-    declare("\"codex\", \"gemini\"");
-    let output = kendex(&home, &project, &["apply", "--yes"]);
-    assert!(output.status.success(), "{}", said(&output));
-    assert!(!project.join(".kendex-generated.json").exists());
-    let lock_path = project.join(".kendex-lock.json");
-    let lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    assert_eq!(lock["shims"], serde_json::json!(["gemini-context-file"]));
-
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
-    let settings = project.join(".gemini/settings.json");
-    fs::write(&settings, theirs).unwrap();
-    declare("\"codex\"");
+    for (what, person_took_the_entry) in [("planned", false), ("settled", true)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = home.join("outside/app");
+        fs::create_dir_all(project.join(".gemini")).unwrap();
+        fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
+        let settings = project.join(".gemini/settings.json");
+        fs::write(&settings, theirs).unwrap();
+        let declare = |harnesses: &str| {
+            fs::write(
+                project.join("kendex.toml"),
+                format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+            )
+            .unwrap();
+        };
+        let parsed = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
+        declare("\"codex\", \"gemini\"");
+        let output = kendex(&home, &project, &["apply", "--yes"]);
+        assert!(output.status.success(), "{what}: {}", said(&output));
+        assert!(!project.join(".kendex-generated.json").exists(), "{what}");
+        assert_ne!(
+            parsed(&fs::read_to_string(&settings).unwrap()),
+            parsed(theirs),
+            "{what}: the shim's entry stands"
+        );
+        let lock: serde_json::Value =
+            parsed(&fs::read_to_string(project.join(".kendex-lock.json")).unwrap());
+        assert_eq!(
+            lock["shims"],
+            serde_json::json!(["gemini-context-file"]),
+            "{what}"
+        );
 
-    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-    let text = said(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(
-        text.contains("shim gemini-context-file: recorded, and this pass does not keep it"),
-        "{text}"
-    );
+        if person_took_the_entry {
+            fs::write(&settings, theirs).unwrap();
+        }
+        declare("\"codex\"");
 
-    let output = kendex(&home, &project, &["apply", "--yes"]);
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(fs::read_to_string(&settings).unwrap(), theirs);
-    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-    assert!(output.status.success(), "{}", said(&output));
+        let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+        let text = said(&output);
+        assert!(!output.status.success(), "{what}: {text}");
+        assert!(
+            text.contains("shim gemini-context-file: recorded, and this pass does not keep it"),
+            "{what}: {text}"
+        );
+        assert!(text.contains("1 other row failed"), "{what}: {text}");
+
+        let output = kendex(&home, &project, &["apply", "--yes"]);
+        assert!(output.status.success(), "{what}: {}", said(&output));
+        assert_eq!(
+            parsed(&fs::read_to_string(&settings).unwrap()),
+            parsed(theirs),
+            "{what}"
+        );
+        let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+        assert!(output.status.success(), "{what}: {}", said(&output));
+    }
 }

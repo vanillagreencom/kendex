@@ -341,8 +341,8 @@ pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
 /// as a planted one does. A keyed shim on one side only is named the same
 /// way: one the pass keeps that the record lacks, as a build predating the
 /// field leaves the record, and one the record carries that the pass no
-/// longer keeps, which a retirement with nothing left to take settles
-/// with no drift row. Each recorded commit
+/// longer keeps, whether its retirement still plans an edit or has
+/// nothing left to take. Each recorded commit
 /// — an entry's source commit, a source's, a set's — must be the one the
 /// declaration resolves to or on that commit's history in the mirror: an
 /// honest record is behind a moving branch and stays honest, and a commit
