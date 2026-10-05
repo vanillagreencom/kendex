@@ -33,7 +33,7 @@ Astra, as a Deprecated models section. Its committed object, every
 committed [env] `KEY = "value"` setting, is matched against the package's
 retired-settings.json: a key listed under keys, or a value listed under
 values for its key, a shipped default since replaced. Those rows and the
-classifier array, the change-class `setting-unset:` and `queue-only:` lines
+classifier array, the change-class lines naming a consumer setting that
 refresh-consumer passes once the classifier ran, form a Consumer settings
 section. It reports and changes no setting. An absent array or object reads
 as empty. A clean parse emits no text. It does not parse settings or
