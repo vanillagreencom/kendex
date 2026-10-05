@@ -88,8 +88,8 @@ name: Skill Tests
 # partition would. Until that split is cut, the step bound the comment above
 # its test step gives holds the leg, against a maximum not yet measured.
 #
-# The cargo lanes' test steps each carry a `timeout-minutes` set above the
-# measured maximum of the step they bound, with headroom, so a hang there
+# The cargo lanes' test steps each carry a `timeout-minutes` set from the
+# figures in the comment above it or its job, with headroom, so a hang there
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
 # the job `timeout-minutes` above their steps, 30 minutes on every macOS leg
@@ -1744,9 +1744,9 @@ jobs:
       # `integration` harness still running. Its true maximum is above 720s
       # and unmeasured. The median of its successful steps rose from 537s to
       # 669s across those four days as that harness grew from 548 tests in
-      # 525s to 586 in 708s. Its bound is 20 minutes, at most 480s above the
-      # censored maximum: headroom that growth erodes, so the leg is pending
-      # the split the header names.
+      # 525s to 586 in 708s. Its bound is 20 minutes, 480s above the censored
+      # 720s and so at most 480s above the true maximum: headroom that growth
+      # erodes, so the leg is pending the split the header names.
       # `render-lint` is bounded at 1012s, the maximum its test reached
       # BEFORE its comments pass was split across scopes; its post-split
       # macOS seconds come from this change's own runs, and the bound is due
