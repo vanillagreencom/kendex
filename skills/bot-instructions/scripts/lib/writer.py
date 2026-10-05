@@ -37,6 +37,21 @@ def inspect(root, rel, require_marker=True):
     return existing, owned
 
 
+def remove(root, rel):
+    """Delete `rel`, behind the marker gate read at the moment of removal.
+
+    `orphan_files` read the file earlier; an edit that took the marker away
+    since then makes it the repo's own file, and this refuses it.
+    """
+    existing, _ = inspect(root, rel, require_marker=False)
+    if not marker_mod.carries_marker(existing):
+        raise RenderError(
+            f"{rel}: no longer carries the {MARKER_TOKEN!r} marker, so it is the repo's "
+            "own file and render will not remove it"
+        )
+    os.unlink(os.path.join(root, rel))
+
+
 def replace(root, rel, data=None, transform=None, require_marker=True):
     """Replace `rel` with `data`, atomically, behind the marker gate.
 

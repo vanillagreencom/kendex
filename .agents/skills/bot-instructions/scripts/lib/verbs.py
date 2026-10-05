@@ -1,7 +1,7 @@
 """`render`, `check`, `adopt`.
 
-`render` builds and validates a complete scratch tree, then replaces each
-path. What this does not claim is an atomic multi-file replacement: no
+`render` builds and validates a complete scratch tree, removes each marked file
+the TOML no longer produces, then replaces each path. What this does not claim is an atomic multi-file replacement: no
 filesystem offers one, and a mixed tree that says so beats one that does not.
 Each individual replacement is atomic, so every path holds either its old
 bytes or its new ones.
@@ -9,7 +9,7 @@ bytes or its new ones.
 
 import re
 
-from . import marker, render, render_markdown, run, writer
+from . import marker, render, render_markdown, run, validators_repo, writer
 from .errors import Finding, RenderError, ValidationFailed
 
 
@@ -21,21 +21,31 @@ def _cause(exc):
 def render_verb(ctx, root, dry_run=False):
     """Validate, then write. A validator failure leaves the repo untouched."""
     run.require_clean(ctx)
+    # A marked file the TOML no longer produces is removed before the writes,
+    # so a render never leaves the orphan `check` reds on.
+    orphans = validators_repo.orphan_files(ctx)
     paths = sorted(ctx.build.files)
     if dry_run:
         paths = [path for path in paths if writer.inspect(root, path)[1]]
     region = ctx.build.region_body is not None and (not dry_run or _region_owned(root))
-    if not paths and not region:
-        return ["nothing to render: every [bot-instructions.bots] flag is false"] + ctx.skipped
+    nothing = [] if paths or region else [
+        "nothing to render: every [bot-instructions.bots] flag is false"
+    ]
     if dry_run:
-        lines = [f"would write {p}" for p in paths]
+        lines = [f"would remove {p}" for p in orphans] + [f"would write {p}" for p in paths]
         if region:
             lines.append(
                 f"would write region AGENTS.md\t{render_markdown.AGENTS_HEADING}"
             )
-        return lines + ctx.skipped
+        return lines + nothing + ctx.skipped
+    if not orphans and nothing:
+        return nothing + ctx.skipped
+    removed = []
     written = []
     try:
+        for path in orphans:
+            writer.remove(root, path)
+            removed.append(path)
         for path in sorted(ctx.build.files):
             writer.replace(root, path, ctx.build.files[path])
             written.append(path)
@@ -48,14 +58,15 @@ def render_verb(ctx, root, dry_run=False):
         # message, so `exc or ...` would still print the empty one.
         raise RenderError("\n".join([
             f"write phase failed: {_cause(exc)}",
+            "removed before the failure: " + (", ".join(removed) or "none"),
             "replaced before the failure: " + (", ".join(written) or "none"),
             "every path above holds either its old bytes or its new ones — re-run "
             "render to finish the set",
         ])) from exc
-    lines = [f"wrote {p}" for p in written]
+    lines = [f"removed {p}" for p in removed] + [f"wrote {p}" for p in written]
     if region:
         lines.append(f"wrote region AGENTS.md\t{render_markdown.AGENTS_HEADING}")
-    return lines + ctx.skipped
+    return lines + nothing + ctx.skipped
 
 
 def _splice(ctx, root):

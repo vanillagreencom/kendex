@@ -1,0 +1,1 @@
+- A consumer refresh pull request that changes the bot-instructions package now carries its render, so the required Bot instructions check passes. The render runs only where the default branch configures `[bot-instructions]`, and it removes files the new package no longer produces; a local render now removes them too and the commit offer carries the removal.

@@ -89,6 +89,16 @@ impl Mode {
             Self::Discover => "would write ",
         }
     }
+
+    /// A file the package removes because its render no longer produces it.
+    /// The deletion is the render's like a write, so the commit offer
+    /// carries it.
+    fn removal_prefix(self) -> &'static str {
+        match self {
+            Self::Write => "removed ",
+            Self::Discover => "would remove ",
+        }
+    }
 }
 
 fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
@@ -154,7 +164,10 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
             regions.insert(region);
             continue;
         }
-        let Some(relative) = line.strip_prefix(prefix) else {
+        let Some(relative) = line
+            .strip_prefix(prefix)
+            .or_else(|| line.strip_prefix(mode.removal_prefix()))
+        else {
             continue;
         };
         paths.insert(reported_path(&root, &command, line, relative)?);

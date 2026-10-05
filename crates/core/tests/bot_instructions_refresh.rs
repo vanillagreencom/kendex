@@ -403,6 +403,47 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
     run_package(&fixture.root, "check");
 }
 
+/// A package version that stops producing a surface leaves its marked file
+/// behind. The render removes it, and the commit offer carries the deletion
+/// beside the writes, so the commit passes the staged check.
+#[test]
+fn a_surface_the_render_no_longer_produces_is_removed_and_offered() {
+    let fixture = enabled_fixture();
+    let retired = fixture
+        .root
+        .join(".github/instructions/retired.instructions.md");
+    fs::copy(
+        fixture
+            .root
+            .join(".github/instructions/docs.instructions.md"),
+        &retired,
+    )
+    .expect("a rendered surface copies to the retired path");
+    git(&fixture.root, &["add", "-A"]);
+    commit_fixture(&fixture.root);
+
+    let mut discovered = GeneratedPaths::default();
+    bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut discovered)
+        .expect("the commit offer discovers the render");
+    assert!(discovered.whole.contains(&retired));
+    let rendered =
+        bot_instructions::render(&fixture.env, &fixture.scope).expect("the refresh re-renders");
+    let mut generated = GeneratedPaths::default();
+    rendered.add_to(&mut generated);
+    assert!(generated.whole.contains(&retired));
+    assert!(!retired.exists());
+
+    let scan = offer_scan(&fixture, &generated);
+    let owned = &scan.owned;
+    assert!(
+        owned
+            .iter()
+            .any(|owned| owned.path == ".github/instructions/retired.instructions.md"),
+        "the offer carries the removal: {owned:?}"
+    );
+    assert!(staged_check_passes(&fixture.root, owned));
+}
+
 #[test]
 fn a_project_with_every_bot_surface_disabled_is_untouched() {
     let fixture = fixture(

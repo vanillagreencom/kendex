@@ -22,7 +22,7 @@ The marker is a comment in that file's syntax naming this package, the spec copy
 
 The version is the spec copy's, not the running copy's, since `--spec` can point them at different copies and the stamp has to name the doctrine the file carries. It is the one stamp a render carries, and what makes a repo running an older installed copy of this package visible: a version bump re-renders every file, and the diff says which doctrine the repo moved to. The marker is also how `render`, `adopt` and the `orphan` validator tell a generated file from a hand-written one.
 
-**The marker gate is read at the moment of the replacement**, never on an earlier read of the repo. A path whose marker is absent then fails naming the path rather than being replaced — the same form § `AGENTS.md` uses for a region that moved between the build and the write, and for the same reason. The gate is what stops a render from destroying hand-written bot files, so proving it against a copy read before the write phase would leave the whole write phase as a window: a hand edit, a marker deletion, or another run landing in it would have the render overwrite exactly the content the gate exists to protect, silently. `orphan` keeps its pre-write read of the repo, because it reports and writes nothing.
+**The marker gate is read at the moment of the replacement**, never on an earlier read of the repo. A path whose marker is absent then fails naming the path rather than being replaced — the same form § `AGENTS.md` uses for a region that moved between the build and the write, and for the same reason. The gate is what stops a render from destroying hand-written bot files, so proving it against a copy read before the write phase would leave the whole write phase as a window: a hand edit, a marker deletion, or another run landing in it would have the render overwrite exactly the content the gate exists to protect, silently. `orphan` keeps its pre-write read of the repo, because it writes nothing; the render's removal of an orphan rereads the marker at the moment of removal, the same gate.
 
 **One open decides and replaces.** A generated file's bytes do not depend on the file, so its replacement has nothing to read. `AGENTS.md` is a read-modify-write — the splice, and `adopt` taking a region or a file over — and there the new bytes are computed from the content the write phase itself read. Computing them from an earlier, separate read would silently discard whatever landed between the two: the ownership check, the region and the bytes spliced all come from one read for that reason.
 
@@ -142,7 +142,7 @@ A repo whose guard pins the tracked reply form needs `[bot-instructions.repo] tr
 
 **Collision.** A configured path this render already writes is an error naming it. The question is asked against the whole output set at the end of the build, never against a second list of the paths this package writes.
 
-**Where it may sit.** Directly under `.github/instructions`, which `orphan` walks, so a file left at a path an earlier `code_review_path` named is reported rather than left active. `repo-toml.md` § `[bot-instructions.repo]` carries the clause and its reason.
+**Where it may sit.** Directly under `.github/instructions`, which `orphan` walks, so a file left at a path an earlier `code_review_path` named is removed by the next render, and reported by `check` until then, rather than left active. `repo-toml.md` § `[bot-instructions.repo]` carries the clause and its reason.
 
 **Escaping.** Markdown, passed through, with the same heading predicate as everywhere else so a repo string cannot forge a section.
 
@@ -274,7 +274,7 @@ Read by Qodo Merge, the commercial product, from the repo root. Rendered only wh
 
 No doctrine. `.pr_agent.toml` carries every block already, which is why this file has no column in the routing table.
 
-**No surfaces.** The file is not written. An existing marked one becomes an orphan, so retiring the last surface says so rather than leaving a marker-only file that looks like current guidance.
+**No surfaces.** The file is not written. An existing marked one becomes an orphan, which the next render removes rather than leaving a marker-only file that looks like current guidance.
 
 **Budget.** `[bot-instructions.budgets] qodo_best_practices_lines`, default 800. Qodo gives that number as writing guidance and states no length at which it rejects or truncates, so the budget is this package's own, taken from that guidance the way `[bot-instructions.budgets] copilot_chars` is taken from a two-page reading; `references/limits.md` marks it a recommendation and carries the page. Organization and mapped-repository best-practices files layer above this one and the generator cannot see them, so nothing here bounds the total.
 

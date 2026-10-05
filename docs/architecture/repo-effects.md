@@ -4,7 +4,7 @@ Read before changing repository effects, the arming record, a package's declared
 
 ## The approach
 
-A package may declare, in its `SKILL.md` frontmatter, an effect on files in the checkout beyond its own render: the review-bot instruction files the bot-instructions package writes, the git hooks commit-guards arms. kendex locates the package, runs its declared installer, checker and uninstaller, and surfaces their results; it judges no part of the package's grammar. Package code runs only under a licence: the arming record kendex writes in the git directory, which git clones for nobody, or a person pressing the control that asks. Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
+A package may declare, in its `SKILL.md` frontmatter, an effect on files in the checkout beyond its own render: the review-bot instruction files the bot-instructions package writes, the git hooks commit-guards arms. kendex locates the package, runs its declared installer, checker and uninstaller, and surfaces their results; it judges no part of the package's grammar. Package code runs only under a licence: the arming record kendex writes in the git directory, which git clones for nobody, a person pressing the control that asks, or, in a consumer refresh run, the default branch's committed `[bot-instructions]` table, which licenses the bot-instructions render in that run's own checkout. Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
 
 ## Why
 
@@ -17,6 +17,7 @@ A package is catalog content, and catalog content runs nothing until a person on
 - Do ask each armed package whether the commit the offer would make carries its files stale, through its staged checker over a candidate index that never touches the repository's own index; a failing answer holds the commit and offers the setup, per [commit-offer.md](commit-offer.md).
 - Do splice an owned `AGENTS.md` region with the byte bounds the package's parser supplies, so every other byte of the file stays as the person left it.
 - Do keep the arming record per work tree: a linked work tree whose main checkout armed the package names that checkout in its skip line and is offered the setup in one step.
+- Do run the bot-instructions render in a consumer refresh run, `skills/review-gate/scripts/refresh-consumer.sh`, where the default branch's committed manifest declares `[bot-instructions]`, under `env -i` with no credential; the run's checkout is created for the run and discarded with it, so that consent reaches no person's machine (`skills/review-gate/tests/refresh-consumer.test.sh`).
 - Never run package code from a session hook or a check that could reach a repository the person has not armed, and never read the record from a clone.
 
 ## The canonical example

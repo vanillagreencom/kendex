@@ -130,7 +130,7 @@ What is an error is a flag combination where something enabled reaches nothing. 
 - `copilot` or `coderabbit` true with `codex` false. That flag writes the pointed file both of them read: CodeRabbit through `knowledge_base.code_guidelines.filePatterns`, Copilot by following the pointer in `.github/copilot-instructions.md`. Without it, `.coderabbit.yaml` carries one doctrine block and names a pattern matching nothing, the Copilot pointer aims at a file that does not exist, and both render clean.
 - A non-empty `[[bot-instructions.surface]]` set with `copilot`, `coderabbit`, `macroscope` and `qodo_best_practices` all false. Those four are every route surface text has, so the surfaces would be instructions nothing reads.
 
-Turning a capability off renders none of its files and deletes none of them, so the files this package wrote stay active until someone removes them. Deleting them is the same commit's work and it comes first: `render` fails on an orphan rather than creating one, so the order is delete, then flip the flag and render. `check` is what catches a retirement that skipped the render. `validators.md` § `orphan` carries the order. A file at one of those paths that this package never wrote is the repo's own and is not judged: `adopt` is how one becomes managed, and it needs the capability on.
+Turning a capability off renders none of its files, and the next `render` removes the marked files this package wrote for it. `check` is what catches a retirement that skipped the render. `validators.md` § `orphan` carries the order. A file at one of those paths that this package never wrote is the repo's own and is not judged: `adopt` is how one becomes managed, and it needs the capability on.
 
 ### `[bot-instructions.cadence]`
 

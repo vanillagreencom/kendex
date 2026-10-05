@@ -465,8 +465,8 @@ expect_green 'and deleting it clears the finding' check --repo "$stray"
 # The path this key used to name. A render at one name and a re-render at
 # another leaves the first file marked, carrying the whole doctrine, and
 # produced by no current TOML. The tree clause in `_code_review_path` is what
-# keeps it inside the tree `orphan` walks, so it is reported rather than left
-# active; `render` refuses before it would create the second file.
+# keeps it inside the tree `orphan` walks, so `check` reports it and `render`
+# removes it before it writes the second file.
 retired="$(bi_new_repo retired-pointed-file)"
 python3 - "$retired/kendex.toml" <<'PY'
 import sys
@@ -498,18 +498,36 @@ fi
 # passing on the neighbour.
 expect_red "orphan drift" 'a marked file at the path code_review_path used to name is an orphan' \
   check --repo "$retired"
-expect_red orphan 'and render refuses rather than creating the second file' \
-  render --repo "$retired"
-# The half the status does not carry: a refusal that ran after the write
-# phase would leave the row above green with the second file on disk, and the
-# green render below passes either way.
-if [ -e "$retired/.github/instructions/code-review.md" ]; then
-  bad 'the refused render wrote no second file' 'the default path exists'
+# kendex carries each reported line into its commit offer, so the removal is
+# a line of its own, under --dry-run as well, and the preview removes nothing.
+bi_run render --dry-run --repo "$retired"
+if [ "$bi_status" -eq 0 ] &&
+    printf '%s\n' "$bi_out" | grep -qxF 'would remove .github/instructions/doctrine.md' &&
+    [ -f "$retired/.github/instructions/doctrine.md" ]; then
+  ok 'a dry run names the retired file it would remove and keeps it'
 else
-  ok 'the refused render wrote no second file'
+  bad 'a dry run names the retired file it would remove and keeps it' "$bi_out"
 fi
-rm -f -- "${retired:?}/.github/instructions/doctrine.md"
+bi_run render --repo "$retired"
+if [ "$bi_status" -eq 0 ] &&
+    printf '%s\n' "$bi_out" | grep -qxF 'removed .github/instructions/doctrine.md' &&
+    [ ! -e "$retired/.github/instructions/doctrine.md" ] &&
+    [ -f "$retired/.github/instructions/code-review.md" ]; then
+  ok 'render removes the retired file and writes the default path'
+else
+  bad 'render removes the retired file and writes the default path' "$bi_out"
+fi
 git -C "$retired" add -A >/dev/null 2>&1
-expect_green 'deleting the retired file lets the render through' render --repo "$retired"
+expect_green 'the tree that render leaves passes check' check --repo "$retired"
+
+# An unmarked file at a scanned path is the repo's own: render leaves it.
+repo="$(bi_rendered_repo render-keeps-unmarked)" || exit 1
+printf 'the repo wrote this\n' > "$repo/.github/instructions/handwritten.instructions.md"
+bi_run render --repo "$repo"
+if [ "$bi_status" -eq 0 ] && [ -f "$repo/.github/instructions/handwritten.instructions.md" ]; then
+  ok 'render keeps an unmarked file at a scanned path'
+else
+  bad 'render keeps an unmarked file at a scanned path' "$bi_out"
+fi
 
 bi_summary

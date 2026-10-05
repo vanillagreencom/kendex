@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.5.0"
+  version: "2.6.0"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -78,7 +78,7 @@ A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plu
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 - `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
 
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces before it writes, and prints `removed PATH` for it. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## The doctrine lives in one file per repo
 

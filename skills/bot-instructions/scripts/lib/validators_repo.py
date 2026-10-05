@@ -64,18 +64,22 @@ def _nested_agents_files(ctx):
     return [p for p in tracked if p.endswith("/AGENTS.md")]
 
 
+def orphan_files(ctx):
+    """Every marked file the current TOML does not produce, sorted."""
+    produced = set(ctx.build.files)
+    return [path for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx))
+            if path not in produced and marker.carries_marker(ctx.read(path))]
+
+
 def orphan(ctx, out):
     """A retired surface's file is still there and the bot still loads it."""
     v = "orphan"
-    produced = set(ctx.build.files)
-    for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx)):
-        if path in produced:
-            continue
-        text = ctx.read(path)
-        if marker.carries_marker(text):
+    # `render` removes these files before it writes, so only `check` reports
+    # them; the marked region below has no removal and reds on both verbs.
+    if ctx.verb != "render":
+        for path in orphan_files(ctx):
             out.append(Finding(v, "carries this package's marker and the current TOML does "
-                                  "not produce it. Retiring one is delete-then-render, in "
-                                  "that order", path))
+                                  "not produce it. A render removes it", path))
     if ctx.config.bots["codex"] or ctx.build.region_body is not None:
         return
     text = ctx.read("AGENTS.md")

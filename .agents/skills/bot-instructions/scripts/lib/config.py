@@ -158,7 +158,7 @@ def _code_review_path(path, where):
 
     **The tree clause is what keeps a retired path findable.** `orphan` walks
     CODE_REVIEW_TREE, so a file left at a path an earlier value named is
-    scanned and reported. A freely placed path would be a marked file carrying
+    scanned, removed by `render` and reported by `check`. A freely placed path would be a marked file carrying
     the whole doctrine that nothing looks at once the key moves or `codex`
     goes false, and `render` would report clean while the old file stayed
     active. The same clause keeps every written path inside the tree this
@@ -183,7 +183,7 @@ def _code_review_path(path, where):
         raise InputError(
             f"{w}: {path!r} is not directly under {CODE_REVIEW_TREE}/. That tree is "
             "the one `orphan` walks, so a file left at a path this key used to name "
-            "is reported rather than left active; it is also the tree this package "
+            "is removed rather than left active; it is also the tree this package "
             "declares it writes"
         )
     if parts[-1].lower() == "agents.md":

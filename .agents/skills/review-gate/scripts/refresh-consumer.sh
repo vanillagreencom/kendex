@@ -10,7 +10,9 @@
 # to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
-# refresh-state=deferred reason=queued|merged|closed|branch-gone.
+# refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
+# that installs bot-instructions without configuring it also gets
+# refresh-render=skipped package=bot-instructions cause=unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 templates=""
@@ -192,6 +194,41 @@ kendex apply --scope project --yes --leave || apply_status=$?
 if [ "$apply_status" -ne 0 ]; then
   printf 'refresh-error=apply value=%s\n' "$apply_status" >&2
   exit 1
+fi
+# The refresh above skips the bot-instructions render: the arming record that
+# licenses it lives in a git directory, and this fresh checkout's has none.
+# The consumer's check judges the pull request with the refreshed package, so
+# the render runs here where the default branch's committed manifest declares
+# [bot-instructions], the package's own configuration. That consent licenses
+# this run's checkout alone, and the render gets no credential. A source
+# catalog declares its installs in kendex-local.toml, the file kendex's
+# project_manifest_path and the package's manifest.resolve both read.
+bot_instructions="$ROOT/.agents/skills/bot-instructions/scripts/bot-instructions"
+if [ -x "$bot_instructions" ]; then
+  if ! configured="$(python3 -c '
+import subprocess, sys, tomllib
+def committed(path):
+    shown = subprocess.run(["git", "show", f"{sys.argv[1]}:{path}"], capture_output=True, check=True)
+    return tomllib.loads(shown.stdout.decode("utf-8"))
+manifest = committed("kendex.toml")
+if manifest.get("is_source_catalog") is True:
+    manifest = committed("kendex-local.toml")
+print("yes" if "bot-instructions" in manifest else "no")
+' "$base")"; then
+    printf 'refresh-error=read value=bot-instructions-manifest\n' >&2
+    exit 1
+  fi
+  if [ "$configured" = yes ]; then
+    render_status=0
+    render_output="$(env -i PATH="$PATH" HOME="$HOME" "$bot_instructions" render 2>&1)" || render_status=$?
+    printf '%s\n' "$render_output"
+    if [ "$render_status" -ne 0 ]; then
+      printf 'refresh-error=bot-instructions-render value=%s\n' "$render_status" >&2
+      exit 1
+    fi
+  else
+    printf 'refresh-render=skipped package=bot-instructions cause=unconfigured\n'
+  fi
 fi
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 # The release-installed parser must judge its own settings, including on a

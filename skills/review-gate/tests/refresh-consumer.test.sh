@@ -95,6 +95,10 @@ case "$1" in
       rm -rf -- .agents/skills/review-gate
       cp -R "$TEST_REFRESH_SKILL" .agents/skills/review-gate
     fi
+    if [ -n "$TEST_REFRESH_BOT" ]; then
+      rm -rf -- .agents/skills/bot-instructions
+      cp -R "$TEST_REFRESH_BOT" .agents/skills/bot-instructions
+    fi
     case "$TEST_ORCH_MODE" in
       keep) ;;
       absent) rm -rf -- .agents/skills/orch ;;
@@ -119,6 +123,9 @@ SH
 cat >"$TMP/bin/git" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# A child the runner starts under env -i carries none of these settings and
+# reaches git itself.
+[ -n "${TEST_REAL_GIT:-}" ] || exec @REAL_GIT@ "$@"
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
 if [ "${1:-}" = push ]; then
@@ -160,6 +167,7 @@ fi
 exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
+file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -1370,6 +1378,135 @@ for mutation in none ignored; do
   esac
   cp "$TMP/release-runner" "$runner"
 done
+# A refresh that changes the bot-instructions package carries its render. The
+# default branch holds a render made with an older copy whose spec had one
+# more default surface; the refreshed copy no longer produces that file. The
+# fresh checkout has no arming record, so the committed [bot-instructions]
+# table is the run's consent, and the render runs with no credential.
+sandbox
+repo="$DIR"
+git -C "$repo" branch -M main
+printf '[]\n' >"$repo/.kendex-generated.json"
+printf 'current\n' >"$repo/rendered.txt"
+printf '# fixture\n\n## Code Review Rules\n\n' >"$repo/AGENTS.md"
+bot_table='[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+
+[bot-instructions.bots]
+codex = true
+copilot = true
+'
+printf 'schema = 6\n\n%s' "$bot_table" >"$repo/kendex.toml"
+cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp -R "$SKILL_DIR/../bot-instructions" "$TMP/bot-release"
+rm -rf -- "${TMP:?}/bot-release/tests"
+cp -R "$TMP/bot-release" "$repo/.agents/skills/bot-instructions"
+python3 - "$repo/.agents/skills/bot-instructions/SKILL.md" <<'OLD_SPEC'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+# The last fence closes the default surfaces block, the section the file ends on.
+head, fence, tail = s.rpartition('"""\n```\n')
+assert fence and not tail.strip(), "the default surfaces block changed shape"
+retired = '\n[[surface]]\nname = "docs-plans"\nglobs = ["docs/plans/**"]\nreviewer_only = true\ninstructions = """\nA file here is a plan.\n'
+p.write_text(head + '"""\n' + retired + fence + tail)
+OLD_SPEC
+(cd "$repo" && git add -A && .agents/skills/bot-instructions/scripts/bot-instructions adopt >/dev/null &&
+  .agents/skills/bot-instructions/scripts/bot-instructions render >/dev/null) || exit 1
+[ -f "$repo/.github/instructions/docs-plans.instructions.md" ] || exit 1
+commit "$repo"
+git init --bare -q "$TMP/bot-remote"
+git --git-dir="$TMP/bot-remote" config gc.auto 0
+git --git-dir="$TMP/bot-remote" config maintenance.auto false
+git -C "$repo" remote add origin "$TMP/bot-remote"
+git -C "$repo" push -q origin main
+git -C "$repo" worktree add --detach "$TMP/bot-trusted" HEAD
+runner="$TMP/bot-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+cp "$runner" "$TMP/bot-runner"
+: >"$TMP/state/pr"
+: >"$TMP/state/creates"
+REFRESH_BOT="$TMP/bot-release"
+# A runner that never renders is the control: the package ships alone, and
+# the check the consumer requires reds on the pushed tree.
+for mutation in none unrendered; do
+  reset_default
+  if [ "$mutation" = unrendered ]; then
+    file_edit "$TMP/bot-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '^  if \[ "\$configured" = yes \]; then$' 's/"\$configured" = yes/"$configured" = never/'
+  fi
+  run_refresh "bot-render-$mutation" pass render
+  head="$(git --git-dir="$TMP/bot-remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+  git -C "$repo" worktree add -q --detach "$TMP/bot-pushed" "$head"
+  check_rc=0
+  check_out="$("$TMP/bot-pushed/.agents/skills/bot-instructions/scripts/bot-instructions" check --repo "$TMP/bot-pushed" 2>&1)" || check_rc=$?
+  rendered=no
+  if [ "$RC" -eq 0 ] && grep -qxF 'removed .github/instructions/docs-plans.instructions.md' <<<"$OUT" &&
+      [ "$check_rc" -eq 0 ] && [ ! -e "$TMP/bot-pushed/.github/instructions/docs-plans.instructions.md" ] &&
+      [ ! -e "$(git -C "$repo" rev-parse --absolute-git-dir)/kendex/armed" ]; then rendered=yes; fi
+  case "$mutation:$rendered" in
+    none:yes) ok 'a refreshed bot-instructions package ships with its render, with no arming record' ;;
+    unrendered:no) ok 'control: a refresh that skips the render ships a tree the check refuses' ;;
+    *) bad "refreshed bot-instructions render mutation=$mutation" "$OUT"$'\n'"$check_out" ;;
+  esac
+  git -C "$repo" worktree remove --force "$TMP/bot-pushed"
+  cp "$TMP/bot-runner" "$runner"
+done
+# The render sees none of the run's credentials. The probe stands in for the
+# refreshed package's launcher; a runner that keeps its environment is the
+# control.
+cp -R "$TMP/bot-release" "$TMP/bot-probe"
+printf '#!/usr/bin/env bash\nenv >%q\n' "$TMP/state/render-env" >"$TMP/bot-probe/scripts/bot-instructions"
+REFRESH_BOT="$TMP/bot-probe"
+for mutation in none inherited; do
+  reset_default
+  rm -f -- "${TMP:?}/state/render-env"
+  if [ "$mutation" = inherited ]; then
+    file_edit "$TMP/bot-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      'env -i PATH="\$PATH" HOME="\$HOME" "\$bot_instructions" render' 's/env -i PATH="\$PATH" HOME="\$HOME" //'
+  fi
+  run_refresh bot-probe pass render
+  isolated=no
+  if [ "$RC" -eq 0 ] && [ -s "$TMP/state/render-env" ] &&
+      ! grep -qE 'test-token|private-test-value' "$TMP/state/render-env"; then isolated=yes; fi
+  case "$mutation:$isolated" in
+    none:yes) ok 'the refresh render runs with no credential in its environment' ;;
+    inherited:no) ok 'control: a render that inherits the run environment sees its credentials' ;;
+    *) bad "credential-free render mutation=$mutation" "$OUT" ;;
+  esac
+  cp "$TMP/bot-runner" "$runner"
+done
+# A consumer that installed the package and never configured it is not set up
+# by a refresh: nothing renders, and the run says why. Forcing the consent is
+# the control, and the package refuses a render with no table.
+reset_default
+git -C "$repo" rm -q -r -- .github AGENTS.md
+printf 'schema = 6\n' >"$repo/kendex.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
+REFRESH_BOT="$TMP/bot-release"
+for mutation in none consented; do
+  reset_default
+  if [ "$mutation" = consented ]; then
+    file_edit "$TMP/bot-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '^  if \[ "\$configured" = yes \]; then$' 's/"\$configured" = yes/yes = yes/'
+  fi
+  run_refresh bot-unconfigured pass render
+  skipped=no
+  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-render=skipped package=bot-instructions cause=unconfigured' <<<"$OUT" &&
+      [ ! -e "$repo/.github/copilot-instructions.md" ]; then skipped=yes; fi
+  case "$mutation:$skipped" in
+    none:yes) ok 'an unconfigured bot-instructions install is not rendered by a refresh' ;;
+    consented:no) ok 'control: a refresh that ignores the committed table renders an unconfigured install' ;;
+    *) bad "unconfigured bot-instructions mutation=$mutation" "$OUT" ;;
+  esac
+  cp "$TMP/bot-runner" "$runner"
+done
+unset REFRESH_BOT
 # The CLI producer succeeds on a hold. The runner must read its ledger,
 # preserve a fully classified edit set before adoption or publication.
 if [ -z "$REAL_KENDEX" ]; then
