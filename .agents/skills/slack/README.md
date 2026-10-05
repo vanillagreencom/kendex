@@ -29,7 +29,7 @@ kendex add vanillagreencom/kendex --skill slack
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so the relay never carries a message twice.
 - Owner text arrives as plain text. Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 - Owner files go to `tmp/slack/files/`, readable only by the checkout's user. The overseer receives the text and each saved path, or `file <id> not fetched: <why>`. A failed download never holds the message back.
-- Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts text. Refused marks retry next poll.
+- Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes it, the relay swaps its mark for :white_check_mark:. Neither mark posts text. Refused marks retry next poll.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations, deadlines and drafts, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
 - Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.
@@ -79,7 +79,7 @@ settings:
 | `groups:history` | Read a private channel and its threads, and receive its new messages as the `message.groups` event |
 | `groups:read` | Find a private channel by name or id |
 | `groups:write` | Create a private channel and invite the owners |
-| `reactions:write` | Mark a directive's message as delivered and as read |
+| `reactions:write` | Mark an owner message as delivered and as read |
 | `users:read`, `users:read.email` | Resolve an owner's email to a user, and name a user an owner mentions |
 
 For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it to the workspace.
@@ -99,7 +99,7 @@ The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overse
 | Where you write | What happens |
 |-----------------|--------------|
 | Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
-| In an open question's thread, any reply | The overseer receives your words as an answer to that question, with eyes when they land. The question stays open until the overseer closes it, or until its deadline passes where it names an option that stands |
+| In an open question's thread, any reply | The overseer receives your words as an answer to that question; :eyes: marks it delivered, :white_check_mark: read. The question stays open until the overseer closes it, or until its deadline passes where it names an option that stands |
 | In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive with small parent context, unless it answers an open question |
 | A file, with or without text | The overseer receives the text, then the saved path of each file |
 | A message with no text and no file | Not routed; the relay replies once, and once more after its journal is moved aside |

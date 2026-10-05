@@ -39,7 +39,7 @@ LINE_KINDS = {
 # The lines a Socket Mode connection's changes write; replay reads nothing
 # from them, and `compact` drops one by its `at`.
 CONNECTION_KINDS = {"connect", "reconnect", "disconnect"}
-# Delivery and directive receipt marks, as their `mark` lines record them.
+# Delivery and read receipt marks, as their `mark` lines record them.
 SEEN = "eyes"
 READ = "white_check_mark"
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -168,7 +168,6 @@ class State:
     pending_files: Dict[str, str] = field(default_factory=dict)
     refused: Dict[str, str] = field(default_factory=dict)
     ignored: Set[str] = field(default_factory=set)
-    directives: Set[str] = field(default_factory=set)
     marks: Dict[str, str] = field(default_factory=dict)
 
     def post_thread(self, envelope_id: str) -> Optional[str]:
@@ -201,8 +200,6 @@ class State:
                 return
             self.delivered[ts] = str(line["id"])
             self.carried.add(str(line["id"]))
-            if line["kind"] == "directive":
-                self.directives.add(ts)
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=str(line["id"]), kind=line["kind"])
@@ -305,8 +302,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
     upload and receipt mark older than it, every history position but the
     last, every hold line but a standing one, every resume line whose end
     is older than the cutoff, and every connection line older than it; keep every open thread, and the `in` and
-    `mark` lines of a directive not yet marked READ, whatever its age: one
-    with no mark, which the relay marks SEEN on its next poll, and one
+    `mark` lines of a directive or answer not yet marked READ, whatever its
+    age: one with no mark, which the relay marks SEEN on its next poll, and one
     marked SEEN, which it swaps for READ once the overseer reads it.
     Returns the lines dropped. An `out` line and a `resume` line are judged
     by the `at` they journal. A resume's skipped ids stay carried while its
@@ -329,7 +326,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         kind = line.get("t")
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
         aged = (kind in ("out", "resume") or kind in CONNECTION_KINDS) and parse_at(str(line["at"])) < cutoff_ts
-        pending = kind in ("in", "mark") and str(line["ts"]) in state.directives and state.marks.get(str(line["ts"])) != READ
+        pending = kind in ("in", "mark") and str(line["ts"]) in state.delivered and state.marks.get(str(line["ts"])) != READ
         drop = False
         if kind == "seen":
             drop = index != last_seen

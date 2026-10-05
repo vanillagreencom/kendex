@@ -12,7 +12,7 @@
 # file, a file with no download url and a
 # body cut short under its Content-Length or inside a chunk each named by file
 # id, a whole chunked body with no Content-Length saved, a directive's eyes
-# mark swapped for a check once the cursor passes it, a refused mark printed
+# mark and an ask answer's swapped for a check once the cursor passes it, a refused mark printed
 # without failing the poll and made on the next, a stop after the delivery
 # or after its mark landed marked and swapped after the restart, a refused
 # swap completed on the next poll, each
@@ -40,7 +40,8 @@
 # unread, the sign-in check gone, the file name kept whole, the files
 # directory mode unset, the file's size unread, the name uncut, the length
 # unchecked, a missing length read as zero, http.client's own error uncaught
-# in the download, the seen mark gone, the cursor unread, a refused mark
+# in the download, the seen mark gone, the cursor unread, answers left out
+# of the read rule, a refused mark
 # raised, each settled Slack answer unsettled, a refused receipts read raised,
 # the markup unread, &amp; unescaped first, the outbound text and the report
 # bytes unchecked, the body sent as text, the text fallback gone, the
@@ -622,6 +623,23 @@ assert_eq "$(sk_state "[.messages.${IOTA_CH}[] | select(.user == \"UBOT\")] | le
 sk_ctl /_test/calls-reset >/dev/null
 sk_poll "$IOTA"
 assert_eq "$(sk_state '[.calls[] | select(startswith("reactions."))] | length')" "0" "a completed swap is not made again"
+# answer_read ROOT CHANNEL NAME — an ask posted, an owner reply in its thread
+# delivered, the overseer's inbox read past it, then a poll. Sets ANSWER to the
+# reply's ts and ANSWER_SEEN to its journaled kind and its reactions before the read.
+answer_read() {
+  local ask_ts
+  sk_lm "$1" ask --item overseer --to owner --file "$(sk_text "$3" "Answer $3?")" --options a,b --recommend a >/dev/null
+  sk_poll "$1"
+  ask_ts="$(sk_state "[.messages.${2}[] | select(.text | contains(\"Answer $3?\")) | .ts][0]")"
+  ANSWER="$(sk_inject "$2" U001 'a' "$ask_ts")"
+  sk_poll "$1"
+  ANSWER_SEEN="$(jq -r --arg ts "$ANSWER" 'select(.t == "in" and .ts == $ts) | .kind' "$(sk_journal "$1")") $(sk_reactions "$2" "$ANSWER")"
+  sk_lm "$1" inbox --item overseer >/dev/null
+  sk_poll "$1"
+}
+answer_read "$IOTA" "$IOTA_CH" iota-answer
+assert_eq "$ANSWER_SEEN|$(sk_reactions "$IOTA_CH" "$ANSWER")" "answer eyes|white_check_mark" \
+  "an owner reply in an ask's thread lands as an answer with eyes, and swaps it for a check once the overseer's inbox reads it"
 settle_rows() { # SLACK ERROR<TAB>THE REACTIONS METHODS THAT ANSWER IT, one line per MARK_SETTLED member
   printf '%s\t%s\n' \
     no_reaction reactions.remove \
@@ -923,6 +941,14 @@ sk_poll "$ZETA"
 assert_eq "$(sk_reactions "$ZETA_CH" "$MC2")" "white_check_mark" "control: the cursor unread, an unread directive is marked read"
 sk_bin_reset
 
+sk_mutant answer-read relay.py 'e\["box"\] == "to-lane" and' 'e["box"] == "to-lane" and e["kind"] == "directive" and'
+AR="$(sk_new_root answer-read)"
+sk_bind "$AR"
+answer_read "$AR" "$(sk_channel "$AR")" answer-control
+sk_assert_red "$ANSWER_SEEN|$(sk_reactions "$(sk_channel "$AR")" "$ANSWER")" "answer eyes|white_check_mark" \
+  "control: the read rule kept to directives, an answer the overseer read keeps eyes"
+sk_bin_reset
+
 sk_mutant mark-fatal relay.py 'print_refusal\(err\)\n                return False' 'raise err'
 sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
 sk_inject "$ZETA_CH" U001 'scope missing' >/dev/null
@@ -945,7 +971,7 @@ while IFS=$'\t' read -r error methods <&3; do
   sk_bin_reset
 done 3<<<"$(settle_rows)"
 
-sk_mutant mark-read-refused relay.py '        try:\n            read = self\.mail\.read_directives\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        read = self.mail.read_directives()\n'
+sk_mutant mark-read-refused relay.py '        try:\n            cursor = self\.mail\.read_cursor\(\)\n            events = self\.mail\.events\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        cursor = self.mail.read_cursor()\n        events = self.mail.events()\n'
 sk_inject "$MU_CH" U001 'refused read' >/dev/null
 touch "$MU/tmp/drain-refused"
 sk_lm "$MU" notice --item overseer --to owner --file "$(sk_text n21 'Held back.')" >/dev/null

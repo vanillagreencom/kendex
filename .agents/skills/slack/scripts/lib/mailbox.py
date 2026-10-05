@@ -166,26 +166,19 @@ class LaneMail:
             return first.rsplit("id=", 1)[1].strip()
         raise Refusal("lane-mail-failed", err.strip() or first)
 
-    def read_directives(self) -> Set[str]:
-        """The ids of the directives the overseer has read: those on a line
-        at or below to-lane.cursor, as `drain --receipts` lists them. A
-        cursor it reports `missed` has read none."""
+    def read_cursor(self) -> int:
+        """How many to-lane.jsonl lines the overseer has read: to-lane.cursor
+        as `drain --receipts` reports it, on the scale of the `line` every
+        to-lane envelope from `events` carries. A cursor it reports `missed`
+        has read none."""
         code, out, err = self._run("drain", "--item", "overseer", "--after", "0", "--receipts")
         if code != 0:
             raise Refusal("lane-mail-failed", _first(err))
-        lines = out.splitlines()
-        header = next((i for i, raw in enumerate(lines) if raw.startswith("receipts cursor=")), None)
+        header = next((raw for raw in out.splitlines() if raw.startswith("receipts cursor=")), None)
         if header is None:
             raise Refusal("lane-mail-failed", f"drain without receipts: {_first(out)}")
-        cursor = lines[header].split()[1][len("cursor="):]
-        if cursor == "missed":
-            return set()
-        read = set()
-        for raw in lines[header + 1:]:
-            number, env_id = raw.split()[:2]
-            if int(number) <= int(cursor):
-                read.add(env_id)
-        return read
+        cursor = header.split()[1][len("cursor="):]
+        return 0 if cursor == "missed" else int(cursor)
 
     def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats

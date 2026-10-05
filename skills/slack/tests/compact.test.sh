@@ -2,13 +2,13 @@
 # `slack compact`: lines resolved or ignored longer ago than SLACK_THREAD_DAYS,
 # an old report's upload, an old read directive's receipt marks, and every
 # history position but the last leave the journal; every open ask, every
-# young line, an old directive still marked eyes with its delivery, and an
-# old directive Slack refused to mark with its delivery stay, the relay reads
+# young line, an old directive or ask answer still marked eyes with its
+# delivery, and an old directive Slack refused to mark with its delivery stay, the relay reads
 # the compacted file as before, marks the unmarked directive eyes and swaps
 # both marks once read, and a running relay's lock refuses the verb; an old
-# connection line leaves and a young one stays. Seven controls, one per rule:
+# connection line leaves and a young one stays. Eight controls, one per rule:
 # a mutant that drops no old line, one that keeps every receipt mark, one
-# that keeps no unread directive, one that keeps no unmarked directive, one
+# that keeps no unread directive, one that keeps no unread answer, one that keeps no unmarked directive, one
 # that keeps every history position, one that keeps every connection line,
 # and one that takes no lock.
 set -uo pipefail
@@ -120,6 +120,27 @@ sk_run -- compact --root "$RESUMES"
 assert_eq "$RC=$(jq -cr 'select(.t == "resume") | .skipped' "$(sk_journal "$RESUMES")")" '0=["YOUNG-SKIP"]' \
   "compaction keeps skipped ids with the young resume and drops them with the aged resume"
 
+# An old answer in a closed ask's thread keeps its delivery and its eyes mark
+# until it is read, as a directive does; one read leaves with its marks.
+ANSWER_UNREAD="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 30))')"
+ANSWER_READ="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 45))')"
+ANSWERS="$(sk_new_root answers)"
+sk_bind "$ANSWERS"
+cat > "$(sk_journal "$ANSWERS")" <<EOF
+{"at": "", "ids": [], "t": "start"}
+{"at": "$OLD_AT", "channel": "C001", "id": "ASK-DONE", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_TS"}
+{"channel": "C001", "id": "ANS-UNREAD", "kind": "answer", "t": "in", "thread": "$OLD_TS", "ts": "$ANSWER_UNREAD"}
+{"channel": "C001", "id": "ANS-READ", "kind": "answer", "t": "in", "thread": "$OLD_TS", "ts": "$ANSWER_READ"}
+{"id": "ASK-DONE", "t": "resolved"}
+{"name": "eyes", "t": "mark", "ts": "$ANSWER_UNREAD"}
+{"name": "eyes", "t": "mark", "ts": "$ANSWER_READ"}
+{"name": "white_check_mark", "t": "mark", "ts": "$ANSWER_READ"}
+EOF
+cp "$(sk_journal "$ANSWERS")" "$SK_TMP/answers.jsonl"
+sk_run -- compact --root "$ANSWERS"
+assert_eq "$RC=$(receipts "$ANSWERS")" "0=in:$ANSWER_UNREAD:answer mark:$ANSWER_UNREAD:eyes " \
+  "the old unread answer keeps its delivery and its eyes mark; the old read one keeps neither"
+
 # Replay the real journal after its completed posts age out. A lone pre-send
 # line is still uncertain; a later outcome, including retry, settles it.
 for mode in production settled-control unknown-control; do
@@ -217,6 +238,13 @@ sk_lm "$GAMMA" inbox --item overseer >/dev/null
 sk_poll "$GAMMA"
 assert_eq "$(receipts "$GAMMA" | grep -c "$UNREAD_LOST")|$(sk_reactions "$GAMMA_CH" "$UNREAD_LOST")" "0|eyes" \
   "control: the unread rule gone, an old eyes directive loses its lines and never swaps"
+
+sk_mutant answers store.py 'str\(line\["ts"\]\) in state\.delivered' 'str(line["ts"]) in state.delivered and line.get("kind") != "answer"'
+cp "$SK_TMP/answers.jsonl" "$(sk_journal "$ANSWERS")"
+sk_run -- compact --root "$ANSWERS"
+sk_assert_red "$RC=$(receipts "$ANSWERS")" "0=in:$ANSWER_UNREAD:answer mark:$ANSWER_UNREAD:eyes " \
+  "control: the unread rule kept to directives, an old eyes answer loses its delivery"
+sk_bin_reset
 
 sk_mutant unmarked store.py 'state\.marks\.get\(str\(line\["ts"\]\)\) != READ' 'state.marks.get(str(line["ts"]), READ) != READ'
 UNMARKED_LOST="$(sk_inject "$GAMMA_CH" U001 'unmarked and lost' '' "\"ts\": \"$OLD_UNMARKED_LOST\"")"

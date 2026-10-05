@@ -32,14 +32,14 @@ them.
 
 Each poll, every SLACK_POLL_SECONDS, per root: re-resolve the owners when
 the setting moved, retry previously unmarked deliveries, run the catch-up
-when one is due, swap the receipt mark of every directive the overseer has
-read since, then read the mailbox's events and
+when one is due, swap the receipt mark of every directive and answer the
+overseer has read since, then read the mailbox's events and
 post every owner-bound envelope not yet carried.
 
-An owner message carries a delivery mark; a directive also carries a receipt mark, a reaction and never a
-message: SEEN once it lands in the mailbox, READ once the overseer's
-to-lane.cursor passes it. The journal judges each mark on delivery and
-later polls, so a stop between the delivery and its
+An owner message delivered as a directive or an answer carries a receipt
+mark, a reaction and never a message: SEEN once it lands in the mailbox,
+READ once the overseer's to-lane.cursor passes it. The journal judges each
+mark on delivery and later polls, so a stop between the delivery and its
 mark leaves the mark to the next poll. Each delivery attempts eyes once,
 without retrying a new refusal later in the same poll.
 
@@ -485,17 +485,20 @@ class RootRelay:
                 self.journal.append(t="mark", ts=ts, name=SEEN)
 
     def mark_read(self) -> None:
-        """Swap SEEN for READ on every directive the overseer has read. A
-        swap Slack refused, or a receipts read lane-mail refused, is made
-        again on the next poll."""
+        """Swap SEEN for READ on every directive and answer the overseer has
+        read: its to-lane line at or below the cursor. A swap Slack refused,
+        or a receipts read lane-mail refused, is made again on the next
+        poll."""
         seen = [ts for ts, name in self.state.marks.items() if name == SEEN]
         if not seen:
             return
         try:
-            read = self.mail.read_directives()
+            cursor = self.mail.read_cursor()
+            events = self.mail.events()
         except Refusal as err:
             print_refusal(err)
             return
+        read = {e["id"] for e in events if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
         for ts in seen:
             if self.state.delivered.get(ts) not in read:
                 continue
