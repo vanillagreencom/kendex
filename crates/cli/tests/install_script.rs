@@ -257,7 +257,8 @@ fn pinned_versions_with_and_without_v_request_the_same_download() {
 const MAIN_BUILD_TAG: &str = "main-build-42-1-0123456789abcdef0123456789abcdef01234567";
 
 /// Whether `script` pinned to a main build fetched that build's feed, then
-/// the command and the AppImage that feed names.
+/// the command and the AppImage that feed names, and recorded the command
+/// as the main channel's.
 #[allow(clippy::unwrap_used)]
 fn pinned_main_build_fetches_its_feed(script: &Path) -> Result<(), String> {
     let home = tempfile::tempdir().unwrap();
@@ -281,9 +282,12 @@ fn pinned_main_build_fetches_its_feed(script: &Path) -> Result<(), String> {
         "https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu",
         "https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage",
     ];
-    match output.status.success() && fetched == expected {
+    let record = kendex_core::env::Env::host_rooted(&root).installed_command_file();
+    let recorded = fs::read_to_string(record).unwrap_or_default();
+    let main_record = format!("{}/.local/bin/kendex\nmain\n", root.display());
+    match output.status.success() && fetched == expected && recorded == main_record {
         true => Ok(()),
-        false => Err(format!("{output:?}\n{urls}")),
+        false => Err(format!("{output:?}\n{urls}\n{recorded}")),
     }
 }
 
@@ -296,7 +300,8 @@ fn a_pinned_main_build_installs_from_its_own_feed() {
 }
 
 /// The control for the row above: a copy of `install.sh` that prefixes the
-/// main-build tag, or reads only the rolling build's feed, turns it red.
+/// main-build tag, reads only the rolling build's feed, or records a main
+/// build as a release turns it red.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_main_build_read_as_a_release_turns_its_row_red() {
@@ -305,6 +310,10 @@ fn a_main_build_read_as_a_release_turns_its_row_red() {
     for (from, to) in [
         ("    main-build-*) ;;\n", ""),
         ("rolling-main|main-build-*)", "rolling-main)"),
+        (
+            "main_feed=1; record_channel=main",
+            "main_feed=1; record_channel=release",
+        ),
     ] {
         assert_eq!(
             source.matches(from).count(),

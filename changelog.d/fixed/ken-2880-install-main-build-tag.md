@@ -1,1 +1,1 @@
-- `install.sh --version main-build-N-A-SHA` installs that published main build, reading its command and AppImage from the build's own feed instead of a missing `v`-prefixed tag.
+- `install.sh --version main-build-N-A-SHA` installs that main build from its own feed, not a missing `v`-prefixed tag, and records its command on the main channel.

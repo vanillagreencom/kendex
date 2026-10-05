@@ -86,10 +86,15 @@ else
 fi
 [ -n "$version" ] || { message release-unavailable latest "The latest release could not be resolved." >&2; exit 1; }
 plain="${version#v}"
-record_channel=release
+# A main build names its AppImage after the version it built, which its tag
+# does not carry, so the build's own feed names every download; its command
+# follows the main channel whichever option chose the build.
+case "$version" in
+  rolling-main|main-build-*) main_feed=1; record_channel=main ;;
+  *) main_feed=0; record_channel=release ;;
+esac
 if [ "$git_channel" -eq 1 ]; then
   plain="main"
-  record_channel=main
 fi
 base="https://github.com/$repo/releases/download/$version"
 
@@ -123,9 +128,6 @@ feed_url() {
 command_url="$base/kendex-$target"
 app_url="$base/kendex_${plain}_${appimage_arch:-}.AppImage"
 icon_ref="$version"
-# A main build names its AppImage after the version it built, which its tag
-# does not carry, so the build's own feed names every download.
-case "$version" in rolling-main|main-build-*) main_feed=1 ;; *) main_feed=0 ;; esac
 if [ "$main_feed" -eq 1 ]; then
   pointer="$base/feed.json"
   if ! curl -fSL --proto '=https' -o "$work/feed.json" "$pointer"; then
