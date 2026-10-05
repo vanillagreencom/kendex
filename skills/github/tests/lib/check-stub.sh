@@ -21,7 +21,8 @@
 # by the account pr-author, id 1001, its identity read (`api graphql`
 # naming viewer) the fixed account lanes-app[bot], id 2002, set by no
 # STUB_* variable, its review threads STUB_THREADS (a JSON array of thread nodes, failing on
-# STUB_THREADS_FAIL), its reviews STUB_REVIEWS and its PR-level comments
+# STUB_THREADS_FAIL, and only a read selecting isResolved, pr-threads', on
+# STUB_THREAD_STATE_FAIL), its reviews STUB_REVIEWS and its PR-level comments
 # STUB_ISSUE_COMMENTS, each of those three collections `[]` when unset. The
 # viewer arm precedes the reviewThreads arm and answers any GraphQL call
 # whose argv holds `viewer`, so a threads query naming a viewer field would
@@ -237,7 +238,7 @@ case "${1:-}" in
         if [[ "${2:-}" == "graphql" && "$*" == *"reviewThreads"* ]]; then
             # A GraphQL error body fails the read at once, where a bare
             # nonzero exit would be retried.
-            if [[ "${STUB_THREADS_FAIL:-false}" == "true" ]]; then
+            if [[ "${STUB_THREADS_FAIL:-false}" == "true" || ("${STUB_THREAD_STATE_FAIL:-false}" == "true" && "$*" == *isResolved*) ]]; then
                 echo '{"errors":[{"type":"FORBIDDEN","message":"review threads unavailable"}]}'
                 exit 1
             fi

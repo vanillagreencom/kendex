@@ -17,11 +17,22 @@
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
-#   retry: same-head       (none and computing only) the refusal clears
-#                          with no change to the head: retry the merge on
-#                          that same head, bounded, rather than routing it
-#                          as a blocker. Every other cause needs a change
-#                          or a reader, and prints no retry: line
+#   retry: same-head       retry the merge on that same head, bounded,
+#                          rather than routing the refusal as a blocker.
+#                          Printed for `computing`, and for `none` when the
+#                          check carries no not_approved: warning and the PR
+#                          has no unresolved review thread: GitHub refuses
+#                          the merge for both, and neither is an issue here.
+#                          `none` means either that the gates cleared since
+#                          the attempt or that the refusal came from outside
+#                          them, its cause in the attempt's stderr; a bound
+#                          reached under `none` means the second. Every
+#                          other cause prints no retry: line, pending CI
+#                          and an unreadable GitHub answer among them beside
+#                          the causes that need a change or a reader. A
+#                          thread count that cannot be read withholds the
+#                          line, with `ci-classify-refusal: threads=unread
+#                          pr=<N>` on stderr
 #   ci_optional_failed: ...  red checks the base branch does not require,
 #                          which block nothing. Printed under every
 #                          non-terminal cause, `none` included: a PR blocked
@@ -149,11 +160,34 @@ jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
 jq -r "$SANITIZE_JQ"' .warnings[]? | clean | select(startswith("ci_optional_failed:"))' <<<"$check_json"
 
 # The direct merge refuses while GitHub still computes mergeability, and by
-# the time this runs that computation has often finished (`none`): neither
-# is fixed by a push, a rebase or a review reply.
-case "$cause" in
-none | computing) echo "retry: same-head" ;;
-esac
+# the time this runs that computation has often finished (`none`). A `none`
+# can also be a refusal from outside these gates, which a retry does not
+# clear; the caller's retry bound ends that, with the attempt's stderr
+# naming the cause. GitHub also refuses for a missing approval, which
+# pr-merge --check reports only as a warning, and an open review thread,
+# which it does not check: either withholds the retry, so the caller waits
+# for review.
+same_head_retry() {
+    case "$cause" in
+    computing) return 0 ;;
+    none) ;;
+    *) return 1 ;;
+    esac
+    if jq -e 'any(.warnings[]?; startswith("not_approved:"))' >/dev/null <<<"$check_json"; then
+        return 1
+    fi
+    local threads unresolved
+    if ! threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>"$check_err") ||
+        ! unresolved=$(jq -er '.unresolved_count | numbers' <<<"$threads" 2>/dev/null); then
+        echo "ci-classify-refusal: threads=unread pr=$pr_num" >&2
+        tail -1 "$check_err" | tr -d '\r' | sed 's/^/  /' >&2
+        return 1
+    fi
+    [ "$unresolved" -eq 0 ]
+}
+if same_head_retry; then
+    echo "retry: same-head"
+fi
 
 if [ "$cause" = "none" ]; then
     echo "note: checks pass now — the refusal did not come from these gates (or has cleared); re-run the refusing command"
