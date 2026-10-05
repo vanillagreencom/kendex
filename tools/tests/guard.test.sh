@@ -181,14 +181,15 @@ unset GUARD_TEST_ENV
 
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
-# checks. The preconditions run those checks on the same defects: the
-# fixture reaches each package's bound, so guard's silence is a delegation.
+# checks. The preconditions run those checks on the same fixture, so
+# guard's silence on a package-owned refusal proves the delegation.
 head -c 8193 /dev/zero | tr '\0' x >"$R/AGENTS.md"
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
 mkdir -p "$R/changelog.d/fixed"
-printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
+LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
+printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 git -C "$R" add -A
 SR_OUT=""
 SR_RC=0
@@ -196,17 +197,46 @@ SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
 [ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 8193 bytes > 8192 bytes"*) true ;; *) false ;; esac \
   && ok "precondition: doc-limits refuses the oversized document" \
   || bad "precondition: doc-limits refuses the oversized document" "rc=$SR_RC out=$SR_OUT"
-CE_OUT=""
-CE_RC=0
-CE_OUT="$(cd "$R" && "$CHANGELOG_ENTRIES" 2>&1)" || CE_RC=$?
+changelog_entries_pass() { # CHECKER: the same acceptance assertion for the control
+  CE_OUT=""
+  CE_RC=0
+  CE_OUT="$(cd "$R" && "$1" 2>&1)" || CE_RC=$?
+  [ "$CE_RC" -eq 0 ]
+}
+changelog_entries_pass "$CHANGELOG_ENTRIES" \
+  && ok "precondition: changelog-entries accepts the long entry" \
+  || bad "precondition: changelog-entries accepts the long entry" "rc=$CE_RC out=$CE_OUT"
+
+# A private checker copy restores the length refusal on the same long entry.
+mkdir -p "$TMP/changelog-control"
+cp -R "$REPO/.agents/skills/commit-guards/scripts" "$TMP/changelog-control/scripts"
+python3 - "$TMP/changelog-control/scripts/changelog-entries" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = '  checked=$((checked + 1))'
+assert s.count(needle) == 1
+p.write_text(s.replace(needle, needle + '\n  [ "$(wc -c <"$GG_TMP/blob")" -le 200 ] || violations=$((violations + 1))'))
+EDIT
+if changelog_entries_pass "$TMP/changelog-control/scripts/changelog-entries"; then
+  bad "control: the length refusal must fail the long-entry acceptance assertion" "rc=$CE_RC out=$CE_OUT"
+elif [ "$CE_RC" -eq 1 ]; then
+  ok "control: the length refusal fails the long-entry acceptance assertion"
+else
+  bad "control: the private checker did not reach its length refusal" "rc=$CE_RC out=$CE_OUT"
+fi
+
+printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
+git -C "$R" add changelog.d/fixed/ken-two.md
+changelog_entries_pass "$CHANGELOG_ENTRIES" || :
 [ "$CE_RC" -eq 1 ] \
-  && case "$CE_OUT" in *ken-two.md*) true ;; *) false ;; esac \
+  && case "$CE_OUT" in *"changelog-entries: fragment-continuation=changelog.d/fixed/ken-two.md"*) true ;; *) false ;; esac \
   && ok "precondition: changelog-entries refuses the two-entry fragment" \
   || bad "precondition: changelog-entries refuses the two-entry fragment" "rc=$CE_RC out=$CE_OUT"
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file and a malformed fragment all pass — the packages judge those" \
-  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file and a malformed fragment all pass — the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" \
+  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" "rc=$RC out=$OUT"
 case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
 reset_world
 
