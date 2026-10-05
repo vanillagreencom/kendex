@@ -64,13 +64,9 @@
 #             A stamp outside that span enters no gap: a ci_green whose
 #             checks finished before the PR opened, or one an optional check
 #             completes after the merge.
-#             Null while a stamp other than launched, first_commit and
-#             armed is missing: a missing stamp has no time, and one that
-#             could fall in the span joins two gaps. A null armed is an arm
-#             that never happened, as on a merge pr-merge's admin route
-#             makes, since pr-timeline reads the PR's whole timeline or
-#             refuses: it has no time to fall in the span, which is read from
-#             the stamps that exist
+#             Null while a stamp other than launched and first_commit is
+#             missing: a missing stamp has no time, and one that could fall
+#             in the span joins two gaps
 #   gate waits  the gap that ends at gate_green, split into the waits it
 #             holds, which sum to it:
 #               paused      the lane was parked or walled: the lane record's
@@ -84,8 +80,8 @@
 #             the gap opens in the wait the latest push or bot review before
 #             it opened, bot_wait where there is neither
 #             pushes and bot reviews are pr-timeline's `push_times`, the
-#             head branch's push log, and `bot_review_times`. Null while the
-#             phase is null, where gate_green falls outside the span, or
+#             head branch's push log, and `bot_review_times`. Null while any
+#             stamp is missing, where gate_green falls outside the span, or
 #             where pr-timeline's `push_times` is null:
 #             no head branch named, or no push in its log for the life the
 #             PR opened in
@@ -98,9 +94,8 @@
 #             ci, and the cause is null where last_push is null or after
 #             ci_green. Null on any other phase, except on a miss, which is
 #             never recorded without a cause: on a miss the phase is the
-#             cause wherever no split above applies, which is the merged and
-#             armed phases and a gate_green or ci_green gap whose pushes were
-#             not read, and the cause is `unread` where the phase is null
+#             cause wherever no split above applies, and the cause is
+#             `unread` where the phase is null
 #   escaped   a micro tier whose merged class is small or standard, or a small
 #             tier whose merged class is standard
 #   tier_inputs  the launch record's {estimate, delta, paths}, null on old records
@@ -175,8 +170,7 @@ TARGETS='{"render":300,"trivial":300,"micro":1200,"small":1800,"standard":5400}'
 ROUND_TARGETS='{"micro":1,"small":1,"standard":2}'
 ROUND_SECS_TARGET=600
 # The rules every program below reads a record through: a negative interval
-# is no measure, and a miss with no wait split names its phase as the cause,
-# one with no phase `unread`.
+# is no measure, and a miss's cause falls back to its phase, then `unread`.
 CYCLE_DEFS='def interval: if type == "number" and . < 0 then null else . end;
   def miss_cause: .cause // .phase // "unread";'
 
@@ -425,9 +419,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      else ($stamps.merged | fromdate) - ($stamps.launched | fromdate) end) as $actual
   | $t.open_secs as $open
   | [$stamps | to_entries[] | select(.value == null) | .key] as $missing
-  # No phase while a missing stamp could fall in the span: launched and
-  # first_commit come before it, and a null armed never happened.
-  | (if $missing - ["launched", "first_commit", "armed"] != [] then null else ($stamps.pr_opened | fromdate) as $o
+  | (if $missing - ["launched", "first_commit"] != [] then null else ($stamps.pr_opened | fromdate) as $o
      | ($stamps.merged | fromdate) as $m
      | [$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)} | select(.at >= $o and .at <= $m)]
      | sort_by(.at) end) as $seq
@@ -436,7 +428,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
         | if .phase == "merged" then .secs = ([.secs - ($merge_group // 0), 0] | max) else . end]
        | sort_by(- .secs) | first end) as $dominant
   | ($seq // [] | map(.name) | index("gate_green")) as $gate
-  | (if ($gate // 0) == 0 or $t.push_times == null then null
+  | (if ($missing | length) > 0 or ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | ($seq // [] | map(.name) | index("ci_green")) as $ci
   | (if ($ci // 0) == 0 or $s.last_push == null then null
