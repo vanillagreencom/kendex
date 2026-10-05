@@ -256,10 +256,10 @@ Options:
                   conflicts, abort it as --reuse does and hand the tree back
                   on its pre-rebase head, set up as a completed reuse would
                   be: the path on stdout, a 'worktree-reuse-unrebased' notice
-                  naming the conflicting files on stderr, exit 76. For a
-                  caller that needs a session in the tree more than a rebased
-                  branch, such as a relaunch; a caller that needs the base
-                  omits it and keeps the failure
+                  naming the path on stderr followed by the conflicting
+                  files, exit 76. For a caller that needs a session in the
+                  tree more than a rebased branch, such as a relaunch; a
+                  caller that needs the base omits it and keeps the failure
   --hosted        The create runs for a hosted lane, on a clone that holds one
                   lane worktree: a new tree lands at
                   ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside

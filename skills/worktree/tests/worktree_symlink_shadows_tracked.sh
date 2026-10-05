@@ -354,6 +354,7 @@ err_text() {
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
     remote-moved) printf 'worktree-restack-remote-moved: origin/topic;worktree-restack-unauthorized: <wt>' ;;
+    unrebased) printf 'worktree-reuse-unrebased: <wt>' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -374,6 +375,7 @@ create --reuse rebases the branch through the advanced vendored file and keeps t
 a reuse whose map cannot be derived puts the links back before it refuses|shadow create twins legacy-link|create topic --reuse|1|-|ambiguous+map-unreadable|$SHADOW_V1
 a restack continue whose map cannot be derived puts the links back, having no finish or abort left|shadow create twins contend legacy-link paused|restack continue topic|1|-|ambiguous+map-unreadable|$SHADOW_V1
 a restack continue refused after the remote moves restores the untracked child links|shadow create feature contend legacy-link paused move-remote|restack continue topic|1|-|remote-moved|$SHADOW_V1
+a conflicting reuse kept with --keep-on-conflict puts the links back before it hands the tree over|shadow create contend legacy-link|create topic --reuse --keep-on-conflict|76|wt|unrebased|$SHADOW_V1
 the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2

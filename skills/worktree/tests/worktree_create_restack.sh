@@ -531,7 +531,8 @@ out_text() {
 # label|fixture|command|rc|out|err|state
 ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --keep-on-conflict over a conflict aborts the rebase and hands the tree back on its pre-rebase head|conflict|create topic --reuse --keep-on-conflict|76|wt|unrebased|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
---keep-on-conflict with --restack is refused before any mutation|conflict|create topic --restack --keep-on-conflict|1|-|keep-mode|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict with --restack is refused before any mutation, even beside --reuse|conflict|create topic --reuse --restack --keep-on-conflict|1|-|keep-mode|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict without --reuse is refused before any mutation|conflict|create topic --keep-on-conflict|1|-|keep-mode|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 a merged branch is kept as it stands and rebased by nothing|conflict merged-pr|create topic --reuse|0|wt|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --restack on a merged branch refuses rather than pausing in a conflict with its own merge|conflict merged-pr|create topic --restack|1|-|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 a merge lookup that cannot answer is recorded and the rebase still runs|conflict gh-fail|create topic --reuse|1|-|merge-unverified+aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
@@ -702,6 +703,35 @@ keep_mutant_rc=0
 assert_eq "$keep_mutant_rc" "1" "control: the mutant fails the reuse it should have kept"
 assert_eq "$(grep -c '^worktree-reuse-unrebased: ' "$ROOT/keep-mutant.err" || true)" "0" \
   "control: the mutant never reports the kept tree"
+
+echo
+echo "=== must-fail control: with one keep-mode clause cut, its row's command gets past the guard ==="
+
+# Each keep-mode row above reaches one clause of the guard alone. The defect
+# planted per row is that clause, on a private package copy, with the other
+# clause kept: the same command then runs on, into a bare create's refusal of
+# the existing tree or a paused restack.
+keep_guard='( "$REUSE" != true || "$RESTACK" == true )'
+# command|exit status past the guard|guard with that row's clause cut
+KEEP_CLAUSES='create topic --keep-on-conflict|75|( "$RESTACK" == true )
+create topic --reuse --restack --keep-on-conflict|1|( "$REUSE" != true )'
+k=0
+while IFS='|' read -r command clause_rc kept_guard; do
+  k=$((k + 1))
+  build "clause-mutant-$k" conflict
+  mkdir -p "$ROOT/pkg"
+  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+  clause_mutant="$ROOT/pkg/worktree/scripts/worktree"
+  clause_src="$(cat "$clause_mutant")" || exit 1
+  assert_eq "$(grep -cF "$keep_guard" "$clause_mutant" || true)" "1" "control finds the keep-mode guard [$command]"
+  printf '%s\n' "${clause_src/"$keep_guard"/$kept_guard}" >"$clause_mutant"
+  assert_eq "$(grep -cF "KEEP_ON_CONFLICT\" == true && $kept_guard" "$clause_mutant" || true)" "1" \
+    "control cuts the clause only in its private copy [$command]"
+  clause_got="$(WORKTREE_SCRIPT="$clause_mutant" run "$command")"
+  assert_eq "${clause_got%% *}" "rc=$clause_rc" "control: the mutant runs on past the guard [$command]"
+  assert_eq "$(grep -c '^worktree-keep-mode-required: ' "$ROOT/err" || true)" "0" \
+    "control: the mutant never refuses the mode [$command]"
+done <<<"$KEEP_CLAUSES"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
