@@ -94,5 +94,8 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = ""
 # Command text the command-safety hook refuses before a shell runs it, as
 # a POSIX extended regular expression. The hook reads it through this
 # skill's settings loader where the command-safety bundle installs it. The
-# default matches only empty command text, so it refuses nothing.
-COMMAND_SAFETY_DENY_PATTERN = "^$"
+# default, which the hook also applies with no setting, refuses a systemd-run
+# MemoryMax= or MemoryHigh= cap in K or M, quoted or not: such a cap starved a
+# build into a kernel allocation failure that left a host's root volume
+# read-only. "^$" turns the hook off.
+COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)"

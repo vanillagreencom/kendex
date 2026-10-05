@@ -102,7 +102,7 @@ assert_first() { # WANT LABEL
 # not, whichever project ships the pattern.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"\n' \
   >"$repo/kendex.settings.toml"
-check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core' 'the memory-cap refusal is the project pattern, not the hook'
+check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core' 'a project pattern replaces the default'
 settings "$ROOT/kendex.settings.toml"
 # The fleet policy is input to the hook. Commands stay in JSON payloads;
 # this suite never runs the capped commands it asks the hook to judge.
@@ -128,8 +128,28 @@ check 2 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
 assert_first 'command-safety: refused=policy' 'raw quoted continuation names the policy'
 settings
 
+# A fresh install has no settings line, or no settings file at all; the
+# hook's own default is then the policy.
+for unconfigured in empty-env no-file; do
+  case "$unconfigured" in
+    empty-env) printf '[env]\n' >"$repo/kendex.settings.toml" ;;
+    no-file) rm -f -- "$repo/kendex.settings.toml" ;;
+  esac
+  while IFS='|' read -r command_json label; do
+    command="$(jq -nr "$command_json")" || exit 1
+    check 2 "$command" "$unconfigured: the default refuses $label"
+    assert_first 'command-safety: refused=policy' "$unconfigured: $label names the policy"
+  done <<'DEFAULT_REFUSES'
+"systemd-run --user --scope -p MemoryMax=64M cargo test"|a bare MemoryMax
+"systemd-run --user --scope -p MemoryHigh=512K cargo test"|a bare MemoryHigh
+"systemd-run --user --scope -p MemoryMax=\"64M\" cargo test"|a quoted MemoryMax
+DEFAULT_REFUSES
+  check 0 'systemd-run --user --scope -p MemoryMax=2G cargo test' "$unconfigured: the default passes a gigabyte cap"
+  check 0 'git status' "$unconfigured: the default passes an unrelated command"
+done
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
+check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'an explicit ^$ turns the hook off'
 printf '[env]\n' >"$repo/kendex.settings.toml"
-check 0 'git status' 'an unconfigured project leaves the hook inactive'
 check 0 'git status' 'a global hook outside Git leaves the hook inactive' /
 mkdir -p "$scratch/outside"
 printf 'gitdir: /missing\n' >"$scratch/outside/.git"

@@ -3,8 +3,8 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive unless the project settings file cannot be read. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# summary: Refuses shell commands matching a project's declared deny pattern, and every command while its settings file cannot be read.
+# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns the hook off. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
+# summary: Refuses shell commands matching a project's deny pattern, a kilobyte or megabyte systemd-run memory cap by default, and every command while its settings file cannot be read.
 # safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # requires-skills: [commit-guards]
@@ -142,7 +142,12 @@ cd -- "$root" || refuse cwd "$root"
 # policy read past the bad line would come from a file the rest of the
 # toolchain rejects. The replayed line names what to fix, so the caller can
 # clear the refusal.
-pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>&1)" || refuse settings unreadable "$pattern"
+# The default is the host-safety rule every install gets: a systemd-run memory
+# cap in K or M starved a build's cgroup into a kernel allocation failure that
+# left a host's root volume read-only. skills/commit-guards'
+# kendex.settings.toml.example declares the same value.
+default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
+pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
 status=0

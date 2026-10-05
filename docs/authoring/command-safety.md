@@ -6,7 +6,13 @@ Configure `COMMAND_SAFETY_DENY_PATTERN` in `kendex.settings.toml` under `[env]`,
 
 Claude Code, Codex, Gemini CLI, and GitHub Copilot execute the hook. Pi executes it while the `pi-hooks` carrier is registered. Cursor and OpenCode install advisory instructions instead of an executable check. Antigravity executes hooks but does not receive this one: it sends the command as `toolCall.args.CommandLine`, not the `tool_input` this hook reads, and a hook reaches Antigravity only by naming it in its `harnesses` line.
 
-An absent setting leaves the hook inactive, unless the project settings file cannot be read. This lets a global installation run in repositories with no command policy and outside Git worktrees. An explicitly empty value, invalid pattern, unreadable setting, or unreadable tool input refuses the command.
+An absent setting applies the shipped host-safety pattern, so a fresh install refuses a `systemd-run` memory cap measured in kilobytes or megabytes, quoted or not:
+
+```text
+(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)
+```
+
+A cap that small starved a build's cgroup into a kernel allocation failure inside a filesystem transaction, and the host's root volume went read-only. A cap in gigabytes, or a run with no cap, passes. A project that sets the key replaces this pattern, so its own pattern keeps this rule where it still wants it; the value `^$` turns the hook off. Outside a Git worktree the hook stays inactive, which lets a global installation run there. An explicitly empty value, invalid pattern, unreadable setting, or unreadable tool input refuses the command.
 
 A malformed value on any `[env]` key refuses every command, not only a malformed pattern. The settings loader reads the file whole, like every kendex settings reader, so a policy read past the bad line would come from a file the rest of the toolchain rejects. The refusal replays the loader's line naming the file, the line and the key to rewrite.
 

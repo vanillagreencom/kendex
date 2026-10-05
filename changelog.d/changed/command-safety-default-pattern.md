@@ -1,0 +1,1 @@
+- The `command-safety` hook now refuses a `systemd-run` memory cap in kilobytes or megabytes with no setting; `COMMAND_SAFETY_DENY_PATTERN = "^$"` turns it off.
