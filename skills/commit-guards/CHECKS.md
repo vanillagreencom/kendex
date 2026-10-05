@@ -75,6 +75,15 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 - Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
 - `COMMIT_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
+### Release versions
+
+A repository that releases chooses each version by this rule. The [version-bump check](#version-bumps) refuses the violations it can read from the entries.
+
+- From 1.0, fixes, internal changes, refactors, tests and docs are a patch. A minor needs a new user-facing capability or a consumer-visible setting. A breaking change is a major and needs the owner's approval.
+- Before 1.0, a minor marks a break and a patch holds everything else.
+- An `added/` fragment names only something a consumer of the repository uses. Internal tooling and tests go under `changed/`, or carry no fragment where [commit-msg](#commit-msg) owes none.
+- Releases are batched: cut one when a consumer waits for a fix or user-facing capabilities have built up, never one per merge day.
+
 ### Version bumps
 
 - `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` selects tracked JSON files by space-separated path globs. Empty, the default, disables version checks. A selected changed file must be regular JSON with a string `version` in `major.minor.patch` form, with optional prerelease and build suffixes. jq reads both versions. Missing jq or unreadable versions are collection errors.
@@ -85,7 +94,7 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 - A `package.json` uses only its adjacent `CHANGELOG.md`: `### Unreleased` before release, or `### <new version>` as the first release section after the release renames that heading. Another package's call-out does not count. A package record has no Added section, so a package patch takes the Breaking refusal only.
 - Other version files use an accepted fragment or the configured record's `## [Unreleased]` or the first release section, `## [<new version>] - <date>`. This permits the release commit after collation deletes fragments and the caller sets the version. Past versions and fenced examples do not count. An unreadable record fails closed.
 - Under `--against`, once a record holds the new version's own section, that section alone is the release's entries, for a package record too. Pending fragments and the pending section wait for the next release, so a branch restacked past a release and judged against its pre-restack tip is not refused for that release's bump. The default, `--staged` and `--base` runs read the fragments and both record sections, and a major whose fragments hold a Breaking entry reads no record in any run.
-- The owner-approval and compatibility policies belong to the consuming repository's release standard, not this configurable catalog check.
+- The compatibility policy belongs to the consuming repository's release standard, not this configurable catalog check.
 - [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, a 0.x patch, a patch whose own release section leaves an added fragment pending under `--against` and refuses it otherwise, a patch refused under `--base` for a pending record Added entry beside its own release section, and a major whose own release section holds no Breaking entry beside a Breaking fragment.
 
 ### Measuring one entry

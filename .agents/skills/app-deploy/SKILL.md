@@ -14,7 +14,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Release kendex
 
-Follow the [release standard](../../../changelog.d/README.md#release-standard) for version choice, breaking changes, compatibility, and owner approval.
+Choose the version by the [release-version rule](../../../skills/commit-guards/CHECKS.md#release-versions). Follow the [release standard](../../../changelog.d/README.md#release-standard) for breaking changes and compatibility.
 
 1. From a clean index and working tree, set `COMMIT_GUARDS_CHANGELOG_COLLATE=1` in the environment and run `.agents/skills/commit-guards/scripts/changelog-entries --collate`. It folds the `changelog.d` fragments into `CHANGELOG.md`'s `Unreleased`. A nonzero exit halts the release: fix the cause before retrying.
 2. Bump the workspace `version` in `Cargo.toml` and the version in `crates/app/tauri.conf.json`. Both must equal the tag minus the `v`, or the update feed no-ops or loops. Move the collated entries under a new `## [<version>] - <date>` heading, leaving an empty `## [Unreleased]` above it. The collator writes no link footer: point `[Unreleased]:` at `compare/v<version>...HEAD` and add `[<version>]: https://github.com/vanillagreencom/kendex/releases/tag/v<version>` above the previous version's line.

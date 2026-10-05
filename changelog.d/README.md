@@ -8,7 +8,7 @@ This standard applies to kendex, its apps, Pi packages, GitHub releases, and the
 - Start a breaking-change item with `- **Breaking:**`. Name the break and include its migration note in that item.
 - Collate accepted fragments into `CHANGELOG.md` at release. Move the pending entries under the new version heading.
 - Pi packages keep their channel record in their own `CHANGELOG.md` under `### Unreleased`. A package major needs a `- **Breaking:**` entry there. Rename the heading to the new version at release, keeping the entry.
-- Choose the bump from the changes. From 1.0, a patch holds fixes only, a minor holds additions and no Breaking entry, and a Breaking entry ships only in a major release. Before 1.0, a minor release carries a break. A major release of kendex or an app needs the owner's approval.
+- Choose the version and the fragment section by [the release-version rule](../skills/commit-guards/CHECKS.md#release-versions).
 - From 1.0, a change that would break a consumer keeps the old form working, with one warning that names the new form, for at least one minor release. Its removal waits for a major release.
 - The consumer refresh route's old forms, the step 6 rows of [the consumer refresh design § Deletion list](../docs/plans/consumer-refresh-source-design.md#deletion-list), are removed one minor release after every consumer runs the shared refresh workflow, not at a major release. Before Build B merges, each consumer's default branch holds the adopter that reads the new form (that design § Migration order, step 3), so no reader of the old form remains.
 - Package-manager recipes pin the published kendex version. They do not choose a separate bump or write separate release notes.
