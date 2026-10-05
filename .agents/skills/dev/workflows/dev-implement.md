@@ -293,7 +293,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed, a `no-verdict` that run to have been cut off; omit the flag only when validation failed before any run started.
+`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed, a `no-verdict` that run to have been cut off; omit the flag only when validation failed before any run started. A project whose own policy forbids `dev-validate-run` and runs its validation entry point in the foreground passes `--validate-record [FILE]`, the record of that run, in place of `--validate-run-dir`; `dev-return-write --help` gives its lines.
 
 One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`.
 

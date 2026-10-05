@@ -19,8 +19,8 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
-#     [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
+#     [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
+#     [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
 #     [--item N DECISION REASONING]...
 #
@@ -59,12 +59,23 @@
 # failed run recorded as a pass, would stand in for the whole battery.
 # validate_class_base is that base, present only where --record reports one.
 # A pass or no-verdict requires the
-# run. A failing round may omit it, because dev-validate-run refuses some
+# run, or the record below. A failing round may omit both, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
 # exists; validate_mode is then null. validate_time is the run's wall time as
 # --record reports it, a no-verdict run's included, and null where no run is
 # named or the run is unfinished. validate_lanes and validate_selection carry
 # the command's report as --record reads it; schemas/dev-return.md names them.
+#
+# --validate-record FILE stands in for --validate-run-dir where the project's
+# own policy runs its validation entry point in the foreground and forbids
+# dev-validate-run. FILE is that run's record, whose grammar --help gives:
+# the mode, the HEAD the run started at, its UTC start and end, its exit
+# status and its lane selection. The writer reads it into the same fields a
+# run directory fills and takes from it only what it states: the epoch start,
+# the wall time and the verdict, pass for exit 0 and FAILING for any other,
+# are derived here. A record states no timeout, so it never carries a
+# no-verdict. Every check below, the fix-round binding included, judges both
+# routes alike.
 #
 # A fix round's run is bound to its round. The round record dev-round-write
 # stamped at delegation, PATH/tmp/dev-round-ID-RID.json, names the round's
@@ -192,6 +203,13 @@ die() {
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
+      validate-source-conflict) printf 'Name the run by one source: a run directory or a foreground validation record.\n' ;;
+      validate-record-unreadable) printf 'The foreground validation record is not a readable file.\n' ;;
+      validate-record-line) printf 'Each record line is one KEY=VALUE pair, its key one --help names, given once.\n' ;;
+      validate-record-missing) printf 'The foreground validation record names no value for the field; --help lists the required fields.\n' ;;
+      validate-record-value) printf 'The value does not match the grammar --help gives for the field.\n' ;;
+      validate-record-lanes) printf 'lanes is required beside selection all or subset and refused beside unreported, as the validation command output contract pairs them.\n' ;;
+      validate-record-time) printf 'The run cannot end before it started.\n' ;;
       validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       round-record-unreadable) printf 'A fix receipt names a run only against its round record, and this one carries no base_sha of 40 hex or no delegated_at epoch.\n' ;;
       run-headless) printf 'The run records no starting HEAD, so it cannot be bound to a round; start a new run.\n' ;;
@@ -219,8 +237,8 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
-    [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
+    [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
+    [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
     [--item N DECISION REASONING]...
 
@@ -238,7 +256,8 @@ failing validation ends the round and is never re-run into a pass.
 validate_mode is the mode dev-validate-run --record reports for it, full,
 range or ci, and a --validate pass needs a run that passed, no-verdict a run the
 timeout ended and a --validate-note naming the scoped suites that passed; a
-FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
+FAILING result is accepted beside any run. A pass or no-verdict requires it,
+or --validate-record below; a FAILING round with no run omits both and
 records validate_mode null. validate_class_base is the round base --record
 reports the run's class was read from, absent where the class covered the
 branch; submit reuses only a full pass without one. validate_time is
@@ -248,6 +267,23 @@ that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
 base as the one a rebase left off the branch, or equal that base's rewritten
 SHA from the worktree-private kendex-rebase-map. The run must start no earlier
 than delegated_at, so a run from an earlier round is refused.
+--validate-record FILE takes the place of --validate-run-dir, never beside it,
+for a project whose own policy runs its validation entry point in the
+foreground and forbids dev-validate-run. FILE records that run, one KEY=VALUE
+per line, each key once:
+  validate-mode=full|range  the mode the run stands for, as validate_mode
+  head=SHA                  the worktree HEAD the run started at, 40 hex
+  started-at=TIME           when the run started, UTC YYYY-MM-DDTHH:MM:SSZ
+  ended-at=TIME             when it ended, no earlier than started-at
+  exit=N                    the entry point's exit status, 0 to 999
+  selection=all|subset|unreported
+  lanes=NAMES               comma-separated, beside all or subset only
+selection and lanes are the validate: line of the validation command output
+contract (references/artifact-checks.md). Every key but lanes is required.
+The writer derives the wall time from the two times and the verdict from the
+exit status, pass for 0 and FAILING for any other, so the record never
+carries a no-verdict; head and started-at bind a --kind fix receipt as a run
+directory's do.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -289,7 +325,7 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--validate-run-dir|--summary|--summary-file|--recovered-text|--qa-label|\
+    --validate-note|--validate-run-dir|--validate-record|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--label|--no-labels|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
@@ -336,6 +372,9 @@ validate_lanes=""
 validate_selection=""
 validate_class_base=""
 validate_run_dir=""
+validate_record=""
+run_ref=""
+run_verdict=""
 validate_seconds=""
 validate_started_at=""
 validate_ended_at=""
@@ -369,6 +408,7 @@ commit_given=false
 validate_given=false
 validate_note_given=false
 validate_run_dir_given=false
+validate_record_given=false
 near_ceiling_base=""
 near_ceiling_base_given=false
 
@@ -383,6 +423,7 @@ while (( $# > 0 )); do
     --validate)     need "$1" $# "${2:-}"; no_dup "$1" "$validate_given";     validate_given=true;     validate="$2"; shift 2 ;;
     --validate-note) need "$1" $# "${2:-}"; no_dup "$1" "$validate_note_given"; validate_note_given=true; validate_note="$2"; shift 2 ;;
     --validate-run-dir) need "$1" $# "${2:-}"; no_dup "$1" "$validate_run_dir_given"; validate_run_dir_given=true; validate_run_dir="$2"; shift 2 ;;
+    --validate-record) need "$1" $# "${2:-}"; no_dup "$1" "$validate_record_given"; validate_record_given=true; validate_record="$2"; shift 2 ;;
     --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --recovered-text) need "$1" $# "${2:-}"; no_dup "$1" "$recovered_given"; recovered_given=true; recovered_text="$2"; shift 2 ;;
@@ -425,6 +466,54 @@ while (( $# > 0 )); do
   esac
 done
 
+# read_validate_record PATH — the foreground validation record --help gives the
+# grammar of, read into the fields the run directory's --record line fills.
+# The epoch start, the wall time and the verdict are derived here, never read.
+UTC_TIME='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+record_value() { # PATH KEY VALUE PATTERN
+  [[ "$3" =~ $4 ]] || die validate-record-value "path=$1" "field=$2" "value=$3"
+}
+read_validate_record() {
+  local path="$1" line key value seen=" " line_no=0 exit_status="" epochs started ended
+  [[ -f "$path" && -r "$path" ]] || die validate-record-unreadable "path=$path"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_no=$((line_no + 1))
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$line" == *=* && "$seen" != *" $key "* ]] || die validate-record-line "path=$path" "line=$line_no"
+    seen="$seen$key "
+    case "$key" in
+      validate-mode) record_value "$path" "$key" "$value" '^(full|range)$'; validate_mode="$value" ;;
+      head) record_value "$path" "$key" "$value" '^[0-9a-f]{40}$'; run_head="$value" ;;
+      started-at) record_value "$path" "$key" "$value" "$UTC_TIME"; validate_started_at="$value" ;;
+      ended-at) record_value "$path" "$key" "$value" "$UTC_TIME"; validate_ended_at="$value" ;;
+      exit) record_value "$path" "$key" "$value" '^(0|[1-9][0-9]{0,2})$'; exit_status="$value" ;;
+      selection) record_value "$path" "$key" "$value" '^(all|subset|unreported)$'; validate_selection="$value" ;;
+      # The lane grammar is the validation command output contract's.
+      lanes) record_value "$path" "$key" "$value" '^[[:alnum:]_.-]+(,[[:alnum:]_.-]+)*$'; validate_lanes="$value" ;;
+      *) die validate-record-line "path=$path" "line=$line_no" ;;
+    esac
+  done <"$path"
+  for key in validate-mode head started-at ended-at exit selection; do
+    [[ "$seen" == *" $key "* ]] || die validate-record-missing "path=$path" "field=$key"
+  done
+  if [[ "$validate_selection" == unreported ]]; then
+    [[ -z "$validate_lanes" ]] || die validate-record-lanes "path=$path" "selection=$validate_selection"
+  else
+    [[ -n "$validate_lanes" ]] || die validate-record-lanes "path=$path" "selection=$validate_selection"
+  fi
+  # jq reads each time as an epoch second and refuses a month or hour out of range.
+  epochs="$(jq -nr --arg s "$validate_started_at" --arg e "$validate_ended_at" \
+    '"\($s | fromdate) \($e | fromdate)"' 2>/dev/null)" \
+    || die validate-record-value "path=$path" "field=started-at,ended-at" "value=$validate_started_at,$validate_ended_at"
+  read -r started ended <<<"$epochs"
+  (( ended >= started )) \
+    || die validate-record-time "path=$path" "started-at=$validate_started_at" "ended-at=$validate_ended_at"
+  run_start="$started"
+  validate_seconds=$(( ended - started ))
+  if [[ "$exit_status" == 0 ]]; then run_verdict=pass; else run_verdict=FAILING; fi
+}
+
 # --- Validate required fields ---
 [[ -n "$worktree" ]] || die required option=--worktree
 [[ -d "$worktree" ]] || die not-directory "path=$worktree"
@@ -440,8 +529,13 @@ check_id_token --round-id "$round_id"
 [[ -n "$validate" ]] || die required option=--validate
 [[ "$validate" == "pass" || "$validate" == "no-verdict" || "$validate" == FAILING:* ]] \
   || die invalid-validate "value=$validate"
+# One source names the run, so neither can silently win.
+if [[ "$validate_run_dir_given" == "true" && "$validate_record_given" == "true" ]]; then
+  die validate-source-conflict options=--validate-run-dir,--validate-record
+fi
 if [[ "$validate_run_dir_given" == "true" ]]; then
   [[ -n "$validate_run_dir" ]] || die required option=--validate-run-dir
+  run_ref="run-dir=$validate_run_dir"
   if ! run_record="$("$SCRIPT_DIR/dev-validate-run" --record --run-dir "$validate_run_dir" 2>&1)"; then
     IFS= read -r run_cause <<<"$run_record" || true
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
@@ -451,7 +545,6 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   # branch, then class-base=C where the class was read from a round base, then
   # seconds=N started-at=T ended-at=T where the run finished, the bound's end
   # included.
-  run_verdict=""
   read -r -a run_fields <<<"$run_record"
   for field in ${run_fields[@]+"${run_fields[@]}"}; do
     case "$field" in
@@ -468,11 +561,15 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
       ended-at=*) validate_ended_at="${field#*=}" ;;
     esac
   done
-  [[ "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
-    || die validate-disagrees "validate=$validate" "run=$run_verdict"
+elif [[ "$validate_record_given" == "true" ]]; then
+  [[ -n "$validate_record" ]] || die required option=--validate-record
+  run_ref="validate-record=$validate_record"
+  read_validate_record "$validate_record"
 elif [[ "$validate" != FAILING:* ]]; then
-  die required option=--validate-run-dir "validate=$validate"
+  die required options=--validate-run-dir,--validate-record "validate=$validate"
 fi
+[[ -z "$run_ref" || "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
+  || die validate-disagrees "validate=$validate" "run=$run_verdict"
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".
 if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
@@ -527,7 +624,7 @@ fi
 
 # A fix round's run must have started on the round's base, or from it once a
 # rebase left it off the branch, and once the round was delegated.
-if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
+if [[ "$kind" == "fix" && -n "$run_ref" ]]; then
   round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
   round_fields="$(jq -r '[(if (.base_sha? | type) == "string" then .base_sha else "" end),
       (if (.delegated_at? | type) == "number" then .delegated_at | tostring else "" end)] | join(" ")' \
@@ -535,7 +632,7 @@ if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
   read -r round_base round_delegated_at <<<"$round_fields" || true
   [[ "$round_base" =~ ^[0-9a-f]{40}$ && "${round_delegated_at:-}" =~ ^[0-9]+$ ]] \
     || die round-record-unreadable "path=$round_record"
-  [[ -n "$run_head" ]] || die run-headless "run-dir=$validate_run_dir"
+  [[ -n "$run_head" ]] || die run-headless "$run_ref"
   # The head is checked as hex before it reaches git, where a value shaped like
   # an option would be parsed as one.
   ancestry=0
@@ -566,15 +663,15 @@ if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
           fi
         fi
         [[ "$mapped_base" == "$run_head" ]] \
-          || die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base"
+          || die run-off-round "$run_ref" "head=$run_head" "base-sha=$round_base"
       fi
       ;;
-    *) die ancestry-unreadable "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
+    *) die ancestry-unreadable "$run_ref" "head=$run_head" "base-sha=$round_base" ;;
   esac
   [[ "$run_start" =~ ^[0-9]+$ ]] \
     || die run-record-unreadable "path=$validate_run_dir" "cause=start=$run_start"
   (( 10#$run_start >= 10#$round_delegated_at )) \
-    || die run-before-round "run-dir=$validate_run_dir" "start=$run_start" "delegated-at=$round_delegated_at"
+    || die run-before-round "$run_ref" "start=$run_start" "delegated-at=$round_delegated_at"
 fi
 
 if [[ "$kind" == "implement" ]]; then

@@ -496,7 +496,7 @@ rm -f "$BW/tmp/dev-return-issue-776-21-21.json"
 # The suite's one must-fail control: a writer that never binds the run
 # records the implement round's full pass for the fix commit.
 BIND_WRITE="$(mutant_scripts bind-mutant dev-return-write)/dev-return-write" || exit 1
-mutate_file "$BIND_WRITE" 'if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then' 'if false; then'
+mutate_file "$BIND_WRITE" 'if [[ "$kind" == "fix" && -n "$run_ref" ]]; then' 'if false; then'
 WRITE_SHIPPED="$WRITE"
 WRITE="$BIND_WRITE"
 table \
@@ -595,6 +595,115 @@ table "control: chaining rows in the shared owner rejects the one-hop run|--work
 WRITE="$WRITE_SHIPPED"
 rm -f -- "$RESTACK_MAP"
 
+echo "=== a foreground validation record stands in for a run directory ==="
+# A project whose policy forbids dev-validate-run names its own foreground run
+# by a record file. foreground_record NAME [KEY=VALUE | -KEY | +LINE]... writes
+# a passing full record at the implement head, 00:00 to 00:55, of a lint,test
+# subset: KEY=VALUE replaces that key, -KEY drops it and +LINE appends LINE.
+foreground_record() {
+  local file="$TMP_ROOT/records/$1" line arg kept lines=()
+  shift
+  mkdir -p "$TMP_ROOT/records"
+  for line in validate-mode=full "head=$IMPL_HEAD" started-at=2026-01-01T00:00:00Z \
+    ended-at=2026-01-01T00:55:00Z exit=0 selection=subset lanes=lint,test; do
+    kept="$line"
+    for arg in "$@"; do
+      case "$arg" in
+        "-${line%%=*}") kept="" ;;
+        "${line%%=*}="*) kept="$arg" ;;
+      esac
+    done
+    [[ -z "$kept" ]] || lines+=("$kept")
+  done
+  for arg in "$@"; do
+    case "$arg" in +*) lines+=("${arg#+}") ;; esac
+  done
+  printf '%s\n' ${lines[@]+"${lines[@]}"} > "$file"
+  printf '%s\n' "$file"
+}
+utc_at() { jq -nr --argjson t "$1" '$t | todate'; }
+FG_OK="$(foreground_record ok)"
+FG_FAILED="$(foreground_record failed exit=1)"
+FG_UNREPORTED="$(foreground_record unreported selection=unreported -lanes)"
+FG_UNREPORTED_LANES="$(foreground_record unreported-lanes selection=unreported)"
+FG_SUBSET_NOLANES="$(foreground_record subset-nolanes -lanes)"
+FG_BACKWARDS="$(foreground_record backwards ended-at=2025-12-31T23:59:59Z)"
+FG_DUPLICATE="$(foreground_record duplicate "+exit=1")"
+FG_UNKNOWN="$(foreground_record unknown "+verdict=pass")"
+FG_BARE="$(foreground_record bare "+passed")"
+FG_HEAD="$(foreground_record bad-head head=HEAD)"
+FG_MODE="$(foreground_record bad-mode validate-mode=ci)"
+FG_TIME="$(foreground_record bad-time started-at=2026-01-01)"
+FG_HOUR="$(foreground_record bad-hour started-at=2026-01-01T25:00:00Z)"
+FG_EXIT="$(foreground_record bad-exit exit=x)"
+FG_LANES="$(foreground_record bad-lanes lanes=lint,)"
+FG_ARGS="--worktree $WT --kind implement --issue issue-fg --round-id 40-40 --branch b --commit $IMPL_HEAD"
+FG_FAIL="--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c"
+FOREGROUND_ROWS=(
+  "a passing record writes the run's mode, wall time and lanes and round-trips|$FG_ARGS --validate pass --validate-record $FG_OK|rc=0 .validate=pass .validate_mode=full .validate_time.started_at=2026-01-01T00:00:00Z .validate_time.seconds=3300 .validate_selection=subset .validate_lanes=lint,test roundtrip=valid"
+  "an unreported selection writes no lanes|$FG_ARGS --validate pass --validate-record $FG_UNREPORTED|rc=0 .validate_selection=unreported has:validate_lanes=false roundtrip=valid"
+  "a FAILING result beside a failed record|$FG_ARGS --validate FAILING:+scripts/validate --validate-record $FG_FAILED|rc=0 .validate=FAILING:+scripts/validate .validate_mode=full roundtrip=valid"
+  "a pass beside a nonzero exit|$FG_FAIL --validate pass --validate-record $FG_FAILED|rc=2 written=no stderr~dev-return-write:+validate-disagrees+validate=pass+run=FAILING=true"
+  "no-verdict beside a record, which states no timeout|$FG_FAIL --validate no-verdict --validate-note scoped --validate-record $FG_OK|rc=2 written=no stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=pass=true"
+  "a record beside a run directory|$FG_FAIL --validate pass --validate-run-dir $VRUN --validate-record $FG_OK|rc=2 written=no stderr~dev-return-write:+validate-source-conflict+options=--validate-run-dir,--validate-record=true"
+  "a record path that names no file|$FG_FAIL --validate pass --validate-record $TMP_ROOT/records/none|rc=2 written=no stderr~dev-return-write:+validate-record-unreadable+path=$TMP_ROOT/records/none=true"
+  "a key given twice|$FG_FAIL --validate pass --validate-record $FG_DUPLICATE|rc=2 written=no stderr~dev-return-write:+validate-record-line+path=$FG_DUPLICATE+line=8=true"
+  "a key the grammar lacks|$FG_FAIL --validate pass --validate-record $FG_UNKNOWN|rc=2 written=no stderr~dev-return-write:+validate-record-line+path=$FG_UNKNOWN+line=8=true"
+  "a line with no value|$FG_FAIL --validate pass --validate-record $FG_BARE|rc=2 written=no stderr~dev-return-write:+validate-record-line+path=$FG_BARE+line=8=true"
+  "a head that is not 40 hex|$FG_FAIL --validate pass --validate-record $FG_HEAD|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_HEAD+field=head+value=HEAD=true"
+  "a mode no foreground run has|$FG_FAIL --validate pass --validate-record $FG_MODE|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_MODE+field=validate-mode+value=ci=true"
+  "a time with no clock|$FG_FAIL --validate pass --validate-record $FG_TIME|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_TIME+field=started-at+value=2026-01-01=true"
+  "an hour out of range|$FG_FAIL --validate pass --validate-record $FG_HOUR|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_HOUR+field=started-at,ended-at=true"
+  "an exit that is no status|$FG_FAIL --validate pass --validate-record $FG_EXIT|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_EXIT+field=exit+value=x=true"
+  "an empty lane name|$FG_FAIL --validate pass --validate-record $FG_LANES|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_LANES+field=lanes+value=lint,=true"
+  "lanes beside an unreported selection|$FG_FAIL --validate pass --validate-record $FG_UNREPORTED_LANES|rc=2 written=no stderr~dev-return-write:+validate-record-lanes+path=$FG_UNREPORTED_LANES+selection=unreported=true"
+  "a subset with no lanes|$FG_FAIL --validate pass --validate-record $FG_SUBSET_NOLANES|rc=2 written=no stderr~dev-return-write:+validate-record-lanes+path=$FG_SUBSET_NOLANES+selection=subset=true"
+  "a run that ends before it starts|$FG_FAIL --validate pass --validate-record $FG_BACKWARDS|rc=2 written=no stderr~dev-return-write:+validate-record-time+path=$FG_BACKWARDS=true"
+)
+# Each required field, dropped alone, is refused on its own name.
+for field in validate-mode head started-at ended-at exit selection; do
+  dropped="$(foreground_record "no-$field" "-$field")"
+  FOREGROUND_ROWS+=("a record with no $field|$FG_FAIL --validate pass --validate-record $dropped|rc=2 written=no stderr~dev-return-write:+validate-record-missing+path=$dropped+field=$field=true")
+done
+table "${FOREGROUND_ROWS[@]}"
+
+# A fix receipt binds the record's head and start time to its round as it
+# binds a run directory's.
+FG_BOUND="$(foreground_record fix-bound "head=$ROUND_BASE" "started-at=$(utc_at "$ROUND_DELEGATED")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
+FG_EARLY="$(foreground_record fix-early "head=$ROUND_BASE" "started-at=$(utc_at "$(( ROUND_DELEGATED - 1 ))")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
+FG_OFF="$(foreground_record fix-off "head=$IMPL_BASE" "started-at=$(utc_at "$ROUND_DELEGATED")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
+table \
+  "a fix record started at the round base once the round was delegated is accepted|--worktree $BW $BIND_ARGS --validate-record $FG_BOUND|rc=0 .validate_mode=full .validate_time.seconds=60" \
+  "a fix record started before the round was delegated is refused|--worktree $BW $BIND_ARGS --validate-record $FG_EARLY|rc=2 written=no stderr~dev-return-write:+run-before-round+validate-record=$FG_EARLY+start=$(( ROUND_DELEGATED - 1 ))+delegated-at=$ROUND_DELEGATED=true" \
+  "a fix record whose head lacks the round base is refused|--worktree $BW $BIND_ARGS --validate-record $FG_OFF|rc=2 written=no stderr~dev-return-write:+run-off-round+validate-record=$FG_OFF+head=$IMPL_BASE+base-sha=$ROUND_BASE=true"
+rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+WRITE="$BIND_WRITE"
+table "control: without the binding a record from before the round is recorded for the fix|--worktree $BW $BIND_ARGS --validate-record $FG_EARLY|rc=0 .validate_mode=full"
+WRITE="$WRITE_SHIPPED"
+rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+
+# One control per record rule: each mutant disables one, and its row's
+# refusal turns into a written receipt. In OLD and NEW, \| is a literal bar.
+FOREGROUND_CONTROLS=(
+  "required fields|for key in validate-mode head started-at ended-at exit selection; do|for key in; do|$FG_ARGS --validate pass --validate-record $TMP_ROOT/records/no-head|rc=0 written=yes"
+  "verdict from the exit status|if [[ \"\$exit_status\" == 0 ]]; then run_verdict=pass; else run_verdict=FAILING; fi|run_verdict=pass|$FG_ARGS --validate pass --validate-record $FG_FAILED|rc=0 written=yes"
+  "one source|if [[ \"\$validate_run_dir_given\" == \"true\" && \"\$validate_record_given\" == \"true\" ]]; then|if false; then|$FG_ARGS --validate pass --validate-run-dir $VRUN --validate-record $FG_OK|rc=0 written=yes"
+  "key given once|[[ \"\$line\" == *=* && \"\$seen\" != *\" \$key \"* ]]|[[ \"\$line\" == *=* ]]|$FG_ARGS --validate FAILING:+x --validate-record $FG_DUPLICATE|rc=0 written=yes"
+  "known keys|*) die validate-record-line \"path=\$path\" \"line=\$line_no\" ;;|*) ;;|$FG_ARGS --validate pass --validate-record $FG_UNKNOWN|rc=0 written=yes"
+  "value grammar|[[ \"\$3\" =~ \$4 ]] \|\| die validate-record-value|true \|\| die validate-record-value|$FG_ARGS --validate pass --validate-record $FG_HEAD|rc=0 written=yes"
+  "lanes pairing|if [[ \"\$validate_selection\" == unreported ]]; then|if false; then|$FG_ARGS --validate pass --validate-record $FG_UNREPORTED_LANES|rc=0 written=yes"
+  "time order|(( ended >= started ))|true|$FG_ARGS --validate pass --validate-record $FG_BACKWARDS|rc=0 written=yes"
+)
+for control in "${FOREGROUND_CONTROLS[@]}"; do
+  IFS='|' read -r name old new args expect <<<"${control//\\|/$'\x1f'}"
+  old="${old//$'\x1f'/|}"; new="${new//$'\x1f'/|}"
+  CONTROL_WRITE="$(mutant_scripts "record-${name// /-}-mutant" dev-return-write)/dev-return-write" || exit 1
+  mutate_file "$CONTROL_WRITE" "$old" "$new"
+  WRITE="$CONTROL_WRITE"
+  table "control: without the $name rule the row's refusal becomes a receipt|$args|$expect"
+  WRITE="$WRITE_SHIPPED"
+done
+
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # Every value-taking flag refuses a missing value and an option token in its
 # place (an argc-only check would record `--no-summary` as the deliverable);
@@ -605,7 +714,7 @@ echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # stderr clause is what proves the row's own guard fired.
 table \
   "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-kind+value=review=true" \
-  "a pass with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--validate-run-dir+validate=pass=true" \
+  "a pass with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+options=--validate-run-dir,--validate-record+validate=pass=true" \
   "a run directory whose mode is outside the three|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_BAD|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$VRUN_BAD+cause=dev-validate-run:+record-unreadable+path=$VRUN_BAD/start+validate-mode=class=true" \
   "a run directory with no start record|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $TMP_ROOT/validate-run-empty|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$TMP_ROOT/validate-run-empty+cause=dev-validate-run:+no-run+path=$TMP_ROOT/validate-run-empty/start=true" \
   "a pass naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=FAILING=true" \
@@ -613,7 +722,7 @@ table \
   "no-verdict naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=FAILING=true" \
   "no-verdict naming a run that passed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=pass=true" \
   "no-verdict with no note naming the scoped suites|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_CUT|rc=2 stderr~dev-return-write:+required+option=--validate-note+validate=no-verdict=true" \
-  "no-verdict with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict|rc=2 stderr~dev-return-write:+required+option=--validate-run-dir+validate=no-verdict=true" \
+  "no-verdict with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict|rc=2 stderr~dev-return-write:+required+options=--validate-run-dir,--validate-record+validate=no-verdict=true" \
   "a pass naming a run with no verdict yet|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_UNFINISHED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=unfinished=true" \
   "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+required+option=--round-id=true" \
   "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+required+option=--issue=true" \
