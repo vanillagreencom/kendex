@@ -100,8 +100,10 @@
 # job_unit_read RECORD loads a record into JOB_UNIT_RUNNER, JOB_UNIT_NAME and
 # JOB_UNIT_LINE, which launch also sets, job_unit_slice CGROUP_FILE prints
 # the user-manager slice launch names for the unit, and job_unit_cgroup_cap
-# CGROUP_DIR FILE prints the cap launch copies from that cgroup file. A
-# failure leaves its KEY in
+# CGROUP_DIR FILE prints the cap launch copies from that cgroup file, and
+# job_unit_pid_is PID ARGV_GLOB judges whether PID still runs that argv: 0 it
+# does, 1 it has exited or runs another argv, 2 its argv could not be read
+# while it still runs. A failure leaves its KEY in
 # JOB_UNIT_ERROR_KEY and its fields in JOB_UNIT_ERROR.
 
 # The seconds between SIGTERM and SIGKILL, both for what a unit still holds
@@ -362,19 +364,33 @@ job_unit_stop() { # UNIT
   job_unit_fail stop-failed "unit=$1.service detail=${out%%$'\n'*}"
 }
 
+# A saved pid names a job only while it still runs the argv the job was
+# started with; a pid the system reused for anything else is not that job.
+# An argv that cannot be read is no answer while the pid still runs, so it is
+# its own status, never a pid found gone.
+job_unit_pid_is() { # PID ARGV_GLOB
+  local args
+  if ! args="$(ps -ww -o args= -p "$1" 2>/dev/null)"; then
+    kill -0 "$1" 2>/dev/null || return 1
+    return 2
+  fi
+  # shellcheck disable=SC2053 # ARGV_GLOB is a pattern by contract
+  [[ "$args" == $2 ]] || return 1
+}
+
 # Each `|| return 1` line below is a rule under which the group is left alone;
 # dev_validate_run.sh holds one planted record and one control per such line.
 job_unit_kill_group() { # PID ARGV_GLOB
-  local pid="$1" glob="$2" args pgid
+  local pid="$1" pgid is=0
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
-  if ! args="$(ps -ww -o args= -p "$pid" 2>/dev/null)" || ! pgid="$(ps -o pgid= -p "$pid" 2>/dev/null)"; then
+  job_unit_pid_is "$pid" "$2" || is=$?
+  [[ "$is" != 1 ]] || return 1
+  if [[ "$is" == 2 ]] || ! pgid="$(ps -o pgid= -p "$pid" 2>/dev/null)"; then
     kill -0 "$pid" 2>/dev/null || return 1
     job_unit_fail kill-group-failed "pid=$pid step=read"
     return
   fi
   [[ "${pgid// /}" == "$pid" ]] || return 1
-  # shellcheck disable=SC2053 # ARGV_GLOB is a pattern by contract
-  [[ "$args" == $glob ]] || return 1
   job_unit_teardown "$pid"
 }
 

@@ -51,7 +51,8 @@
 #       One run at a time per worktree: while a run directory there has no
 #       verdict and its child, the process its pid file names with that run's
 #       --child argv, still runs, a start is refused as run-live, naming that
-#       directory, before anything is recorded. A second battery beside the
+#       directory, before anything is recorded. A pid that still runs but
+#       whose argv cannot be read is refused the same way. A second battery beside the
 #       first shares the host's CPU and fails the slower one on load timeouts
 #       in files the change never touched. Wait for that run with --wait, or
 #       end it with --stop, then start again.
@@ -308,11 +309,13 @@ child_glob() { # RUN_DIR
 }
 
 # The first run directory of the worktree with no verdict whose child still
-# runs, in LIVE_RUN_DIR and LIVE_RUN_PID; both empty where there is none.
+# runs, in LIVE_RUN_DIR and LIVE_RUN_PID; both empty where there is none. A
+# pid that still runs but whose argv cannot be read counts as that child: a
+# start is refused rather than run beside a battery it could not rule out.
 LIVE_RUN_DIR=""
 LIVE_RUN_PID=""
 find_live_run() { # WORKTREE
-  local pid_file dir pid args
+  local pid_file dir pid is
   LIVE_RUN_DIR="" LIVE_RUN_PID=""
   for pid_file in "$1"/tmp/dev-validate-*/pid; do
     [[ -f "$pid_file" ]] || continue
@@ -320,9 +323,9 @@ find_live_run() { # WORKTREE
     [[ ! -s "$dir/exit" ]] || continue
     pid="$(cat "$pid_file" 2>/dev/null || true)"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    args="$(ps -ww -o args= -p "$pid" 2>/dev/null)" || continue
-    # shellcheck disable=SC2053 # child_glob prints a pattern
-    [[ "$args" == $(child_glob "$dir") ]] || continue
+    is=0
+    job_unit_pid_is "$pid" "$(child_glob "$dir")" || is=$?
+    [[ "$is" != 1 ]] || continue
     LIVE_RUN_DIR="$dir" LIVE_RUN_PID="$pid"
     return 0
   done

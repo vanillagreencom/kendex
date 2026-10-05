@@ -50,6 +50,8 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    A record with a `seconds=` field takes [dev-start.md § Store Validation Time](dev-start.md#store-validation-time)'s write, with `[ISSUE_ID]` being `[ISSUE]`, `[DEV_ROUND_ID]` being `restack-` and the run directory's name after `dev-validate-`, `[KIND]` being `restack`, `[VALIDATE_MODE]` the record's `validate-mode` and `[SECONDS]` its `seconds`. `[VALIDATE_LANES]` is the record's `lanes` as a JSON string, or `null` when absent; `[VALIDATE_SELECTION]` is its `selection` as a JSON string. An exit-0 record with no `seconds=` field has no wall time, and records nothing.
 
+   A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
+
    Only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches step 4.
 
 3. Push through the guarded owner:
