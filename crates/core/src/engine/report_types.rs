@@ -571,13 +571,16 @@ pub struct PlanOptions {
     /// add names a set the scope already installs. How far a named item's
     /// exemption reaches is [`Targets::reach`].
     pub update_only: Option<Targets>,
-    /// Keep the record's commit for each source this pass read nothing at
-    /// the source's own revision of, rather than recording what its mirror
-    /// resolves to now. Under a hold naming no package, only a declaration
-    /// the record cannot place reads there, and its source's record moves
-    /// to what it read; every other source keeps the record's account of
-    /// where it sits, unless it is now declared at another repository or
-    /// revision than that account was written for. Only
+    /// Keep the record's commit for each source the plan's own reads did
+    /// not resolve at the source's own revision, rather than recording
+    /// what its mirror resolves to now. Under a hold naming no package,
+    /// only a declaration the record cannot place reads there, and its
+    /// source's record moves to what the plan read; every other source
+    /// keeps the record's account of where it sits, unless it is now
+    /// declared at another repository or revision than that account was
+    /// written for. The Pi settle resolves outside the plan, so a Pi
+    /// package the record cannot place installs and records its own entry
+    /// at the source's tip while its source's entry is kept. Only
     /// [`PlanOptions::locked`] sets this: `verify --at-record` weighs the
     /// record against where each source resolves now, and reads that off
     /// the record this pass would write.
