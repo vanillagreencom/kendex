@@ -7,15 +7,17 @@
 //! for itself, needs the hook's `Not run on <id>: <reason>.` sentence, read
 //! by `hook::stated_reason`, the reader the row takes. A missing or
 //! unterminated sentence fails the rendering naming the hook and harness.
-//! On a harness the hook runs on, an `On <id>:` fallback sentence is
-//! optional, and an unterminated one fails: the row would list the harness
-//! as plainly supported and drop the fallback. A sentence in the wrong form
-//! fails too: `Not run on <id>:` for a harness the hook runs on, `On <id>:`
-//! for one it does not, and either for one that takes it as advisory prose,
-//! where the row reads neither. A hook that reaches a harness where a companion it requires
-//! is withheld fails too: the row would say it runs there, and the engine
-//! installs it nowhere, so its `harnesses:` line must leave that harness
-//! out.
+//! Where core states the reason, the hook's own sentence is optional and
+//! replaces core's, and an unterminated one fails: the row would drop it
+//! and show core's. On a harness the hook runs on, an `On <id>:` fallback
+//! sentence is optional, and an unterminated one fails: the row would list
+//! the harness as plainly supported and drop the fallback. A sentence in
+//! the wrong form fails too: `Not run on <id>:` for a harness the hook runs
+//! on, `On <id>:` for one it does not, and either for one that takes it as
+//! advisory prose, where the row reads neither. A hook that reaches a
+//! harness where a companion it requires is withheld fails too: the row
+//! would say it runs there, and the engine installs it nowhere, so its
+//! `harnesses:` line must leave that harness out.
 //!
 //! Every failure opens with `hooks-readme: <key>=<value>`, English below it.
 //! Regenerate the file with the command in `REGENERATE`.
@@ -104,12 +106,12 @@ fn reason(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
     }
 }
 
-/// The hook's optional `On <id>: <reason>.` fallback sentence ends, or the
+/// The hook's optional `form` sentence naming `harness` ends, or the
 /// finding naming it.
-fn fallback(spec: &HookSpec, harness: HarnessId) -> Result<(), String> {
-    match stated_reason(&spec.description, ToolSentence::On, harness) {
+fn terminated(spec: &HookSpec, form: ToolSentence, harness: HarnessId) -> Result<(), String> {
+    match stated_reason(&spec.description, form, harness) {
         Stated::Reason(_) | Stated::Absent => Ok(()),
-        Stated::Unterminated => Err(unterminated(spec, ToolSentence::On, harness)),
+        Stated::Unterminated => Err(unterminated(spec, form, harness)),
     }
 }
 
@@ -171,8 +173,9 @@ enum Standing {
     /// supported-tools row reads neither sentence, and either is false.
     Advisory,
     /// Not run: `stated` is whether core states the reason itself, as it
-    /// does for the by-name-only refusal and a harness that takes no hooks;
-    /// an `On <id>:` sentence is false.
+    /// does for the by-name-only refusal and a harness that takes no hooks,
+    /// where the hook's own `Not run on <id>:` sentence is optional and
+    /// must end; an `On <id>:` sentence is false.
     NotRun { stated: bool },
 }
 
@@ -199,15 +202,16 @@ fn judged(spec: &HookSpec, withheld: bool, harness: HarnessId) -> Vec<String> {
     let mut checks = match standing {
         Standing::Runs => vec![
             absent(spec, &standing, ToolSentence::NotRun, harness),
-            fallback(spec, harness),
+            terminated(spec, ToolSentence::On, harness),
         ],
         Standing::Advisory => vec![
             absent(spec, &standing, ToolSentence::On, harness),
             absent(spec, &standing, ToolSentence::NotRun, harness),
         ],
-        Standing::NotRun { stated: true } => {
-            vec![absent(spec, &standing, ToolSentence::On, harness)]
-        }
+        Standing::NotRun { stated: true } => vec![
+            absent(spec, &standing, ToolSentence::On, harness),
+            terminated(spec, ToolSentence::NotRun, harness),
+        ],
         Standing::NotRun { stated: false } => vec![
             absent(spec, &standing, ToolSentence::On, harness),
             reason(spec, harness),
@@ -333,7 +337,11 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
 type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
 
 /// Every planted defect, each in one of this catalog's own hooks.
-fn planted_rows() -> [PlantedRow; 9] {
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table: planted defects judged by one render, each row a hook edit of its own"
+)]
+fn planted_rows() -> [PlantedRow; 10] {
     [
         // Codex and Copilot never fire TaskCompleted. The planted Copilot
         // recorder reason leaves the Codex recorder without one, and the
@@ -408,6 +416,17 @@ fn planted_rows() -> [PlantedRow; 9] {
                     .push_str(" On antigravity: a planted fallback.");
             },
             &["hooks-readme: wrong-form=block-bare-cd:antigravity"],
+        ),
+        // The hook's own reason there replaces core's, so it must end, or
+        // the row drops it and shows core's.
+        (
+            "block-bare-cd",
+            |source| {
+                source
+                    .description
+                    .push_str(" Not run on antigravity: an unterminated reason");
+            },
+            &["hooks-readme: unterminated-reason=block-bare-cd:antigravity"],
         ),
         // Codex runs block-bare-cd: a fallback there must end, or the row
         // drops it.
