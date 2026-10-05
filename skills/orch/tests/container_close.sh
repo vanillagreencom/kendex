@@ -247,15 +247,19 @@ printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"compl
 assert_eq "$(run_close 2>/dev/null)" "closed PARENT-1" "a changed child set resumes the close"
 assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #102" "a changed child set rebuilds the kept summary"
 
-# Rate-limited after the summary posted: the hold keeps no summary, and the
-# resume sets Done without posting a second one.
+# Rate-limited after the summary posted: the hold still keeps the summary it
+# built, and the resume's validation finds the posted one, so it sets Done
+# without posting the kept copy and releases it.
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 printf 'update\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
-assert_eq "$(run_close 2>/dev/null)" "held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited state transition holds"
+assert_eq "$(run_close 2>"$TMP_ROOT/held-update.err")" "held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited state transition holds"
+assert_file_contains "$TMP_ROOT/held-update.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held state transition names the summary it kept"
+assert_eq "$(cd "$HELD_DIR" && ls -A)" $'children.tsv\nsummary.md' "a held state transition keeps the summary and its child rows"
 assert_eq "$(run_close 2>/dev/null)" "closed PARENT-1" "a held state transition resumes"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" $'summary\nstate-only' "a held state transition resumes without the summary"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/summary.calls" | tr -d ' ')" "1" "a held state transition posts one summary"
+[[ ! -e "$HELD_DIR" ]] && pass "a resumed state transition releases its held inputs" || fail "a resumed state transition releases its held inputs"
 
 for validation_mode in exit false string_all_ok missing_parent duplicate_parent empty_state wrong_state_type wrong_summary_type; do
   reset_state

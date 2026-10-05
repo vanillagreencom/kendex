@@ -166,9 +166,11 @@ must wait. A bare `deferred` means the 120-second lock wait expired. Prints
 REQUESTS_RESET being the UTC time its quota refills or `unavailable`: the parent
 stays open, and the caller holds this command under the linear skill's
 patterns/workflow-actions.md Quota Holds. The bundle summary that run built is
-kept under tmp/container-close-held/<PARENT_ID>/ in the shared repository, and
-the next run posts it unchanged while the children it was built from are
-unchanged, so the resumed completion needs no second PR lookup. Operational
+kept under tmp/container-close-held/<PARENT_ID>/ in the shared repository,
+whether or not the limited completion had posted it. The next run posts it
+only when completion validation finds no bundle summary on the parent, and
+then unchanged while the children it was built from are unchanged, so the
+resumed completion needs no second PR lookup. Operational
 and validation failures exit 1, naming the cause on stderr; the parent is left
 open and the run is safe to repeat once the cause is gone -- including a `gh pr
 list` that failed or would not parse, whether the reason was a rate limit or an
@@ -348,6 +350,9 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
     < "$COMPLETE_ERR")" || { container_close_message completion-diagnostics "$@" >&2; exit 1; }
   if [[ -n "$REQUESTS_RESET" ]]; then
     # A run without a summary has nothing to keep: its summary is posted.
+    # A built summary is kept even where the limit hit the Done update after
+    # the comment posted: only prose tells the two apart, and the next run's
+    # validation, which owns whether the parent has a summary, skips it there.
     # The old summary goes first, so a move that fails part way leaves no
     # summary beside rows it was not built from.
     if [[ -f "$SUMMARY" ]]; then
