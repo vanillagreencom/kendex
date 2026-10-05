@@ -2004,11 +2004,11 @@ session_guard_owner() {
 }
 
 # Owner identity carried by an issue-addressed command (`remove <ID>`,
-# `create <ID> --reuse`). The documented claim the orchestrating workflow makes
-# is `claim [WORKTREE_PATH] --owner [ISSUE_ID]`, so on a default install — where no
-# session-owner env var is set — the issue ID IS the identity the lease
-# carries, and deriving it from the command's own argument is what makes claim
-# and release agree without any session env plumbing. Prints nothing
+# `create <ID> --reuse`). The orchestrating workflow claims under the issue
+# ID, so on a default install — where no session-owner env var is set — the
+# issue ID IS the identity the lease carries, and deriving it from the
+# command's own argument is what makes claim and release agree without any
+# session env plumbing. Prints nothing
 # when the ID cannot be a lease owner: the guard caps owners at 64 characters
 # (the issue-ID charset is already a subset of the owner charset), and an
 # unusable owner would turn every probe into a usage failure.

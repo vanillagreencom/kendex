@@ -47,9 +47,10 @@ Options (a flag a command does not take is a usage failure):
   --owner NAME       claim, refresh, release, status. Lease owner; defaults to
                      KENDEX_SESSION_OWNER, HT_SESSION_OWNER, then USER for
                      mutating owner commands.
-  --adopt            claim, with --owner. Take over a lease held under the
-                     environment owner above, as a session-start claim
-                     leaves it; without it that lease refuses --owner.
+  --adopt            claim. Has effect only with --owner: take over a lease
+                     held under the environment owner above, as a
+                     session-start claim leaves it; without it that lease
+                     refuses --owner.
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
   --stale            release. Release a lease only when it is past the TTL.
   --force            release. Release a foreign lease regardless of age.
