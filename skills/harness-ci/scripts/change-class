@@ -22,30 +22,45 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. Every verdict also prints
-# one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
-# line on stderr, ahead of the `class:` line: true where a changed path
-# matches a `queue` line of orch's narrow-change.conf, which is the list of
-# paths a change must run in a merge group for, or a glob of the repository's
-# own HARNESS_CI_QUEUE_PATHS (cause=repository-queue-path), or a glob of a
-# lane the base commit's .github/ci-lanes.conf marks `:queue`, which the
-# change-class action defers off a pull request to the merge group
-# (cause=queue-lane lane=<n> path=<p> glob=<g>); where that declaration
-# could not be read (cause=lane-declaration-unreadable); where that setting
-# is unset (cause=queue-list-undeclared) or the settings holding it could not
-# be read (cause=queue-settings-unreadable); where a changed path is one
-# git quoted (cause=path-quoted), where the diff is empty
-# (cause=no-changed-paths), and where the paths were not read
-# (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
-# cause=queue-list-missing). It is judged on every changed path harness-only
-# read, before any refusal or rule below, and no class changes it. A wiring
-# error prints no such line, and a reader takes its absence as
-# queue_only=true. An absent or malformed declaration marks no lane, as the
-# action then defers none. The unset setting also prints one
-# `setting-unset: setting=HARNESS_CI_QUEUE_PATHS` warning per run, save
-# where a queue lane answered first. The --output FILE carries the same
-# value as `queue_only=true|false` beside `change_class=`. This
-# paragraph is the one statement of when the line reads true; other docs
-# point here.
+# one `queue-only: queue_only=true|false cause=<name> [lane=<n>] [path=<p>
+# glob=<g>]` line on stderr, ahead of the `class:` line. It reads false only
+# with cause=no-queue-path. The causes are read in this order, first match
+# winning, and every one but no-queue-path reads true:
+#
+#   no-changed-paths      the diff is empty
+#   paths-unread          the changed paths were not read
+#   path-quoted path=<p>  git quoted a changed path, which no glob matches
+#   queue-list-unreadable orch's narrow-change.conf could not be read
+#   queue-list-missing    that list holds no `queue` line
+#   queue-path path=<p> glob=<g>
+#                         a changed path matches a `queue` line of that
+#                         list, the paths a change must run in a merge
+#                         group for
+#   queue-settings-unreadable
+#                         the base commit's settings could not be read
+#   lane-declaration-unreadable
+#                         the base commit's .github/ci-lanes.conf could not
+#                         be read
+#   queue-lane lane=<n> path=<p> glob=<g>
+#                         a changed path matches a glob of a lane that
+#                         declaration marks `:queue`, which the
+#                         change-class action defers off a pull request to
+#                         the merge group
+#   queue-list-undeclared the base's HARNESS_CI_QUEUE_PATHS is unset
+#   no-queue-path         no changed path matches a glob of that setting
+#   repository-queue-path path=<p> glob=<g>
+#                         a changed path matches one
+#
+# The first two answer where no changed path reaches the judgement; the rest
+# are judged on every changed path harness-only read, before any refusal or
+# rule below, and no class changes the answer. A wiring error prints no such
+# line, and a reader takes its absence as queue_only=true. An absent or
+# malformed lane declaration marks no lane, as the action then defers none.
+# cause=queue-list-undeclared also prints one
+# `setting-unset: setting=HARNESS_CI_QUEUE_PATHS` warning per run. The
+# --output FILE carries the same value as `queue_only=true|false` beside
+# `change_class=`. This paragraph is the one statement of when the line reads
+# true; other docs point here.
 # The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
