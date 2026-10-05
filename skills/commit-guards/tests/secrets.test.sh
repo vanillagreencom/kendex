@@ -4,9 +4,10 @@
 # reaches the output; under a diff scope only a finding on an added line
 # counts, and a range judges each commit it holds against that commit's
 # parents; the repository cannot switch a finding off through gitleaks' own
-# allowlists; a missing or too-old gitleaks is a gap notice that passes,
-# except under CI on a range or --all scan; a gitleaks run that fails, or a
-# report the lane cannot read, is exit 2. Each row builds a fresh repository
+# allowlists, nor through its own exclusion list under --policy-root; a
+# missing or too-old gitleaks is a gap notice that passes, except under CI on
+# a range or --all scan; a gitleaks run that fails, or a report the lane
+# cannot read, is exit 2. Each row builds a fresh repository
 # and pins the exit status with the first stable line.
 #
 # The credentials are assembled at run time, so this file holds none a scan
@@ -262,6 +263,33 @@ put fixtures/cred.txt "aws = $CRED\n"
 row "a reasoned row in the excludes list passes the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$R"
 
+echo "=== --policy-root reads the exclusion policy from that repository, never the judged one ==="
+# CI passes the default branch's checkout, so a pull request that adds a
+# match-everything row, to the default list or to a list its own setting
+# names, is still judged by the default branch's rows.
+repo trusted-policy
+put tools/secrets-excludes "fixtures/*\tfake credentials the suite asserts against\n"
+POLICY="$R"
+while IFS='|' read -r name setting file; do
+  repo "$name"
+  [ -z "$setting" ] || put .kendex/settings.toml "[env]\nCOMMIT_GUARDS_SECRETS_EXCLUDES = \"$file\"\n"
+  put "$file" "*\tthe pull request excludes every path\n"
+  put fixtures/cred.txt "aws = $CRED\n"
+  put cred.txt "aws = $CRED\n"
+  row "$name: under --policy-root the judged repository's row is not read" \
+    "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --policy-root "$POLICY"
+  carries fixtures/cred.txt
+  assert_eq "$name: the policy root's own row still excludes its path" "absent" "$HAS"
+  row "$name: without it the repository's own row governs, as at commit time" \
+    "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$R"
+done <<'ROWS'
+own-list||tools/secrets-excludes
+own-setting|yes|tools/pr-excludes
+ROWS
+POLICY_SUBJECT="$R"
+row "a policy root that cannot be entered refuses" \
+  "rc=2 secrets: policy-root=$TMP/no-checkout" "$R" --policy-root "$TMP/no-checkout"
+
 echo "=== the tool: missing or too old is a gap outside CI and on --staged, a refusal on a CI range or --all ==="
 NO_TOOL_PATH="$TMP/no-tool-bin"
 mkdir -p "$NO_TOOL_PATH"
@@ -397,6 +425,9 @@ git -C "$MERGE" checkout -q evil
 gg_mutant LANE secrets 'grep -Fxq -- "$COMMIT" "$shallow"' 'grep -Fxq -- "$COMMIT" /dev/null'
 row "control: a shallow boundary read as a root commit judges every line it holds" \
   "rc=1 secrets: secret=key.pem:1:private-key" "$SHALLOW" --against HEAD^1
+gg_mutant LANE secrets 'cd -- "$POLICY_ROOT" 2>/dev/null' 'true'
+row "control: a lane that stays in the judged repository reads its own row" \
+  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$POLICY"
 gg_mutant LANE secrets '--config "$GG_TMP/gitleaks.toml"' '--log-level warn'
 row "control: without the config flag the environment's configuration allowlists the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$ENV_TOML" "$ENV_CONFIG"

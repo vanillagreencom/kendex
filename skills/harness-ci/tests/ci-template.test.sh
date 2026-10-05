@@ -31,7 +31,9 @@
 #      not, so a repository whose default branch does not yet carry this
 #      package still classifies, with the `render` class out of reach.
 #   6. the credential scan: default-branch scripts scan the PR merge ref
-#      and execute no script from it, even when both subject scripts exit 0.
+#      and execute no script from it, even when both subject scripts exit 0,
+#      and read the exclusion list from the default branch, even when the
+#      PR adds a row excluding every path.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
@@ -39,7 +41,8 @@
 # declaration read from the judged checkout, CI without always(), a
 # template without merge_group, a render-reach step that fails the job, and
 # an evaluator that refuses every expression, a credential scanner or
-# installer read from the PR, and guards checked out at its merge ref.
+# installer read from the PR, guards checked out at its merge ref, and an
+# exclusion list read from the PR.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -366,8 +369,9 @@ credential_step() { # TEMPLATE KEY
   ' "$1"
 }
 
-# Both the installer and scanner in the PR are no-ops. The credential is
-# assembled at runtime, so the suite itself contains no credential.
+# Both the installer and scanner in the PR are no-ops, and its exclusion
+# list excludes every path. The credential is assembled at runtime, so the
+# suite itself contains no credential.
 CREDENTIAL_REPO="$(new_repo credential-source)" || exit 1
 git -C "$CREDENTIAL_REPO" config gc.auto 0
 git -C "$CREDENTIAL_REPO" config maintenance.auto false
@@ -380,8 +384,10 @@ for script in install-gitleaks secrets; do
   printf '#!/usr/bin/env bash\nprintf ran >"$RUNNER_TEMP/subject-code-ran"\nexit 0\n' >"$CREDENTIAL_REPO/.agents/skills/commit-guards/scripts/$script"
 done
 printf '%s\n' "AKIA""Z7Q3R5T2V4X6Y7W2" >"$CREDENTIAL_REPO/cred.txt"
+mkdir -p "$CREDENTIAL_REPO/tools"
+printf '*\tthe pull request excludes every path\n' >"$CREDENTIAL_REPO/tools/secrets-excludes"
 git -C "$CREDENTIAL_REPO" add -A
-git -C "$CREDENTIAL_REPO" commit -qm 'disable scanner and add credential'
+git -C "$CREDENTIAL_REPO" commit -qm 'disable scanner and exclusions and add credential'
 git -C "$CREDENTIAL_REPO" checkout -qb pr-merge main
 git -C "$CREDENTIAL_REPO" merge -q --no-ff evil -m merge
 if ! GITLEAKS_BIN="$(command -v gitleaks)"; then
@@ -422,7 +428,7 @@ credential_scan() { # TEMPLATE NAME -> exit and credential finding, never its va
     printf 'subject-code=absent\n'
   fi
 }
-assert_eq "CI refuses a credential when the PR replaces its scanner and installer with exit 0" \
+assert_eq "CI refuses a credential when the PR replaces its scanner, installer and exclusions" \
   "exit=1
 secrets: secret=cred.txt:1:aws-access-token
 subject-code=absent" "$(credential_scan "$TEMPLATE" trusted-scan)"
@@ -439,6 +445,9 @@ plant "$TEMPLATE" '/guards/.agents/skills/commit-guards/scripts/install-gitleaks
 assert_eq "must-fail: the installer runs from the PR" "exit=1
 secrets: secret=cred.txt:1:aws-access-token
 subject-code=ran" "$(credential_scan "$SANDBOX/pr-installer.yml" pr-installer)"
+plant "$TEMPLATE" ' --policy-root "$GITHUB_WORKSPACE/guards"' '' "$SANDBOX/pr-policy.yml" ci
+assert_eq "must-fail: the PR's exclusion list passes the planted credential" "exit=0
+subject-code=absent" "$(credential_scan "$SANDBOX/pr-policy.yml" pr-policy)"
 plant "$TEMPLATE" 'ref: ${{ github.event.repository.default_branch }}' \
   'ref: ' "$SANDBOX/pr-guards.yml" ci
 assert_eq "must-fail: guards from the merge ref pass the planted credential" "exit=0

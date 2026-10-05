@@ -198,7 +198,7 @@ jobs:
         working-directory: subject
         run: |
           "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"
-          PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/secrets" --against HEAD^1
+          PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/secrets" --against HEAD^1 --policy-root "$GITHUB_WORKSPACE/guards"
       - name: the classifier ran and every lane that skipped was told to
         working-directory: subject
         env:
