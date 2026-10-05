@@ -17,19 +17,19 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # The check reads the issue through the Linear CLI beside its own skill, and
 # that CLI refuses Bash 3.2, which the macOS suite leg runs. A stand-in at the
-# sibling path answers `cache issues get ID --format=raw` from the fixture's
-# cache the way the CLI does: {"issue": row} on stdout, or a stderr line and
-# exit 1 when the cache holds no such issue. The check under test runs from
+# sibling path answers `issues get ID --format=raw` from the fixture's issue
+# rows the way the CLI does: {"issue": row} on stdout, or a stderr line and
+# exit 1 when Linear has no such issue. The check under test runs from
 # a directory of links to the shipped scripts beside it, the shape the
 # control's one mutated copy takes.
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-[[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
+[[ "${1:-}" == issues && "${2:-}" == get && "${4:-}" == --format=raw ]] \
   || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
-row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
-[[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
+row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/tracker-fixture/issues.json)"
+[[ -n "$row" ]] || { echo '{"error":"Issue not found: '"$3"'"}' >&2; exit 1; }
 jq -n --argjson issue "$row" '{issue: $issue}'
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
@@ -61,11 +61,11 @@ git -C "$WT" add -A
 git -C "$WT" commit -q -m base
 git -C "$WT" switch -q -c size
 
-# The Linear cache the stand-in answers from.
+# The issue rows the stand-in answers from.
 write_issue() {
-  mkdir -p "$WT/.cache/linear"
+  mkdir -p "$WT/.cache/tracker-fixture"
   jq -n --arg body "$1" '[{identifier: "KEN-SIZE", description: $body}]' \
-    > "$WT/.cache/linear/issues.json"
+    > "$WT/.cache/tracker-fixture/issues.json"
 }
 
 mk() { mkdir -p "$(dirname "$WT/$2")"; seq 1 "$1" > "$WT/$2"; }
@@ -235,12 +235,12 @@ assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$gh_js
   "50,60,pass" "a GitHub issue body supplies the same allowance"
 
 # --- An issue the tracker cannot give is an environment failure -------------
-jq -n '[{identifier: "KEN-OTHER", description: "another issue"}]' > "$WT/.cache/linear/issues.json"
+jq -n '[{identifier: "KEN-OTHER", description: "another issue"}]' > "$WT/.cache/tracker-fixture/issues.json"
 rc_of unread_rc run_check "$CHECK_BIN"
-assert_eq "$unread_rc" "2" "an issue absent from the cache exits 2 rather than judging by nothing"
+assert_eq "$unread_rc" "2" "an issue Linear does not return exits 2 rather than judging by nothing"
 
 # --- A pr-N key names no issue: measured, not refused ------------------------
-# The repository-local fallback for a branch carrying no issue id. The cache
+# The repository-local fallback for a branch carrying no issue id. The fixture
 # here holds no such row, so a key that reached the tracker would exit 2.
 "$STATE" --state-dir "$WT/tmp" init pr-51 --worktree "$WT" --branch size >/dev/null
 run_pr_check() {
@@ -281,7 +281,19 @@ for near_miss_key in local-1-2 local-x local-1-2-3x; do
   set -e
   assert_eq "$near_miss_rc,${near_miss_error%%$'\n'*}" "2,branch-size-check: linear-read issue=$near_miss_key" \
     "$near_miss_key, outside the local- shape, still reaches the tracker"
+  assert_eq "$(sed -n 2p <<<"$near_miss_error")" \
+    "issue '$near_miss_key' could not be read from Linear: {\"error\":\"Issue not found: $near_miss_key\"}" \
+    "$near_miss_key: the refusal carries the CLI's cause"
 done
+# Control: the cause dropped in a private copy fails the cause row.
+CAUSE_MUTANT="$(mutant_scripts cause-mutant branch-size-check)/branch-size-check" || exit 1
+mutate_file "$CAUSE_MUTANT" '    linear_cause="$(tail -n 1 -- "$linear_err")" || linear_cause=""' '    linear_cause=""'
+set +e
+cause_error="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+  "$CAUSE_MUTANT" --worktree "$WT" --issue local-x 2>&1 >/dev/null)"
+set -e
+assert_eq "$(sed -n 2p <<<"$cause_error")" "issue 'local-x' could not be read from Linear" \
+  "control: a refusal without the CLI's cause fails the cause row"
 
 # --- A cut retry on a pr-N key is judged against its recorded comparison -----
 # review-pr-comments keys a branch with no issue id pr-N, and a cut chosen

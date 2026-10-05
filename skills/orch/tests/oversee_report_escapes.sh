@@ -2,7 +2,7 @@
 # lib/escapes.sh: the escape count behind oversee-report's Escapes line.
 #
 # Each case builds a checkout whose origin holds merges and reverts at chosen
-# times, stubs the Linear CLI's sync, label list and issue list, and calls
+# times, stubs the Linear CLI's label list and issue list, and calls
 # escapes_read at a fixed NOW. It asserts the per-week lines the renderer
 # reads, or the return status and the cause an unread count names.
 set -euo pipefail
@@ -33,30 +33,47 @@ NOW="$(at 2026-09-30T12:00:00Z)"
 # this repository's pull request.
 REPO=owner/repo
 
-# The Linear CLI: `sync` copies $ESCAPES_UPSTREAM, where set, over the cache
-# $ESCAPES_ISSUES, or fails under $ESCAPES_SYNC_FAIL; the label list answers
-# $ESCAPES_LABELS; the issue list answers the cache, each issue's `team`
-# standing for the team.name the real cache filters --team on and the safe
-# shape drops; an issue list that is no array passes through whole. Any other
-# call fails, an empty --team among them.
+# The Linear CLI, read live: the label list answers $ESCAPES_LABELS, or fails
+# under $ESCAPES_LINEAR_FAIL; the issue list answers the issues of
+# $ESCAPES_ISSUES created within --created-since days of $NOW, carrying the
+# --label it names (every issue where it names none), in the team --team
+# names, and archived only under --include-archived. Each issue's `team` and
+# `archived` stand for what the filters read and the safe shape drops. An
+# issue list that is no array passes through whole. Each issue read's
+# arguments are kept in $ESCAPES_CALLS. Any other call fails, an empty --team
+# among them.
 LINEAR="$TMP_ROOT/linear"
 cat > "$LINEAR" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${ESCAPES_LINEAR_FAIL:-}" ]] || { echo "linear stub: read failed" >&2; exit 1; }
+unexpected() { echo "linear stub: unexpected call: $*" >&2; exit 1; }
 case "$*" in
-  "sync --if-stale 15")
-    [[ -z "${ESCAPES_SYNC_FAIL:-}" ]] || { echo "linear stub: sync failed" >&2; exit 1; }
-    [[ -z "${ESCAPES_UPSTREAM:-}" ]] || cp -- "$ESCAPES_UPSTREAM" "$ESCAPES_ISSUES" ;;
-  "cache labels list --format=safe") cat -- "$ESCAPES_LABELS" ;;
-  "cache issues list --all-projects --max --include-archived --format=safe")
-    jq 'if type == "array" then map(del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
-  "cache issues list --all-projects --max --include-archived --team "?*" --format=safe")
-    jq --arg team "$8" 'if type == "array" then map(select(.team == $team) | del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
-  *) echo "linear stub: unexpected call: $*" >&2; exit 1 ;;
+  "labels list --max --format=safe") exec cat -- "$ESCAPES_LABELS" ;;
+  "issues list "*) printf '%s\n' "$*" >>"${ESCAPES_CALLS:-/dev/null}" ;;
+  *) unexpected "$@" ;;
 esac
+args="$*" label="" days="" team="" archived=false
+shift 2
+while (($#)); do
+  case "$1" in
+    --label) label="$2"; shift 2 ;;
+    --created-since) days="${2%d}"; shift 2 ;;
+    --team) [[ -n "$2" ]] || exit 1; team="$2"; shift 2 ;;
+    --include-archived) archived=true; shift ;;
+    --max | --format=safe) shift ;;
+    *) unexpected "$args" ;;
+  esac
+done
+[[ "$days" =~ ^[0-9]+$ ]] || unexpected "$args"
+jq --arg label "$label" --arg team "$team" --argjson archived "$archived" --argjson cut "$((NOW - days * 86400))" '
+  if type == "array" then map(select(($label == "" or any(.labels[]; . == $label))
+    and ($team == "" or .team == $team) and ($archived or (.archived | not))
+    and (.created_at | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601) >= $cut) | del(.team, .archived)) else . end' \
+  -- "$ESCAPES_ISSUES"
 EOF
 chmod +x "$LINEAR"
 export ESCAPES_LABELS="$TMP_ROOT/labels.json"
-echo '[{"name": "Feature"}, {"name": "Bug"}]' > "$ESCAPES_LABELS"
+echo '[{"name": "Feature"}, {"name": "Bug"}, {"name": "bug"}, {"name": "feature"}]' > "$ESCAPES_LABELS"
 
 # count LIB ROOT [TRACKER] [NAME=VALUE ...] — escapes_read from LIB against
 # ROOT at NOW, with LINEAR_TEAM the project's team, kendex, each NAME=VALUE set
@@ -73,6 +90,8 @@ count() {
     source "$1"
     local assignment
     for assignment in "${@:4}"; do export "${assignment?}"; done
+    # The stub's clock, as the CLI's is the report's.
+    export NOW
     rc=0
     escapes_read "$2" "${3:-$LINEAR}" "$NOW" "$scratch" || rc=$?
     printf 'rc=%s%s\n%s' "$rc" "${ESCAPE_UNREAD:+ unread=$ESCAPE_UNREAD}" "$ESCAPE_WEEKS"
@@ -89,11 +108,16 @@ COMMITS=(
   # #9's first finding, this revert, falls before the window, so its later
   # bug issue does not count it inside the window.
   "2026-08-11T10:00:00Z|feat: merged before the window (#9)"
+  # #10's first finding is a bug filed the next day, before the window, so
+  # its revert in the week of 08-24 does not count either: the bug read
+  # reaches back past the window to find it.
   "2026-08-12T10:00:00Z|feat: reverted 13 days later (#10)"
   "2026-08-15T10:00:00Z|Revert \"feat: merged before the window (#9)\" (#21)"
   # #12's revert comes 19 days after its merge: past the 14-day reach.
   "2026-08-20T10:00:00Z|feat: reverted too late (#12)"
-  # Week of 08-24: the revert names #10 thirteen days after its merge.
+  # Week of 08-24: the revert names #10 thirteen days after its merge, and a
+  # bug names #23.
+  "2026-08-24T08:00:00Z|feat: a bug names it the next day (#23)"
   "2026-08-25T10:00:00Z|Revert \"feat: reverted 13 days later (#10)\" (#20)"
   # Week of 08-31: an issue labelled Bug names #11 and #48 on one
   # Regressed-by line.
@@ -117,6 +141,7 @@ COMMITS=(
   "2026-09-16T10:00:00Z|Merge pull request #43 from owner/ken-43|Revert \"feat: named before its merge (#13)\" (#44)"
   # Week of 09-21: a bug issue and a revert both name #15; one escape, in the
   # week of the earlier. #45's revert comes exactly 14 days after its merge.
+  # An archived bug names #16, the revert's own merge: it does not count.
   "2026-09-21T10:00:00Z|feat: found twice (#15)"
   "2026-09-23T10:00:00Z|revert: back out #15 (#16)"
   "2026-09-24T10:00:00Z|Revert \"feat: reverted exactly 14 days later (#45)\" (#46)"
@@ -127,11 +152,14 @@ COMMITS=(
   "2026-09-28T09:00:00Z|feat: a number inside a longer one (#17)"
   "2026-09-28T10:00:00Z|Merge pull request #18 from owner/ken-18"
 )
-# id|created|title|description|label|team; an empty description or label is
-# the fixture's default, an empty team is kendex, and `\n` in a description is
-# a newline.
+# id|created|title|description|label|team|archived; an empty description or
+# label is the fixture's default, an empty team is kendex, and `\n` in a
+# description is a newline.
 BUGS=(
   "KEN-B9|2026-08-24T09:00:00Z|after its revert, #9 breaks again|Regressed-by: #9|"
+  "KEN-B10|2026-08-13T10:00:00Z|the day after it merges|Regressed-by: #10|"
+  "KEN-B23|2026-08-25T09:00:00Z|the day after it merges|Regressed-by: #23|"
+  "KEN-A16|2026-09-24T12:00:00Z|archived since|Regressed-by: #16|||archived"
   "KEN-B11|2026-09-02T10:00:00Z|the report breaks|Regressed-by: #11, #48|Bug"
   "KEN-B13|2026-09-10T10:00:00Z|wrong before it merges|Regressed-by: #13|"
   "KEN-F13|2026-09-15T11:00:00Z|follow up|Regressed-by: #13|feature"
@@ -165,16 +193,16 @@ done
 escapes_publish "$WORLD"
 bug_lines=""
 for row in "${BUGS[@]}"; do
-  IFS='|' read -r id when title description label team <<<"$row"
+  IFS='|' read -r id when title description label team archived <<<"$row"
   description="${description//\\n/$'\n'}"
   bug_lines+="$(escapes_bug "$id" "$(at "$when")" "$title" "$description" "$label" \
-    | jq -c --arg team "${team:-kendex}" '. + {team: $team}')"$'\n'
+    | jq -c --arg team "${team:-kendex}" --arg archived "$archived" '. + {team: $team, archived: ($archived == "archived")}')"$'\n'
 done
 export ESCAPES_ISSUES="$TMP_ROOT/issues.json"
 jq -s . <<<"$bug_lines" > "$ESCAPES_ISSUES"
 
 assert_eq "$(count "$LIB" "$WORLD")" "$WANT" \
-  "a revert or a bug's Regressed-by line naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug, foreign, other-team or source-only one does not"
+  "a revert or a bug's Regressed-by line naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug, foreign, other-team, archived or source-only one does not"
 
 # Months after the cap week, the count still reaches back to it.
 LATER="$(at 2027-01-13T12:00:00Z)"
@@ -192,15 +220,16 @@ escapes_commit "$TMP_ROOT/other" "$(at 2026-09-30T06:00:00Z)" "Revert \"feat: a 
 git -C "$TMP_ROOT/other" push -q origin main
 assert_eq "$(count "$LIB" "$TMP_ROOT/stale" | tail -n 1)" "2026-09-28	2" "a revert on origin that this checkout has not fetched is counted"
 
-# The count syncs a stale cache first: a bug filed since the last sync, here
-# KEN-B18, is counted.
-stale_cache() {
-  local cache
-  cache="$(mktemp "$TMP_ROOT/cache.XXXXXX")" || return 1
-  jq '[.[] | select(.id != "KEN-B18")]' "$ESCAPES_ISSUES" > "$cache" || return 1
-  count "$1" "$WORLD" "" ESCAPES_ISSUES="$cache" ESCAPES_UPSTREAM="$ESCAPES_ISSUES" | tail -n 1
-}
-assert_eq "$(stale_cache "$LIB")" "2026-09-28	1" "a bug the cache's last sync missed is counted"
+# The count asks Linear for the bugs alone, once per spelling of the label,
+# created no earlier than the window's reach, in the project's team.
+calls="$TMP_ROOT/escapes-calls"
+: > "$calls"
+count "$LIB" "$WORLD" "" ESCAPES_CALLS="$calls" >/dev/null
+assert_eq "$(awk '{print $4}' "$calls" | sort | paste -sd, -)" "Bug,bug" "each spelling of bug is read, and nothing else"
+assert_eq "$(awk '{print $9}' "$calls" | sort -u)" "kendex" "the bug read names the project's team"
+# NOW is 2026-09-30T12:00Z and the window's reach starts 2026-08-10T00:00Z:
+# 51 whole days back, with a day of margin either side.
+assert_eq "$(awk '{print $6}' "$calls" | sort -u)" "53d" "the bug read reaches back from NOW past the window's reach"
 
 # The base branch is the one origin's HEAD names, here trunk; the world has
 # no main on origin.
@@ -234,11 +263,16 @@ git -C "$HANGS" remote add origin ssh://example.invalid/owner/repo
 git -C "$HANGS" config core.sshCommand "sleep 2; :"
 NOT_EXECUTABLE="$TMP_ROOT/linear-not-executable"
 : > "$NOT_EXECUTABLE"
-SLOW_SYNC="$TMP_ROOT/linear-slow-sync"
-printf '#!/usr/bin/env bash\n[[ "$1" == sync ]] && sleep 2\nexit 1\n' > "$SLOW_SYNC"
-chmod +x "$SLOW_SYNC"
+SLOW_READ="$TMP_ROOT/linear-slow-read"
+printf '#!/usr/bin/env bash\nsleep 2\nexit 1\n' > "$SLOW_READ"
+chmod +x "$SLOW_READ"
+# The label read answers at once; the issue read outlives its bound.
+SLOW_ISSUES="$TMP_ROOT/linear-slow-issues"
+printf '#!/usr/bin/env bash\n[[ "$1" == labels ]] && exec cat -- "$ESCAPES_LABELS"\nsleep 2\nexit 1\n' > "$SLOW_ISSUES"
+chmod +x "$SLOW_ISSUES"
+# The label read answers; the issue read fails.
 FAILING="$TMP_ROOT/linear-failing"
-printf '#!/usr/bin/env bash\n[[ "$1" == sync ]] && exit 0\necho "cache corrupt" >&2\nexit 1\n' > "$FAILING"
+printf '#!/usr/bin/env bash\n[[ "$1" == labels ]] && exec cat -- "$ESCAPES_LABELS"\necho "read failed" >&2\nexit 1\n' > "$FAILING"
 chmod +x "$FAILING"
 NOT_A_LIST="$TMP_ROOT/not-a-list.json"
 echo '{"issues": []}' > "$NOT_A_LIST"
@@ -260,19 +294,20 @@ UNREAD=(
   "$NO_ORIGIN||rc=1 unread=git fetch origin main failed|"
   "$LOCAL_ORIGIN||rc=1 unread=the repository's owner/name did not resolve|GH_REPO="
   "$WORLD|$NOT_EXECUTABLE|rc=1 unread=no Linear CLI|"
-  "$WORLD||rc=1 unread=Linear sync failed|ESCAPES_SYNC_FAIL=1"
-  "$WORLD|$FAILING|rc=1 unread=Linear cache read failed|"
+  "$WORLD||rc=1 unread=Linear read failed|ESCAPES_LINEAR_FAIL=1"
+  "$WORLD|$FAILING|rc=1 unread=Linear read failed|"
   "$WORLD||rc=1 unread=no Linear label named bug|ESCAPES_LABELS=$NO_BUG_LABEL"
   "$WORLD||rc=1 unread=the Linear label list did not parse|ESCAPES_LABELS=$NOT_A_LIST"
-  "$WORLD||rc=1 unread=the git log or the bug list did not parse|ESCAPES_ISSUES=$NOT_A_LIST"
+  "$WORLD||rc=1 unread=the bug list did not parse|ESCAPES_ISSUES=$NOT_A_LIST"
   "$WORLD||rc=1 unread=the clock reads before the cap week 2026-09-28|NOW=$(at 2026-09-21T12:00:00Z)"
 )
-# The fetch and the sync are bounded only where `timeout` or `gtimeout`
+# The fetch and the Linear reads are bounded only where `timeout` or `gtimeout`
 # exists; stock macOS ships neither. Each bound is one second, so each row
 # waits that long.
 if [[ -n "$REAL_TIMEOUT" ]]; then
   UNREAD+=("$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1"
-    "$WORLD|$SLOW_SYNC|rc=1 unread=Linear sync timed out|ESCAPE_SYNC_SECONDS=1"
+    "$WORLD|$SLOW_READ|rc=1 unread=Linear read timed out|ESCAPE_LINEAR_SECONDS=1"
+    "$WORLD|$SLOW_ISSUES|rc=1 unread=Linear read timed out|ESCAPE_LINEAR_SECONDS=1"
     "$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1 PATH=$GTIMEOUT_ONLY")
 fi
 for row in "${UNREAD[@]}"; do
@@ -302,21 +337,25 @@ CONTROLS=(
   'every-number|world|def regressed: [split("\n")[] | capture("^(?:[*][*]Regressed-by[*][*]|Regressed-by):(?<v>.*)$").v | numbers[]];|def regressed: numbers;'
   'plain-key-only|world|(?:[*][*]Regressed-by[*][*]|Regressed-by):|Regressed-by:'
   'every-parent|world|log --first-parent|log'
-  'label-case|world|any(.labels[]; ascii_downcase == "bug")|any(.labels[]; . == "bug")'
-  'any-label|world|select(any(.labels[]; ascii_downcase == "bug"))|select(true)'
+  'label-case|world|select(ascii_downcase == "bug")|select(. == "bug")'
+  'any-label|world|issues list --label "$label" \|issues list \'
   'any-repository|world|select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase))|select(true)'
   'every-team|world|${LINEAR_TEAM:+--team "$LINEAR_TEAM"}|${LINEAR_TEAM:+}'
+  'one-day|world|days=$(((now - since) / 86400 + 2))|days=1'
+  'window-start|world|days=$(((now - since) / 86400 + 2))|days=$(((now - from) / 86400 + 2))'
+  'archived|world|--created-since "${days}d" --max|--created-since "${days}d" --max --include-archived'
   'bare-only|world|select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase))|select(.repo == null)'
   'window-only|later_cap|((cap >= from)) || from=$cap|true'
-  'no-sync|stale_cache|"$tracker" sync --if-stale|true --if-stale'
   'main-only|on_trunk|"$ESCAPES_LIB_DIR/../resolve-base-branch" "$root"|echo main'
 )
 hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1; }
-slow_sync() { count "$1" "$WORLD" "$SLOW_SYNC" ESCAPE_SYNC_SECONDS=1; }
+slow_read() { count "$1" "$WORLD" "$SLOW_READ" ESCAPE_LINEAR_SECONDS=1; }
+slow_issues() { count "$1" "$WORLD" "$SLOW_ISSUES" ESCAPE_LINEAR_SECONDS=1; }
 gtimeout_hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1 PATH="$GTIMEOUT_ONLY"; }
 if [[ -n "$REAL_TIMEOUT" ]]; then
   CONTROLS+=('unbounded-fetch|hangs|escapes_bounded "$bound" "$ESCAPE_FETCH_SECONDS" env|env'
-    'unbounded-sync|slow_sync|escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker"|"$tracker"'
+    'unbounded-read|slow_read|escapes_bounded "$bound" "$ESCAPE_LINEAR_SECONDS" "$tracker" labels|"$tracker" labels'
+    'unbounded-issue-read|slow_issues|escapes_bounded "$bound" "$ESCAPE_LINEAR_SECONDS" "$tracker" issues|"$tracker" issues'
     'timeout-only|gtimeout_hangs|for candidate in timeout gtimeout; do|for candidate in timeout; do')
 fi
 for row in "${CONTROLS[@]}"; do
@@ -334,7 +373,7 @@ done
 
 # The label check dropped: a workspace with no bug label reads a count.
 LABEL_LIB="$(mutant_lib no-label-check)" || exit 1
-mutate_file "$LABEL_LIB" '[[ "$bug_label" != true ]]' 'false'
+mutate_file "$LABEL_LIB" '[[ -z "$bug_labels" ]]' 'false'
 got="$(count "$LABEL_LIB" "$WORLD" "" ESCAPES_LABELS="$NO_BUG_LABEL" | awk 'NR == 1')"
 [[ "$got" != "rc=1 unread=no Linear label named bug" ]] && pass "control no-label-check: the no-bug-label row flags it" \
   || fail "control no-label-check: the no-bug-label row MISSED it" "got=$got"

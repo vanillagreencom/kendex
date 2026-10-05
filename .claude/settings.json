@@ -19,7 +19,6 @@
       "Bash(.agents/skills/github/scripts/github.sh pr-threads *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-view *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-list *)",
-      "Bash(.agents/skills/linear/scripts/linear.sh cache *)",
       "Bash(skills/orch/tests/run-all.sh *)",
       "Bash(bash skills/orch/tests/run-all.sh *)"
     ]

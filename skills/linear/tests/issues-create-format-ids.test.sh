@@ -15,9 +15,8 @@ assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
-# throwaway root — without this, cache writes land in the real project's
-# `.cache/linear`.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. issueCreate returns a fixed issue.
@@ -27,11 +26,11 @@ config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
 
-issue_json='{"id":"issue-uuid","identifier":"PROJ-1","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-1","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+issue_json='{"id":"issue-uuid","identifier":"PROJ-1","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-1","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
   printf '%s' "{\"data\":{\"issueCreate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200"

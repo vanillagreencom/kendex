@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["milestones", "list", "--format=raw"],
+  "root_index": 0,
+  "root_path": "projectMilestones",
+  "output": ".projectMilestones.nodes",
+  "expected_rows": 2,
+  "derived_rows": "The workspace holds no milestones; the rows carry exactly the fields the recorded query selects.",
+  "requests": [
+    {"operation":"GetAllMilestones","response":{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"milestone-1","name":"Fixture milestone","description":null,"targetDate":null,"progress":0,"sortOrder":1,"project":{"id":"project-1","name":"Fixture project"},"createdAt":"2026-10-01T00:00:00.000Z"},{"id":"milestone-2","name":"Fixture milestone","description":null,"targetDate":null,"progress":0,"sortOrder":2,"project":{"id":"project-1","name":"Fixture project"},"createdAt":"2026-10-01T00:00:00.000Z"}]}}}}
+  ]
+}

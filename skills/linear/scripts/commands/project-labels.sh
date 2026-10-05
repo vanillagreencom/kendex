@@ -23,7 +23,8 @@ Common Options:
   --format=raw     Original GraphQL structure
 
 List Options:
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Create Options:
   --name <text>         Label name (required)
@@ -51,7 +52,7 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 
 list_project_labels() {
-    local first=75
+    linear_list_reset
     local format="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -59,8 +60,12 @@ list_project_labels() {
             --format=*) format="${1#--format=}"; shift ;;
             --format) format="$2"; shift 2 ;;
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
@@ -69,8 +74,9 @@ list_project_labels() {
     done
 
     local query='
-    query ListProjectLabels($first: Int) {
-        projectLabels(first: $first) {
+    query ListProjectLabels($first: Int, $after: String) {
+        projectLabels(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -83,12 +89,12 @@ list_project_labels() {
         }
     }'
 
-    local variables="{\"first\": $first}"
+    local variables='{}'
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" projectLabels) || return 1
 
     case "$format" in
-        raw) echo "$result" ;;
+        raw) linear_public_result "$result" ;;
         safe|*) format_project_labels_list "$result" ;;
     esac
 }

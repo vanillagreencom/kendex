@@ -17,11 +17,10 @@ assert_tmpdir TMP_ROOT
 # is the house rule in the repository's AGENTS.md.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
-# throwaway root — without this, cache writes land in the real project's
-# `.cache/linear`.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
 git -C "$TMP_ROOT" config gc.auto 0
 git -C "$TMP_ROOT" config maintenance.auto false
@@ -38,7 +37,7 @@ query="$(jq -r '.query' <<<"$payload")"
 variables="$(jq -c '.variables' <<<"$payload")"
 printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 
-issue='{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+issue='{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 case "$query" in
 *"users(filter: {email: {"*)
@@ -53,20 +52,20 @@ case "$query" in
   *) false ;;
   esac && hit=1 || hit=0
   if [[ "$hit" == 1 ]]; then
-    printf '%s' '{"data":{"users":{"nodes":[{"id":"11111111-2222-3333-4444-555555555555","name":"Dana Doe","email":"Dana@Example.com"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"11111111-2222-3333-4444-555555555555","name":"Dana Doe","email":"Dana@Example.com"}]}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   fi
   ;;
 *"users(filter: {name:"*)
   if [[ "$(jq -r '.name' <<<"$variables")" == "Dana" ]]; then
-    printf '%s' '{"data":{"users":{"nodes":[{"id":"11111111-2222-3333-4444-555555555555"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"11111111-2222-3333-4444-555555555555"}]}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   fi
   ;;
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
   printf '{"data":{"issue":%s}}___HTTP_CODE___200' "$issue"

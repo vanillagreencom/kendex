@@ -81,53 +81,6 @@ assert_at_exit() {
 	ASSERT_CLEANUP_CMDS+=("$1")
 }
 
-# --- cache isolation --------------------------------------------------------
-#
-# The scripts under test resolve their cache and attachment store from the
-# repository the process is standing in, which for a suite is the developer's
-# own kendex checkout. A suite that creates a comment or completes an issue
-# therefore wrote its fixture identifiers into the real .cache/linear, where
-# `cache issues list` and any audit can see them.
-#
-# The redirect is installed here, once, for every suite that sources this file:
-# no suite has to remember it, and each suite is isolated before its first line
-# runs. LINEAR_CACHE_ROOT outranks the git root in the scripts under test, and
-# the scratch root goes with the suite's other scratch directories at exit — on
-# success, on a failed assertion, and on an abort alike, taking any lock file
-# written under it.
-#
-# A suite that stands up its own project root re-points LINEAR_CACHE_ROOT at
-# that root, which must still be scratch it registered. The verdict refuses
-# anything else: a suite that unsets the variable, or aims it at a directory it
-# does not own, is a suite writing to the real cache again.
-#
-# A suite whose subject IS the root resolution cannot do that — the redirect
-# outranks the git root, so pointing it anywhere answers the question under
-# test. Such a suite keeps this default and drops the variable per invocation
-# with `env -u LINEAR_CACHE_ROOT`, standing in scratch of its own so nothing
-# reaches the real cache. cache-root-git-worktree.test.sh is the example.
-assert_tmpdir ASSERT_CACHE_ROOT
-mkdir -p "$ASSERT_CACHE_ROOT/.cache/linear/comments"
-export LINEAR_CACHE_ROOT="$ASSERT_CACHE_ROOT"
-
-# The diagnostic for a cache root that left the sandbox, or the empty string
-# when it did not. Read by the exit verdict before cleanup removes the
-# directories it is checked against.
-__assert_cache_root_escape() {
-	local dir
-	if [[ -z "${LINEAR_CACHE_ROOT:-}" ]]; then
-		printf 'LINEAR_CACHE_ROOT was unset by the suite'
-		return 0
-	fi
-	for dir in ${ASSERT_TMPDIRS[@]+"${ASSERT_TMPDIRS[@]}"}; do
-		if [[ "$LINEAR_CACHE_ROOT" == "$dir" || "$LINEAR_CACHE_ROOT" == "$dir"/* ]]; then
-			return 0
-		fi
-	done
-	printf 'LINEAR_CACHE_ROOT points outside every scratch directory this suite registered: %s' \
-		"$LINEAR_CACHE_ROOT"
-}
-
 # assert DESC CMD [ARG...] — CMD must exit zero. The command's own output is
 # captured, not printed: redirecting an assertion at the call site would
 # silence the failure report too.
@@ -247,11 +200,9 @@ run_oauth_request() {
 	local command="$PROJECT/request" action=()
 	if [[ "$1" == auth-check ]]; then command="$LINEAR"; action=(auth-check); fi
 	if [[ "$1" == auth-mint ]]; then command="$LINEAR"; action=(auth-mint); fi
-	if [[ "$1" == cache-fetch ]]; then command="$LINEAR"; action=(cache attachments fetch TEAM-1); fi
-	if [[ "$1" == cache-read ]]; then command="$LINEAR"; action=(cache attachments list TEAM-1); fi
 	shift
 	OUT=$(cd -- "$PROJECT" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT" \
-		LINEAR_CACHE_ROOT="$PROJECT" LOG="$LOG" NOW="$NOW" REAL_JQ="$REAL_JQ" LINEAR_RETRY_BASE_DELAY=0 \
+		LOG="$LOG" NOW="$NOW" REAL_JQ="$REAL_JQ" LINEAR_RETRY_BASE_DELAY=0 TMPDIR="$TMP_ROOT/tmpdir" \
 		"$@" bash "$command" "${action[@]}" 2>"$LOG/error") && RC=0 || RC=$?
 }
 
@@ -305,9 +256,7 @@ run_oauth_git_redirects() {
 # so an unscoped lookup returns the other team's same-name label first.
 install_label_team_fixture() {
 	local project="$1"
-	mkdir -p "$project/bin" "$project/.cache/linear"
-	jq '[.issueLabels.nodes[] | select(.team.name == "fleet")]' \
-		"$SKILL_DIR/tests/lib/fixtures/issue-team-labels.json" >"$project/.cache/linear/labels.json"
+	mkdir -p "$project/bin"
 	cat >"$project/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -326,7 +275,7 @@ case "$query" in
   [[ "$query" != *'team: {id: {eq: $teamId}}'* ]] || scope=id
   [[ "$query" != *'team: {null: true}'* ]] || workspace=true
   jq -cj --argjson payload "$payload" --arg scope "$scope" --argjson workspace "$workspace" '
-    {data: {issueLabels: {nodes: [.issueLabels.nodes[]
+    {data: {issueLabels: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.issueLabels.nodes[]
       | select(.name == $payload.variables.name)
       | select($scope == "none"
         or ($scope == "name" and .team.name == $payload.variables.teamName)
@@ -344,12 +293,12 @@ case "$query" in
   ;;
 *"teams(filter:"*)
   jq -cj --argjson payload "$payload" '
-    {data: {teams: {nodes: ([.issueLabels.nodes[].team
+    {data: {teams: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: ([.issueLabels.nodes[].team
       | select(. != null and .name == $payload.variables.name)] | unique | map({id}))}}}' \
     "$FIXTURE_DIR/issue-team-labels.json"
   ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}'
+  printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-in-progress"}]}}}'
   ;;
 *"issueUpdate(id:"*)
   jq -cj '{data: {issueUpdate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json"
@@ -367,7 +316,7 @@ SH
 }
 
 # Each request has its own payload log and failure input. The configured team
-# differs from the recorded issue's team, and the cache holds fleet-only IDs.
+# differs from the recorded issue's team.
 # Leading NAME=VALUE arguments after FAIL are added to the child environment
 # after the defaults, so one replaces a default of the same name.
 # Usage: run_label_team_request PROJECT NAME FAIL [NAME=VALUE...] ISSUES-ARGS...
@@ -382,7 +331,7 @@ run_label_team_request() {
 	: >"$TMP_ROOT/$name.jsonl"
 	(cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$project/bin:$PATH" \
 		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
-		LINEAR_CACHE_ROOT="$project" FIXTURE_FAIL="$fail" \
+		FIXTURE_FAIL="$fail" \
 		FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
 		${extra_env[@]+"${extra_env[@]}"} \
 		"$BASH" "$project/.agents/skills/linear/scripts/linear.sh" issues "$@") \
@@ -446,7 +395,7 @@ run_output() {
 }
 
 __assert_on_exit() {
-	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0 outstanding="" cache_escape=""
+	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0 outstanding=""
 
 	# A background job still running has not finished writing to the ledger, so
 	# the totals below would be computed over a record that is still being
@@ -471,7 +420,6 @@ __assert_on_exit() {
 		ledger_failed="$(grep -c '^failed' "$ASSERT_LEDGER" || true)"
 	fi
 	lost=$((ledger_ran - ASSERT_COUNT))
-	cache_escape="$(__assert_cache_root_escape)"
 
 	for cmd in ${ASSERT_CLEANUP_CMDS[@]+"${ASSERT_CLEANUP_CMDS[@]}"}; do
 		eval "$cmd" || true
@@ -481,13 +429,6 @@ __assert_on_exit() {
 	done
 	rm -f -- "${ASSERT_LEDGER:?}"
 
-	if [[ -n "$cache_escape" ]]; then
-		printf 'FAIL: %s\n' "$cache_escape" >&2
-		printf '      the scripts under test would have resolved their cache from the enclosing\n' >&2
-		printf '      repository and written fixture ids into the real .cache/linear — point it\n' >&2
-		printf '      at a directory from assert_tmpdir instead\n' >&2
-		exit 1
-	fi
 	if ((lost > 0)); then
 		printf 'FAIL: %d assertion(s) ran in a subshell, where the suite cannot see them\n' "$lost" >&2
 		printf '      a command substitution, pipeline element, backgrounded or parenthesised\n' >&2
@@ -540,6 +481,10 @@ pages_case() {
 		elif $name == "create" or $name == "update" then
 			{initial:{("issue"+(if $name == "create" then "Create" else "Update" end)):{success:true,issue:owner}},replies:[labelReply("owner")]}
 		elif $name == "root-rows" then
+			{initial:root([issue("first";180000) | .labels=conn([{name:"a"}];true;"l1"),
+				issue("second";180000) | .labels=conn([{name:"a"}];true;"l1")];false;null),
+			 replies:[labelReply("first"),labelReply("second")]}
+		elif $name == "root-rows-closed" then
 			{initial:root([issue("first";180000),issue("second";180000)];false;null),replies:[]}
 		elif $name == "absent" then {initial:{issue:{id:"owner",description:"short"},project:null},replies:[]}
 		elif $name == "children" or $name == "children-recursive" or $name == "children-failure" then
@@ -653,6 +598,104 @@ SUBJECT
 		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" "$SKILL_DIR/scripts/lib/formatters.sh" "$child_mode" \
 		2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
 	assert_file_lacks "$name: page walk budget" "$PAGE_ROOT/error" 'fixture: page-budget='
+}
+
+# recorded_fixture_values NAME FIXTURE — the tree is public and a recording
+# reads the whole workspace, so a recorded fixture holds fixture values only:
+# every identifier KEN-9NNN, every id 00000000-0000-4000-8000-NNNNNNNNNNNN,
+# every team key KEN or FX plus a letter, and every name a fixture name, a
+# workflow state, the research or an agent: label, or the kendex team. Each
+# rule prints the values that break it, so a failure names them.
+recorded_fixture_values() {
+	local name="$1" fixture="$2" bad
+	bad=$(jq -c '[.. | strings | scan("\\b[A-Z][A-Z0-9]*-[0-9]+\\b") | select(test("^KEN-9[0-9]{3}$") | not)] | unique' "$fixture") || bad="unreadable fixture"
+	assert_eq "$name: identifiers are fixture identifiers" "$bad" '[]'
+	bad=$(jq -c '[.. | strings | scan("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+		| select(test("^00000000-0000-4000-8000-[0-9]{12}$") | not)] | unique' "$fixture") || bad="unreadable fixture"
+	assert_eq "$name: ids are fixture ids" "$bad" '[]'
+	bad=$(jq -c '["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled", "Duplicate", "Triage"] as $states
+		| [paths(strings) as $p | select($p[-1] == "name") | getpath($p)
+			| select(. as $v | ($states | index($v)) or test("^(Fixture|fixture)\\b") or test("^agent:[a-z-]+$")
+				or . == "research" or . == "kendex" | not)]
+		+ [paths(strings) as $p | select($p[-1] == "key") | getpath($p) | select(test("^(KEN|FX[A-Z])$") | not)]
+		| unique' "$fixture") || bad="unreadable fixture"
+	assert_eq "$name: names are fixture names" "$bad" '[]'
+}
+
+# recorded_read_case NAME — drive one read verb through linear.sh against its
+# recorded replies in tests/lib/fixtures/recorded/NAME.json, twice. The replay
+# answers the recorded requests in order, and splits the connection at
+# `root_path` of request `root_index` into two cursor pages: every row but the
+# last, then the last. `complete` serves the second page; `partial` fails it.
+# The fixture's `expected_rows` and `output` say what a complete read prints,
+# or its `output_lines` the exact stdout of a line-format read, so the
+# expectation never comes from the code under test.
+recorded_read_case() {
+	local name="$1" fixture="$SKILL_DIR/tests/lib/fixtures/recorded/$1.json" project mode out rc calls want want_lines arg args=()
+	if [[ -z "$ASSERT_SCRATCH_DIR" ]]; then
+		assert_tmpdir ASSERT_SCRATCH_DIR
+	fi
+	project="$ASSERT_SCRATCH_DIR/replay-$name"
+	mkdir -p "$project/bin" "$project/.agents/skills"
+	cp -R "$SKILL_DIR" "$project/.agents/skills/linear"
+	git -C "$project" init -q -b main
+	git -C "$project" config gc.auto 0
+	git -C "$project" config maintenance.auto false
+	cat >"$project/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+config=$(cat)
+payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
+query=$(jq -r '.query' <<<"$payload")
+after=$(jq -r '.variables.after // ""' <<<"$payload")
+printf '%s\n' "$payload" >>"$REPLAY_DIR/calls"
+split='(.root_path | split(".") | ["data"] + .) as $path'
+if [[ "$query" == *"query ContinueConnection"* || "$after" == page-2 ]]; then
+    if [[ "$REPLAY_MODE" == partial ]]; then
+        printf '%s' '{"errors":[{"message":"fixture: later page failed"}]}___HTTP_CODE___200'
+        exit 0
+    fi
+    jq -cj "$split"' | .requests[.root_index].response
+        | setpath($path; {nodes: getpath($path).nodes[-1:], pageInfo: {hasNextPage: false, endCursor: null}})' "$REPLAY_FIXTURE"
+else
+    read -r n <"$REPLAY_DIR/next"
+    printf '%s\n' "$((n + 1))" >"$REPLAY_DIR/next"
+    jq -cj --argjson n "$n" "$split"' | if $n >= (.requests | length) then {errors: [{message: "fixture: no recorded request \($n)"}]}
+        elif $n == .root_index then .requests[$n].response
+            | setpath($path; {nodes: getpath($path).nodes[:-1], pageInfo: {hasNextPage: true, endCursor: "page-2"}})
+        else .requests[$n].response end' "$REPLAY_FIXTURE"
+fi
+printf '___HTTP_CODE___200'
+SH
+	chmod +x "$project/bin/curl"
+	recorded_fixture_values "$name" "$fixture"
+	want=$(jq -r '.requests | length + 1' "$fixture")
+	for mode in complete partial; do
+		: >"$project/calls"
+		printf '0\n' >"$project/next"
+		args=()
+		while IFS= read -r arg; do args+=("$arg"); done < <(jq -r '.args[]' "$fixture")
+		out=$(cd -- "$project" && env -i PATH="$project/bin:$PATH" HOME="$project" \
+			LINEAR_APP_TOKEN=fixture-token LINEAR_TEAM=kendex LINEAR_FORMAT=safe LINEAR_RETRY_BASE_DELAY=0 \
+			REPLAY_DIR="$project" REPLAY_MODE="$mode" REPLAY_FIXTURE="$fixture" \
+			bash .agents/skills/linear/scripts/linear.sh "${args[@]}" 2>"$project/error") && rc=0 || rc=$?
+		if [[ "$mode" == complete ]]; then
+			assert_eq "$name: complete chain succeeds" "$rc" 0
+			if want_lines=$(jq -er '.output_lines | arrays | join("\n")' "$fixture"); then
+				assert_eq "$name: every recorded row is read" "$out" "$want_lines"
+			else
+				assert_jq "$name: every recorded row is read" "$out" \
+					"($(jq -r '.output' "$fixture")) | length == $(jq -r '.expected_rows' "$fixture")"
+			fi
+			calls=$(wc -l <"$project/calls")
+			assert_eq "$name: one request per recorded reply and the second page" "${calls//[[:space:]]/}" "$want"
+		else
+			assert_ne "$name: partial chain refuses" "$rc" 0
+			assert_eq "$name: partial chain prints nothing" "$out" ''
+			assert_file_contains "$name: partial chain names the failed page" "$project/error" 'fixture: later page failed'
+		fi
+		assert_not "$name: no local store is written" test -e "$project/.cache"
+	done
 }
 
 trap __assert_on_exit EXIT

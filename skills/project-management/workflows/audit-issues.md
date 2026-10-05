@@ -46,16 +46,15 @@ Resolve once, before any tracker command. Precedence:
 
 Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**Mode constraint**: `project`, `team`, and `project-order` audit Linear projects and are Linear only — `team` takes its input set from the Linear cache and has no GitHub equivalent. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
+**Mode constraint**: `project`, `team`, and `project-order` audit Linear projects and are Linear only — `team` takes its input set from Linear's issue inventory and has no GitHub equivalent. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
 
-**GitHub mode runs no Linear commands** — no `sync`, `session-status`, cache read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
+**GitHub mode runs no Linear commands** — no `session-status`, Linear read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
 
 #### 1.2.1 Preflight — Linear (TRACKER=linear)
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh session-status
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 .agents/skills/orch/scripts/reconcile-work-items
 ```
 
@@ -250,7 +249,7 @@ Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to each i
 Before any mutation that creates an issue or changes labels:
 
 1. Build the intended operation per finding: `create` and gap issues take the full `create_fields.labels[]`; `agent_mismatch` is `replace_category` on `agent`; `label_cooccurrence` is `add`; a `label_updates[]` entry carries its own mode and category.
-2. For an existing issue, fetch current labels and compute the full final set, preserving unrelated labels — Linear `cache issues get [ISSUE_ID]`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json labels`.
+2. For an existing issue, fetch current labels and compute the full final set, preserving unrelated labels — Linear `issues get [ISSUE_ID]`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json labels`.
 3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. Any failure there halts before mutation and reports the failing set; a label the tracker lacks follows § Creating Labels in the same file.
 4. Pass only the validated final set: Linear `--labels`, GitHub `gh issue create --label` and the github skill's `label-add`/`label-remove`.
 
@@ -303,7 +302,7 @@ A `create` whose `review_born` is false is the same command without that flag.
 
 **Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `symptom` supplying `[SYMPTOM]`, `regressed_by` supplying `[REGRESSED_BY]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution. When creating a child, carry the parent's `**Research**:` and `**Decision**:` lines to the top of the child's description.
 
-**Superseded issues — Linear**: fetch children (`cache issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. Scope fully covered."`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel.
+**Superseded issues — Linear**: fetch children (`issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. Scope fully covered."`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel.
 
 **GitHub degradation (explicit, never silent)**: GitHub has no bundle, typed-relation, project-state, or cascade model here. Represent structure in issue bodies — `make_child` becomes a `Parent: #[N]` line at the top of the child plus a comment on the parent; relations become `Blocks: #N` / `Blocked by: #N` / `Related: #N` lines maintained through the body-edit route. Supersession has no detach or cascade: enumerate any sub-items listed in the closed issue's body in the close comment. Never drop an approved hierarchy or relation action — either record its body representation or report it as not executed, and list every degradation in § 8.
 
@@ -314,8 +313,8 @@ A `create` whose `review_born` is false is the same command without that flag.
 Once every create has landed and its relations and parent are attached — never per create — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue is blocked by a non-Done issue in another project, or it is P4 with no blocking relations.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects get [PROJECT_ID] | jq -r '.state'
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT]" --state "Todo" --max --format=safe | jq 'sort_by(.sort_order)'
+.agents/skills/linear/scripts/linear.sh projects get [PROJECT_ID] | jq -r '.state'
+.agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT]" --state "Todo" --max --format=safe | jq 'sort_by(.sort_order)'
 .agents/skills/linear/scripts/linear.sh issues update [NEW_ID] --state "Todo" --sort-order [CALCULATED]
 ```
 
@@ -323,9 +322,9 @@ Once every create has landed and its relations and parent are attached — never
 
 ### 7.3 Add Research References
 
-**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `cache issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); prepend `**Research**: [RESEARCH_REF]` when absent, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`). Apply the § 7 artifact rule even when the reference already exists.
+**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); prepend `**Research**: [RESEARCH_REF]` when absent, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`). Apply the § 7 artifact rule even when the reference already exists.
 
-Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
+Propagate to children — Linear `issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
 ### 7.4 Post-Cancellation Cleanup
 
@@ -347,7 +346,7 @@ Re-fetch every mutated issue and confirm state, labels, parent, project, relatio
 .agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe
 ```
 
-For a single Linear issue, `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]` also works. GitHub, per issue:
+For a single Linear issue, `.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]` also works. GitHub, per issue:
 
 ```bash
 gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels,state,url

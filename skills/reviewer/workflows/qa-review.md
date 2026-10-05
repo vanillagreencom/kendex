@@ -19,15 +19,15 @@ Resolve tracker context once, before any tracker command. Precedence:
 
 Store the result as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**GitHub reviews must not run Linear commands**: when `TRACKER=github`, no `sync`, Linear cache read, or Linear mutation may run anywhere in this workflow. A missing Linear cache is not an error for a GitHub-tracked review — read live GitHub context instead (§ 1.2). If a tracker read fails on the resolved route, report the gap in your review output; do not silently fall back to the other tracker.
+**GitHub reviews must not run Linear commands**: when `TRACKER=github`, no Linear read or mutation may run anywhere in this workflow; read live GitHub context instead (§ 1.2). If a tracker read fails on the resolved route, report the gap in your review output; do not silently fall back to the other tracker.
 
 ### 1.2 Read Context
 
 **Linear route (TRACKER=linear)**:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh comments list [ISSUE_ID]
 ```
 
 **GitHub route (TRACKER=github)**:

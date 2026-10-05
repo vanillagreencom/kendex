@@ -6,12 +6,6 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
 
 `roadmap create @[plan-file] [--source-issue [ISSUE_ID]]`. Read the optional source issue from the invocation before opening the plan. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
 
-This workflow creates and cancels issues, so it reconciles before the § 3.1 initiatives read and every cache read after it:
-
-```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-```
-
 Resolve the plan through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), using the invocation's source issue when the local file is absent. Keep its repository reference as `PLAN_PATH` and its readable file as `PLAN_READ_PATH`. Read that markdown for `FEATURE` and its `**Plan data**` reference, then resolve the companion JSON with the same source issue and read it as `TPM_OUTPUT`. A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`. With no source issue, a local plan still loads as before.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
@@ -53,7 +47,7 @@ For each conflict whose resolution changed since the plan gate or was not presen
 List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | `Create new initiative` | `No initiative`.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache initiatives list --status Active
+.agents/skills/linear/scripts/linear.sh initiatives list --status Active --max
 ```
 
 Creating one takes a name and a multi-month objective as free text:
@@ -91,8 +85,7 @@ Position within the backlog is not set here; `audit-issues project-order` owns p
 ### 4.1 Label Preflight
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
 Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) § Validation before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Any failure there halts before mutation.
@@ -145,9 +138,9 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 ## 5. Verify and Report
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects get [PROJECT_ID]
-.agents/skills/linear/scripts/linear.sh cache projects list-dependencies [PROJECT_ID]
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --max
+.agents/skills/linear/scripts/linear.sh projects get [PROJECT_ID]
+.agents/skills/linear/scripts/linear.sh projects list-dependencies [PROJECT_ID]
+.agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT_NAME]" --max
 ```
 
 Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.

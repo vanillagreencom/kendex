@@ -89,7 +89,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `type` | Yes when the block is present | `linear` or `github` |
 | `repository` | github only | `owner/repo` |
 
-An existing-issue batch must set `tracker` explicitly. It has no parent hint. Without the block for proposed items, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
+An existing-issue batch must set `tracker` explicitly. It has no parent hint. Without the block for proposed items, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear reads, session status, project inventory, or Linear mutation commands.
 
 ## Hierarchy Contract
 

@@ -1,0 +1,1 @@
+- A rate-limited `linear.sh` call prints the time Linear's request quota refills (`requests_reset`); only rate-limited, 5xx and unanswered requests are retried.

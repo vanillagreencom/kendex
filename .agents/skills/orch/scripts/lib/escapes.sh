@@ -8,15 +8,15 @@
 #   - the subject of a revert commit on that branch, a subject starting
 #     `Revert` or `revert`, other than the revert's own merge; or
 #   - a `Regressed-by` line in the description of a Linear issue labelled
-#     bug, in any case, and created at or after the merge, read from the
-#     linear skill's cache. The line starts the description or follows a
+#     bug, in any case, created at or after the merge and neither archived
+#     nor trashed, read live through the linear skill. The line starts the description or follows a
 #     newline, its key plain (`Regressed-by: #N`) or bold as the issue
 #     template writes it (`**Regressed-by**: #N`), and may name several
 #     numbers, comma-separated. A number anywhere else in the issue, its
 #     title or a Source or Reached by line citing where a finding came from,
 #     is not a finding. Where LINEAR_TEAM is set, only an issue in that team
-#     counts: the cache holds every team the API key reaches, and a bare
-#     `#N` in another team's bug names another repository's pull request.
+#     counts: the API key reaches every team, and a bare `#N` in another
+#     team's bug names another repository's pull request.
 # A number names the pull request bare (`#N`) or qualified with this
 # repository's own owner/name (`owner/name#N`), the one lib/gh-repo.sh
 # resolves; a number qualified with any other repository names that one's.
@@ -27,8 +27,8 @@
 # the week of its first finding. Weeks are ISO weeks, Monday 00:00 UTC to
 # the next.
 #
-# Nothing here is stored: every read derives the count from git and the
-# cache again.
+# Nothing here is stored: every read derives the count from git and Linear
+# again.
 
 ESCAPES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 # shellcheck source=gh-repo.sh
@@ -43,14 +43,10 @@ ESCAPE_REACH=1209600
 # Escapes line compares against. The same week the setting fell to 1 in every
 # consumer repository's own settings, so it is each install's cap week too.
 ESCAPE_CAP_WEEK=2026-09-28
-# How long the fetch of the base branch, and the Linear sync, may run before
-# the count reads unread, where `timeout` or `gtimeout` exists. A sync that
-# outlasts its bound, a full one on a large workspace, reads unread until a
-# `linear.sh sync` run by hand completes.
+# How long the fetch of the base branch, and each Linear read, may run
+# before the count reads unread, where `timeout` or `gtimeout` exists.
 ESCAPE_FETCH_SECONDS=60
-ESCAPE_SYNC_SECONDS=120
-# How old, in minutes, the Linear cache may be before the count syncs it.
-ESCAPE_SYNC_MINUTES=15
+ESCAPE_LINEAR_SECONDS=120
 
 # escapes_bounded BOUND SECONDS COMMAND... — COMMAND under a SECONDS bound
 # that BOUND, `timeout` or `gtimeout`, holds, answering 124 where it cuts it
@@ -71,15 +67,15 @@ escapes_bounded() {
 # Monday, for the ESCAPE_WINDOW_WEEKS weeks ending with the one NOW falls in,
 # or from ESCAPE_CAP_WEEK where that week is older. ROOT is the checkout
 # whose base branch is read, fetched first so the count is not the last
-# fetch's; TRACKER is the Linear CLI, whose cache is synced first where it is
-# older than ESCAPE_SYNC_MINUTES; SCRATCH a directory the reads are written
-# to. LINEAR_TEAM, the project's own, narrows the issue read where set.
+# fetch's; TRACKER is the Linear CLI, read live; SCRATCH a directory the
+# reads are written to. LINEAR_TEAM, the project's own, narrows the issue
+# read where set.
 # Returns 1 with ESCAPE_UNREAD naming the read that failed, and ESCAPE_WEEKS
 # empty: a count missing either source is not printed as a number.
 ESCAPE_WEEKS=""
 ESCAPE_UNREAD=""
 escapes_read() {
-  local root="$1" tracker="$2" now="$3" scratch="$4" week cap from since base repo bug_label rc=0 cut="" bound="" candidate
+  local root="$1" tracker="$2" now="$3" scratch="$4" week cap from since base repo bug_labels rc=0 cut="" bound="" candidate
   ESCAPE_WEEKS=""
   ESCAPE_UNREAD=""
   # 1970-01-05, a Monday, is 345600: the week starts that many seconds past
@@ -133,35 +129,52 @@ escapes_read() {
     ESCAPE_UNREAD="no Linear CLI"
     return 1
   fi
-  # The cache answers only what its last sync saw: a bug filed since then is
-  # missing from a read that exits 0.
-  escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker" sync --if-stale "$ESCAPE_SYNC_MINUTES" \
-    >/dev/null 2>"$scratch/escapes-linear.err" || rc=$?
-  if [[ "$rc" == "$cut" ]]; then
-    ESCAPE_UNREAD="Linear sync timed out"
-    return 1
-  elif ((rc != 0)); then
-    ESCAPE_UNREAD="Linear sync failed"
-    return 1
-  fi
   # --format=safe pins the shapes against the project's LINEAR_FORMAT. A
   # workspace spells the label `bug` or `Bug`, and one with neither never
-  # read a bug half, so it reads unread rather than 0. An unset LINEAR_TEAM
-  # sends no --team, which the CLI refuses empty.
-  if ! "$tracker" cache labels list --format=safe >"$scratch/escapes-labels.json" 2>"$scratch/escapes-linear.err" \
-    || ! "$tracker" cache issues list --all-projects --max --include-archived \
-      ${LINEAR_TEAM:+--team "$LINEAR_TEAM"} --format=safe \
-      >"$scratch/escapes-issues.json" 2>"$scratch/escapes-linear.err"; then
-    ESCAPE_UNREAD="Linear cache read failed"
+  # read a bug half, so it reads unread rather than 0.
+  escapes_bounded "$bound" "$ESCAPE_LINEAR_SECONDS" "$tracker" labels list --max --format=safe \
+    >"$scratch/escapes-labels.json" 2>"$scratch/escapes-linear.err" || rc=$?
+  if [[ "$rc" == "$cut" ]]; then
+    ESCAPE_UNREAD="Linear read timed out"
+    return 1
+  elif ((rc != 0)); then
+    ESCAPE_UNREAD="Linear read failed"
     return 1
   fi
-  if ! bug_label="$(jq -r 'if type != "array" then error("the label list is not one JSON array") else
-      any(.[]; (.name // "") | ascii_downcase == "bug") end' "$scratch/escapes-labels.json" 2>"$scratch/escapes-jq.err")"; then
+  if ! bug_labels="$(jq -r 'if type != "array" then error("the label list is not one JSON array") else
+      [.[] | (.name // "") | select(ascii_downcase == "bug")] | unique | .[] end' "$scratch/escapes-labels.json" 2>"$scratch/escapes-jq.err")"; then
     ESCAPE_UNREAD="the Linear label list did not parse"
     return 1
   fi
-  if [[ "$bug_label" != true ]]; then
+  if [[ -z "$bug_labels" ]]; then
     ESCAPE_UNREAD="no Linear label named bug"
+    return 1
+  fi
+  # Only a bug created after the window's earliest merge can name an escape,
+  # so the read asks Linear for those bugs alone, one read per spelling of the
+  # label. An unset LINEAR_TEAM sends no --team, which the CLI refuses empty.
+  # --created-since counts days back from the clock the CLI reads, which is
+  # NOW for a report of the present week; the span runs from NOW to the
+  # window's reach, a day of margin either side. Linear leaves archived and
+  # trashed issues out of a read that does not ask for them.
+  local days label
+  days=$(((now - since) / 86400 + 2))
+  : >"$scratch/escapes-issues.jsonl"
+  while IFS= read -r label; do
+    escapes_bounded "$bound" "$ESCAPE_LINEAR_SECONDS" "$tracker" issues list --label "$label" \
+      --created-since "${days}d" --max ${LINEAR_TEAM:+--team "$LINEAR_TEAM"} --format=safe \
+      >>"$scratch/escapes-issues.jsonl" 2>"$scratch/escapes-linear.err" || rc=$?
+    if [[ "$rc" == "$cut" ]]; then
+      ESCAPE_UNREAD="Linear read timed out"
+      return 1
+    elif ((rc != 0)); then
+      ESCAPE_UNREAD="Linear read failed"
+      return 1
+    fi
+  done <<<"$bug_labels"
+  if ! jq -s 'if all(.[]; type == "array") then add // [] | unique_by(.uuid // .id) else error("not arrays") end' \
+    "$scratch/escapes-issues.jsonl" >"$scratch/escapes-issues.json" 2>"$scratch/escapes-jq.err"; then
+    ESCAPE_UNREAD="the bug list did not parse"
     return 1
   fi
   if ! ESCAPE_WEEKS="$(jq -r -n --rawfile log "$scratch/escapes-log.tsv" --slurpfile issues "$scratch/escapes-issues.json" \
@@ -178,7 +191,7 @@ escapes_read() {
         | ((.s | capture("[(]#(?<n>[0-9]+)[)]$")) // (.s | capture("^Merge pull request #(?<n>[0-9]+) ")) // empty)
         | {key: .n, value: {t: $c.t, sha: $c.sha}}] | from_entries) as $merged
     | [($commits[] | select(.s | test("^[Rr]evert")) | {t, sha, ns: (.s | numbers)}),
-       ($issues[0][] | select(any(.labels[]; ascii_downcase == "bug"))
+       ($issues[0][]
          | {t: (.created_at | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601), sha: "",
             ns: ((.description // "") | regressed)})] as $findings
     | [$findings[] as $f | $f.ns[] as $n | $merged[$n] as $m

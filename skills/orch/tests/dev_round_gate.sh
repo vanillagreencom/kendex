@@ -31,7 +31,7 @@ mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -42,9 +42,9 @@ RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
 
 write_allowance() {
   local repo="$1" issue="$2" line="$3"
-  mkdir -p "$repo/.cache/linear"
+  mkdir -p "$repo/.cache/tracker-fixture"
   jq -n --arg id "$issue" --arg body "$line" \
-    '[{identifier: $id, description: $body}]' > "$repo/.cache/linear/issues.json"
+    '[{identifier: $id, description: $body}]' > "$repo/.cache/tracker-fixture/issues.json"
   printf '.cache/\n' >> "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
 }
 

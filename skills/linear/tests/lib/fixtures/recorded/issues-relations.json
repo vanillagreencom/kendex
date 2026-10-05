@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["issues", "list-relations", "KEN-9032", "--format=raw"],
+  "root_index": 0,
+  "root_path": "issue.inverseRelations",
+  "output": ".issue.inverseRelations.nodes",
+  "expected_rows": 2,
+  "requests": [
+    {"operation":"GetRelations","response":{"data":{"issue":{"id":"00000000-0000-4000-8000-000000000085","identifier":"KEN-9032","title":"Fixture text","relations":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000086"},"nodes":[{"id":"00000000-0000-4000-8000-000000000087","type":"related","relatedIssue":{"id":"00000000-0000-4000-8000-000000000088","identifier":"KEN-9033","title":"Fixture text","state":{"name":"Backlog","type":"backlog"}}},{"id":"00000000-0000-4000-8000-000000000086","type":"related","relatedIssue":{"id":"00000000-0000-4000-8000-000000000089","identifier":"KEN-9034","title":"Fixture text","state":{"name":"Done","type":"completed"}}}]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000090","type":"related","issue":{"id":"00000000-0000-4000-8000-000000000091","identifier":"KEN-9035","title":"Fixture text","state":{"name":"In Progress","type":"started"}}},{"id":"00000000-0000-4000-8000-000000000092","type":"related","issue":{"id":"00000000-0000-4000-8000-000000000093","identifier":"KEN-9036","title":"Fixture text","state":{"name":"In Progress","type":"started"}}}]}}}}}
+  ]
+}

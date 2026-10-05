@@ -29,7 +29,7 @@ A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: 
 
 ### Reading a Full Subtree
 
-`cache issues children [ISSUE_ID] --recursive` returns three levels, flattened, every row carrying its own `depth`. A deeper tree is not truncated to one branch: every row at the maximum depth returned is a frontier, and a branching tree has as many frontier rows as it has branches.
+`issues children [ISSUE_ID] --recursive` returns three levels, flattened, every row carrying its own `depth`. A deeper tree is not truncated to one branch: every row at the maximum depth returned is a frontier, and a branching tree has as many frontier rows as it has branches.
 
 Repeat the call rooted at **every** frontier row, deduplicate identifiers across calls, and stop when a round returns nothing new. Continuing from one frontier row drops every subtree under the rest.
 

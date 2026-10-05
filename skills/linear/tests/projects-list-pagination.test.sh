@@ -60,8 +60,8 @@ case "$query" in
             targetDate: null,
             startDate: null,
             lead: null,
-            teams: { nodes: [] },
-            labels: { nodes: [] },
+            teams: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []},
+            labels: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []},
             url: ("https://linear.app/test/project/proj-" + (tostring)),
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z"

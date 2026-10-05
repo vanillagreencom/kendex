@@ -64,13 +64,13 @@ RID="1750000000-99"
 FW="$(new_repo fix-wt)"
 FIX_HEAD="$(git -C "$FW" rev-parse HEAD)"
 init_growth_state "$STATE" "$FW" issue-776 7-7 100
-mkdir -p "$FW/.cache/linear" "$TMP_ROOT/bin"
+mkdir -p "$FW/.cache/tracker-fixture" "$TMP_ROOT/bin"
 printf '[{"identifier":"issue-776","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' \
-  > "$FW/.cache/linear/issues.json"
+  > "$FW/.cache/tracker-fixture/issues.json"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -249,9 +249,9 @@ A_MOVED="$(git -C "$AW" checkout -q --detach main && mkdir -p "$AW/src" && git -
 git -C "$AW" checkout -q main
 # A fix round on AW, delegated at main, whose fix is a non-Apple path.
 init_growth_state "$STATE" "$AW" issue-777 31-31
-mkdir -p "$AW/.cache/linear"
+mkdir -p "$AW/.cache/tracker-fixture"
 printf '[{"identifier":"issue-777","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' \
-  > "$AW/.cache/linear/issues.json"
+  > "$AW/.cache/tracker-fixture/issues.json"
 growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$AW" --issue issue-777 --round-id 31-31 \
   --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 VRUN_AFIX="$(round_run_dir "$TMP_ROOT/validate-run-afix" "$AW" issue-777 31-31)"
@@ -430,8 +430,8 @@ git -C "$BW" add feature.txt
 git -C "$BW" commit -q -m implementation
 ROUND_BASE="$(git -C "$BW" rev-parse HEAD)"
 init_growth_state "$STATE" "$BW" issue-776 21-21
-mkdir -p "$BW/.cache/linear"
-cp "$FW/.cache/linear/issues.json" "$BW/.cache/linear/issues.json"
+mkdir -p "$BW/.cache/tracker-fixture"
+cp "$FW/.cache/tracker-fixture/issues.json" "$BW/.cache/tracker-fixture/issues.json"
 env ORCH_STATE_DIR="$BW/tmp" "$ROUND_WRITE" --worktree "$BW" --issue issue-776 --round-id 21-21 \
   --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 VRUN_BOUND="$(round_run_dir "$TMP_ROOT/validate-run-bound" "$BW" issue-776 21-21 range)"

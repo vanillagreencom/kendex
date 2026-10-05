@@ -28,11 +28,14 @@ Resources:
   cycles          Cycle operations (list, create, update)
   statuses        Workflow state operations (list, get)
   documents       Document operations (list, get)
+  attachments     Files an issue references, read live (list), and one download (fetch)
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
   auth-mint       Mint app token JSON from the client pair without writing files
-  sync            Sync Linear data to local cache
-  cache           Query local cache (issues, projects, cycles, initiatives, comments, labels)
+
+Every read goes to Linear's API as it runs; no local copy is kept. The
+removed cache verb refuses naming the live command to run instead, and the
+removed sync verb refuses naming none, since every read is live.
 
 Examples:
   # Issues with parent/sub-issues and relations
@@ -68,8 +71,11 @@ Environment:
                   when no app token is set. Tokens use the fixed scope
                   read,write,issues:create,comments:create,timeSchedule:write,
                   initiative:read,initiative:write,customer:read,customer:write.
-                  auth-mint prints access_token and expires_at without caching;
-                  the pair's API path caches and renews its own token.
+                  auth-mint prints access_token and expires_at and writes no
+                  file; the pair's API path keeps its token until it expires in
+                  kendex/linear-oauth/ under XDG_CACHE_HOME, else ~/.cache,
+                  or, when this user cannot write there, in
+                  kendex-linear-oauth-<uid>/ under TMPDIR or /tmp.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins
                   over a plain environment export (auth-check warns when they
                   differ). LINEAR_API_KEY_OVERRIDE overrides personal-key
@@ -106,16 +112,51 @@ case "$resource" in
     cycle) resource="cycles" ;;
     status) resource="statuses" ;;
     document) resource="documents" ;;
+    attachment) resource="attachments" ;;
 esac
 
 case "$resource" in
+    # The local store is gone. Each removed verb answers with one line naming
+    # what to run instead and exits nonzero, so a caller still running it fails
+    # rather than reading a store that no longer exists.
     sync)
-        exec "$BASH" "$SCRIPT_DIR/commands/sync.sh" "$@"
+        echo "linear: removed=sync replacement=none: every read goes to the live API, so drop the sync step" >&2
+        exit 1
         ;;
     cache)
-        exec "$BASH" "$SCRIPT_DIR/commands/cache-query.sh" "$@"
+        case "${1:-}" in
+        "" | -*) echo "linear: removed=cache replacement=linear.sh <resource> <action>: the live read of the same resource; a whole-set list takes --max" >&2 ;;
+        status) echo "linear: removed=cache replacement=linear.sh auth-check: no local store has a status" >&2 ;;
+        *)
+            # The live read that answers what the cache verb did: a store list
+            # of projects, labels or initiatives held the whole set, so its
+            # live read takes --max; the store's cycle types have live names.
+            cache_args=("$@")
+            if [[ "$1:${2:-}" == issues:list-comments ]]; then
+                cache_args=(comments list "${@:3}")
+            fi
+            if [[ "${2:-}" == list ]]; then
+                cache_bounded=false
+                for ((i = 2; i < ${#cache_args[@]}; i++)); do
+                    case "${cache_args[i]}" in
+                    --limit | --max) cache_bounded=true ;;
+                    past | upcoming)
+                        if [[ "${cache_args[i - 1]}" == --type ]]; then
+                            if [[ "${cache_args[i]}" == past ]]; then cache_args[i]=previous; else cache_args[i]=next; fi
+                        fi
+                        ;;
+                    esac
+                done
+                case "$1" in
+                projects | labels | initiatives) [[ "$cache_bounded" == true ]] || cache_args+=(--max) ;;
+                esac
+            fi
+            echo "linear: removed=cache replacement=linear.sh ${cache_args[*]}" >&2
+            ;;
+        esac
+        exit 1
         ;;
-    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|session-status|auth-check|auth-mint)
+    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|attachments|session-status|auth-check|auth-mint)
         script="$SCRIPT_DIR/commands/${resource}.sh"
         if [ -f "$script" ]; then
             exec "$BASH" "$script" "$@"

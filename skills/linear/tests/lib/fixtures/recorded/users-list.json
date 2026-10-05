@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["users", "list", "--limit", "3", "--format=raw"],
+  "root_index": 0,
+  "root_path": "users",
+  "output": ".users.nodes",
+  "expected_rows": 3,
+  "requests": [
+    {"operation":"ListUsers","response":{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000372","name":"Fixture Person","email":"fixture@example.invalid","displayName":"fixture","active":true,"admin":false,"createdAt":"2026-09-30T09:59:56.600Z"},{"id":"00000000-0000-4000-8000-000000000379","name":"Fixture Person","email":"fixture@example.invalid","displayName":"fixture","active":true,"admin":false,"createdAt":"2026-03-24T12:56:29.311Z"},{"id":"00000000-0000-4000-8000-000000000380","name":"Fixture Person","email":"fixture@example.invalid","displayName":"fixture","active":true,"admin":false,"createdAt":"2026-03-12T18:48:21.187Z"}]}}}}
+  ]
+}

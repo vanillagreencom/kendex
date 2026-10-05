@@ -1,0 +1,12 @@
+{
+  "provenance": "Derived: the application token has no initiative:read scope, so no initiative was recorded. The rows carry exactly the fields the command's query selects, in the shape of the recorded projects replies, and every value is a fixture value.",
+  "args": ["initiatives", "get", "00000000-0000-4000-8000-000000000941", "--format=raw"],
+  "root_index": 0,
+  "root_path": "initiative.projects",
+  "output": ".initiative.projects.nodes",
+  "expected_rows": 2,
+  "derived_rows": "One initiative holding two projects.",
+  "requests": [
+    {"operation":"GetInitiative","response":{"data":{"initiative":{"id":"00000000-0000-4000-8000-000000000941","name":"Fixture initiative","description":"Fixture text","content":null,"status":"Active","health":null,"healthUpdatedAt":null,"targetDate":null,"url":"https://linear.app/fixture","owner":{"name":"Fixture Person","email":"fixture@example.invalid"},"lastUpdate":null,"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000951","name":"Fixture project","state":"started","progress":0.5,"health":null},{"id":"00000000-0000-4000-8000-000000000952","name":"Fixture project","state":"started","progress":0.5,"health":null}]},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"}}}}
+  ]
+}

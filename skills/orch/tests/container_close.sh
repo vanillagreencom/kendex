@@ -60,25 +60,18 @@ root="$FAKE_LINEAR_ROOT"
 resource="$1"; action="$2"; shift 2
 printf '%s:%s\n' "$resource" "$action" >> "$root/linear.calls"
 case "$resource:$action" in
-  sync:--reconcile) exit 0 ;;
-  cache:issues)
-    sub="$1"; shift
-    case "$sub" in
-      get)
-        state="$(cat "$root/parent.state")"; type=started
-        [[ "$state" == Done ]] && type=completed
-        printf '{"id":"PARENT-1","title":"Container","state":"%s","state_type":"%s"}\n' "$state" "$type"
-        ;;
-      children)
-        shift; pending=false; format=safe
-        for arg in "$@"; do [[ "$arg" == --pending ]] && pending=true; [[ "$arg" == --format=ids ]] && format=ids; done
-        if $pending; then
-          if [[ "$format" == ids ]]; then jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' "$root/children.json"
-          else jq '[.[] | select(.state_type != "completed" and .state_type != "canceled")]' "$root/children.json"; fi
-        else jq 'map(.depth //= 0)' "$root/children.json"; fi
-        ;;
-      *) exit 2 ;;
-    esac
+  issues:get)
+    state="$(cat "$root/parent.state")"; type=started
+    [[ "$state" == Done ]] && type=completed
+    printf '{"id":"PARENT-1","title":"Container","state":"%s","state_type":"%s"}\n' "$state" "$type"
+    ;;
+  issues:children)
+    shift; pending=false; format=safe
+    for arg in "$@"; do [[ "$arg" == --pending ]] && pending=true; [[ "$arg" == --format=ids ]] && format=ids; done
+    if $pending; then
+      if [[ "$format" == ids ]]; then jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' "$root/children.json"
+      else jq '[.[] | select(.state_type != "completed" and .state_type != "canceled")]' "$root/children.json"; fi
+    else jq 'map(.depth //= 0)' "$root/children.json"; fi
     ;;
   issues:validate-completion)
     mode="$(cat "$root/validation.mode")"; has_summary=false

@@ -6,7 +6,7 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 {
   "feature": "Feature name",
   "research_path": "docs/plans/feature-plan.md",
-  "research_read_path": ".cache/linear/attachments/files/hash_feature-plan.md",
+  "research_read_path": "tmp/feature-plan.md",
   "research_source_issue": "PROJ-123",
   "spec_path": "docs/plans/feature-plan.md",
   "origin_issue": {

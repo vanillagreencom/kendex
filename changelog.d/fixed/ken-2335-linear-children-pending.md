@@ -1,0 +1,1 @@
+- `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.

@@ -20,7 +20,8 @@ Actions:
 List Options:
   --team <ref>          Team key or name (default: $LINEAR_TEAM; unset = all teams)
   --type <type>         Filter: current, previous, next, or all (default: all)
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Create Options:
   --name <text>         Cycle name (optional, defaults to "Cycle N")
@@ -49,7 +50,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 list_cycles() {
     local team=""
     local cycle_type=""
-    local first=75
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -63,8 +64,12 @@ list_cycles() {
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
@@ -77,15 +82,8 @@ list_cycles() {
     linear_set_team_target "$team"
     team="$LINEAR_TEAM_TARGET"
 
-    # No configured team means no team filter, never a guessed one.
     local filter_parts=()
-    if [ -n "$team" ]; then
-        local team_id
-        team_id=$(resolve_team_id "$team") || return 1
-        filter_parts+=("\"team\": {\"id\": {\"eq\": \"$team_id\"}}")
-    fi
-
-    # Add cycle type filter
+    # The type filter refuses before any request.
     case "$cycle_type" in
         current)
             filter_parts+=("\"isActive\": {\"eq\": true}")
@@ -96,7 +94,19 @@ list_cycles() {
         next)
             filter_parts+=("\"isNext\": {\"eq\": true}")
             ;;
+        all | "")
+            ;;
+        *)
+            jq -cn --arg v "$cycle_type" '{error: ("--type must be current, previous, next or all, got: " + $v)}' >&2
+            return 1
+            ;;
     esac
+    # No configured team means no team filter, never a guessed one.
+    if [ -n "$team" ]; then
+        local team_id
+        team_id=$(resolve_team_id "$team") || return 1
+        filter_parts+=("\"team\": {\"id\": {\"eq\": \"$team_id\"}}")
+    fi
 
     local filter_json="{}"
     if [ ${#filter_parts[@]} -gt 0 ]; then
@@ -104,8 +114,9 @@ list_cycles() {
     fi
 
     local query='
-    query ListCycles($filter: CycleFilter, $first: Int) {
-        cycles(filter: $filter, first: $first) {
+    query ListCycles($filter: CycleFilter, $first: Int, $after: String) {
+        cycles(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 number
@@ -120,14 +131,14 @@ list_cycles() {
         }
     }'
 
-    local variables="{\"filter\": $filter_json, \"first\": $first}"
+    local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" cycles) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_cycles_list "$result"

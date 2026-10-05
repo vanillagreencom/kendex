@@ -28,36 +28,9 @@ CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
 ERR_FILE="$TMP_ROOT/stderr.txt"
 
 # The fake curl mirrors the script's two transports: GraphQL POSTs and the
-# storage PUT arrive as curl-config-on-stdin (-K -). Asset downloads use the
-# same transport and pass their output and header paths as direct arguments.
+# storage PUT arrive as curl-config-on-stdin (-K -).
 cat >"$PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
-has_config=0
-for a in "$@"; do [ "$a" = "-K" ] && has_config=1; done
-if [[ "$has_config" = "0" || "$*" == *' -D '* ]]; then
-  if [[ "$has_config" = "1" ]]; then cat >/dev/null; fi
-  if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "fail" ]; then
-    printf '500'
-    exit 0
-  fi
-  if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "1" ]; then
-    out="" headers=""
-    while (($#)); do
-      case "$1" in
-      -o) out="$2"; shift 2 ;;
-      -D) headers="$2"; shift 2 ;;
-      *) shift ;;
-      esac
-    done
-    printf 'research findings\n' >"$out"
-    printf 'HTTP/2 200\n' >"$headers"
-    printf '200'
-    exit 0
-  fi
-  # background attachment-cache download — out of scope until the sync case
-  printf '404'
-  exit 0
-fi
 config="$(cat)"
 
 if grep -q '^upload-file = ' <<<"$config"; then
@@ -91,17 +64,17 @@ case "$query" in
   fi
   ;;
 *"SyncIssueAttachments"*)
-  printf '%s' '{"data":{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}}]}}}___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
   name="$(jq -r '.variables.name // empty' <<<"$payload")"
   if [ "$name" = "agent:ghost" ]; then
-    printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
   fi
   ;;
 *"issueCreate(input:"*)
@@ -110,7 +83,7 @@ case "$query" in
     printf '%s' '{"data":{"issueCreate":{"success":false,"issue":null}}}___HTTP_CODE___200'
     exit 0
   fi
-  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"data":{}}___HTTP_CODE___200'
@@ -333,173 +306,3 @@ printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
 run_linear issues create --title "Bare" --attach
 assert_ne "a bare --attach fails" "$RC" 0
 assert_contains "a bare --attach gives a structured usage error" "$ERR" "requires a path"
-
-echo "=== sync downloads issue attachment objects and keeps their repo paths ==="
-
-export CACHE_PROJECT_ROOT="$PROJECT" LINEAR_API_KEY=test-token
-export FAKE_ASSET_DOWNLOAD=1 CURL_LOG
-export PATH="$PROJECT/bin:$PATH"
-source "$SKILL_DIR/scripts/lib/attachments.sh"
-mkdir -p "$PROJECT/.cache/linear"
-attach_ensure_dir
-printf '[{"identifier":"TEAM-1","description":""}]' >"$PROJECT/.cache/linear/issues.json"
-printf '{}' >"$ATTACH_MANIFEST"
-GRAPHQL_MODE=objects
-graphql_query() {
-  case "$GRAPHQL_MODE" in
-  objects)
-    printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}},{"url":"https://uploads.linear.app/asset/other.md","title":"docs/research/OTHER/findings.md","issue":{"identifier":"OTHER"}}]}}'
-    ;;
-  empty)
-    printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
-    ;;
-  large)
-    local page
-    read -r page <"$LARGE_COUNTER"
-    page=$((page + 1))
-    printf '%s\n' "$page" >"$LARGE_COUNTER"
-    sed -n "${page}p" "$LARGE_PAGES_FILE"
-    ;;
-  esac
-}
-linear_authorization() { printf '%s' "$LINEAR_API_KEY"; }
-curl_config_quote() { printf '%s' "$1" | jq -Rs .; }
-
-count=$(attach_sync --quiet)
-assert_eq "an issue attachment object downloads without a description link" "$count" 1
-assert "an issue attachment keeps its exact repo path in cache" \
-  jq -e '[.[] | select(.source == "TEAM-1" and .filename == "findings.md" and
-    .repo_path == "docs/research/TEAM-1/findings.md" and (.local_path | endswith("_findings.md")))] | length == 1' \
-  "$ATTACH_MANIFEST"
-cached=$(attach_get_for_issue TEAM-1)
-assert_eq "the issue lookup returns its downloaded attachment" \
-  "$(jq -r '.[0].repo_path' <<<"$cached")" 'docs/research/TEAM-1/findings.md'
-assert_eq "an unrelated issue attachment stays outside this cache" \
-  "$(jq 'length' "$ATTACH_MANIFEST")" 1
-cached_path=$(jq -r '.[0].local_path' <<<"$cached")
-assert_eq "re-uploading a cached file retains its source repo path" \
-  "$(attach_issue_title "$cached_path")" 'docs/research/TEAM-1/findings.md'
-
-# A markdown URL may have been downloaded before the attachment object was
-# fetched. The object must still supply the cited path on the next sync.
-jq 'to_entries | map({key, value: (.value | del(.repo_path) | .context = "description")}) | from_entries' \
-  "$ATTACH_MANIFEST" >"$ATTACH_MANIFEST.tmp"
-mv "$ATTACH_MANIFEST.tmp" "$ATTACH_MANIFEST"
-count=$(attach_sync --quiet)
-assert_eq "a previously downloaded URL needs no second download" "$count" 0
-assert_eq "an existing download gains the attachment repo path" \
-  "$(jq -r '.[].repo_path' "$ATTACH_MANIFEST")" 'docs/research/TEAM-1/findings.md'
-
-LINKED_ROOT="$TMP_ROOT/linked-worktree"
-mkdir -p "$LINKED_ROOT"
-ln -s "$PROJECT/.cache" "$LINKED_ROOT/.cache"
-CACHE_PROJECT_ROOT="$LINKED_ROOT"
-source "$SKILL_DIR/scripts/lib/attachments.sh"
-printf '{}' >"$ATTACH_MANIFEST"
-count=$(attach_sync --quiet)
-assert_eq "the shared cache downloads through the linked worktree path" "$count" 1
-cached_path=$(jq -r '.[].local_path' "$ATTACH_MANIFEST")
-export LINEAR_CACHE_ROOT="$LINKED_ROOT"
-run_linear issues create --title "Reattach cached research" --attach "$cached_path"
-assert_eq "a cached file reattachment exits zero" "$RC" 0
-assert_log "a linked worktree cached file retains its repo path on reattachment" \
-  'any(.[]; (.query? // "" | contains("attachmentCreate"))
-    and .variables.input.title == "docs/research/TEAM-1/findings.md")'
-
-printf '{"synced_at":"2026-08-08T00:00:00Z"}' >"$PROJECT/.cache/linear/meta.json"
-printf '{}' >"$ATTACH_MANIFEST"
-run_linear cache attachments fetch TEAM-1
-assert_eq "a per-issue attachment fetch succeeds when the file downloads" "$RC" 0
-assert_jq "a per-issue attachment fetch reports its download" "$OUT" \
-  '.downloaded == 1 and .total_urls == 1'
-
-printf '{}' >"$ATTACH_MANIFEST"
-rm -f -- "$cached_path"
-export FAKE_ASSET_DOWNLOAD=fail
-failed_rc=0
-failed_out=$(attach_sync --quiet 2>"$ERR_FILE") || failed_rc=$?
-assert_ne "a failed attachment sync exits nonzero" "$failed_rc" 0
-assert_file_contains "a failed attachment sync reports its failure count" \
-  "$ERR_FILE" 'download_failed=1'
-assert_eq "a failed attachment sync prints no success count" "$failed_out" ''
-
-run_linear cache attachments fetch TEAM-1
-assert_ne "a failed per-issue attachment fetch exits nonzero" "$RC" 0
-assert_contains "a failed per-issue attachment fetch reports its failure count" \
-  "$ERR" 'download_failed=1'
-run_linear cache attachments fetch
-assert_ne "a failed all-issue attachment fetch exits nonzero" "$RC" 0
-assert_contains "a failed all-issue attachment fetch reports its failure count" \
-  "$ERR" 'download_failed=1'
-
-sync_rc=0
-meta_before=$(cat "$PROJECT/.cache/linear/meta.json")
-(
-  cd "$PROJECT"
-  source "$SKILL_DIR/scripts/commands/sync.sh"
-  sync_issues() { printf '%s' '[{"id":"issue-uuid","identifier":"TEAM-1","title":"Research","description":"","trashed":false,"archivedAt":null}]'; }
-  sync_comments() { printf '%s' '[]'; }
-  write_comments() { :; }
-  sync_projects() { printf '%s' '[]'; }
-  sync_cycles() { printf '%s' '[]'; }
-  sync_initiatives() { printf '%s' '[]'; }
-  sync_labels() { printf '%s' '[]'; }
-  graphql_query() { printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}}]}}'; }
-  main --full
-) >"$TMP_ROOT/sync-out" 2>"$ERR_FILE" || sync_rc=$?
-assert_ne "a failed project sync exits nonzero" "$sync_rc" 0
-assert_eq "a failed project sync leaves the cache timestamp unchanged" \
-  "$(cat "$PROJECT/.cache/linear/meta.json")" "$meta_before"
-export FAKE_ASSET_DOWNLOAD=1
-
-GRAPHQL_MODE=empty
-printf '{}' >"$ATTACH_MANIFEST"
-count=$(attach_sync --quiet)
-assert_eq "a consumer with no attachments keeps an empty cache" "$count" 0
-assert_eq "an empty attachment pull records no issue attachment" \
-  "$(jq 'length' "$ATTACH_MANIFEST")" 0
-
-LARGE_PAGES_FILE="$TMP_ROOT/large-attachment-pages.jsonl"
-LARGE_COUNTER="$TMP_ROOT/large-attachment-page"
-jq -n '[range(0; 30) | {identifier: ("TEAM-" + tostring), description: ""}]' \
-  >"$PROJECT/.cache/linear/issues.json"
-jq -cn '
-  [range(0; 1500) as $n | {url: ("https://uploads.linear.app/asset/research-" + ($n | tostring) + ".md"),
-    title: ("docs/research/TEAM-" + (($n / 50 | floor) | tostring) + "/research-" + ($n | tostring) + ".md"),
-    issue: {identifier: ("TEAM-" + (($n / 50 | floor) | tostring))}}] as $items
-  | range(0; 6) as $page
-  | {attachments: {pageInfo: {hasNextPage: ($page < 5), endCursor: ("p" + ($page | tostring))},
-      nodes: $items[($page * 250):(($page + 1) * 250)]}}
-' >"$LARGE_PAGES_FILE"
-GRAPHQL_MODE=large
-printf '0\n' >"$LARGE_COUNTER"
-large_rc=0
-large_urls=$(attach_issue_object_urls 2>"$ERR_FILE") || large_rc=$?
-assert_eq "a large attachment page series extracts all objects" "$large_rc" 0
-assert_eq "the large attachment query keeps every page" \
-  "$(jq 'length' <<<"$large_urls")" 1500
-
-printf '0\n' >"$LARGE_COUNTER"
-large_rc=0
-large_urls=$(attach_extract_all_urls 2>"$ERR_FILE") || large_rc=$?
-assert_eq "a large attachment set merges with cached text" "$large_rc" 0
-assert_eq "the large attachment merge keeps every issue object" \
-  "$(jq 'length' <<<"$large_urls")" 1500
-
-GRAPHQL_MODE=empty
-angle_issue_url='https://uploads.linear.app/asset/angle-issue.md'
-angle_comment_url='https://uploads.linear.app/asset/angle-comment.md'
-assert_eq "an angle markdown URL excludes its closing bracket" \
-  "$(attach_extract_urls "(<$angle_issue_url>)")" "$angle_issue_url"
-mkdir -p "$PROJECT/.cache/linear/comments"
-jq -n --arg url "$angle_issue_url" \
-  '[{identifier: "TEAM-1", description: ("(<" + $url + ">)")}]' \
-  >"$PROJECT/.cache/linear/issues.json"
-jq -n --arg url "$angle_comment_url" \
-  '[{body: ("(<" + $url + ">)")}]' \
-  >"$PROJECT/.cache/linear/comments/TEAM-1.json"
-angle_urls=$(attach_extract_all_urls)
-assert_eq "an angle markdown issue URL excludes its closing bracket" \
-  "$(jq -r '[.[] | select(.context == "description") | .url] | first' <<<"$angle_urls")" "$angle_issue_url"
-assert_eq "an angle markdown comment URL excludes its closing bracket" \
-  "$(jq -r '[.[] | select(.context == "comment") | .url] | first' <<<"$angle_urls")" "$angle_comment_url"

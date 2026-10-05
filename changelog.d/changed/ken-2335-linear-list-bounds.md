@@ -1,0 +1,1 @@
+- Every bounded `linear.sh` list returns 75 rows by default, refuses a `--limit` that is not a positive whole number, and prints `linear-list: truncated` on stderr when rows were left unread.

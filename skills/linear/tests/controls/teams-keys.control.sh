@@ -2,5 +2,5 @@
 # `teams keys` wire contract consumed by Slack.
 control_expect 'team keys supplies the workspace and complete key array'
 control_replace scripts/commands/teams.sh 1 \
-    '    result=$(graphql_query '\''query TeamKeys { organization { urlKey teams { nodes { key } } } }'\'' '\''{}'\'') || return $?' \
-    '    result=$(graphql_query '\''query TeamKeys { organization { teams { nodes { key } } } }'\'' '\''{}'\'') || return $?'
+    '    result=$(graphql_query '\''query TeamKeys { organization { urlKey teams { pageInfo { hasNextPage endCursor } nodes { key } } } }'\'' '\''{}'\'') || return $?' \
+    '    result=$(graphql_query '\''query TeamKeys { organization { teams { pageInfo { hasNextPage endCursor } nodes { key } } } }'\'' '\''{}'\'') || return $?'

@@ -5,8 +5,9 @@
 # never re-read. READ-ONLY: prints findings, mutates nothing; the caller
 # decides what to fix.
 #
-# Three checks over the linear skill's cache (offline; sync first for
-# freshness):
+# Three checks over every issue of the project's LINEAR_TEAM, or of every team
+# the Linear API key reaches where none is set, read live through the linear
+# skill (`issues list --max [--team]`, archived and trashed issues excluded):
 #   container-parked  a parent in a non-terminal state whose non-canceled
 #                     children are all Done — the close that only merge-pr § 5
 #                     performs never ran
@@ -55,8 +56,9 @@ message() {
     not-repository) printf 'The command must run inside a Git repository.\n' ;;
     invalid-threshold) printf 'The stale threshold must be a non-negative integer.\n' ;;
     missing-command) printf 'Install the required command.\n' ;;
-    missing-cache) printf 'Run linear.sh sync to create the issue cache.\n' ;;
-    invalid-cache) printf 'The cache must contain issue rows with identifier, state, and a timestamp on started rows.\n' ;;
+    missing-linear) printf 'The linear skill must be installed beside this one.\n' ;;
+    collection-failed) printf 'The live issue read failed; nothing was scanned.\n' ;;
+    invalid-inventory) printf 'The issue read must hold issue rows with identifier, state, and a timestamp on started rows.\n' ;;
     temporary-directory) printf 'The scratch directory could not be created.\n' ;;
     scan-failed) printf 'The issue scan failed.\n' ;;
     clock-failed) printf 'The current time could not be read.\n' ;;
@@ -88,8 +90,15 @@ GH_CLI="${RECONCILE_GH_CLI:-gh}"
 
 command -v jq >/dev/null 2>&1 || config_error missing-command command=jq
 
-CACHE="$REPO_ROOT/.cache/linear/issues.json"
-[ -f "$CACHE" ] || config_error missing-cache "path=$CACHE"
+LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+[ -x "$LINEAR" ] || config_error missing-linear "path=$LINEAR"
+TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
+trap 'rm -rf -- "${TMPD:?}"' EXIT
+# A failed or partial read refuses: the linear skill reads every page or
+# fails, and a scan of part of the tracker would report it clean.
+ISSUES="$TMPD/issues.json"
+"$LINEAR" issues list --max ${LINEAR_TEAM:+--team "$LINEAR_TEAM"} --format=raw >"$TMPD/raw.json" || config_error collection-failed source=linear
+jq -e '.issues.nodes | arrays' "$TMPD/raw.json" >"$ISSUES" 2>/dev/null || config_error invalid-inventory source=linear
 # Structural validation up front: an array of rows missing the fields the
 # scans key on would otherwise be skipped silently and report clean.
 jq -e 'type == "array" and all(.[];
@@ -98,8 +107,8 @@ jq -e 'type == "array" and all(.[];
     and (.state | type == "object")
     and (.state.name | type == "string")
     and (.state.type | type == "string")
-    and (.state.type != "started" or ((.updatedAt | type == "string") and (.updatedAt | test("\\S")))))' "$CACHE" >/dev/null 2>&1 \
-  || config_error invalid-cache "path=$CACHE"
+    and (.state.type != "started" or ((.updatedAt | type == "string") and (.updatedAt | test("\\S")))))' "$ISSUES" >/dev/null 2>&1 \
+  || config_error invalid-inventory source=linear
 
 findings=0
 note() { findings=$((findings + 1)); message "$@"; }
@@ -107,8 +116,6 @@ note() { findings=$((findings + 1)); message "$@"; }
 # --- container-parked --------------------------------------------------------
 # Non-terminal parents whose non-canceled children (by parent identifier) are
 # all completed. Trashed/archived rows never count as children or parents.
-TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
-trap 'rm -rf -- "$TMPD"' EXIT
 
 jq -r '
   map(select((.trashed // false) == false and .archivedAt == null)) as $live
@@ -125,7 +132,7 @@ jq -r '
   # Done children is that contract working, not a parked container.
   | select($parent.title | test("\\(one PR\\)"; "i") | not)
   | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
-' "$CACHE" >"$TMPD/containers" || config_error scan-failed scan=container
+' "$ISSUES" >"$TMPD/containers" || config_error scan-failed scan=container
 while IFS=$'\t' read -r pid ptitle pstate; do
   [ -n "$pid" ] || continue
   note container-parked "issue=$pid" "state=$pstate" "title=$ptitle"
@@ -137,7 +144,7 @@ jq -r '
   .[] | select((.trashed // false) == false and .archivedAt == null)
   | select(.state.type == "started")
   | [.identifier, .title, .state.name, .updatedAt] | @tsv
-' "$CACHE" >"$TMPD/started" || config_error scan-failed scan=started
+' "$ISSUES" >"$TMPD/started" || config_error scan-failed scan=started
 while IFS=$'\t' read -r iid ititle istate iupdated; do
   [ -n "$iid" ] || continue
   updated_epoch="$(date -u -d "$iupdated" +%s 2>/dev/null)" || updated_epoch=""
@@ -182,7 +189,7 @@ jq -r '
   | select(.state.type == "completed")
   | select((.description // "") | test("- \\[ \\]"))
   | [.identifier, .title] | @tsv
-' "$CACHE" >"$TMPD/done" || config_error scan-failed scan=done
+' "$ISSUES" >"$TMPD/done" || config_error scan-failed scan=done
 while IFS=$'\t' read -r iid ititle; do
   [ -n "$iid" ] || continue
   note done-unchecked "issue=$iid" "title=$ititle"

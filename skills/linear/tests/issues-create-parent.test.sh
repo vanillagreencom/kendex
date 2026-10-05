@@ -9,11 +9,10 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
-mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
-# throwaway root — without this, cache writes from `issues create` land in
-# the real project's `.cache/linear`.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
@@ -27,13 +26,13 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"projects(filter:"*)
-  printf '%s' '{"data":{"projects":{"nodes":[{"id":"project-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"project-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
   if [[ "$(jq -r '.id' <<<"$variables")" != "CC-557" ]]; then
@@ -52,10 +51,10 @@ case "$query" in
     printf '%s' '{"data":{"issueCreate":{"success":true,"issue":null}}}___HTTP_CODE___200'
     ;;
   missing-child-id)
-    printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
     ;;
   *)
-    printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
     ;;
   esac
   ;;
@@ -69,10 +68,10 @@ case "$query" in
     printf '%s' '{"errors":[{"message":"update failed"}]}___HTTP_CODE___200'
     ;;
   repair-unverified)
-    printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
     ;;
   *)
-    printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":{"id":"parent-uuid","identifier":"CC-557","title":"parent"},"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-558","title":"child","description":"c","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-uuid","name":"X"},"projectMilestone":null,"cycle":null,"parent":{"id":"parent-uuid","identifier":"CC-557","title":"parent"},"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-558","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
     ;;
   esac
   ;;

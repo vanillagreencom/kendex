@@ -11,8 +11,8 @@ control_replace scripts/commands/issues.sh 1 \
 # does not hold is matched anyway.
 control_expect "an unmatched name reports a miss, not an API failure"
 control_replace scripts/lib/common.sh 1 \
-    "    local query='query GetMilestone(\$name: String!, \$projectId: ID!) { projectMilestones(filter: {name: {eq: \$name}, project: {id: {eq: \$projectId}}}) { nodes { id } } }'" \
-    "    local query='query GetMilestone(\$name: String!) { projectMilestones(filter: {name: {eq: \$name}}) { nodes { id } } }'"
+    "    local query='query GetMilestone(\$name: String!, \$projectId: ID!, \$after: String) { projectMilestones(filter: {name: {eq: \$name}, project: {id: {eq: \$projectId}}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id } } }'" \
+    "    local query='query GetMilestone(\$name: String!, \$after: String) { projectMilestones(filter: {name: {eq: \$name}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"
 
 # Take the first match instead of the whole set, so a second milestone of that
 # name is picked from rather than refused.
@@ -25,9 +25,9 @@ control_replace scripts/lib/common.sh 1 \
 # milestone lookup fails in this suite, so this is the unchecked exit status
 # resolve_milestone_id shipped with: an outage reported as a missing milestone.
 control_expect "a failed lookup reports the API failure, not a miss"
-control_replace scripts/lib/common.sh 3 \
-    '    if ! result=$(graphql_query "$query" "$vars"); then' \
-    '    if ! result=$(graphql_query "$query" "$vars" || true); then'
+control_replace scripts/lib/common.sh 1 \
+    '    if ! result=$(graphql_pages "$query" "$vars" projectMilestones); then' \
+    '    if ! result=$(graphql_pages "$query" "$vars" projectMilestones || true); then'
 
 # Resolve a name with no project rather than refusing it.
 control_expect "a milestone name with no project to scope it is refused before any lookup"

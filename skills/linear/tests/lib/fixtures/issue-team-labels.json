@@ -1,6 +1,6 @@
 {
   "issueLabels": {
-    "nodes": [
+    "pageInfo": {"hasNextPage":false,"endCursor":null},"nodes": [
       {
         "id": "469598a4-6a78-4ff9-be12-25b92244b2c2",
         "name": "agent:runtime",

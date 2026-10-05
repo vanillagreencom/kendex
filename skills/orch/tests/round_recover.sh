@@ -29,12 +29,12 @@ unset DEV_VALIDATE_RANGE_CMD
 export ORCH_STATE_DIR
 
 # dev-round-write measures a fix round's branch against the issue's expected
-# delta, read here through a gh stub over each worktree's cached issue body.
+# delta, read here through a gh stub over each worktree's fixture issue body.
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -96,11 +96,11 @@ new_round() { # NAME ISSUE RID EXIT
 new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT] [SOURCE]
   local cut=() source=() allowance="100 lines, 100 test lines"
   new_round "$1" "issue-$2" "$3" "$4"
-  mkdir -p "$WT/.cache/linear"
+  mkdir -p "$WT/.cache/tracker-fixture"
   [[ "${6:-no}" == yes ]] && cut=(--cut) && allowance="1 line, 1 test line"
   [[ -z "${7:-}" ]] || source=(--source "$7")
   printf '[{"identifier":"issue-%s","description":"**Expected delta**: %s"}]\n' "$2" "$allowance" \
-    > "$WT/.cache/linear/issues.json"
+    > "$WT/.cache/tracker-fixture/issues.json"
   "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} ${source[@]+"${source[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
   # The record's delegation time is the state's, fifty seconds ago, so the

@@ -8,7 +8,7 @@ Planning workflows for teams that track work in Linear or GitHub. They turn back
 kendex add vanillagreencom/kendex --skill project-management
 ```
 
-Requires Git and jq. kendex installs orch, linear and github. Sync the Linear cache before planning Linear work.
+Requires Git and jq. kendex installs orch, linear and github. Linear reads go to the live API.
 
 ## Features
 

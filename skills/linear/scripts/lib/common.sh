@@ -31,8 +31,8 @@ linear_require_supported_bash || exit $?
 # a path that is not a directory, and under `set -e` a bare assignment carries
 # either status out before any guard below can print. Every subcommand died at
 # a bare 128 with nothing on stdout or stderr. Everything past this line — the
-# cache, the attachment store, the project settings and .env.local — is read
-# from the repository, so the resolution refuses rather than degrading.
+# project settings, .env.local and the label taxonomy — is read from the
+# repository, so the resolution refuses rather than degrading.
 if ! PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)" \
     || ! PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"; then
     jq -cn --arg cwd "$PWD" \
@@ -76,7 +76,15 @@ _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 source "$_LIB_DIR/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 
-# Seconds before the first retry of a rate-limited or failed GraphQL call;
+# The local store is gone, and a root setting left in the environment or a
+# project file would otherwise read as if it still redirected something.
+if [[ -n "${LINEAR_CACHE_ROOT+set}" ]]; then
+    printf '%s\n' 'linear-setting: retired=LINEAR_CACHE_ROOT' >&2
+    printf '%s\n' 'Remove LINEAR_CACHE_ROOT from the environment, kendex.settings.toml and .env.local: every read goes to the live API and no local store exists to redirect.' >&2
+    exit 1
+fi
+
+# Seconds before the first retry of a rate-limited, 5xx or unanswered call;
 # each further attempt doubles it. Overridable so a suite driving the retry
 # path against a stubbed curl does not spend the real backoff — the wait is
 # for Linear's benefit, and there is no Linear on the other end of a stub.
@@ -160,14 +168,15 @@ LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
 
 # Source formatters
 source "$_LIB_DIR/formatters.sh"
+# shellcheck source=cycle-dates.sh
+source "$_LIB_DIR/cycle-dates.sh"
 
 # shellcheck source=auth.sh
 source "$_LIB_DIR/auth.sh"
 
-# Most commands hit the Linear API and should resolve op:// references during
-# startup so authentication failures surface before any mutation/read work.
-# Local-cache commands source this file only for shared formatters/defaults; they
-# must not require API auth for documented cache-only reads.
+# Every command but auth-mint reads the selected credential, so op://
+# references resolve at startup and an authentication failure surfaces before
+# any read or write. auth-mint resolves the client pair on its own.
 if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" != "1" ]]; then
     linear_resolve_credentials || exit 1
 fi
@@ -175,23 +184,6 @@ fi
 # Validate API key
 check_api_key() {
     linear_check_credentials
-}
-
-json_or_default() {
-    local fallback="$1"
-    local expected_type="$2"
-    shift 2
-
-    local output=""
-    if ! output=$("$@" 2>/dev/null); then
-        :
-    fi
-
-    if ! jq -e --arg type "$expected_type" 'type == $type' >/dev/null 2>&1 <<<"$output"; then
-        output="$fallback"
-    fi
-
-    printf '%s' "$output"
 }
 
 curl_config_quote() {
@@ -213,67 +205,111 @@ validate_length() {
     return 0
 }
 
-# Make GraphQL request with error handling and retry
-# Usage: graphql_query "query string" '{"var": "value"}'
-graphql_query() {
+# The time a rate-limited answer's request quota refills, as an ISO-8601 UTC
+# instant, read from Linear's X-RateLimit-Requests-Reset header (epoch
+# milliseconds), or "unavailable" when the answer carried no usable value.
+# Usage: linear_requests_reset "$headers"
+linear_requests_reset() {
+    local value
+    value=$(awk 'tolower($1) == "x-ratelimit-requests-reset:" { gsub("\r", "", $2); value = $2 } END { print value }' <<<"$1") || return 1
+    if [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
+        jq -rn --arg ms "$value" '$ms | tonumber / 1000 | floor | todate'
+    else
+        printf 'unavailable\n'
+    fi
+}
+
+# One POST to Linear, sent again while its answer may succeed when sent again:
+# a rate-limited answer (an HTTP 429, or a body carrying Linear's RATELIMITED
+# code, which Linear serves under a 400 and could serve under any status), a
+# 5xx, or no answer at all (curl reached no server, code 000), twice at most
+# with a doubling delay. A 4xx such as a scope or validation refusal answers
+# the same way every time, so it is returned on its first answer. A
+# rate-limited final answer prints one JSON line naming the time the request
+# quota refills, so a caller can hold its write until then, and returns 1.
+# Otherwise prints the final status on the first line and the body after it.
+# CONFIG is the curl config lines naming the request.
+# Usage: reply=$(linear_http_post "$config") || return 1
+linear_http_post() {
+    local config="$1" attempt=1 delay="$LINEAR_RETRY_BASE_DELAY" raw code body headers reset
+    local delimiter="___HTTP_CODE___"
+    while true; do
+        headers=''
+        # Headers go to stdout ahead of the body ("-" is curl's own stdout
+        # stream, so they cannot interleave), and are split off below.
+        if ! raw=$(printf '%s\n%s\n' "$config" 'dump-header = "-"' | curl -s -w "${delimiter}%{http_code}" -K -); then
+            raw="${delimiter}000"
+        fi
+        code="${raw##*"$delimiter"}"
+        body="${raw%"$delimiter"*}"
+        # A proxy's CONNECT answer or an interim 100 adds a header block of its
+        # own before the response's; a JSON body never starts with HTTP/.
+        while [[ "$body" == HTTP/* && "$body" == *$'\r\n\r\n'* ]]; do
+            headers="${body%%$'\r\n\r\n'*}"
+            body="${body#*$'\r\n\r\n'}"
+        done
+        if jq -e '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1 <<<"$body"; then
+            code=429
+        fi
+        case "$code" in
+        429 | 5?? | 000)
+            if ((attempt < 3)); then
+                sleep "$delay"
+                delay=$((delay * 2))
+                attempt=$((attempt + 1))
+                continue
+            fi
+            ;;
+        esac
+        if [[ "$code" == 429 ]]; then
+            reset=$(linear_requests_reset "$headers") || return 1
+            jq -cn --arg reset "$reset" \
+                '{error: ("Rate limited. Requests-Reset=" + $reset), code: "RATELIMITED", requests_reset: $reset}' >&2
+            return 1
+        fi
+        printf '%s\n%s' "$code" "$body"
+        return 0
+    done
+}
+
+# One GraphQL request, as the transport every read and write goes through.
+# linear_http_post owns which answers are sent again; an app pair's token is
+# renewed once on an HTTP 401. Returns 2 when Linear answers that the entity
+# the request names does not exist for this actor ("Entity not found: Issue",
+# under HTTP 200), and 1 on every other failure, so a caller can tell "no
+# such thing" from "the read failed". graphql_query passes that status
+# through; only graphql_pages returns 1 for both.
+# Usage: graphql_request "query string" '{"var": "value"}'
+graphql_request() {
     local query="$1"
     local variables="$2"
     if [ -z "$variables" ]; then
         variables='{}'
     fi
-    local max_retries=3
-    local retry_delay="$LINEAR_RETRY_BASE_DELAY"
-    local attempt=1
-    local authorization auth_renewed=0
+    local authorization auth_renewed=0 payload reply http_code response
 
     check_api_key || return 1
     authorization=$(linear_authorization) || return 1
+    # Variables go in on stdin: one argv string is capped at 128 KiB
+    # (MAX_ARG_STRLEN), which a long description or a large id filter
+    # passes. Slurped so a second or trailing value still refuses.
+    if ! payload=$(jq -cs --arg query "$(echo "$query" | tr '\n' ' ')" \
+        'if length == 1 then {query: $query, variables: .[0]} else error("not one JSON value") end' \
+        <<<"$variables"); then
+        echo '{"error": "Invalid GraphQL variables JSON"}' >&2
+        return 1
+    fi
 
-    while [ $attempt -le $max_retries ]; do
-        local response
-        local http_code
-        local payload
+    while true; do
+        reply=$(linear_http_post "$(printf '%s\n' \
+            "url = $(curl_config_quote "$LINEAR_API")" \
+            'request = "POST"' \
+            "header = $(curl_config_quote "Content-Type: application/json")" \
+            "header = $(curl_config_quote "Authorization: $authorization")" \
+            "data = $(curl_config_quote "$payload")")") || return 1
+        http_code="${reply%%$'\n'*}"
+        response="${reply#*$'\n'}"
 
-        # Use unique delimiter to separate response from HTTP code
-        # This handles JSON with literal newlines in string values
-        local delimiter="___HTTP_CODE___"
-        local raw_output
-        # Variables go in on stdin: one argv string is capped at 128 KiB
-        # (MAX_ARG_STRLEN), which a reconcile id filter or a long description
-        # passes. Slurped so a second or trailing value still refuses.
-        if ! payload=$(jq -cs --arg query "$(echo "$query" | tr '\n' ' ')" \
-            'if length == 1 then {query: $query, variables: .[0]} else error("not one JSON value") end' \
-            <<<"$variables"); then
-            echo '{"error": "Invalid GraphQL variables JSON"}' >&2
-            return 1
-        fi
-
-        if ! raw_output=$(
-            printf '%s\n' \
-                "url = $(curl_config_quote "$LINEAR_API")" \
-                'request = "POST"' \
-                "header = $(curl_config_quote "Content-Type: application/json")" \
-                "header = $(curl_config_quote "Authorization: $authorization")" \
-                "data = $(curl_config_quote "$payload")" \
-            | curl -s -w "${delimiter}%{http_code}" -K -
-        ); then
-            raw_output="${delimiter}000"
-        fi
-
-        http_code="${raw_output##*${delimiter}}"
-        response="${raw_output%${delimiter}*}"
-
-        # Linear emits rate-limit rejections with an OUTER HTTP 400 (the body
-        # carries extensions.code RATELIMITED / extensions.statusCode 429), so
-        # normalize on the body marker: without this they fall into the
-        # generic branch and surface as "HTTP error: 400" — and callers like
-        # resolve_team_id then compound it into "Team not found".
-        if [ "$http_code" != "200" ] && echo "$response" | jq -e \
-            '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1; then
-            http_code=429
-        fi
-
-        # Handle HTTP errors
         case "$http_code" in
         200)
             # Check for GraphQL errors
@@ -292,6 +328,10 @@ graphql_query() {
                     ;;
                 *"Project not found"*)
                     echo '{"error": "Project not found. Use exact name or UUID"}' >&2
+                    ;;
+                "Entity not found: "*)
+                    jq -cn --arg msg "$error_msg" '{error: $msg}' >&2
+                    return 2
                     ;;
                 *"relation"*"exist"* | *"already exist"* | *"duplicate"*"relation"*)
                     # Idempotent: relation/dependency already exists — not an error
@@ -318,36 +358,23 @@ graphql_query() {
             linear_auth_unauthorized
             return 1
             ;;
-        429)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
-            fi
-            echo '{"error": "Rate limited. Try again later."}' >&2
-            return 1
-            ;;
-        *)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
-            fi
-            # Carry the body's first error message: a bare status code hides
-            # the actionable reason (validation detail, quota text, ...).
-            local error_detail
-            error_detail=$(echo "$response" | jq -r '.errors[0].message // empty' 2>/dev/null || true)
-            if [ -n "$error_detail" ]; then
-                jq -cn --arg code "$http_code" --arg msg "$error_detail" \
-                    '{error: ("HTTP error: " + $code + ": " + $msg)}' >&2
-            else
-                echo "{\"error\": \"HTTP error: $http_code\"}" >&2
-            fi
-            return 1
-            ;;
         esac
+
+        # Carry the body's first error message: a bare status code hides
+        # the actionable reason (validation detail, quota text, ...).
+        # A body that is not JSON, such as a proxy's HTML error page, carries
+        # no message, and the status code alone is reported.
+        local error_detail=""
+        if ! error_detail=$(jq -r '.errors[0].message // empty' 2>/dev/null <<<"$response"); then
+            error_detail=""
+        fi
+        if [ -n "$error_detail" ]; then
+            jq -cn --arg code "$http_code" --arg msg "$error_detail" \
+                '{error: ("HTTP error: " + $code + ": " + $msg)}' >&2
+        else
+            echo "{\"error\": \"HTTP error: $http_code\"}" >&2
+        fi
+        return 1
     done
 }
 
@@ -366,7 +393,7 @@ linear_require_pattern() {
     return 1
 }
 
-# Reject an unsupported --format before any API or cache work, rather than
+# Reject an unsupported --format before any API work, rather than
 # letting a `safe | *` catch-all silently serve safe output under the name the
 # caller asked for. The supported set differs per action (only the list actions
 # emit ids), so each caller passes its own.
@@ -420,9 +447,8 @@ linear_require_team_value() {
     return 0
 }
 
-# Days-before-now as an ISO timestamp, for the --updated-since/--created-since
-# "7d" spelling. GNU and BSD date disagree on the flag, so both are tried; a
-# non-numeric count is rejected here rather than reaching either.
+# Days-before-now in Linear's UTC shape, for the --updated-since/--created-since
+# "7d" spelling. A non-numeric count is rejected here rather than reaching date.
 linear_iso_days_ago() {
     local flag="$1" spec="$2"
     local days="${spec%d}"
@@ -431,25 +457,47 @@ linear_iso_days_ago() {
             '{error: ($flag + " expects a day count such as 7d, got: " + $spec)}' >&2
         return 1
     fi
-    date -d "-$days days" -Iseconds 2>/dev/null || date -v-"${days}"d -Iseconds
+    linear_utc_days_ago "$days"
+}
+
+# Refuse a second project-scope option.
+# Usage: linear_project_scope "$scope_so_far" "$flag"
+linear_project_scope() {
+    [ -n "$1" ] || return 0
+    jq -cn --arg first "$1" --arg second "$2" \
+        '{error: ($second + " cannot be combined with " + $first + ": each names the project scope")}' >&2
+    return 1
 }
 
 # Parse common CLI arguments into GraphQL filter
 # Usage: parse_filter "$@"
-# Sets global FILTER_JSON variable
+# Sets global FILTER_JSON variable; --limit sets the list bound
+# (linear_list_option), so the caller resets it before.
 # Every value is carried through jq --arg: a label, project, team, or state name
 # holding a quote or backslash must not be able to reshape the filter object.
 parse_filter() {
     local filter_parts=()
     local team=""
-    local first=75
     local include_archived="false"
+    # --project, --project-id, --all-projects and --no-project each name the
+    # project scope; two of them would AND into a filter nobody asked for.
+    local project_scope=""
+    # Every --label and --labels name must be on the issue: one AND clause.
+    local label_names=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --label)
             linear_require_option_value "$@" || return 1
-            filter_parts+=("$(jq -cn --arg v "$2" '{labels: {name: {eq: $v}}}')")
+            label_names+=("$2")
+            shift 2
+            ;;
+        --labels)
+            linear_require_option_value "$@" || return 1
+            local label_name
+            while IFS= read -r label_name; do
+                [ -n "$label_name" ] && label_names+=("$label_name")
+            done < <(jq -rn --arg v "$2" '$v | split(",")[] | sub("^\\s+"; "") | sub("\\s+$"; "")')
             shift 2
             ;;
         --state | --status)
@@ -465,13 +513,29 @@ parse_filter() {
             ;;
         --project)
             linear_require_option_value "$@" || return 1
+            linear_project_scope "$project_scope" "$1" || return 1
+            project_scope="$1"
             filter_parts+=("$(jq -cn --arg v "$2" '{project: {name: {eq: $v}}}')")
             shift 2
             ;;
         --project-id)
             linear_require_option_value "$@" || return 1
+            linear_project_scope "$project_scope" "$1" || return 1
+            project_scope="$1"
             filter_parts+=("$(jq -cn --arg v "$2" '{project: {id: {eq: $v}}}')")
             shift 2
+            ;;
+        --all-projects)
+            # Every project in one read: no project filter at all.
+            linear_project_scope "$project_scope" "$1" || return 1
+            project_scope="$1"
+            shift
+            ;;
+        --no-project)
+            linear_project_scope "$project_scope" "$1" || return 1
+            project_scope="$1"
+            filter_parts+=('{"project": {"null": true}}')
+            shift
             ;;
         --team)
             linear_require_team_value "$@" || return 1
@@ -502,14 +566,7 @@ parse_filter() {
             shift 2
             ;;
         --limit)
-            linear_require_option_value "$@" || return 1
-            # FIRST_JSON is spliced into the variables payload and compared
-            # numerically by callers; anything else corrupts both.
-            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
-                jq -cn --arg v "$2" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
-                return 1
-            fi
-            first="$2"
+            linear_list_option "$@" || return 1
             shift 2
             ;;
         --include-archived)
@@ -527,6 +584,11 @@ parse_filter() {
         esac
     done
 
+    if [ ${#label_names[@]} -gt 0 ]; then
+        filter_parts+=("$(printf '%s\n' "${label_names[@]}" | jq -cRn '[inputs | {labels: {name: {eq: .}}}] |
+            if length == 1 then .[0] else {and: .} end')")
+    fi
+
     # Resolved after the loop, so a malformed option refuses before any API call.
     if [ -n "$team" ]; then
         local team_id
@@ -539,7 +601,6 @@ parse_filter() {
     else
         FILTER_JSON="{}"
     fi
-    FIRST_JSON="$first"
     INCLUDE_ARCHIVED_JSON="$include_archived"
 }
 
@@ -568,6 +629,88 @@ resolve_issue_id() {
     fi
 
     echo "$issue_id"
+}
+
+# The issue references a bulk read names, as one JSON array: an identifier
+# upper-cased, a UUID as given. Linear's id comparator takes both shapes. A
+# reference of any other shape, or one holding a line break (a quoted list
+# whose spelling is --stdin), refuses before any request: sent, it would read
+# as an issue that does not exist. KIND `identifiers` takes identifiers only,
+# for an output keyed by identifier; `refs` takes either shape.
+# Usage: refs=$(linear_issue_refs identifiers|refs REF...)
+linear_issue_refs() {
+    local kind="$1" refs bad
+    shift
+    if [[ $# -eq 0 ]]; then
+        echo '{"error": "No issue identifiers provided"}' >&2
+        return 1
+    fi
+    # jq's $ also matches before a final line break; \A and \z hold the whole value.
+    local defs='def identifier: test("\\A[A-Za-z0-9]+-[0-9]+\\z");
+        def uuid: test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z");
+        def accepted: identifier or ($kind == "refs" and uuid);'
+    refs=$(printf '%s\0' "$@" | jq -cRs 'split("\u0000")[:-1]') || return 1
+    bad=$(jq -c --arg kind "$kind" "$defs"'[.[] | select(accepted | not)]' <<<"$refs") || return 1
+    if [[ "$bad" != "[]" ]]; then
+        jq -c --arg kind "$kind" '{error: ("Not an issue " + (if $kind == "refs" then "identifier (TEAM-123) or UUID" else "identifier (TEAM-123)" end)
+            + ": " + (map(@json) | join(", ")))}' <<<"$bad" >&2
+        return 1
+    fi
+    jq -c --arg kind "$kind" "$defs"'map(if identifier then ascii_upcase else . end)' <<<"$refs"
+}
+
+# Read the issues REFS names (linear_issue_refs' array), each row selecting
+# FIELDS, which must hold `id` and `identifier`. Prints {nodes, refs}: the
+# rows in REFS order, each once, and the identifier that answers each ref.
+# One `id: {in: REFS}` read answers a ref by identifier or id. A ref it leaves
+# unanswered gets one `issue(id:)` lookup, the read that resolves a moved
+# issue's earlier identifier. A named issue is read whether or not it is
+# archived. A ref Linear answers it has no issue for refuses the whole read
+# with `missing`, after the lookup's own error line. A lookup that fails any
+# other way (a quota, a 5xx, no answer) fails the read at once with no
+# `missing`, since whether that issue exists is unknown, and spends no
+# request on the refs after it.
+# Usage: read=$(linear_issue_refs_read "$fields" "$refs")
+linear_issue_refs_read() {
+    local fields="$1" refs="$2" query variables result rows answered unanswered ref row rc missing='[]'
+    query="query IssueRefs(\$filter: IssueFilter!, \$after: String) {
+        issues(filter: \$filter, first: 50, after: \$after, includeArchived: true) {
+            pageInfo { hasNextPage endCursor }
+            nodes { $fields }
+        }
+    }"
+    variables=$(jq -c '{filter: {id: {in: .}}}' <<<"$refs") || return 1
+    result=$(graphql_pages "$query" "$variables" issues) || return 1
+    rows=$(jq -c '.issues.nodes' <<<"$result") || return 1
+    answered=$(jq -cs '.[1] as $rows | [.[0][] | . as $r
+        | {key: $r, value: ([$rows[] | select(.identifier == $r or .id == $r) | .identifier] | first)}]
+        | from_entries' <<<"$refs"$'\n'"$rows") || return 1
+    unanswered=$(jq -r 'to_entries[] | select(.value == null) | .key' <<<"$answered") || return 1
+    while IFS= read -r ref; do
+        [[ -n "$ref" ]] || continue
+        variables=$(jq -cn --arg id "$ref" '{id: $id}') || return 1
+        rc=0
+        result=$(graphql_query "query IssueRef(\$id: String!) { issue(id: \$id) { $fields } }" "$variables") || rc=$?
+        if ((rc == 2)); then
+            missing=$(jq -c --arg ref "$ref" '. + [$ref]' <<<"$missing") || return 1
+            continue
+        fi
+        ((rc == 0)) || return 1
+        if ! row=$(jq -ce '.issue | select(type == "object" and (.identifier | type == "string"))' <<<"$result"); then
+            jq -cn --arg ref "$ref" '{error: ("Issue lookup for " + $ref + " answered no issue and no error")}' >&2
+            return 1
+        fi
+        rows=$(jq -cs '.[0] + [.[1]]' <<<"$rows"$'\n'"$row") || return 1
+        answered=$(jq -cs --arg ref "$ref" '.[0] + {($ref): .[1].identifier}' <<<"$answered"$'\n'"$row") || return 1
+    done <<<"$unanswered"
+    if [[ "$missing" != "[]" ]]; then
+        jq -c '{error: ("Issues not read: " + join(", ")), missing: .}' <<<"$missing" >&2
+        return 1
+    fi
+    jq -cs '.[0] as $refs | .[1] as $answered | .[2] as $rows
+        | {nodes: ([$refs[] | $answered[.] as $id | $rows[] | select(.identifier == $id)] | reduce .[] as $row ([];
+            if any(.[]; .id == $row.id) then . else . + [$row] end)),
+           refs: $answered}' <<<"$refs"$'\n'"$answered"$'\n'"$rows"
 }
 
 # Normalize mutation response to consistent structure
@@ -665,13 +808,13 @@ resolve_project_id() {
     # `state` is selected, not filtered on: the server-side `state` filter is
     # broken (see list_projects), and the whole match set is what separates
     # "no such project" from "only canceled ones".
-    local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id state } } }'
+    local query='query GetProject($name: String!, $after: String) { projects(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id state } } }'
     local variables
     variables=$(jq -nc --arg name "$project_ref" '{name: $name}')
     local result
     # A FAILED query is an API failure (rate limit, outage); "Project not
     # found" is only true of a lookup that succeeded and matched nothing.
-    if ! result=$(graphql_query "$query" "$variables"); then
+    if ! result=$(graphql_pages "$query" "$variables" projects); then
         jq -nc --arg name "$project_ref" \
             '{error: ("Could not resolve project \"" + $name + "\": Linear API request failed (see previous error)")}' >&2
         return 1
@@ -680,7 +823,7 @@ resolve_project_id() {
     # PROJECT_PICK_JQ (lib/formatters.sh) is the rule; this is one of its
     # callers. The name query cannot return an id match, so only the
     # canceled-loses-to-live arm ever fires here, and passing $ref anyway is
-    # what keeps this spelling the same one the cache reads.
+    # what keeps this spelling the same one every other caller reads.
     local project_id
     project_id=$(echo "$result" | jq -r --arg ref "$project_ref" \
         "$PROJECT_PICK_JQ"'(.projects.nodes // []) | (live_project_pick($ref) | .id) // ""')
@@ -713,12 +856,12 @@ resolve_team_id() {
     # Look up by key or name. A FAILED query must propagate as the API
     # failure it is (rate limit, outage) — "Team not found" is only true for
     # a successful lookup that returned no match.
-    local query='query GetTeam($name: String!) { teams(filter: {or: [{key: {eq: $name}}, {name: {eq: $name}}]}) { nodes { id key name } } }'
+    local query='query GetTeam($name: String!, $after: String) { teams(filter: {or: [{key: {eq: $name}}, {name: {eq: $name}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id key name } } }'
     # Build variables and diagnostics with jq: a team name containing a
     # quote or backslash must neither break the request JSON nor the error.
     local vars result
     vars=$(jq -cn --arg name "$team_ref" '{name: $name}')
-    if ! result=$(graphql_query "$query" "$vars"); then
+    if ! result=$(graphql_pages "$query" "$vars" teams); then
         jq -cn --arg team "$team_ref" \
             '{error: ("Could not resolve team '\''" + $team + "'\'': Linear API request failed (see previous error)")}' >&2
         return 1
@@ -759,10 +902,10 @@ resolve_state_id() {
     fi
 
     # Look up state by name + team
-    local query='query GetState($name: String!, $teamId: ID!) { workflowStates(filter: {name: {eq: $name}, team: {id: {eq: $teamId}}}) { nodes { id } } }'
+    local query='query GetState($name: String!, $teamId: ID!, $after: String) { workflowStates(filter: {name: {eq: $name}, team: {id: {eq: $teamId}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
     local vars result
     vars=$(jq -cn --arg name "$state_name" --arg teamId "$team_id" '{name: $name, teamId: $teamId}')
-    result=$(graphql_query "$query" "$vars")
+    result=$(graphql_pages "$query" "$vars" workflowStates) || return 1
     local state_id
     state_id=$(echo "$result" | jq -r '.workflowStates.nodes[0].id // empty')
 
@@ -771,8 +914,8 @@ resolve_state_id() {
         # the real diagnostic to a second failed request helps nobody.
         local team_vars all_result available=""
         team_vars=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}')
-        local all_query='query GetStates($teamId: ID!) { workflowStates(filter: {team: {id: {eq: $teamId}}}) { nodes { name } } }'
-        if all_result=$(graphql_query "$all_query" "$team_vars"); then
+        local all_query='query GetStates($teamId: ID!, $after: String) { workflowStates(filter: {team: {id: {eq: $teamId}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } }'
+        if all_result=$(graphql_pages "$all_query" "$team_vars" workflowStates); then
             available=$(echo "$all_result" | jq -r '[.workflowStates.nodes[].name] | join(", ")')
         fi
         jq -cn --arg name "$state_name" --arg available "$available" \
@@ -804,11 +947,11 @@ resolve_label_id() {
     case "$scope" in
     team-id)
         team_var=teamId
-        query='query GetLabel($name: String!, $teamId: ID!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}) { nodes { id } } }'
+        query='query GetLabel($name: String!, $teamId: ID!, $after: String) { issueLabels(filter: {name: {eq: $name}, or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         ;;
     team-name)
         team_var=teamName
-        query='query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'
+        query='query GetLabel($name: String!, $teamName: String!, $after: String) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         ;;
     *)
         jq -cn --arg scope "$scope" \
@@ -819,7 +962,7 @@ resolve_label_id() {
     local vars result
     vars=$(jq -cn --arg name "$label_name" --arg key "$team_var" --arg team "$team" \
         '{name: $name, ($key): $team}') || return 2
-    if ! result=$(graphql_query "$query" "$vars"); then
+    if ! result=$(graphql_pages "$query" "$vars" issueLabels); then
         jq -cn --arg name "$label_name" \
             '{error: ("Label lookup failed for " + ($name | tojson) + ": Linear API request failed (see previous error)")}' >&2
         return 2
@@ -934,11 +1077,6 @@ linear_label_message() {
         printf 'linear-labels: workspace-duplicate name=%s\n' "$value"
         jq -cn --arg name "$value" \
             '{error: ("Refusing label name " + ($name | tojson) + ": a workspace label already uses this name, and a second label of one name makes every name lookup ambiguous. Use the workspace label.")}'
-        ;;
-    audit-incomplete)
-        printf 'linear-labels: audit-incomplete connection=%s\n' "$value"
-        jq -cn --arg connection "$value" \
-            '{error: ("labels audit could not read every page of " + $connection + ", and an audit of part of the team would report drift it never read as clean.")}'
         ;;
     no-team)
         printf 'linear-labels: no-team\n'
@@ -1081,12 +1219,12 @@ resolve_milestone_id() {
     require_milestone_project "$milestone_ref" "$project_id" || return 1
 
     # Look up by name within the project.
-    local query='query GetMilestone($name: String!, $projectId: ID!) { projectMilestones(filter: {name: {eq: $name}, project: {id: {eq: $projectId}}}) { nodes { id } } }'
+    local query='query GetMilestone($name: String!, $projectId: ID!, $after: String) { projectMilestones(filter: {name: {eq: $name}, project: {id: {eq: $projectId}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
     local vars result
     vars=$(jq -cn --arg name "$milestone_ref" --arg projectId "$project_id" '{name: $name, projectId: $projectId}')
     # A FAILED query is an API failure (rate limit, outage); "Milestone not
     # found" is only true of a lookup that succeeded and matched nothing.
-    if ! result=$(graphql_query "$query" "$vars"); then
+    if ! result=$(graphql_pages "$query" "$vars" projectMilestones); then
         jq -cn --arg ref "$milestone_ref" \
             '{error: ("Could not resolve milestone " + ($ref | tojson) + ": Linear API request failed (see previous error)")}' >&2
         return 1
@@ -1111,3 +1249,7 @@ resolve_milestone_id() {
 
     echo "$milestone_ids"
 }
+
+# Cursor traversal and nested completion; graphql_query is defined there.
+# shellcheck source=pages.sh
+source "$_LIB_DIR/pages.sh"

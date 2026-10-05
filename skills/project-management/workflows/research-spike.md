@@ -16,16 +16,10 @@ Infer the research type from the description and answers.
 
 Infer the affected domains from the topic and answers by matching component paths (project-configurable); do not ask the user to confirm them. State each domain and why in the § 4 report.
 
-Refresh a stale cache before the lookup below. This workflow only reads; the § 3 handoff to research-issue reconciles again before it creates anything:
+Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`), then search it. Without an unambiguous assignable label, skip the lookup and continue — do not query a hard-coded fallback label.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --if-stale 15
-```
-
-Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then search it. Without an unambiguous assignable label, skip the lookup and continue — do not query a hard-coded fallback label.
-
-```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
+.agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
 On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
@@ -33,7 +27,7 @@ On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and extract its f
 ## 3. Hand Off
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects list --state started --first
+.agents/skills/linear/scripts/linear.sh projects list --state started --first
 ```
 
 Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.

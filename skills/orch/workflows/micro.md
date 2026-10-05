@@ -36,13 +36,14 @@ Resolve `TRACKER` and `ISSUE_REF` from `[ISSUE_ID]` per [SKILL.md § Tracker Res
 Its output is `[MAIN_REPO_ROOT]`. Read the item. Linear:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID]
 ```
+
+A rate-limited activation is held under [workflow-actions.md § Quota Holds](../../linear/patterns/workflow-actions.md#quota-holds).
 
 GitHub:
 

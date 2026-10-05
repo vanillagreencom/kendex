@@ -15,3 +15,7 @@ control_expect 'update: completes'
 control_replace scripts/lib/pages.sh 1 \
     '            data=$(jq -cs --arg root "$root" '\''.[1] as $value | .[0] | .[$root] = $value'\'' <<<"$data"$'\''\n'\''"$value") || return 1' \
     '            data=$(jq -c --arg root "$root" --argjson value "$value" '\''.[$root] = $value'\'' <<<"$data") || return 1'
+control_expect 'root-rows: open row collections completed'
+control_replace scripts/lib/pages.sh 1 \
+    '            [[ "$open" == true ]] || continue' \
+    '            continue'

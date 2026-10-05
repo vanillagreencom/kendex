@@ -1,0 +1,1 @@
+- `linear.sh issues bulk-get` reads identifiers and UUIDs, archived included, resolves a moved issue's old identifier, and names in `missing` only issues Linear says it does not have.

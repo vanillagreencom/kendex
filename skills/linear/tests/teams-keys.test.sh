@@ -23,12 +23,12 @@ if [ "$FAIL_READ" = 1 ]; then
   printf '%s' '{"errors":[{"message":"Read failed"}]}___HTTP_CODE___200'
 elif [[ "$query" == *organization* ]]; then
   if [[ "$query" == *urlKey* && "$query" == *'nodes { key }'* ]]; then
-    printf '%s' '{"data":{"organization":{"urlKey":"workspace","teams":{"nodes":[{"key":"HT"},{"key":"HTIO"},{"key":"KEN"}]}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"organization":{"urlKey":"workspace","teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"key":"HT"},{"key":"HTIO"},{"key":"KEN"}]}}}}___HTTP_CODE___200'
   else
     printf '%s' '{"data":{"organization":{}}}___HTTP_CODE___200'
   fi
 else
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team","name":"Team","key":"KEN","description":"","members":{"nodes":[]},"createdAt":""}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team","name":"Team","key":"KEN","description":"","members":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"createdAt":""}]}}}___HTTP_CODE___200'
 fi
 SH
 chmod +x "$TMP_ROOT/bin/curl"
@@ -38,7 +38,7 @@ run() {
   shift
   RC=0
   OUT="$(cd "$TMP_ROOT/project" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" LANG=C \
-    LINEAR_CACHE_ROOT="$ASSERT_CACHE_ROOT" LINEAR_API_KEY_OVERRIDE=test-key \
+    LINEAR_API_KEY_OVERRIDE=test-key \
     LINEAR_CLIENT_ID='' LINEAR_CLIENT_SECRET='' CALLS="$TMP_ROOT/calls" FAIL_READ="$fail" \
     bash "$LINEAR" "$@" 2>"$TMP_ROOT/err")" || RC=$?
 }

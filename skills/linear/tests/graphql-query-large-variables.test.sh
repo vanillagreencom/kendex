@@ -2,7 +2,7 @@
 # graphql_query hands its variables to jq on stdin, never as one argv string,
 # so a variables payload past the kernel's per-argument cap (MAX_ARG_STRLEN,
 # 128 KiB) reaches the API whole. Producers: an issue description or comment
-# body read from a file, and an id filter over a workspace-sized cache. A
+# body read from a file, and a bulk-get or comments bulk-list id filter. A
 # variables string that is not exactly one JSON value still refuses.
 #
 # Runs fully offline against a mocked curl.
@@ -40,13 +40,13 @@ run_query() {
   rm -f "$ROOT/payload.json"
   RC=0
   env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT" LINEAR_API_KEY_OVERRIDE=lin_api_test \
-    LINEAR_CACHE_ROOT="$ROOT" LINEAR_RETRY_BASE_DELAY=0 \
+    LINEAR_RETRY_BASE_DELAY=0 \
     bash "$ROOT/subject" "$ROOT" "$SKILL_DIR/scripts/lib/common.sh" "$1" \
     >"$ROOT/out" 2>"$ROOT/err" || RC=$?
   ERR="$(cat "$ROOT/err")"
 }
 
-# A 6226-id filter, the cache size that first passed the cap.
+# A 6226-id filter, the first id set measured past the cap.
 jq -nc '{filter: {id: {in: [range(6226) | "00000000-0000-4000-8000-\(1000000000000 + . | tostring | .[1:])"]}}}' \
   >"$ROOT/large.json"
 assert "the large variables pass the per-argument cap" \

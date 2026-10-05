@@ -19,7 +19,8 @@ Actions:
   keys    Read the workspace URL key and all team keys
 
 List Options:
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Get:
   teams.sh get <id-or-name>
@@ -34,14 +35,18 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 
 list_teams() {
-    local first=75
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
@@ -52,27 +57,28 @@ list_teams() {
     done
 
     local query='
-    query ListTeams($first: Int) {
-        teams(first: $first) {
+    query ListTeams($first: Int, $after: String) {
+        teams(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
                 key
                 description
-                members { nodes { name email } }
+                members { pageInfo { hasNextPage endCursor } nodes { name email } }
                 createdAt
             }
         }
     }'
 
-    local variables="{\"first\": $first}"
+    local variables='{}'
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" teams) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_teams_list "$result"
@@ -82,7 +88,7 @@ list_teams() {
 
 team_keys() {
     local result
-    result=$(graphql_query 'query TeamKeys { organization { urlKey teams { nodes { key } } } }' '{}') || return $?
+    result=$(graphql_query 'query TeamKeys { organization { urlKey teams { pageInfo { hasNextPage endCursor } nodes { key } } } }' '{}') || return $?
     jq -e '{urlKey: .organization.urlKey, keys: [.organization.teams.nodes[].key]}' <<<"$result"
 }
 
@@ -114,9 +120,9 @@ get_team() {
             name
             key
             description
-            members { nodes { name email } }
-            labels { nodes { name color } }
-            states { nodes { name type position } }
+            members { pageInfo { hasNextPage endCursor } nodes { name email } }
+            labels { pageInfo { hasNextPage endCursor } nodes { name color } }
+            states { pageInfo { hasNextPage endCursor } nodes { name type position } }
             createdAt
             updatedAt
         }
@@ -124,12 +130,12 @@ get_team() {
 
     local variables="{\"id\": \"$team_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_team_single "$result"

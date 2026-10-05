@@ -18,8 +18,7 @@ An explicit user choice wins. Otherwise, with several items and `codex_app.creat
 **Container preflight** — Linear items only, before any worktree is created.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ITEM] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ITEM] --with-bundle
 ```
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) per item. A container drops off the launch list and is replaced by its unblocked DIRECT children (`depth == 0`), each of which reruns this preflight. A blocked item drops off with its live blockers named.

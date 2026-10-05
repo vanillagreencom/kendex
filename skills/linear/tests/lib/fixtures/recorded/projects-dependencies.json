@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["projects", "list-dependencies", "00000000-0000-4000-8000-000000000028", "--format=raw"],
+  "root_index": 0,
+  "root_path": "project.inverseRelations",
+  "output": ".project.inverseRelations.nodes",
+  "expected_rows": 2,
+  "derived_rows": "The recorded connection held one row; a copy of it with a new id is the second row the cursor split needs.",
+  "requests": [
+    {"operation":"GetProjectDependencies","response":{"data":{"project":{"id":"00000000-0000-4000-8000-000000000028","name":"Fixture project","relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000104","type":"dependency","anchorType":"start","relatedAnchorType":"end","project":{"id":"00000000-0000-4000-8000-000000000105","name":"Fixture project","state":"backlog","progress":0.8151465798045603}},{"id":"00000000-0000-4000-8000-000000000104-copy","type":"dependency","anchorType":"start","relatedAnchorType":"end","project":{"id":"00000000-0000-4000-8000-000000000105","name":"Fixture project","state":"backlog","progress":0.8151465798045603}}]}}}}}
+  ]
+}

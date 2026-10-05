@@ -182,10 +182,10 @@ query=$(jq -r '.query' <<<"$payload")
 has() { [[ "$query" == *"$1"* ]] && echo true || echo false; }
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-kendex"}]}}}' ;;
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-kendex"}]}}}' ;;
 *"WorkspaceLabel"*)
   jq -cj --argjson payload "$payload" --argjson workspace "$(has 'team: {null: true}')" '
-    {data: {issueLabels: {nodes: [.labels[] | select(.name == $payload.variables.name)
+    {data: {issueLabels: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.labels[] | select(.name == $payload.variables.name)
       | select(($workspace | not) or .team == null) | {id}]}}}' "$LABELS_DATA" ;;
 *"issueLabelCreate"*|*"issueLabelUpdate"*)
   mutation=issueLabelCreate
@@ -230,7 +230,7 @@ run_labels() { # NAME FAIL PROJECT INSTALL LABELS-ARGS...
   shift 4
   : >"$TMP_ROOT/$name.jsonl"
   (cd -- "$project" && timeout 20 env -i HOME="$TMP_ROOT" PATH="$LABELS_PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=kendex LINEAR_CACHE_ROOT="$project" \
+    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=kendex \
     LINEAR_AGENT_LABELS=agent:runtime FIXTURE_FAIL="$fail" CURL_LOG="$TMP_ROOT/$name.jsonl" \
     LABELS_DATA="$LABELS_DATA" "$BASH" "$install/scripts/linear.sh" labels "$@") \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
@@ -344,7 +344,7 @@ assert "audit: ignores another team's same-name label" \
 run_status rc run_labels audit-pages pages "$LABELS_PROJECT" "$LABELS_PROJECT/.agents/skills/linear" audit
 assert_ne "audit-pages: refused" "$rc" 0
 assert_file_contains "audit-pages: a page with no pageInfo fails the audit" \
-  "$TMP_ROOT/audit-pages.err" "linear-labels: audit-incomplete connection=issues"
+  "$TMP_ROOT/audit-pages.err" "linear-pages: incomplete=issues"
 
 run_status rc run_labels audit-absent "" "$NO_TAXONOMY" "$NO_TAXONOMY/.agents/skills/linear" audit
 assert_ne "audit-absent: refused" "$rc" 0

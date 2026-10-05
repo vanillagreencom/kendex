@@ -24,8 +24,7 @@ Type follows domain count when the caller did not supply one: 1 domain is Target
 ### 1.1 Validate Labels
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
 Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory per [labels.md](../references/labels.md); do not assume the literal name `research` exists.
@@ -90,7 +89,7 @@ Research: [RESEARCH_ISSUE_ID] - [TOPIC]
 Worktree: [WORKTREE_PATH]
 
 Blocked issue: [BLOCKED_ISSUE_ID]
-Read it: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID]`
+Read it: `.agents/skills/linear/scripts/linear.sh issues get [BLOCKED_ISSUE_ID]`
 Read: [RESEARCH_PATHS]
 Read: [project decision documents]/INDEX.md
 Read: [project decision documents]/[DECISION_ID]-*.md
@@ -131,7 +130,7 @@ Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 ## 3. Publish the Assets
 
-Read the current description (`cache issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
+Read the current description (`issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ```markdown
 ## Assets

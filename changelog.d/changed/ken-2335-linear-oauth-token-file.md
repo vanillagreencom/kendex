@@ -1,0 +1,1 @@
+- With a client pair, `linear.sh` keeps its OAuth token in `kendex/linear-oauth/` under `XDG_CACHE_HOME` or `~/.cache`, else under `TMPDIR`; delete stale `.cache/linear/oauth/` files.

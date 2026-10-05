@@ -20,23 +20,23 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision. Pre
 
 ### 1.1 Team Scope
 
-Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any cached read. The § 1.4 project list and the § 1.5 comparison set both return the whole workspace; drop everything outside the scope before comparing against either. § 2 proposes `cancel` and `supersede` against that set, and roadmap-create executes them.
+Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. The § 1.4 project list and the § 1.5 comparison set both return the whole workspace; drop everything outside the scope before comparing against either. § 2 proposes `cancel` and `supersede` against that set, and roadmap-create executes them.
 
 ### 1.2 Label Policy
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy alongside it. Freshness is the § 1.1 refresh's job; what a cached read itself enforces is presence, so a missing Linear cache on this or any later read halts the analysis and asks the caller to run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+Load the project taxonomy alongside it. A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 
 **Skip if** `origin_issue` is null.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh cache issues children [ORIGIN_ISSUE_ID] --recursive --format=safe
+.agents/skills/linear/scripts/linear.sh issues get [ORIGIN_ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues children [ORIGIN_ISSUE_ID] --recursive --format=safe
 ```
 
 `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
@@ -45,10 +45,10 @@ Decide whether the proposed issues decompose the origin issue's scope (`children
 
 ### 1.4 Projects
 
-Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1 scopes out.
+Fetch every project in ONE command. `projects list --state` matches one state type exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1 scopes out.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects list
+.agents/skills/linear/scripts/linear.sh projects list --max
 ```
 
 Store `id`, `name`, `state`, `description`, `content` per project.
@@ -58,7 +58,7 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 Fetch every project's issues in ONE command — never loop `--project` per project:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
+.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
 Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
@@ -78,7 +78,7 @@ For each `conflicts_with` entry, search existing issues and code for the target 
 Then place the roadmap: use an existing planned or backlog project when its scope matches, otherwise recommend a new one. For a new project, set relations from dependency direction — consuming another project's output is `blocked-by`, enabling one is `blocks`, no dependency means no relation:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects list-dependencies [PROJECT_ID]
+.agents/skills/linear/scripts/linear.sh projects list-dependencies [PROJECT_ID]
 ```
 
 Store in `project_placement`.

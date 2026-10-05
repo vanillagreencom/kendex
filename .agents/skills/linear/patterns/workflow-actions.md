@@ -17,11 +17,19 @@ scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 
 Cancel, duplicate, and absorb are all `comments create` + `issues update --state "Canceled"`; name the surviving issue in the comment on both sides of an absorb.
 
+## Quota Holds
+
+A command Linear rate-limits exits nonzero with one JSON line on stderr carrying `"code":"RATELIMITED"` and `requests_reset`, the UTC time its request quota refills, or `unavailable`. An `activate` or `complete` that answers so is held, never reported as a failed step:
+
+1. Keep the exact command and its `--summary-file` or body file under `tmp/`.
+2. Wait until `requests_reset` through the job runner, then run the same command once more.
+3. A second rate limit, or a reset of `unavailable`, returns the held command and its file to the caller; neither authorizes another try.
+
 ## Descriptions
 
 Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
-After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `cache issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
+After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
 
 ## Hierarchy and Relations
 
@@ -44,7 +52,7 @@ Never drop a valid dependency. Lift child-level dependencies to the parent level
 
 Before any create or label update from a workflow:
 
-1. `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
+1. `scripts/linear.sh labels list --max --format=safe`.
 2. Build the full final set from the project's taxonomy, rejecting unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts.
 3. Ask for explicit authorization before creating any missing label; never create labels automatically.
 

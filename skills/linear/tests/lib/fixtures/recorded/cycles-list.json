@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["cycles", "list", "--limit", "3", "--format=raw"],
+  "root_index": 1,
+  "root_path": "cycles",
+  "output": ".cycles.nodes",
+  "expected_rows": 3,
+  "requests": [
+    {"operation":"GetTeam","response":{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000024"},"nodes":[{"id":"00000000-0000-4000-8000-000000000024","key":"KEN","name":"kendex"}]}}}},
+    {"operation":"ListCycles","response":{"data":{"cycles":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000025","number":7,"name":null,"startsAt":"2026-10-26T07:00:00.000Z","endsAt":"2026-11-09T08:00:00.000Z","progress":0,"issueCountHistory":[],"completedIssueCountHistory":[],"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000026","number":6,"name":null,"startsAt":"2026-10-12T07:00:00.000Z","endsAt":"2026-10-26T07:00:00.000Z","progress":0,"issueCountHistory":[],"completedIssueCountHistory":[],"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000027","number":5,"name":null,"startsAt":"2026-09-28T07:00:00.000Z","endsAt":"2026-10-12T07:00:00.000Z","progress":0.9631410256410257,"issueCountHistory":[78,159,250,315,399,449],"completedIssueCountHistory":[50,137,221,289,379,435],"team":{"name":"kendex"}}]}}}}
+  ]
+}

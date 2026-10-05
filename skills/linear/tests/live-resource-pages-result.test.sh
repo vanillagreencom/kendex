@@ -16,8 +16,13 @@ while IFS='|' read -r name mode check; do
     assert_file_lacks "$name: no argument-size failure" "$PAGE_ROOT/error" 'Argument list too long'
 done <<'ROWS'
 root-rows|query|(.issues.nodes | length == 2) and (.issues.nodes[1].description | length == 180000)
+root-rows-closed|query|(.issues.nodes | length == 2) and (.issues.nodes[1].description | length == 180000)
 create|query|.issueCreate.success == true and (.issueCreate.issue.description | length == 180000) and (.issueCreate.issue.labels.nodes | length == 2)
 update|query|.issueUpdate.success == true and (.issueUpdate.issue.description | length == 180000) and (.issueUpdate.issue.labels.nodes | length == 2)
 absent|query|.issue == {id:"owner",description:"short"} and .project == null
 ROWS
 
+# A page whose rows hold no open collection is returned as read; one that does
+# has each open row completed.
+pages_case root-rows query
+assert_jq 'root-rows: open row collections completed' "$PAGE_OUT" 'all(.issues.nodes[]; .labels.nodes | length == 2)'

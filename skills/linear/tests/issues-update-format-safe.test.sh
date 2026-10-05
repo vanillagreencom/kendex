@@ -18,9 +18,8 @@ assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
-# throwaway root — without this, cache writes from `issues update` land in
-# the real project's `.cache/linear`.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. The updated issue carries a real
@@ -32,13 +31,13 @@ config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
 
-issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 case "$query" in
 *"issueUpdate(id:"*)
   printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200" ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-todo","name":"Todo"}]}}}___HTTP_CODE___200' ;;
+  printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-todo","name":"Todo"}]}}}___HTTP_CODE___200' ;;
 *"issue(id:"*)
   printf '%s' "{\"data\":{\"issue\":$issue_json}}___HTTP_CODE___200" ;;
 *)

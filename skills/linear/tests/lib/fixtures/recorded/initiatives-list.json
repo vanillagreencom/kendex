@@ -1,0 +1,12 @@
+{
+  "provenance": "Derived: the application token has no initiative:read scope, so no initiative was recorded. The rows carry exactly the fields the command's query selects, in the shape of the recorded projects replies, and every value is a fixture value.",
+  "args": ["initiatives", "list", "--limit", "3", "--format=raw"],
+  "root_index": 0,
+  "root_path": "initiatives",
+  "output": ".initiatives.nodes",
+  "expected_rows": 2,
+  "derived_rows": "Two initiatives, Active and Planned, each holding one project.",
+  "requests": [
+    {"operation":"ListInitiatives","response":{"data":{"initiatives":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000941","name":"Fixture initiative","description":"Fixture text","content":null,"status":"Active","health":null,"targetDate":null,"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000951","name":"Fixture project","state":"started"}]},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"},{"id":"00000000-0000-4000-8000-000000000942","name":"Fixture initiative","description":"Fixture text","content":null,"status":"Planned","health":null,"targetDate":null,"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000952","name":"Fixture project","state":"started"}]},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"}]}}}}
+  ]
+}

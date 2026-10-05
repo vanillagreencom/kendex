@@ -16,16 +16,16 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 unset DEV_VALIDATE_RANGE_CMD
 
 # branch-size-check reads the allowance through the Linear CLI beside its own
-# skill; the stand-in answers `cache issues get ID --format=raw` from the
-# fixture's cache, the same shape branch_size_check.sh uses.
+# skill; the stand-in answers `issues get ID --format=raw` from the fixture's
+# issue rows, the same shape branch_size_check.sh uses.
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-[[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
+[[ "${1:-}" == issues && "${2:-}" == get && "${4:-}" == --format=raw ]] \
   || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
-row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
-[[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
+row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/tracker-fixture/issues.json)"
+[[ -n "$row" ]] || { echo '{"error":"Issue not found: '"$3"'"}' >&2; exit 1; }
 jq --null-input --argjson issue "$row" '{issue: $issue}'
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
@@ -45,9 +45,9 @@ build_branch() {
   git -C "$wt" config commit.gpgsign false
   git -C "$wt" commit -q --allow-empty -m base
   git -C "$wt" switch -q -c growth
-  mkdir -p "$wt/.cache/linear"
+  mkdir -p "$wt/.cache/tracker-fixture"
   jq --null-input '[{identifier: "KEN-GROWTH", description: "**Expected delta**: 1 line, 1 test line"}]' \
-    > "$wt/.cache/linear/issues.json"
+    > "$wt/.cache/tracker-fixture/issues.json"
   printf '.cache/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
   for pair in "$@"; do
     mkdir -p "$(dirname "$wt/${pair#*:}")"

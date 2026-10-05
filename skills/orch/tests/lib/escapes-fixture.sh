@@ -3,7 +3,7 @@
 # The neutral world the escape count (scripts/lib/escapes.sh) reads, shared by
 # oversee_report_escapes.sh and oversee_report.sh: a checkout whose origin is
 # a bare repository beside it, a commit or a merge on main at a chosen time,
-# and an issue in the Linear cache's shape. Nothing here plants a defect; each
+# and an issue in the live issue list's safe shape. Nothing here plants a defect; each
 # suite writes its own merges, reverts and issues, and its own Linear CLI stub.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
@@ -51,9 +51,10 @@ escapes_publish() {
   git -C "$1" push -q origin main
 }
 
-# escapes_bug ID EPOCH TITLE [DESCRIPTION] [LABEL] — one issue in the Linear
-# cache's safe shape, created at EPOCH, labelled LABEL, `bug` by default; the
-# suite's Linear CLI stub answers the issue list with a JSON array of these.
+# escapes_bug ID EPOCH TITLE [DESCRIPTION] [LABEL] — one issue in the
+# `issues list --format=safe` shape, created at EPOCH, labelled LABEL, `bug`
+# by default; the suite's Linear CLI stub answers the issue list with a JSON
+# array of these.
 escapes_bug() {
   jq -cn --arg id "$1" --arg at "$(jq -rn --argjson t "$2" '$t | todate | sub("Z$"; ".000Z")')" --arg title "$3" \
     --arg description "${4:-Symptom: see the title.}" --arg label "${5:-bug}" \

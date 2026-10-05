@@ -5,8 +5,8 @@ control_expect "app: create sends the kendex team and its label ids"
 control_expect "uuid: create sends only workspace labels for a team that owns none"
 control_expect "attach: no upload is sent for another team's agent label"
 control_replace scripts/lib/common.sh 1 \
-    '        query='"'"'query GetLabel($name: String!, $teamId: ID!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}) { nodes { id } } }'"'" \
-    '        query='"'"'query GetLabel($name: String!, $teamId: ID!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id } } }'"'"
+    '        query='"'"'query GetLabel($name: String!, $teamId: ID!, $after: String) { issueLabels(filter: {name: {eq: $name}, or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"'" \
+    '        query='"'"'query GetLabel($name: String!, $teamId: ID!, $after: String) { issueLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"'"
 
 # Classify a team reference by a lowercase-only grammar again: an uppercase
 # team UUID becomes a name to look up instead of the id the create sends.

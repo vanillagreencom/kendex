@@ -159,10 +159,10 @@ Rows:
                   the merge, in the week of the first finding, for this
                   week, last week and the week the review cap fell to 1
                   (lib/escapes.sh). It fetches that branch from origin in
-                  the project checkout and syncs a stale Linear cache
-                  first. `Escapes: unread (<cause>)`
-                  where git or the Linear cache could not be read or
-                  parsed, or the workspace has no label named bug.
+                  the project checkout and reads Linear live.
+                  `Escapes: unread (<cause>)` where git or Linear could not
+                  be read or parsed, or the workspace has no label named
+                  bug.
   Running         each lanes[] record reading running, preparing or parked.
                   The issue cell carries its open PR, or `no PR`, and that
                   status; a parked record's PR is the one its `parked` names,
@@ -197,7 +197,7 @@ A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
 title; `why it matters`, the first line of its `## Done when` section. The
 tracker is the lane record's, else the one the key names (lib/lane-state.sh,
-lane_key_tracker). A Linear issue is read from the linear skill's cache, a
+lane_key_tracker). A Linear issue is read live through the linear skill, a
 GitHub issue-N from the record's repo. An item whose tracker neither answers
 renders `(tracker unknown)` as what it is, a GitHub item whose record names
 no repo `(repo unknown)`, one whose key is not issue-N `(no issue number)`,
@@ -607,7 +607,7 @@ issue_cells() {
       [[ -x "$TRACKER" ]] || refuse tracker-missing "$TRACKER"
       # --format=safe pins the shape: LINEAR_FORMAT from the project's settings
       # would otherwise nest the issue or drop its description.
-      if ! json="$("$TRACKER" cache issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
+      if ! json="$("$TRACKER" issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
         refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
       fi ;;
     *) TITLE="(tracker unknown)"; return 0 ;;

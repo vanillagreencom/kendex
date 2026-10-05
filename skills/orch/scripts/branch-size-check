@@ -158,7 +158,7 @@ message() {
       ;;
     linear-read)
       printf 'branch-size-check: linear-read issue=%s\n' "$issue"
-      printf '%s\n' "issue '$issue' could not be read from the Linear cache"
+      printf '%s\n' "issue '$issue' could not be read from Linear${linear_cause:+: $linear_cause}"
       ;;
     invalid-delta)
       printf 'branch-size-check: invalid-delta issue=%s body=%s\n' "$issue" "$issue_body"
@@ -210,6 +210,7 @@ die() {
 
 worktree=""
 issue=""
+linear_cause=""
 state_dir=""
 as_json=false
 cut_from_round=""
@@ -267,20 +268,23 @@ elif [[ "$issue" == issue-* ]]; then
   command -v gh >/dev/null 2>&1 || die missing-gh "$@"
   # gh and the Linear CLI both resolve their repository from the working
   # directory, which is the caller's, not the worktree's. The subshell scopes
-  # the move; PROJECT_ROOT is dropped so the Linear cache honors the caller's
-  # own LINEAR_CACHE_ROOT redirect.
+  # the move.
   issue_body="$( (cd "$REPO_ROOT" && gh issue view "${issue#issue-}" --json body --jq '.body // ""') 2>/dev/null)" \
     || die github-read "$@"
 else
   [[ -x "$SCRIPT_DIR/../../linear/scripts/linear.sh" ]] \
     || die missing-linear "$@"
-  # The CLI answers on stderr when it has no issue to give, so both streams are
-  # read: a JSON object naming no issue is the cache answering that it holds
-  # none, and anything else is a read that did not happen at all.
+  # A failed read, an unknown issue among them, prints no {"issue": ...}
+  # object, and either is a read that answered nothing to measure against.
+  # The CLI says why on its last stderr line, which the refusal carries.
+  linear_err="$(mktemp)" || die linear-read "$@"
+  trap 'rm -f -- "${linear_err:?}"' EXIT
   raw="$( (cd "$REPO_ROOT" && env -u PROJECT_ROOT "$SCRIPT_DIR/../../linear/scripts/linear.sh" \
-    cache issues get "$issue" --format=raw) 2>&1 || true)"
-  jq -e 'type == "object" and has("issue")' <<<"$raw" >/dev/null 2>&1 \
-    || die linear-read "$@"
+    issues get "$issue" --format=raw) 2>"$linear_err" || true)"
+  if ! jq -e 'type == "object" and has("issue")' <<<"$raw" >/dev/null 2>&1; then
+    linear_cause="$(tail -n 1 -- "$linear_err")" || linear_cause=""
+    die linear-read "$@"
+  fi
   issue_body="$(jq -r '.issue.description // ""' <<<"$raw")"
 fi
 

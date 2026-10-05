@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["labels", "list", "--limit", "5", "--format=raw"],
+  "root_index": 0,
+  "root_path": "issueLabels",
+  "output": ".issueLabels.nodes",
+  "expected_rows": 5,
+  "requests": [
+    {"operation":"ListLabels","response":{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000094","name":"agent:swift","color":"#9C27B0","description":"Fixture text","isGroup":false,"team":null,"parent":{"name":"Fixture name 5"},"createdAt":"2026-10-01T15:28:44.299Z"},{"id":"00000000-0000-4000-8000-000000000095","name":"Fixture name 6","color":"#4EA7FC","description":null,"isGroup":false,"team":null,"parent":null,"createdAt":"2026-10-01T00:27:14.121Z"},{"id":"00000000-0000-4000-8000-000000000096","name":"Fixture name 7","color":"#4EA7FC","description":null,"isGroup":false,"team":null,"parent":null,"createdAt":"2026-10-01T00:27:13.795Z"},{"id":"00000000-0000-4000-8000-000000000097","name":"agent:runtime","color":"#9C27B0","description":"Fixture text","isGroup":false,"team":null,"parent":{"name":"Fixture name 5"},"createdAt":"2026-09-30T13:45:44.434Z"},{"id":"00000000-0000-4000-8000-000000000098","name":"Fixture name 8","color":"#4EA7FC","description":"Fixture text","isGroup":false,"team":{"name":"Fixture name 9"},"parent":null,"createdAt":"2026-09-14T23:12:35.816Z"}]}}}}
+  ]
+}

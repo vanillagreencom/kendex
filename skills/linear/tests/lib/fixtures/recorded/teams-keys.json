@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["teams", "keys"],
+  "root_index": 0,
+  "root_path": "organization.teams",
+  "output": ".keys",
+  "expected_rows": 11,
+  "requests": [
+    {"operation":"TeamKeys","response":{"data":{"organization":{"urlKey":"fixture","teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"key":"FXA"},{"key":"FXB"},{"key":"FXC"},{"key":"FXD"},{"key":"FXE"},{"key":"FXF"},{"key":"FXG"},{"key":"KEN"},{"key":"FXH"},{"key":"FXI"},{"key":"FXJ"}]}}}}}
+  ]
+}

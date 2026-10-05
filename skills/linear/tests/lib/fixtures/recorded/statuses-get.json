@@ -1,0 +1,13 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["statuses", "get", "--name", "Todo", "--format=raw"],
+  "root_index": 1,
+  "root_path": "workflowStates",
+  "output": ".workflowStates.nodes",
+  "expected_rows": 2,
+  "derived_rows": "The recorded connection held one row; a copy of it with a new id is the second row the cursor split needs.",
+  "requests": [
+    {"operation":"GetTeam","response":{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000024"},"nodes":[{"id":"00000000-0000-4000-8000-000000000024","key":"KEN","name":"kendex"}]}}}},
+    {"operation":"GetState","response":{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000360","name":"Todo","type":"unstarted","color":"#e2e2e2","position":1,"description":null,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000360-copy","name":"Todo","type":"unstarted","color":"#e2e2e2","position":1,"description":null,"team":{"name":"kendex"}}]}}}}
+  ]
+}

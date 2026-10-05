@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
-mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
 
@@ -29,10 +29,10 @@ printf '%s\n' "$payload" >>"${CURL_PAYLOAD_LOG:?}"
 
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"projects(filter:"*)
-  printf '%s' '{"data":{"projects":{"nodes":[{"id":"project-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"project-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *issueLabelCreate*)
   printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"label-uuid","name":"my label","color":null,"isGroup":false,"parent":null}}}}___HTTP_CODE___200'

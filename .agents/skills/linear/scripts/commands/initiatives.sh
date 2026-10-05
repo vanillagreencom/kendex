@@ -23,7 +23,8 @@ Actions:
 
 List Options:
   --status <status>  Filter by status (Planned, Active, Completed)
-  --limit <n>        Max results (default: 50)
+  --limit <n>        Max results (default: 75); a larger value spans pages
+  --max              Read every page; a chain that fails partway refuses
 
 Create Options:
   --name <text>         Initiative name (required)
@@ -59,13 +60,20 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_initiatives() {
     local status=""
-    local first=75
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --status) status="$2"; shift 2 ;;
-            --limit) first="$2"; shift 2 ;;
+            --limit)
+                linear_list_option "$@" || return 1
+                shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
+                ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
             --) shift; break ;;
@@ -80,8 +88,9 @@ list_initiatives() {
     fi
 
     local query='
-    query ListInitiatives($filter: InitiativeFilter, $first: Int) {
-        initiatives(filter: $filter, first: $first) {
+    query ListInitiatives($filter: InitiativeFilter, $first: Int, $after: String) {
+        initiatives(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -90,21 +99,21 @@ list_initiatives() {
                 status
                 health
                 targetDate
-                projects { nodes { id name state } }
+                projects { pageInfo { hasNextPage endCursor } nodes { id name state } }
                 createdAt
                 updatedAt
             }
         }
     }'
 
-    local variables="{\"filter\": $filter_json, \"first\": $first}"
+    local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" initiatives) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_initiatives_list "$result"
@@ -113,6 +122,8 @@ list_initiatives() {
 }
 
 get_initiative() {
+    # Read by lib/pages.sh when the projects connection is left open.
+    local LINEAR_INITIATIVE_PROJECT_MODE=get
     local initiative_id=""
     FORMAT="${DEFAULT_FORMAT}"
 
@@ -150,6 +161,7 @@ get_initiative() {
                 createdAt
             }
             projects {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     name
@@ -165,12 +177,12 @@ get_initiative() {
 
     local variables="{\"id\": \"$initiative_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_initiative_single "$result"
@@ -381,14 +393,15 @@ remove_project() {
 
     # Find the InitiativeToProject link ID via top-level query
     local link_query='
-    query GetInitiativeLinks {
-        initiativeToProjects(first: 250) {
+    query GetInitiativeLinks($after: String) {
+        initiativeToProjects(first: 250, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes { id initiative { id } project { id } }
         }
     }'
 
     local link_result
-    link_result=$(graphql_query "$link_query" "{}")
+    link_result=$(graphql_pages "$link_query" "{}" initiativeToProjects) || return 1
     local link_id
     link_id=$(echo "$link_result" | jq -r --arg iid "$initiative_id" --arg pid "$project_id" '.initiativeToProjects.nodes[] | select(.initiative.id == $iid and .project.id == $pid) | .id')
 
@@ -426,7 +439,7 @@ case "$action" in
             echo '{"error": "Usage: initiatives.sh get <id>"}' >&2
             exit 1
         fi
-        get_initiative "$1"
+        get_initiative "$@"
         ;;
     create)
         create_initiative "$@"

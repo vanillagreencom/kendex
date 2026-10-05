@@ -18,7 +18,8 @@ Actions:
   me      Get current user (shorthand for "get me")
 
 List Options:
-  --limit <n>           Max results (default: 75; the API's largest page is 250)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Get:
   users.sh get <id-or-name>
@@ -36,14 +37,18 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 
 list_users() {
-    local first=75
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
@@ -54,8 +59,9 @@ list_users() {
     done
 
     local query='
-    query ListUsers($first: Int) {
-        users(first: $first) {
+    query ListUsers($first: Int, $after: String) {
+        users(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -68,14 +74,14 @@ list_users() {
         }
     }'
 
-    local variables="{\"first\": $first}"
+    local variables='{}'
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" users) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_users_list "$result"
@@ -112,11 +118,11 @@ get_user() {
                 displayName
                 active
                 admin
-                teams { nodes { name } }
+                teams { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }
         }'
-        result=$(graphql_query "$query" "{}")
+        result=$(graphql_query "$query" "{}") || return 1
     else
         local query='
         query GetUser($id: String!) {
@@ -127,18 +133,18 @@ get_user() {
                 displayName
                 active
                 admin
-                teams { nodes { name } }
+                teams { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }
         }'
         local variables="{\"id\": \"$user_ref\"}"
-        result=$(graphql_query "$query" "$variables")
+        result=$(graphql_query "$query" "$variables") || return 1
     fi
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_user_single "$result"

@@ -31,8 +31,8 @@ LINEAR_REQUIRE_REACH = ""
 # they lack; other commands print safe in its place and report nothing.
 LINEAR_FORMAT = "safe"
 
-# Seconds to wait before retrying a Linear call that was rate limited or
-# failed. The wait doubles on each further attempt. Whole seconds; 0 retries
+# Seconds to wait before retrying a Linear call that was rate limited, got a
+# 5xx or got no answer. The wait doubles on each further attempt. Whole seconds; 0 retries
 # with no wait at all.
 LINEAR_RETRY_BASE_DELAY = "1"
 
@@ -48,7 +48,8 @@ LINEAR_APP_TOKEN = ""
 # Together they win over the personal key when LINEAR_APP_TOKEN is unset.
 # Both mint paths use the fixed scope read,write,issues:create,comments:create,
 # timeSchedule:write,initiative:read,initiative:write,customer:read,
-# customer:write. Only the pair's API path caches.
+# customer:write. auth-mint writes no file; the pair's API path keeps its
+# token in a private per-user file (README.md § Settings).
 LINEAR_CLIENT_ID = ""
 
 # The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only

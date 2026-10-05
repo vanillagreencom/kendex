@@ -16,8 +16,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 **A bundle needs an explicit single-PR marker.** A parent with children is a CONTAINER unless one of exactly three markers is present: `(one PR)` in its title, `Audit Bundle: yes` in the delegation, or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none present, stop and report the mis-delegation. Check the marker against the delegation's `Parent Title:` line; when a bundled delegation omits that line, read the title first — never classify from labels and children alone:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [PARENT_ID]
+.agents/skills/linear/scripts/linear.sh issues get [PARENT_ID]
 ```
 
 In the sub-issue tree, complete blockers before the issues they block; entries marked `(completed)` are context only and are skipped in the § 4 loop.
@@ -46,13 +45,12 @@ Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWN
 Linear only — activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT_TYPE]
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh comments list [ISSUE_ID]
 ```
 
-The sync must succeed before activation or any cache read. A missing cache before that command is expected in a fresh worktree. If the sync fails, stop and preserve its exact diagnostic: that is a sync/auth/API/config failure, not a missing-cache result. If a mandatory cache read reports `No cache found` after sync succeeded, stop and report a cache-initialization defect. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
+Every read is live. A failed read or activation stops the round with its exact diagnostic, an auth, API or configuration failure; a rate-limited activation is held under [workflow-actions.md § Quota Holds](../../linear/patterns/workflow-actions.md#quota-holds). Never run this Linear preflight for GitHub-tracked or ad-hoc work.
 
 GitHub only:
 
@@ -62,11 +60,11 @@ gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,u
 
 Ad-hoc: no tracker reads.
 
-**If bundled with completed siblings**, read their comments too, all of them in one `linear.sh cache comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. A refusal carrying `missing` names siblings the cache does not hold, because they are archived, deleted, mistyped or unsynced: stop and report those identifiers. One carrying `path` is a corrupt cache file, which `linear.sh sync --full` repairs.
+**If bundled with completed siblings**, read their comments too, all of them in one `linear.sh comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. A refusal carrying `missing` names siblings Linear has no issue for, because they are deleted or mistyped: stop and report those identifiers.
 
 ### 2.2 Research Context
 
-Read the issue description — `.description` from the cache read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
+Read the issue description — `.description` from the read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
 
@@ -281,7 +279,7 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 
 **Skip if** the tracker is not Linear, this issue blocks nothing, or completion alone unblocks the downstream work.
 
-Read `.blocks` from `linear.sh cache issues get [ISSUE_ID]`. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue.
+Read `.blocks` from `linear.sh issues get [ISSUE_ID]`. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue.
 
 ---
 

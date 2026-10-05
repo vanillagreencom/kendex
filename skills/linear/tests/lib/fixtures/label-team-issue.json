@@ -7,7 +7,7 @@
       "name": "kendex"
     },
     "labels": {
-      "nodes": [
+      "pageInfo": {"hasNextPage":false,"endCursor":null},"nodes": [
         {
           "name": "harness"
         },

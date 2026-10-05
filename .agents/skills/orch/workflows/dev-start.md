@@ -21,8 +21,7 @@ Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 **Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is equivalent to the `(one PR)` marker: skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
@@ -51,7 +50,7 @@ Select the agent through [dev § Implementer selection](../../dev/SKILL.md#imple
 
 ```bash
 # Linear
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --format=compact
 # GitHub
 gh issue view [N] --json labels --jq '.labels[].name'
 ```

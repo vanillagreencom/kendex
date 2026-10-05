@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["projects", "get", "00000000-0000-4000-8000-000000000028", "--format=raw"],
+  "root_index": 0,
+  "root_path": "project.inverseRelations",
+  "output": ".project.inverseRelations.nodes",
+  "expected_rows": 2,
+  "derived_rows": "The recorded connection held one row; a copy of it with a new id is the second row the cursor split needs.",
+  "requests": [
+    {"operation":"GetProject","response":{"data":{"project":{"id":"00000000-0000-4000-8000-000000000028","name":"Fixture project","description":"Fixture text","content":null,"state":"backlog","progress":0.8227513227513228,"health":null,"healthUpdatedAt":null,"priority":0,"sortOrder":-2830,"startDate":null,"targetDate":null,"url":"https://linear.app/fixture","teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000024"},"nodes":[{"name":"kendex"}]},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"lead":null,"createdAt":"2026-08-03T04:08:31.500Z","updatedAt":"2026-08-21T18:04:28.107Z","lastUpdate":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000104","type":"dependency","anchorType":"start","relatedAnchorType":"end","project":{"id":"00000000-0000-4000-8000-000000000105","name":"Fixture project","state":"backlog","progress":0.8151465798045603}},{"id":"00000000-0000-4000-8000-000000000104-copy","type":"dependency","anchorType":"start","relatedAnchorType":"end","project":{"id":"00000000-0000-4000-8000-000000000105","name":"Fixture project","state":"backlog","progress":0.8151465798045603}}]}}}}}
+  ]
+}

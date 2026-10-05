@@ -1,0 +1,1 @@
+- `linear.sh` reads go to Linear's API and follow every page of each collection; a read whose page chain fails exits nonzero with no partial output, and `session-status` no longer syncs.

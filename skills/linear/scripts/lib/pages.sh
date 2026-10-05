@@ -3,11 +3,12 @@
 set -euo pipefail
 
 # Read the requested connection to its end, or to a caller's total row limit.
-# Every page must carry pageInfo. A row limit can leave the chain open.
+# Every page must carry pageInfo. A row limit can leave the chain open, and
+# the result's pageInfo.hasNextPage then says rows were left unread.
 # Output follows successful traversal to the end or limit. Failures leave stdout empty.
 graphql_pages() {
     local query="$1" variables="$2" path="$3" limit="${4:-0}" initial="${5:-}"
-    local result nodes all='[]' seen='[]' cursor='null' next count=0 key
+    local result nodes all='[]' seen='[]' cursor='null' next count=0 key collected=0 rows
     key=$(jq -cn --arg path "$path" '$path | split(".")') || return 1
     while true; do
         if [[ -n "$initial" ]]; then
@@ -25,10 +26,12 @@ graphql_pages() {
         fi
         all=$(jq -cs '.[0] + .[1]' <<<"$all"$'\n'"$nodes") || return 1
         count=$((count + 1))
+        if (( limit > 0 )); then
+            rows=$(jq 'length' <<<"$nodes") || return 1
+            collected=$((collected + rows))
+        fi
         next=$(jq -r --argjson key "$key" 'getpath($key).pageInfo.hasNextPage' <<<"$result") || return 1
         if [[ "$next" == false ]]; then break; fi
-        local collected
-        collected=$(jq 'length' <<<"$all") || return 1
         if (( limit > 0 && collected >= limit )); then break; fi
         cursor=$(jq -ce --argjson key "$key" 'getpath($key).pageInfo.endCursor | strings | select(length > 0)' <<<"$result") || {
             printf 'linear-pages: missing-cursor=%s\n' "$path" >&2
@@ -47,10 +50,89 @@ graphql_pages() {
             return 1
         fi
     done
-    if (( limit > 0 )); then all=$(jq -c --argjson n "$limit" '.[:$n]' <<<"$all") || return 1; fi
+    if (( limit > 0 && collected > limit )); then
+        all=$(jq -c --argjson n "$limit" '.[:$n]' <<<"$all") || return 1
+        result=$(jq -c --argjson key "$key" 'setpath($key + ["pageInfo", "hasNextPage"]; true)' <<<"$result") || return 1
+    fi
     result=$(jq -cs --argjson key "$key" '
         .[1] as $nodes | .[0] | setpath($key + ["nodes"]; $nodes)' <<<"$result"$'\n'"$all") || return 1
     linear_complete_result "$result"
+}
+
+# List bounds, one owner for every list verb: the default row bound, --limit,
+# --max and --first, the page size, and the notice a bounded read prints when
+# rows were left unread. A verb calls linear_list_reset before its parse, hands
+# its bound options to linear_list_option from its own shell (a command
+# substitution would lose the bound), and reads through linear_list_read.
+LINEAR_LIST_DEFAULT=75
+LINEAR_LIST_BOUND=$LINEAR_LIST_DEFAULT
+
+linear_list_reset() {
+    LINEAR_LIST_BOUND=$LINEAR_LIST_DEFAULT
+}
+
+# The bound is one value: a row count, `all` (--max) or `first` (--first, one
+# row the caller asked for alone, so no notice says more rows exist). --limit
+# takes digits only, so no value a caller passes can spell a word.
+# Usage: linear_list_option --limit N | --max | --first
+linear_list_option() {
+    case "$1" in
+    --max) LINEAR_LIST_BOUND=all ;;
+    --first) LINEAR_LIST_BOUND=first ;;
+    --limit)
+        linear_require_pattern --limit "${2:-}" '^[1-9][0-9]{0,8}$' "a positive whole number" || return 1
+        LINEAR_LIST_BOUND="$2"
+        ;;
+    *)
+        printf 'linear-list: unknown-option=%s\n' "$1" >&2
+        return 1
+        ;;
+    esac
+}
+
+# The page size a list query asks its root connection for when its verb names
+# none, read from the query itself. Linear refuses a query whose complexity
+# passes 10,000. A row that selects no connection costs a few points, so it
+# takes Linear's largest page, 250. A row that selects one can cost over a
+# hundred (measured per row: teams 123, initiatives 131, projects 54, so 250
+# rows of teams cost 30,675), so it takes Linear's default page, 50. Every
+# connection carries pageInfo (lib/pages.sh completes an open one), so a query
+# naming pageInfo more than once has rows that select a connection.
+# Usage: page=$(linear_list_page_size QUERY)
+linear_list_page_size() {
+    local rest="${1#*pageInfo}"
+    if [[ "$rest" == *pageInfo* ]]; then
+        printf '50'
+    else
+        printf '250'
+    fi
+}
+
+# Read the root connection at PATH to the verb's bound. VARIABLES carries no
+# `first`; the page size is set here: PAGE when the verb names one, a size
+# measured for its own query, else linear_list_page_size's. Linear does not
+# price every connection by its rows: issues measured 506 points at any page.
+# Usage: linear_list_read QUERY VARIABLES PATH [PAGE]
+linear_list_read() {
+    local query="$1" variables="$2" path="$3" page="${4:-}" first limit result open
+    if [[ -z "$page" ]]; then
+        page=$(linear_list_page_size "$query") || return 1
+    fi
+    case "$LINEAR_LIST_BOUND" in
+    all) first=$page limit=0 ;;
+    first) first=1 limit=1 ;;
+    *) first=$((LINEAR_LIST_BOUND < page ? LINEAR_LIST_BOUND : page)) limit=$LINEAR_LIST_BOUND ;;
+    esac
+    variables=$(jq -c --argjson first "$first" '. + {first: $first}' <<<"$variables") || return 1
+    result=$(graphql_pages "$query" "$variables" "$path" "$limit") || return 1
+    if [[ "$LINEAR_LIST_BOUND" != all && "$LINEAR_LIST_BOUND" != first ]]; then
+        open=$(jq -r --arg path "$path" 'getpath($path | split(".")).pageInfo.hasNextPage' <<<"$result") || return 1
+        if [[ "$open" == true ]]; then
+            printf 'linear-list: truncated path=%s limit=%s\nMore rows match than --limit %s returns; pass --max to read them all.\n' \
+                "$path" "$limit" "$limit" >&2
+        fi
+    fi
+    printf '%s\n' "$result"
 }
 
 # The fields are the existing command contracts, shared by their continuation
@@ -62,6 +144,7 @@ linear_connection_fields() {
     issue:inverseRelations) printf '%s' "$ISSUE_BLOCKED_BY_NODE_FIELDS" ;;
     issue:children) linear_children_fields "${LINEAR_CHILD_DEPTH:-1}" ;;
     issue:comments) printf '%s' 'id body createdAt updatedAt user { name }' ;;
+    issue:attachments) printf '%s' 'id url title' ;;
     project:relations) printf '%s' 'id type anchorType relatedAnchorType relatedProject { id name state progress }' ;;
     project:inverseRelations) printf '%s' 'id type anchorType relatedAnchorType project { id name state progress }' ;;
     project:projectUpdates) printf '%s' 'id body health createdAt user { name }' ;;
@@ -84,7 +167,7 @@ linear_children_fields() {
     brief) fields='id identifier title state { name }' ;;
     direct) fields='id identifier title state { name type } assignee { name } priority estimate createdAt' ;;
     bundle|recursive)
-        fields="id identifier title state { name type } assignee { name } labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } } priority estimate parent { identifier } $ISSUE_RELATION_PAGE_FIELDS"
+        fields="id identifier title state { name type } assignee { name } labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } } priority estimate parent { identifier } $ISSUE_RELATION_FIELDS"
         if [[ "$LINEAR_ISSUE_CHILD_MODE" == bundle ]]; then fields="description $fields"; fi
         if (( depth > 1 )); then
             descendants=$(linear_children_fields "$((depth - 1))") || return 1
@@ -148,7 +231,7 @@ linear_complete_entity() {
 
 # Finish nested collections on the existing helper's read and mutation replies.
 linear_complete_result() {
-    local data="$1" root type rows row all value roots kind
+    local data="$1" root type rows row all value roots kind open
     jq -e 'type == "object"' <<<"$data" >/dev/null || return 1
     roots=$(jq -r 'keys[]' <<<"$data") || return 1
     while IFS= read -r root; do
@@ -174,6 +257,11 @@ linear_complete_result() {
         value=$(linear_complete_entity "$type" "$value") || return 1
         kind=$(jq -r 'has("nodes")' <<<"$value") || return 1
         if [[ "$kind" == true ]]; then
+            # The connection above is validated whole; a page whose rows hold
+            # no open collection is complete as read, and walking its rows one
+            # by one would cost a jq run per row for nothing.
+            open=$(jq -r 'any(.nodes[] | .. | objects | select(has("nodes")); .pageInfo.hasNextPage)' <<<"$value") || return 1
+            [[ "$open" == true ]] || continue
             rows=$(jq -c '.nodes[]' <<<"$value") || return 1
             all='[]'
             while IFS= read -r row; do
@@ -189,8 +277,10 @@ linear_complete_result() {
     printf '%s\n' "$data"
 }
 
+# One request and its nested completion. Returns graphql_request's status, so
+# a caller can tell Linear's "Entity not found" (2) from a failed read (1).
 graphql_query() {
     local result
-    result=$(graphql_request "$@") || return 1
+    result=$(graphql_request "$@") || return
     linear_complete_result "$result"
 }

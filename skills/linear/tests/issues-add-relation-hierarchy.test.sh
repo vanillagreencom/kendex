@@ -71,7 +71,7 @@ case "$query" in
   printf '%s' '{"data":{"issueRelationCreate":{"success":true,"issueRelation":{"id":"rel-1","type":"blocks","issue":{"identifier":"CC-X","title":"t"},"relatedIssue":{"identifier":"CC-Y","title":"t"}}}}}___HTTP_CODE___200'
   ;;
 *"RefreshIssues"*)
-  printf '%s' '{"data":{"issues":{"nodes":[]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'

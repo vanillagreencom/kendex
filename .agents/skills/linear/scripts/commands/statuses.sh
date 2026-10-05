@@ -63,8 +63,9 @@ list_statuses() {
     fi
 
     local query='
-    query ListStates($filter: WorkflowStateFilter) {
-        workflowStates(filter: $filter) {
+    query ListStates($filter: WorkflowStateFilter, $after: String) {
+        workflowStates(filter: $filter, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -78,12 +79,12 @@ list_statuses() {
 
     local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" workflowStates) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_states_list "$result"
@@ -132,8 +133,9 @@ get_status() {
     fi
 
     local query='
-    query GetState($filter: WorkflowStateFilter) {
-        workflowStates(filter: $filter) {
+    query GetState($filter: WorkflowStateFilter, $after: String) {
+        workflowStates(filter: $filter, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -148,12 +150,12 @@ get_status() {
 
     local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" workflowStates) || return 1
 
     # Apply output format - returns first matching state as single object
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             # Return first matching state as flat object

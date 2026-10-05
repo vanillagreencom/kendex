@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["issues", "children", "KEN-9016", "--format=raw"],
+  "root_index": 0,
+  "root_path": "issue.children",
+  "output": ".issue.children.nodes",
+  "expected_rows": 5,
+  "requests": [
+    {"operation":"GetChildren","response":{"data":{"issue":{"id":"00000000-0000-4000-8000-000000000055","identifier":"KEN-9016","title":"Fixture text","children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000058","identifier":"KEN-9018","title":"Fixture text","state":{"name":"Backlog","type":"backlog"},"assignee":null,"priority":3,"estimate":1,"createdAt":"2026-10-02T17:00:35.824Z"},{"id":"00000000-0000-4000-8000-000000000061","identifier":"KEN-9020","title":"Fixture text","state":{"name":"Backlog","type":"backlog"},"assignee":null,"priority":2,"estimate":3,"createdAt":"2026-10-02T17:00:33.661Z"},{"id":"00000000-0000-4000-8000-000000000067","identifier":"KEN-9023","title":"Fixture text","state":{"name":"Backlog","type":"backlog"},"assignee":null,"priority":3,"estimate":2,"createdAt":"2026-10-02T17:00:29.775Z"},{"id":"00000000-0000-4000-8000-000000000066","identifier":"KEN-9022","title":"Fixture text","state":{"name":"Backlog","type":"backlog"},"assignee":null,"priority":2,"estimate":2,"createdAt":"2026-10-02T17:00:26.166Z"},{"id":"00000000-0000-4000-8000-000000000060","identifier":"KEN-9019","title":"Fixture text","state":{"name":"Backlog","type":"backlog"},"assignee":null,"priority":2,"estimate":2,"createdAt":"2026-10-02T17:00:23.975Z"}]}}}}}
+  ]
+}

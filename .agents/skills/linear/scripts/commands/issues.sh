@@ -17,7 +17,7 @@ Usage: issues.sh <action> [options]
 Actions:
   list           List issues with filters
   get            Get a single issue by ID (--with-bundle for recursive children + pending_count)
-  bulk-get       Get multiple issues with full relations in one query
+  bulk-get       Get several issues with full relations, by identifier or UUID
   bulk-update    Update multiple issues with the same changes
   create         Create a new issue
   update         Update an existing issue
@@ -55,7 +55,10 @@ Output Formats (all query commands):
   --format=raw          Original GraphQL structure
 
 List Options:
-  --label <name>        Filter by label (e.g., "backend")
+  --label <name>        Filter by label (e.g., "backend"); repeat to require
+                        every named label
+  --labels <a,b,c>      Comma-separated labels, every one required (ANDs with
+                        --label)
   --state <name>        Filter by state (e.g., "Todo", "In Progress,Todo")
   --project <name>      Filter by project name
   --project-id <uuid>   Filter by project ID
@@ -63,11 +66,16 @@ List Options:
   --assignee <name|me>  Filter by assignee
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd>  Filter by created date
-  --limit <n>           Max results per page (default: 75)
-  --max                 Fetch ALL results (auto-paginates, up to 15000)
+  --limit <n>           Max results (default: 75); a larger value spans pages,
+                        and a read that leaves rows unread says so on stderr
+  --max                 Fetch every page; a chain left open at the page cap
+                        or failed partway refuses with no output
   --search <terms>      Filter by title/description substring, server-side and
                         case-insensitive; pipe-separated terms are OR'd.
-                        Not a regex (the cache's --search is; see cache --help)
+  --all-projects        Every project in one read (no project filter; each
+                        row carries its project name). Not with --project
+  --no-project          Only issues with no project. Not with --project or
+                        --all-projects
   --include-archived    Include archived issues
   --with-relations      Include blocking info (use --format=raw for analyzed output)
 
@@ -240,7 +248,7 @@ Examples:
   issues.sh create --title "Sub-task" --parent PROJ-42 --description "Reached by: kendex apply"
   issues.sh children PROJ-42                    # Direct children only
   issues.sh children PROJ-42 --recursive        # All descendants (3 levels deep)
-  issues.sh children PROJ-42 --recursive --pending  # Pending only (excludes completed/canceled)
+  issues.sh children PROJ-42 --recursive --pending  # Pending only: drops completed/canceled rows, keeps an open grandchild of a closed child
   issues.sh update PROJ-43 --parent PROJ-42
   issues.sh update PROJ-43 --remove-parent
 
@@ -321,11 +329,10 @@ fi
 unset _want_help _skip_value _arg
 
 source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
-# Shared issue fields for mutation responses — matches list query for cache parity
+# Shared issue fields for mutation responses, the list query's fields
 ISSUE_RETURN_FIELDS='
     id
     identifier
@@ -338,7 +345,7 @@ ISSUE_RETURN_FIELDS='
     cycle { id name number }
     parent { id identifier title }
     team { name }
-    labels { nodes { name } }
+    labels { pageInfo { hasNextPage endCursor } nodes { name } }
     priority
     estimate
     sortOrder
@@ -364,7 +371,7 @@ read_description_file() {
 
 list_issues() {
     local with_relations="false"
-    local paginate_all="false"
+    linear_list_reset
     local search_pattern=""
     local search_given="false"
     local args=()
@@ -376,7 +383,7 @@ list_issues() {
             with_relations="true"
             ;;
         --max)
-            paginate_all="true"
+            linear_list_option --max
             ;;
         --format)
             # A following option token is a missing value, not a format:
@@ -451,8 +458,6 @@ list_issues() {
     fi
 
     local query
-    # Both queries now include full fields for cache compatibility
-# Includes project.id, projectMilestone, cycle, parent, archivedAt, and trashed
     query='
     query ListIssues($filter: IssueFilter, $first: Int, $includeArchived: Boolean, $after: String) {
         issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
@@ -468,7 +473,7 @@ list_issues() {
                 projectMilestone { id name }
                 cycle { id name number }
                 parent { id identifier title }
-                labels { nodes { name } }
+                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                 priority
                 estimate
                 sortOrder
@@ -482,53 +487,11 @@ list_issues() {
         }
     }'
 
-    local result
-    local all_nodes="[]"
-    local cursor="null"
-    local page_count=0
-    local max_pages=200 # Safety limit: 200 pages * 75 = 15000 issues max
-
-    if [ "$paginate_all" = "true" ]; then
-        # Pagination mode: fetch all pages
-        while true; do
-            local variables="{\"filter\": $FILTER_JSON, \"first\": $FIRST_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON, \"after\": $cursor}"
-            result=$(graphql_query "$query" "$variables")
-
-            # Extract nodes and merge
-            local nodes
-            nodes=$(echo "$result" | jq '.issues.nodes')
-            all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
-
-            # Check for next page
-            local has_next
-            has_next=$(echo "$result" | jq -r '.issues.pageInfo.hasNextPage')
-
-            page_count=$((page_count + 1))
-
-            if [ "$has_next" = "true" ] && [ $page_count -ge $max_pages ]; then
-                echo "⚠️  --max stopped at the $max_pages-page safety cap with more pages remaining — results are truncated." >&2
-            fi
-            if [ "$has_next" != "true" ] || [ $page_count -ge $max_pages ]; then
-                break
-            fi
-
-            cursor=$(echo "$result" | jq '.issues.pageInfo.endCursor')
-        done
-
-        # Reconstruct result structure with all nodes
-        result=$(echo "$all_nodes" | jq '{issues: {nodes: .}}')
-    else
-        # Single query mode (default)
-        local variables="{\"filter\": $FILTER_JSON, \"first\": $FIRST_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON, \"after\": null}"
-        result=$(graphql_query "$query" "$variables")
-
-        # Check for truncation and warn if results may be incomplete
-        local result_count
-        result_count=$(echo "$result" | jq '.issues.nodes | length')
-        if [ "$result_count" -ge "$FIRST_JSON" ]; then
-            echo "⚠️  Returned $result_count issues (limit: $FIRST_JSON). Results may be truncated. Use --max for all results." >&2
-        fi
-    fi
+    local result variables
+    variables="{\"filter\": $FILTER_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON}"
+    # Measured: this query costs 506 points at any page, so it reads 75 rows a
+    # request, one request for the default bound.
+    result=$(linear_list_read "$query" "$variables" issues 75) || return 1
 
     # Apply output format
     case "$FORMAT" in
@@ -550,7 +513,7 @@ list_issues() {
                     ]
                 }'
         else
-            echo "$result"
+            linear_public_result "$result"
         fi
         ;;
     ids)
@@ -607,37 +570,10 @@ bulk_get_issues() {
         done
     fi
 
-    if [ ${#identifiers[@]} -eq 0 ]; then
-        echo '{"error": "No issue identifiers provided"}' >&2
-        return 1
-    fi
+    local refs
+    refs=$(linear_issue_refs refs ${identifiers[@]+"${identifiers[@]}"}) || return 1
 
-    # Resolve identifiers to UUIDs (Linear API requires UUIDs for filtering)
-    local uuids=()
-    for id in "${identifiers[@]}"; do
-        local uuid
-        uuid=$(resolve_issue_id "$id")
-        if [ -n "$uuid" ]; then
-            uuids+=("\"$uuid\"")
-        fi
-    done
-
-    if [ ${#uuids[@]} -eq 0 ]; then
-        echo '{"error": "No valid issues found"}' >&2
-        return 1
-    fi
-
-    # Build filter with id IN clause
-    local id_list
-    id_list=$(
-        IFS=,
-        echo "[${uuids[*]}]"
-    )
-
-    local query='
-    query BulkGetIssues($filter: IssueFilter!) {
-        issues(filter: $filter, first: 50) {
-            nodes {
+    local fields='
                 id
                 identifier
                 title
@@ -648,7 +584,7 @@ bulk_get_issues() {
                 projectMilestone { id name }
                 cycle { id name number }
                 team { name }
-                labels { nodes { name } }
+                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                 priority
                 estimate
                 sortOrder
@@ -658,20 +594,17 @@ bulk_get_issues() {
                 archivedAt
                 trashed
                 parent { id identifier title }
-                children { nodes { id identifier title state { name } } }
-'"$ISSUE_RELATION_FIELDS"'
-            }
-        }
-    }'
+                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
+'"$ISSUE_RELATION_FIELDS"
 
-    local variables="{\"filter\": {\"id\": {\"in\": $id_list}}}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_issue_refs_read "$fields" "$refs") || return 1
+    result=$(jq -c '{issues: {nodes: .nodes}}' <<<"$result") || return 1
 
     # Apply output format
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     ids)
         format_issues_ids "$result"
@@ -811,6 +744,8 @@ bulk_update_issues() {
 }
 
 get_issue() {
+    # Read by lib/pages.sh when a children connection is left open.
+    local LINEAR_ISSUE_CHILD_MODE=brief LINEAR_CHILD_DEPTH=1
     local issue_id=""
     local with_bundle="false"
     local extra_args=()
@@ -857,6 +792,8 @@ get_issue() {
 
     local query
     if [ "$with_bundle" = "true" ]; then
+        LINEAR_ISSUE_CHILD_MODE=bundle
+        LINEAR_CHILD_DEPTH=3
         # Extended query with 3-level recursive children for bundle analysis
         query='
         query GetIssueWithBundle($id: String!) {
@@ -871,7 +808,7 @@ get_issue() {
                 projectMilestone { id name }
                 cycle { id name number }
                 team { name }
-                labels { nodes { name } }
+                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                 priority
                 estimate
                 sortOrder
@@ -884,29 +821,32 @@ get_issue() {
                 parent { id identifier title }
 '"$ISSUE_RELATION_FIELDS"'
                 children {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                         id identifier title description
                         state { name type }
                         assignee { name }
-                        labels { nodes { name } }
+                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
                         priority estimate
                         parent { identifier }
 '"$ISSUE_RELATION_FIELDS"'
                         children {
+                            pageInfo { hasNextPage endCursor }
                             nodes {
                                 id identifier title description
                                 state { name type }
                                 assignee { name }
-                                labels { nodes { name } }
+                                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                                 priority estimate
                                 parent { identifier }
 '"$ISSUE_RELATION_FIELDS"'
                                 children {
+                                    pageInfo { hasNextPage endCursor }
                                     nodes {
                                         id identifier title description
                                         state { name type }
                                         assignee { name }
-                                        labels { nodes { name } }
+                                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
                                         priority estimate
                                         parent { identifier }
 '"$ISSUE_RELATION_FIELDS"'
@@ -932,7 +872,7 @@ get_issue() {
                 projectMilestone { id name }
                 cycle { id name number }
                 team { id name }
-                labels { nodes { name } }
+                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                 priority
                 estimate
                 sortOrder
@@ -943,7 +883,7 @@ get_issue() {
                 archivedAt
                 trashed
                 parent { id identifier title }
-                children { nodes { id identifier title state { name } } }
+                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
                 syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } }
 '"$ISSUE_RELATION_FIELDS"'
             }
@@ -962,7 +902,7 @@ get_issue() {
     # Apply output format
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     compact)
         if [ "$with_bundle" = "true" ]; then
@@ -1101,13 +1041,12 @@ upload_attach_paths() {
 # find_user_by_email EMAIL — the user whose whole address is EMAIL, compared
 # case-insensitively by Linear's own filter, as one {id, name, email} object on
 # stdout; nothing at all when no user has it. Asked of the server rather than
-# scanned out of a listing, so no page bound can hide a user, and nothing is
-# cached. Exits 1 when the query itself failed, its error already on stderr: a
+# scanned out of a listing, so no page bound can hide a user. Exits 1 when the query itself failed, its error already on stderr: a
 # failed lookup is never an unknown address.
 find_user_by_email() {
     local email="$1" vars result
     vars=$(jq -cn --arg email "$email" '{email: $email}')
-    result=$(graphql_query 'query GetUserByEmail($email: String!) { users(filter: {email: {eqIgnoreCase: $email}}) { nodes { id name email } } }' "$vars") || return 1
+    result=$(graphql_pages 'query GetUserByEmail($email: String!, $after: String) { users(filter: {email: {eqIgnoreCase: $email}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name email } } }' "$vars" users) || return 1
     jq -c '.users.nodes[0] // empty' <<<"$result"
 }
 
@@ -1129,10 +1068,10 @@ resolve_assignee_id() {
         result=$(find_user_by_email "$ref") || return 1
         assignee_id=$(jq -r '.id // empty' <<<"$result")
     else
-        local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
+        local user_query='query GetUser($name: String!, $after: String) { users(filter: {name: {containsIgnoreCase: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         local user_vars
         user_vars=$(jq -cn --arg name "$ref" '{name: $name}')
-        result=$(graphql_query "$user_query" "$user_vars") || return 1
+        result=$(graphql_pages "$user_query" "$user_vars" users) || return 1
         assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result")
     fi
     if [ -z "$assignee_id" ]; then
@@ -1500,7 +1439,6 @@ create_issue() {
         echo "$result" | jq -c '{error: "issueCreate was rejected (success != true) - no issue was created; uploaded files (if any) were not attached", data: (.issueCreate // {})}' >&2
         return 1
     fi
-# Write-through: upsert the created issue into the cache
     local created_issue
     created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
     if [[ -n "$requested_parent_id" ]]; then
@@ -1554,15 +1492,6 @@ create_issue() {
             created_issue="$updated_issue"
         fi
     fi
-    [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_upsert_issue "$created_issue" 2>/dev/null || true
-    [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_patch_relation_snapshots "$created_issue" 2>/dev/null || true
-# Download attachments in the created issue description
-    if [[ -n "$created_issue" && "$created_issue" != "null" ]]; then
-        local _id _desc
-        _id=$(echo "$created_issue" | jq -r '.identifier // empty')
-        _desc=$(echo "$created_issue" | jq -r '.description // empty')
-        attach_download_from_text "$_desc" "$_id" "description" &
-    fi
     # Non-image --attach files: attachmentCreate against the created issue.
     # The issue already exists here, so a failure must surface the created
     # identifier AND exit non-zero — never a zero exit with a silent gap.
@@ -1581,9 +1510,8 @@ create_issue() {
     fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
-    # The attachment cache is a synchronized read view that this write path
-    # never touches, so the create response is the only immediate local proof
-    # that each non-image record landed. Report the requested count and, when
+    # The create response is the immediate proof that each non-image record
+    # landed. Report the requested count and, when
     # every attachmentCreate succeeded, the records themselves; a partial
     # failure leaves the list empty rather than claiming a missing record.
     local attach_record_count=${#attach_pending[@]}
@@ -2077,18 +2005,8 @@ update_issue() {
         echo "$result" | jq -c --arg id "$issue_id" '{error: ("issueUpdate was rejected (success != true) for " + $id + " - nothing was updated; uploaded files (if any) were not attached"), data: (.issueUpdate // {})}' >&2
         return 1
     fi
-    # Write-through: upsert updated issue into cache
     local updated_issue
     updated_issue=$(echo "$result" | jq '.issueUpdate.issue // empty')
-    [[ -n "$updated_issue" && "$updated_issue" != "null" ]] && cache_upsert_issue "$updated_issue" 2>/dev/null || true
-    [[ -n "$updated_issue" && "$updated_issue" != "null" ]] && cache_patch_relation_snapshots "$updated_issue" 2>/dev/null || true
-    # Download any attachments in the updated description
-    if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
-        local _id _desc
-        _id=$(echo "$updated_issue" | jq -r '.identifier // empty')
-        _desc=$(echo "$updated_issue" | jq -r '.description // empty')
-        attach_download_from_text "$_desc" "$_id" "description" &
-    fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueUpdate" "issue")
     # Output format. Default (no --format) preserves the historical mutation
@@ -2121,7 +2039,7 @@ update_issue() {
         echo "$normalized" | jq -r '.identifier // empty'
         ;;
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     "" | *)
         echo "$normalized"
@@ -2148,7 +2066,7 @@ update_issue() {
 # IssueArchivePayload.success reports the request was processed, not that the
 # entity mutated — Linear answers success=true even when the archive/trash
 # no-ops server-side. Trust only the returned entity: require the
-# marker field on it, touch the cache only after confirmation, and fail with
+# marker field on it, and fail with
 # a nonzero exit otherwise so a silent no-op can never look like success.
 confirm_archive_mutation() {
     local result="$1"
@@ -2165,8 +2083,6 @@ confirm_archive_mutation() {
         return 1
     fi
 
-    # Write-through: remove the issue from cache now that the server confirmed
-    cache_remove_issue "$issue_id" 2>/dev/null || true
     normalize_mutation_response "$result" "$operation" "entity"
 }
 
@@ -2220,6 +2136,8 @@ trash_issue() {
 }
 
 list_children() {
+    # Read by lib/pages.sh when a children connection is left open.
+    local LINEAR_ISSUE_CHILD_MODE=direct LINEAR_CHILD_DEPTH=1
     local issue_id=""
     local recursive="false"
     local pending_only="false"
@@ -2256,49 +2174,55 @@ list_children() {
         return 1
     fi
 
-    linear_require_format "$FORMAT" safe raw || return 1
+    linear_require_format "$FORMAT" safe raw ids || return 1
 
     local query
     if [ "$recursive" = "true" ]; then
+        LINEAR_ISSUE_CHILD_MODE=recursive
+        LINEAR_CHILD_DEPTH=3
         # Fetch 3 levels deep (covers nearly all real-world nesting)
         # Includes relations for blocking info between sub-issues
         query='
         query GetChildrenRecursive($id: String!) {
             issue(id: $id) {
+                id
                 identifier
                 title
                 children {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                         id
                         identifier
                         title
                         state { name type }
                         assignee { name }
-                        labels { nodes { name } }
+                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
                         priority
                         estimate
                         parent { identifier }
 '"$ISSUE_RELATION_FIELDS"'
                         children {
+                            pageInfo { hasNextPage endCursor }
                             nodes {
                                 id
                                 identifier
                                 title
                                 state { name type }
                                 assignee { name }
-                                labels { nodes { name } }
+                                labels { pageInfo { hasNextPage endCursor } nodes { name } }
                                 priority
                                 estimate
                                 parent { identifier }
 '"$ISSUE_RELATION_FIELDS"'
                                 children {
+                                    pageInfo { hasNextPage endCursor }
                                     nodes {
                                         id
                                         identifier
                                         title
                                         state { name type }
                                         assignee { name }
-                                        labels { nodes { name } }
+                                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
                                         priority
                                         estimate
                                         parent { identifier }
@@ -2315,9 +2239,11 @@ list_children() {
         query='
         query GetChildren($id: String!) {
             issue(id: $id) {
+                id
                 identifier
                 title
                 children {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                         id
                         identifier
@@ -2333,45 +2259,55 @@ list_children() {
         }'
     fi
 
-    local variables="{\"id\": \"$issue_id\"}"
+    local variables
+    variables=$(jq -cn --arg id "$issue_id" '{id: $id}') || return 1
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
-    # Apply pending filter if requested (filter out completed/canceled)
+    # --pending drops completed and canceled rows. A flat read drops each such
+    # row alone, so an open grandchild under a Done child stays listed. The
+    # nested raw shape keeps a closed issue only as the container of an open
+    # one beneath it. A raw row carries state.type, a flat row state_type.
+    local open='def open: ((.state | objects | .type) // .state_type) | . != "completed" and . != "canceled";'
     if [ "$pending_only" = "true" ]; then
         if [ "$recursive" = "true" ]; then
-            # Filter recursively through nested children
-            result=$(echo "$result" | jq '
-                def filter_pending:
-                    if . == null then null
-                    elif type == "array" then [.[] | filter_pending]
-                    elif type == "object" and has("state") then
-                        if .state.type == "completed" or .state.type == "canceled" then empty
-                        else . + (if has("children") then {children: {nodes: ([.children.nodes[]? | filter_pending])}} else {} end)
-                        end
-                    else .
-                    end;
-                .issue.children.nodes = [.issue.children.nodes[]? | filter_pending]
-            ')
+            if [ "$FORMAT" = raw ]; then
+                result=$(jq -c "$open"'
+                    def prune: map(if (.children | type) == "object" then .children.nodes |= prune else . end
+                        | select(open or ((.children.nodes // []) | length > 0)));
+                    .issue.children.nodes |= prune' <<<"$result") || return 1
+            fi
         else
-            # Simple filter for non-recursive
-            result=$(echo "$result" | jq '.issue.children.nodes = [.issue.children.nodes[] | select(.state.type != "completed" and .state.type != "canceled")]')
+            result=$(jq -c "$open"'.issue.children.nodes |= map(select(open))' <<<"$result") || return 1
         fi
     fi
 
-    # Apply output format
+    local rows
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
+        return
         ;;
-    safe)
+    ids | safe)
         if [ "$recursive" = "true" ]; then
-            format_children_recursive "$result"
+            rows=$(format_children_recursive "$result") || return 1
+            if [ "$pending_only" = "true" ]; then
+                rows=$(jq -c "$open"'map(select(open))' <<<"$rows") || return 1
+            fi
         else
-            format_children_list "$result"
+            rows=$(format_children_list "$result") || return 1
         fi
         ;;
+    *)
+        jq -cn --arg format "$FORMAT" '{error: ("issues children: unvalidated format " + $format)}' >&2
+        return 1
+        ;;
     esac
+    if [ "$FORMAT" = ids ]; then
+        jq -r '.[].id' <<<"$rows"
+    else
+        jq '.' <<<"$rows"
+    fi
 }
 
 list_relations() {
@@ -2406,20 +2342,22 @@ list_relations() {
     local query='
     query GetRelations($id: String!) {
         issue(id: $id) {
+            id
             identifier
             title
 '"$ISSUE_RELATION_FIELDS"'
         }
     }'
 
-    local variables="{\"id\": \"$issue_id\"}"
+    local variables
+    variables=$(jq -cn --arg id "$issue_id" '{id: $id}') || return 1
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     safe)
         format_relations_list "$result"
@@ -2587,8 +2525,6 @@ add_relation() {
             '{error: "issueRelationCreate was rejected (success != true) - no relation was created", data: $data}' >&2
         return 1
     fi
-    # Write-through: re-fetch both issues to get updated relations
-    cache_refresh_issues "$issue_id" "$related_issue_uuid" 2>/dev/null || true
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueRelationCreate" "issueRelation")
     echo "$normalized"
@@ -2689,11 +2625,12 @@ remove_relation() {
     local query='
     query GetRelations($id: String!) {
         issue(id: $id) {
+            id
 '"$ISSUE_RELATION_FIELDS"'
         }
     }'
     local result
-    result=$(graphql_query "$query" "{\"id\": \"$issue_id\"}")
+    result=$(graphql_query "$query" "{\"id\": \"$issue_id\"}") || return 1
 
     # Find the relation ID
     local relation_id=""
@@ -2720,10 +2657,6 @@ remove_relation() {
         }
     }'
     result=$(graphql_query "$mutation" "{\"id\": \"$relation_id\"}")
-    # Write-through: re-fetch both issues to update cached relations
-    local other_uuid
-    other_uuid=$(resolve_issue_id "$other_ref" 2>/dev/null || true)
-    cache_refresh_issues "$issue_id" ${other_uuid:+"$other_uuid"} 2>/dev/null || true
     normalize_mutation_response "$result" "issueRelationDelete" "issueRelation"
 }
 
@@ -3344,7 +3277,8 @@ validate_completion() {
 
         # Check for Completion Summary comment
         local comments
-        comments=$(json_or_default '[]' array "$SCRIPT_DIR/comments.sh" list "$issue_id")
+        # A failed read is not "no summary": the check fails closed on it.
+        comments=$("$BASH" "$SCRIPT_DIR/comments.sh" list "$issue_id") || return 1
         local has_summary
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
 
@@ -3461,14 +3395,13 @@ main() {
     comment)
         echo "Error: Comments are a separate resource. Use:" >&2
         echo "  linear.sh comments create [ISSUE_ID] --body \"Your comment\"" >&2
-        echo "  linear.sh cache comments list [ISSUE_ID]" >&2
+        echo "  linear.sh comments list [ISSUE_ID]" >&2
         exit 1
         ;;
     view | show)
         echo "Error: Unknown action '$action' — supported issue lookups:" >&2
         echo "  linear.sh issues get [ISSUE_ID]" >&2
         echo "  linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2]   # live state (post-mutation verification)" >&2
-        echo "  linear.sh cache issues get [ISSUE_ID]                 # cache read" >&2
         exit 1
         ;;
     *)

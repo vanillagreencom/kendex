@@ -28,7 +28,7 @@ mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -36,9 +36,9 @@ OK_REACH="tools/guard on a staged .agents render"
 
 seed_allowance() {
   local repo="$1"
-  mkdir -p "$repo/.cache/linear"
+  mkdir -p "$repo/.cache/tracker-fixture"
   printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 lines, 1000000 test lines"}]\n' \
-    > "$repo/.cache/linear/issues.json"
+    > "$repo/.cache/tracker-fixture/issues.json"
   printf '.cache/\n' >> "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
 }
 

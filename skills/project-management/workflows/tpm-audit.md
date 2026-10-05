@@ -38,10 +38,9 @@ For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the reques
 
 ### 1.1.1 Resolve Team Scope
 
-**Skip if** TRACKER=github — a repository is one scope. Otherwise refresh the cache and resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any cached read:
+**Skip if** TRACKER=github — a repository is one scope. Otherwise resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any Linear read:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --if-stale 15
 .agents/skills/linear/scripts/linear.sh auth-check
 .agents/skills/linear/scripts/linear.sh teams get [TEAM]
 ```
@@ -51,20 +50,20 @@ For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the reques
 ### 1.2 Load Label Policy
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe   # TRACKER=linear
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe   # TRACKER=linear
 gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRACKER=github
 ```
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy alongside it. Freshness is the § 1.1.1 refresh's job; what a cached read itself enforces is presence, so a missing Linear cache on this or any later read halts the analysis and reports that the caller must run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
+Load the project taxonomy alongside it. A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
-Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1.1 scopes out.
+Fetch every project in ONE command. `projects list --state` matches one state type exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1.1 scopes out.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects list
+.agents/skills/linear/scripts/linear.sh projects list --max
 ```
 
 **GitHub — explicit degradation**: record an empty project set and leave every project-placement field (`recommended_project`, `wrong_project`, project moves) null or omitted with reason `github: no project inventory`. Never invent a placement; scope fit checks to the repository backlog from § 1.5.
@@ -72,25 +71,25 @@ Fetch every project in ONE command. `cache projects list --state` matches one st
 ### 1.4 Fetch Input Issues
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Done" --max   # project mode
-.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max               # team mode
-.agents/skills/linear/scripts/linear.sh cache issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe                                     # issues mode, one call
+.agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Done" --max   # project mode
+.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max               # team mode
+.agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe                                     # issues mode, one call
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
 
-Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset. An input issue the caller named that resolves outside the § 1.1.1 scope halts the same way — the cache holds it, and auditing another team's issue is not the caller's to authorize.
+Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `issues get [ISSUE_ID]`. `issues bulk-get` fails the whole read when an identifier names no issue, and compare the returned `id` values against every requested identifier besides: halt naming any input that is missing, which `issues get` on each input names. An unmatched target is a mistyped or deleted issue, never an absent one, and auditing the remainder would report a complete result over a subset. An input issue the caller named that resolves outside the § 1.1.1 scope halts the same way — Linear returns it, and auditing another team's issue is not the caller's to authorize.
 
-The cached Linear issue payload carries `blocks`, `blocked_by`, `blocked_by_open`, and `related`. `blocked_by_open` decides whether an issue is blocked now; `blocked_by` remains the full relation history used by § 4. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
+The Linear issue payload carries `blocks`, `blocked_by`, `blocked_by_open`, and `related`. `blocked_by_open` decides whether an issue is blocked now; `blocked_by` remains the full relation history used by § 4. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
 ### 1.4.1 Read Comments
 
-Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue (`.cache/linear/comments/[ISSUE_ID].json`) and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1). An issue with no comments reads as an empty list, and a disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
+Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. This is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1). An issue with no comments reads as an empty list, and a disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
 
-On Linear each set is one `bulk-list` call, run one after the other: never one `comments list` per issue and never parallel readers, which pay a script start per issue and saturate a small host across a whole backlog. The result is one object keyed by identifier. A refusal carrying `missing` names identifiers the cache does not hold, and halts as an unmatched § 1.4 target does; one carrying `path` is a corrupt cache file, which `linear.sh sync --full` repairs, and never reads as an issue with no comments.
+On Linear each set is one `bulk-list` call, run one after the other: never one `comments list` per issue and never parallel readers, which pay a script start per issue and saturate a small host across a whole backlog. The result is one object keyed by identifier. A refusal carrying `missing` names identifiers Linear has no issue for, and halts as an unmatched § 1.4 target does; a failed read never reads as an issue with no comments.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]   # TRACKER=linear
-.agents/skills/linear/scripts/linear.sh cache comments bulk-list --stdin < [ID_FILE]         # TRACKER=linear, a large set, one identifier per line
+.agents/skills/linear/scripts/linear.sh comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]   # TRACKER=linear
+.agents/skills/linear/scripts/linear.sh comments bulk-list --stdin < [ID_FILE]         # TRACKER=linear, a large set, one identifier per line
 gh issue view [N] --repo [REPOSITORY] --json body,comments                                    # TRACKER=github
 ```
 
@@ -99,7 +98,7 @@ gh issue view [N] --repo [REPOSITORY] --json body,comments                      
 Fetch the full backlog in ONE command:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done,Canceled" --max
+.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done,Canceled" --max
 ```
 
 Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparing anything against it. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` and `Canceled` added. `Canceled` is here as comparison evidence and nowhere else — a duplicate an issue already has, a relation it already carries, a child § 7.3 must count — never as an audit input. Neither state takes a disposition (§ 1.1), and the § 6 sweep proposes cancellations only from this set's active rows.
@@ -364,9 +363,9 @@ For every `create`: populate `create_fields` per [audit-output.md](../schemas/au
 
 Entered from § 1.1 after § 1.1.1; §§ 2-10 do not apply. Every project, initiative, and issue read below is filtered to the § 1.1.1 scope first: an initiative naming another team's projects contributes none of them, and a project whose `teams[]` omits `TEAM` is neither ordered nor recommended.
 
-1. **Fetch** initiatives (`cache initiatives list`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field.
+1. **Fetch** initiatives (`initiatives list --max`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field.
 
-2. **Assign a layer** to each `planned` and `backlog` project (never `started` or `completed`) from its scope: what it delivers, what it consumes, and what its issues touch (`cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress" --max`). Verify against the architecture docs that deliverables do not depend on unbuilt code. L0 foundation (no project dependencies) → L1 core infrastructure → L2 features → L3 integration and testing → L4 polish and release.
+2. **Assign a layer** to each `planned` and `backlog` project (never `started` or `completed`) from its scope: what it delivers, what it consumes, and what its issues touch (`issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress" --max`). Verify against the architecture docs that deliverables do not depend on unbuilt code. L0 foundation (no project dependencies) → L1 core infrastructure → L2 features → L3 integration and testing → L4 polish and release.
 
 3. **Order** by topological sort on layer, then dependency edges (A's deliverables consumed by B means A precedes B), then priority.
 
@@ -418,11 +417,11 @@ One filing: the creation bar, a title-level duplicate check, the label set and t
 4. **Duplicates by title.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact   # TRACKER=linear
+   .agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact   # TRACKER=linear
    gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title                                                                # TRACKER=github
    ```
 
-   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
+   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
 

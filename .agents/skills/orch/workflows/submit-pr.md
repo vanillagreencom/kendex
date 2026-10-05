@@ -151,7 +151,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body "$PR_NUM" --body-file "$BODY_FILE"
    ```
 
-   `[ISSUE_TITLE]` comes from `linear.sh cache issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
+   `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
 5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back.
 
@@ -211,7 +211,7 @@ At 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-subm
 
 ### 3.2 Golden Baselines
 
-**Skip if** the issue does not carry the `design` label (`linear.sh cache issues get [ISSUE_ID] --format=compact`, or `gh issue view [N] --json labels`).
+**Skip if** the issue does not carry the `design` label (`linear.sh issues get [ISSUE_ID] --format=compact`, or `gh issue view [N] --json labels`).
 
 Capture golden baselines in the worktree with the project's visual QA tooling; if the project has no baseline-capable target, skip and report why. Commit and push without retriggering CI:
 

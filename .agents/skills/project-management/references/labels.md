@@ -6,7 +6,7 @@ Every create/update path uses two inputs: the **live issue-label inventory** fro
 
 | Resource | Used for | Source |
 |----------|----------|--------|
-| Issue labels | Issue routing, ownership, workflow, classification, domain/stack | `linear.sh cache labels list` / `gh label list` |
+| Issue labels | Issue routing, ownership, workflow, classification, domain/stack | `linear.sh labels list --max` / `gh label list` |
 | Project labels | Project and initiative categorization only | `linear.sh project-labels ...` |
 
 Preflight uses **issue labels only**. Never validate an issue label against the project-label list.
@@ -16,13 +16,12 @@ Preflight uses **issue labels only**. Never validate an issue label against the 
 Run before any workflow creates an issue or updates issue labels:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
 Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its error output and never read as clean, and `taxonomy-unreadable` halts the create.
 
-GitHub-tracked runs read live instead — `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` — with no cache or sync step.
+GitHub-tracked runs read `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` instead.
 
 Safe inventory row shape:
 
@@ -30,7 +29,7 @@ Safe inventory row shape:
 {"id": "uuid", "name": "agent:example", "color": "#9C27B0", "description": "...", "team": "Team name or empty", "parent": "Agent", "is_group": false}
 ```
 
-If `is_group` is absent, refresh the cache. If it stays absent, treat any label that appears as another label's `parent` as a group label and never assign it.
+If `is_group` is absent, treat any label that appears as another label's `parent` as a group label and never assign it.
 
 For Linear, match each label by ID and scope as well as name. The inventory's `team` is empty for a workspace label. A team label must belong to the issue's team. A project taxonomy states which labels are shared and which belong to its team; prose using this existing `team` representation is sufficient. The CLI's `--labels` resolves names. If the mutation credential can see multiple labels with the same name, stop before mutation and report their IDs and scopes. Definition changes follow [Linear shared label maintenance](../../linear/SKILL.md#shared-label-maintenance).
 

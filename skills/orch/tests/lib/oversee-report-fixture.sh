@@ -75,26 +75,26 @@ case "$verb" in
   *) echo "unexpected gh call: $verb" >&2; exit 1 ;;
 esac
 EOF
-# The Linear CLI: `cache issues get ID` answers linear-ID.json in the safe
-# shape under --format=safe, and nested as {issue: ...} otherwise, the raw
-# shape a project's LINEAR_FORMAT=raw gives a call that names no format. A
+# The Linear CLI: `issues get ID` answers linear-ID.json in the safe shape
+# under --format=safe, and nested as {issue: ...} otherwise, the raw shape a
+# project's LINEAR_FORMAT=raw gives a call that names no format. A
 # merge-on-read-ID.json file is a pull request that merges while ID is read:
-# it joins merged.json, once, mid-render. The Escapes line's sync is fresh,
-# its label list holds bug and its issue list answers bugs.json.
+# it joins merged.json, once, mid-render. The Escapes line's label list holds
+# bug and its bug read answers bugs.json.
 cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  "sync --if-stale 15") exit 0 ;;
-  "cache labels list --format=safe") echo '[{"name": "bug"}]'; exit ;;
-  "cache issues list --all-projects --max --include-archived --format=safe") cat "$CASE/bugs.json"; exit ;;
+  "labels list --max --format=safe") echo '[{"name": "bug"}]'; exit ;;
+  "issues list --label bug --created-since "[0-9]*d" --max --format=safe" | \
+    "issues list --label bug --created-since "[0-9]*d" --max --team "?*" --format=safe") cat "$CASE/bugs.json"; exit ;;
 esac
-[[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
-if [[ -f "$CASE/merge-on-read-$4.json" ]]; then
-  jq -c --slurpfile pr "$CASE/merge-on-read-$4.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
+[[ "$1 $2" == "issues get" && -f "$CASE/linear-$3.json" ]] || { echo "Issue not found: $3" >&2; exit 1; }
+if [[ -f "$CASE/merge-on-read-$3.json" ]]; then
+  jq -c --slurpfile pr "$CASE/merge-on-read-$3.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
   mv -- "$CASE/merged.next" "$CASE/merged.json" || exit 1
-  rm -f -- "$CASE/merge-on-read-$4.json"
+  rm -f -- "${CASE:?}/merge-on-read-$3.json"
 fi
-if [[ "${5:-}" == --format=safe ]]; then cat "$CASE/linear-$4.json"; else jq -c '{issue: .}' "$CASE/linear-$4.json"; fi
+if [[ "${4:-}" == --format=safe ]]; then cat "$CASE/linear-$3.json"; else jq -c '{issue: .}' "$CASE/linear-$3.json"; fi
 EOF
 # github.sh: `pr-list-failing --all` answers failing.<SLUG>.json for the
 # GH_REPO it runs under, else failing.json, [] without either. It picks its

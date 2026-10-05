@@ -31,7 +31,7 @@ mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -53,9 +53,9 @@ new_repo() {
   git -C "$d" config commit.gpgsign false
   git -C "$d" commit -q --allow-empty -m base
   init_growth_state "$STATE" "$d" "$2" "${3:-seed}" ${4:+"$4"} >/dev/null
-  mkdir -p "$d/.cache/linear"
+  mkdir -p "$d/.cache/tracker-fixture"
   jq -n --arg id "$2" '[{identifier: $id, description: "**Expected delta**: 1000000 lines, 1000000 test lines"}]' \
-    > "$d/.cache/linear/issues.json"
+    > "$d/.cache/tracker-fixture/issues.json"
   printf '.cache/\n' >> "$(git -C "$d" rev-parse --path-format=absolute --git-path info/exclude)"
   printf '%s' "$d"
 }

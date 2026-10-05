@@ -122,10 +122,10 @@ exec git "$@"
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
         (self.source / ".env.local").write_bytes(b"SECRET=private-fixture\n")
-        cache = self.source / ".cache/linear"
-        cache.mkdir(parents=True)
-        (cache / "issues.json").write_text('{"cached":true}')
-        (cache / "sync.lock").write_text("local lock")
+        # A source checkout can still hold the retired Linear store; a clone never receives it.
+        retired = self.source / ".cache/linear"
+        retired.mkdir(parents=True)
+        (retired / "issues.json").write_text('{"cached":true}')
         machine_half = self.source / ".cache/kendex/lock-local.json"
         machine_half.parent.mkdir(parents=True)
         machine_half.write_text("this host's half of the install record")
@@ -169,8 +169,7 @@ exec git "$@"
         self.assertEqual(first.returncode, 0, first.stderr)
         clone = Path(self.row["clone"])
         self.assertEqual((clone / ".env.local").read_bytes(), (self.source / ".env.local").read_bytes())
-        self.assertEqual((clone / ".cache/linear/issues.json").read_text(), '{"cached":true}')
-        self.assertFalse((clone / ".cache/linear/sync.lock").exists())
+        self.assertFalse((clone / ".cache/linear").exists())
         self.assertFalse((clone / ".cache/kendex/lock-local.json").exists())
         calls = (self.root / "calls").read_text()
         self.assertNotIn("claude-secret-fixture", calls)
@@ -187,12 +186,11 @@ exec git "$@"
             with self.subTest(flag=flag):
                 again = self.create(flag)
                 self.assertEqual((again.returncode, again.stdout), (0, first.stdout), again.stderr)
-        (clone / ".cache/linear/issues.json").write_text("remote-cache")
         result = self.create("--reuse", harness="codex")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"CODEX_HOME", result.stdout)
         self.assertEqual((Path(self.row["account"]) / "auth.json").read_bytes(), (self.account / "auth.json").read_bytes())
-        self.assertEqual((clone / ".cache/linear/issues.json").read_text(), "remote-cache")
+        self.assertFalse((clone / ".cache/linear").exists())
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)

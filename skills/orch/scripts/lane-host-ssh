@@ -2,7 +2,6 @@
 """Static SSH lane hosts. Use --help for configuration and the command contract."""
 
 import argparse
-import io
 import json
 import os
 from pathlib import Path
@@ -308,16 +307,6 @@ if ! test -r "$lib" || ! bash -c '. "$1" && declare -F lane_identity_record >/de
 fi''', row["clone"])
     env_file = source / ".env.local"
     put(row, row["clone"] + "/.env.local", env_file.read_bytes() if env_file.exists() else b"")
-    cache = source / ".cache/linear"
-    if result.stdout == b"new" and cache.is_dir():
-        archive = io.BytesIO()
-        with tarfile.open(fileobj=archive, mode="w:gz", dereference=True) as tar:
-            # Linear owns these cache files; locks are local to each machine.
-            def unlocked(info):
-                return None if info.name.endswith(".lock") else info
-            tar.add(cache, arcname="linear", filter=unlocked)
-        remote(row, 'mkdir -p -- "$1/.cache"; tar -xzf - -C "$1/.cache"',
-               row["clone"], data=archive.getvalue())
     account = Path(args.account)
     remote_account = row["account"]
     # The shell the prefix starts records its own launch identity beside the
@@ -506,7 +495,7 @@ repo (OWNER/REPO), item, target (SSH destination), clone (absolute remote clone
 path), account (absolute remote harness config directory). Each target/clone
 pair and each item occurs once. SSH keys and host verification use your SSH config.
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
-create copies its .env.local and, for a fresh clone, .cache/linear without locks.
+create copies its .env.local.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 create renders nothing and installs no Pi package: the worktree carries the

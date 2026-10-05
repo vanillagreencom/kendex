@@ -5,8 +5,8 @@
 # select the application with the fixed scope read,write,issues:create,
 # comments:create,timeSchedule:write,initiative:read,initiative:write,
 # customer:read,customer:write.
-# LINEAR_API_KEY is the fallback for key-only installs. OAuth tokens live only
-# in the Linear cache.
+# LINEAR_API_KEY is the fallback for key-only installs. A token minted from the
+# pair is kept until it expires in a private per-user file outside the checkout.
 
 [env]
 # The team every Linear write targets. No default: an empty value refuses

@@ -24,7 +24,8 @@ Actions:
 
 List Options:
   --team <ref>          Filter by team key or name (workspace labels if omitted)
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Create Options:
   --name <text>         Label name (required)
@@ -63,7 +64,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_labels() {
     local team=""
-    local first=75
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -74,8 +75,12 @@ list_labels() {
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
@@ -93,8 +98,9 @@ list_labels() {
     fi
 
     local query='
-    query ListLabels($filter: IssueLabelFilter, $first: Int) {
-        issueLabels(filter: $filter, first: $first) {
+    query ListLabels($filter: IssueLabelFilter, $first: Int, $after: String) {
+        issueLabels(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -108,14 +114,14 @@ list_labels() {
         }
     }'
 
-    local variables="{\"filter\": $filter_json, \"first\": $first}"
+    local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" issueLabels) || return 1
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_labels_list "$result"
@@ -317,31 +323,6 @@ delete_label() {
     normalize_mutation_response "$result" "issueLabelDelete" "issueLabel"
 }
 
-# Read one connection to its end. A page that cannot be followed fails the
-# audit: a partial read would report a clean team it never finished reading.
-audit_pages() {
-    local query="$1" variables="$2" field="$3" all='[]' cursor=null pages=0
-    local page_vars result has_next
-    while true; do
-        page_vars=$(jq -c --argjson after "$cursor" '. + {after: $after}' <<<"$variables") || return 1
-        result=$(graphql_query "$query" "$page_vars") || return 1
-        if ! all=$(jq -cs --arg field "$field" '.[1][$field].nodes as $nodes | if ($nodes | type) == "array" then .[0] + $nodes else error("nodes") end' <<<"$all"$'\n'"$result" 2>/dev/null) ||
-            ! has_next=$(jq -r --arg field "$field" '.[$field].pageInfo.hasNextPage | if type == "boolean" then . else error("hasNextPage") end' <<<"$result" 2>/dev/null); then
-            linear_label_message audit-incomplete "$field" >&2
-            return 1
-        fi
-        [ "$has_next" = true ] || break
-        # Linear can keep a connection open under concurrent edits; the bound
-        # is `issues list --max`'s page cap.
-        pages=$((pages + 1))
-        if [ "$pages" -ge 200 ] || ! cursor=$(jq -ce --arg field "$field" '.[$field].pageInfo.endCursor | strings' <<<"$result"); then
-            linear_label_message audit-incomplete "$field" >&2
-            return 1
-        fi
-    done
-    printf '%s\n' "$all"
-}
-
 # Drift against the declared taxonomy, read live: each undeclared label on the
 # team's open issues with the issues carrying it, and each name both a team
 # label and a workspace label use. Read-only; it reports and never relabels.
@@ -372,17 +353,18 @@ audit_labels() {
         return 1
     fi
 
+    # Every page of both connections, and of each issue's labels (lib/pages.sh
+    # follows an open one by the issue's id): a partial read would report a
+    # clean team it never finished reading, so it fails with no output.
     local team_id variables issues labels
     team_id=$(resolve_team_id "$LINEAR_TEAM_TARGET") || return 1
-    variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId, first: 100}') || return 1
-    issues=$(audit_pages 'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }' \
+    variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}') || return 1
+    issues=$(graphql_pages 'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }' \
         "$variables" issues) || return 1
-    if ! jq -e 'all(.[]; .labels.pageInfo.hasNextPage == false)' <<<"$issues" >/dev/null; then
-        linear_label_message audit-incomplete issues.labels >&2
-        return 1
-    fi
-    labels=$(audit_pages 'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }' \
+    issues=$(jq -c '.issues.nodes' <<<"$issues") || return 1
+    labels=$(graphql_pages 'query AuditLabels($teamId: ID!, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }' \
         "$variables" issueLabels) || return 1
+    labels=$(jq -c '.issueLabels.nodes' <<<"$labels") || return 1
 
     jq -s --arg team "$LINEAR_TEAM_TARGET" --arg taxonomy "$LINEAR_TAXONOMY_FILE" '
         .[0] as $declared | .[1] as $issues | .[2] as $labels |

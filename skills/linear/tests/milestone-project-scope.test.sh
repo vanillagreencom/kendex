@@ -32,8 +32,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
 cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this throwaway
-# root so cache writes stay out of the real project's .cache/linear.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$PROJECT" init -q -b main
 if [[ ! -d "$PROJECT/.git" ]]; then
   assert_stop "the fixture repository is the one git init created" \
@@ -55,13 +55,13 @@ printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query="$(jq -r '.query' <<<"$payload")"
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
   ;;
 *"projects(filter:"*)
-  printf '%s' '{"data":{"projects":{"nodes":[{"id":"live-uuid","state":"backlog"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"live-uuid","state":"backlog"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"projectMilestones(filter:"*)
   name="$(jq -r '.variables.name // empty' <<<"$payload")"
@@ -69,17 +69,17 @@ case "$query" in
   scoped=no
   case "$query" in *"project: {id:"*) scoped=yes ;; esac
   if [ "$scoped" = no ]; then
-    printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-elsewhere"},{"id":"alpha-here"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"alpha-elsewhere"},{"id":"alpha-here"}]}}}___HTTP_CODE___200'
   else
     case "$project/$name" in
     # The project --project names.
-    live-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-here"}]}}}___HTTP_CODE___200' ;;
+    live-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"alpha-here"}]}}}___HTTP_CODE___200' ;;
     # The project ISS-1 is already in. Its Alpha is a different milestone, so
     # a case that passes --project proves which of the two won.
-    old-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-old"}]}}}___HTTP_CODE___200' ;;
-    live-uuid/Twin) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"twin-one"},{"id":"twin-two"}]}}}___HTTP_CODE___200' ;;
+    old-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"alpha-old"}]}}}___HTTP_CODE___200' ;;
+    live-uuid/Twin) printf '%s' '{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"twin-one"},{"id":"twin-two"}]}}}___HTTP_CODE___200' ;;
     live-uuid/Boom) printf '%s' '{"errors":[{"message":"Rate limited"}]}___HTTP_CODE___200' ;;
-    *) printf '%s' '{"data":{"projectMilestones":{"nodes":[]}}}___HTTP_CODE___200' ;;
+    *) printf '%s' '{"data":{"projectMilestones":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
     esac
   fi
   ;;
@@ -96,7 +96,7 @@ case "$query" in
   printf '%s' '{"data":{"fileUpload":{"success":false}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
-  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"TestTeam"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"TestTeam"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *"issueUpdate"*)
   printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"iss-uuid","identifier":"ISS-1"}}}}___HTTP_CODE___200'

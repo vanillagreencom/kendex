@@ -41,9 +41,9 @@ case "$query" in
   [[ "$query" != *'{key: {eq: $name}}'* ]] || key=true
   [[ "$query" != *'{name: {eq: $name}}'* ]] || name=true
   jq -cj --argjson p "$payload" --argjson key "$key" --argjson name "$name" \
-    '{data: {teams: {nodes: [.[] | select(($key and .key == $p.variables.name) or ($name and .name == $p.variables.name))]}}}' <<<"$teams"
+    '{data: {teams: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.[] | select(($key and .key == $p.variables.name) or ($name and .name == $p.variables.name))]}}}' <<<"$teams"
   ;;
-*"cycles(filter:"*) printf '%s' '{"data":{"cycles":{"nodes":[]}}}' ;;
+*"cycles(filter:"*) printf '%s' '{"data":{"cycles":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
 *"cycleCreate("*) printf '%s' '{"data":{"cycleCreate":{"success":true,"cycle":{"id":"c1","number":1,"name":null,"startsAt":"","endsAt":"","team":{"name":"kendex"}}}}}' ;;
 *"issueLabelCreate("*) printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"l1","name":"n","color":"","isGroup":false,"parent":null}}}}' ;;
 *"issueCreate("*) jq -cj '{data: {issueCreate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json" ;;
@@ -52,10 +52,10 @@ case "$query" in
   jq -cj --argjson team '{"id":"3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73","name":"ENG"}' \
     '{data: {issue: (.issue + {team: $team})}}' "$FIXTURE_DIR/label-team-issue.json"
   ;;
-*"workflowStates(filter:"*) printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}' ;;
-*"issues(filter:"*) printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
-*"projects(filter:"*) printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
-*"issueLabels(filter:"*) printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}' ;;
+*"workflowStates(filter:"*) printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-in-progress"}]}}}' ;;
+*"issues(filter:"*) printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
+*"projects(filter:"*) printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
+*"issueLabels(filter:"*) printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
 *"team(id:"*) printf '%s' '{"data":{"team":{"id":"5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15","name":"kendex","key":"KEN"}}}' ;;
 *) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
@@ -69,7 +69,7 @@ run_team_ref() {
   shift
   : >"$TMP_ROOT/$name.jsonl"
   (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_CACHE_ROOT="$PROJECT" \
+    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
     FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
     "$BASH" "$PROJECT/.agents/skills/linear/scripts/linear.sh" "$@") \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"

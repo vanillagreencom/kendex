@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["documents", "list", "--limit", "3", "--format=raw"],
+  "root_index": 0,
+  "root_path": "documents",
+  "output": ".documents.nodes",
+  "expected_rows": 2,
+  "derived_rows": "The workspace holds no documents; the rows carry exactly the fields the recorded query selects.",
+  "requests": [
+    {"operation":"ListDocuments","response":{"data":{"documents":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"document-1","title":"Fixture text","content":"Fixture text","project":null,"creator":{"name":"Fixture Person"},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"},{"id":"document-2","title":"Fixture text","content":"Fixture text","project":null,"creator":{"name":"Fixture Person"},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"}]}}}}
+  ]
+}

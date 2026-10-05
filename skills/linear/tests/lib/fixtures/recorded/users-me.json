@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["users", "me", "--format=raw"],
+  "root_index": 0,
+  "root_path": "viewer.teams",
+  "output": ".viewer.teams.nodes",
+  "expected_rows": 2,
+  "requests": [
+    {"operation":"GetViewer","response":{"data":{"viewer":{"id":"00000000-0000-4000-8000-000000000372","name":"Fixture Person","email":"fixture@example.invalid","displayName":"fixture","active":true,"admin":false,"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"Fixture name 91"},{"name":"Fixture name 16"}]},"createdAt":"2026-09-30T09:59:56.600Z"}}}}
+  ]
+}

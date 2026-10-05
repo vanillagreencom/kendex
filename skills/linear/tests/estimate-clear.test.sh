@@ -4,7 +4,6 @@
 #   - `--estimate 0` is a compatibility alias for clearing (maps 0 -> null)
 #   - real estimates 1-5 still pass through; 6+/negative/non-int are rejected
 #   - `--clear-estimate` + `--estimate <1-5>` together is a hard error
-#   - the local cache write-through reflects the cleared (null) value
 #   - `bulk-update` forwards --clear-estimate / --estimate 0 to the mutation
 #
 # Self-contained: the Linear API is fully mocked, no network calls.
@@ -16,10 +15,8 @@ source "$SCRIPT_DIR/lib/assert.sh"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 assert_tmpdir TMP
 export TMP
-# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel, from CWD — the
-# common.sh PROJECT_ROOT recompute overrides any inherited PROJECT_ROOT env
-# var) to this throwaway root. Without this, update_issue's cache
-# write-through lands in the real project's `.cache/linear`.
+# The CLI resolves its project from git rev-parse --show-toplevel, so the
+# fixture is a repository of its own.
 git -C "$TMP" init -q -b main
 
 # Run update_issue with a fully mocked API. The mocked graphql_query captures
@@ -95,29 +92,6 @@ rc="$(run_update "$cap" CC-1 --clear-estimate --estimate 0)"
 assert_eq "--clear-estimate with --estimate 0 exits zero" "$rc" 0
 assert "--clear-estimate with --estimate 0 builds estimate: null" \
     jq -e '.input.estimate == null' "$cap"
-
-# --- cache write-through reflects the cleared value -----------------------
-cache_dir="$TMP/cache"
-mkdir -p "$cache_dir"
-printf '%s' '[{"id":"uuid-1","identifier":"CC-1","title":"t","estimate":3,"state":{"name":"Todo","type":"unstarted"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}]' >"$cache_dir/issues.json"
-LINEAR_API_KEY_OVERRIDE=test-token \
-    bash -uo pipefail -c '
-        cd "$TMP"
-        issues_sh="$1"
-        cache_dir="$2"
-        # shellcheck disable=SC1090
-        source "$issues_sh"
-        # cache.sh fixes CACHE_DIR at source time; point it at the test cache.
-        CACHE_DIR="$cache_dir"
-        get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
-        attach_download_from_text() { :; }
-        graphql_query() {
-            printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
-        }
-        update_issue CC-1 --clear-estimate
-    ' _ "$ISSUES_SH" "$cache_dir" >/dev/null 2>&1
-assert "the cache write-through stores the cleared estimate as null, not a stale 3" \
-    jq -e '.[] | select(.id == "uuid-1") | .estimate == null' "$cache_dir/issues.json"
 
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
 cap="$TMP/bulk-clear.json"

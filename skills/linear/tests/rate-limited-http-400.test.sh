@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Linear emits rate-limit rejections with an OUTER
 # HTTP 400 whose body carries extensions.code RATELIMITED. These must route
-# to the rate-limit path ("Rate limited. Try again later."), never surface as
+# to the rate-limit path, one JSON line carrying "code":"RATELIMITED" and
+# requests_reset, the time X-RateLimit-Requests-Reset names, never surface as
 # the generic "HTTP error: 400" — and a failed team lookup must propagate the
 # API failure instead of reporting the misleading "Team not found".
-# A generic non-200 must carry the body's first error message.
+# Only a rate-limited, 5xx or unanswered request is retried: a generic 4xx
+# fails on its first answer and carries the body's first error message.
 #
 # Runs fully offline against a mocked curl.
 set -euo pipefail
@@ -15,19 +17,28 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_BASE
 
-# make_env <root> <http_code> <body-json>: isolated skill copy + a curl stub
-# that always answers with the given status/body (graphql_query appends the
-# status code after a NUL-ish delimiter via -w; emulate with %{http_code}).
+# make_env <root> <http_code> <body-json> [headers]: isolated skill copy + a
+# curl stub that always answers with the given status/body (linear_http_post
+# appends the status code after a delimiter via -w; emulate with
+# %{http_code}). Headers, when given, precede the body as `dump-header = "-"`
+# writes them: CRLF lines and a blank line, one such block per header block.
+# The code `none` is a curl that reaches no server: it writes nothing and
+# exits 7.
 make_env() {
-  local root="$1" code="$2" body="$3"
+  local root="$1" code="$2" body="$3" headers="${4:-}"
   mkdir -p "$root/.agents/skills" "$root/bin"
   cp -R "$SKILL_DIR" "$root/.agents/skills/linear"
   git -C "$root" init -q >/dev/null
-  printf '%s' "$body" > "$root/body.json"
+  if [[ -n "$headers" ]]; then
+    printf '%s\r\n\r\n%s' "$headers" "$body" > "$root/body.json"
+  else
+    printf '%s' "$body" > "$root/body.json"
+  fi
   cat >"$root/bin/curl" <<SH
 #!/usr/bin/env bash
 # Consume the -K - config from stdin like the real invocation.
 cat >/dev/null
+[[ "$code" != none ]] || exit 7
 args=("\$@")
 w_fmt=""
 for ((i=0; i<\${#args[@]}; i++)); do
@@ -40,7 +51,13 @@ SH
 }
 
 RL_BODY='{"errors":[{"message":"Rate limit exceeded. Only 2500 requests are allowed per 1 hour.","extensions":{"type":"ratelimited","code":"RATELIMITED","statusCode":429,"userError":true}}]}'
+# Header names as Linear sends them; the reset is epoch milliseconds.
+RL_HEADERS=$'HTTP/1.1 400 Bad Request\r\nX-Ratelimit-Requests-Remaining: 0\r\nX-Ratelimit-Requests-Reset: 1791143331872'
+RL_RESET="2026-10-04T19:48:51Z"
 GENERIC_BODY='{"errors":[{"message":"Argument Validation Error","extensions":{"code":"INVALID_INPUT"}}]}'
+
+# The rate-limit line among OUTPUT's lines, as one JSON object.
+quota_line() { jq -c 'select(type == "object" and .code == "RATELIMITED")' 2>/dev/null <<<"$1" || true; }
 
 # Returns the CLI's combined output and its status. The status is asserted by
 # the caller rather than here: every call site captures this in a command
@@ -62,8 +79,42 @@ rl_rc=0
 out="$(run_linear "$TMP_BASE/rl" statuses list)" || rl_rc=$?
 
 assert_ne "a RATELIMITED body on HTTP 400 fails the call" "$rl_rc" 0
-assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. Try again later."
+assert_jq "rate-limited 400 reports the rate limit" "$(quota_line "$out")" '.code == "RATELIMITED"'
+assert_jq "a rate limit with no reset header says the reset is unavailable" "$(quota_line "$out")" '.requests_reset == "unavailable"'
 assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
+
+echo "=== a rate limit names the time the request quota refills ==="
+make_env "$TMP_BASE/reset" 400 "$RL_BODY" "$RL_HEADERS"
+reset_rc=0
+out="$(run_linear "$TMP_BASE/reset" statuses list)" || reset_rc=$?
+assert_ne "a rate limit with a reset header fails the call" "$reset_rc" 0
+assert_jq "a rate limit names the Requests-Reset time" "$(quota_line "$out")" ".requests_reset == \"$RL_RESET\""
+make_env "$TMP_BASE/status429" 429 '{}' "$RL_HEADERS"
+status_rc=0
+out="$(run_linear "$TMP_BASE/status429" statuses list)" || status_rc=$?
+assert_ne "an HTTP 429 fails the call" "$status_rc" 0
+assert_jq "an HTTP 429 is the rate-limit path" "$(quota_line "$out")" ".requests_reset == \"$RL_RESET\""
+# An interim 100 Continue, or a proxy's CONNECT answer, puts a header block of
+# its own ahead of the response's: the reset is read off the last block.
+make_env "$TMP_BASE/blocks" 400 "$RL_BODY" $'HTTP/1.1 100 Continue\r\n\r\n'"$RL_HEADERS"
+blocks_rc=0
+out="$(run_linear "$TMP_BASE/blocks" statuses list)" || blocks_rc=$?
+assert_ne "a reply after an interim header block fails the call" "$blocks_rc" 0
+assert_jq "a reply after an interim header block names the Requests-Reset time" "$(quota_line "$out")" ".requests_reset == \"$RL_RESET\""
+# The RATELIMITED code in the body decides, whatever status carries it.
+make_env "$TMP_BASE/ok429" 200 "$RL_BODY"
+ok_rc=0
+out="$(run_linear "$TMP_BASE/ok429" statuses list)" || ok_rc=$?
+assert_ne "a RATELIMITED body on HTTP 200 fails the call" "$ok_rc" 0
+assert_jq "a RATELIMITED body on HTTP 200 reports the rate limit" "$(quota_line "$out")" '.code == "RATELIMITED"'
+
+echo "=== a successful reply carries its headers ahead of the body ==="
+make_env "$TMP_BASE/ok" 200 '{"data":{"viewer":{"id":"actor-id","name":"Actor name"}}}' \
+  $'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Ratelimit-Requests-Remaining: 2499'
+ok_out="$(cd "$TMP_BASE/ok" && env PATH="$TMP_BASE/ok/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" LINEAR_RETRY_BASE_DELAY=0 \
+  "$TMP_BASE/ok/.agents/skills/linear/scripts/linear.sh" auth-check 2>/dev/null)" || true
+assert_jq "a header-prefixed 200 reads its body" "$ok_out" '.ok == true and .actor.id == "actor-id"'
 echo "=== failed team lookup propagates the API failure ==="
 unit_rc=0
 unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
@@ -76,7 +127,7 @@ unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
 ' "$TMP_BASE/rl" 2>&1)" || unit_rc=$?
 
 assert_ne "a rate-limited team lookup fails" "$unit_rc" 0
-assert_contains "team lookup surfaces the rate limit" "$unit" "Rate limited. Try again later."
+assert_jq "team lookup surfaces the rate limit" "$(quota_line "$unit")" '.code == "RATELIMITED"'
 assert_contains "team lookup names the failed resolution" "$unit" "Could not resolve team 'Claude'"
 assert_not_contains "team lookup does not claim the team is missing" "$unit" "Team not found"
 echo "=== generic non-200 carries the body's error message ==="
@@ -156,7 +207,25 @@ zero_out="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
   "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list 2>&1)" || true
 assert_eq "a leading-zero base delay is read in base ten" \
   "$(tr '\n' ' ' <"$TMP_BASE/rl/slept")" "8 16 "
-assert_contains "a leading-zero base delay still answers with the rate limit" \
-  "$zero_out" "Rate limited. Try again later."
+assert_jq "a leading-zero base delay still answers with the rate limit" \
+  "$(quota_line "$zero_out")" '.code == "RATELIMITED"'
 assert_not_contains "a leading-zero base delay is never an arithmetic error" \
   "$zero_out" "value too great for base"
+
+echo "=== only a rate-limited, 5xx or unanswered request is retried ==="
+# Each arm reads the waits the retry asked for off a sleep stub. A request
+# retried twice sleeps twice; one that fails on its first answer never sleeps.
+for row in "gen|a generic 400 fails on its first answer|" "server|a 5xx is retried|0 0 " "rl|a rate-limited answer is retried|0 0 " \
+  "noanswer|an unanswered request is retried|0 0 "; do
+  IFS='|' read -r env label want <<<"$row"
+  if [[ "$env" == server ]]; then make_env "$TMP_BASE/server" 503 '{}'; fi
+  if [[ "$env" == noanswer ]]; then make_env "$TMP_BASE/noanswer" none ''; fi
+  cat >"$TMP_BASE/$env/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$TMP_BASE/$env/slept"
+SH
+  chmod +x "$TMP_BASE/$env/bin/sleep"
+  : >"$TMP_BASE/$env/slept"
+  run_linear "$TMP_BASE/$env" statuses list >/dev/null 2>&1 || true
+  assert_eq "$label" "$(tr '\n' ' ' <"$TMP_BASE/$env/slept")" "$want"
+done

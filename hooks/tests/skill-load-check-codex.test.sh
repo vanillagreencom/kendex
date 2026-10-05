@@ -175,7 +175,7 @@ linear_shell_row() { # INSTALL RESULT WANT
   cp -- "$HOOK" "$REPO/$install/hooks/skill-load-check.sh"
   rollout 'cat .agents/skills/linear/SKILL.md' "$result"
   payload=$(jq -n -c --arg t "$TRANSCRIPT" '{tool_name:"Bash",
-    tool_input:{command:".agents/skills/linear/scripts/linear.sh cache issues get KEN-2337"},transcript_path:$t}')
+    tool_input:{command:".agents/skills/linear/scripts/linear.sh issues get KEN-2337"},transcript_path:$t}')
   set +e
   env -i PATH="$PATH" HOME="$TMP_ROOT" CODEX_HOME="$REPO/$install" \
     "$BASH_BIN" "$REPO/$install/hooks/skill-load-check.sh" \

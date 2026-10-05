@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["attachments", "list", "KEN-9001"],
+  "root_index": 0,
+  "root_path": "issue.attachments",
+  "output": "map(select(.context == \"attachment\"))",
+  "expected_rows": 2,
+  "derived_rows": "The recorded connection held one row; a copy of it with a new id is the second row the cursor split needs.",
+  "requests": [
+    {"operation":"IssueAttachments","response":{"data":{"issue":{"id":"00000000-0000-4000-8000-000000000001","identifier":"KEN-9001","description":"Fixture text","attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000002","url":"https://uploads.linear.app/fixture/00000000-0000-4000-8000-000000000003","title":"Fixture text"},{"id":"00000000-0000-4000-8000-000000000002-copy","url":"https://uploads.linear.app/fixture/00000000-0000-4000-8000-000000000003-copy","title":"Fixture text"}]},"comments":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000004"},"nodes":[{"id":"00000000-0000-4000-8000-000000000004","body":"Fixture text","createdAt":"2026-10-04T19:08:57.653Z","updatedAt":"2026-10-04T19:08:57.637Z","user":{"name":"Fixture Person"}}]}}}}}
+  ]
+}

@@ -30,18 +30,19 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 unset DEV_VALIDATE_RANGE_CMD
 mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
 # The size owner reads the issue through its sibling Linear CLI. This stand-in
-# supplies the same raw cache row on Bash 3.2 test runners.
+# answers `issues get ID --format=raw` with the fixture's row on Bash 3.2 test
+# runners.
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/tracker-fixture/issues.json)"
 [[ -n "$row" ]] || exit 1
 jq -n --argjson issue "$row" '{issue: $issue}'
 SH
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh" "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -52,14 +53,14 @@ CHECK="$LIVE_SCRIPTS/dev-artifact-check"
 
 write_allowance() {
   local repo="$1" issue="$2" line="$3"
-  mkdir -p "$repo/.cache/linear"
-  if [[ ! -f "$repo/.cache/linear/issues.json" ]]; then
-    printf '[]\n' > "$repo/.cache/linear/issues.json"
+  mkdir -p "$repo/.cache/tracker-fixture"
+  if [[ ! -f "$repo/.cache/tracker-fixture/issues.json" ]]; then
+    printf '[]\n' > "$repo/.cache/tracker-fixture/issues.json"
   fi
   jq --arg id "$issue" --arg body "$line" \
     '[.[] | select(.identifier != $id)] + [{identifier: $id, description: $body}]' \
-    "$repo/.cache/linear/issues.json" > "$repo/.cache/linear/next.json"
-  mv "$repo/.cache/linear/next.json" "$repo/.cache/linear/issues.json"
+    "$repo/.cache/tracker-fixture/issues.json" > "$repo/.cache/tracker-fixture/next.json"
+  mv "$repo/.cache/tracker-fixture/next.json" "$repo/.cache/tracker-fixture/issues.json"
 }
 
 # new_repo NAME ISSUE... — a committed git repo with growth state for each

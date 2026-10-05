@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["projects", "list", "--limit", "3", "--format=raw"],
+  "root_index": 0,
+  "root_path": "projects",
+  "output": ".projects.nodes",
+  "expected_rows": 3,
+  "requests": [
+    {"operation":"ListProjects","response":{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000106","name":"Fixture name 15","description":"Fixture text","content":null,"state":"backlog","progress":0.9695945945945946,"health":null,"priority":0,"sortOrder":-1145,"targetDate":null,"startDate":null,"lead":null,"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000107"},"nodes":[{"name":"Fixture name 16"}]},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"url":"https://linear.app/fixture","createdAt":"2026-09-30T05:33:01.624Z","updatedAt":"2026-09-30T05:33:01.624Z"},{"id":"00000000-0000-4000-8000-000000000108","name":"Fixture name 17","description":"Fixture text","content":null,"state":"backlog","progress":0.9519230769230769,"health":null,"priority":0,"sortOrder":-81,"targetDate":null,"startDate":null,"lead":null,"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000107"},"nodes":[{"name":"Fixture name 16"}]},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"url":"https://linear.app/fixture","createdAt":"2026-09-30T03:24:30.380Z","updatedAt":"2026-09-30T03:24:30.380Z"},{"id":"00000000-0000-4000-8000-000000000109","name":"Fixture name 18","description":"Fixture text","content":null,"state":"backlog","progress":0.8519206939281289,"health":null,"priority":0,"sortOrder":-5909,"targetDate":null,"startDate":null,"lead":null,"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000110"},"nodes":[{"name":"Fixture name 19"}]},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"url":"https://linear.app/fixture","createdAt":"2026-09-17T23:03:27.101Z","updatedAt":"2026-09-17T23:03:27.101Z"}]}}}}
+  ]
+}

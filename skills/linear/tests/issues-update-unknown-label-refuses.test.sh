@@ -32,14 +32,14 @@ printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query="$(jq -r '.query' <<<"$payload")"
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
   name="$(jq -r '.variables.name // empty' <<<"$payload")"
   if [ "$name" = "ghost-label" ]; then
-    printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"lbl-1","name":"real-label"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"lbl-1","name":"real-label"}]}}}___HTTP_CODE___200'
   fi
   ;;
 *"issue(id:"*|*"issues(filter:"*)
@@ -57,7 +57,7 @@ chmod +x "$PROJECT/bin/curl"
 
 run_update() {
   ( cd -- "$PROJECT" \
-    && env -i HOME="$TMP_ROOT" LINEAR_CACHE_ROOT="$PROJECT" \
+    && env -i HOME="$TMP_ROOT" \
        CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=TestTeam \
        "$LINEAR" issues update ISS-1 --labels "$1" ) >"$TMP_ROOT/out.txt" 2>"$ERR_FILE"
 }
@@ -77,7 +77,7 @@ assert_file_lacks "no mutation was sent for the refused update" "$CURL_LOG" "iss
 printf 'x' >"$TMP_ROOT/asset.bin"
 attach_rc=0
 ( cd -- "$PROJECT" \
-  && env -i HOME="$TMP_ROOT" LINEAR_CACHE_ROOT="$PROJECT" \
+  && env -i HOME="$TMP_ROOT" \
      CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=TestTeam \
      "$LINEAR" issues update ISS-1 --labels "ghost-label" --attach "$TMP_ROOT/asset.bin" ) \
      >"$TMP_ROOT/out.txt" 2>"$ERR_FILE" || attach_rc=$?

@@ -1,0 +1,12 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["statuses", "list", "--team", "kendex", "--format=raw"],
+  "root_index": 1,
+  "root_path": "workflowStates",
+  "output": ".workflowStates.nodes",
+  "expected_rows": 8,
+  "requests": [
+    {"operation":"GetTeam","response":{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":"00000000-0000-4000-8000-000000000024"},"nodes":[{"id":"00000000-0000-4000-8000-000000000024","key":"KEN","name":"kendex"}]}}}},
+    {"operation":"ListStates","response":{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000361","name":"Triage","type":"triage","color":"#FC7840","position":0,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000360","name":"Todo","type":"unstarted","color":"#e2e2e2","position":1,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000362","name":"Duplicate","type":"duplicate","color":"#95a2b3","position":5,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000363","name":"Done","type":"completed","color":"#5e6ad2","position":3,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000364","name":"In Review","type":"started","color":"#0f783c","position":1002,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000365","name":"Backlog","type":"backlog","color":"#bec2c8","position":0,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000366","name":"In Progress","type":"started","color":"#f2c94c","position":2,"team":{"name":"kendex"}},{"id":"00000000-0000-4000-8000-000000000367","name":"Canceled","type":"canceled","color":"#95a2b3","position":4,"team":{"name":"kendex"}}]}}}}
+  ]
+}

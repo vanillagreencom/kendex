@@ -277,25 +277,25 @@ control_replace scripts/commands/labels.sh 1 \
 # Read every state's issues, closed ones included.
 control_expect "audit: skips closed issues"
 control_replace scripts/commands/labels.sh 1 \
-    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \' \
-    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \'
+    '    issues=$(graphql_pages '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \' \
+    '    issues=$(graphql_pages '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \'
 
 # Read every team's open issues.
 control_expect "audit: reads only the team's issues"
 control_replace scripts/commands/labels.sh 1 \
-    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \' \
-    '    issues=$(audit_pages '"'"'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }'"'"' \'
+    '    issues=$(graphql_pages '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \' \
+    '    issues=$(graphql_pages '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \'
 
 # Read every team's labels.
 control_expect "audit: ignores another team's same-name label"
 control_replace scripts/commands/labels.sh 1 \
-    '    labels=$(audit_pages '"'"'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \' \
-    '    labels=$(audit_pages '"'"'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \'
+    '    labels=$(graphql_pages '"'"'query AuditLabels($teamId: ID!, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \' \
+    '    labels=$(graphql_pages '"'"'query AuditLabels($teamId: ID!, $after: String) { issueLabels(first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }'"'"' \'
 
 # Stop at the first page of open issues.
 control_expect "audit: reads the open issues past the first page"
-control_replace scripts/commands/labels.sh 1 \
-    '        [ "$has_next" = true ] || break' \
+control_replace scripts/lib/pages.sh 1 \
+    '        if [[ "$next" == false ]]; then break; fi' \
     '        break'
 
 # Report every label sharing a name, not only team/workspace pairs.
@@ -304,12 +304,12 @@ control_replace scripts/commands/labels.sh 1 \
     '            | map(select(any(.[]; .team == null) and any(.[]; .team != null))' \
     '            | map(select(any(.[]; .team == null) or any(.[]; .team != null))'
 
-# Read a page with no pageInfo as the last page.
-control_expect "audit-pages: refused"
+# Read the open issues in one request, outside the shared page loop, whose
+# refusal names the chain it could not complete.
 control_expect "audit-pages: a page with no pageInfo fails the audit"
 control_replace scripts/commands/labels.sh 1 \
-    '            ! has_next=$(jq -r --arg field "$field" '"'"'.[$field].pageInfo.hasNextPage | if type == "boolean" then . else error("hasNextPage") end'"'"' <<<"$result" 2>/dev/null); then' \
-    '            ! has_next=$(jq -r --arg field "$field" '"'"'.[$field].pageInfo.hasNextPage // false'"'"' <<<"$result" 2>/dev/null); then'
+    '    issues=$(graphql_pages '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \' \
+    '    issues=$(graphql_query '"'"'query AuditIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id identifier labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } } } } }'"'"' \'
 
 # Audit with no taxonomy, reporting every label as drift.
 control_expect "audit-absent: no taxonomy has nothing to audit against"

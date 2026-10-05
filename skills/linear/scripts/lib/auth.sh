@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Selected Linear credential and its short-lived OAuth token cache.
+# Selected Linear credential and the OAuth token minted from an app pair,
+# kept in a private per-user file until it expires.
 
 set -euo pipefail
 
@@ -17,8 +18,8 @@ else
 fi
 
 # One fixed set for every minter: Linear revokes every app token when an app
-# requests a different set. The token cache key hashes it, so a cached token
-# minted under another set is never reused.
+# requests a different set. The token file's name hashes it, so a token minted
+# under another set is never reused.
 _LINEAR_APP_SCOPE="read,write,issues:create,comments:create,timeSchedule:write,initiative:read,initiative:write,customer:read,customer:write"
 
 # Resolve only the selected credential: an unused personal key cannot block an app.
@@ -78,33 +79,74 @@ linear_authorization() (
         return 0
     fi
 
-    # Reuse the cache library's root resolution, including LINEAR_CACHE_ROOT.
-    source "$_LIB_DIR/cache.sh" || return 1
-    local identity now token_file cached token staged
+    # The pair's token lives per user, outside any checkout, so every
+    # invocation and worktree of this user reuses one token until it expires:
+    # Linear caps an application's active client-credentials tokens, and a
+    # mint per request would spend that cap. The token directory is the first
+    # candidate this user owns and can write: the user's cache directory, else
+    # one under TMPDIR (else /tmp) named by the user id, for a session such as
+    # a sandbox whose writes are held to its workspace and temporary
+    # directory. That one directory serves both the read and the store, so a
+    # renewal always replaces the token it renews and a revoked token left
+    # where this session cannot write is never read. Under a shared /tmp
+    # another user could make the name first, so a symlink or another user's
+    # directory is never used. The file is named by the fingerprint of the pair
+    # and the scope set, so a token minted under another set is never reused.
+    local base candidate cause dir='' failed='' identity token_file now cached token staged=''
+    if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+        base="$XDG_CACHE_HOME"
+    elif [[ -n "${HOME:-}" ]]; then
+        base="$HOME/.cache"
+    else
+        echo '{"error": "linear-auth: token-dir=unset\nSet HOME or XDG_CACHE_HOME: the app pair'"'"'s token file lives under it."}' >&2
+        return 1
+    fi
     identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE") || return 1
-    token_file="$CACHE_DIR/oauth/$identity.json"
+    umask 077
+    trap '[[ -z "${staged:-}" ]] || rm -f -- "${staged:?}"' EXIT
+    # The staged file is the write probe and, after a mint, the atomic
+    # replacement that keeps parallel callers from reading a partial token.
+    for candidate in "$base/kendex/linear-oauth" "${TMPDIR:-/tmp}/kendex-linear-oauth-$UID"; do
+        if ! mkdir -p -- "$candidate" 2>/dev/null; then
+            cause=mkdir-failed
+        elif [[ -L "$candidate" ]]; then
+            cause=symlink
+        elif [[ ! -O "$candidate" ]]; then
+            cause=not-owned
+        elif ! staged=$(mktemp "$candidate/.token.XXXXXX" 2>/dev/null); then
+            cause=not-writable
+        else
+            dir="$candidate"
+            break
+        fi
+        failed+=" dir=[$candidate] cause=$cause"
+    done
+    token_file="$dir/$identity.json"
     now=$(date +%s) || return 1
-    if [[ "${1:-}" != "renew" && -f "$token_file" ]]; then
+    if [[ -n "$dir" && "${1:-}" != "renew" && -f "$token_file" ]]; then
         cached=$(cat -- "$token_file") || return 1
         # Linear supplies expires_in; the margin avoids expiring in transit.
         if token=$(jq -er --argjson now "$now" '
             select(.expires_at | type == "number" and . == floor) |
             select(.expires_at > ($now + 60)) | .access_token |
-            select(type == "string" and length > 0)' <<<"$cached"); then
+            select(type == "string" and length > 0)' <<<"$cached" 2>/dev/null); then
             printf 'Bearer %s' "$token"
             return 0
         fi
     fi
 
     cached=$(linear_mint_token) || return 1
-    token=$(jq -r '.access_token' <<<"$cached") || return 1
-    # Atomic replacement keeps parallel callers from reading a partial token.
-    umask 077
-    mkdir -p -- "$CACHE_DIR/oauth" || return 1
-    staged=$(mktemp "$CACHE_DIR/oauth/.token.XXXXXX") || return 1
-    trap 'rm -f -- "${staged:?}"' EXIT
-    printf '%s\n' "$cached" >"$staged" || return 1
-    mv -f -- "$staged" "$token_file" || return 1
+    token=$(jq -er '.access_token' <<<"$cached") || return 1
+    # A store that fails loses only the reuse: this request still runs on the
+    # minted token.
+    if [[ -n "$dir" ]] && ! { printf '%s\n' "$cached" >"$staged" &&
+        mv -f -- "$staged" "$token_file"; } 2>/dev/null; then
+        failed+=" dir=[$dir] cause=write-failed"
+        dir=''
+    fi
+    [[ -n "$dir" ]] ||
+        printf 'linear-auth: token-store=failed%s\nThe minted token serves this request only; each later request mints again until one of these directories is writable.\n' \
+            "$failed" >&2
     printf 'Bearer %s' "$token"
 )
 
@@ -117,7 +159,7 @@ linear_mint_token() (
     fi
     local LINEAR_AUTH_KIND="app"
     linear_resolve_credentials || return 1
-    local now raw http_code response payload payload_quote cached
+    local now reply http_code response payload payload_quote cached
     now=$(date +%s) || return 1
     # Environment values cannot contain NUL; it separates credentials on stdin.
     payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg scope "$_LINEAR_APP_SCOPE" '
@@ -125,17 +167,19 @@ linear_mint_token() (
         "grant_type=client_credentials&scope=" + ($scope | @uri) + "&client_id=" + (.[0] | @uri) +
         "&client_secret=" + (.[1] | @uri)') || return 1
     payload_quote=$(curl_config_quote "$payload") || return 1
-    raw=$(
-        printf '%s\n' \
-            'url = "https://api.linear.app/oauth/token"' \
-            'request = "POST"' \
-            'header = "Content-Type: application/x-www-form-urlencoded"' \
-            "data = $payload_quote" \
-        | curl -s -w '___HTTP_CODE___%{http_code}' -K -
-    ) || { echo '{"error": "linear-auth: token=transport-failed"}' >&2; return 1; }
-    http_code="${raw##*___HTTP_CODE___}"
-    response="${raw%___HTTP_CODE___*}"
-    if [[ "$http_code" != "200" ]]; then
+    # linear_http_post retries as every request does and reports a rate limit
+    # in the same RATELIMITED shape.
+    reply=$(linear_http_post "$(printf '%s\n' \
+        'url = "https://api.linear.app/oauth/token"' \
+        'request = "POST"' \
+        'header = "Content-Type: application/x-www-form-urlencoded"' \
+        "data = $payload_quote")") || return 1
+    http_code="${reply%%$'\n'*}"
+    response="${reply#*$'\n'}"
+    if [[ "$http_code" == 000 ]]; then
+        echo '{"error": "linear-auth: token=transport-failed"}' >&2
+        return 1
+    elif [[ "$http_code" != "200" ]]; then
         jq -cn --arg code "$http_code" '{error: ("linear-auth: token-http=" + $code)}' >&2
         return 1
     fi

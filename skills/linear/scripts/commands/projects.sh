@@ -6,13 +6,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Shared project fields for mutation responses — matches list query for cache parity
+# Shared project fields for mutation responses, the list query's fields
 PROJECT_RETURN_FIELDS='
     id name description content state progress health
     priority sortOrder targetDate startDate
     lead { name }
-    teams { nodes { name } }
-    labels { nodes { name } }
+    teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+    labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
     url createdAt updatedAt
 '
 
@@ -39,10 +39,8 @@ Actions:
 List Options:
   --state <name>        Filter by state (e.g., "started", "completed")
   --team <ref>          Filter by team key or name
-  --limit <n>           Max results (default: 50). Values above 50 are fetched
-                        transparently by paginating (per request capped at 50,
-                        the connection maximum).
-  --max                 Fetch ALL matching projects (paginate until exhausted)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
   --first               Output just the first project's name (useful for scripts)
   --include-archived    Include archived projects
 
@@ -112,20 +110,13 @@ EOF
 case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 
 source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-
-# Linear's projects connection rejects large `first` values (query complexity),
-# so a single request can return at most this many projects. Higher --limit
-# values are satisfied by transparently paginating with the endCursor.
-PROJECTS_PAGE_MAX=50
 
 list_projects() {
     local filter_parts=()
     local team=""
-    local limit=50
     local include_archived="false"
     local first_only="false"
-    local paginate_all="false"
+    linear_list_reset
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -141,14 +132,11 @@ list_projects() {
             shift 2
             ;;
         --limit)
-            # Reaches shell arithmetic below, where bash evaluates the VALUE as
-            # an expression — a crafted one runs command substitution.
-            linear_require_pattern --limit "$2" '^[0-9]+$' "a non-negative integer" || return 1
-            limit="$2"
+            linear_list_option "$@" || return 1
             shift 2
             ;;
         --max)
-            paginate_all="true"
+            linear_list_option --max
             shift
             ;;
         --include-archived)
@@ -157,7 +145,7 @@ list_projects() {
             ;;
         --first)
             first_only="true"
-            limit=1
+            linear_list_option --first
             shift
             ;;
         --format)
@@ -212,8 +200,8 @@ list_projects() {
                 targetDate
                 startDate
                 lead { name }
-                teams { nodes { name } }
-                labels { nodes { name } }
+                teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+                labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
                 url
                 createdAt
                 updatedAt
@@ -221,48 +209,8 @@ list_projects() {
         }
     }'
 
-    # Fetch pages until we have enough (or all, with --max). Per-request page
-    # size never exceeds PROJECTS_PAGE_MAX so the connection never 400s.
-    local all_nodes="[]"
-    local cursor="null"
-    local page_count=0
-    local max_pages=200 # Safety limit: 200 pages * 50 = 10000 projects max
-    local result
-
-    while true; do
-        local page_size=$PROJECTS_PAGE_MAX
-        if [ "$paginate_all" != "true" ]; then
-            local collected
-            collected=$(echo "$all_nodes" | jq 'length')
-            local remaining=$((limit - collected))
-            [ "$remaining" -le 0 ] && break
-            [ "$remaining" -lt "$page_size" ] && page_size=$remaining
-        fi
-
-        local variables="{\"filter\": $filter_json, \"first\": $page_size, \"includeArchived\": $include_archived, \"after\": $cursor}"
-        result=$(graphql_query "$query" "$variables")
-
-        local nodes
-        nodes=$(echo "$result" | jq '.projects.nodes // []')
-        all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
-
-        page_count=$((page_count + 1))
-
-        local has_next
-        has_next=$(echo "$result" | jq -r '.projects.pageInfo.hasNextPage // false')
-        if [ "$has_next" != "true" ] || [ "$page_count" -ge "$max_pages" ]; then
-            break
-        fi
-
-        cursor=$(echo "$result" | jq '.projects.pageInfo.endCursor')
-    done
-
-    # In limited mode, return exactly up to --limit projects.
-    if [ "$paginate_all" != "true" ]; then
-        all_nodes=$(echo "$all_nodes" | jq --argjson n "$limit" '.[0:$n]')
-    fi
-
-    result=$(echo "$all_nodes" | jq '{projects: {nodes: .}}')
+    local variables="{\"filter\": $filter_json, \"includeArchived\": $include_archived}" result
+    result=$(linear_list_read "$query" "$variables" projects) || return 1
 
     # Handle --first: output just the name of first project
     if [ "$first_only" = "true" ]; then
@@ -282,7 +230,7 @@ list_projects() {
     # Apply output format
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     ids)
         format_projects_ids "$result"
@@ -342,8 +290,8 @@ get_project() {
             startDate
             targetDate
             url
-            teams { nodes { name } }
-            labels { nodes { name } }
+            teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+            labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
             lead { name email }
             createdAt
             updatedAt
@@ -354,6 +302,7 @@ get_project() {
                 createdAt
             }
             relations {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     type
@@ -363,6 +312,7 @@ get_project() {
                 }
             }
             inverseRelations {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     type
@@ -376,12 +326,12 @@ get_project() {
 
     local variables="{\"id\": \"$project_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     safe | *)
         format_project_single "$result"
@@ -492,9 +442,9 @@ create_project() {
             # named won't-fix aborted the command with an unmatched-quote error.
             label_name="${label_name#"${label_name%%[![:space:]]*}"}"
             label_name="${label_name%"${label_name##*[![:space:]]}"}"
-            local label_query='query GetProjectLabel($name: String!) { projectLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
+            local label_query='query GetProjectLabel($name: String!, $after: String) { projectLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
             local label_result
-            label_result=$(graphql_query "$label_query" "{\"name\": \"$label_name\"}")
+            label_result=$(graphql_pages "$label_query" "$(jq -cn --arg name "$label_name" '{name: $name}')" projectLabels) || return 1
             local label_id
             label_id=$(echo "$label_result" | jq -r '.projectLabels.nodes[0].id // empty')
             if [ -z "$label_id" ]; then
@@ -529,10 +479,6 @@ create_project() {
 
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-# Write-through: upsert the created project into the cache
-    local created_project
-    created_project=$(echo "$result" | jq '.projectCreate.project // empty')
-    [[ -n "$created_project" && "$created_project" != "null" ]] && cache_upsert_project "$created_project" 2>/dev/null || true
     normalize_mutation_response "$result" "projectCreate" "project"
 }
 
@@ -622,9 +568,9 @@ update_project() {
             # named won't-fix aborted the command with an unmatched-quote error.
             label_name="${label_name#"${label_name%%[![:space:]]*}"}"
             label_name="${label_name%"${label_name##*[![:space:]]}"}"
-            local label_query='query GetProjectLabel($name: String!) { projectLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
+            local label_query='query GetProjectLabel($name: String!, $after: String) { projectLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
             local label_result
-            label_result=$(graphql_query "$label_query" "{\"name\": \"$label_name\"}")
+            label_result=$(graphql_pages "$label_query" "$(jq -cn --arg name "$label_name" '{name: $name}')" projectLabels) || return 1
             local label_id
             label_id=$(echo "$label_result" | jq -r '.projectLabels.nodes[0].id // empty')
             if [ -z "$label_id" ]; then
@@ -664,10 +610,6 @@ update_project() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$project_id\", \"input\": $input_json}")
-    # Write-through: upsert updated project into cache
-    local updated_project
-    updated_project=$(echo "$result" | jq '.projectUpdate.project // empty')
-    [[ -n "$updated_project" && "$updated_project" != "null" ]] && cache_upsert_project "$updated_project" 2>/dev/null || true
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 
@@ -683,10 +625,6 @@ delete_project() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$project_id\"}")
-    # Write-through: remove project from cache
-    local success
-    success=$(echo "$result" | jq -r '.projectDelete.success // "false"')
-    [[ "$success" == "true" ]] && cache_remove_project "$project_id" 2>/dev/null || true
     normalize_mutation_response "$result" "projectDelete" "project"
 }
 
@@ -736,6 +674,7 @@ list_dependencies() {
             id
             name
             relations {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     type
@@ -745,6 +684,7 @@ list_dependencies() {
                 }
             }
             inverseRelations {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     type
@@ -758,11 +698,11 @@ list_dependencies() {
 
     local variables="{\"id\": \"$resolved_project_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     case "$FORMAT" in
     raw)
-        echo "$result"
+        linear_public_result "$result"
         ;;
     safe | *)
         format_project_dependencies "$result"
@@ -930,10 +870,6 @@ post_update() {
 
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-    # Write-through: upsert the parent project with updated health
-    local updated_project
-    updated_project=$(echo "$result" | jq '.projectUpdateCreate.projectUpdate.project // empty')
-    [[ -n "$updated_project" && "$updated_project" != "null" ]] && cache_upsert_project "$updated_project" 2>/dev/null || true
     normalize_mutation_response "$result" "projectUpdateCreate" "projectUpdate"
 }
 
@@ -957,8 +893,10 @@ list_updates() {
         }
     }'
 
+    # The ten most recent updates are the read this asks for, so the bounded
+    # connection is read as answered rather than completed page by page.
     local variables="{\"id\": \"$project_id\"}"
-    graphql_query "$query" "$variables"
+    graphql_request "$query" "$variables" || return 1
 }
 
 reorder_projects() {
@@ -991,12 +929,12 @@ reorder_projects() {
         esac
     done
 
-    # Query all backlog/planned projects with dependencies and sortOrder
-    # Note: graphql_query escapes double quotes, so use raw quotes here
-    # Using first: 25 to stay within API complexity limits
+    # Every backlog/planned project with dependencies and sortOrder. Pages of
+    # 25 with nested pages of 10 stay within Linear's query complexity limit.
     local query='
-    query {
-        projects(filter: {status: {type: {in: ["backlog", "planned"]}}}, first: 25) {
+    query BacklogProjects($after: String) {
+        projects(filter: {status: {type: {in: ["backlog", "planned"]}}}, first: 25, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -1004,12 +942,14 @@ reorder_projects() {
                 priority
                 sortOrder
                 relations {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                         type
                         relatedProject { id name state }
                     }
                 }
                 inverseRelations {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                         type
                         project { id name state }
@@ -1020,7 +960,7 @@ reorder_projects() {
     }'
 
     local result
-    result=$(graphql_query "$query" "{}")
+    result=$(graphql_pages "$query" "{}" projects) || return 1
 
     # If --include specified, fetch those projects and merge (ensures they're included even with limit)
     if [ ${#include_ids[@]} -gt 0 ]; then
@@ -1034,12 +974,14 @@ reorder_projects() {
                     priority
                     sortOrder
                     relations {
+                        pageInfo { hasNextPage endCursor }
                         nodes {
                             type
                             relatedProject { id name state }
                         }
                     }
                     inverseRelations {
+                        pageInfo { hasNextPage endCursor }
                         nodes {
                             type
                             project { id name state }
@@ -1177,10 +1119,6 @@ reorder_projects() {
 
             if echo "$update_result" | jq -e '.projectUpdate.success' >/dev/null 2>&1; then
                 changes_made=$((changes_made + 1))
-                # Write-through: upsert updated project into cache
-                local updated_proj
-                updated_proj=$(echo "$update_result" | jq '.projectUpdate.project // empty')
-                [[ -n "$updated_proj" && "$updated_proj" != "null" ]] && cache_upsert_project "$updated_proj" 2>/dev/null || true
             fi
         done < <(echo "$reorder_plan" | jq -c '.[] | select(.needs_update)')
 
@@ -1276,10 +1214,6 @@ set_sort_order() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$project_id\", \"input\": {\"sortOrder\": $new_sort_order}}")
-    # Write-through: upsert updated project into cache
-    local updated_project
-    updated_project=$(echo "$result" | jq '.projectUpdate.project // empty')
-    [[ -n "$updated_project" && "$updated_project" != "null" ]] && cache_upsert_project "$updated_project" 2>/dev/null || true
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 

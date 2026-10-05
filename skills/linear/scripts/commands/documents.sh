@@ -22,7 +22,8 @@ Common Options:
 
 List Options:
   --project <name>      Filter by project name
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75); a larger value spans pages
+  --max                 Read every page; a chain that fails partway refuses
 
 Get:
   documents.sh get <id>
@@ -40,7 +41,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_documents() {
     local filter_parts=()
-    local first=75
+    linear_list_reset
     local format="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -52,8 +53,12 @@ list_documents() {
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                linear_list_option "$@" || return 1
                 shift 2
+                ;;
+            --max)
+                linear_list_option --max
+                shift
                 ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
@@ -69,8 +74,9 @@ list_documents() {
     fi
 
     local query='
-    query ListDocuments($filter: DocumentFilter, $first: Int) {
-        documents(filter: $filter, first: $first) {
+    query ListDocuments($filter: DocumentFilter, $first: Int, $after: String) {
+        documents(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 title
@@ -83,12 +89,12 @@ list_documents() {
         }
     }'
 
-    local variables="{\"filter\": $filter_json, \"first\": $first}"
+    local variables="{\"filter\": $filter_json}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(linear_list_read "$query" "$variables" documents) || return 1
 
     case "$format" in
-        raw) echo "$result" ;;
+        raw) linear_public_result "$result" ;;
         safe|*) format_documents_list "$result" ;;
     esac
 }
@@ -126,10 +132,10 @@ get_document() {
 
     local variables="{\"id\": \"$doc_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     case "$format" in
-        raw) echo "$result" ;;
+        raw) linear_public_result "$result" ;;
         safe|*) format_document_single "$result" ;;
     esac
 }

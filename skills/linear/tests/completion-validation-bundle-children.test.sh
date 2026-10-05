@@ -53,14 +53,14 @@ single_issue() {
   if [[ -n "$parent" ]]; then
     parent_json="{\"id\":\"uuid-$parent\",\"identifier\":\"$parent\",\"title\":\"parent\"}"
   fi
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]}}}}"
 }
 
 # A child node embedded in a bundle's children.nodes.
 # Args: identifier state_name state_type parent_identifier
 bundle_child() {
   local id="$1" sname="$2" stype="$3" parent="$4"
-  printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]},"children":{"nodes":[]}}' \
+  printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}' \
     "$id" "$id" "$id" "$sname" "$stype" "$parent"
 }
 
@@ -70,15 +70,15 @@ bundle_child() {
 bundle_parent() {
   local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}" branch
   branch="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$children]}}}}"
 }
 
 comments_with_summary() {
-  emit '{"data":{"issue":{"comments":{"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
+  emit '{"data":{"issue":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
 }
 
 comments_empty() {
-  emit '{"data":{"issue":{"comments":{"nodes":[]}}}}'
+  emit '{"data":{"issue":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}'
 }
 
 if [[ "$query" == *"GetIssueWithBundle"* ]]; then

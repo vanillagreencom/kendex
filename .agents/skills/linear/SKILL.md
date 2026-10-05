@@ -1,7 +1,7 @@
 ---
 name: linear
 description: "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
-summary: "Bash CLI over Linear's GraphQL API with a local cache: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
+summary: "Bash CLI over Linear's GraphQL API, read live: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
 license: MIT
 user-invocable: true
 metadata:
@@ -27,41 +27,42 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/linear/scripts/linear.sh <resource> <action> [options]
 ```
 
-Reads go through `cache`; writes go through the live commands, which write through to the cache. `linear.sh <resource> --help` prints per-resource options. `--format` values: `safe` (the default, flat and null-safe), `compact` (a smaller shape for workflow routing), `ids` (identifiers only), `table`, `raw` (the GraphQL nesting, so never assume top-level jq paths). `safe` renames fields: `identifier`→`id`, `id`→`uuid`, `state.name`→`state`, `state.type`→`state_type`, `sortOrder`→`sort_order`.
+Every read and write goes to Linear's API as it runs; nothing is stored locally. `linear.sh <resource> --help` prints per-resource options. `--format` values: `safe` (the default, flat and null-safe), `compact` (a smaller shape for workflow routing), `ids` (identifiers only), `table`, `raw` (the GraphQL nesting, so never assume top-level jq paths). `safe` renames fields: `identifier`→`id`, `id`→`uuid`, `state.name`→`state`, `state.type`→`state_type`, `sortOrder`→`sort_order`.
 
 ## Commands
 
 | Resource | Actions |
 |----------|---------|
 | `issues` | list, get, bulk-get, create, update, bulk-update, archive, trash/delete, children, list-relations, add-relation, remove-relation, activate, block, unblock, complete, validate-completion |
-| `comments` / `labels` / `project-labels` | list, create, update, delete (`labels` also audit) |
+| `comments` / `labels` / `project-labels` | list, create, update, delete (`comments` also bulk-list, `labels` also audit) |
 | `projects` | list, get, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order |
 | `initiatives` / `milestones` | list, get, create, update, delete (`initiatives` also add-project, remove-project) |
 | `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`; `teams keys` reads `{urlKey, keys}` for outbound tracker links without changing `teams list`'s array) |
 | `cycles` | list, create, update |
-| `sync` | Refresh the local cache (`--full`, `--reconcile`, `--if-stale N`, `--stats`) |
-| `cache` | Cache-only reads: issues, projects, comments, labels, initiatives, cycles, attachments, status |
+| `attachments` | list (every file an issue references), fetch (download one) |
 | `auth-check` | Report the selected credential, actor, team and `writes_enabled` for writes that need a configured team (`--strict` exits non-zero when no team is configured) |
 | `auth-mint` | Mint application token JSON from the client pair without writing files |
 | `session-status` | Aggregated status for the `/start` workflow |
 
-Aliases: `issues relations` → `list-relations`, `projects dependencies` → `list-dependencies`. Singular resource names (`issue`, `project`, …) route to the plural. There is no `view`/`show`: single-issue lookups are `issues get <ID>` (live) or `cache issues get <ID>`; only the live `issues get <ID>`, without `--with-bundle` and in the default `safe` format, carries `github_sync`, the GitHub issues Linear's GitHub sync links the issue to, each as `owner/repo#N` lowercased. Multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`, which is also the post-mutation verification path. Comments for several issues are one `cache comments bulk-list <ID1> <ID2> ...` call (`--stdin` takes one identifier per line), never a loop or parallel `cache comments list` readers.
+Aliases: `issues relations` → `list-relations`, `projects dependencies` → `list-dependencies`. Singular resource names (`issue`, `project`, …) route to the plural. There is no `view`/`show`: single-issue lookups are `issues get <ID>`; only `issues get <ID>`, without `--with-bundle` and in the default `safe` format, carries `github_sync`, the GitHub issues Linear's GitHub sync links the issue to, each as `owner/repo#N` lowercased. Multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`, which is also the post-mutation verification path. Comments for several issues are one `comments bulk-list <ID1> <ID2> ...` call (`--stdin` takes one identifier per line), never a loop or parallel `comments list` readers.
+
+The removed `cache` verb exits 1 with one `linear: removed=cache replacement=` line that names its arguments as a live `linear.sh` command (`cache issues get ID` names `linear.sh issues get ID`, and a projects, labels or initiatives list adds `--max`); a spelling only the cache took is named as written and refuses there too. The removed `sync` verb names none, since every read is live.
 
 Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_variant_current` (API), `/linear/linear` (SDK), `/websites/linear_app_developers` (guides). [patterns/workflow-actions.md](patterns/workflow-actions.md) covers multi-step state changes.
 
-## Cache
+## Reads
 
 ```bash
-linear.sh cache issues list --project "Phase 2" --state "Todo,In Progress"
-linear.sh cache issues get ABC-100 --with-bundle
-linear.sh sync --reconcile
+linear.sh issues list --project "Phase 2" --state "Todo,In Progress" --max
+linear.sh issues get ABC-100 --with-bundle
+linear.sh labels list --max --format=safe
 ```
 
-`cache issues list --all-projects` enumerates every project in one command (each row carries its `project` name); `--no-project` returns only unassigned issues. Both are mutually exclusive with `--project`. Use `--all-projects`; never loop per project. An unrecognized filter flag is rejected. Repeated `--label` flags (and `--labels a,b`) require ALL named labels.
+`issues list --all-projects` enumerates every project in one command (each row carries its `project` name); `--no-project` returns only unassigned issues. Both are mutually exclusive with `--project`. Use `--all-projects`; never loop per project. An unrecognized filter flag is rejected. Repeated `--label` flags (and `--labels a,b`) require ALL named labels.
 
-Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (`--max --limit N` pages at N under a 200-page cap that warns when it truncates). An audit that must see the whole backlog passes `--max`.
+A list of issues, projects, labels, project labels, teams, users, cycles, documents or initiatives returns its first `--limit` rows (75 by default, a positive whole number) and prints a `linear-list: truncated` line on stderr when rows were left unread; `--max` reads every page. `milestones list`, `statuses list`, `comments list` and `attachments list` always read every row and take neither. A read follows each nested collection (labels, relations, children, comments) to its end. A read that cannot finish its chain (a failed later page, a missing or repeated cursor, or a chain still open after 400 pages) exits nonzero with no output, never a partial result. An audit that must see the whole backlog passes `--max`.
 
-The cache is `.cache/linear` under the physical worktree root ([README.md](README.md)); a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory refuses `sync` and names the repair. A repo whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` is exempt.
+A rate-limited request exits nonzero with one JSON line on stderr carrying `"code":"RATELIMITED"` and `requests_reset`, the UTC time the request quota refills. Rate-limited, 5xx and unanswered requests are retried twice; any other HTTP error fails on its first answer. Holding an activation or completion until the reset: [patterns/workflow-actions.md § Quota Holds](patterns/workflow-actions.md#quota-holds).
 
 ## Team Target
 
@@ -93,20 +94,20 @@ Where the repository declares a label taxonomy (the project-management skill's r
 
 `issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Images embed as markdown in the description/body. On `issues update` without `--description`, the embed appends to the existing description rather than replacing it. Other files become Linear attachments on issues, or markdown links on comments (comments have no attachment surface). An unreadable path refuses before any API call; an attachment failure after a successful issue write reports `partial: true` and exits non-zero. Existing-issue attachments require a successful live issue lookup with a nonempty canonical ID before upload, including for UUID input.
 
-`issues create` and attach-only `issues update` report `attachments_requested`, the number of non-image records requested, and `attachments`, one `{url, repo_path}` object per record in request order once every `attachmentCreate` succeeded. On `issues create` they appear in the default JSON response only, so a create that needs this verification takes the default output: `--format=ids` prints the identifier alone and discards both fields. Those fields are the immediate verification: an attachment write does not make the local attachment manifest current, so `cache attachments list` can still be empty for a record that landed. Run `linear.sh sync --reconcile` before reading the cache to verify a just-written attachment.
+`issues create` and attach-only `issues update` report `attachments_requested`, the number of non-image records requested, and `attachments`, one `{url, repo_path}` object per record in request order once every `attachmentCreate` succeeded. On `issues create` they appear in the default JSON response only, so a create that needs this verification takes the default output: `--format=ids` prints the identifier alone and discards both fields. Those fields are the immediate verification; `attachments list` reads the records live.
 
 ### Resolve a cited artifact
 
-Read a cited repository path when it exists. When it is absent, reconcile the tracker before looking up attachments, even if the workflow's general cache is fresh. If reconciliation fails, stop and report the sync failure; do not treat it as a missing attachment.
+Read a cited repository path when it exists. When it is absent, list the issue's attachments; a failed list is a read failure to report, not a missing attachment.
 
 ```bash
-linear.sh sync --reconcile
-linear.sh cache attachments list [ISSUE_ID]
+linear.sh attachments list [ISSUE_ID]
+linear.sh attachments fetch [URL] --output tmp/[FILENAME]
 ```
 
-Match the original cited repository path against `repo_path`, scoped to that issue or the research/source issue its brief explicitly names. For attachments with no `repo_path`, accept a filename match only when it is unique within that issue. Use an attachment URL in the brief to select the matching `url` when references collide. Read the matching `local_path` under `.cache/linear/attachments/`; keep the repository path as the tracker reference. Resolve companion files, such as a plan's JSON or research metadata, the same way. Do not write a machine's cache path into an issue or delegation for another checkout.
+Match the original cited repository path against `repo_path`, scoped to that issue or the research/source issue its brief explicitly names. For attachments with no `repo_path`, accept a filename match only when it is unique within that issue. Use an attachment URL in the brief to select the matching `url` when references collide. Fetch the match into `tmp/` and read that file; keep the repository path as the tracker reference. Resolve companion files, such as a plan's JSON or research metadata, the same way. Do not write a machine's `tmp/` path into an issue or delegation for another checkout.
 
-No match leaves the calling workflow's missing-file behavior unchanged. Multiple matches without a distinguishing reference require clarification. A matched attachment whose local file is unreadable is a download failure; report it instead of treating the research as absent. Consumers without attachments keep reading repository files as before.
+No match leaves the calling workflow's missing-file behavior unchanged. Multiple matches without a distinguishing reference require clarification. A failed fetch is a download failure; report it instead of treating the research as absent. Consumers without attachments keep reading repository files as before.
 
 ## Blocked Label vs Issue Relations
 
@@ -122,9 +123,9 @@ Normalized issue lists, gets, bulk gets, bundles, recursive children, relation r
 
 What each option accepts: `issues --help`. Refused before any write, on the create and update paths alike: `--cycle` on a non-UUID, `--project`/`--milestone`/`--assignee` on a reference that matches nothing, and `--priority` on an out-of-range value. Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
 
-A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get` / `cache projects get`, `projects list-dependencies` / `cache projects list-dependencies`, `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project`, `cache issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
+A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get`, `projects list-dependencies`, `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
 
-`--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. `issues update --labels` and `issues activate --agent` resolve names live against the issue's own team and workspace labels. An unresolved name refuses before mutation and names the team and label. `--clear-labels` is the only way to empty the set.
+`--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `labels list --max --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. `issues update --labels` and `issues activate --agent` resolve names live against the issue's own team and workspace labels. An unresolved name refuses before mutation and names the team and label. `--clear-labels` is the only way to empty the set.
 
 - `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`).
 - `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed issue read, users lookup or update fails the activation with no line (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively; a user id is sent as given.
@@ -133,6 +134,6 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 
 ## validate-completion
 
-The pre-merge check on state plus summary comment, live only: `issues validate-completion`, with no `cache` spelling. The expected-state matrix is in `issues --help` § Validate-Completion: session root vs bundle children vs `--container` parents, and the fail-closed flag pairing.
+The pre-merge check on state plus summary comment: `issues validate-completion`. The expected-state matrix is in `issues --help` § Validate-Completion: session root vs bundle children vs `--container` parents, and the fail-closed flag pairing.
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

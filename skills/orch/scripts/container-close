@@ -65,10 +65,6 @@ container_close_message() {
       printf 'container-close: pr-response child-id=%s\n' "$child_id"
       printf '%s\n' "container-close: invalid PR response for $child_id"
       ;;
-    sync-failed)
-      printf 'container-close: sync-failed parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: Linear sync failed for $PARENT_ID"
-      ;;
     parent-unreadable)
       printf 'container-close: parent-unreadable parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: cannot read parent $PARENT_ID"
@@ -124,10 +120,6 @@ container_close_message() {
     summary-state)
       printf 'container-close: summary-state id=%s state-type=%s\n' "$id" "$state_type"
       printf '%s\n' "container-close: child $id has unexpected summary state: $state_type"
-      ;;
-    completion-sync)
-      printf 'container-close: completion-sync parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: Linear sync failed after completion failure for $PARENT_ID"
       ;;
     completion-parent)
       printf 'container-close: completion-parent parent-id=%s\n' "$PARENT_ID"
@@ -212,8 +204,8 @@ CHILD_ROWS="$RUN_DIR/children.tsv"
 cleanup() { rm -f -- "$SUMMARY" "$CHILD_ROWS"; rmdir -- "$RUN_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
 
-sync_linear() { "$LINEAR" sync --reconcile >/dev/null; }
-parent_json() { "$LINEAR" cache issues get "$PARENT_ID"; }
+# Every Linear read below is live, so each answers with the tracker as it is.
+parent_json() { "$LINEAR" issues get "$PARENT_ID"; }
 print_deferred() {
   printf 'deferred'
   while IFS= read -r id; do [[ -z "$id" ]] || printf ' %s' "$id"; done <<<"$1"
@@ -251,22 +243,16 @@ child_pr() {
   [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
-sync_linear || { container_close_message sync-failed "$@" >&2; exit 1; }
 PARENT="$(parent_json)" || { container_close_message parent-unreadable "$@" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { container_close_message parent-response "$@" >&2; exit 1; }
 if [[ "$PARENT_TYPE" == "completed" ]]; then printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
 
-PENDING=""
-for _attempt in 1 2 3; do
-  PENDING="$("$LINEAR" cache issues children "$PARENT_ID" --recursive --pending --format=ids)" \
-    || { container_close_message pending-unreadable "$@" >&2; exit 1; }
-  [[ -z "$PENDING" ]] && break
-  [[ $_attempt -eq 3 ]] || sync_linear || { container_close_message sync-failed "$@" >&2; exit 1; }
-done
+PENDING="$("$LINEAR" issues children "$PARENT_ID" --recursive --pending --format=ids)" \
+  || { container_close_message pending-unreadable "$@" >&2; exit 1; }
 if [[ -n "$PENDING" ]]; then print_deferred "$PENDING"; exit 0; fi
 
-CHILDREN="$("$LINEAR" cache issues children "$PARENT_ID" --recursive)" \
+CHILDREN="$("$LINEAR" issues children "$PARENT_ID" --recursive)" \
   || { container_close_message children-unreadable "$@" >&2; exit 1; }
 jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
   (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
@@ -312,13 +298,10 @@ fi
 COMPLETE_RC=0
 "$LINEAR" issues complete ${COMPLETE_ARGS[@]+"${COMPLETE_ARGS[@]}"} >/dev/null || COMPLETE_RC=$?
 if [[ $COMPLETE_RC -ne 0 ]]; then
-  for _attempt in 1 2 3; do
-    sync_linear || { container_close_message completion-sync "$@" >&2; exit 1; }
-    PARENT="$(parent_json)" || { container_close_message completion-parent "$@" >&2; exit 1; }
-    PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
-      || { container_close_message completion-response "$@" >&2; exit 1; }
-    [[ "$PARENT_TYPE" == "completed" ]] && break
-  done
+  # A completion another caller landed first reads as completed here.
+  PARENT="$(parent_json)" || { container_close_message completion-parent "$@" >&2; exit 1; }
+  PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
+    || { container_close_message completion-response "$@" >&2; exit 1; }
   [[ "$PARENT_TYPE" == "completed" ]] || { container_close_message completion-failed "$@" >&2; exit 1; }
   container_close_message already-completed "$@" >&2
 fi

@@ -6,11 +6,10 @@ Link completed research to the issues it unblocks, analyze its impact, record th
 
 ## 1. Read the Research
 
-This workflow updates labels, descriptions, and issue state, so it reconciles before its first cache read:
+This workflow updates labels, descriptions, and issue state; read the issue live first:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 Bind `RESEARCH_SOURCE_ISSUE` to `[ISSUE_ID]`, `FINDINGS_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, and `METADATA_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/raw-exa.json`. Resolve both references with that source issue through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) before reading either; bind their readable files as `FINDINGS_READ_PATH` and `METADATA_READ_PATH`. If a required input has no local copy or attachment, route back to `research-issue.md § 2. Prepare Assets`. Read `FINDINGS_READ_PATH` and summarize the findings. Capture `.metadata` from `METADATA_READ_PATH`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`. Treat `agent:researcher` as the producer unless the issue history says otherwise. Apply the shared publication rule to the research issue, including the bound files and cited research inputs.
@@ -18,7 +17,7 @@ Bind `RESEARCH_SOURCE_ISSUE` to `[ISSUE_ID]`, `FINDINGS_REF` to `[RESEARCH_DOCS_
 ## 2. Domain Labels
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
 Issue labels only, validated per [labels.md](../references/labels.md) § Validation; any failure there halts before mutation.
@@ -33,7 +32,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) § Validat
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description and put the research reference at the top when absent. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+For each blocked issue and, recursively, its children (`issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description and put the research reference at the top when absent. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ```markdown
 **Research**: [FINDINGS_REF]

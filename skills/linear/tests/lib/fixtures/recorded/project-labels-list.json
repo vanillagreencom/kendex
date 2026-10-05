@@ -1,0 +1,11 @@
+{
+  "provenance": "Recorded 2026-10-04 through linear.sh with the kendex application token, read-only. Every name, identifier, id and text is a fixture value; keys, types, enums, nesting, nulls, ordering and references between rows are as Linear answered.",
+  "args": ["project-labels", "list", "--limit", "5", "--format=raw"],
+  "root_index": 0,
+  "root_path": "projectLabels",
+  "output": ".projectLabels.nodes",
+  "expected_rows": 5,
+  "requests": [
+    {"operation":"ListProjectLabels","response":{"data":{"projectLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"00000000-0000-4000-8000-000000000099","name":"Fixture name 10","color":"#5e6ad2","description":null,"isGroup":false,"parent":null,"createdAt":"2026-08-02T18:37:37.265Z"},{"id":"00000000-0000-4000-8000-000000000100","name":"Fixture name 7","color":"#5e6ad2","description":null,"isGroup":false,"parent":null,"createdAt":"2026-08-02T18:37:12.805Z"},{"id":"00000000-0000-4000-8000-000000000101","name":"Fixture name 11","color":"#607D8B","description":null,"isGroup":false,"parent":{"name":"Fixture name 12"},"createdAt":"2026-03-12T03:03:53.360Z"},{"id":"00000000-0000-4000-8000-000000000102","name":"Fixture name 13","color":"#9B59B6","description":null,"isGroup":false,"parent":{"name":"Fixture name 12"},"createdAt":"2026-03-12T03:03:52.663Z"},{"id":"00000000-0000-4000-8000-000000000103","name":"Fixture name 14","color":"#FF6B35","description":null,"isGroup":false,"parent":{"name":"Fixture name 12"},"createdAt":"2026-03-12T03:03:52.005Z"}]}}}}
+  ]
+}

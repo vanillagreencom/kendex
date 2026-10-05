@@ -51,11 +51,11 @@ case "$query" in
     ] | map(. + {
       state: {name: "Todo", type: "unstarted"}, assignee: null,
       project: null, projectMilestone: null, cycle: null, parent: null,
-      labels: {nodes: []}, priority: 0, estimate: null, sortOrder: 1,
+      labels: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []}, priority: 0, estimate: null, sortOrder: 1,
       url: ("https://linear.app/test/issue/" + .identifier),
       createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z",
       archivedAt: null, trashed: false,
-      relations: {nodes: []}, inverseRelations: {nodes: []}
+      relations: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []}, inverseRelations: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []}
     });
 
     def clause_match($i):

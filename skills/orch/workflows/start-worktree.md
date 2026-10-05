@@ -22,8 +22,7 @@ The full session from inside a worktree: implement → review → submit → fin
 3. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh sync --reconcile
-   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+   .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
    ```
 
    A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.

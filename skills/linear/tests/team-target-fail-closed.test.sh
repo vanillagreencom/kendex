@@ -9,7 +9,7 @@
 # One table. A row names the project's settings file, the exported LINEAR_TEAM,
 # the command, and everything the command left behind, rendered as one line:
 # the exit status, the count of API calls, every call's operation with the
-# team it scoped to (`SyncCycles(teamName="Configured")`; `ListIssues()` is a
+# team it scoped to (`ListCycles(filter.team.id.eq="team-uuid")`; `ListIssues()` is a
 # call that named no team anywhere in its variables or its document), then
 # stderr whole, or for an auth-check row its report's fields and warnings whole.
 
@@ -38,7 +38,7 @@ query="$(jq -r '.query' <<<"$payload")"
 
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"viewer"*)
   printf '%s' '{"data":{"viewer":{"id":"viewer-uuid"}}}___HTTP_CODE___200'
@@ -50,10 +50,10 @@ case "$query" in
   printf '%s' '{"data":{"issueUpdate":{"success":true}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
-  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Explicit"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-07-30T00:00:00Z","updatedAt":"2026-07-30T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Explicit"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-07-30T00:00:00Z","updatedAt":"2026-07-30T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *"commentCreate(input:"*)
   printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-uuid","body":"b","createdAt":"2026-07-30T00:00:00Z","user":{"name":"tester"}}}}}___HTTP_CODE___200'
@@ -68,16 +68,16 @@ case "$query" in
   printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"label-uuid","name":"backend","color":"#fff","description":null,"isGroup":false,"team":null,"parent":null,"createdAt":"2026-07-30T00:00:00Z"}}}}___HTTP_CODE___200'
   ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"cycles(filter:"*)
-  printf '%s' '{"data":{"cycles":{"nodes":[]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"cycles":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   ;;
-*"comments(filter:"*)
-  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
+*"projects(first:"*)
+  printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   ;;
 *"issues(filter:"*)
-  printf '%s' '{"data":{"issues":{"nodes":[]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"data":{}}___HTTP_CODE___200'
@@ -102,8 +102,8 @@ settings() {
 # operation is the document's named operation, or its first field for an
 # anonymous one; the values are every variable whose path mentions a team, the
 # top-level name a lookup resolves, the body or title a write carries, and
-# `inline-team` when the document itself carries a team filter, which is where
-# sync puts its scoping. `ListIssues()` is a call that named no team anywhere.
+# `inline-team` when the document itself carries a team filter. `ListIssues()`
+# is a call that named no team anywhere.
 wire() {
   jq -r '
     def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
@@ -127,8 +127,7 @@ auth_view() {
 # line: the status, the call count, then the view. ENV is `-` (LINEAR_TEAM
 # absent from the process) or the exported value, the empty string included.
 # VIEW: `err` is the wire and stderr whole; `err-first` selects its first line.
-# `wire` is the wire alone (sync's
-# progress line carries an elapsed time); `out` is the first stdout line (help
+# `wire` is the wire alone; `out` is the first stdout line (help
 # prints one document); `auth` is the report's fields and warnings.
 run() {
   local fixture="$1" envteam="$2" view="$3" rc=0 out err calls
@@ -171,7 +170,7 @@ graphql() {
 
 # --- the expected lines --------------------------------------------------------
 REFUSAL='{"error": "No Linear team configured for this project - refusing to write. A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so writing without one can land in another project tracker. Fix: set LINEAR_TEAM in this project kendex.settings.toml [env] (committed, non-secret) or .env.local. The create actions that take a team (issues, projects, cycles, labels) also accept --team <key-or-name> for one call. Verify with: linear.sh auth-check --strict"}'
-REDIRECT='Error: Comments are a separate resource. Use:;  linear.sh comments create [ISSUE_ID] --body "Your comment";  linear.sh cache comments list [ISSUE_ID]'
+REDIRECT='Error: Comments are a separate resource. Use:;  linear.sh comments create [ISSUE_ID] --body "Your comment";  linear.sh comments list [ISSUE_ID]'
 W_NOTEAM='No LINEAR_TEAM configured: writes that need a configured team are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.'
 W_ENVKEY='LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.'
 w_shadow() { printf 'LINEAR_TEAM from the process environment ("%s") overrides the project value ("%s"). Writes that need a configured team use the environment value.' "$1" "$2"; }
@@ -260,8 +259,8 @@ statuses get sends no guessed team|none|-|err|statuses get --name "In Progress"|
 issues list sends no guessed team|none|-|err|issues list --limit 5|ok ListIssues()
 cycles list scopes to the configured team|Configured|-|err|cycles list --type current|ok GetTeam(name="Configured"),ListCycles(filter.team.id.eq="team-uuid")
 statuses list scopes to the configured team|Configured|-|err|statuses list|ok GetTeam(name="Configured"),ListStates(filter.team.id.eq="team-uuid")
-sync inlines no team into any document with no team configured|none|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(),SyncInitiatives(),SyncLabels()
-sync scopes cycles to the configured team, in the document and its variables|Configured|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(teamName="Configured",inline-team),SyncInitiatives(),SyncLabels()
+session-status reads the cycles of every team with no team configured|none|-|wire|session-status|ok SessionProjects(),SessionCycles(),SessionIssues(),SessionIssues()
+session-status scopes its cycles to the configured team|Configured|-|wire|session-status|ok SessionProjects(),GetTeam(name="Configured"),SessionCycles(filter.team.id.eq="team-uuid"),SessionIssues(),SessionIssues()
 auth-check reports an unresolved team and the global key|none|-|auth|auth-check|auth 0 null unset null false noteam envkey
 auth-check --strict fails on an unresolved team|none|-|auth|auth-check --strict|auth 1 null unset null false noteam envkey
 auth-check --strict names the configured team and its file|Configured|-|auth|auth-check --strict|auth 0 Configured project-config kendex.settings.toml true

@@ -4,10 +4,11 @@ set -euo pipefail
 
 readonly ISSUE_BLOCKS_NODE_FIELDS='id type relatedIssue { id identifier title state { name type } }'
 readonly ISSUE_BLOCKED_BY_NODE_FIELDS='id type issue { id identifier title state { name type } }'
-readonly ISSUE_BLOCKS_FIELDS="relations { nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
-readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
+# Every nested connection carries pageInfo: lib/pages.sh completes an open one
+# and refuses a connection that does not say whether it is open.
+readonly ISSUE_BLOCKS_FIELDS="relations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
+readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { pageInfo { hasNextPage endCursor } nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
-readonly ISSUE_RELATION_PAGE_FIELDS="relations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKS_NODE_FIELDS } } inverseRelations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKED_BY_NODE_FIELDS } }"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];
@@ -33,9 +34,8 @@ def issue_blocked_by_open_rows($relations; $with_relation_id): issue_blocked_by_
 # ISSUE_RELATION_JQ; `git grep -n live_project_pick` enumerates them.
 #
 # Input is the array of matches. `live_project_refusal` takes the subject line
-# because the live and cache lookups name different stores; everything the two
-# messages share — the parenthetical, and which states count as live — lives
-# here, so neither can drift from the other.
+# from its caller; the parenthetical, and which states count as live, live
+# here, so no caller's message can drift from the rule.
 readonly PROJECT_PICK_JQ='
 def project_is_live: (.state // "" | ascii_downcase) != "canceled";
 def project_matches($ref): [.[] | select(.id == $ref or .name == $ref)];
@@ -93,12 +93,11 @@ format_issues_list() {
 # Format single issue to safe structure
 # Input: Raw GraphQL response with .issue
 # Output: Flat object (not wrapped in {issue: ...}). A response carrying
-# syncedWith, which the live `issues get` asks for and the cache never holds,
-# adds github_sync: the GitHub issues Linear's GitHub sync links the issue to,
+# syncedWith, which only `issues get` without --with-bundle asks for, adds
+# github_sync: the GitHub issues Linear's GitHub sync links the issue to,
 # each as owner/repo#N, lowercased: GitHub reads owner and repository names
 # case-insensitively, and oversee-watch keys each --repo lowercased. A read
-# without it, the cache's, has no github_sync rather than an empty one it
-# cannot vouch for.
+# without it has no github_sync rather than an empty one it cannot vouch for.
 format_issue_single() {
     local raw="$1"
     echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
@@ -421,8 +420,8 @@ format_initiative_single() {
     }'
 }
 
-# One comment's safe shape. `comments list` and `cache comments bulk-list`
-# both emit it, so the two cannot drift apart.
+# One comment's safe shape. `comments list` and `comments bulk-list` both emit
+# it, so the two cannot drift apart.
 readonly COMMENT_SAFE_JQ='
 def comment_safe: {
     id: .id,
@@ -680,4 +679,11 @@ format_project_labels_list() {
         parent: (.parent.name // ""),
         created_at: (.createdAt // "")
     }]'
+}
+
+# Public raw output: Linear's own nesting without the pageInfo the page walk
+# requests, so a raw read has one shape whether or not it spanned pages.
+# Usage: linear_public_result "$result"
+linear_public_result() {
+    jq 'walk(if type == "object" then del(.pageInfo) else . end)' <<<"$1"
 }
