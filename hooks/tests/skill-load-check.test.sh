@@ -605,7 +605,7 @@ tools_table() { # TOOLS
     "with none of them the value is the whole list, in check order"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
-tools_table "jq git cat grep dirname"
+tools_table "jq git cat grep dirname sed"
 
 # The current engine scopes companion requirements by harness. The released
 # engines do not, so the catalog proof must run their actual planner.
