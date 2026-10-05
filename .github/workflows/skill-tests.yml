@@ -114,11 +114,6 @@ name: Skill Tests
   merge_group:
   push:
     branches: [main]
-  # A dispatch runs what a push to main runs, the macOS skill suites on the
-  # full roster among it, so a branch can prove a macOS fix before it merges.
-  # Every job held to pull_request and merge_group stands down on it as on a
-  # push.
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -152,7 +147,7 @@ jobs:
   # same on either event.
   changes:
     name: Classify the diff
-    if: github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # `actions: read` is what the action's proof reads this workflow's runs
     # and their records with; the token grants nothing else.
@@ -315,7 +310,7 @@ jobs:
   bot-instructions:
     name: Bot instructions
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.bot_instructions == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.bot_instructions == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -434,9 +429,9 @@ jobs:
     needs: changes
     # Pull requests and merge groups run Linux shards when classification
     # is missing or selects shell work with a remaining Linux runner.
-    # Pushes, dispatches and cancelled runs stand this job down. The status
-    # function lifts the implicit `success()` when classification fails.
-    if: ${{ !cancelled() && github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
+    # Pushes and cancelled runs stand this job down. The status function
+    # lifts the implicit `success()` when classification fails.
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1387,13 +1382,12 @@ jobs:
         run: git diff --exit-code -- bundle/
 
   # macOS queues and slower process launches do not hold required PR checks.
-  # On main pushes and dispatches changes is skipped, so the shared matrix
-  # expression uses its full-roster fallback. The suite steps and budgets have
-  # one owner.
+  # On main pushes changes is skipped, so the shared matrix expression uses
+  # its full-roster fallback. The suite steps and budgets have one owner.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.event_name == 'push' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1418,7 +1412,7 @@ jobs:
   ui-tests:
     name: UI (vitest, tsc, biome)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1471,7 +1465,7 @@ jobs:
   skill-suites:
     name: Skill suites (shell + node)
     needs: [changes, skill-suites-shard, ui-tests, bot-instructions]
-    if: always() && github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1632,7 +1626,7 @@ jobs:
       # five-minute Linux trigger the header sets, and the test that costs
       # the macOS leg its own leg costs 103s here.
       - name: test
-        if: github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'push'
         timeout-minutes: 10
         run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
         env:
@@ -1776,7 +1770,7 @@ jobs:
       # reason --no-fail-fast has: one run reports everything. The doc run is
       # 0 tests and half a second today, well inside the bound above.
       - name: test
-        if: github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 20 || 12 }}
         env:
           GH_TOKEN: ""
@@ -1815,7 +1809,7 @@ jobs:
   cargo-lint:
     name: Cargo lints (clippy, fmt, doc)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && github.event_name != 'workflow_dispatch' && (needs.changes.result != 'success' || needs.changes.outputs.cargo_lint == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.cargo_lint == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -1858,7 +1852,7 @@ jobs:
     # lane that skips on its own name is a lane nothing holds; under this
     # aggregate a skip is accepted only where the class authorized it.
     needs: [changes, cargo-linux, cargo-lint, cargo-check-windows, cargo-tests-windows]
-    if: always() && github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1883,7 +1877,7 @@ jobs:
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
     needs: [changes, cargo-macos]
-    if: always() && github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1951,7 +1945,7 @@ jobs:
         timeout-minutes: 25
         run: cargo test --workspace --locked --no-run
       - name: test
-        if: github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'push'
         timeout-minutes: 10
         run: cargo test --workspace --locked --no-fail-fast
       # Same posture as the macOS step of that name: Windows is where most of
@@ -1984,7 +1978,7 @@ jobs:
   ci:
     name: CI
     needs: [changes, bot-instructions, skill-suites-shard, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
-    if: always() && github.event_name != 'push' && github.event_name != 'workflow_dispatch'
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -2750,25 +2750,36 @@ assert_eq "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_op
 # unobservable launch that never works spends the read's whole cap and then the
 # rest of the budget, which is the longest this path can take. Where no
 # per-process environment is readable the read answers at once instead and the
-# seconds go to the wait; the ceiling is what this row pins either way, which is
-# what a caller sizes its timeout by.
+# seconds go to the wait; the seconds the budget adds are what this row pins
+# either way, which is what a caller sizes its timeout by.
 #
-# The ceiling is the promise succ_budget_bound's floor states — --wait-secs plus
-# at most one settle — with two terms on top, since the figure is taken off
-# `date +%s` around the whole call rather than inside the script.
-# BOUND_OVERHEAD is the part of that window which is not the wait: the shim's
-# own fork and capture, the window the run opens and the lane launch under it.
-# SCHED_SLACK is the runner's lateness over all of it.
-BOUND_WAIT=12
-BOUND_OVERHEAD=1
-BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + BOUND_OVERHEAD + SCHED_SLACK ))
-new_caller "$MARK"
+# The figure is taken off `date +%s` around the whole call, so it also carries
+# what the run does besides waiting: the shim's fork and capture, the window it
+# opens, the lane launch, the last inspect pass and the teardown. That work
+# costs whole seconds more on the macOS runner than on Linux, so no one figure
+# for it holds on both. The same run under a one-second --wait-secs carries the
+# same work, and the row pins the difference between the two: the seconds the
+# longer budget added, which one deadline holds to BOUND_WAIT - BOUND_BASE_WAIT
+# and two deadlines push past by the read's half of the budget. BOUND_CLOCK is
+# the second two truncated `date +%s` differences can disagree by, and
+# SCHED_SLACK the runner's lateness over the longer run.
+BOUND_WAIT=16
+BOUND_BASE_WAIT=1
+BOUND_CLOCK=1
+BOUND_CEILING=$(( BOUND_WAIT - BOUND_BASE_WAIT + BOUND_CLOCK + SCHED_SLACK ))
+bound_run() { # NAME WAIT_SECS — the run's wall-clock seconds, in BOUND_ELAPSED
+  local started
+  new_caller "$MARK"
+  started=$(date +%s)
+  succeed_shim "$1" 'claude:fable:high' --wait-secs "$2"
+  BOUND_ELAPSED=$(( $(date +%s) - started ))
+}
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
-bound_started=$(date +%s)
-succeed_shim bound 'claude:fable:high' --wait-secs "$BOUND_WAIT"
-bound_elapsed=$(( $(date +%s) - bound_started ))
-assert_eq "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" \
-  "1|within" "a run that never works returns inside one --wait-secs bound, not the sum of two"
+bound_run bound-base "$BOUND_BASE_WAIT"
+bound_base_rc=$RC bound_base=$BOUND_ELAPSED
+bound_run bound "$BOUND_WAIT"
+assert_eq "$bound_base_rc|$RC|$(in_range within "$(( BOUND_ELAPSED - bound_base ))" '' "$BOUND_CEILING")" \
+  "1|1|within" "a run that never works returns inside one --wait-secs bound, not the sum of two"
 
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
