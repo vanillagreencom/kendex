@@ -43,7 +43,7 @@ Its output is `[MAIN_REPO_ROOT]`. Read the item. Linear:
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID]
 ```
 
-A rate-limited activation is held under [workflow-actions.md § Quota Holds](../../linear/patterns/workflow-actions.md#quota-holds).
+A rate-limited activation is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds.
 
 GitHub:
 

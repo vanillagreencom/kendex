@@ -326,7 +326,7 @@ Use the output as `MAIN_REPO_ROOT`.
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --done-when-met [MET_BOXES]
    ```
 
-   A rate-limited completion is held under [workflow-actions.md § Quota Holds](../../linear/patterns/workflow-actions.md#quota-holds), never recorded as a failed step.
+   A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
    `[MET_BOXES]` is the `## Done when` boxes that check found on the default branch: `all` when it found every box, otherwise their numbers in section order from 1, comma-separated. A section that holds no checkbox, only plain bullets, takes `all`, which ticks nothing and sets Done.
 

@@ -50,7 +50,7 @@ Linear only — activate the issue, or the parent alone if bundled (sub-issues a
 .agents/skills/linear/scripts/linear.sh comments list [ISSUE_ID]
 ```
 
-Every read is live. A failed read or activation stops the round with its exact diagnostic, an auth, API or configuration failure; a rate-limited activation is held under [workflow-actions.md § Quota Holds](../../linear/patterns/workflow-actions.md#quota-holds). Never run this Linear preflight for GitHub-tracked or ad-hoc work.
+Every read is live. A failed read or activation stops the round with its exact diagnostic, an auth, API or configuration failure; a rate-limited activation is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
 
 GitHub only:
 
