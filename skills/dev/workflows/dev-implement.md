@@ -68,7 +68,7 @@ Read the issue description — `.description` from the read above, or `gh issue 
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
 
-For a missing planning or research path in a Linear brief, follow the linear skill's SKILL.md § Resolve a cited artifact before classifying the context as missing.
+For a missing planning or research path in a brief, find it by the route the project-management skill's SKILL.md § Planning artifacts gives for the work item's tracker before classifying the context as missing.
 
 ### 2.3 Evaluate Feasibility
 

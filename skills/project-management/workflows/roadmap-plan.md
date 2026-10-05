@@ -44,7 +44,7 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 With no match, ask the user:
 
-- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `tmp/plans/[FEATURE]-research.md`, and continue with it as `RESEARCH_PATH`. No tracker issue; the file reaches the issues the plan creates as an attachment under § Planning artifacts.
+- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `tmp/plans/[FEATURE]-research.md`, and continue with it as `RESEARCH_PATH`. No tracker issue; the file reaches the issues the plan creates under § Planning artifacts.
 - **Delegate a research spike** — standalone tracked research. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup — never omit the value. Capture the returned `RESEARCH_ISSUE_ID` and re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH] --source-issue [RESEARCH_ISSUE_ID]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 

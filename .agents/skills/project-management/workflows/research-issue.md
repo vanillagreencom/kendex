@@ -109,7 +109,7 @@ Reply with a structured section per item.
 
 ### 2.2 Assemble
 
-Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
+`[RESEARCH_DOCS_PATH]` is the research directory [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) defines. Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 - **prompt.txt** — research objective (one sentence), context summary (2-3 sentences), attached files with descriptions, the merged and prioritized questions, scope constraints, deliverables.
 - **context-[topic].md** — the agents' extractions, fully self-contained. Every reference is resolved into the file: no doc paths, no issue IDs, no decision IDs, no "per project rules". "See docs/architecture/module.md" becomes the extracted content; "Reference [ISSUE_ID] findings" becomes the findings inline; "Message Bus Design ([DECISION_ID])" becomes "Message Bus Design". The researcher has no repository access.
@@ -144,7 +144,7 @@ Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 `research-complete [RESEARCH_ISSUE_ID]`
 
 ## Researcher Execution
-Before either execution route, use existing local assets first. For each absent file in Assets, follow the Linear skill's Resolve a cited artifact rule on [RESEARCH_ISSUE_ID], create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
+Before either execution route, use existing local assets first. For each absent file in Assets, find it on [RESEARCH_ISSUE_ID] by the route the project-management skill's SKILL.md § Planning artifacts gives, create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 ```
 
 ## 4. Delegate to the Researcher

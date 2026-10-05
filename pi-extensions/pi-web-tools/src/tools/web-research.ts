@@ -55,7 +55,7 @@ export const webResearchSchema = Type.Object({
 	query: Type.Optional(Type.String({ description: "Research question to investigate with Exa Deep Search." })),
 	queryFile: Type.Optional(Type.String({ description: "Path to a file containing the research question. Relative paths resolve against ctx.cwd; leading @ is stripped." })),
 	contextFiles: Type.Optional(Type.Array(Type.String({ description: "Context files to append to the system prompt. Relative paths resolve against ctx.cwd; leading @ is stripped." }))),
-	contextGlob: Type.Optional(Type.String({ description: "Simple bounded glob for context files, e.g. docs/research/ISSUE/context-*.md." })),
+	contextGlob: Type.Optional(Type.String({ description: "Simple bounded glob for context files, e.g. tmp/plans/research/ISSUE/context-*.md." })),
 	researchMode: Type.Optional(StringEnum(researchModes)),
 	type: Type.Optional(StringEnum(deepTypes)),
 	systemPrompt: Type.Optional(Type.String()),

@@ -145,7 +145,7 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 
 Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.
 
-Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every issue created or updated by this workflow, including § 2 actions. Verify that the plan markdown, its JSON, and cited research/spec inputs are attached. Keep the repository files at their cited paths; moving them would break the plan's companion-file reference.
+Publish the plan markdown, its JSON and each cited research/spec input under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) once, to one source issue: the invocation's `--source-issue`, which already holds them from roadmap-plan, else the first issue § 4 created, which receives them now. Every other issue this workflow created or updated, § 2 actions included, links those attachments from its `**Artifacts**` list and uploads nothing. Verify the attachments on the source issue and the links on every other issue.
 
 <output_format>
 
@@ -165,7 +165,7 @@ Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every 
 | Issue | Expected | Actual |
 |-------|----------|--------|
 
-**Plan attached**: [ISSUE_IDS]
+**Plan attached**: [SOURCE_ISSUE_ID] · **Linked from**: [ISSUE_IDS]
 </output_format>
 
 ## 6. Return State

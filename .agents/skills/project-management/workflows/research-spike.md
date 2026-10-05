@@ -22,7 +22,7 @@ Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxo
 .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
-On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
 
 ## 3. Hand Off
 
