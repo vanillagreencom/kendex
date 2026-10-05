@@ -932,6 +932,39 @@ jq -n '{rate_limit: {primary_window: {used_percent: 30, reset_at: 1785000000, li
 table \
   "a 5h and a 7d window fill their slots and the larger binds||list --harness codex --json|first.session_5h_pct=30 first.weekly_pct=70 first.headroom_pct=30"
 
+echo "=== a percentage that does not read is unmeasured, never an empty window ==="
+# Read as 0, an unreadable window would leave the account measured with full
+# headroom, and pick would launch onto it.
+new_home invalid-pct
+make_lane "$H" claude 3600
+make_codex_lane "$H/.codex"
+jq -n '{five_hour: {utilization: "12", resets_at: "2026-07-27T06:00:00Z"},
+        seven_day: {resets_at: "2026-08-01T06:00:00Z"},
+        limits: [{kind: "weekly_scoped", percent: -5, scope: {model: {display_name: "Opus"}}},
+                 {kind: "weekly_scoped", percent: 1e13, scope: {model: {display_name: "Fable"}}}]}' \
+  > "$FIXTURE_DIR/.claude.json"
+jq -n '{rate_limit: {primary_window: {used_percent: "30", limit_window_seconds: 18000},
+                     secondary_window: {used_percent: -1, limit_window_seconds: 604800}}}' \
+  > "$FIXTURE_DIR/.codex.json"
+INVALID_CLAUDE="a string, missing, negative or oversized Claude percentage is null and the lane unmeasured||$LIST|first.session_5h_pct=null first.weekly_pct=null first.model_pct=null first.buckets=Opus:null,Fable:null first.status=no_usage_data"
+INVALID_CODEX="a string or negative Codex percentage is null and the lane unmeasured||list --harness codex --json|first.session_5h_pct=null first.weekly_pct=null first.status=no_usage_data"
+table "$INVALID_CLAUDE" "$INVALID_CODEX"
+# One control per rule and harness: the type test and the range test.
+range='(if (. > 1e12 or . < 0) then'
+for spec in claude:round:type claude:round:range codex:floor:type codex:floor:range; do
+  IFS=':' read -r harness op rule <<<"$spec"
+  dir="$(mutant_scripts "mutant-pct-$harness-$rule" lib/lane-usage.sh)" || exit 1
+  if [[ $rule == type ]]; then
+    mutate_file "$dir/lib/lane-usage.sh" "$op | $range null else . end) else null end;" "$op | $range null else . end) else 0 end;"
+  else
+    mutate_file "$dir/lib/lane-usage.sh" "$op | $range null" "$op | $range 0"
+  fi
+  LANES="$dir/lanes"
+  run_lanes "" list --harness "$harness" --json
+  assert_eq "$(observe first.status)" "first.status=ok" "control $harness $rule: an invalid percentage read as 0 measures the lane"
+done
+LANES="$SCRIPTS_DIR/lanes"
+
 echo "=== an expired codex token is renewed by the Codex CLI, or the lane reads expired ==="
 # The Codex CLI renews its token only while it runs, so an idle account's token
 # expires and its usage query answers 401. The expiry is read from the token's
