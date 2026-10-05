@@ -68,9 +68,13 @@ list_attachments() {
         jq -cn --arg id "$issue_ref" '{error: ("Issue not found: " + $id)}' >&2
         return 1
     fi
+    # A bare link drops the prose punctuation that ends a sentence around it,
+    # the characters GitHub Flavored Markdown leaves out of an autolink, and
+    # the semicolon; a Markdown link destination is the URL as written.
     jq '.issue as $issue
         | def links($text; $context):
-            [($text // "") | match("https://uploads\\.linear\\.app/[^[:space:])>\"]+"; "g").string
+            [($text // "") | capture("(?<destination>\\]\\(<?)?(?<url>https://uploads\\.linear\\.app/[^[:space:])>\"]+)"; "g")
+             | if .destination then .url else .url | sub("[?!.,:;*_~]+$"; "") end
              | {url: ., source: $issue.identifier, context: $context,
                 filename: (split("?")[0] | split("/") | last), repo_path: null}];
         [$issue.attachments.nodes[] | select(.url | startswith("https://uploads.linear.app/"))
@@ -85,7 +89,8 @@ list_attachments() {
 
 # A subshell, so the EXIT trap removes the temporary file on every path.
 fetch_attachment() (
-    local url="${1:-}" output authorization header url_quote code renewed=0 temp
+    local url="${1:-}" output authorization header url_quote raw code headers renewed=0 attempt=1 temp
+    local delimiter="___HTTP_CODE___"
     if [[ "$#" -ne 3 || "${2:-}" != --output || -z "${3:-}" ]]; then
         echo '{"error": "Usage: attachments.sh fetch <url> --output <path>"}' >&2
         return 1
@@ -103,16 +108,24 @@ fetch_attachment() (
     temp=$(mktemp -- "$output.XXXXXX") || return 1
     trap 'rm -f -- "$temp"' EXIT
     while true; do
-        if ! code=$(printf '%s\n' "url = $url_quote" "header = $header" |
-            curl -s -o "$temp" -w '%{http_code}' -K -); then
-            code=000
+        # The body goes to the temporary file and the header blocks to stdout,
+        # ahead of the status.
+        if ! raw=$(printf '%s\n' "url = $url_quote" "header = $header" 'dump-header = "-"' |
+            curl -s -o "$temp" -w "${delimiter}%{http_code}" -K -); then
+            raw="${delimiter}000"
         fi
+        code="${raw##*"$delimiter"}"
+        headers="${raw%"$delimiter"*}"
         # An app token Linear's upload server refuses is renewed once, as the
         # GraphQL transport renews it.
         if [[ "$code" == 401 && "$LINEAR_AUTH_KIND" == app && "$renewed" == 0 ]]; then
             authorization=$(linear_authorization renew) || return 1
             header=$(curl_config_quote "Authorization: $authorization") || return 1
             renewed=1
+            continue
+        fi
+        if linear_retry_wait "$code" "$attempt" "$headers"; then
+            attempt=$((attempt + 1))
             continue
         fi
         break

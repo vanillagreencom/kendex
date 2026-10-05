@@ -93,7 +93,7 @@ fi
 # kendex_load_project_env snapshots only EXPORTED names, so a default assigned
 # above it is a plain variable the settings files overwrite unvalidated. Base
 # ten at the seed, so a leading zero is decimal and not the octal 08 rejects.
-# Bounded on width too, and 18 digits survives all three doublings: past that
+# Bounded on width too, and 18 digits survives the doubling: past that
 # the arithmetic wraps and the backoff is a negative sleep, not a refusal.
 LINEAR_RETRY_BASE_DELAY="${LINEAR_RETRY_BASE_DELAY:-1}"
 if ! [[ "$LINEAR_RETRY_BASE_DELAY" =~ ^[0-9]{1,18}$ ]]; then
@@ -205,13 +205,20 @@ validate_length() {
     return 0
 }
 
+# The value of one header in an answer's header block, the last when it
+# repeats, or nothing when the block lacks it. NAME is lower case.
+# Usage: linear_header_value <name> "$headers"
+linear_header_value() {
+    awk -v name="$1:" 'tolower($1) == name { gsub("\r", "", $2); value = $2 } END { print value }' <<<"$2"
+}
+
 # The time a rate-limited answer's request quota refills, as an ISO-8601 UTC
 # instant, read from Linear's X-RateLimit-Requests-Reset header (epoch
 # milliseconds), or "unavailable" when the answer carried no usable value.
 # Usage: linear_requests_reset "$headers"
 linear_requests_reset() {
     local value
-    value=$(awk 'tolower($1) == "x-ratelimit-requests-reset:" { gsub("\r", "", $2); value = $2 } END { print value }' <<<"$1") || return 1
+    value=$(linear_header_value x-ratelimit-requests-reset "$1") || return 1
     if [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
         jq -rn --arg ms "$value" '$ms | tonumber / 1000 | floor | todate'
     else
@@ -219,19 +226,45 @@ linear_requests_reset() {
     fi
 }
 
-# One POST to Linear, sent again while its answer may succeed when sent again:
-# a rate-limited answer (an HTTP 429, or a body carrying Linear's RATELIMITED
-# code, which Linear serves under a 400 and could serve under any status), a
-# 5xx, or no answer at all (curl reached no server, code 000), twice at most
-# with a doubling delay. A 4xx such as a scope or validation refusal answers
-# the same way every time, so it is returned on its first answer. A
-# rate-limited final answer prints one JSON line naming the time the request
-# quota refills, so a caller can hold its write until then, and returns 1.
+# Whether a request is sent again after an answer, every Linear request and
+# attachment download deciding alike: a rate-limited answer (HTTP 429), a 5xx
+# or no answer at all (curl reached no server, code 000) may succeed when sent
+# again, twice at most. A 4xx such as a scope or validation refusal answers
+# the same way every time. The wait doubles from LINEAR_RETRY_BASE_DELAY, or
+# is the answer's Retry-After when that names more whole seconds; a
+# Retry-After over 60 seconds makes the answer final, since a request sent
+# sooner would be refused again and a caller is better served by the failure
+# than by a minute-long hang. ATTEMPT counts the answers so far.
+# Returns 0 once the wait is over, 1 when the answer is final.
+# Usage: linear_retry_wait <code> <attempt> "$headers"
+linear_retry_wait() {
+    local code="$1" attempt="$2" delay after
+    case "$code" in
+    429 | 5?? | 000) ;;
+    *) return 1 ;;
+    esac
+    ((attempt < 3)) || return 1
+    delay=$((LINEAR_RETRY_BASE_DELAY << (attempt - 1)))
+    after=$(linear_header_value retry-after "$3") || return 1
+    if [[ "$after" =~ ^[0-9]{1,9}$ ]]; then
+        after=$((10#$after))
+        ((after <= 60)) || return 1
+        ((after <= delay)) || delay="$after"
+    fi
+    sleep "$delay"
+}
+
+# One POST to Linear, sent again while linear_retry_wait says so. Linear
+# serves its RATELIMITED code under a 400 and could serve it under any
+# status, so a body carrying it is a rate-limited answer whatever the status.
+# A rate-limited final answer prints one JSON line naming the time the
+# request quota refills, so a caller can hold its write until then, and
+# returns 1.
 # Otherwise prints the final status on the first line and the body after it.
 # CONFIG is the curl config lines naming the request.
 # Usage: reply=$(linear_http_post "$config") || return 1
 linear_http_post() {
-    local config="$1" attempt=1 delay="$LINEAR_RETRY_BASE_DELAY" raw code body headers reset
+    local config="$1" attempt=1 raw code body headers reset
     local delimiter="___HTTP_CODE___"
     while true; do
         headers=''
@@ -251,16 +284,10 @@ linear_http_post() {
         if jq -e '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1 <<<"$body"; then
             code=429
         fi
-        case "$code" in
-        429 | 5?? | 000)
-            if ((attempt < 3)); then
-                sleep "$delay"
-                delay=$((delay * 2))
-                attempt=$((attempt + 1))
-                continue
-            fi
-            ;;
-        esac
+        if linear_retry_wait "$code" "$attempt" "$headers"; then
+            attempt=$((attempt + 1))
+            continue
+        fi
         if [[ "$code" == 429 ]]; then
             reset=$(linear_requests_reset "$headers") || return 1
             jq -cn --arg reset "$reset" \

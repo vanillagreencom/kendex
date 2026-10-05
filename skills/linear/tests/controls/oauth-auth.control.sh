@@ -133,8 +133,8 @@ control_replace scripts/lib/auth.sh 1 \
 control_expect 'attachment download keeps token out of curl arguments'
 control_expect 'app-renew: renewed token stays out of curl arguments'
 control_replace scripts/commands/attachments.sh 1 \
-    "            curl -s -o \"\$temp\" -w '%{http_code}' -K -); then" \
-    "            curl -s -o \"\$temp\" -w '%{http_code}' -K - -H \"Authorization: \$authorization\"); then"
+    '            curl -s -o "$temp" -w "${delimiter}%{http_code}" -K -); then' \
+    '            curl -s -o "$temp" -w "${delimiter}%{http_code}" -K - -H "Authorization: $authorization"); then'
 
 control_expect 'live references: resolved credentials reach token endpoint'
 control_replace scripts/lib/auth.sh 1 \

@@ -6,7 +6,8 @@
 # the generic "HTTP error: 400" — and a failed team lookup must propagate the
 # API failure instead of reporting the misleading "Team not found".
 # Only a rate-limited, 5xx or unanswered request is retried: a generic 4xx
-# fails on its first answer and carries the body's first error message.
+# fails on its first answer and carries the body's first error message. A
+# Retry-After on the answer lengthens the wait before the next one.
 #
 # Runs fully offline against a mocked curl.
 set -euo pipefail
@@ -229,3 +230,14 @@ SH
   run_linear "$TMP_BASE/$env" statuses list >/dev/null 2>&1 || true
   assert_eq "$label" "$(tr '\n' ' ' <"$TMP_BASE/$env/slept")" "$want"
 done
+
+echo "=== a Retry-After the answer carries lengthens the wait ==="
+make_env "$TMP_BASE/after" 429 '{}' $'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 5'
+cat >"$TMP_BASE/after/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$TMP_BASE/after/slept"
+SH
+chmod +x "$TMP_BASE/after/bin/sleep"
+: >"$TMP_BASE/after/slept"
+run_linear "$TMP_BASE/after" statuses list >/dev/null 2>&1 || true
+assert_eq "a rate-limited answer waits out its Retry-After" "$(tr '\n' ' ' <"$TMP_BASE/after/slept")" "5 5 "

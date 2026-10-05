@@ -19,3 +19,33 @@ control_expect 'list of a missing issue: names the issue'
 control_replace scripts/commands/attachments.sh 1 \
     "    if ! jq -e '.issue.id | strings | select(length > 0)' <<<\"\$result\" >/dev/null; then" \
     '    if false; then'
+# A bare link keeps the punctuation of the sentence it ends.
+control_expect 'list: a bare link drops trailing prose punctuation'
+control_replace scripts/commands/attachments.sh 1 \
+    '             | if .destination then .url else .url | sub("[?!.,:;*_~]+$"; "") end' \
+    '             | .url'
+# A Markdown link destination is trimmed as a bare link is.
+control_expect 'list: a Markdown link destination keeps its url as written'
+control_replace scripts/commands/attachments.sh 1 \
+    '             | if .destination then .url else .url | sub("[?!.,:;*_~]+$"; "") end' \
+    '             | .url | sub("[?!.,:;*_~]+$"; "")'
+# A download is sent once, whatever it is answered.
+control_expect 'a 503 is retried: attempts'
+control_replace scripts/commands/attachments.sh 1 \
+    '        if linear_retry_wait "$code" "$attempt" "$headers"; then' \
+    '        if false; then'
+# The answer's Retry-After is never read.
+control_expect 'a Retry-After within the bound is waited out: waits'
+control_replace scripts/lib/common.sh 1 \
+    '        ((after <= delay)) || delay="$after"' \
+    '        :'
+# A Retry-After past the bound is cut to the bound and sent again early.
+control_expect 'a Retry-After past the bound fails at once: attempts'
+control_replace scripts/lib/common.sh 1 \
+    '        ((after <= 60)) || return 1' \
+    '        ((after <= 60)) || after=60'
+# A Retry-After shorter than the backoff replaces it.
+control_expect 'a Retry-After shorter than the backoff waits the backoff: waits'
+control_replace scripts/lib/common.sh 1 \
+    '        ((after <= delay)) || delay="$after"' \
+    '        delay="$after"'

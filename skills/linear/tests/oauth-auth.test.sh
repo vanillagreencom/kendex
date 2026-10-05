@@ -297,7 +297,7 @@ for row in \
     'app-second-401|app/id|app&secret|401,401,200|0|1|2|2|Authorization: Bearer token-2' \
     'app-renew-failure|app/id|app&secret|401,200|1|1|1|2|Authorization: Bearer token-1' \
     'app-terminal|app/id|app&secret|401,403,200|0|1|2|2|Authorization: Bearer token-2' \
-    'app-transport|app/id|app&secret|401,000,200|0|1|2|2|Authorization: Bearer token-2' \
+    'app-transport|app/id|app&secret|401,000,200|0|0|3|2|Authorization: Bearer token-2' \
     'key-success|||200|0|0|1|0|Authorization: personal-key' \
     'key-401|||401,200|0|1|1|0|Authorization: personal-key'; do
     IFS='|' read -r label id secret codes fail_renewal expected_rc downloads mints last_auth <<<"$row"

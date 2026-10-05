@@ -10,8 +10,8 @@ control_replace scripts/lib/common.sh 1 \
 # three requests and three waits before it fails.
 control_expect "a generic 400 fails on its first answer"
 control_replace scripts/lib/common.sh 1 \
-    '        429 | 5?? | 000)' \
-    '        *)'
+    '    429 | 5?? | 000) ;;' \
+    '    *) ;;'
 
 # Drop the header read, so a rate limit names no time the quota refills.
 control_expect "a rate limit names the Requests-Reset time"
@@ -22,8 +22,8 @@ control_replace scripts/lib/common.sh 1 \
 # A request that reached no server fails on its first try.
 control_expect "an unanswered request is retried"
 control_replace scripts/lib/common.sh 1 \
-    '        429 | 5?? | 000)' \
-    '        429 | 5??)'
+    '    429 | 5?? | 000) ;;' \
+    '    429 | 5??) ;;'
 
 # Only a non-200 answer is read for the RATELIMITED code.
 control_expect "a RATELIMITED body on HTTP 200 reports the rate limit"
@@ -43,3 +43,10 @@ control_expect "a header-prefixed 200 reads its body"
 control_replace scripts/lib/common.sh 1 \
     "        while [[ \"\$body\" == HTTP/* && \"\$body\" == *\$'\\r\\n\\r\\n'* ]]; do" \
     "        while [[ \"\$code\" != 200 && \"\$body\" == HTTP/* && \"\$body\" == *\$'\\r\\n\\r\\n'* ]]; do"
+
+# The GraphQL path hands the retry decision no headers, so a Retry-After is
+# never waited out.
+control_expect "a rate-limited answer waits out its Retry-After"
+control_replace scripts/lib/common.sh 1 \
+    '        if linear_retry_wait "$code" "$attempt" "$headers"; then' \
+    "        if linear_retry_wait \"\$code\" \"\$attempt\" ''; then"
