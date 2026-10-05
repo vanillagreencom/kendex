@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # prose — instruction markdown states the rule that holds now. A history
-# reference in a file an agent loads (SKILL.md, workflows/*.md, agents/*.md,
-# AGENTS.md, CLAUDE.md) fails: a calendar date, a three- or four-digit issue
-# number. An agent acts on the rule, and a
-# rule wrapped in the story of how it got there costs every reader the same
-# paragraph to discard. The story belongs in the commit that made the change.
+# reference in a file a harness loads at every turn (AGENTS.md, CLAUDE.md,
+# GEMINI.md, SKILL.md) fails: a calendar date, a three- or four-digit issue
+# number. An agent acts on the rule, and a rule wrapped in the story of how
+# it got there costs every reader the same paragraph to discard. The story
+# belongs in the commit that made the change.
 #
 # Scope is the whole rule: only the configured paths are scanned, so a
-# reference doc, a changelog and a design record keep their history intact.
+# workflow, an agent definition, a reference doc, a changelog and a design
+# record keep their history for their writers and reviewers to judge.
 # COMMIT_GUARDS_PROSE_PATHS replaces the path list.
 #
 # Content comes from the index, like every scan in this family. A symlink, a
@@ -34,19 +35,12 @@ source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
 
-# What an agent harness loads on its own: a skill's entry point and its
-# workflows, an agent definition, and the repo-level instruction files. Each
-# name is spelled twice — at the repository root and anywhere below it —
-# because `*` crosses `/` but never stands in for the separator itself, and
-# the second spelling is also what reaches a rendered copy under `.claude/`
-# or `.agents/`. The architecture docs those files point at are loaded the
-# same way, so they hold the same rule — once the repository says its
-# markdown is rewritten (COMMIT_GUARDS_MD_SCOPE=all, the switch the markdown
-# lanes read); before that a repository's architecture docs are what the
-# rewrite is for, and this lane has no staged scope to spare them.
-PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
-PATHS_ARCH="docs/architecture/*.md"
-PATHS_DEFAULT="$PATHS_CORE $PATHS_ARCH"
+# What a harness loads at every turn: the repo-level instruction files and a
+# skill's entry point. Each name is spelled twice — at the repository root
+# and anywhere below it — because `*` crosses `/` but never stands in for the
+# separator itself, and the second spelling is also what reaches a rendered
+# copy under `.claude/` or `.agents/`.
+PATHS_DEFAULT="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md"
 
 usage() {
   gg_message usage prose "Command usage follows."
@@ -54,12 +48,13 @@ usage() {
   cat <<EOF
 usage: prose
 
-A history reference in agent-loaded markdown fails: a calendar date
-(20YY-MM-DD) or a three- or four-digit issue number after '#'.
+A history reference in the markdown a harness loads at every turn fails: a
+calendar date (20YY-MM-DD) or a three- or four-digit issue number after '#'.
 The scan reads index content. Ordinary words do not trigger this check.
-Only the configured paths are scanned; a reference doc, a changelog and a
-design record are out of scope by not being named. A symlink, a submodule
-gitlink and binary content at a configured path are counted as unmeasured.
+Only the configured paths are scanned; a workflow, an agent definition, a
+reference doc, a changelog and a design record are out of scope by not being
+named. A symlink, a submodule gitlink and binary content at a configured
+path are counted as unmeasured.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -87,12 +82,6 @@ fi
 
 gg_repo_root_cd
 
-MD_SCOPE="$(gg_setting COMMIT_GUARDS_MD_SCOPE touched)" || exit 2
-case "$MD_SCOPE" in
-  all) ;;
-  touched) PATHS_DEFAULT="$PATHS_CORE" ;;
-  *) gg_fail scope "$MD_SCOPE" "COMMIT_GUARDS_MD_SCOPE must be touched or all." ;;
-esac
 PATHS_RAW="$(gg_setting COMMIT_GUARDS_PROSE_PATHS "$PATHS_DEFAULT")" || exit 2
 
 # The path list, its validation and its matcher are the family's, shared with

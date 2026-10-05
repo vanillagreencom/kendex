@@ -20,7 +20,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CE="$(cd "$TEST_DIR/.." && pwd)/scripts/changelog-entries"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-unset COMMIT_GUARDS_CHANGELOG_CAP COMMIT_GUARDS_CHANGELOG_PATHS COMMIT_GUARDS_CHANGELOG_RECORD \
+unset COMMIT_GUARDS_CHANGELOG_PATHS COMMIT_GUARDS_CHANGELOG_RECORD \
   COMMIT_GUARDS_CHANGELOG_COLLATE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -188,15 +188,15 @@ fx_symlink_record() { pending symlink-record; mv "$R/CHANGELOG.md" "$R/real.md";
 fx_nul_record() { pending nul-record; printf '%s\0' "$RECORD" >"$R/CHANGELOG.md"; reseed; git -C "$R" add -A; git -C "$R" commit -qm 'chore: nul'; }
 fx_bad_beside() { pending bad-beside; frag fixed bad.md 'Prose, not a list item.\n'; }
 run_rows \
-  "a heading that is not a section refuses, naming it and the sections|fx_misspelled|||rc=1 ${ERR}record-section=CHANGELOG.md:Add;${ERR}violations=1:1:200|SEED|$ONE" \
-  "a record with no [Unreleased] heading refuses with the remedy|fx_no_heading|||rc=1 ${ERR}record-heading=CHANGELOG.md:missing;${ERR}violations=1:1:200|SEED|$ONE" \
+  "a heading that is not a section refuses, naming it and the sections|fx_misspelled|||rc=1 ${ERR}record-section=CHANGELOG.md:Add;${ERR}violations=1:1|SEED|$ONE" \
+  "a record with no [Unreleased] heading refuses with the remedy|fx_no_heading|||rc=1 ${ERR}record-heading=CHANGELOG.md:missing;${ERR}violations=1:1|SEED|$ONE" \
   "two [Unreleased] headings are a shape nothing can decide: a collection error|fx_two_headings|||rc=2 ${ERR}record-heading-count=CHANGELOG.md:2|SEED|$ONE" \
   "an unclosed fence is the same class|fx_open_fence|||rc=2 ${ERR}record-fence=CHANGELOG.md:unclosed|SEED|$ONE" \
   "a record git does not track is refused: nothing measured it|fx_untracked_record|||rc=2 ${ERR}record-untracked=CHANGELOG.md|SEED|$ONE" \
   "the record scope off leaves the fold nowhere to write|fx_scope_off|COMMIT_GUARDS_CHANGELOG_RECORD=||rc=2 ${ERR}record-off=COMMIT_GUARDS_CHANGELOG_RECORD|SEED|$ONE" \
   "a record tracked as a symlink is not a destination|fx_symlink_record|||rc=2 ${ERR}record-mode=CHANGELOG.md:120000|SEED|$ONE" \
   "a record carrying a NUL is binary, not a destination|fx_nul_record|||rc=2 ${ERR}record-binary=CHANGELOG.md|SEED|$ONE" \
-  "a fragment the judge refuses stops the run as its own refusal, and the acceptable one beside it is neither folded nor deleted|fx_bad_beside|||rc=1 ${ERR}fragment-marker=changelog.d/fixed/bad.md;${ERR}violations=1:1:200|SEED|changelog.d/fixed~changelog.d/fixed/bad.md~changelog.d/fixed/pending.md"
+  "a fragment the judge refuses stops the run as its own refusal, and the acceptable one beside it is neither folded nor deleted|fx_bad_beside|||rc=1 ${ERR}fragment-marker=changelog.d/fixed/bad.md;${ERR}violations=1:1|SEED|changelog.d/fixed~changelog.d/fixed/bad.md~changelog.d/fixed/pending.md"
 
 echo "=== every guarantee of the fold, on one record and one exact expected output ==="
 # One fixture, because these rules only meet in a file: all six section

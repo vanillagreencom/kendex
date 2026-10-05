@@ -114,21 +114,21 @@ block() { # PREFIX COUNT -> the block on stdout
 scenario() { # VAR NAME REBASE(0|1) [SKILL-SOURCE] — VAR gets the repo path
   local __v="$1" r=""
   new_repo r "$2" "${4:-}"
-  block body 60 >"$r/big.md"
-  q git -C "$r" add kendex.settings.toml big.md
+  block body 60 >"$r/big.txt"
+  q git -C "$r" add kendex.settings.toml big.txt
   q git -C "$r" commit -q -m "feat: seed the shared document"
   q git -C "$r" push -q origin main
   q git -C "$r" branch topic
 
   q git -C "$r" checkout -q topic
-  block tail 30 >>"$r/big.md"
-  q git -C "$r" add big.md
+  block tail 30 >>"$r/big.txt"
+  q git -C "$r" add big.txt
   q git -C "$r" commit -q -m "feat: add the branch's own tail"
 
   q git -C "$r" checkout -q main
-  { block head 30; cat -- "$r/big.md"; } >"$r/big.md.next"
-  mv -f -- "$r/big.md.next" "$r/big.md"
-  q git -C "$r" add big.md
+  { block head 30; cat -- "$r/big.txt"; } >"$r/big.txt.next"
+  mv -f -- "$r/big.txt.next" "$r/big.txt"
+  q git -C "$r" add big.txt
   q git -C "$r" commit -q -m "feat: add the shared preamble"
   q git -C "$r" push -q origin main
 
@@ -153,13 +153,13 @@ printf '%s\n' "$gg_suite"
 # A row's lines are joined by '@@', since the table's own separator is a line.
 DIRECT=""
 new_repo DIRECT direct
-block body 10 >"$DIRECT/big.md"
-q git -C "$DIRECT" add kendex.settings.toml big.md
+block body 10 >"$DIRECT/big.txt"
+q git -C "$DIRECT" add kendex.settings.toml big.txt
 q git -C "$DIRECT" commit -q -m "feat: seed"
 SEED="$(git -C "$DIRECT" rev-parse HEAD)"
 q git -C "$DIRECT" push -q origin main
-block more 10 >>"$DIRECT/big.md"
-q git -C "$DIRECT" add big.md
+block more 10 >>"$DIRECT/big.txt"
+q git -C "$DIRECT" add big.txt
 q git -C "$DIRECT" commit -q -m "feat: grow"
 TIP="$(git -C "$DIRECT" rev-parse HEAD)"
 q git -C "$DIRECT" branch elsewhere "$SEED"
@@ -273,13 +273,13 @@ q git -C "$DIRECT" remote set-url --delete origin "$TMP/second.git"
 # the same configuration.
 REWRITE=""
 new_repo REWRITE rewrite
-block body 10 >"$REWRITE/big.md"
-q git -C "$REWRITE" add kendex.settings.toml big.md
+block body 10 >"$REWRITE/big.txt"
+q git -C "$REWRITE" add kendex.settings.toml big.txt
 q git -C "$REWRITE" commit -q -m "feat: seed"
 q git -C "$REWRITE" push -q origin main
 q git -C "$REWRITE" checkout -q -b topic
-block more 10 >>"$REWRITE/big.md"
-q git -C "$REWRITE" add big.md
+block more 10 >>"$REWRITE/big.txt"
+q git -C "$REWRITE" add big.txt
 q git -C "$REWRITE" commit -q -m "feat: grow"
 # The same repository the tracking refs came from, under a spelling only the
 # rewrite resolves — the shape a consumer's SSH remote has when the fallback
@@ -326,7 +326,7 @@ assert_eq "the branch as authored is under the ceiling and pushes" \
 
 REBASED=""
 scenario REBASED rebased 1
-REFUSED="rc=1 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=1"
+REFUSED="rc=1 pre-push: step=base:<oid>;byte-ceiling: oversized=big.txt:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=1"
 assert_eq "a branch rebased into a breach is refused before it leaves the machine" \
   "$REFUSED" "$(push_ref "$REBASED" topic)"
 # The same commit, the same remote ref, spelled the way `worktree push` spells
@@ -344,9 +344,9 @@ assert_eq "and refused again when the push spells its left side HEAD" \
 # code, and the lane's own help says neither untracked files nor unstaged
 # edits are consulted.
 EXCLUDES=tools/byte-ceiling-excludes
-excludes_row() { # REPO — the row that would leave big.md out of the scan, in the work tree
+excludes_row() { # REPO — the row that would leave big.txt out of the scan, in the work tree
   mkdir -p "$1/tools"
-  printf 'big.md\ta row that would excuse the document\n' >"$1/$EXCLUDES"
+  printf 'big.txt\ta row that would excuse the document\n' >"$1/$EXCLUDES"
 }
 
 STRAY=""
@@ -470,7 +470,7 @@ assert_eq "the mutant edit took" "rewritten" \
 MUTATED=""
 scenario MUTATED mutated 1 "$MUTANT"
 assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
-  "rc=0 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=0" \
+  "rc=0 pre-push: step=base:<oid>;byte-ceiling: oversized=big.txt:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$MUTATED" topic)"
 
 # ------------------------------------------------------ the destination
@@ -486,23 +486,23 @@ diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged
   local __v="$1" r="" fork=""
   new_repo r "$2" "${3:-}"
   # The legacy file predates the guard, so it is committed with none running.
-  block body 216 >"$r/big.md"
-  q git -C "$r" add kendex.settings.toml big.md
+  block body 216 >"$r/big.txt"
+  q git -C "$r" add kendex.settings.toml big.txt
   q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a legacy oversized file"
   fork="$(git -C "$r" rev-parse HEAD)"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
   # The destination's branch: shrunk, which the ratchet allows and the commit
   # hook passes.
   q git -C "$r" checkout -q -b topic
-  block body 192 >"$r/big.md"
-  q git -C "$r" add big.md
+  block body 192 >"$r/big.txt"
+  q git -C "$r" add big.txt
   q git -C "$r" commit -q -m "feat: shrink it on the branch"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
   # The rewrite: back to the fork point and a different shrink, so the two have
   # diverged and only a force push can land it.
   q git -C "$r" reset -q --hard "$fork"
-  block body 204 >"$r/big.md"
-  q git -C "$r" add big.md
+  block body 204 >"$r/big.txt"
+  q git -C "$r" add big.txt
   q git -C "$r" commit -q -m "feat: a different shrink on the rewritten branch"
   eval "$__v=\$r"
 }
@@ -510,7 +510,7 @@ diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged
 DIVERGED=""
 diverged DIVERGED diverged
 assert_eq "a force push that would grow the destination's own file is refused" \
-  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.md:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
+  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.txt:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
   "$(push_ref "$DIVERGED" topic --force-with-lease)"
 
 # The must-fail control: the same push judged from the ancestor the two share

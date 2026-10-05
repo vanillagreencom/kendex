@@ -6,8 +6,8 @@
 # content, --base judges the branch since its merge-base, --against judges
 # what it would do to another tree, and --all sweeps
 # every tracked file, holding an oversized one to its baseline row and failing
-# a row that is loose or names no oversized file, lockfiles and declared
-# asset trees are exempt, the
+# a row that is loose or names no oversized file, lockfiles, Markdown files
+# and declared asset trees are exempt, the
 # ceiling resolves through the settings ladder and is validated, a file under
 # the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent of it is
 # named without failing the run, and a
@@ -206,10 +206,11 @@ run_rows \
   "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged unmerged-staged|$C=1||rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1" \
   "--all refuses it too, where ls-files would size one blob per stage|fx_unmerged unmerged-all|$C=1|--all|rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1"
 
-echo "=== lockfiles are exempt by basename; declared asset trees by an excludes row with a reason ==="
+echo "=== lockfiles and Markdown are exempt by basename; declared asset trees by an excludes row with a reason ==="
 fx_lock() { repo "$1"; put "${2:-package-lock.json}" 2; } # NAME [PATH]
-fx_lock_twin() { fx_lock "$1" "$2"; cp "$R/$2" "$R/data.json"; git -C "$R" add -A; } # NAME LOCK
+fx_lock_twin() { fx_lock "$1" "$2"; cp "$R/$2" "$R/${3:-data.json}"; git -C "$R" add -A; } # NAME EXEMPT [TWIN]
 fx_lock_suffix() { repo lock-suffix; put not-package-lock.json 2; }
+fx_md_suffix() { repo md-suffix; put notes.md.bak 2; }
 asset() { repo "$1"; put assets/demo.gif 2; } # NAME
 fx_excluded() { asset excluded; excludes 'assets/*\tdemo media\n'; }
 fx_no_reason() { asset no-reason; excludes 'assets/*\n'; }
@@ -221,6 +222,10 @@ run_rows \
   "an oversized .kendex-lock.json, the install record kendex generates, passes and is not counted|fx_lock kendex-lock .kendex-lock.json|$C=1||rc=0 $(ok 0)" \
   "control: the same bytes as data.json beside it fail while the kendex lock is still not counted|fx_lock_twin kendex-lock-twin .kendex-lock.json|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
   "control: a basename that only ends in a lockfile's name is not exempt|fx_lock_suffix|$C=1||rc=1 $(over not-package-lock.json 2048 2 1);$(failed 1 1)" \
+  "an oversized README.md passes and is not counted: a document has no byte limit|fx_lock markdown README.md|$C=1||rc=0 $(ok 0)" \
+  "a nested Markdown file is exempt too: the basename suffix is what is judged|fx_lock markdown-nested docs/guide.md|$C=1||rc=0 $(ok 0)" \
+  "control: the same bytes as notes.sh beside it fail while the Markdown file is still not counted|fx_lock_twin markdown-twin README.md notes.sh|$C=1||rc=1 $(over notes.sh 2048 2 1);$(failed 1 1)" \
+  "control: a basename whose .md is not its suffix is not exempt|fx_md_suffix|$C=1||rc=1 $(over notes.md.bak 2048 2 1);$(failed 1 1)" \
   "control: an asset fails without an excludes row|asset asset-bare|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 1)" \
   "an excludes row exempts the declared tree; the list itself is a staged file and is counted|fx_excluded|$C=1||rc=0 $(ok 1)" \
   "a pattern without a reason is exit 2 naming the line|fx_no_reason|$C=1||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
@@ -232,9 +237,10 @@ echo "=== a file under the ceiling but within reach of it is named, and the run 
 # 1000 bytes against a 1024-byte ceiling is 97 percent; 900 is 87. The warn
 # threshold is a percent of the ceiling in bytes, so a row states the bytes it
 # stages rather than a kibibyte count.
-near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero | tr '\0' 'x' >"$R/near.txt"; git -C "$R" add -A; } # NAME BYTES
+near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero | tr '\0' 'x' >"$R/${3:-near.txt}"; git -C "$R" add -A; } # NAME BYTES [PATH]
 run_rows \
   "a staged file at 97 percent of the ceiling is named, with its bytes, the ceiling and the percent, and the run still passes|near_fx warn-over 1000|$C=1||rc=0 $(near near.txt 1000 1024 97);$(ok 1)" \
+  "a Markdown file at 97 percent of the ceiling is neither named nor counted: the exemption covers the notice|near_fx warn-markdown 1000 near.md|$C=1||rc=0 $(ok 0)" \
   "control: the same file at 87 percent is silent|near_fx warn-under 900|$C=1||rc=0 $(ok 1)" \
   "the smallest file the default threshold holds is named: 922 bytes is the first at or above 90 percent of 1024|near_fx warn-exact 922|$C=1||rc=0 $(near near.txt 922 1024 90);$(ok 1)" \
   "control: one byte below that is silent|near_fx warn-just-under 921|$C=1||rc=0 $(ok 1)" \

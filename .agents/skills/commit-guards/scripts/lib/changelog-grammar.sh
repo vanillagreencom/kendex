@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # What a changelog IS to this family: where its two scopes live, and the
-# grammars each is judged by — what a fragment is, what an entry measures,
-# where the record's [Unreleased] section starts and stops, and which release
-# entries name a break or an addition. Kept apart
+# grammars each is judged by — what a fragment is, where the record's
+# [Unreleased] section starts and stops, and which release entries name a
+# break or an addition. Kept apart
 # from the scans that run them, and shared, so the changelog-entries check and
 # the commit-msg lane cannot come to different answers about the same repo.
 #
@@ -63,8 +63,8 @@ END { if (!seen) print empty }
 # The first line of a blob that is not valid UTF-8, or nothing. Strict, as the
 # byte grammar RFC 3629 defines it: a run of stray continuation bytes, an
 # overlong form, a surrogate encoding and an out-of-range lead byte are each
-# text with no character count, and counting one would read a run of bytes as
-# almost nothing.
+# bytes no reader of the collated record can decode, and the collator folds a
+# fragment in verbatim.
 GG_UTF8_AWK='
 BEGIN {
   UTF8 = "^([\001-\177]"
@@ -82,10 +82,10 @@ line !~ UTF8 { print NR; exit }
 '
 
 # ONE path into a changelog blob, whichever scope is reading it. The bytes
-# land in $GG_TMP/blob having been proven to be text this family can measure:
+# land in $GG_TMP/blob having been proven to be text this family can fold:
 # git calls a blob binary when a NUL falls in its leading bytes, and text that
-# is not valid UTF-8 has no character count to take. Two scopes reading a blob
-# their own way would create two places for one rule.
+# is not valid UTF-8 cannot be read back from the record. Two scopes reading a
+# blob their own way would create two places for one rule.
 #
 # Binary content returns status 1. The caller reports a fragment violation
 # or an unusable collation destination.
@@ -96,48 +96,16 @@ gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
   # Every NUL becomes \200 before awk reads a byte. An awk that holds a record
   # as a NUL-terminated C string — the BWK awk macOS ships — otherwise sees a
   # line that stops at its first NUL, and a blob git calls text for having its
-  # only NUL past the leading sample would be measured as the short prefix
+  # only NUL past the leading sample would be read as the short prefix
   # instead of refused. \200 is a stray continuation byte, which the grammar
   # below already rejects, so the line reports as the invalid UTF-8 it is.
   if ! bad="$({ LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK"; } 2>"$GG_TMP/encoding.err")"; then
     gg_fail_cause encoding-read "$label" "$GG_TMP/encoding.err" "could not read $(gg_shown "$label") to check its encoding"
   fi
   if [ -n "$bad" ]; then
-    gg_fail encoding-line "$label:$bad" "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+    gg_fail encoding-line "$label:$bad" "$(gg_shown "$label") line $bad is not valid UTF-8 — the record cannot carry it"
   fi
 }
-
-# One measurement row, "M<TAB>characters<TAB>first line". A fragment is one
-# list item whose later lines all indent under it, so measuring is joining
-# every line and counting what comes out — there is no second entry to find a
-# boundary for. It measures; it validates nothing, because gg_changelog_blob
-# has already proven these bytes are text this family can count.
-#
-# LC_ALL=C is what makes the character count exact: it puts awk on bytes, and
-# gg_chars subtracts the continuation bytes to turn bytes back into
-# characters. Under a UTF-8 locale its class would match nothing and every
-# multibyte entry would count short. The same byte view is what lets CTRL name
-# the C0 controls and DEL exactly, which the quoted first line is stripped of
-# — an escape sequence, a carriage return or a backspace in a tracked file
-# must not reach the reader's terminal through a diagnostic. Tab survives, and
-# so do high bytes: they are the UTF-8 an entry is legitimately written in.
-GG_ENTRY_AWK="$GG_CHARS_AWK_FN"'
-BEGIN {
-  CTRL = "[\001-\010\013-\037\177]"
-}
-{
-  line = $0; sub(/\r$/, "", line)
-  if (first == "" && line ~ /[^ \t]/) first = line
-  text = text " " line
-}
-END {
-  gsub(/[ \t]+/, " ", text)
-  sub(/^ /, "", text)
-  sub(/ $/, "", text)
-  gsub(CTRL, "?", first)
-  printf "M\t%d\t%s\n", gg_chars(text), first
-}
-'
 
 # The Keep a Changelog sections, and the ONE test for membership in them.
 #

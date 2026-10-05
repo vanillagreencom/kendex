@@ -118,19 +118,21 @@ if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   exit 1
 fi
 
-# A document no shipped class names has no limit, whatever its size. The
-# control re-adds one such class to a private copy of the shipped list, which
-# fails the first of these documents.
-UNCLASSIFIED_ASSERTIONS=0
+# A tracked file outside the four load-point basenames is never measured,
+# whatever its size and whatever class names it: the class here names every
+# path. The control removes the basename gate from a private copy, which
+# fails the first of these files.
+export DOC_LIMITS_CLASSES='*=1k'
+OUTSIDE_ASSERTIONS=0
 while IFS= read -r path; do
   bytes "$path" 100000
   git -C "$R" add -- "$path"
   run --staged
-  expect 0 "$path has no shipped class"
+  expect 0 "$path is outside the load points"
   expect_first_line 'notice=documents-checked count=0' "$path measures nothing"
   git -C "$R" rm -qf -- "$path"
-  UNCLASSIFIED_ASSERTIONS=$((UNCLASSIFIED_ASSERTIONS + 1))
-done <<'UNCLASSIFIED'
+  OUTSIDE_ASSERTIONS=$((OUTSIDE_ASSERTIONS + 1))
+done <<'OUTSIDE'
 README.md
 pkg/README.md
 docs/architecture/overview.md
@@ -138,27 +140,54 @@ docs/architecture/topic.md
 skills/demo/workflows/task.md
 skills/demo/references/contract.md
 CHANGELOG.md
-UNCLASSIFIED
-if [ "$UNCLASSIFIED_ASSERTIONS" -eq 0 ]; then
-  printf 'FAIL: UNCLASSIFIED executed no assertions\n' >&2
+agents/big.md
+src/large.rs
+site/index.html
+docs/references/example.html
+OUTSIDE
+if [ "$OUTSIDE_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: OUTSIDE executed no assertions\n' >&2
   exit 1
 fi
-SHIPPED_HEAD="SHIPPED_CLASSES='AGENTS.md=8k;"
 bytes README.md 100000
 git -C "$R" add README.md
-private_command shipped-classes
+private_command load-point-gate
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fc "$SHIPPED_HEAD" "$MUTANT")" -eq 1 ]
-sed "s|^$SHIPPED_HEAD|SHIPPED_CLASSES='README.md=16k;AGENTS.md=8k;|" "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  is_load_point "$f" || continue' "$MUTANT")" -eq 1 ]
+sed 's/^  is_load_point "\$f" || continue$/  :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
 bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
-must_fail 0 1 'shipped-classes control: a README.md class re-added to the shipped list fails the unlimited README.md row'
+must_fail 0 1 'load-point gate control: measuring every tracked file fails the README.md row'
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf README.md
+unset DOC_LIMITS_CLASSES
+
+# A load-point document no shipped class names has no limit, whatever its
+# size: the shipped list names SKILL.md below the root only. The control adds
+# a root class to a private copy of the shipped list, which fails it.
+SHIPPED_HEAD="SHIPPED_CLASSES='AGENTS.md=8k;"
+bytes SKILL.md 100000
+git -C "$R" add SKILL.md
+run --staged
+expect 0 'a root SKILL.md has no shipped class'
+expect_first_line 'notice=documents-checked count=0' 'a root SKILL.md measures nothing'
+private_command shipped-classes
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fc "$SHIPPED_HEAD" "$MUTANT")" -eq 1 ]
+sed "s|^$SHIPPED_HEAD|SHIPPED_CLASSES='SKILL.md=16k;AGENTS.md=8k;|" "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail 0 1 'shipped-classes control: a root SKILL.md class added to the shipped list fails the unlimited root SKILL.md row'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf SKILL.md
 
 # A caller still passing the retired --against keeps its verdict, warned.
 bytes AGENTS.md 8192
@@ -179,16 +208,23 @@ must_fail_first_line 'notice=argument-retired argument=--against' 'retired --aga
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf AGENTS.md
 
-# A project class fails its documents over the limit like a shipped one.
-bytes extra/note.md 1025
-git -C "$R" add extra/note.md
-DOC_LIMITS_CLASSES='extra/*.md=1k'
-export DOC_LIMITS_CLASSES
+# A project class sets the ceiling of a load-point document and of nothing
+# else: the same class over the same bytes passes agents/big.md unmeasured and
+# fails agents/AGENTS.md.
+export DOC_LIMITS_CLASSES='agents/*.md=1k'
+bytes agents/big.md 1025
+git -C "$R" add agents/big.md
 run --staged
-expect 1 'project class over its limit fails'
-expect_first_line 'notice=document-over-limit path=extra/note.md' 'project class over-limit notice'
+expect 0 'a project class over a file outside the load points measures nothing'
+expect_first_line 'notice=documents-checked count=0' 'project class outside the load points notice'
+git -C "$R" rm -qf agents/big.md
+bytes agents/AGENTS.md 1025
+git -C "$R" add agents/AGENTS.md
+run --staged
+expect 1 'control: the same project class fails a load-point document over its limit'
+expect_first_line 'notice=document-over-limit path=agents/AGENTS.md' 'project class over-limit notice'
 unset DOC_LIMITS_CLASSES
-git -C "$R" rm -qf extra/note.md
+git -C "$R" rm -qf agents/AGENTS.md
 
 bytes AGENTS.md 8192
 git -C "$R" add AGENTS.md
@@ -205,7 +241,7 @@ must_fail_first_line 'notice=documents-checked count=1' 'notice protocol control
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf AGENTS.md
 
-DOCUMENT_PATH="bad$(printf '\t')path.md"
+DOCUMENT_PATH="bad$(printf '\t')dir/AGENTS.md"
 bytes "$DOCUMENT_PATH" 1
 git -C "$R" add -- "$DOCUMENT_PATH"
 run --staged
@@ -235,40 +271,6 @@ must_fail_first_line 'error=document-unmerged path=pkg/AGENTS.md' 'document diag
 SR="$SOURCE_COMMAND"
 git -C "$R" update-index --force-remove pkg/AGENTS.md
 rm -- "${R:?}/pkg/AGENTS.md"
-
-bytes src/large.rs 100000
-git -C "$R" add src/large.rs
-export DOC_LIMITS_CLASSES='*=1k'
-run --staged
-expect 0 'source file outside ceilings'
-expect_first_line 'notice=documents-checked count=0' 'source file measures nothing'
-
-bytes site/index.html 100000
-git -C "$R" add site/index.html
-run --staged
-expect 0 'website HTML outside ceilings'
-expect_first_line 'notice=documents-checked count=0' 'website HTML measures nothing'
-
-bytes docs/references/example.html 100000
-git -C "$R" add docs/references/example.html
-run --staged
-expect 0 'documentation HTML outside ceilings'
-expect_first_line 'notice=documents-checked count=0' 'documentation HTML measures nothing'
-
-private_command document-selection
-[ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '  case "$f" in *.md) ;; *) continue ;; esac' "$MUTANT")" -eq 1 ]
-sed 's/^  case "\$f" in \*\.md) ;; \*) continue ;; esac$/  case "$f" in *) ;; esac/' "$SOURCE_COMMAND" >"$MUTANT.changed"
-if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
-mv "$MUTANT.changed" "$MUTANT"
-chmod +x "$MUTANT"
-bash -n "$MUTANT"
-SR="$MUTANT"
-run --staged
-must_fail_first_line 'notice=documents-checked count=0' 'document-selection control: measuring source files fails outside-ceilings row'
-SR="$SOURCE_COMMAND"
-unset DOC_LIMITS_CLASSES
-git -C "$R" rm -qf src/large.rs site/index.html docs/references/example.html
 
 bytes AGENTS.md 8193
 git -C "$R" add AGENTS.md

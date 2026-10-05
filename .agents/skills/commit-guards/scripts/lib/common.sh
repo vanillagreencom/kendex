@@ -150,7 +150,7 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
 # rather than one per sequence: text that is not valid UTF-8 has no character
 # count, and a cap must round that in the direction that cannot let an
 # over-long value through. The alternatives are the byte grammar RFC 3629
-# defines — the same ranges GG_ENTRY_AWK validates against — because a range
+# defines — the same ranges GG_UTF8_AWK validates against — because a range
 # written loosely is what makes E0 80 80 or F4 90 80 80 measure as one.
 GG_CHARS_AWK_FN='
 function gg_chars(s,   seq) {

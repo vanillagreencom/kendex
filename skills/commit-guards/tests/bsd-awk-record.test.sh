@@ -7,11 +7,12 @@
 # and the real check runs under it. What the rule costs: git calls a blob
 # binary only when a NUL falls in its leading sample, so a blob whose only
 # NUL is past that sample is text to git and must be text to this family
-# too. Under BWK's rule the UTF-8 pass never sees that NUL, the blob measures
-# as the short prefix before it, and an unmeasurable file is reported as an
-# over-long entry instead of being refused. scripts/lib/changelog-grammar.sh
-# translates every NUL to \200, a stray continuation byte its grammar
-# already rejects, before awk reads a byte; this suite pins that.
+# too. Under BWK's rule the UTF-8 pass never sees that NUL, the blob reads
+# as the short prefix before it, and a file the record cannot carry is
+# accepted as a whole entry instead of being refused.
+# scripts/lib/changelog-grammar.sh translates every NUL to \200, a stray
+# continuation byte its grammar already rejects, before awk reads a byte;
+# this suite pins that.
 #
 # One table: PACKAGE is the shipped skill or a copy with the translation
 # removed; changelog-entries runs under the shim over a fragment git calls
@@ -22,7 +23,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-unset COMMIT_GUARDS_CHANGELOG_CAP COMMIT_GUARDS_CHANGELOG_PATHS \
+unset COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -63,7 +64,7 @@ assert_eq "a program over stdin sees the record end at its NUL" "2" "$(awk '{ pr
 assert_eq "control: a file operand reads as the host's awk reads it" "$("$REAL_AWK" '{ print length($0) }' "$TMP/probe")" "$(awk '{ print length($0) }' "$TMP/probe")"
 
 # The fragment: 8100 bytes of content, then the file's only NUL, past the
-# sample git sniffs; git calls it text, and its measure under BWK's rule is
+# sample git sniffs; git calls it text, and what BWK's rule reads of it is
 # the prefix.
 XS="$(i=0; while [ "$i" -lt 8100 ]; do printf x; i=$((i + 1)); done)"
 plant() { # REPO
@@ -108,10 +109,10 @@ echo "=== premise: the broken package holds no translation ==="
 broken
 assert_eq "the control removed the NUL translation" "0" "$(grep -c "tr '\\\\000'" "$PKG/scripts/lib/changelog-grammar.sh")"
 
-echo "=== a NUL past git's sample is refused as unmeasurable under BWK's record rule, not reported as a long entry ==="
+echo "=== a NUL past git's sample is refused under BWK's record rule, not accepted as the prefix before it ==="
 run_rows \
   "the shipped package refuses the fragment naming its line|real|rc=2 changelog-entries: encoding-line=changelog.d/added/late-nul.md:1" \
-  "control: without the translation the record ends at the NUL and the prefix is measured as an over-long entry|broken|rc=1 changelog-entries: fragment-long=changelog.d/added/late-nul.md:8102:200;changelog-entries: entry-preview=- $XS;changelog-entries: violations=1:1:200"
+  "control: without the translation the record ends at the NUL and the prefix is accepted as a whole entry|broken|rc=0 changelog-entries: checked=1"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

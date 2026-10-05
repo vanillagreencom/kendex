@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Pins for scripts/prose, the history-reference scan over agent-loaded
-# markdown: a calendar date or an issue number in a scoped file fails naming
-# file:line and the remedy, ordinary wording and decision IDs pass, the path
-# list is the harness-loaded names (the architecture docs join under
-# COMMIT_GUARDS_MD_SCOPE=all), replaceable and validated, the markdown
-# excludes carve paths out, and a scoped path that is not markdown is named
-# rather than counted clean. Two tables: one line of SKILL.md judged, and
+# Pins for scripts/prose, the history-reference scan over the markdown a
+# harness loads at every turn: a calendar date or an issue number in a scoped
+# file fails naming file:line and the remedy, ordinary wording and decision
+# IDs pass, the path list is the four load-point names at the root and at
+# any depth, replaceable and validated, the markdown excludes carve paths
+# out, and a scoped path that is not markdown is named rather than counted
+# clean. Two tables: one line of SKILL.md judged, and
 # the runs over a built repository. A row runs the scan once and pins the
 # exit status with every line printed, so the hit, its line, the remedy,
 # the counts and the path list shown are one pin. The index readers this
@@ -19,7 +19,7 @@ PROSE="$SKILL_DIR/scripts/prose"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
-unset COMMIT_GUARDS_PROSE_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset COMMIT_GUARDS_PROSE_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -60,13 +60,12 @@ put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" ad
 SEEDED='Seeded 2026-08-12.\n'
 
 # The lines the scan prints, as functions of what a row put in.
-PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
-PATHS_ALL="$PATHS_CORE docs/architecture/*.md"
+PATHS_DEFAULT="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md"
 ERR="prose: "
 hit() { printf 'prose: match=history reference:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE SOURCE-TEXT
 unmeasured() { printf '%s' "$1"; } # N
 clean() { printf 'prose: summary=violations=0 files=%s skipped=%s' "$1" "${2:-0}"; } # SCANNED [SKIPPED]
-failed() { printf 'prose: summary=violations=%s files=%s skipped=%s;prose: paths=%s' "$1" "$2" "${4:-0}" "${3:-$PATHS_CORE}"; } # HITS SCANNED [PATHS] [SKIPPED]
+failed() { printf 'prose: summary=violations=%s files=%s skipped=%s;prose: paths=%s' "$1" "$2" "${4:-0}" "${3:-$PATHS_DEFAULT}"; } # HITS SCANNED [PATHS] [SKIPPED]
 nomatch() { printf 'prose: no-match=%s' "$1"; } # PATHS
 NONE="prose: unmeasured-count="
 
@@ -120,14 +119,14 @@ run_rows() { # label | fixture | envs | args | expect
   done
 }
 
-echo "=== scope: each default name is scanned, the architecture docs under scope all, and nothing else ==="
-SCOPED="SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md"
-ARCH="docs/architecture/overview.md docs/architecture/topic.md"
-UNSCOPED="README.md CHECKS.md docs/design.md CHANGELOG.md skills/dev/references/api.md notes/workflows.md"
-UNSCOPED_GLOBS="README.md CHECKS.md docs/*.md CHANGELOG.md skills/dev/references/*.md notes/*.md"
-UNSCOPED_SORTED="CHANGELOG.md CHECKS.md README.md docs/design.md notes/workflows.md skills/dev/references/api.md" # index order
+echo "=== scope: each load-point name is scanned at the root and at any depth, and nothing else ==="
+SCOPED="SKILL.md AGENTS.md CLAUDE.md GEMINI.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md skills/dev/GEMINI.md .agents/skills/dev/SKILL.md"
+UNSCOPED="README.md CHECKS.md docs/design.md docs/architecture/overview.md CHANGELOG.md skills/dev/references/api.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md notes/workflows.md"
+UNSCOPED_GLOBS="README.md CHECKS.md docs/*.md docs/architecture/*.md CHANGELOG.md skills/dev/references/*.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md notes/*.md"
+UNSCOPED_SORTED=".claude/agents/rust.md CHANGELOG.md CHECKS.md README.md agents/rust.md docs/architecture/overview.md docs/design.md notes/workflows.md skills/dev/references/api.md skills/dev/workflows/ship.md workflows/ship.md" # index order
 scoped() { repo "scoped-${1//\//_}"; put "$1" "$SEEDED"; } # PATH — the one tracked file, seeded
-fx_arch() { repo "$1"; put SKILL.md 'clean\n'; put docs/architecture/overview.md "$SEEDED"; }
+fx_workflow() { repo "$1"; put SKILL.md 'clean\n'; put workflows/x.md "$SEEDED"; }
+fx_workflow_control() { repo "$1"; put SKILL.md "$SEEDED"; put workflows/x.md 'clean\n'; }
 fx_unscoped() { # NAME — every scoped path clean, every unscoped one seeded
   local f
   repo "$1"
@@ -136,17 +135,13 @@ fx_unscoped() { # NAME — every scoped path clean, every unscoped one seeded
 }
 rows=()
 for f in $SCOPED; do
-  rows+=("$f is in the default scope|scoped $f|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit "$f" 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_ALL")")
-done
-for f in $ARCH; do
-  rows+=("$f is in the scope-all list|scoped $f|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit "$f" 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_ALL")")
+  rows+=("$f is in the default scope|scoped $f|||rc=1 $(hit "$f" 1 'Seeded 2026-08-12.');$(failed 1 1)")
 done
 run_rows "${rows[@]}" \
-  "under COMMIT_GUARDS_MD_SCOPE=touched the architecture docs are not yet in scope|fx_arch arch-touched|||rc=0 $(clean 1)" \
-  "control: under scope all the same file fails|fx_arch arch-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit docs/architecture/overview.md 1 'Seeded 2026-08-12.');$(failed 1 2 "$PATHS_ALL")" \
-  "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read|fx_unscoped unscoped|||rc=0 $(clean 10)" \
-  "control: the same six files fail once a path list names them|fx_unscoped unscoped-named|COMMIT_GUARDS_PROSE_PATHS=$UNSCOPED_GLOBS||rc=1 $(for f in $UNSCOPED_SORTED; do hit "$f" 1 'Seeded 2026-08-12, reverted in #1204.'; printf ';'; done)$(failed 6 6 "$UNSCOPED_GLOBS")" \
-  "an unknown scope is exit 2, quoting it|fx_arch scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}scope=sometimes"
+  "a date in workflows/x.md passes under the default scope|fx_workflow workflow|||rc=0 $(clean 1)" \
+  "control: the same date in SKILL.md fails|fx_workflow_control workflow-control|||rc=1 $(hit SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
+  "README, CHECKS, docs, the architecture docs, CHANGELOG, references, workflows and agent definitions keep their history, with the nine scoped files still read|fx_unscoped unscoped|||rc=0 $(clean 9)" \
+  "control: the same eleven files fail once a path list names them|fx_unscoped unscoped-named|COMMIT_GUARDS_PROSE_PATHS=$UNSCOPED_GLOBS||rc=1 $(for f in $UNSCOPED_SORTED; do hit "$f" 1 'Seeded 2026-08-12, reverted in #1204.'; printf ';'; done)$(failed 11 11 "$UNSCOPED_GLOBS")"
 
 echo "=== the markdown excludes list carves a vendored skill out ==="
 vendored() { repo "$1"; put SKILL.md 'clean\n'; put .agents/skills/vendored/SKILL.md "$SEEDED"; }
@@ -168,7 +163,7 @@ run_rows \
   "a path escaping the repository is exit 2|override escaping|COMMIT_GUARDS_PROSE_PATHS=../outside/*.md||rc=2 ${ERR}path-escape=prose:../outside/*.md" \
   "an unknown flag is exit 2, quoting it|override unknown-flag||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag"
 assert_eq "--help prints usage at exit 0" "rc=0 prose: usage=prose" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
-assert_eq "--help names the default scope-all paths" "$PATHS_ALL" "$(run '' --help | LC_ALL=C sed -n 's/.*;prose: paths=//p')"
+assert_eq "--help names the default paths" "$PATHS_DEFAULT" "$(run '' --help | LC_ALL=C sed -n 's/.*;prose: paths=//p')"
 
 echo "=== a configured path that is not markdown is named, never counted clean ==="
 fx_regular() { repo regular; put notes/target.md "$SEEDED"; put skills/dev/SKILL.md "$SEEDED"; }
@@ -185,27 +180,28 @@ fx_gitlink() { # a gitlink at a scoped path: mode 160000 carries a commit id, no
   git -C "$R" update-index --add --cacheinfo "160000,$(git -C "$R" rev-parse HEAD),vendor/AGENTS.md"
 }
 fx_binary() { repo binary; put AGENTS.md 'lead\0000Seeded 2026-08-12.\n'; }
-fx_index_both() { repo "$1"; put workflows/a.md 'clean\n'; put workflows/b.md "$SEEDED"; }
-fx_index_glob() { fx_index_both index-glob; rm "$R/workflows/b.md"; } # b.md still in the index, gone from the checkout
+fx_index_both() { repo "$1"; put skills/a/SKILL.md 'clean\n'; put skills/b/SKILL.md "$SEEDED"; }
+fx_index_glob() { fx_index_both index-glob; rm "$R/skills/b/SKILL.md"; } # skills/b/SKILL.md still in the index, gone from the checkout
 run_rows \
   "control: the same content as a REGULAR file at the scoped path fails|fx_regular|||rc=1 $(hit skills/dev/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
   "a scoped symlink is counted apart with no path named: no clean verdict, no 'nothing matched' line|fx_symlink symlink|||rc=0 $NONE$(unmeasured 1)" \
   "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, counting both links|fx_chain_clean|||rc=0 $(clean 1 "$(unmeasured 2)")" \
-  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
+  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_DEFAULT" "$(unmeasured 2)")" \
   "a gitlink at a scoped path is counted as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(clean 1 "$(unmeasured 1)")" \
   "a binary blob at a scoped path is counted as unmeasured, with no clean file count over it|fx_binary|||rc=0 $NONE$(unmeasured 1)" \
-  "control: both tracked workflows are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
-  "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
+  "control: both tracked skill entry points are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit skills/b/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
+  "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit skills/b/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
 # The premises the rows above rest on. The symlink skip: `git grep --cached`
 # finds nothing at all in a symlink index entry, spending no status and no
 # stderr on it. The index glob: b.md really is gone from the work tree while
-# the index still names it.
+# the index still names it. The index glob: skills/b/SKILL.md really is gone
+# from the work tree while the index still names it.
 fx_symlink symlink-premise
 assert_eq "fixture: a bare --cached grep over the symlink entry finds nothing" "rc=1 mode=120000" \
   "$(cd "$R" && git grep --cached -n -I -E '2026' -- skills/dev/SKILL.md >/dev/null 2>&1; printf 'rc=%s mode=%s' "$?" "$(git ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)")"
 R="$TMP/index-glob"
-assert_eq "fixture: workflows/b.md is absent from the work tree and still in the index" "work-tree=absent index=workflows/b.md" \
-  "$(printf 'work-tree=%s index=%s' "$([ -e "$R/workflows/b.md" ] && echo present || echo absent)" "$(git -C "$R" ls-files workflows/b.md)")"
+assert_eq "fixture: skills/b/SKILL.md is absent from the work tree and still in the index" "work-tree=absent index=skills/b/SKILL.md" \
+  "$(printf 'work-tree=%s index=%s' "$([ -e "$R/skills/b/SKILL.md" ] && echo present || echo absent)" "$(git -C "$R" ls-files skills/b/SKILL.md)")"
 
 echo "=== the skill's own shipped markdown does not trip the lane ==="
 fx_shipped() { # NAME — the four shipped documents
@@ -217,10 +213,10 @@ fx_shipped() { # NAME — the four shipped documents
   done
   git -C "$R" add -A
 }
-fx_shipped_planted() { fx_shipped shipped-planted; put skills/commit-guards/workflows/ship.md "$SEEDED"; }
+fx_shipped_planted() { fx_shipped shipped-planted; put skills/other/SKILL.md "$SEEDED"; }
 run_rows \
   "the shipped SKILL.md scans clean beside its unscanned siblings|fx_shipped shipped|||rc=0 $(clean 1)" \
-  "control: a planted reference fails while the shipped SKILL.md stays unnamed|fx_shipped_planted|||rc=1 $(hit skills/commit-guards/workflows/ship.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
+  "control: a planted reference fails while the shipped SKILL.md stays unnamed|fx_shipped_planted|||rc=1 $(hit skills/other/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
 R="$TMP/shipped"
 assert_eq "fixture: the four shipped documents are tracked beside each other" "4" "$(git -C "$R" ls-files | wc -l | tr -d ' ')"
 

@@ -5,10 +5,9 @@
 # entry per file, so two branches never write the same line. Each matched
 # path must be a real text file (a symlink, a gitlink or a binary blob is
 # refused, not skipped), sit directly under a Keep a Changelog section
-# directory, hold exactly one Markdown list item, and that entry must be
-# within the character cap (default 200). One number is the whole length
-# rule: no line counting, so an entry that states its outcome passes however
-# it is wrapped.
+# directory and hold exactly one Markdown list item. The shape is the whole
+# rule: an entry has no character, line or byte limit, so one that states its
+# outcome passes however long it runs or however it is wrapped.
 #
 # Ordinary checks judge fragments and configured JSON version bumps. Which
 # fragments and record sections are a bump's release entries, in each mode,
@@ -22,17 +21,11 @@
 # and the record's boundaries have one spelling rather than a collator's
 # second one that agrees until it does not.
 #
-# A fragment is one entry, so measuring one is joining its lines: CR
-# stripped, whitespace runs collapsed to one space, counted in characters —
-# UTF-8 sequences count once, so an em dash costs what it reads as, and an
-# entry that states its outcome passes however it is wrapped.
-#
 # Content comes from the index, like the other scans. Text that is not valid
-# UTF-8 has no character count to take, so it is a collection error naming
-# the line, never a measurement: git calls such a blob text whenever it
-# carries no NUL, and counting it would read a run of stray bytes as almost
-# no characters at all. Configured paths matching no tracked file are a clean
-# pass: a repository with no changelog has nothing to judge.
+# UTF-8 is a collection error naming the line, never a fragment the collator
+# folds into the record: git calls such a blob text whenever it carries no
+# NUL. Configured paths matching no tracked file are a clean pass: a
+# repository with no changelog has nothing to judge.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -75,12 +68,10 @@ Checks changelog fragments. --collate also validates its destination.
 
 Fragments (COMMIT_GUARDS_CHANGELOG_PATHS): every matched tracked path must
 be a real text file, sit directly under a section directory (added, changed,
-deprecated, removed, fixed, security), hold exactly one Markdown list item —
+deprecated, removed, fixed, security) and hold exactly one Markdown list item:
 the first non-blank line opens with a hyphen and a space and says something,
-every later line indents under it — and measure within the cap. A symlink, a
-submodule gitlink or a binary blob at a configured path is refused. The
-measurement joins the fragment's lines with CR stripped and whitespace runs
-collapsed to one space, counted in characters.
+and every later line indents under it. An entry has no length limit. A
+symlink, a submodule gitlink or a binary blob at a configured path is refused.
 
 Ordinary runs read the record only as evidence for a configured version bump.
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects JSON files with a string version,
@@ -113,7 +104,6 @@ collection error. Paths matching no tracked file are a clean pass.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
-  COMMIT_GUARDS_CHANGELOG_CAP     characters per entry  (default 200)
   COMMIT_GUARDS_CHANGELOG_PATHS   space-separated shell globs against the
                                   full repo-relative path, '*' crossing
                                   '/' as in the excludes lists
@@ -159,9 +149,6 @@ done
   || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE" "Use one scope or --collate, not both."
 
 gg_repo_root_cd
-
-CAP="$(gg_setting COMMIT_GUARDS_CHANGELOG_CAP 200)" || exit 2
-gg_positive_int "$CAP" "COMMIT_GUARDS_CHANGELOG_CAP"
 
 # Both scopes, resolved by the library the commit-msg lane reads too — which
 # loads the fragment globs through lib/configured-paths.sh, the same way
@@ -270,7 +257,7 @@ while IFS= read -r -d '' rec; do
     continue
   fi
   # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads
-  # the bytes and proves them text this family can measure. Binary is the only
+  # the bytes and proves them text this family can fold. Binary is the only
   # answer left to phrase, and a fragment nothing can read is refused.
   if ! gg_changelog_blob "$sha" "$f"; then
     refuse fragment-binary "$(gg_shown "$f")" "holds binary content" "a fragment is the Markdown list item it becomes"
@@ -291,24 +278,6 @@ while IFS= read -r -d '' rec; do
   printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
   LC_ALL=C awk -v entry_query=1 -v whole_entry=1 -v entry_section="$sec" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >>"$GG_TMP/fragment-entries" \
     || gg_fail breaking-read "$(gg_shown "$f")" "Could not read the release entry."
-  status=0
-  LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
-  [ "$status" -eq 0 ] || gg_fail fragment-measure "$(gg_shown "$f"):$status" "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
-  while IFS="$GG_TAB" read -r kind a b; do
-    case "$kind" in
-      M)
-        [ "$a" -gt "$CAP" ] || continue
-        gg_message fragment-long "$(gg_shown "$f"):$a:$CAP" "The fragment exceeds the character cap."
-        # Content, not a name: the awk pass already replaced every C0
-        # control except tab, and DEL; a newline cannot survive a line read,
-        # and %q here would render a legible entry as an escaped blob.
-        gg_message entry-preview "$b" "The first line of the fragment."
-        echo "  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
-        violations=$((violations + 1))
-        ;;
-      *) gg_fail measurement-kind "$(gg_shown "$f"):$kind" "unrecognized measurement record $(gg_shown "$kind") while reading $(gg_shown "$f")" ;;
-    esac
-  done <"$GG_TMP/report"
 done <"$GG_TMP/files.z"
 
 # Release manifests already expose their version through jq. Opt-in discovery
@@ -458,13 +427,13 @@ if [ "$COLLATE" -eq 1 ] && [ "$checked" -gt 0 ]; then
 fi
 
 if [ "$violations" -gt 0 ]; then
-  gg_message violations "$violations:$checked:$CAP" "Violations, measured fragments, and character cap."
+  gg_message violations "$violations:$checked" "Violations and accepted fragments."
   exit 1
 fi
 # Only past the verdict: the fold must never publish a set this run was still
 # going to refuse something from. Its own line is the verdict a release
-# reads — what was folded in and where — so it stands in for the cap report
-# below rather than following it.
+# reads — what was folded in and where — so it stands in for the checked
+# report below rather than following it.
 if [ "$COLLATE" -eq 1 ]; then
   gg_changelog_collate
   exit 0
@@ -473,4 +442,4 @@ if [ "$checked" -eq 0 ]; then
   gg_message no-matches "$PATTERNS_SHOWN" "No tracked file matches COMMIT_GUARDS_CHANGELOG_PATHS."
   exit 0
 fi
-gg_message checked "$checked:$CAP" "All measured fragments are within the character cap."
+gg_message checked "$checked" "Every fragment is one list item under a section."

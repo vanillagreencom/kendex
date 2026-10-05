@@ -23,9 +23,6 @@ LINEAR_TEAM_PREFIX = "KEN"
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift"
 
-# Catalog source ceiling; harness renders use the generated inventory exemption.
-DOC_LIMITS_CLASSES = "agents/*.md=5k"
-
 # Non-empty makes `issues create` hold the presence half of the creation bar
 # in the project-management skill's SKILL.md, § Disposition → **Name what
 # reaches it**: it refuses a body with no `Reached by:` line, and a

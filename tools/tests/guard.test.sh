@@ -188,8 +188,6 @@ printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ba
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
 mkdir -p "$R/changelog.d/fixed"
-LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
-printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
 git -C "$R" add -A
 SR_OUT=""
@@ -202,14 +200,13 @@ CE_OUT=""
 CE_RC=0
 CE_OUT="$(cd "$R" && "$CHANGELOG_ENTRIES" 2>&1)" || CE_RC=$?
 [ "$CE_RC" -eq 1 ] \
-  && case "$CE_OUT" in *ken-long.md*) true ;; *) false ;; esac \
   && case "$CE_OUT" in *ken-two.md*) true ;; *) false ;; esac \
-  && ok "precondition: changelog-entries refuses the long entry and the two-entry fragment" \
-  || bad "precondition: changelog-entries refuses the long entry and the two-entry fragment" "rc=$CE_RC out=$CE_OUT"
+  && ok "precondition: changelog-entries refuses the two-entry fragment" \
+  || bad "precondition: changelog-entries refuses the two-entry fragment" "rc=$CE_RC out=$CE_OUT"
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
-  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file and a malformed fragment all pass — the packages judge those" \
+  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file and a malformed fragment all pass — the packages judge those" "rc=$RC out=$OUT"
 case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
 reset_world
 

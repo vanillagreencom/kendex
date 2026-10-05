@@ -17,7 +17,7 @@ CE="$SKILL_DIR/scripts/changelog-entries"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
-unset COMMIT_GUARDS_CHANGELOG_CAP COMMIT_GUARDS_CHANGELOG_PATHS \
+unset COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_CHANGELOG_COLLATE \
   COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 export COMMIT_GUARDS_CHANGELOG_COLLATE=1
@@ -83,19 +83,19 @@ rows() { # MODE — label | content | expect; MODE is the plain check or --colla
   done
 }
 ERR="changelog-entries: "
-VIOLATION="changelog-entries: violations=1:1:200"
+VIOLATION="changelog-entries: violations=1:1"
 UNTOUCHED="record=same fragment=same index=same"
 
 echo "=== the plain check reads fragments, never the record: any wording passes beside a valid fragment ==="
 rows '' \
-  "a record with no Unreleased heading|# Release notes\n|rc=0 changelog-entries: checked=1:200 $UNTOUCHED" \
-  "a record with a paragraph under a foreign section|# Changelog\n\n## [Unreleased]\n\n### Details\n\nA new paragraph.\n|rc=0 changelog-entries: checked=1:200 $UNTOUCHED"
+  "a record with no Unreleased heading|# Release notes\n|rc=0 changelog-entries: checked=1 $UNTOUCHED" \
+  "a record with a paragraph under a foreign section|# Changelog\n\n## [Unreleased]\n\n### Details\n\nA new paragraph.\n|rc=0 changelog-entries: checked=1 $UNTOUCHED"
 
 echo "=== control: a fragment's own structure still fails beside a reworded record ==="
 ROW=$((ROW + 1))
 repo "row-$ROW" '# Release notes\n' 'not a list item\n'
 assert_eq "a fragment that is not a list item fails naming it, the record untouched" \
-  "rc=1 changelog-entries: fragment-marker=$FRAGMENT;changelog-entries: violations=1:0:200 $UNTOUCHED" "$(run)"
+  "rc=1 changelog-entries: fragment-marker=$FRAGMENT;changelog-entries: violations=1:0 $UNTOUCHED" "$(run)"
 
 echo "=== collation reads the record: an unusable shape is refused without a write, a usable one folds ==="
 rows --collate \
