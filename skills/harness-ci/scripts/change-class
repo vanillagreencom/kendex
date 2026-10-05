@@ -207,8 +207,8 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # measurement reads, or the ceilings it compares against. orch's
 # narrow-change.conf refuses the narrow classes on each, and
 # https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/tests/narrow-boundary.test.sh
-# holds that file's boundary group to this list,
-# to branch-size-check's, and to the `source` lines of every file they name.
+# holds that file's boundary group to this list and the source lines of every
+# file it names.
 # measures-with: skills/harness-ci/scripts/change-class
 # measures-with: skills/harness-ci/scripts/harness-only
 # measures-with: skills/harness-ci/scripts/lib/change-class.sh
@@ -406,7 +406,7 @@ path_class_matches() { # PHASE CLASS
 # and is queue-only. That commit is the one --base names, the pull request's base tip or
 # a merge group's base, never the merge base, which the author picks by
 # choosing where to fork. The tables are parsed by orch's kendex-env.sh, the
-# same reader branch-size-check's settings ladder uses, in that ladder's order,
+# shared settings reader, in its ladder's order,
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
@@ -958,8 +958,7 @@ change_class_path_load "$NARROW_CONF" || answer standard "cause=$CHANGE_CLASS_PA
 ! path_class_matches narrow standard || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
 # Every measured class shares orch's branch growth reader, which owns the
-# production/test split and the render-mirror pairing branch-size-check judges
-# an allowance by. It is handed the base endpoint this call named, so the lines
+# production/test split and render-mirror pairing for CI classification. It is handed the base endpoint this call named, so the lines
 # are counted over the range the paths came from.
 production=""
 total=""

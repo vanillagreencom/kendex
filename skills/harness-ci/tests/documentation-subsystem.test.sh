@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch and branch tiers for one source subsystem with its documentation.
+# Launch estimates and CI classes for source changes with documentation.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -13,10 +13,10 @@ base="$(git -C "$repo" rev-parse HEAD)"
 
 # The launch producer names Location paths and an estimate. Its branch also
 # carries the architecture document and changelog the implementation adds.
-# A true second source subsystem, large docs and an excluded path still refuse
-# small. No verifier is needed: each row changes non-generated source.
+# The CI class measures source and docs together. The launch tier reads the
+# estimate and Location paths. Each row changes non-generated source.
 rows=0
-while IFS='|' read -r label estimate launch_tier lane_tier class_line specs; do
+while IFS='|' read -r label estimate launch_tier class_line specs; do
   rows=$((rows + 1))
   git -C "$repo" checkout -q -B case "$base"
   git -C "$repo" clean -qfd
@@ -43,21 +43,18 @@ while IFS='|' read -r label estimate launch_tier lane_tier class_line specs; do
   launch="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
     "$ORCH_PACKAGE/scripts/item-tier" --repo "$repo" --production "$estimate" \
     "${location_args[@]}")"
-  lane="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
-    "$ORCH_PACKAGE/scripts/item-tier" --repo "$repo" --floor small \
-    --base "$base" --head HEAD)"
-  assert_eq "$label" "tier=$launch_tier tier=$lane_tier $class_line" \
-    "${launch%% *} ${lane%% *} $(sed -n '/^class: /p' <<<"$class_err")"
+  assert_eq "$label" "tier=$launch_tier $class_line" \
+    "${launch%% *} $(sed -n '/^class: /p' <<<"$class_err")"
 done <<'DOCS'
-a source with its architecture document|40|small|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/architecture/runtime.md:10
-a source with its changelog fragment|31|small|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 changelog.d/fixed/runtime.md:1
-a source with root documentation|40|small|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 README.md:10
-a source with a root instruction file|31|small|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 AGENTS.md:1
-documentation still counts at the small size ceiling|150|small|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/runtime.md:120
-documentation still counts past the small size ceiling|151|standard|standard|class: class=standard measured=true cause=production-past-small production=151|runtime/product.ts:30 docs/runtime.md:121
-an all-docs change permits complete empty outside discovery|30|small|small|class: class=small measured=true cause=production-within-small subsystem=|docs/runtime.md:30
-two source subsystems beside docs stay standard in the lane|70|small|standard|class: class=standard measured=true cause=several-subsystems production=70|runtime/product.ts:30 payload/data.conf:30 docs/runtime.md:10
-an excluded path beside docs stays standard at launch and in the lane|40|standard|standard|class: class=standard measured=true cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/*|runtime/product.ts:30 .github/workflows/ci.yml:1 docs/runtime.md:9
+a source with its architecture document|40|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/architecture/runtime.md:10
+a source with its changelog fragment|31|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 changelog.d/fixed/runtime.md:1
+a source with root documentation|40|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 README.md:10
+a source with a root instruction file|31|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 AGENTS.md:1
+documentation still counts at the small size ceiling|150|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/runtime.md:120
+documentation still counts past the small size ceiling|151|standard|class: class=standard measured=true cause=production-past-small production=151|runtime/product.ts:30 docs/runtime.md:121
+an all-docs change permits complete empty outside discovery|30|small|class: class=small measured=true cause=production-within-small subsystem=|docs/runtime.md:30
+two source subsystems beside docs select the standard CI class|70|small|class: class=standard measured=true cause=several-subsystems production=70|runtime/product.ts:30 payload/data.conf:30 docs/runtime.md:10
+an excluded path beside docs selects standard at launch and in CI|40|standard|class: class=standard measured=true cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/*|runtime/product.ts:30 .github/workflows/ci.yml:1 docs/runtime.md:9
 DOCS
 require_rows documentation-subsystem "$rows"
 

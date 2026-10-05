@@ -118,3 +118,11 @@ The overseer's death, wall and identity come from its own session rows, `lib/ses
 Codex Desktop handoff starts each child thread in an app-managed worktree, often on a detached `HEAD`. Generated Codex agents must be tracked under `.codex/agents/*.toml` in the saved project branch to be visible before subagent discovery; local ignored files are not enough, because setup hooks, `WORKTREE_SYMLINKS`, and `codex-setup` all run too late. Create the app worktree from the resolved base branch rather than a controller `working-tree` snapshot, which can start the child before those agents are visible and force a `worker` fallback.
 
 The managed lifecycle relies on committed branch diffs, so `dev-start.md`, `review-pr.md` and `submit-pr.md` reject dirty or detached worktrees before review or submission; otherwise uncommitted edits read as "no changes".
+
+## Remaining branch measurements
+
+`item-tier` reads the launch estimate and Expected delta to select a tier. Its branch-range mode reads changed paths only. The shared `expected_delta_read` parser remains for that estimate. Invalid or absent delta text does not refuse a tier.
+
+`branch_size_classified` remains in `scripts/lib/branch-growth.sh`. Harness CI reads its production, test and render counts and test paths to select CI checks and the review skip for a trivial change. `dev-validate-run` and submit reuse read that classifier for validation coverage. Review-gate consumer refresh also reads it to report the class and select checks. These uses do not gate an orch workflow on an issue allowance.
+
+`dev-return-write` reads `branch_baseline_lines` to record additions plus deletions in an implement receipt, with paired renders counted once. The receipt reports churn; it does not authorize a round or a cut. `branch_size_numstat`, base resolution and render-root settings remain for these callers. Fix-round stamping and cut acceptance read no branch size. The review watcher reads GitHub review state only.

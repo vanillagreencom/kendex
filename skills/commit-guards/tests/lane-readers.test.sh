@@ -94,7 +94,7 @@ fx_addadd() {
   commit_all ours
   git -C "$R" merge other >/dev/null 2>&1 || true
 }
-fx_merged_big() { new_repo "$1"; printf 'seed\n' >"$R/seed.txt"; commit_all base; head -c 400000 /dev/zero | tr '\0' 'a' >"$R/big.txt"; git -C "$R" add -A; }
+fx_merged_big() { new_repo "$1"; printf 'seed\n' >"$R/seed.txt"; commit_all base; head -c 400000 /dev/zero >"$R/big.bin"; git -C "$R" add -A; }
 fx_merged_small() { new_repo "$1"; printf 'seed\n' >"$R/seed.txt"; commit_all base; printf 'small\n' >"$R/small.txt"; git -C "$R" add -A; }
 
 fx_addadd addadd-fixture
@@ -111,7 +111,7 @@ rows=(
   "control: a resolved, marker-free tree passes|fx_conflict_resolved cm-resolved|conflict-markers|rc=0 conflict-markers: result=0:0:tools/conflict-markers-excludes"
   "byte-ceiling refuses an add/add conflict instead of measuring around it|fx_addadd bc-addadd|byte-ceiling|rc=2 $BIG_UNMERGED"
   "--all refuses it too, where ls-files emits one record per stage|fx_addadd bc-addadd-all|byte-ceiling --all|rc=2 $BIG_UNMERGED"
-  "control: a merged index still fails an oversized addition|fx_merged_big bc-merged-big|byte-ceiling|rc=1 byte-ceiling: oversized=big.txt:400000:391:200;byte-ceiling: result=1:1:200:staged:"
+  "control: a merged index still fails an oversized addition|fx_merged_big bc-merged-big|byte-ceiling|rc=1 byte-ceiling: oversized=big.bin:400000:391:200;byte-ceiling: result=1:1:200:staged:"
   "control: a merged index with nothing oversized passes|fx_merged_small bc-merged-small|byte-ceiling|rc=0 byte-ceiling: result=0:1:200:staged:"
 )
 for row in "${rows[@]}"; do

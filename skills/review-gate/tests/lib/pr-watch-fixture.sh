@@ -287,27 +287,6 @@ observe() {
         value="$(awk -F'\t' '$3 == "error" {print}' <<<"$OUT")"
         value="${value//$'\t'/$field_sep}"
         value="${value// /+}" ;;
-      size)
-        # The disarmed line's size annotation reduced to the fields the
-        # contract names — the counts and their ratio, the measured head,
-        # or the one word a stale or missing record answers with.
-        local line
-        line="$(grep -o 'disarmed.*' <<<"$OUT" | head -1 || true)"
-        if [[ "$line" != *"— size "* ]]; then value=none
-        elif [[ "$line" == *"size unavailable"* ]]; then value=unavailable
-        elif [[ "$line" =~ size\ stale:\ the\ recorded\ measurement\ is\ of\ ([0-9a-f]{8}) ]]; then
-          value="stale@${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ size\ ([0-9]+)\ of\ ([0-9]+)\ production\ lines\ added\ \(([0-9]+)%\ of\ the\ allowance\),\ measured\ at\ ([0-9a-f]{8}) ]]; then
-          value="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}%@${BASH_REMATCH[4]}"
-        elif [[ "$line" =~ size\ ([0-9]+)\ of\ ([0-9]+)\ production\ lines\ added,\ measured\ at\ ([0-9a-f]{8}) ]]; then
-          value="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}@${BASH_REMATCH[3]}"
-        elif [[ "$line" =~ size\ ([0-9]+)\ production\ lines\ added,\ no\ allowance\ stated,\ measured\ at\ ([0-9a-f]{8}) ]]; then
-          value="${BASH_REMATCH[1]}/none@${BASH_REMATCH[2]}"
-        else value=unparsed; fi
-        # The verdict rides the same line and is matched last, after the
-        # counts above have been read out of BASH_REMATCH.
-        if [[ "$line" =~ submit\ recorded\ ([a-z_]+) ]]; then value="$value!${BASH_REMATCH[1]}"; fi
-        ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"

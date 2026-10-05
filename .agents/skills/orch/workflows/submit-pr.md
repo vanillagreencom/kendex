@@ -86,14 +86,6 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    A `worktree-push-base-conflict` refusal pushed and rebased nothing: the branch conflicts with that base, and the guarded restack is its one rebase. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3, which unarm the PR where one exists, restack, validate the restacked head where the project sets `DEV_VALIDATE_RANGE_CMD`, and push through `worktree-push`, then continue here; a red run there hands back instead.
 
-   Measure the pushed branch before constructing publication text. The issue's optional `**Expected delta**` line supplies the comparison.
-
-   ```bash
-   .agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
-   ```
-
-   Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry its counts, allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means malformed `**Expected delta**` text; exit 2 means a usage or environment failure. Report either failure and stop before creating or updating the PR.
-
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
 2. **Check for an existing PR**:
@@ -123,9 +115,6 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    ## QA Metrics
    [Results from the QA agents that ran — project-configurable.]
-
-   ## Size
-   [The pr.size_check production and test counts, allowances or unsized, and verdict: pass, over, or allowance_missing.]
 
    ## Merge decision
    [Pending the merge attempt. The lane records the returned merge-route line here.]

@@ -5,7 +5,7 @@
 # directory that only looks like the main checkout; a consumer's hook given
 # back byte for byte; the doc-limits and preflight lanes the chain runs
 # beside its own checks, and every way one of them is broken or replaced,
-# which blocks or is a stated skip and never a silent one. One table: a row
+# which blocks when an installed companion fails. One table: a row
 # builds its own repository, runs one action and reads back the exit status
 # with every line this package prints, the chain's own step lines included,
 # so a row shows which lanes ran and from which scripts directory. Arming
@@ -22,22 +22,15 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the package's verdict lines; each lane's own report is still its suite's.
 KEEP="${KEEP/::error::/::error::doc-limits: unknown argument}"
 KEEP="${KEEP%)}|pre-commit: )"
-ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
 DL="pre-commit: step=doc-limits"
 BATCH="pre-commit: step=commit-guards all --staged"
 LOCAL_NONE="pre-commit: local-entry=none"
 PF_FIRST="pre-commit: base-missing=preflight"
 PF_RAN="pre-commit: step=preflight"
-# The verdict names git's bypass flag; assembled from split tokens so this
-# file never carries the flag itself (the quality corpus reads it as code).
 ERRORS="pre-commit: result=2"
-SCRIPTS="<repo>/.agents/skills/commit-guards/scripts"
-skip() { printf 'pre-commit: lane-absent=%s roots=%s skills=%s fallback=%s/../../%s' "$1" "$2" "$ROOTS" "$3" "$1"; } # LANE SEARCHED SCRIPTS-DIR
-# The lane lines of a commit whose chain runs from SCRIPTS-DIR with the
-# committing tree at SEARCHED and no preflight installed.
-lanes() { printf '%s;%s;%s;%s;%s' "$DL" "$(skip preflight "$1" "$2")" "$(skip bot-instructions "$1" "$2")" "$BATCH" "$LOCAL_NONE"; } # SEARCHED SCRIPTS-DIR
-CLEAN="$(lanes '<repo>' "$SCRIPTS");$CHAIN_OK"
-BLOCKS="$(lanes '<repo>' "$SCRIPTS");$BLOCKED"
+CHAIN="$DL;$BATCH;$LOCAL_NONE"
+CLEAN="$CHAIN;$CHAIN_OK"
+BLOCKS="$CHAIN;$BLOCKED"
 # Both baked scripts paths, so the helper reaches the search: the committing
 # tree's own render at the recorded place would otherwise run first. A baked
 # value spans lines when the project name holds a newline, so each blanking
@@ -139,7 +132,6 @@ fx_project_root() {
   settings 'DOC_LIMITS_CLASSES = "*.md=1k"'
   stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"
 }
-SUB_SCRIPTS="<repo>/sub/.agents/skills/commit-guards/scripts"
 # A copy installed outside every skill root finds its siblings beside
 # itself: neither the committing tree nor a project root carries them.
 fx_vendored() {
@@ -154,18 +146,16 @@ fx_vendored() {
   settings 'DOC_LIMITS_CLASSES = "*.md=1k"'
   stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"
 }
-VENDOR_SCRIPTS="<repo>/vendor/commit-guards/scripts"
-CLAUDE_SCRIPTS="<repo>/.claude/skills/commit-guards/scripts"
 run_rows \
-  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $(lanes '<repo>' "$CLAUDE_SCRIPTS");$CHAIN_OK;${MSG_OK}feat: add a|" \
-  "control: the rediscovered chain still blocks|fx_copy_marker|$ONE|commit|feat: add b|rc=1 $(lanes '<repo>' "$CLAUDE_SCRIPTS");$BLOCKED|" \
+  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $CHAIN;$CHAIN_OK;${MSG_OK}feat: add a|" \
+  "control: the rediscovered chain still blocks|fx_copy_marker|$ONE|commit|feat: add b|rc=1 $CHAIN;$BLOCKED|" \
   "a package beside an external git directory is not this repository's: the checkout's own package gates|fx_separate|$ONE|commit|feat: separate|rc=1 $BLOCKS|" \
   "a package under the git directory's parent inside the work tree is not the main checkout's|fx_inside|$ONE|commit|feat: inside|rc=1 $BLOCKS|" \
-  "a linked worktree is served by the main checkout's package|fx_linked|$ONE|commit|feat: linked|rc=1 $(lanes '<root>/wt-linked and <repo>' "$SCRIPTS");$BLOCKED|" \
+  "a linked worktree is served by the main checkout's package|fx_linked|$ONE|commit|feat: linked|rc=1 $CHAIN;$BLOCKED|" \
   "a checkout reached through a symlink is still gated, through its own root|fx_symlinked|$ONE|commit-here|feat: via link|rc=1 $BLOCKS|" \
   "with the package gone the search fails closed and names every root|fx_no_package|$ONE|commit|feat: add a|rc=1 kendex-guards: lane-missing=pre-commit|" \
-  "a copy outside every skill root finds doc-limits beside itself, and it gates|fx_vendored|$ONE|commit|feat: add big|rc=1 $(lanes '<repo>' "$VENDOR_SCRIPTS");$BLOCKED|" \
-  "a project below the work-tree root finds a sibling under another of its skill roots, and it gates|fx_project_root|$ONE|commit|feat: add big|rc=1 $(lanes '<repo> and <repo>/sub' "$SUB_SCRIPTS");$BLOCKED|"
+  "a copy outside every skill root finds doc-limits beside itself, and it gates|fx_vendored|$ONE|commit|feat: add big|rc=1 $CHAIN;$BLOCKED|" \
+  "a project below the work-tree root finds a sibling under another of its skill roots, and it gates|fx_project_root|$ONE|commit|feat: add big|rc=1 $CHAIN;$BLOCKED|"
 
 echo "=== a consumer's hook is given back byte for byte ==="
 over() { R="$(new_repo "$1")"; printf '%b' "$2" >"$R/.git/hooks/pre-commit"; chmod "${3:-0755}" "$R/.git/hooks/pre-commit"; } # NAME BODY [MODE]
@@ -210,7 +200,7 @@ fx_pf_dies() {
   printf '#!/bin/sh\necho "preflight: cannot source lib/findings.sh" >&2\nexit 2\n' >"$R/.agents/skills/preflight/scripts/preflight"
   chmod +x "$R/.agents/skills/preflight/scripts/preflight"
 }
-PF_LANES_TAIL="$(skip bot-instructions '<repo>' "$SCRIPTS");$BATCH;$LOCAL_NONE"
+PF_LANES_TAIL="$BATCH;$LOCAL_NONE"
 run_rows \
   "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
   "a staged fail-open script blocks through preflight|fx_pf_blocks|$ONE|commit|feat: add loose|rc=1 $DL;$PF_RAN;$PF_LANES_TAIL;$BLOCKED|" \
@@ -234,8 +224,8 @@ VERDICT='#!/usr/bin/env bash\necho "doc-limits: FAIL ok.txt over its ceiling"\ne
 fx_fork_rejects() { fork fork-rejects "$REJECTS"; }
 fx_fork_verdict() { fork fork-verdict "$VERDICT"; }
 run_rows \
-  "a fork that refuses --staged is a step that did not complete, and blocks|fx_fork_rejects|$ONE|commit|feat: add ok|rc=1 $DL;::error::doc-limits: unknown argument '--staged' (see --help);pre-commit: step-incomplete=doc-limits:2;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$ERRORS|" \
-  "a fork's own verdict blocks like the skill's|fx_fork_verdict|$ONE|commit|feat: add ok|rc=1 $DL;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$BLOCKED|"
+  "a fork that refuses --staged is a step that did not complete, and blocks|fx_fork_rejects|$ONE|commit|feat: add ok|rc=1 $DL;::error::doc-limits: unknown argument '--staged' (see --help);pre-commit: step-incomplete=doc-limits:2;$PF_LANES_TAIL;$ERRORS|" \
+  "a fork's own verdict blocks like the skill's|fx_fork_verdict|$ONE|commit|feat: add ok|rc=1 $DL;$PF_LANES_TAIL;$BLOCKED|"
 
 echo "=== a project name survives every byte it may hold ==="
 # The project the helper was armed from is baked into it as a shell
@@ -262,14 +252,11 @@ fx_nasty_check() { nasty_armed nasty-check; }
 fx_nasty_own() { nasty_armed nasty-own; printf '.gitignore\n' >"$R/.gitignore"; stage_marker; }
 fx_nasty_commit() { nasty_armed nasty-commit; blank_baked; printf '.gitignore\n' >"$R/.gitignore"; stage_marker; }
 fx_nasty_uninstall() { nasty_armed nasty-uninstall; }
-# The fallback path ends with a newline; the header replaces it with '?'.
-nasty_skip() { printf 'pre-commit: lane-absent=%s roots=<repo> and <repo>/%s skills=%s fallback=<repo>/%s?/.agents/skills/commit-guards/scripts/../../%s' "$1" "$NASTY" "$ROOTS" "$NASTY" "$1"; } # LANE
-NASTY_LANES="$DL;$(nasty_skip preflight);$(nasty_skip bot-instructions);$BATCH;$LOCAL_NONE"
 run_rows \
   "a project named with every awkward class arms|fx_nasty_install||install||rc=0 $ARMED|" \
   "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
-  "and the helper runs the render at the recorded place under that name, whose chain blocks|fx_nasty_own|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
-  "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
+  "and the helper runs the render at the recorded place under that name, whose chain blocks|fx_nasty_own|$ONE|commit|feat: add b|rc=1 $CHAIN;$BLOCKED|" \
+  "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $CHAIN;$BLOCKED|" \
   "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>"
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"

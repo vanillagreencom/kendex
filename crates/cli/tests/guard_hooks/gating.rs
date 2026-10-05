@@ -147,32 +147,29 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
     assert!(said(&out).contains("todo-ban"), "{}", said(&out));
 }
 
-/// A sibling gate the work tree carries joins the chain, and one it does
-/// not carry is an announced skip rather than a silently missing check.
+/// An installed sibling joins the chain. An absent sibling leaves the
+/// chain clean and prints no missing-package notice.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
+fn installed_sibling_gates_join_the_chain_and_absent_ones_are_silent() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
     install_package(home, &root, &["commit-guards"]);
 
     let without = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert!(without.status.success(), "{}", said(&without));
     assert!(
-        said(&without).contains("pre-commit: lane-absent=doc-limits "),
+        !said(&without).contains("pre-commit: lane-absent="),
         "{}",
         said(&without)
     );
 
     install_package(home, &root, &["doc-limits"]);
     let with = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert!(with.status.success(), "{}", said(&with));
     assert!(
         said(&with).contains("pre-commit: step=doc-limits"),
-        "{}",
-        said(&with)
-    );
-    assert!(
-        !said(&with).contains("pre-commit: lane-absent=doc-limits "),
         "{}",
         said(&with)
     );

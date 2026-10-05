@@ -70,10 +70,12 @@ repo() { # NAME
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
 }
 put() { # PATH KB [FILL]
   mkdir -p "$R/$(dirname "$1")"
-  head -c "$(($2 * 1024))" /dev/zero | tr '\0' "${3:-\0}" >"$R/$1"
+  { printf '\0'; head -c "$(($2 * 1024 - 1))" /dev/zero | tr '\0' "${3:-\0}"; } >"$R/$1"
   git -C "$R" add -A
 }
 commit() { git -C "$R" commit -qm "${1:-seed}"; }
@@ -114,6 +116,51 @@ run_rows \
   "a 2 KB addition at ceiling 1 KB fails naming file, bytes and ceiling, carrying the remedy and counting both staged files|staged over big.bin 2|$C=1||rc=1 $(over big.bin 2048 2 1);$(near small.bin 1024 1024 100);$(failed 1 2)" \
   "a 205 KB addition fails under the built-in 200 KB|staged default-over big.bin 205|||rc=1 $(over big.bin 209920 205 200);$(failed 1 2 200)" \
   "control: a 100 KB addition passes under the built-in default|staged default-under ok.bin 100|||rc=0 $(ok 2 "$STAGED" 200)"
+
+
+echo "=== text and source files have no ceiling or warning ==="
+text_file() { repo "$1"; head -c 307200 /dev/zero | tr '\0' 'x' >"$R/$2"; git -C "$R" add -A; }
+run_rows \
+  "a 300 KB source file passes the default ceiling|text_file large-source source.rs|||rc=0 $(ok 1 "$STAGED" 200)" \
+  "a 300 KB text file passes the default ceiling|text_file large-text document.md|||rc=0 $(ok 1 "$STAGED" 200)" \
+  "a 300 KB binary fails the default ceiling|staged large-binary blob.bin 300|||rc=1 $(over blob.bin 307200 300 200);$(failed 1 2 200)"
+
+text_baseline() { text_file "$1" source.rs; baseline 'source.rs\t999999\n'; }
+text_to_binary() { text_file text-to-binary source.rs; commit; put source.rs 300; }
+run_rows \
+  "a text baseline cannot impose a ceiling on source|text_baseline source-baseline||--all|rc=0 $(ok 2 "$SWEEP" 200)" \
+  "changing large text to binary adds a blob|text_to_binary|||rc=1 $(over source.rs 307200 300 200);$(failed 1 1 200)"
+
+# The text cases turn red when a disposable copy loses content classification.
+mkdir -p "$TMP/mutant"
+cp -R "$SKILL_DIR/scripts" "$TMP/mutant/scripts"
+MUTANT="$TMP/mutant/scripts/byte-ceiling"
+python3 - "$MUTANT" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = '    if ! gg_blob_is_binary "$GG_TMP/blob" "$f"; then'
+assert s.count(needle) == 1
+p.write_text(s.replace(needle, '    if false; then'))
+EDIT
+text_file text-control source.rs
+control_rc=0
+(cd "$R" && "$MUTANT" --staged >/dev/null 2>&1) || control_rc=$?
+assert_eq "control: a ceiling on text rejects the source fixture" "1" "$control_rc"
+
+# Removing the binary refusal turns the binary fixture green.
+python3 - "$MUTANT" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = '  if [ "$size" -gt "$CEILING_BYTES" ]; then'
+assert s.count(needle) == 1
+p.write_text(s.replace(needle, '  if false; then'))
+EDIT
+staged binary-control blob.bin 300
+control_rc=0
+(cd "$R" && "$MUTANT" --staged >/dev/null 2>&1) || control_rc=$?
+assert_eq "control: removing the binary refusal permits the large blob" 0 "$control_rc"
 
 echo "=== a change: past the ceiling fails; an oversized file may shrink or hold, not grow; a rename is no addition ==="
 grown() { repo "$1"; put seed.bin "$2"; commit; } # NAME KB — one committed file of KB
@@ -237,21 +284,20 @@ echo "=== a file under the ceiling but within reach of it is named, and the run 
 # 1000 bytes against a 1024-byte ceiling is 97 percent; 900 is 87. The warn
 # threshold is a percent of the ceiling in bytes, so a row states the bytes it
 # stages rather than a kibibyte count.
-near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero | tr '\0' 'x' >"$R/${3:-near.txt}"; git -C "$R" add -A; } # NAME BYTES [PATH]
+near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero >"$R/near.bin"; git -C "$R" add -A; } # NAME BYTES
 run_rows \
-  "a staged file at 97 percent of the ceiling is named, with its bytes, the ceiling and the percent, and the run still passes|near_fx warn-over 1000|$C=1||rc=0 $(near near.txt 1000 1024 97);$(ok 1)" \
-  "a Markdown file at 97 percent of the ceiling is neither named nor counted: the exemption covers the notice|near_fx warn-markdown 1000 near.md|$C=1||rc=0 $(ok 0)" \
+  "a staged file at 97 percent of the ceiling is named, with its bytes, the ceiling and the percent, and the run still passes|near_fx warn-over 1000|$C=1||rc=0 $(near near.bin 1000 1024 97);$(ok 1)" \
   "control: the same file at 87 percent is silent|near_fx warn-under 900|$C=1||rc=0 $(ok 1)" \
-  "the smallest file the default threshold holds is named: 922 bytes is the first at or above 90 percent of 1024|near_fx warn-exact 922|$C=1||rc=0 $(near near.txt 922 1024 90);$(ok 1)" \
+  "the smallest file the default threshold holds is named: 922 bytes is the first at or above 90 percent of 1024|near_fx warn-exact 922|$C=1||rc=0 $(near near.bin 922 1024 90);$(ok 1)" \
   "control: one byte below that is silent|near_fx warn-just-under 921|$C=1||rc=0 $(ok 1)" \
-  "the threshold is inclusive: a file at exactly the percent, 512 bytes against 50 percent of 1024, is named|near_fx warn-inclusive 512|$C=1,$W=50||rc=0 $(near near.txt 512 1024 50);$(ok 1)" \
+  "the threshold is inclusive: a file at exactly the percent, 512 bytes against 50 percent of 1024, is named|near_fx warn-inclusive 512|$C=1,$W=50||rc=0 $(near near.bin 512 1024 50);$(ok 1)" \
   "control: one byte under exactly the percent is silent|near_fx warn-exclusive 511|$C=1,$W=50||rc=0 $(ok 1)" \
   "COMMIT_GUARDS_BYTE_WARN_PCT moves the threshold: at 95 the 87-percent file stays silent while a lower setting names it|near_fx warn-setting 900|$C=1,$W=95||rc=0 $(ok 1)" \
-  "the same file at a warn percent of 80 is named|near_fx warn-setting-low 900|$C=1,$W=80||rc=0 $(near near.txt 900 1024 87);$(ok 1)" \
-  "a file past the ceiling still fails and is not doubly reported as near it|near_fx warn-over-ceiling 2000|$C=1||rc=1 $(over near.txt 2000 2 1);$(failed 1 1)" \
+  "the same file at a warn percent of 80 is named|near_fx warn-setting-low 900|$C=1,$W=80||rc=0 $(near near.bin 900 1024 87);$(ok 1)" \
+  "a file past the ceiling still fails and is not doubly reported as near it|near_fx warn-over-ceiling 2000|$C=1||rc=1 $(over near.bin 2000 2 1);$(failed 1 1)" \
   "a non-numeric warn percent is exit 2, quoting it|near_fx warn-bad 100|$C=1,$W=abc||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:abc" \
   "a zero warn percent is exit 2: every file is at or above nothing|near_fx warn-zero 100|$C=1,$W=0||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:0" \
-  "control: 100 is the top of the range and is accepted|near_fx warn-hundred 1024|$C=1,$W=100||rc=0 $(near near.txt 1024 1024 100);$(ok 1)" \
+  "control: 100 is the top of the range and is accepted|near_fx warn-hundred 1024|$C=1,$W=100||rc=0 $(near near.bin 1024 1024 100);$(ok 1)" \
   "a warn percent above the range is exit 2: past the ceiling the notice would be off with no word|near_fx warn-101 100|$C=1,$W=101||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:101" \
   "a warn percent large enough to overflow the comparison is refused by the same bound, not measured|near_fx warn-overflow 10|$C=1,$W=9007199254740993||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:9007199254740993"
 

@@ -54,4 +54,4 @@ Run [start-worktree.md](start-worktree.md) § 5.
 
 ## Escape
 
-A branch whose class is wider than `small` ends this run. The run stops where it stands and reports the `item-tier` line. The item relaunches at the class that line names, on the branch it left, by the route [micro.md](micro.md) § Escape gives a lane. That session's [start-worktree.md](start-worktree.md) § 1 records the tier as `standard`, which lifts this workflow's bounds.
+A branch whose changed paths select a tier wider than `small` ends this run. The run stops where it stands and reports the `item-tier` line. The item relaunches at the class that line names, on the branch it left, by the route [micro.md](micro.md) § Escape gives a lane. That session's [start-worktree.md](start-worktree.md) § 1 records the tier as `standard`, which lifts this workflow's bounds.

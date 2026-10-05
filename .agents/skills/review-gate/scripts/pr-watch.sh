@@ -9,7 +9,7 @@
 # codes, env — is print_usage below: run with --help.
 # Stdout is the whole-text attention protocol consumed by orch oversee-watch
 # and lane-close: PR number, head prefix, kind, and detail separated by
-# literal tabs. The detail includes the queue and submit-size annotations.
+# literal tabs. The detail includes the queue annotation.
 # Preserve these payloads.
 # Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
@@ -57,16 +57,7 @@ Attention kinds:
                      PR orch's merge route takes past the queue with
                      --admin is unarmed by design until its lane's direct
                      merge attempt, so for such a PR the line reports that
-                     wait, not an eviction. The
-                     line also carries the size orch's branch-size-check
-                     recorded for this head branch at submit (workflow state
-                     `pr.size_check`): the production lines it added, the
-                     allowance the issue stated and the ratio between them,
-                     and the head it measured. A record of any other head
-                     reads `stale`, and no record at all `unavailable`. A
-                     verdict other than pass is named, so a branch over its
-                     test allowance is not read off a passing production
-                     ratio — read only, never re-measured, refusing nothing
+                     wait, not an eviction.
   awaiting-stale     reviewDecision REVIEW_REQUIRED and the head has sat
                      unapproved longer than the quiet period
                      (PR_REVIEW_WAIT_SECS, default 900), counted from the
@@ -103,13 +94,6 @@ Exit codes:
      with no per-PR lines — surface stderr, not just stdout
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
-Env (optional): ORCH_STATE_DIR — where the disarmed line reads the submit
-size record from, else tmp/ under the working directory. That is the
-environment fallback orch's workflow-state honours; its --state-dir flag has
-no equivalent here, so a record written under one reads unavailable. The
-record is found by its own branch name, so one directory serving a fleet can
-match a same-named branch in another repo — the head binding then reads that
-record stale rather than as this PR's size
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
@@ -187,11 +171,6 @@ if [ -z "$AWAITING_AFTER" ]; then
     exit 2
   fi
 fi
-# Read as the file orch's schema documents, not through orch's own
-# workflow-state CLI: orch calls this reducer, so calling back would close a
-# loop, and a PR is not the issue key that CLI addresses state by.
-SIZE_STATE_DIR="${ORCH_STATE_DIR:-tmp}"
-
 attention=0
 errored=0
 
@@ -199,59 +178,6 @@ emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
   emitted_this_pr=1
 }
-
-# The size the reader needs BEFORE arming, read and never re-measured: an
-# oversized branch is refused at submit, and refusing it again here would be
-# one rule in two tools. The kinds block above is the output contract.
-#
-# Every failure lands on stale or unavailable — an absent state directory, a
-# head branch the PR object did not carry, an unreadable file — because this
-# annotation informs a line that already stands, and a local state file must
-# never turn a real disarmed finding into an error.
-size_note() { # branch, head -> the annotation, prefixed for the detail
-  local branch="$1" head="$2" note="" file
-  local files=()
-  if [ -n "$branch" ]; then
-    for file in "$SIZE_STATE_DIR"/workflow-state-*.json; do
-      if [ -f "$file" ]; then files+=("$file"); fi
-    done
-  fi
-  if [ "${#files[@]}" -eq 0 ]; then
-    note="size unavailable: no submit measurement is recorded for this branch"
-  else
-    note="$(jq -rs --arg branch "$branch" --arg head "$head" '
-        def pct($n; $d): (($n * 100) / $d | floor);
-        map(select(type == "object" and (.branch? // "") == $branch
-                   and ((.pr?.size_check? | type) == "object"))
-            | .pr.size_check
-            | select((.head_sha? | type) == "string"
-                     and (.production_lines? | type) == "number")) as $records
-        | ($records | map(select(.head_sha == $head)) | first) as $current
-        | if $current != null then
-            "size "
-            + (if ($current.production_allowance | type) == "number"
-               then "\($current.production_lines) of \($current.production_allowance) production lines added"
-                    + (if $current.production_allowance > 0
-                       then " (\(pct($current.production_lines; $current.production_allowance))% of the allowance)"
-                       else "" end)
-               else "\($current.production_lines) production lines added, no allowance stated"
-               end)
-            + ", measured at \($current.head_sha[0:8])"
-            + (($current.verdict? // "") as $v
-               | if ($v | type) == "string" and $v != "" and $v != "pass"
-                    and $v != "allowance_missing"
-                 then ", submit recorded \($v)" else "" end)
-          elif ($records | length) > 0 then
-            "size stale: the recorded measurement is of \($records[0].head_sha[0:8]), not this head"
-          else
-            "size unavailable: no submit measurement is recorded for this branch"
-          end' "${files[@]}" 2>/dev/null)" \
-      || note=""
-  fi
-  [ -n "$note" ] || note="size unavailable: the recorded measurement could not be read"
-  printf ' — %s' "$note"
-}
-
 
 # Queue membership and GitHub's review decision, in one read. The answer is
 # two words: queued or unqueued, then APPROVED, CHANGES_REQUESTED,
@@ -380,10 +306,6 @@ for number in $pr_numbers; do
   draft="$(jq -r '.draft | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
   created_at="$(jq -r '.created_at' <<<"$row")"
-  # The head branch keys the size record below and nothing else, so it is
-  # NOT part of the well-formed check above: a row without it annotates as
-  # unavailable, the same answer a repo running no orch lane gets.
-  head_ref="$(jq -r '.head.ref // ""' <<<"$row")"
   # Closed/merged PRs need nothing (reachable via explicit PR args). The
   # REST enum is open|closed — anything else is malformed data, and a
   # malformed state must never read as "closed, skip silently".
@@ -548,7 +470,7 @@ for number in $pr_numbers; do
     read_review_state "$number" "$head" "review-state recheck" || continue
     classify_decision "$number" "$head" recheck || continue
     if [ "$review_met" = "1" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
-      emit "$number" "$head" disarmed "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
+      emit "$number" "$head" disarmed "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
       attention=1
     fi
   fi

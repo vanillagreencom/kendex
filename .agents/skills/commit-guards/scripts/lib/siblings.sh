@@ -76,6 +76,7 @@ gg_resolve_sibling() { # SCRIPTS-DIR SKILL — skill directory on stdout; 1 when
 gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean or skipped, 1 violations, 2 could not complete
   local scripts="$1" skill="" lane="" out="" status=0
   if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then
+    [ "$GG_CHECK" = "pre-commit" ] && return 0
     gg_message lane-absent "doc-limits roots=$(gg_searched_roots "$scripts") skills=$GG_SKILL_ROOTS fallback=$scripts/../../doc-limits" "=== $GG_CHECK: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots "$scripts") ($GG_SKILL_ROOTS), nor at $scripts/../../doc-limits)"
     return 0
   fi

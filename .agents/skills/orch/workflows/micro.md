@@ -1,6 +1,6 @@
 # Micro Workflow
 
-The tier for an item whose whole change is a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and waits the merge out: no dev subagent, no review cycle, no QA cycle, and no full validation battery. [oversee.md](oversee.md) § Item Tier picks the tier through `item-tier`, and § 4 holds the branch to the classifier that script reads. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
+The tier for an item estimated to change a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and waits the merge out: no dev subagent, no review cycle, no QA cycle, and no full validation battery. [oversee.md](oversee.md) § Item Tier picks the tier through `item-tier`, and § 4 checks the changed paths through that script. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
@@ -122,10 +122,7 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 
 ## 3. Push And Open The PR
 
-**Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. That range owns the push and its `sha-reconcile:` routing, the size measurement against the item's optional `**Expected delta**` allowance, and the create. This tier changes two things inside it:
-
-- The body is the three lines below rather than step 3's template. No headings and no other section.
-- Step 1's measured verdict routes here: `over` escapes (§ Escape condition 5); `pass` and `allowance_missing` continue.
+**Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. That range owns the push and its `sha-reconcile:` routing, and the create. The body is the three lines below rather than step 3's template. No headings and no other section.
 
 ```markdown
 [What the change does, in one sentence.]
@@ -157,13 +154,13 @@ Read the pull request's exact endpoints through the GitHub skill and bind them a
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
 ```
 
-Classify that range through `item-tier`, which reads the shared harness-ci classifier and accepts no asserted class:
+Check the changed paths through `item-tier`:
 
 ```bash
 [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
 ```
 
-The accepted answer is `tier=micro`: the classifier measured `render`, `trivial` or `micro`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.
+The accepted answer is `tier=micro`. A path rule that selects `small` or `standard`, or a command failure, escapes (§ Escape condition 6). The measured line count cannot change the tier.
 
 Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base and resolve its mode, per [Gate-mode routing](../references/gates.md#gate-mode-routing):
 
@@ -171,7 +168,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base and resolve its mode, per [Ga
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7). An `off` mode ends the micro route without removing GitHub's approval requirement.
+Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 6). An `off` mode ends the micro route without removing GitHub's approval requirement.
 
 Ask the canonical merge gate for its readiness object before any merge attempt:
 
@@ -179,13 +176,13 @@ Ask the canonical merge gate for its readiness object before any merge attempt:
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --check
 ```
 
-Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 7). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
+Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 6). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
 
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The class was measured over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
 
-Its § 3 is skipped, so nothing waits on a reviewer before § 5 step 1, and only that step's CI wait, ahead of its direct attempt, waits on CI. § 5 step 1 then attempts the prepared head and owns the queue wait to a terminal verdict. A refusal `ci-classify-refusal` marks `retry: same-head`, such as GitHub still computing mergeability, is retried on that head by re-entering the step under [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound and is not an escape; its limit stop ends the run as a merge-pr verdict. Any other refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
+Its § 3 is skipped, so nothing waits on a reviewer before § 5 step 1, and only that step's CI wait, ahead of its direct attempt, waits on CI. § 5 step 1 then attempts the prepared head and owns the queue wait to a terminal verdict. A refusal `ci-classify-refusal` marks `retry: same-head`, such as GitHub still computing mergeability, is retried on that head by re-entering the step under [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound and is not an escape; its limit stop ends the run as a merge-pr verdict. Any other refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 7).
 
-A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 9).
+A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 8).
 
 ## 5. Return
 
@@ -199,7 +196,6 @@ Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 contro
 |--------|-------|
 | PR | #[PR_NUMBER] |
 | Merge | [MERGE_SHA] or the merge-pr verdict that stopped it |
-| Size | [PRODUCTION] production, [TEST] test lines |
 | Dev phase | [MINUTES], against the § Budget target for the route |
 | Checkout | the branch the main checkout ends on, or `lane` |
 | Escaped | no, or the § Escape condition and the handback it names |
@@ -212,13 +208,12 @@ The tier holds only while the item and its change stay inside it. Each condition
 
 1. § 1 read a container, a blocked child, or a bundle. This tier implements one item's own Done-when and nothing else.
 2. The repository's commit chain is not armed, or the answer could not be read.
-3. The edit reached a file that gates a merge, runs in a commit or turn hook, enforces a guard rule, launches a lane, or sets this tier's own boundary: this workflow, [small.md](small.md), [oversee.md](oversee.md) § Item Tier and the `item-tier` script it runs, `install-git-hooks`, and the measurement `branch-size-check` runs, whose files are the `# [boundary]` group of [references/narrow-change.conf](../references/narrow-change.conf) under the rule that group states. § 2 step 3 reads the changed paths against this class. [references/narrow-change.conf](../references/narrow-change.conf) holds that class as globs a script can read, together with the lock-format, manifest-parser and render-inventory paths the wider `small` class also refuses; every `path` line there escapes this tier except one a `superseded` line names, which is kept for older readers and skipped as the list's header states, so a reader checks a path against every other `path` line. Its `instruction` lines name the agent instruction files, `AGENTS.md` and `SKILL.md` at any depth: an edit reaching one answers `small` where it would earn micro, so it escapes this tier too. It also carries this tier's production ceiling, which `item-tier` selects on.
+3. The edit reached a file that gates a merge, runs in a commit or turn hook, enforces a guard rule, launches a lane, or sets this tier's own boundary: this workflow, [small.md](small.md), [oversee.md](oversee.md) § Item Tier and the `item-tier` script it runs, `install-git-hooks`, and the shared path rules, whose files are the `# [boundary]` group of [references/narrow-change.conf](../references/narrow-change.conf) under the rule that group states. § 2 step 3 reads the changed paths against this class. [references/narrow-change.conf](../references/narrow-change.conf) holds that class as globs a script can read, together with the lock-format, manifest-parser and render-inventory paths the wider `small` class also refuses; every `path` line there escapes this tier except one a `superseded` line names, which is kept for older readers and skipped as the list's header states, so a reader checks a path against every other `path` line. Its `instruction` lines name the agent instruction files, `AGENTS.md` and `SKILL.md` at any depth: an edit reaching one answers `small` where it would earn micro, so it escapes this tier too. It also carries this tier's production ceiling, which `item-tier` selects on.
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
-5. `branch-size-check` reports `over`.
-6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
-8. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds pending CI and an unreadable GitHub answer beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
-9. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step, by a push, or by a retarget that changes the class or moves the pull request onto a base that requires no approval without moving the head.
+5. A review finding on the pull request needs a change condition 3 excludes.
+6. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
+7. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds pending CI and an unreadable GitHub answer beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
+8. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step, by a push, or by a retarget that changes the class or moves the pull request onto a base that requires no approval without moving the head.
 
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 

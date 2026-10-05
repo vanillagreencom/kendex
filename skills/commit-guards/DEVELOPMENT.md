@@ -101,6 +101,8 @@ Stated once, in CHECKS.md § todo-ban. At `--staged` the change set is collected
 
 ## byte-ceiling sizing
 
+The shared binary classifier selects blobs for the ceiling and warning. Text and source files are not sized against the ceiling. Large binary blobs remain in every clone.
+
 Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling, so which tree the source blob comes from decides what the ratchet permits: `--base` takes it from the merge base, `--against` from the ref's own tree, `--staged` from the index's parent. `--all` has no source blob; its prior is the file's row in `COMMIT_GUARDS_BYTE_BASELINE`, read from the index. Rename detection is pinned on and held to exact content in every lane that diffs.
 
 ## suppression-ban patterns

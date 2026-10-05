@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# byte-ceiling — tracked files a change puts over the byte ceiling fail
+# byte-ceiling — tracked binary files a change puts over the byte ceiling fail
 # (default 200 KB). A touched file already over the ceiling may stay the
 # same size or shrink, so adoption does not freeze the work that reduces it.
 # A Markdown file is outside the ceiling: a document has no byte limit, and
@@ -29,7 +29,7 @@
 # declared baseline (path<TAB>bytes), and a row looser than its file or naming
 # no oversized file fails, so the declaration only tightens.
 #
-# A file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
+# A binary file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
 # of it gets one near-ceiling notice and no violation: a refusal that arrives
 # only at the wall stops a branch of a dozen commits for a split the round
 # before could have planned.
@@ -52,8 +52,10 @@ usage() {
   cat <<'EOF'
 usage: byte-ceiling [--staged | --base REF | --against REF | --all] [--excludes FILE] [--baseline FILE]
 
-Tracked files a change puts over the byte ceiling fail. An existing file
-already over the ceiling may stay the same size or shrink, but may not grow.
+Binary and non-text blobs over the byte ceiling fail because large blobs
+bloat every clone. Text and source files have no byte ceiling. Content uses
+the shared Git binary classifier, independent of file names and attributes.
+An existing oversized binary file may hold or shrink, but may not grow.
 --staged (default) checks the staged additions and changes; --base REF checks
 additions and changes since the merge-base with REF; --against REF checks
 them between REF's own tree and HEAD; --all sweeps every tracked file.
@@ -73,10 +75,9 @@ baseline (path<TAB>bytes, read from the index): a file at its row passes, one
 past it or with no row fails, and a row larger than its file or naming no
 oversized file fails. An absent baseline is empty.
 
-A file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
-percent of it prints one near-ceiling line and does not fail, so the split is
-planned by the round that comes within reach of the wall rather than by the
-round that meets it. The percent must be 1-100.
+A binary file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
+percent of it prints one near-ceiling line and does not fail. Text files
+never print this notice. The percent must be 1-100.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -308,6 +309,13 @@ while IFS= read -r -d '' sha \
   gg_is_excluded "$f" && continue
   size="$(git cat-file -s "$sha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause blob-size "$f:$sha" "$GG_TMP/dependency.err" "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
   checked=$((checked + 1))
+  if [ $((size * 100)) -ge $((CEILING_BYTES * WARN_PCT)) ] || { [ "$MODE" = "all" ] && baseline_row "$f" >/dev/null; }; then
+    git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/dependency.err" || gg_fail_cause blob-read "$f:$sha" "$GG_TMP/dependency.err" "cannot read blob $sha for '$f'"
+    if ! gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+      [ "$MODE" != "all" ] || matched_rows="$matched_rows$f$NL"
+      continue
+    fi
+  fi
   if [ "$size" -gt "$CEILING_BYTES" ]; then
     prior_size=""
     if [ "$MODE" = "all" ]; then
@@ -318,6 +326,10 @@ while IFS= read -r -d '' sha \
       fi
     elif gg_mode_is_regular "$srcmode"; then
       prior_size="$(git cat-file -s "$srcsha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause prior-size "$f:$srcsha" "$GG_TMP/dependency.err" "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
+      if [ "$prior_size" -gt "$CEILING_BYTES" ]; then
+        git cat-file blob "$srcsha" >"$GG_TMP/prior" 2>"$GG_TMP/dependency.err" || gg_fail_cause prior-read "$f:$srcsha" "$GG_TMP/dependency.err" "cannot read prior blob $srcsha for '$f'"
+        gg_blob_is_binary "$GG_TMP/prior" "$f" || prior_size=""
+      fi
     fi
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ] && [ "$size" -le "$prior_size" ]; then
       # A source blob is the file's own past, so a shrink is progress. A row
@@ -335,7 +347,7 @@ while IFS= read -r -d '' sha \
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ]; then
       gg_message grew "$f:$prior_size:$size:$kb:$CEILING_KB" "The oversized file grew beyond its baseline."
     else
-      gg_message oversized "$f:$size:$kb:$CEILING_KB" "The file exceeds the byte ceiling."
+      gg_message oversized "$f:$size:$kb:$CEILING_KB" "The binary file exceeds the byte ceiling and bloats every clone."
     fi
     echo "  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCLUDES_FILE with its reason"
     violations=$((violations + 1))
@@ -344,7 +356,7 @@ while IFS= read -r -d '' sha \
     # left, and rounding it up would report the threshold for a file that
     # has not reached it.
     gg_message near-ceiling "$f:$size:$CEILING_BYTES:$((size * 100 / CEILING_BYTES))" "The file is within reach of the byte ceiling."
-    echo "  remedies: split the file while it is still cheap; a file that genuinely belongs at that size gets a row in $EXCLUDES_FILE with its reason, or moves to an asset store, Git LFS or build-time generation — crossing the ceiling stops the commit and the push"
+    echo "  remedies: move large blobs to an asset store, Git LFS or build-time generation; a binary file that belongs at that size gets a reasoned row in $EXCLUDES_FILE"
   fi
 done <"$GG_TMP/candidates.z"
 

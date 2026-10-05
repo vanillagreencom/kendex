@@ -2,9 +2,8 @@
 # Tests for item-tier, the gate that assigns an item's cycle.
 #
 # The script runs from a copy laid out as the installed packages are:
-# orch/scripts beside harness-ci/scripts. The classifier is a stub answering
-# what each range row names. Location rows use harness-ci's real shared path
-# rules, not that stub. The ceilings come from narrow-change.conf, so
+# orch/scripts beside harness-ci/scripts. Range and Location rows use
+# harness-ci's shared path rules. The range rows use a real Git repository. The ceilings come from narrow-change.conf, so
 # a boundary row follows the list rather than a second copy of its numbers.
 
 set -euo pipefail
@@ -27,26 +26,7 @@ cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scr
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
-cat >"$LAYOUT/harness-ci/scripts/change-class" <<'SH'
-#!/usr/bin/env bash
-# Answers only the range the rows name, so a swapped or dropped endpoint is
-# a classifier failure rather than a class. The `class:` line carries the
-# measured marker the real classifier prints.
-[ "$*" = "$STUB_ARGV" ] || { echo "stub: unexpected argv: $*" >&2; exit 7; }
-case "$STUB_CLASS" in
-  exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
-  unmeasured)
-    echo "class: class=standard measured=false cause=unresolved-endpoint endpoint=b" >&2
-    printf 'change_class=standard\n' ;;
-  nomarker) printf 'change_class=small\n' ;; # a change-class from before KEN-1638
-  *)
-    printf 'class: class=%s measured=true cause=stub\n' "$STUB_CLASS" >&2
-    printf 'change_class=%s\n' "$STUB_CLASS" ;;
-esac
-SH
-chmod +x "$LAYOUT/harness-ci/scripts/change-class"
 TIER="$LAYOUT/orch/scripts/item-tier"
-export STUB_ARGV="--event pull_request --base b --head h --repo $TMP_ROOT --output /dev/null"
 
 # Two layouts whose ceiling list item-tier cannot use: one without the file,
 # one without the small ceiling line.
@@ -65,14 +45,11 @@ SMALL_MAX="$(conf_value small_max_production)"
   exit 1
 }
 
-# The first stdout line's tier, brief and cause key, the class= token that
-# follows the cause where there is one, and the exit status. The class= token
-# is what separates render, trivial and micro, which all answer tier=micro,
-# and review-pr.md skips the review on class=trivial alone.
+# The first stdout line's tier, brief, cause key and exit status.
 run_tier() { # CLASS ARG...
-  local class="$1" out rc=0
+  local out rc=0
   shift
-  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" STUB_ARGV="$STUB_ARGV" STUB_CLASS="$class" \
+  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" \
     "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
   if [[ "${TIER_RAW:-false}" != true ]]; then
     out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
@@ -90,11 +67,6 @@ ROWS=(
   "-|--production $((MICRO_MAX + 1))|tier=small brief=small cause=estimate-within-small rc=0|an estimate one past the micro ceiling is small"
   "-|--production $SMALL_MAX|tier=small brief=small cause=estimate-within-small rc=0|an estimate at the small ceiling is small"
   "-|--production $((SMALL_MAX + 1))|tier=standard brief=start cause=estimate-past-small rc=0|an estimate one past the small ceiling is standard"
-  "small|--production 1 --base b --head h|tier=small brief=small cause=classifier class=small rc=0|a micro estimate on a small branch takes the wider class"
-  "micro|--production $SMALL_MAX --base b --head h|tier=small brief=small cause=estimate-within-small rc=0|a small estimate on a micro branch takes the wider class"
-  "trivial|--floor small --base b --head h|tier=small brief=small cause=floor class=small rc=0|a floor holds over a narrower branch"
-  "standard|--floor small --base b --head h|tier=standard brief=start cause=classifier class=standard rc=0|a branch past its floor escapes to its class"
-  "exit-2|--floor small --base b --head h|tier=standard brief=start cause=classifier-failed rc=0|a classifier that cannot answer is standard"
   "-|--production 1 --path kendex.settings.toml|tier=standard brief=start cause=configuration-source rc=0|a settings Location takes the classifier's class and cause"
   "-|--production 1 --path kendex.toml|tier=standard brief=start cause=configuration-source rc=0|a manifest Location takes the classifier's class and cause"
   "-|--production 1 --path kendex-local.toml|tier=standard brief=start cause=configuration-source rc=0|a catalog manifest Location takes the classifier's class and cause"
@@ -111,12 +83,6 @@ ROWS=(
   "-|--production 1 --path skills/x/SKILL.md|tier=small brief=small cause=instruction-file rc=0|a SKILL.md Location is never micro"
   "-|--production 1 --path AGENTS.md|tier=small brief=small cause=instruction-file rc=0|a root AGENTS.md Location is never micro"
   "-|--production $((SMALL_MAX + 1)) --path skills/x/SKILL.md|tier=standard brief=start cause=estimate-past-small rc=0|an instruction Location leaves a wider estimate alone"
-  "unmeasured|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a standard the classifier did not measure says so"
-  "nomarker|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a class with no measured marker is standard"
-  "docs|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unreadable class=docs rc=0|a classifier word outside the classes is standard"
-  "render|--base b --head h|tier=micro brief=micro cause=classifier class=render rc=0|a render branch counts as micro"
-  "trivial|--base b --head h|tier=micro brief=micro cause=classifier class=trivial rc=0|a trivial branch is micro and names its class"
-  "micro|--base b --head h|tier=micro brief=micro cause=classifier class=micro rc=0|a micro branch is micro and names its class, not trivial"
   "-|--production $SMALL_MAX --floor small|tier=small brief=small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause"
   "-||rc=2|no input is a usage error"
   "-|--production 1x|rc=2|a malformed estimate is a usage error"
@@ -140,9 +106,9 @@ done <<ROWS
 --production 1 --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
 --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
 --production $((SMALL_MAX + 2)) --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 2)) estimate=$((SMALL_MAX + 2)) delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
---production 1 --body $TMP_ROOT/empty-body|tier=standard brief=start cause=body-without-tier-inputs rc=0
+--production 1 --body $TMP_ROOT/empty-body|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/empty-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
---production 1 --body $TMP_ROOT/bad-body|rc=2
+--production 1 --body $TMP_ROOT/bad-body|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/missing|rc=2
 ROWS
 TIER_RAW=true
@@ -166,17 +132,6 @@ else
   pass "delta floor regression turns red without the floor"
 fi
 unset TIER_BIN
-cp -R "$LAYOUT" "$TMP_ROOT/no-body-default"
-awk '$0 == "  consider standard body-without-tier-inputs" {hits++; print "  : # consider standard body-without-tier-inputs"; next} {print} END {exit hits == 1 ? 0 : 3}' \
-  "$TIER" > "$TMP_ROOT/no-body-default/orch/scripts/item-tier"
-if cmp -s "$TIER" "$TMP_ROOT/no-body-default/orch/scripts/item-tier"; then
-  echo 'FAIL: body default control changed nothing' >&2; exit 1
-fi
-TIER_BIN="$TMP_ROOT/no-body-default/orch/scripts/item-tier"
-assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/empty-body")" \
-  'tier=micro brief=micro cause=estimate-within-micro rc=0' "control: without the body default an unsized brief narrows"
-unset TIER_BIN
-
 # Must-fail control for the hook body row: the list's one-segment glob needs
 # extglob, and a copy without it reads a hook body as off the list.
 mkdir -p "$TMP_ROOT/no-extglob"
@@ -247,6 +202,47 @@ assert_eq "$(run_tier - --production 1)" \
 TIER_BIN="$TMP_ROOT/no-small-ceiling/orch/scripts/item-tier"
 assert_eq "$(run_tier - --production 1)" \
   "tier=standard brief=start cause=narrow-change-ceilings-missing rc=0" "a missing ceiling is standard"
+unset TIER_BIN
+
+# A branch larger than the launch estimate keeps its tier. Path rules still apply.
+RANGE="$TMP_ROOT/range"
+mkdir -p "$RANGE"
+git -C "$RANGE" init -q
+git -C "$RANGE" config user.email test@example.com
+git -C "$RANGE" config user.name test
+git -C "$RANGE" config gc.auto 0
+git -C "$RANGE" config maintenance.auto false
+printf 'seed\n' >"$RANGE/seed"
+git -C "$RANGE" add -A
+git -C "$RANGE" commit -qm seed
+BASE="$(git -C "$RANGE" rev-parse HEAD)"
+mkdir -p "$RANGE/src"
+awk 'BEGIN {for (i=0;i<1000;i++) print "pub fn source_" i "() {}"}' >"$RANGE/src/main.rs"
+git -C "$RANGE" add -A
+git -C "$RANGE" commit -qm source
+assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE")" \
+  "tier=micro brief=micro cause=estimate-within-micro rc=0" "branch growth does not replace the launch estimate"
+assert_eq "$(run_tier - --floor small --base "$BASE" --head HEAD --repo "$RANGE")" \
+  "tier=small brief=small cause=floor class=small rc=0" "branch growth does not replace the recorded tier"
+printf '# Instructions\n' >"$RANGE/AGENTS.md"
+git -C "$RANGE" add -A
+git -C "$RANGE" commit -qm instructions
+assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE")" \
+  "tier=small brief=small cause=instruction-file rc=0" "a changed instruction file still selects small"
+# The range-path control loses that file while retaining the Git read.
+cp -R "$LAYOUT" "$TMP_ROOT/no-range-paths"
+python3 - "$TMP_ROOT/no-range-paths/orch/scripts/item-tier" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = '      change_class_path "$path" launch'
+assert s.count(needle) == 2
+before, after = s.rsplit(needle, 1)
+p.write_text(before + '      CHANGE_CLASS_PATH=""' + after)
+EDIT
+TIER_BIN="$TMP_ROOT/no-range-paths/orch/scripts/item-tier"
+assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE")" \
+  "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the instruction file"
 unset TIER_BIN
 
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"

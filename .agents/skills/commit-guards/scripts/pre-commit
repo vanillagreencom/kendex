@@ -5,8 +5,8 @@
 # install carries those sibling skills, then `commit-guards all --staged`,
 # then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL, run only
 # when the commit touches a path COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS names,
-# or on every commit when that setting is empty. Every lane announces itself,
-# a skipped or unconfigured one included.
+# or on every commit when that setting is empty. Installed lanes announce
+# themselves; absent sibling packages produce no output.
 #
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
@@ -111,8 +111,7 @@ if PREFLIGHT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" preflight)"; then
     # a repository's birth is not this chain's job.
     gg_message base-missing preflight "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
-else
-  gg_message lane-absent "preflight roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../preflight" "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+
 fi
 
 # Same sibling contract for the bot-instructions check: the rendered review
@@ -122,8 +121,7 @@ if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
   BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
   [ -x "$BOT_CHECK" ] || gg_fail lane-missing "$BOT_CHECK" "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
   run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
-else
-  gg_message lane-absent "bot-instructions roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../bot-instructions" "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
+
 fi
 
 BATCH="$SCRIPT_DIR/commit-guards"

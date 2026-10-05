@@ -131,6 +131,23 @@ run_rows \
   "an overlong two-byte encoding is not valid UTF-8|fx_overlong|||rc=2 ${ERR}encoding-line=changelog.d/fixed/o.md:2" \
   "the first invalid line is named, and only it|fx_two_bad|||rc=2 ${ERR}encoding-line=changelog.d/fixed/t.md:2"
 
+# Restoring the removed length refusal turns the long-entry case red.
+mkdir -p "$TMP/cap-control"
+cp -R "$SKILL_DIR/scripts" "$TMP/cap-control/scripts"
+python3 - "$TMP/cap-control/scripts/changelog-entries" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = '  checked=$((checked + 1))'
+assert s.count(needle) == 1
+p.write_text(s.replace(needle, needle + '\n  [ "$(wc -c <"$GG_TMP/blob")" -le 200 ] || violations=$((violations + 1))'))
+EDIT
+repo long-control
+frag fixed long.md "- $(rep x 10000)\n"
+control_rc=0
+(cd "$R" && "$TMP/cap-control/scripts/changelog-entries" >/dev/null 2>&1) || control_rc=$?
+assert_eq "control: the removed character ceiling rejects the long fixture" 1 "$control_rc"
+
 echo "=== a fragment is exactly one list item, or it is refused ==="
 fx_empty() { repo empty; frag fixed e.md ''; }
 fx_blank() { repo blank; frag fixed e.md '\n\n'; }

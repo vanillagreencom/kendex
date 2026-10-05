@@ -157,7 +157,7 @@ A plan, a research report, a measurement or a handoff is not repository content.
 
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
-- Instruction markdown states the rule that holds now; a date, an issue number or the story of a change goes to the commit. The commit-guards `prose` lane checks the load-point files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`; review holds the rule everywhere else.
+- Keep history out of agent-loaded markdown so each load carries current instructions. This is writing guidance.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing

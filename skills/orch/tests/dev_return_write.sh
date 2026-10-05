@@ -380,7 +380,7 @@ done
 
 echo "=== --near-ceiling-base runs the installed lane and records what it could answer ==="
 # probe_wt NAME SIZE... — a worktree on branch `work` over `main` that adds one
-# file per SIZE in bytes, with the real byte-ceiling lane installed where a
+# binary per SIZE in bytes, with the real byte-ceiling lane installed where a
 # consumer repository renders it. Under a 1 KB ceiling a 950-byte file is 92
 # percent of it and a 2000-byte file is over it, which makes the lane exit 1.
 probe_wt() {
@@ -389,7 +389,7 @@ probe_wt() {
   shift
   git -C "$dir" switch -q -c work
   for size in "$@"; do
-    printf "%${size}s" '' > "$dir/f$size.txt"
+    head -c "$size" /dev/zero > "$dir/f$size.bin"
   done
   git -C "$dir" add .
   git -C "$dir" commit -q -m work
@@ -399,7 +399,7 @@ probe_wt() {
 }
 NEAR_WT="$(probe_wt probe-near 950)"
 OVER_WT="$(probe_wt probe-over 950 2000)"
-NEAR_LINE="byte-ceiling: near-ceiling=f950.txt:950:1024:92"
+NEAR_LINE="byte-ceiling: near-ceiling=f950.bin:950:1024:92"
 # A lane present but not runnable, and a dangling link at or above it, are
 # broken installs: each records null, never the empty list an absent lane gets.
 NOEXEC_WT="$(new_repo probe-noexec)"

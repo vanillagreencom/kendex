@@ -264,7 +264,6 @@ the settings naming required contexts are queue-only|queue_only=true cause=queue
 the machine-local settings naming required contexts are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
 the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
 the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
-the branch measurement is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/branch-size-check glob=*skills/orch/scripts/branch-size-check|skills/orch/scripts/branch-size-check=2
 the branch measurement's library is queue-only|queue_only=true cause=queue-path path=.agents/skills/orch/scripts/lib/branch-growth.sh glob=*skills/orch/scripts/lib/branch-growth.sh|.agents/skills/orch/scripts/lib/branch-growth.sh=2
 the measurement's settings reader is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh|skills/orch/scripts/lib/kendex-env.sh=2
 the measurement's base resolver is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch|skills/orch/scripts/resolve-base-branch=2
@@ -432,7 +431,7 @@ assert_eq "an empty diff is queue-only under its own cause" \
 # one required row say the reader found the group.
 boundary_rows="$(boundary_globs "$ORCH_PACKAGE/references/narrow-change.conf")"
 assert_eq "the boundary group is read" 1 \
-  "$(grep -cxF '*skills/orch/scripts/branch-size-check' <<<"$boundary_rows" || true)"
+  "$(grep -cxF '*skills/orch/scripts/lib/branch-growth.sh' <<<"$boundary_rows" || true)"
 while IFS= read -r glob; do
   [ -n "$glob" ] || continue
   path="${glob#\*}"

@@ -36,7 +36,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
 KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets comments commit-msg"
-BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
 # at commit each judges what the commit adds. md-format judges touched

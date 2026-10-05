@@ -28,6 +28,8 @@ A path filter that stops a workflow from starting leaves a required context that
 
 The `changes` job of `.github/workflows/skill-tests.yml`: it checks the default branch's classifier out separately, runs it through `.github/actions/change-class`, publishes the class and per-lane verdicts, and every gated job reads them. A new lane reads a verdict from that job and adds its row to `tools/ci-job-set`.
 
+A consumer refresh whose open rolling pull request is queued, merged or closed at run start defers before the refresh. A refused consumer-refresh push defers only after GitHub reports the rolling pull request queued, merged or closed, or a previously observed branch deleted; a push refusal that is GitHub's GH006 merge-queue refusal defers as queued even when that read answers armed or active. Any other refusal of an armed pull request exits 1. A failed or incomplete state read remains a failure. `skills/review-gate/tests/refresh-consumer.test.sh` holds the run-start deferral, the post-refusal ordering and the publication boundary.
+
 ## Decisions
 
 One merge path and consumers pulling renders, [D003](../decisions/D003-one-merge-path.md), amended by [D013](../decisions/D013-admin-merge-green-prs.md), [D016](../decisions/D016-merge-route-reads-bypass.md) and [D018](../decisions/D018-platform-review-requirements.md).

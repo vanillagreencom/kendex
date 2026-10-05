@@ -28,17 +28,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 unset DEV_VALIDATE_RANGE_CMD
 export ORCH_STATE_DIR
 
-# dev-round-write measures a fix round's branch against the issue's expected
-# delta, read here through a gh stub over each worktree's fixture issue body.
-mkdir -p "$TMP_ROOT/bin"
-cat > "$TMP_ROOT/bin/gh" <<'SH'
-#!/usr/bin/env bash
-set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
-SH
-chmod +x "$TMP_ROOT/bin/gh"
-export PATH="$TMP_ROOT/bin:$PATH"
-
 NOW="$(date +%s)"
 DEAD_PID="$(sh -c 'printf "%s" $$')"
 
@@ -89,19 +78,14 @@ new_round() { # NAME ISSUE RID EXIT
 }
 
 # new_round for a fix round: the round record holds items 1 and 2 and its
-# base_sha, ROUND_SHA, and with CUT yes declares a cut against a one-line
-# allowance the fix then exceeds. Unless COMMITTED is no, the round then
+# base_sha and ROUND_SHA. Unless COMMITTED is no, the round then
 # commits its fix, growing the branch, so HEAD_SHA is one commit past
 # ROUND_SHA.
-new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT] [SOURCE]
-  local cut=() source=() allowance="100 lines, 100 test lines"
+new_fix_round() { # NAME N RID EXIT [COMMITTED] [SOURCE]
+  local source=()
   new_round "$1" "issue-$2" "$3" "$4"
-  mkdir -p "$WT/.cache/tracker-fixture"
-  [[ "${6:-no}" == yes ]] && cut=(--cut) && allowance="1 line, 1 test line"
-  [[ -z "${7:-}" ]] || source=(--source "$7")
-  printf '[{"identifier":"issue-%s","description":"**Expected delta**: %s"}]\n' "$2" "$allowance" \
-    > "$WT/.cache/tracker-fixture/issues.json"
-  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} ${source[@]+"${source[@]}"} \
+  [[ -z "${6:-}" ]] || source=(--source "$6")
+  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${source[@]+"${source[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
   # The record's delegation time is the state's, fifty seconds ago, so the
   # run new_round started since then belongs to this round.
@@ -293,19 +277,12 @@ assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
 # A ci run passed at once and left a pr-comments round to the pull request
 # CI: a pass beside it recovers the round.
-new_fix_round fix-ci 782 5-9 none yes no pr-comments
+new_fix_round fix-ci 782 5-9 none yes pr-comments
 add_run "$WT" 1 10 0 "$DEAD_PID" ci
 transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
 run --worktree "$WT" --issue issue-782 --round-id 5-9 --transcript "$TMP_ROOT/fix-ci.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-782-5-9.json" '"\(.validate) \(.validate_mode)"') $("$CHECK" --worktree "$WT" --issue issue-782 --round-id 5-9 --expect-items-from-round 2>/dev/null | jq -r .verdict)" \
   "rc=0 pass ci accept" "a fix round whose run was a ci-mode pass is recovered and accepted" "$TMP_ROOT/stderr"
-# A cut round whose fix grew the branch: the gate's refusal is the acceptance
-# table's retry row to route, so the artifact stays and the round is recovered.
-new_fix_round fix-cut 781 5-8 0 yes yes
-transcript "$TMP_ROOT/fix-cut.jsonl" claude-send 5-8 "$(fix_report "$HEAD_SHA" pass)"
-run --worktree "$WT" --issue issue-781 --round-id 5-8 --transcript "$TMP_ROOT/fix-cut.jsonl"
-assert_eq "rc=$RC ${OUT%% artifact=*} $("$CHECK" --worktree "$WT" --issue issue-781 --round-id 5-8 --expect-items-from-round 2>/dev/null | jq -r '"\(.verdict) \(.reason)"')" \
-  "rc=0 round-recover: recovered retry cut_not_shrunk" "a cut that did not shrink keeps its artifact for the retry row" "$TMP_ROOT/stderr"
 # A report missing a delegated item fails dev-artifact-check's exact-set gate:
 # the written artifact is removed and the round re-delegates.
 new_fix_round fix-short 780 5-7 0

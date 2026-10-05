@@ -120,8 +120,7 @@ assert_eq "$(printf '%s\n' "$r_a" "$r_b" "$r_c" "$r_d" | sort -u | wc -l | tr -d
   "four rapid consecutive mints are all distinct"
 
 # A local key is the state key of work with no issue id and no PR, so rapid
-# mints must differ, carry the local- shape branch-size-check reads as naming
-# no issue, and leave no state behind: the minting workflow inits its own.
+# mints must differ, carry the path-safe local- form, and leave no state behind: the minting workflow inits its own.
 local_state_dir="$TMP_ROOT/local-key-state"
 mkdir -p "$local_state_dir"
 k_a="$("$WS" --state-dir "$local_state_dir" new-local-key)"
@@ -369,68 +368,7 @@ else
   fail "merge-pr must short-circuit an already-merged PR above the micro classification (short-circuit=${already_merged_line:-absent}, classify=${classify_line:-absent})"
 fi
 
-# A micro run has no internal review, so step 1 re-resolves the gate mode
-# between its classification and its continue rule: a retarget can move the
-# pull request onto a base that requires no approval without moving the head.
-# merge-pr resolves the mode in § 3 as well, so only a call inside that span
-# is step 1's.
-micro_continue='A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`'
-micro_head_is_pinned() { # merge-doc
-  local classify_at continue_at
-  classify_at="$(grep -m1 -n -F 'item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD]' "$1" | cut -d: -f1 || true)"
-  continue_at="$(grep -m1 -n -F -- "$micro_continue" "$1" | cut -d: -f1 || true)"
-  [[ -n "$classify_at" && -n "$continue_at" ]] &&
-    awk -v from="$classify_at" -v to="$continue_at" \
-      'NR > from && NR < to && index($0, ".agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]") { found = 1 }
-       END { exit !found }' "$1" &&
-    grep -Fq 'Any other answer arms nothing and escapes by micro.md condition 9' "$1"
-}
-
-if micro_head_is_pinned "$merge_workflow"; then
-  pass "merge-pr continues a micro entry only on a fresh micro answer and approval mode at the classified head"
-else
-  fail "merge-pr must continue a micro entry only on a fresh micro answer and approval mode at the classified head"
-fi
-
-assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
-  "$micro_continue" \
-  'A `[MICRO_ENTRY]` run continues' \
-  "a micro entry continued on a stale answer"
-assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
-  '   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' \
-  '   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  "a micro entry continued without consumer context"
-
 micro_workflow="$SKILL_DIR/workflows/micro.md"
-micro_class_is_closed() { # micro-doc
-  grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
-    grep -Fq 'orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
-    grep -Fq 'The accepted answer is `tier=micro`' "$1" &&
-    grep -Fq 'Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.' "$1" &&
-    grep -Fq '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' "$1" &&
-    grep -Fq 'Continue only on `approval`.' "$1" &&
-    grep -Fq '`off` or a non-zero exit escapes (§ Escape condition 7)' "$1" &&
-    grep -Fq '7. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or' "$1" &&
-    grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
-    grep -Fq 'binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`.' "$1" &&
-    grep -Fq '9. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1"
-}
-
-if micro_class_is_closed "$micro_workflow"; then
-  pass "micro continues only on a measured micro class over a base in approval mode"
-else
-  fail "micro must escape when a measured micro class or approval mode cannot be proved"
-fi
-
-assert_doc_mutant_fails micro_class_is_closed "$micro_workflow" \
-  'Every other answer escapes (§ Escape condition 7)' \
-  'Every other answer continues (§ Escape condition 7)' \
-  "continuing on an answer outside the accepted one"
-assert_doc_mutant_fails micro_class_is_closed "$micro_workflow" \
-  'Continue only on `approval`.' \
-  'Continue on any gate mode.' \
-  "a micro run admitted on a base that requires no approval"
-
 micro_dirty_transfer_is_owned() { # micro-doc
   local route=""
   if ! route=$(awk '

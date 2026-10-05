@@ -585,7 +585,6 @@
   ".agents/skills/orch/schemas/workflow-state.md",
   ".agents/skills/orch/scripts/approval-wait",
   ".agents/skills/orch/scripts/base-freshness",
-  ".agents/skills/orch/scripts/branch-size-check",
   ".agents/skills/orch/scripts/ci-wait",
   ".agents/skills/orch/scripts/container-close",
   ".agents/skills/orch/scripts/copilot-lane-context/extension.mjs",

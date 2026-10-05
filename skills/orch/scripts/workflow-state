@@ -381,9 +381,6 @@ cmd_init() {
         fixed_items: [],
         escalated_items: [],
         audit_issues_created: [],
-        pr: {
-          size_check: null
-        },
         pr_review_baseline: null,
         pr_comment_review: {
           iterations: 0,
@@ -948,9 +945,8 @@ cmd_new_round_id() {
 }
 
 # Mint and print a key for work whose branch carries no issue id and whose PR
-# gives none either: local-<epoch>-<pid>-<random>. The key names no issue, so
-# branch-size-check measures it without reading a tracker, and it matches the
-# path-safe grammar every round writer checks. Nothing is written: the caller
+# gives none either: local-<epoch>-<pid>-<random>. The key names no issue and
+# matches the path-safe grammar every round writer checks. Nothing is written: the caller
 # that minted it owns the key, inits state under it and removes that state.
 # Seconds rather than %N, which macOS date prints as a literal N; the pid keeps
 # two same-second mints from one repository apart.

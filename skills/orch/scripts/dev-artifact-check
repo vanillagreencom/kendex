@@ -55,8 +55,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/branch-growth.sh
-source "$SCRIPT_DIR/lib/branch-growth.sh"
 # Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
@@ -126,8 +124,7 @@ additionally REQUIRES --expect-items-from-round and exits 2 without it: its
 delegated set and authorized additions live in the round record, and omitting
 the flag would check neither. Implement rounds write no round record and stay
 flagless.
-An accepted round-mode implement receipt does not set a fix-round size limit.
-The round's cut_comparison owns the cut comparison. File mode: validates one explicit JSON file (round_id checked only when --round-id
+File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). Its repository is the parent of the file's directory when that
 directory is named tmp and the parent is a git work tree, as dev-return-write
 lays it out; the commit object gate runs against it, and with no such
@@ -152,10 +149,7 @@ additions probe, and an adds[] path beginning with '-' or carrying a space,
 tab, newline, carriage return, form feed or vertical tab. Never recreate the
 record after delegation and never downgrade to --expect-items; mint a fresh
 round.
-A record carrying "cut": true was written by dev-round-write --cut. Acceptance
-uses its recorded allowance, or its production and test counts when unsized.
-Exceeding that comparison is reason=cut_not_shrunk; a failed measurement is
-reason=cut_unmeasurable. Every other gate applies unchanged.
+A record carrying "cut": true records a reviewer or orchestrator scope choice.
 Protected-addition scope, and what the gate does once a rebase orphans base_sha:
 skills/orch/schemas/dev-round.md § Protected additions.
 A kind fix receipt checked against its round record also carries the mode a
@@ -170,7 +164,7 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
                       "commit_unverifiable"|"comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"additions_unattributable"|
-                      "cut_not_shrunk"|"cut_unmeasurable"|"mode_mismatch"|
+                      "mode_mismatch"|
                       "incomplete",
               warning: "commit_unreachable"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
@@ -191,8 +185,7 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
 fix round mode (round record only) → mode_mismatch → commit object →
 commit_unverifiable or commit_unresolvable → additions probe → comparison_failed or
-classifier_failed or unapproved_additions or additions_unattributable → cut
-size (declared cuts only) → cut_not_shrunk or cut_unmeasurable → items →
+classifier_failed or unapproved_additions or additions_unattributable → items →
 incomplete → valid.
 
 Exit status reflects artifact validity only: a valid artifact whose recorded
@@ -239,14 +232,6 @@ reason meanings when ok=false:
               classification is inferred from a failed comparison.
   classifier_failed
               the protected-addition classifier produced no valid JSON array.
-  cut_not_shrunk
-              the round record declares a cut ("cut": true) but the branch is
-              still above its recorded cut_comparison. A fresh retry preserves
-              that comparison through dev-round-write --cut-from-round.
-  cut_unmeasurable
-              a declared cut whose recorded comparison could not be read, or a
-              branch git could not diff against its base. A cut is never
-              accepted on an unmeasured branch.
   mode_mismatch
               a fix receipt records a validation mode other than the one its
               round runs, such as the implement round's full run named where
@@ -388,16 +373,6 @@ message() {
     unapproved-additions)
       printf 'dev-artifact-check: unapproved-additions paths=%s\n' "$refused_additions"
       printf 'The round added files outside its declared additions.\n'
-      ;;
-    cut-unmeasurable)
-      printf 'dev-artifact-check: cut-unmeasurable repo=%s\n' "$repo"
-      printf '%s\n' "$BRANCH_GROWTH_ERROR"
-      ;;
-    cut-oversized)
-      printf 'dev-artifact-check: cut-oversized classes=%s production=%s allowance=%s tests=%s test-allowance=%s\n' \
-        "$BRANCH_ALLOWANCE_CLASSES" "$BRANCH_ALLOWANCE_PRODUCTION" \
-        "$BRANCH_ALLOWANCE_PRODUCTION_LIMIT" "$BRANCH_ALLOWANCE_TESTS" "$BRANCH_ALLOWANCE_TEST_LIMIT"
-      printf 'The cut round exceeds its recorded size comparison.\n'
       ;;
     verdict-unreadable)
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
@@ -711,9 +686,8 @@ collect_unapproved_additions() {
 # {ok, path, reason, warning}, returns 0 iff valid.
 # want_round "" skips the round_id match (--file mode without --round-id).
 # expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
-# round_record "" skips the three record-derived gates — the fix-round mode
-# check, protected additions (no delegated adds set) and the declared-cut size
-# check.
+# round_record "" skips the record-derived fix-round mode and protected-addition
+# checks (no delegated adds set).
 # repo "" is --file mode with no resolved repository, and refuses the commit
 # (round mode always passes its worktree). A round-mode worktree that is not a
 # git repo skips the commit checks — production worktrees always are, and a
@@ -826,21 +800,6 @@ validate_artifact() {
       message unapproved-additions >&2
       emit false "$file" "unapproved_additions" "" "" "$refused_additions"
       return 1
-    fi
-    # A declared cut keeps the comparison recorded when it was delegated.
-    if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
-      local measured=0
-      branch_allowance_check "$repo" "${issue:-}" "$SCRIPT_DIR" "$round_record" || measured=$?
-      if (( measured != 0 )); then
-        message cut-unmeasurable >&2
-        emit false "$file" "cut_unmeasurable"
-        return 1
-      fi
-      if [[ "$BRANCH_ALLOWANCE_STATUS" == over ]]; then
-        message cut-oversized >&2
-        emit false "$file" "cut_not_shrunk"
-        return 1
-      fi
     fi
   fi
   if [[ -n "$expect_items" ]]; then

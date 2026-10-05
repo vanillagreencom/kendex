@@ -251,7 +251,7 @@ When the list is non-empty, pass those exact repository-relative paths to the wr
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
-Every measured size verdict permits delegation. Use the round's `size_check` report for the cut decision in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. Exit 3 means malformed allowance text. Other nonzero exits name a usage or environment failure. Report either failure and stop. A `pr-[PR_NUMBER]` key names no issue, so the checker measures the branch and records `allowance_missing`.
+A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A nonzero exit names a usage or environment failure. Report it and stop.
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 

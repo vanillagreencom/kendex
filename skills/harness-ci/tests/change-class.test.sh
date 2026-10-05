@@ -583,11 +583,8 @@ assert_eq "a copilot hook registry file is a configuration source" \
   "cause=configuration-source path=.github/hooks/guard.json glob=.github/hooks/*.json" \
   "$(printf '%s\n' "$copilot_hook_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
-# The micro-tier measurement's own boundary: a two-line edit to a script it
-# resolves its range or its settings through escapes the narrow classes,
-# whether the measurement reaches it by `source` or as an argument. The
-# Linear CLI it runs to read the allowance is outside that boundary, so an
-# ordinary edit to it keeps the class its size earns.
+# The settings reader is protected by the shared path rules. An ordinary
+# runtime script outside those paths keeps the class its size earns.
 boundary_rows=0
 while IFS='|' read -r boundary_path boundary_line; do
   boundary_rows=$((boundary_rows + 1))
@@ -601,7 +598,6 @@ while IFS='|' read -r boundary_path boundary_line; do
   assert_eq "$boundary_path answers ${boundary_line%% *}" "class: $boundary_line" \
     "$(printf '%s\n' "$boundary_err" | grep '^class: ')"
 done <<'BOUNDARY'
-skills/orch/scripts/resolve-base-branch|class=standard measured=true cause=excluded-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch
 skills/orch/scripts/lib/kendex-env.sh|class=standard measured=true cause=excluded-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh
 skills/linear/scripts/linear.sh|class=micro measured=true cause=production-within-micro production=2
 BOUNDARY
@@ -1374,14 +1370,8 @@ PATH="$stub_bin:$PATH" assert_class \
 assert_eq "and the file its settings name never ran" "absent" \
   "$([ -e "$marker" ] && echo present || echo absent)"
 
-# change-class reads the base tip's settings files and branch-size-check the
-# worktree's, through the same reader. They count the same lines where the
-# base tip and the branch hold the same settings, as here, and can differ for
-# a branch forked before main changed one, which the fork-point rows below
-# build. A test glob in the settings file moves a 30-line script from
-# production to test in both; read from nowhere, it stays production and
-# change-class answers small. The process environment still outranks the
-# file.
+# The base tip's test glob moves a script from production to test. The
+# process environment outranks that file.
 ladder="$(new_repo change-class-ladder)"
 printf '[env]\nORCH_SIZE_TEST_PATHS = "checks/*"\n' >"$ladder/kendex.settings.toml"
 commit_paths "$ladder" baseline seed.txt
@@ -1400,18 +1390,7 @@ done <<'LADDER'
 change-class reads the test glob from the base revision's settings||class: class=micro measured=true cause=production-within-micro production=0
 and the process environment outranks that file|none/*|class: class=small measured=true cause=production-within-small subsystem=checks
 LADDER
-ladder_state="$SANDBOX/ladder-state"
-"$TEST_DIR/../../orch/scripts/workflow-state" --state-dir "$ladder_state" \
-  init pr-1 --worktree "$ladder" --branch case >/dev/null
-ladder_json="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
-  WORKTREE_DEFAULT_BRANCH=main "$TEST_DIR/../../orch/scripts/branch-size-check" \
-  --worktree "$ladder" --issue pr-1 --state-dir "$ladder_state" --json 2>/dev/null)" || true
-assert_eq "branch-size-check counts the same lines from the same file" "0,30" \
-  "$(jq -r '[.production_lines, .test_lines] | map(tostring) | join(",")' <<<"$ladder_json" 2>/dev/null)"
-
-# Both settings files load in the ladder's order, so .kendex/settings.toml
-# outranks kendex.settings.toml in change-class as it does in
-# branch-size-check.
+# .kendex/settings.toml outranks kendex.settings.toml.
 order="$(new_repo change-class-ladder-order)"
 printf '[env]\nORCH_SIZE_TEST_PATHS = "none/*"\n' >"$order/kendex.settings.toml"
 mkdir -p "$order/.kendex"
@@ -1428,15 +1407,6 @@ order_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
 assert_eq ".kendex/settings.toml outranks kendex.settings.toml" \
   "class: class=micro measured=true cause=production-within-micro production=0" \
   "$(printf '%s\n' "$order_err" | grep '^class: ')"
-order_state="$SANDBOX/ladder-order-state"
-"$TEST_DIR/../../orch/scripts/workflow-state" --state-dir "$order_state" \
-  init pr-2 --worktree "$order" --branch case >/dev/null
-order_json="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
-  WORKTREE_DEFAULT_BRANCH=main "$TEST_DIR/../../orch/scripts/branch-size-check" \
-  --worktree "$order" --issue pr-2 --state-dir "$order_state" --json 2>/dev/null)" || true
-assert_eq "and branch-size-check ranks the two files the same way" "0,30" \
-  "$(jq -r '[.production_lines, .test_lines] | map(tostring) | join(",")' <<<"$order_json" 2>/dev/null)"
-
 # The settings are the base endpoint's, never the merge base's: the author
 # picks the merge base by choosing where to fork. Main allowlists src/ after
 # the fork point, which takes away the documentation set, so a 10-line doc

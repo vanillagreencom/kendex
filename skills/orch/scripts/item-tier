@@ -18,15 +18,12 @@
 #                    harness-ci's shared path rules. No render is proved at
 #                    launch. A matched rule supplies its class and cause;
 #                    an unmatched path leaves the other inputs unchanged.
-#   --base, --head   the item's branch, classified by harness-ci's
-#                    change-class through lib/change-class.sh. render and
-#                    trivial count as micro. A class the classifier's
-#                    `measured=` marker says it did not measure answers
-#                    standard as classifier-unmeasured.
+#   --base, --head   the item's changed paths. The shared path rules apply;
+#                    measured branch line counts never select a tier.
 #
-# --body reads the Expected delta production allowance (branch-size-check
-# owns its format) and floors --production with it. With no Location paths
-# and no Expected delta in a supplied body, the launch is standard.
+# --body reads Expected delta through lib/branch-growth.sh and floors the
+# launch estimate with a valid production count. A malformed header is
+# ignored. With no Location paths, estimate or valid delta, launch is standard.
 # At least one of --production, --body, --floor and --base is required.
 # --repo (default .) is the checkout the classifier reads.
 #
@@ -101,7 +98,7 @@ estimate="$production"
 delta=""
 if [ -n "$body" ]; then
   body_text="$(cat -- "$body")" || die body-unreadable "cannot read --body '$body'"
-  expected_delta_read "$body_text" || die invalid-delta "--body has a malformed Expected delta"
+  expected_delta_read "$body_text" || EXPECTED_DELTA_PRODUCTION=""
   delta="$EXPECTED_DELTA_PRODUCTION"
   if [ -n "$delta" ] && { [ -z "$production" ] || [ "$delta" -gt "$production" ]; }; then
     production="$delta"
@@ -127,7 +124,7 @@ consider() { # CLASS CAUSE
   fi
 }
 
-if [ -n "$body" ] && [ -z "$delta" ] && [ "${#paths[@]}" -eq 0 ]; then
+if [ -n "$body" ] && [ -z "$delta" ] && [ -z "$production" ] && [ "${#paths[@]}" -eq 0 ]; then
   consider standard body-without-tier-inputs
 fi
 
@@ -170,32 +167,19 @@ fi
 [ -z "$floor" ] || consider "$floor" "floor class=$floor"
 
 if [ -n "$base" ]; then
-  class_err="$(mktemp "${TMPDIR:-/tmp}/item-tier-class.XXXXXX")" ||
-    die scratch-unavailable "a scratch file for the classifier's log could not be created"
-  trap 'rm -f -- "$class_err"' EXIT
-  if change_class_read "$base" "$head" "$repo" "$class_err"; then
-    # standard is both a verdict and the classifier's fallback; only the
-    # `measured=` marker on its `class:` line tells them apart.
-    # A log that cannot be read carries no marker, which is unmeasured.
-    measured=""
-    unmeasured=""
-    if ! measured="$(sed -n 's/^class: class=[a-z]* measured=\([a-z]*\).*/\1/p' "$class_err" | tail -1)" ||
-      [ "$measured" != true ]; then
-      cat -- "$class_err" >&2
-      if ! unmeasured="$(sed -n 's/^class: class=[a-z]* measured=[a-z]* //p' "$class_err" | tail -1)"; then
-        unmeasured=""
-      fi
-      consider standard "classifier-unmeasured detail=${unmeasured:-no-marker}"
-    else
-      case "$CHANGE_CLASS" in
-        render | trivial | micro) consider micro "classifier class=$CHANGE_CLASS" ;;
-        small | standard) consider "$CHANGE_CLASS" "classifier class=$CHANGE_CLASS" ;;
-        *) consider standard "classifier-unreadable class=$CHANGE_CLASS" ;;
-      esac
-    fi
+  range_paths="$(mktemp "${TMPDIR:-/tmp}/item-tier-paths.XXXXXX")" ||
+    die scratch-unavailable "could not create a file for changed paths"
+  trap 'rm -f -- "${range_paths:?}"' EXIT
+  if ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- >"$range_paths"; then
+    consider standard branch-paths-unreadable
+  elif ! change_class_location_load; then
+    consider standard "$CHANGE_CLASS_CAUSE"
   else
-    cat -- "$class_err" >&2
-    consider standard "classifier-failed detail=$CHANGE_CLASS_CAUSE"
+    consider micro branch-paths
+    while IFS= read -r -d '' path; do
+      change_class_path "$path" launch
+      [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
+    done <"$range_paths"
   fi
 fi
 

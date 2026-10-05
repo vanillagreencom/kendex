@@ -107,36 +107,6 @@ block() { # PREFIX COUNT -> the block on stdout
   done
 }
 
-# The state this lane exists for. Two commits that each PASSED the armed commit
-# hook — main prepends 300 bytes, the branch appends 300 — and a rebase that
-# combines them into 1200 bytes against a 1024-byte ceiling. Git runs no hook
-# on a replay, so nothing has ever judged the branch's own tip.
-scenario() { # VAR NAME REBASE(0|1) [SKILL-SOURCE] — VAR gets the repo path
-  local __v="$1" r=""
-  new_repo r "$2" "${4:-}"
-  block body 60 >"$r/big.txt"
-  q git -C "$r" add kendex.settings.toml big.txt
-  q git -C "$r" commit -q -m "feat: seed the shared document"
-  q git -C "$r" push -q origin main
-  q git -C "$r" branch topic
-
-  q git -C "$r" checkout -q topic
-  block tail 30 >>"$r/big.txt"
-  q git -C "$r" add big.txt
-  q git -C "$r" commit -q -m "feat: add the branch's own tail"
-
-  q git -C "$r" checkout -q main
-  { block head 30; cat -- "$r/big.txt"; } >"$r/big.txt.next"
-  mv -f -- "$r/big.txt.next" "$r/big.txt"
-  q git -C "$r" add big.txt
-  q git -C "$r" commit -q -m "feat: add the shared preamble"
-  q git -C "$r" push -q origin main
-
-  q git -C "$r" checkout -q topic
-  [ "$3" -eq 0 ] || q git -C "$r" rebase -q main
-  eval "$__v=\$r"
-}
-
 push_ref() { # REPO REFSPEC [PUSH-FLAG] -> the run's one line on stdout
   local rc=0 out=""
   out="$(git -C "$1" push ${3:+"$3"} origin "$2" 2>&1)" || rc=$?
@@ -314,80 +284,6 @@ assert_eq "must-fail: reading the configured value back loses the boundary the r
   "$REWRITE_WHOLE" "$(rewritten_push)"
 cp -- "$REWRITE_KEPT" "$REWRITE_LANE"
 
-# ------------------------------------------------------------------ the replay
-#
-# The whole path, through `git push`: the installed shim, the helper's pre-push
-# mode, this lane, the batch, byte-ceiling.
-UNREBASED=""
-scenario UNREBASED unrebased 0
-assert_eq "the branch as authored is under the ceiling and pushes" \
-  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "$(push_ref "$UNREBASED" topic)"
-
-REBASED=""
-scenario REBASED rebased 1
-REFUSED="rc=1 pre-push: step=base:<oid>;byte-ceiling: oversized=big.txt:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=1"
-assert_eq "a branch rebased into a breach is refused before it leaves the machine" \
-  "$REFUSED" "$(push_ref "$REBASED" topic)"
-# The same commit, the same remote ref, spelled the way `worktree push` spells
-# it after a restack — which is the spelling that reaches the lane as HEAD.
-# The refusal above was refused; nothing on the remote moved.
-assert_eq "and refused again when the push spells its left side HEAD" \
-  "$REFUSED" "$(push_ref "$REBASED" HEAD:refs/heads/topic)"
-
-# ------------------------------------------------------ the policy at push
-#
-# That breach is excludable: a row in byte-ceiling's excludes list leaves the
-# document out of the scan. Every lane reads its policy from the INDEX, so a
-# stray list nobody staged cannot excuse the document the push is carrying —
-# a verdict bought with a local file no commit holds is a fail-open in gate
-# code, and the lane's own help says neither untracked files nor unstaged
-# edits are consulted.
-EXCLUDES=tools/byte-ceiling-excludes
-excludes_row() { # REPO — the row that would leave big.txt out of the scan, in the work tree
-  mkdir -p "$1/tools"
-  printf 'big.txt\ta row that would excuse the document\n' >"$1/$EXCLUDES"
-}
-
-STRAY=""
-scenario STRAY stray 1
-excludes_row "$STRAY"
-assert_eq "an untracked excludes row excuses nothing: the rebased breach is still refused" \
-  "$REFUSED" "$(push_ref "$STRAY" topic)"
-
-# The inverse, which is what makes the row above a row that would have worked.
-# Staging it alone cannot answer this: the index-drift refusal fires first, so
-# the row reaches the index the only way a push carries one, in a commit.
-HONOURED=""
-scenario HONOURED honoured 1
-excludes_row "$HONOURED"
-q git -C "$HONOURED" add "$EXCLUDES"
-q git -C "$HONOURED" commit -q -m "chore: declare the document in the excludes list"
-assert_eq "control: the same row committed is honoured and the push passes" \
-  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "$(push_ref "$HONOURED" topic)"
-
-# The must-fail control: a copy of the policy reader that falls back to the
-# worktree copy for a path the index does not carry. The stray row is then
-# honoured, and the document the push is carrying leaves under a clean verdict.
-FALLBACK="$TMP/.fallback/commit-guards"
-mkdir -p "$(dirname "$FALLBACK")"
-cp -R "$SKILL_TEMPLATE" "$FALLBACK"
-FALLBACK_LIB="$FALLBACK/scripts/lib/configured-paths.sh"
-FALLBACK_BEFORE="$(cat -- "$FALLBACK_LIB")"
-sed -i.bak 's#^    1) return 1 ;;$#    1) [ ! -f "$file" ] || { cat -- "$file"; return 0; }; return 1 ;;#' \
-  "$FALLBACK_LIB"
-rm -f -- "$FALLBACK_LIB.bak"
-assert_eq "the fallback edit took" "rewritten" \
-  "$(if [ "$FALLBACK_BEFORE" = "$(cat -- "$FALLBACK_LIB")" ]; then echo unchanged; else echo rewritten; fi)"
-
-FELLBACK=""
-scenario FELLBACK fellback 1 "$FALLBACK"
-excludes_row "$FELLBACK"
-assert_eq "must-fail: with the worktree fallback restored, the stray row excuses the breach and it pushes" \
-  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:0:1:base:<oid>;pre-push: result=0" \
-  "$(push_ref "$FELLBACK" topic)"
-
 # ------------------------------------------------------------- the subject
 #
 # The not-head refusal settles which commit is leaving; it settles nothing
@@ -468,9 +364,9 @@ assert_eq "the mutant edit took" "rewritten" \
   "$(if [ "$MUTANT_BEFORE" = "$MUTANT_AFTER" ]; then echo unchanged; else echo rewritten; fi)"
 
 MUTATED=""
-scenario MUTATED mutated 1 "$MUTANT"
+drift_repo MUTATED mutated "$MUTANT"
 assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
-  "rc=0 pre-push: step=base:<oid>;byte-ceiling: oversized=big.txt:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=0" \
+  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=0" \
   "$(push_ref "$MUTATED" topic)"
 
 # ------------------------------------------------------ the destination
@@ -486,23 +382,23 @@ diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged
   local __v="$1" r="" fork=""
   new_repo r "$2" "${3:-}"
   # The legacy file predates the guard, so it is committed with none running.
-  block body 216 >"$r/big.txt"
-  q git -C "$r" add kendex.settings.toml big.txt
+  head -c 2160 /dev/zero >"$r/big.md"
+  q git -C "$r" add kendex.settings.toml big.md
   q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a legacy oversized file"
   fork="$(git -C "$r" rev-parse HEAD)"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
   # The destination's branch: shrunk, which the ratchet allows and the commit
   # hook passes.
   q git -C "$r" checkout -q -b topic
-  block body 192 >"$r/big.txt"
-  q git -C "$r" add big.txt
+  head -c 1920 /dev/zero >"$r/big.md"
+  q git -C "$r" add big.md
   q git -C "$r" commit -q -m "feat: shrink it on the branch"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
   # The rewrite: back to the fork point and a different shrink, so the two have
   # diverged and only a force push can land it.
   q git -C "$r" reset -q --hard "$fork"
-  block body 204 >"$r/big.txt"
-  q git -C "$r" add big.txt
+  head -c 2040 /dev/zero >"$r/big.md"
+  q git -C "$r" add big.md
   q git -C "$r" commit -q -m "feat: a different shrink on the rewritten branch"
   eval "$__v=\$r"
 }

@@ -42,7 +42,7 @@
 # the receipt's --validate-note; a no-verdict naming none is unproven. Only a refusal of
 # the report's own shape (incomplete: a fix report whose rows miss, repeat or
 # invent a delegated item; invalid) removes it and re-delegates as unparsed.
-# Every other verdict, a FAILING validation or a gate such as cut_not_shrunk or
+# Every other verdict, a FAILING validation or a gate such as
 # unapproved_additions, keeps the artifact and prints recovered, so the
 # delegating workflow's acceptance table routes that reason through its own
 # retry row. A Proposed rule: line other than

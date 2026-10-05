@@ -28,40 +28,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # reads the process environment first: a developer's own range command would
 # otherwise decide the fix receipts' acceptance.
 unset DEV_VALIDATE_RANGE_CMD
-mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
-# The size owner reads the issue through its sibling Linear CLI. This stand-in
-# answers `issues get ID --format=raw` with the fixture's row on Bash 3.2 test
-# runners.
-cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
-#!/usr/bin/env bash
-set -eu
-row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/tracker-fixture/issues.json)"
-[[ -n "$row" ]] || exit 1
-jq -n --argjson issue "$row" '{issue: $issue}'
-SH
-cat > "$TMP_ROOT/bin/gh" <<'SH'
-#!/usr/bin/env bash
-set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
-SH
-chmod +x "$TMP_ROOT/linear/scripts/linear.sh" "$TMP_ROOT/bin/gh"
-export PATH="$TMP_ROOT/bin:$PATH"
 LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
 CHECK="$LIVE_SCRIPTS/dev-artifact-check"
-
-write_allowance() {
-  local repo="$1" issue="$2" line="$3"
-  mkdir -p "$repo/.cache/tracker-fixture"
-  if [[ ! -f "$repo/.cache/tracker-fixture/issues.json" ]]; then
-    printf '[]\n' > "$repo/.cache/tracker-fixture/issues.json"
-  fi
-  jq --arg id "$issue" --arg body "$line" \
-    '[.[] | select(.identifier != $id)] + [{identifier: $id, description: $body}]' \
-    "$repo/.cache/tracker-fixture/issues.json" > "$repo/.cache/tracker-fixture/next.json"
-  mv "$repo/.cache/tracker-fixture/next.json" "$repo/.cache/tracker-fixture/issues.json"
-}
 
 # new_repo NAME ISSUE... — a committed git repo with growth state for each
 # ISSUE; prints its path.
@@ -73,11 +43,11 @@ new_repo() {
   git -C "$d" config user.email test@example.com
   git -C "$d" config user.name Test
   git -C "$d" config commit.gpgsign false
+  git -C "$d" config gc.auto 0
+  git -C "$d" config maintenance.auto false
   git -C "$d" commit -q --allow-empty -m base
-  printf '.cache/\n' >> "$(git -C "$d" rev-parse --path-format=absolute --git-path info/exclude)"
   for issue in "$@"; do
-    init_growth_state "$STATE" "$d" "$issue" seed 1000000 >/dev/null
-    write_allowance "$d" "$issue" '**Expected delta**: 1000000 lines, 1000000 test lines'
+    init_growth_state "$STATE" "$d" "$issue" seed >/dev/null
   done
   printf '%s' "$d"
 }
@@ -276,7 +246,6 @@ table \
   "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--issue=true" \
   "a path-unsafe --source|--worktree $WT --issue i --round-id 1-1 --source pr/comments --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-id+arg1=--source+arg2=pr/comments=true" \
   "a duplicate --source: no silent last-wins|--worktree $WT --issue i --round-id 1-1 --source a --source b --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--source=true" \
-  "an empty --state-dir would measure under the default directory|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --state-dir EMPTY|rc=2 stderr~dev-round-write:+required+arg1=--state-dir=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
 run_write -h
@@ -287,8 +256,7 @@ echo "=== the writer refuses to place a record over a symlink ==="
 LINKED_MAIN="$(new_repo linked-main)"
 LINKED="$TMP_ROOT/linked-wt"
 git -C "$LINKED_MAIN" worktree add -q -b linked "$LINKED"
-init_growth_state "$STATE" "$LINKED" issue-826 seed 1000000 >/dev/null
-write_allowance "$LINKED" issue-826 '**Expected delta**: 1000000 lines, 1000000 test lines'
+init_growth_state "$STATE" "$LINKED" issue-826 seed >/dev/null
 run_write --worktree "$LINKED" --issue issue-826 --round-id 30-30 --item 1 linked "$OK_REACH"
 assert_eq "$(observe "rc=0 written=yes") main_side=$([[ -e "$LINKED_MAIN/.git/kendex" ]] && echo yes || echo no)" "rc=0 written=yes main_side=no" "a linked worktree keeps its round record in its own tmp/" "$ERR"
 SYMLINK_RECORD="$LINKED/tmp/dev-round-issue-826-31-31.json"
@@ -300,121 +268,14 @@ run_write --worktree "$LINKED" --issue issue-826 --round-id 31-31 --item 1 symli
 assert_eq "$(observe "rc=2")" "rc=2" "a record path that is a symlink is refused" "$ERR"
 rm -f "$SYMLINK_RECORD"
 
-echo "=== a lane that keeps its state in its worktree measures there ==="
-# A hosted lane keeps workflow state in its worktree's tmp/, and the main
-# checkout it is linked to has no tmp/ at all. The lane runs the writer and the
-# checker from its worktree with no ORCH_STATE_DIR, so --state-dir alone points
-# the measurement that records pr.size_check at the lane's state, and a cut
-# comparison, which records nothing, needs no state directory. The first row
-# declares the cut that the retry row and the acceptance below compare against.
-HOSTED_MAIN="$(new_repo hosted-main)"
-HOSTED="$TMP_ROOT/hosted-wt"
-git -C "$HOSTED_MAIN" worktree add -q -b hosted "$HOSTED"
-init_growth_state "$STATE" "$HOSTED" issue-115 seed >/dev/null
-write_allowance "$HOSTED" issue-115 '**Expected delta**: 1000000 lines, 1000000 test lines'
-HOSTED_FIRST="$HOSTED/tmp/dev-round-issue-115-40-1.json"
-# run_lane SCRIPT ARGS... — the script as such a lane runs it.
-run_lane() {
-  local script="$1"
-  shift
-  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
-  mkdir -p "$RUN"
-  ERR="$RUN/stderr"
-  set +e
-  OUT=$(cd "$HOSTED" && env -u ORCH_STATE_DIR "$script" "$@" 2>"$ERR")
-  RC=$?
-  set -e
-}
-# `label^round^extra args^expect`; extra args split on spaces.
-lane_rows=(
-  "the lane's own state directory^40-1^--cut --state-dir $HOSTED/tmp^rc=0 written=yes .size_check.verdict=pass .cut=true"
-  "a cut retry^40-2^--cut-from-round $HOSTED_FIRST --state-dir $HOSTED/tmp^rc=0 written=yes .cut=true .cut_comparison.verdict=pass"
-  "no state directory^40-3^^rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
-)
-for row in "${lane_rows[@]}"; do
-  IFS='^' read -r label rid extra expect <<<"$row"
-  [[ -n "$expect" ]] || { printf 'lane: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-  read -r -a extra_args <<<"$extra"
-  run_lane "$WRITE_BIN" --worktree "$HOSTED" --issue issue-115 --round-id "$rid" --item 1 lane "$OK_REACH" ${extra_args[@]+"${extra_args[@]}"}
-  assert_eq "$(observe "$expect")" "$expect" "lane: $label" "$ERR"
-done
-assert_eq "$(jq -c '.size_check' "$HOSTED_FIRST")" "$("$STATE" --state-dir "$HOSTED/tmp" get issue-115 '.pr.size_check' | jq -c '.')" "lane: the round and the lane's workflow state carry the same report"
-(cd "$HOSTED" && env -u ORCH_STATE_DIR "$RETURN_WRITE" --worktree "$HOSTED" --kind fix --issue issue-115 --round-id 40-1 --branch hosted \
-  --commit "$(git -C "$HOSTED" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-hosted-40-1" "$HOSTED" issue-115 40-1)" --item 1 Applied cut >/dev/null)
-# lane_accept SCRIPTS — the cut acceptance as the lane's orchestrator runs it;
-# ACCEPTED is its exit, verdict and reason.
-lane_accept() {
-  run_lane "$1/dev-artifact-check" --worktree "$HOSTED" --issue issue-115 --round-id 40-1 --expect-items-from-round
-  ACCEPTED="rc=$RC $(jq -r '"verdict=\(.verdict) reason=\(.reason)"' <<<"$OUT" 2>/dev/null)"
-}
-lane_accept "$LIVE_SCRIPTS"
-assert_eq "$ACCEPTED" "rc=0 verdict=accept reason=valid" "lane: the declared cut is accepted" "$ERR"
-# Controls: a writer that drops the directory before its first measurement, and
-# a measurement that drops it before workflow-state, each lose the lane's
-# state. `label^file^old^new`.
-lane_controls=(
-  'the first measurement^dev-round-write^"$SCRIPT_DIR" "" "$state_dir" ||^"$SCRIPT_DIR" "" "" ||'
-  'the measurement itself^lib/branch-growth.sh^state_args=(--state-dir "$5")^state_args=()'
-)
-for control in "${lane_controls[@]}"; do
-  IFS='^' read -r label file old new <<<"$control"
-  LANE_MUTANT="$(mutant_scripts lane-mutant "$file")" || exit 1
-  mutate_file "$LANE_MUTANT/$file" "$old" "$new"
-  run_lane "$LANE_MUTANT/dev-round-write" --worktree "$HOSTED" --issue issue-115 --round-id 41-1 --item 1 lane "$OK_REACH" --state-dir "$HOSTED/tmp"
-  assert_eq "$(observe "rc=2 written=no stderr~dev-round-write:+growth-unmeasured")" "rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true" "control: $label without the state directory cannot measure the lane" "$ERR"
-done
-# Control: a cut comparison that keeps its scratch file in the state directory
-# it resolves finds the main checkout's, which a hosted lane has not got, so
-# neither the cut retry nor the acceptance can measure.
-CUT_MUTANT="$(mutant_scripts lane-cut-mutant lib/branch-growth.sh)" || exit 1
-mutate_file "$CUT_MUTANT/lib/branch-growth.sh" 'checker_args=(--cut-from-round "$4")' \
-  'checker_args=(--cut-from-round "$4"); state_dir="$("$script_dir/workflow-state" path "$issue")"'
-mutate_file "$CUT_MUTANT/lib/branch-growth.sh" '"${TMPDIR:-/tmp}/branch-allowance.XXXXXX"' '"${state_dir%/*}/.branch-allowance.XXXXXX"'
-run_lane "$CUT_MUTANT/dev-round-write" --worktree "$HOSTED" --issue issue-115 --round-id 41-2 --item 1 lane "$OK_REACH" --state-dir "$HOSTED/tmp" --cut-from-round "$HOSTED_FIRST"
-assert_eq "$(observe "rc=2 written=no stderr~dev-round-write:+growth-unmeasured")" "rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true" "control: a cut retry measured under the state directory cannot measure the lane" "$ERR"
-lane_accept "$CUT_MUTANT"
-assert_eq "$ACCEPTED" "rc=1 verdict=retry reason=cut_unmeasurable" "control: a cut acceptance measured under the state directory cannot measure the lane" "$ERR"
-
-echo "=== fix rounds record size without refusing ==="
-GW="$(new_repo growth-wt KEN-GROWTH)"
-git -C "$GW" switch -q -c growth
-printf 'one\ntwo\nthree\nfour\nfive\n' > "$GW/change.txt"
-mkdir -p "$GW/tests"
-printf 'one\ntwo\n' > "$GW/tests/new.sh"
-git -C "$GW" add change.txt tests/new.sh
-git -C "$GW" commit -q -m implementation
-size_rows=(
-  'pass|**Expected delta**: 5 lines, 2 test lines|0|pass|5|2'
-  'production|**Expected delta**: 4 lines, 2 test lines|0|over|4|2'
-  'test|**Expected delta**: 5 lines, 1 test line|0|over|5|1'
-  'both|**Expected delta**: 4 lines, 1 test line|0|over|4|1'
-  'unsized|No size field here.|0|allowance_missing|null|null'
-  'malformed|**Expected delta**: about 4 lines|3|||'
-)
-for row in "${size_rows[@]}"; do
-  IFS='|' read -r label line code verdict allowance test_allowance <<<"$row"
-  write_allowance "$GW" KEN-GROWTH "$line"
-  run_write --worktree "$GW" --issue KEN-GROWTH --round-id "$label" --item 1 size "$OK_REACH"
-  if [[ "$code" == 0 ]]; then
-    E="rc=0 written=yes .size_check.verdict=$verdict .size_check.production_lines=5 .size_check.test_lines=2 .size_check.production_allowance=$allowance .size_check.test_allowance=$test_allowance"
-  else
-    E="rc=3 written=no stderr~branch-size-check:+invalid-delta+issue=KEN-GROWTH=true"
-  fi
-  assert_eq "$(observe "$E")" "$E" "$label records the measured verdict or reports malformed input" "$ERR"
-  if [[ "$code" == 0 && "$RC" == 0 ]]; then
-    assert_eq "$(rec '.size_check')" "$("$STATE" --state-dir "$GW/tmp" get KEN-GROWTH '.pr.size_check')" "$label keeps the same report in the round and workflow state"
-  fi
-done
-
 echo "=== a pr-N key stamps its round and the checker reads it back ==="
 # A pull request with no issue id keys its state pr-N (review-pr-comments.md
-# § 1). No tracker holds that key, so the branch measures under
-# allowance_missing and the round still stamps.
+# § 1). No tracker holds that key, and stamping needs no tracker read.
 PRW="$(new_repo pr-wt)"
 init_growth_state "$STATE" "$PRW" pr-51 51-1 >/dev/null
 run_write --worktree "$PRW" --issue pr-51 --round-id 51-1 --item 1 "pr key round" "$OK_REACH"
-E="rc=0 written=yes .issue=pr-51 .size_check.verdict=allowance_missing .size_check.production_allowance=null"
-assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps with the measured allowance_missing verdict" "$ERR"
+E="rc=0 written=yes .issue=pr-51"
+assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps without a tracker read" "$ERR"
 "$RETURN_WRITE" --worktree "$PRW" --kind fix --issue pr-51 --round-id 51-1 --branch main \
   --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-prw-51-1-1" "$PRW" pr-51 51-1)" --item 1 Applied done >/dev/null
 set +e
@@ -433,8 +294,8 @@ LOCAL_KEY="$("$STATE" new-local-key)"
 init_growth_state "$STATE" "$LW" "$LOCAL_KEY" seed >/dev/null
 LOCAL_RID="$("$STATE" --state-dir "$LW/tmp" new-round-id "$LOCAL_KEY" dev_round_id)"
 run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --item 1 "local review round" "$OK_REACH"
-E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID .size_check.verdict=allowance_missing"
-assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps with the measured allowance_missing verdict" "$ERR"
+E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID"
+assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps without a tracker read" "$ERR"
 "$RETURN_WRITE" --worktree "$LW" --kind fix --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --branch main \
   --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-lw-local" "$LW" "$LOCAL_KEY" "$LOCAL_RID")" --item 1 Applied done >/dev/null
 set +e

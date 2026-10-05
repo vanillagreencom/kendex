@@ -13,8 +13,7 @@
 # spelling: a file one of them loads that no declaration names, a path
 # naming no catalog file, and a line the resolver cannot bring to one path
 # are each drift. The static read sees the libraries; the declaration
-# carries what reaches execution another way, such as the base resolver
-# branch-size-check passes as an argument.
+# carries dependencies that reach execution outside source statements.
 #
 # Every drift line starts with a key and the path or glob it names.
 set -euo pipefail
@@ -226,12 +225,11 @@ boundary_drift() { # CATALOG CONF
 
 REAL_CONF="$CATALOG/orch/references/narrow-change.conf"
 
-# The extractor's floor, with the two members it must find: a reader finding
+# The extractor's floor, with the classifier it must find: a reader finding
 # neither has broken, not found a tree with no measurement.
 scripts="$(measurement_scripts "$CATALOG")"
-assert_eq "the measurement scripts are the two that measure" \
-  "harness-ci/scripts/change-class
-orch/scripts/branch-size-check" "$scripts"
+assert_eq "the classifier declares its measurement dependencies" \
+  "harness-ci/scripts/change-class" "$scripts"
 
 assert_eq "the boundary group agrees with the measurement's declarations" "" \
   "$(boundary_drift "$CATALOG" "$REAL_CONF")"
@@ -239,8 +237,8 @@ assert_eq "the boundary group agrees with the measurement's declarations" "" \
 # The derived set carries what no invocation-syntax walk reaches, and leaves
 # out what the measurement runs for a reason outside the rule.
 declared="$(boundary_declared "$CATALOG")"
-assert_eq "the base resolver branch-size-check passes as an argument is carried" "1" \
-  "$(grep -cxF 'skills/orch/scripts/resolve-base-branch' <<<"$declared")"
+assert_eq "the shared branch measurement is carried" "1" \
+  "$(grep -cxF 'skills/orch/scripts/lib/branch-growth.sh' <<<"$declared")"
 assert_eq "the Linear CLI read for the allowance is not" "0" \
   "$(grep -cxF 'skills/linear/scripts/linear.sh' <<<"$declared" || true)"
 
@@ -257,15 +255,15 @@ while IFS='|' read -r label edit expected; do
   cp "$REAL_CONF" "$fixture/orch/references/narrow-change.conf"
   cp -R "$CATALOG/harness-ci/scripts" "$fixture/harness-ci/scripts"
   conf="$fixture/orch/references/narrow-change.conf"
-  measured="$fixture/orch/scripts/branch-size-check"
+  measured="$fixture/harness-ci/scripts/change-class"
   case "$edit" in
     declare-extra)
       printf '%s\n' '# measures-with: skills/orch/scripts/lib/lane-cap.sh' >>"$measured" ;;
     drop-conf-row)
-      grep -vxF 'path *skills/orch/scripts/resolve-base-branch' "$conf" >"$conf.new"
+      grep -vxF 'path *skills/orch/scripts/lib/branch-growth.sh' "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     add-conf-row)
-      awk '{ print } /^path \*skills\/orch\/scripts\/branch-size-check$/ { print "path *skills/orch/scripts/lanes" }' \
+      awk '{ print } /^path \*skills\/harness-ci\/scripts\/change-class$/ { print "path *skills/orch/scripts/lanes" }' \
         "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     source-other-skill)
@@ -282,11 +280,11 @@ while IFS='|' read -r label edit expected; do
       # One new dependency, lib/lane-relaunch.sh, in the spelling the row
       # names; each must resolve to that one catalog path.
       case "$edit" in
-        source-spelled-quoted) spelled='source "$SCRIPT_DIR/lib/lane-relaunch.sh"' ;;
-        source-spelled-split-quoted) spelled='source "$SCRIPT_DIR"/lib/lane-relaunch.sh' ;;
-        source-spelled-unquoted) spelled='true; . $SCRIPT_DIR/lib/lane-relaunch.sh' ;;
-        source-spelled-braced) spelled='source ${SCRIPT_DIR}/lib/lane-relaunch.sh' ;;
-        source-spelled-relative) spelled='source lib/lane-relaunch.sh' ;;
+        source-spelled-quoted) spelled='source "$ORCH_DIR/scripts/lib/lane-relaunch.sh"' ;;
+        source-spelled-split-quoted) spelled='source "$ORCH_DIR"/scripts/lib/lane-relaunch.sh' ;;
+        source-spelled-unquoted) spelled='true; . $ORCH_DIR/scripts/lib/lane-relaunch.sh' ;;
+        source-spelled-braced) spelled='source ${ORCH_DIR}/scripts/lib/lane-relaunch.sh' ;;
+        source-spelled-relative) spelled='source ../../orch/scripts/lib/lane-relaunch.sh' ;;
         source-spelled-absolute) spelled="source $fixture/orch/scripts/lib/lane-relaunch.sh" ;;
         *) echo "unknown spelling $edit" >&2; exit 1 ;;
       esac
@@ -297,17 +295,15 @@ while IFS='|' read -r label edit expected; do
       printf '%s\n' 'source "$file" >&2' >>"$measured" ;;
     declare-missing)
       printf '%s\n' '# measures-with: skills/orch/scripts/gone' >>"$measured"
-      awk '{ print } /^path \*skills\/orch\/scripts\/branch-size-check$/ { print "path *skills/orch/scripts/gone" }' \
+      awk '{ print } /^path \*skills\/harness-ci\/scripts\/change-class$/ { print "path *skills/orch/scripts/gone" }' \
         "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     no-declaration)
-      for declaring in "$measured" "$fixture/harness-ci/scripts/change-class"; do
-        grep -v '^# measures-with: ' "$declaring" >"$declaring.new"
-        mv "$declaring.new" "$declaring"
-      done ;;
+      grep -v '^# measures-with: ' "$measured" >"$measured.new"
+      mv "$measured.new" "$measured" ;;
     widen-row)
       cp "$measured" "$measured.orig"
-      sed 's|^path \*skills/orch/scripts/branch-size-check$|path *skills/orch/scripts/branch-size-check*|' \
+      sed 's|^path \*skills/harness-ci/scripts/change-class$|path *skills/harness-ci/scripts/change-class*|' \
         "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     no-boundary-group)
@@ -316,30 +312,30 @@ while IFS='|' read -r label edit expected; do
     *) echo "unknown edit $edit" >&2; exit 1 ;;
   esac
   assert_eq "the control's edit changed its file" "changed" \
-    "$(if cmp -s "$conf" "$REAL_CONF" && cmp -s "$measured" "$CATALOG/orch/scripts/branch-size-check"; then echo same; else echo changed; fi)"
+    "$(if cmp -s "$conf" "$REAL_CONF" && cmp -s "$measured" "$CATALOG/harness-ci/scripts/change-class"; then echo same; else echo changed; fi)"
   expected="${expected//@CATALOG@/$fixture}"
   expected="${expected//@CONF@/$conf}"
   expected="${expected//@LAST_LINE@/$(grep -c '' "$measured")}"
   assert_eq "$label" "$expected" "$(boundary_drift "$fixture" "$conf")"
 done <<'FIXTURES'
 a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/lib/lane-cap.sh
-a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/orch/scripts/resolve-base-branch
+a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/orch/scripts/lib/branch-growth.sh
 a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/scripts/lanes
-a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled braced|source-spelled-braced|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled relative|source-spelled-relative|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled absolute|source-spelled-absolute|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/lane-relaunch.sh
-another skill's library of the same name is named|source-other-skill|undeclared-source file=skills/orch/scripts/branch-size-check source=skills/linear/scripts/lib/kendex-env.sh
-a library that is not in the catalog is named|source-nowhere|unresolved-source file=skills/orch/scripts/branch-size-check source=skills/orch/scripts/lib/not-there.sh
-a library under a variable the script does not own is reported|source-unknown-variable|unsupported-source file=skills/orch/scripts/branch-size-check line=@LAST_LINE@
-a loader through a command substitution is reported|source-substitution|unsupported-source file=skills/orch/scripts/branch-size-check line=@LAST_LINE@
-a bare variable no exemption names is reported|source-bare-variable|unsupported-source file=skills/orch/scripts/branch-size-check line=@LAST_LINE@
+a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled braced|source-spelled-braced|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled relative|source-spelled-relative|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled absolute|source-spelled-absolute|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/orch/scripts/lib/lane-relaunch.sh
+another skill's library of the same name is named|source-other-skill|undeclared-source file=skills/harness-ci/scripts/change-class source=skills/linear/scripts/lib/kendex-env.sh
+a library that is not in the catalog is named|source-nowhere|unresolved-source file=skills/harness-ci/scripts/change-class source=skills/harness-ci/scripts/lib/not-there.sh
+a library under a variable the script does not own is reported|source-unknown-variable|unsupported-source file=skills/harness-ci/scripts/change-class line=@LAST_LINE@
+a loader through a command substitution is reported|source-substitution|unsupported-source file=skills/harness-ci/scripts/change-class line=@LAST_LINE@
+a bare variable no exemption names is reported|source-bare-variable|unsupported-source file=skills/harness-ci/scripts/change-class line=@LAST_LINE@
 a declared file that is not there is named|declare-missing|missing path=skills/orch/scripts/gone
 a catalog whose scripts declare nothing is named|no-declaration|no-declaration catalog=@CATALOG@
 a conf with no boundary group is named|no-boundary-group|no-boundary-group conf=@CONF@
-a boundary row covering a file no declaration names is named|widen-row|wider glob=*skills/orch/scripts/branch-size-check* path=skills/orch/scripts/branch-size-check.orig
+a boundary row covering a file no declaration names is named|widen-row|wider glob=*skills/harness-ci/scripts/change-class* path=skills/harness-ci/scripts/change-class.orig
 FIXTURES
 require_rows narrow-boundary-fixtures "$fixture_rows"
 

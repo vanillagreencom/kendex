@@ -5,49 +5,15 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/pr-watch-fixture.sh"
 
-# One orch workflow-state file per size fixture, the shape branch-size-check
-# writes: the record under `pr.size_check`, keyed by the lane's own branch and
-# bound to the head it measured. A null allowance is the `allowance_missing`
-# verdict, which the check emits for an issue that states no expected delta.
-size_state() { # dir, branch, head_sha, production_lines, allowance-or-null, [verdict]
-  mkdir -p "$1"
-  jq -n --arg branch "$2" --arg head "$3" --argjson prod "$4" --argjson allow "$5" \
-    --arg verdict "${6:-}" \
-    '{issue_id:"KEN-1", branch:$branch, worktree:"/wt",
-      pr:{baseline_lines:100,
-          size_check:{base_sha:"0000000000000000000000000000000000000000", head_sha:$head,
-                      production_lines:$prod, test_lines:40, mirror_lines:0,
-                      production_allowance:$allow, test_allowance:null,
-                      verdict:(if $verdict != "" then $verdict
-                               elif $allow == null then "allowance_missing"
-                               else "pass" end),
-                      reason:""}}}' > "$1/workflow-state-KEN-1.json"
-}
-SD_CURRENT="$TMP_ROOT/state/current"; size_state "$SD_CURRENT" lane "$HEAD_A" 214 250
-SD_STALE="$TMP_ROOT/state/stale";     size_state "$SD_STALE"   lane "$HEAD_B" 214 250
-SD_NOALLOW="$TMP_ROOT/state/noallow"; size_state "$SD_NOALLOW" lane "$HEAD_A" 214 null
-SD_OTHER="$TMP_ROOT/state/other";     size_state "$SD_OTHER"   other-lane "$HEAD_A" 214 250
-# A stated allowance of zero is a real number, not an absent line: the check's
-# delta grammar accepts `0 lines`, which is how a test-only issue states its
-# production budget. Past it, and past a test allowance the production ratio
-# says nothing about, the verdict is the only signal. `workflow-state init`
-# with no --branch records the empty string, so an empty head ref must never
-# be allowed to key the lookup.
-SD_ZERO="$TMP_ROOT/state/zero";           size_state "$SD_ZERO"      lane "$HEAD_A"   5   0 production_over
-SD_TESTSOVER="$TMP_ROOT/state/testsover"; size_state "$SD_TESTSOVER" lane "$HEAD_A" 214 250 tests_over
-SD_NOBRANCH="$TMP_ROOT/state/nobranch";   size_state "$SD_NOBRANCH"  ""   "$HEAD_A" 214 250
-
-
 P7U="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')"
 P7UD="$(jq -cn --argjson r "$(pr_row 7 open unarmed true)" '[$r]')"
-P7UNOREF="$(jq -cn --argjson r "$(pr_row 7 open unarmed | jq 'del(.head.ref)')" '[$r]')"
 P7AD="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')"
 P7NEW="$(jq -cn --argjson r "$(pr_row 7 open armed false "$NOW")" '[$r]')"
 T_STUCK='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}'
 T_PAGE1='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}'
 T_PAGE2_OPEN='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false}]}}}}}'
 T_PAGE2_RESOLVED='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":true}]}}}}}'
-DISARMED_DETAIL='approved+(reviewDecision+APPROVED)+but+auto-merge+is+not+armed+and+the+PR+is+not+queued+—+nothing+will+merge+this+(re-arm)+—+size+unavailable:+no+submit+measurement+is+recorded+for+this+branch'
+DISARMED_DETAIL='approved+(reviewDecision+APPROVED)+but+auto-merge+is+not+armed+and+the+PR+is+not+queued+—+nothing+will+merge+this+(re-arm)'
 
 echo "=== the reduction over threads, reviewDecision, arming and queue membership ==="
 # A healthy PR is silence. Every finding is its own line read from GitHub:
@@ -69,42 +35,6 @@ table \
   "an unapproved PR is never disarmed|--awaiting-after 3600|STUB_OPEN_PRS=$P7U;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$NOW|rc=0 kinds=none" \
   "an open thread holds the stale-review nudge|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=1 kinds=threads-open" \
   "an approved PR is never awaiting-stale|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_HEAD_DATE=$OLD|rc=0 kinds=none"
-
-echo "=== the disarmed line carries the submit-size record ==="
-# branch-size-check records the branch's measured size at submit, keyed by the
-# lane's branch and bound to the head it compared; the reducer reads that
-# record and never re-measures. The disarmed line carries it, a record of any
-# other head reads stale rather than as this head's size, and a state
-# directory holding only another lane's record leaves this one unavailable.
-table \
-  "the disarmed line carries the counts and their ratio||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa" \
-  "a record of another head reads stale, never as this head's size||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=stale@bbbbbbbb" \
-  "another lane's record leaves this branch unavailable||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=unavailable" \
-  "no state directory at all is unavailable||ORCH_STATE_DIR=$TMP_ROOT/state/absent;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=unavailable" \
-  "a record stating no allowance reports the count and no ratio||ORCH_STATE_DIR=$SD_NOALLOW;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=214/none@aaaaaaaa" \
-  "a stated allowance of zero is reported as the number it is||ORCH_STATE_DIR=$SD_ZERO;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=5/0@aaaaaaaa!production_over" \
-  "a test-allowance breach is named, not hidden by a clean ratio||ORCH_STATE_DIR=$SD_TESTSOVER;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa!tests_over" \
-  "a PR row with no head ref keys nothing and reads unavailable||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF|rc=1 kinds=disarmed size=unavailable"
-
-echo "=== must-fail controls for the surfaces above ==="
-# Each control fails against a copy of the reducer with the one expression it
-# depends on removed: the call at the disarmed site, the head binding that
-# makes a record current, the branch binding that makes it this lane's, and
-# the guard that stops an empty branch from keying the lookup at all.
-
-mutant_watch disarmed-call 's|(re-arm)$(size_note "$head_ref" "$head")|(re-arm)|' '(re-arm)$(size_note'
-table "must-fail: without the disarmed site's call that line carries no size||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=none"
-
-mutant_watch head-binding 's#map(select(.head_sha == $head)) | first#first#' 'map(select(.head_sha == $head)) | first'
-table "must-fail: without the head binding the old record reads as current||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=214/250/85%@bbbbbbbb"
-
-mutant_watch branch-binding 's#(.branch? // "") == $branch#true#' '(.branch? // "") == $branch'
-table "must-fail: without the branch binding another lane's record is reported||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
-
-mutant_watch empty-branch-guard 's#if \[ -n "$branch" \]; then#if true; then#' 'if [ -n "$branch" ]; then'
-table "must-fail: without the empty-branch guard a branchless lane's record is reported||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
-
-WATCH_BIN="$LIVE_WATCH"
 
 echo "=== the thread walk is paged, summed and bounded ==="
 # Over 100 threads, a cursor that never advances, or more than 20 advancing

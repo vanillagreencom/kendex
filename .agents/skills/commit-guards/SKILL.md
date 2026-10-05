@@ -27,7 +27,7 @@ repo-effects:
     - "preflight"
     - "bot-instructions"
   notes:
-    - "A missing companion is announced and skipped, as is preflight on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
+    - "A missing companion is skipped silently. Preflight is skipped on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
     - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
     - "Git does not clone hooks; arm every clone once."
@@ -58,11 +58,11 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | Check | Verdict |
 |---|---|
 | **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
-| **byte-ceiling** | A new tracked file over the configured ceiling fails; an existing oversized file may hold or shrink but may not grow; Markdown files and lockfiles are exempt. |
+| **byte-ceiling** | A new tracked binary file over the configured ceiling fails; an existing oversized binary file may hold or shrink but may not grow; text files and lockfiles are exempt. |
 | **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
 | **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section. |
-| **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
+| **prose** | Optional audit of history references in Markdown named by `COMMIT_GUARDS_PROSE_PATHS`; excluded from the default chain. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
 | **md-refs** | Dead references in consumer-authored citing files fail; lock-listed citing files warn unless `--strict` is set. Skipped sources are one count per reason on the summary line, with a path named only where a judged reference lands on it. `COMMIT_GUARDS_MD_REFS_PATHS` selects documents; `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` selects source comments and TOML strings for `§` citations. The supported forms are in [CHECKS.md § md-refs](CHECKS.md#md-refs). |
 | **py-names** | An undefined name or a syntax error in a Python file fails, judged by ruff or, where ruff is absent, pyflakes; neither installed while a Python file is selected is exit 2. See [CHECKS.md § py-names](CHECKS.md#py-names). |
@@ -98,10 +98,10 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 
 | Key | Default | Meaning |
 |---|---|---|
-| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff, and `secrets`. |
+| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff, and `secrets`. |
 | `COMMIT_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
-| `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
-| `COMMIT_GUARDS_BYTE_WARN_PCT` | `90` | Percent of the byte ceiling at which byte-ceiling prints a `near-ceiling` notice, 1-100; the exit status is unchanged. |
+| `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Binary blob ceiling in KB. |
+| `COMMIT_GUARDS_BYTE_WARN_PCT` | `90` | Percent of the binary blob ceiling at which byte-ceiling prints a `near-ceiling` notice, 1-100; the exit status is unchanged. |
 | `COMMIT_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
 | `COMMIT_GUARDS_BYTE_BASELINE` | `tools/byte-ceiling-baseline` | byte-ceiling `--all` baseline: the object size each legacy oversized file is held to. |
 | `COMMIT_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |

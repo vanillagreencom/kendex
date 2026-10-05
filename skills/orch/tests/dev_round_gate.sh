@@ -27,26 +27,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # otherwise decide the fix receipts' acceptance.
 unset DEV_VALIDATE_RANGE_CMD
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
-mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
-cat > "$TMP_ROOT/bin/gh" <<'SH'
-#!/usr/bin/env bash
-set -eu
-jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/tracker-fixture/issues.json
-SH
-chmod +x "$TMP_ROOT/bin/gh"
-export PATH="$TMP_ROOT/bin:$PATH"
 LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 CHECK="$LIVE_SCRIPTS/dev-artifact-check"
 ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
-
-write_allowance() {
-  local repo="$1" issue="$2" line="$3"
-  mkdir -p "$repo/.cache/tracker-fixture"
-  jq -n --arg id "$issue" --arg body "$line" \
-    '[{identifier: $id, description: $body}]' > "$repo/.cache/tracker-fixture/issues.json"
-  printf '.cache/\n' >> "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
-}
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -67,9 +51,10 @@ git -C "$wt" init -q -b main
 git -C "$wt" config user.email test@example.com
 git -C "$wt" config user.name Test
 git -C "$wt" config commit.gpgsign false
+git -C "$wt" config gc.auto 0
+git -C "$wt" config maintenance.auto false
 git -C "$wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$wt" issue-826 seed 1000000
-write_allowance "$wt" issue-826 '**Expected delta**: 1000000 lines, 1000000 test lines'
+init_growth_state "$STATE" "$wt" issue-826 seed
 
 # A round whose diff adds a protected file it was never authorized to add. Every
 # case below asks whether some other spelling of the check lets it through.
@@ -178,156 +163,27 @@ set +e
 assert_eq "$?" "2" "a symlinked round record fails closed"
 set -e
 
-# --- A chosen cut uses its recorded comparison ----------------------------
-cut_wt="$TMP_ROOT/cut-wt"
-mkdir -p "$cut_wt"
-git -C "$cut_wt" init -q -b main
-git -C "$cut_wt" config user.email test@example.com
-git -C "$cut_wt" config user.name Test
-git -C "$cut_wt" config commit.gpgsign false
-git -C "$cut_wt" commit -q --allow-empty -m base
-git -C "$cut_wt" switch -q -c cut
-printf 'one\ntwo\n' > "$cut_wt/change.txt"
-git -C "$cut_wt" add change.txt
-git -C "$cut_wt" commit -q -m implementation
-# The branch grows past its issue allowance.
-init_growth_state "$STATE" "$cut_wt" issue-1165 1-1 1
-write_allowance "$cut_wt" issue-1165 '**Expected delta**: 4 lines, 2 test lines'
-printf 'three\nfour\nfive\n' >> "$cut_wt/change.txt"
-git -C "$cut_wt" add change.txt
-git -C "$cut_wt" commit -q -m over-limit
-
-cut_reason() {
-  env ORCH_STATE_DIR="$cut_wt/tmp" "$CHECK" "$@" 2>/dev/null | jq -r '.reason'
-}
-
-for row in 'over|**Expected delta**: 4 lines, 2 test lines|0|over' \
-  'unsized|No allowance.|0|allowance_missing' 'malformed|**Expected delta**: about 4 lines|3|'; do
-  IFS='|' read -r label line want_rc verdict <<<"$row"
-  write_allowance "$cut_wt" issue-1165 "$line"
-  round_rc=0
-  "$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id "$label" \
-    --item 1 "fix the branch" "the branch this round shrinks" >/dev/null 2>&1 || round_rc=$?
-  assert_eq "$round_rc" "$want_rc" "$label round reports size or malformed text"
-  [[ "$want_rc" != 0 ]] || assert_eq \
-    "$(jq -r '[.size_check.verdict, .size_check.production_lines, .size_check.test_lines] | join(",")' "$cut_wt/tmp/dev-round-issue-1165-$label.json")" \
-    "$verdict,5,0" "$label round records its verdict and counts"
-done
-write_allowance "$cut_wt" issue-1165 '**Expected delta**: 4 lines, 2 test lines'
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id 1-1 --cut \
-  --item 1 "cut the branch back to the Done-when" "the branch this round shrinks" >/dev/null
-assert_eq "$(jq -r '.cut' "$cut_wt/tmp/dev-round-issue-1165-1-1.json")" "true" \
-  "the declared cut is recorded, so its item set is still checked at acceptance"
-
-# The cut lands: the branch comes back under the cap and the receipt is accepted.
-printf 'one\ntwo\n' > "$cut_wt/change.txt"
-git -C "$cut_wt" add change.txt
-git -C "$cut_wt" commit -q -m cut
+# A cut remains a scope declaration. Its receipt uses the same item and
+# addition checks even when the branch grows.
+cut_wt="$wt"
+"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-826 --round-id 5-5 --cut \
+  --item 1 "cut work back to the Done-when" "the branch this round cuts" >/dev/null
+cut_record="$cut_wt/tmp/dev-round-issue-826-5-5.json"
+assert_eq "$(jq -r '.cut' "$cut_record")" "true" "the scope cut is recorded"
+seq 1 1000 > "$cut_wt/growth.txt"
+git -C "$cut_wt" add growth.txt
+git -C "$cut_wt" commit -q -m growth
 cut_head="$(git -C "$cut_wt" rev-parse HEAD)"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id 1-1 --branch cut \
-  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-1-1-2" "$cut_wt" issue-1165 1-1)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 1-1 --expect-items-from-round)" \
-  "valid" "a cut that brought the branch back to the cap is accepted"
+"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-826 --round-id 5-5 --branch main \
+  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cut" "$cut_wt" issue-826 5-5)" --item 1 Applied "cut work to scope" >/dev/null
+assert_eq "$(reason --worktree "$cut_wt" --issue issue-826 --round-id 5-5 --expect-items-from-round)" \
+  "valid" "branch growth does not refuse a scope cut"
 
-# Must-fail: the same declaration over a round that grew the branch instead.
-# Only the round's effect on the branch differs from the arm above.
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --cut \
-  --item 1 "cut the branch back to the Done-when" "the branch this round shrinks" >/dev/null
-printf 'three\nfour\nfive\nsix\n' >> "$cut_wt/change.txt"
-git -C "$cut_wt" add change.txt
-git -C "$cut_wt" commit -q -m grew
-grew_head="$(git -C "$cut_wt" rev-parse HEAD)"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id 2-2 --branch cut \
-  --commit "$grew_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-2-2-3" "$cut_wt" issue-1165 2-2)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
-  "cut_not_shrunk" "a round declared a cut that grew the branch is refused"
-
-# Tracker edits cannot change an already delegated cut's comparison.
-for line in 'No allowance.' '**Expected delta**: 100 lines' '**Expected delta**: about 4 lines'; do
-  write_allowance "$cut_wt" issue-1165 "$line"
-  assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
-    "cut_not_shrunk" "the recorded cut comparison survives: $line"
-done
-
-# dev-artifact-check's one must-fail control: the recorded comparison dropped
-# from a private copy of the measurement, so the tracker edit decides the cut.
-MUTANT_SCRIPTS="$(mutant_scripts cut-comparison-mutant lib/branch-growth.sh)" || exit 1
-mutate_file "$MUTANT_SCRIPTS/lib/branch-growth.sh" 'checker_args=(--cut-from-round "$4")' 'checker_args=()'
-write_allowance "$cut_wt" issue-1165 '**Expected delta**: 100 lines'
-LIVE_CHECK="$CHECK"
-CHECK="$MUTANT_SCRIPTS/dev-artifact-check"
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
-  "valid" "control: reading the edited allowance accepts the unfinished cut"
-CHECK="$LIVE_CHECK"
-
-write_allowance "$cut_wt" issue-1165 'No allowance.'
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --cut \
-  --item 1 "cut the branch back to the Done-when" "the branch this round shrinks" >/dev/null
-assert_eq "$(jq -r '[.size_check.verdict, .size_check.production_lines] | join(",")' "$cut_wt/tmp/dev-round-issue-1165-3-3.json")" \
-  "allowance_missing,6" "an unsized cut records its starting count"
-printf 'one\ntwo\n' > "$cut_wt/change.txt"
-git -C "$cut_wt" add change.txt
-git -C "$cut_wt" commit -q -m unsized-cut
-cut_head="$(git -C "$cut_wt" rev-parse HEAD)"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id 3-3 --branch cut \
-  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-3-3-4" "$cut_wt" issue-1165 3-3)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
-  "valid" "an unsized cut can finish below its recorded counts"
-assert_eq "$("$STATE" --state-dir "$cut_wt/tmp" get issue-1165 '.pr.size_check.verdict, .pr.size_check.production_allowance, .pr.size_check.test_allowance' | paste -sd, -)" \
-  "allowance_missing,null,null" "cut acceptance keeps the unsized PR report without invented allowances"
-
-mkdir -p "$cut_wt/tests"
-printf 'test\n' > "$cut_wt/tests/new.sh"
-git -C "$cut_wt" add tests/new.sh
-git -C "$cut_wt" commit -q -m test-growth
-cut_head="$(git -C "$cut_wt" rev-parse HEAD)"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id 3-3 --branch cut \
-  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-3-3-5" "$cut_wt" issue-1165 3-3)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
-  "cut_not_shrunk" "an unsized cut cannot grow tests above their recorded count"
-unsized_record="$cut_wt/tmp/dev-round-issue-1165-3-3.json"
-
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry \
-  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null
-retry_record="$cut_wt/tmp/dev-round-issue-1165-retry.json"
-assert_eq "$(jq -r '[.size_check.verdict, .size_check.production_lines, .size_check.test_lines, .cut_comparison.production_allowance, .cut_comparison.test_allowance] | join(",")' "$retry_record")" \
-  "allowance_missing,2,1,6,0" "a cut retry records current counts and preserves the earlier comparison"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id retry --branch cut \
-  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-retry-6" "$cut_wt" issue-1165 retry)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id retry --expect-items-from-round)" \
-  "cut_not_shrunk" "a fresh cut retry cannot accept the same uncut growth"
-
-# dev-round-write's one must-fail control: a private writer whose cut retry
-# records its own counts in place of the earlier comparison.
-RETRY_WRITER="$(mutant_scripts cut-retry-mutant dev-round-write)/dev-round-write" || exit 1
-mutate_file "$RETRY_WRITER" '  cut_comparison="$BRANCH_ALLOWANCE_RECORD"' '  cut_comparison="$size_check"'
-ROUND_WRITE_BIN="$RETRY_WRITER"
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry-mutant \
-  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null
-ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
-"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id retry-mutant --branch cut \
-  --commit "$cut_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-cutwt-retry-mutant-7" "$cut_wt" issue-1165 retry-mutant)" --item 1 Applied "cut to the Done-when" >/dev/null
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id retry-mutant --expect-items-from-round)" \
-  "valid" "control: resetting the comparison accepts the unchanged growth"
-
-jq 'del(.cut_comparison)' "$unsized_record" > "$TMP_ROOT/cut-unmeasurable.json"
-cp "$TMP_ROOT/cut-unmeasurable.json" "$unsized_record"
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
-  "cut_unmeasurable" "a cut without its recorded comparison fails closed"
-retry_rc=0
-"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry-unmeasurable \
-  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null 2>&1 || retry_rc=$?
-assert_eq "$retry_rc" "2" "a cut retry without its recorded comparison fails closed"
-
-# Must-fail: the record's cut is a boolean, and a hand-edited string is not it.
-# Only the field's type differs from the arm above — same token, same items,
-# same base_sha — so a refusal here can come from nothing else.
-cut_record="$cut_wt/tmp/dev-round-issue-1165-2-2.json"
+# The declaration is still a boolean. The same record and receipt isolate its type.
 jq '.cut = "true"' "$cut_record" > "$TMP_ROOT/cut-string.json"
 cp "$TMP_ROOT/cut-string.json" "$cut_record"
 set +e
-env ORCH_STATE_DIR="$cut_wt/tmp" "$CHECK" --worktree "$cut_wt" --issue issue-1165 \
-  --round-id 2-2 --expect-items-from-round >/dev/null 2>&1
+"$CHECK" --worktree "$cut_wt" --issue issue-826 --round-id 5-5 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "a round record whose cut is a non-boolean fails closed"
 set -e
 

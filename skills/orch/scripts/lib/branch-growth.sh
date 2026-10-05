@@ -6,18 +6,17 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
-# Reads the issue header shared by branch-size-check and item-tier. Missing
-# is permitted; malformed allowance text returns 1 with no numeric result.
+# Reads the Expected delta estimate for item-tier. Missing
+# is permitted; malformed estimate text returns 1 with no numeric result.
 expected_delta_read() { # BODY
   local line grammar='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
-  EXPECTED_DELTA_PRODUCTION="" EXPECTED_DELTA_TEST=""
+  EXPECTED_DELTA_PRODUCTION=""
   line="$(sed -n 's/^[[:space:]]*[*_]*[Ee]xpected delta[*_]*[[:space:]]*:[[:space:]]*//p' <<<"$1")" || return 1
   line="${line%%$'\n'*}"
   line="$(sed 's/[[:space:]]*$//' <<<"$line")" || return 1
   [[ -z "$line" ]] || {
     [[ "$line" =~ $grammar ]] || return 1
     EXPECTED_DELTA_PRODUCTION="${BASH_REMATCH[1]%% *}"
-    EXPECTED_DELTA_TEST="${BASH_REMATCH[3]%% *}"
   }
 }
 # What a caller outside this package checks before it uses the measurement.
@@ -51,12 +50,11 @@ branch_growth_base_ref() {
 }
 # The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than
-# left to the runner's diff.renames, which decides whether a move a size
-# ratchet forced costs zero lines or twice the file. core.quotePath=false keeps
+# left to the runner's diff.renames, so a move counts the same for each caller. core.quotePath=false keeps
 # a non-ASCII path literal: under the default git wraps it in double quotes and
 # escapes the bytes, and the classifier compares whole paths, so a quoted
 # tests/ path stops reading as a test and its lines are scored against the
-# stricter production allowance. The base ref it compared against is left in
+# production total. The base ref it compared against is left in
 # BRANCH_GROWTH_BASE_REF for a caller that binds its verdict to the commits it
 # measured.
 #
@@ -93,10 +91,10 @@ branch_growth_render_roots_from_env() {
   BRANCH_GROWTH_RENDER_ROOTS="${ORCH_SIZE_RENDER_ROOTS:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
 }
 # The render-mirror roots every branch measurement pairs against, resolved once
-# per process from ORCH_SIZE_RENDER_ROOTS. dev-round-write, dev-return-write
-# and dev-artifact-check load no project configuration of their own, so the
-# measurement they share resolves it for them, and branch-size-check, which
-# does load it, reads the answer here rather than restating the default.
+# per process from ORCH_SIZE_RENDER_ROOTS. dev-return-write loads no project
+# configuration of its own, so the
+# measurement they share resolves it for them. CI callers set the roots
+# from their trusted base configuration before measuring.
 #
 # The load runs in a subshell. The same [env] table carries keys such as
 # ORCH_STATE_DIR that decide where these scripts read and write their state,
@@ -110,7 +108,7 @@ branch_growth_render_roots_from_env() {
 # anything it prints would otherwise land in the capture ahead of the value: a
 # stray token naming a real top-level directory becomes a render root, changed
 # code under it pairs off as a mirror, and the branch measures smaller than it
-# is, which understates the branch's size report.
+# is, which understates the receipt's churn.
 branch_growth_render_roots() {
   local worktree="$1" repo_root resolved
   [[ -z "$BRANCH_GROWTH_RENDER_ROOTS" ]] || return 0
@@ -129,94 +127,14 @@ branch_growth_render_roots() {
   BRANCH_GROWTH_RENDER_ROOTS="${resolved:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
 }
 # The legacy implement receipt still carries its measured churn. It no longer
-# authorizes a fix round; branch-size-check owns the issue allowance and its
-# production/test classification.
+# authorizes a fix round. CI classification shares the production/test and
+# render measurement below.
 branch_baseline_lines() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
   branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1
   measured="$BRANCH_SIZE_BASELINE"
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
-}
-BRANCH_ALLOWANCE_RECORD=""
-BRANCH_ALLOWANCE_CLASSES=""
-BRANCH_ALLOWANCE_STATUS=""
-BRANCH_ALLOWANCE_PRODUCTION=""
-BRANCH_ALLOWANCE_TESTS=""
-BRANCH_ALLOWANCE_PRODUCTION_LIMIT=""
-BRANCH_ALLOWANCE_TEST_LIMIT=""
-# Delegate parsing, measurement, and the verdict to branch-size-check. Its
-# JSON is the contract shared by launch, round minting, and cut acceptance.
-# Return the checker's exit code. Every measured verdict succeeds.
-# Cut acceptance supplies its round record as the comparison source. That
-# comparison writes no workflow state, so it resolves no state directory, which
-# a hosted lane's acceptance has no way to name. A measurement that writes
-# pr.size_check takes the caller's state directory fifth, and workflow-state
-# resolves it by the same rule as its own --state-dir; empty leaves that rule
-# to the environment and project settings.
-branch_allowance_check() {
-  local worktree="$1" issue="$2" script_dir="$3" output rc record verdict fields state_dir captured diagnostic
-  local checker_args=() state_args=()
-  if [[ -n "${4:-}" ]]; then
-    checker_args=(--cut-from-round "$4")
-  else
-    [[ -z "${5:-}" ]] || state_args=(--state-dir "$5")
-    state_dir="$("$script_dir/workflow-state" ${state_args[@]+"${state_args[@]}"} path "$issue")" || {
-      branch_growth_fail "caller workflow state directory could not be resolved"
-      return 2
-    }
-    checker_args=(--state-dir "${state_dir%/*}")
-  fi
-  BRANCH_ALLOWANCE_RECORD=""
-  BRANCH_ALLOWANCE_CLASSES=""
-  BRANCH_ALLOWANCE_STATUS="error"
-  captured="$(
-    diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/branch-allowance.XXXXXX" 2>/dev/null)" || exit 2
-    trap 'rm -f "$diagnostic_file"' EXIT
-    checker_rc=0
-    checker_output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
-      --json ${checker_args[@]+"${checker_args[@]}"} 2>"$diagnostic_file")" || checker_rc=$?
-    checker_error="$(cat -- "$diagnostic_file")" || exit 2
-    jq -n --arg output "$checker_output" --arg diagnostic "$checker_error" \
-      --argjson rc "$checker_rc" '{output: $output, diagnostic: $diagnostic, rc: $rc}'
-  )" || {
-    branch_growth_fail "checker output could not be captured under '${TMPDIR:-/tmp}'"
-    return 2
-  }
-  output="$(jq -r '.output' <<<"$captured")" || return 2
-  diagnostic="$(jq -r '.diagnostic' <<<"$captured")" || return 2
-  rc="$(jq -r '.rc' <<<"$captured")" || return 2
-  if (( rc != 0 )); then
-    branch_growth_fail "${diagnostic:-branch-size-check produced no diagnostic}"
-    return "$rc"
-  fi
-  record="$output"
-  if ! jq -e 'type == "object" and
-      (.verdict == "pass" or .verdict == "allowance_missing" or
-       .verdict == "over") and
-      (.production_lines | type == "number") and
-      (.test_lines | type == "number") and
-      (.production_allowance == null or (.production_allowance | type == "number")) and
-      (.test_allowance == null or (.test_allowance | type == "number"))' \
-      <<<"$record" >/dev/null 2>&1; then
-    branch_growth_fail "branch-size-check returned no valid measurement for '$issue'"
-    return 2
-  fi
-  verdict="$(jq -r '.verdict' <<<"$record")" || return 2
-  BRANCH_ALLOWANCE_RECORD="$record"
-  BRANCH_ALLOWANCE_CLASSES="$(jq -r '
-    [if .production_allowance != null and .production_lines > .production_allowance then "production" else empty end,
-     if .test_allowance != null and .test_lines > .test_allowance then "test" else empty end]
-    | join(",")' <<<"$record")" || return 2
-  fields="$(jq -r '[.production_lines, .test_lines, .production_allowance, (.test_allowance // "none")]
-    | map(tostring) | join(" ")' <<<"$record")" || {
-    branch_growth_fail "branch-size-check counts could not be read for '$issue'"
-    return 2
-  }
-  read -r BRANCH_ALLOWANCE_PRODUCTION BRANCH_ALLOWANCE_TESTS \
-    BRANCH_ALLOWANCE_PRODUCTION_LIMIT BRANCH_ALLOWANCE_TEST_LIMIT <<<"$fields"
-  BRANCH_ALLOWANCE_STATUS="$verdict"
-  return "$rc"
 }
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
@@ -228,13 +146,10 @@ BRANCH_SIZE_MIRROR=""
 # listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
 # Every counted row's additions plus deletions, render mirrors left out, for
-# the implement receipt. This shares the report's render classification.
+# the implement receipt. This shares CI's render classification.
 BRANCH_SIZE_BASELINE=""
-# Split the branch's added lines into production, test, and mandated render
-# mirror lines. Additions alone are counted there, so a rewrite that moves
-# lines earns no headroom from what it deleted. Test lines are counted apart
-# because they answer to their own allowance, and a total that folds the two
-# hides which one grew.
+# Split added lines into production, test and mandated render mirror lines
+# for CI classification. The receipt also reads additions plus deletions.
 #
 # The render-mirror roots come from branch_growth_render_roots, not from an
 # argument: every caller of this measurement resolves one list, once. A render
@@ -259,8 +174,8 @@ BRANCH_SIZE_BASELINE=""
 # or, for a path under a render root, the path past that root, with `*` any
 # run of characters including `/`, `?` any single character, and everything
 # else literal. The list only adds: empty, or matching nothing, it
-# leaves every line where the built-in rule put it, which for a path that rule
-# does not name is production and the stricter allowance.
+# leaves every line where the built-in rule put it. A path that rule does not
+# name is production code.
 #
 # The globs reach awk through the environment, not a `-v` assignment: awk
 # processes escape sequences in a `-v` value before the program sees it, so a

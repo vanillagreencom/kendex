@@ -2,8 +2,6 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
-Before writing the record, `dev-round-write` stores the `branch-size-check` report in `size_check`. The issue's `**Expected delta**` line is optional. Every measured verdict permits a round. A malformed line exits 3; a read or measurement failure exits 2.
-
 For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
 ## Identity: the round id
@@ -25,19 +23,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
   "delegated_at": 1769600000,
   "adds": ["tools/refresh-fixture"],
   "cut": false,
-  "cut_comparison": null,
   "source": "pr-comments",
-  "size_check": {
-    "base_sha": "0123456789abcdef0123456789abcdef01234567",
-    "head_sha": "0123456789abcdef0123456789abcdef01234567",
-    "production_lines": 0,
-    "test_lines": 0,
-    "mirror_lines": 0,
-    "production_allowance": null,
-    "test_allowance": null,
-    "verdict": "allowance_missing",
-    "reason": "No Expected delta line."
-  },
   "items": [
     { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
   ]
@@ -53,8 +39,6 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `delegated_at` | Yes | captured from the clock | Epoch second the round's first `dev-round-write` invocation started. An identical retry keeps it: identity compares every other field |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
-| `size_check` | Yes | captured from `branch-size-check` | The current report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |
-| `cut_comparison` | Yes | `--cut` or `--cut-from-round PATH` | A cut's comparison report; null for other rounds. A retry preserves the earlier comparison while `size_check` records current counts |
 | `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent. `dev-artifact-check` accepts a receipt's `ci` validation mode only where it is `pr-comments` |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
@@ -76,7 +60,7 @@ A reviewer or the orchestrator chooses a cut to bring the branch back to the Don
 
 A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
 
-`--cut` records `"cut": true` and stores the initial size report as `cut_comparison`. Acceptance uses that report's allowance, or its production and test counts when unsized. `dev-round-write --cut-from-round PATH` declares a fresh cut retry and preserves the comparison from that earlier round. Later tracker edits and retry measurements do not change the comparison. `dev-artifact-check` measures the branch again through `branch-size-check --cut-from-round`, which leaves `pr.size_check` unchanged. It returns `cut_not_shrunk` when the branch exceeds the recorded comparison, or `cut_unmeasurable` when measurement fails. The item set, reach, protected additions and immutability checks still apply. [`tests/dev_round_gate.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/tests/dev_round_gate.sh) exercises cut acceptance.
+`--cut` records `"cut": true`. The reviewer or orchestrator decides which work to cut. Acceptance checks the item set, reach, protected additions and immutability. A fresh retry repeats `--cut` and delegates the remaining work. Branch line counts do not decide acceptance.
 
 ## Readers
 

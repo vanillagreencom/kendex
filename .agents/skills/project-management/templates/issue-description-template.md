@@ -27,7 +27,7 @@
 |-------------|--------|-------|
 | `[ORIGIN_CONTEXT]` | Caller — e.g. `PR review suggestion ([found_by])`, `architecture planning` | Always include provenance |
 | `[REACH]` | `create_fields.reach`, else the caller — the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask | **Required on every issue** — the rule and what it refuses are [SKILL.md](../SKILL.md) § Disposition; `linear.sh issues create` enforces it |
-| `[N]` in **Expected delta** | Caller — the production lines the change is allowed to add; `[N] lines, [M] test lines` allows test lines too | The submit-time size check (`branch-size-check`) reads it as the branch's allowance and nothing else. Drop the line when no number is worth stating; the check then reports the counts for review |
+| `[N]` in **Expected delta** | Caller: estimated production lines for the planned change | `item-tier` reads it with the launch estimate and Location paths to choose a tier. Drop the line when no estimate is useful. It places no limit on the committed diff |
 | `[REGRESSED_BY]` | `create_fields.regressed_by`, else the caller: the pull request that caused the defect, as `#N`, several comma-separated | Only when that pull request is known; drop the line otherwise. A review-born item that names its source PR in `[ORIGIN_CONTEXT]` leaves it empty. `oversee-report`'s Escapes count reads this line and no other `#N` |
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[DESCRIPTION]` | `items[].description` | Use as written |

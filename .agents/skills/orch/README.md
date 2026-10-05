@@ -12,7 +12,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 - `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
 - `oversee-report` writes the overseer's status reports; `oversee-cycle` times each merge against its class target.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another, and workflow state and handoff files let a lane or overseer continue where it stopped.
-- Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
+- Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds.
 - [references/secret-value.ere](references/secret-value.ere) matches GitHub and Slack tokens and private-key headers for scripts to refuse to send matching text or files. Its header states how to read it.
 - Lanes run on Claude Code, Codex, OpenCode, Pi and Copilot CLI, remotely and in a fleet on all but OpenCode (Copilot fleets local); account selection, succession and preference entries cover all but OpenCode.
 
@@ -85,7 +85,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account, Codex credits exempt; bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](kendex.settings.toml.example) | `5000` |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
-| `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
+| `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |
 
 `ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form until the next major release: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet.
 

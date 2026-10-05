@@ -67,7 +67,7 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
+DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
 STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
@@ -120,7 +120,7 @@ fx_committed_md() { # NAME
   put doc.md 'Wrapped\ntext.\n'
   commit
 }
-full_scope() { repo "$1"; put big.txt "$(head -c 2048 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
+full_scope() { repo "$1"; put big.txt "\0$(head -c 2047 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
 # A hard-wrapped document committed BEFORE the base tag, then one commit that
 # touches no markdown: the range since base excludes the document entirely.
 fx_swept_md() { # NAME
@@ -180,7 +180,7 @@ assert_eq "must-fail: a batch that withholds nothing from the push hook hands se
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB
 run_rows \
-  "a clean repository runs the ten default checks, byte-ceiling, py-names and secrets with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
+  "a clean repository runs the default checks, byte-ceiling, py-names and secrets with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
   "'all' is the same batch|clean clean-2||all|rc=0 $(steps all "$DEFAULT")$(ok)" \
   "one violating check makes the batch exit 1 after every check ran|planted planted-1|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
   "COMMIT_GUARDS_CHECKS narrows the batch: with byte-ceiling alone the planted marker is not judged|planted planted-2|COMMIT_GUARDS_CHECKS=byte-ceiling||rc=0 $(steps all byte-ceiling)$(ok byte-ceiling)" \
@@ -246,6 +246,33 @@ single_rows \
   "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
   "--help prints usage at exit 0|clean help||--help||rc=0 commit-guards: usage=commit-guards" \
   "-h is --help|clean help-h||-h||rc=0 commit-guards: usage=commit-guards"
+
+# The default commit chain accepts large source, dated guidance and long notes.
+repo default-commit
+mkdir -p "$R/changelog.d/changed" "$R/.agents/skills"
+cp -R "$SKILL_DIR" "$R/.agents/skills/commit-guards"
+printf '# Guidance\n\nPublished: 2026-10-05.\n' >"$R/SKILL.md"
+head -c 307200 /dev/zero | tr '\0' 'x' >"$R/source.rs"
+printf -- '- %s\n' "$(head -c 10000 /dev/zero | tr '\0' 'a')" >"$R/changelog.d/changed/note.md"
+git -C "$R" add SKILL.md source.rs changelog.d/changed/note.md
+"$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null
+commit_rc=0
+git -C "$R" commit -qm 'feat: accept text and release notes' >"$TMP/default-commit.log" 2>&1 || commit_rc=$?
+assert_eq "the default chain commits large text, dated guidance and long release notes" 0 "$commit_rc"
+# A private dispatcher that restores prose must fail that same input.
+python3 - "$R/.agents/skills/commit-guards/scripts/commit-guards" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+needle = 'BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"'
+assert s.count(needle) == 1
+p.write_text(s.replace(needle, needle.replace('changelog-entries md-format', 'changelog-entries prose md-format')))
+EDIT
+printf 'Published: 2026-10-06.\n' >>"$R/SKILL.md"
+git -C "$R" add SKILL.md
+commit_rc=0
+git -C "$R" commit -qm 'docs: restore prose control' >"$TMP/prose-control.log" 2>&1 || commit_rc=$?
+assert_eq "control: restoring prose refuses the dated guidance" 1 "$commit_rc"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
