@@ -256,11 +256,29 @@ fn pinned_versions_with_and_without_v_request_the_same_download() {
 
 const MAIN_BUILD_TAG: &str = "main-build-42-1-0123456789abcdef0123456789abcdef01234567";
 
-/// Whether `script` pinned to a main build fetched that build's feed, then
-/// the command and the AppImage that feed names, and recorded the command
-/// as the main channel's.
+/// What `install.sh` did when pinned to a main build.
+struct MainBuildRun {
+    succeeded: bool,
+    /// The first three URLs curl was handed: the feed, then the command and
+    /// the AppImage.
+    fetched: Vec<String>,
+    /// The installed-command record, the fixture root spelled `<root>`.
+    recorded: String,
+    stderr: String,
+}
+
+impl MainBuildRun {
+    /// Every fact the run observed, for a failed assertion's message.
+    fn report(&self) -> String {
+        format!(
+            "succeeded={}\nfetched={:?}\nrecorded={:?}\nstderr:\n{}",
+            self.succeeded, self.fetched, self.recorded, self.stderr
+        )
+    }
+}
+
 #[allow(clippy::unwrap_used)]
-fn pinned_main_build_fetches_its_feed(script: &Path) -> Result<(), String> {
+fn pin_main_build(script: &Path) -> MainBuildRun {
     let home = tempfile::tempdir().unwrap();
     let root = rooted(&home);
     let (output, urls) = run_script(
@@ -273,46 +291,71 @@ fn pinned_main_build_fetches_its_feed(script: &Path) -> Result<(), String> {
         SUDO_STUB,
         &["--version", MAIN_BUILD_TAG],
     );
-    let feed = format!(
-        "https://github.com/vanillagreencom/kendex/releases/download/{MAIN_BUILD_TAG}/feed.json"
-    );
-    let fetched: Vec<&str> = urls.lines().take(3).collect();
-    let expected = [
-        feed.as_str(),
-        "https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu",
-        "https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage",
-    ];
     let record = kendex_core::env::Env::host_rooted(&root).installed_command_file();
-    let recorded = fs::read_to_string(record).unwrap_or_default();
-    let main_record = format!("{}/.local/bin/kendex\nmain\n", root.display());
-    match output.status.success() && fetched == expected && recorded == main_record {
-        true => Ok(()),
-        false => Err(format!("{output:?}\n{urls}\n{recorded}")),
+    MainBuildRun {
+        succeeded: output.status.success(),
+        fetched: urls.lines().take(3).map(str::to_owned).collect(),
+        recorded: fs::read_to_string(record)
+            .unwrap_or_default()
+            .replace(&root.display().to_string(), "<root>"),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
 }
 
+/// The build's own feed, then the command and the AppImage that feed names.
+fn main_build_fetches() -> Vec<String> {
+    vec![
+        format!(
+            "https://github.com/vanillagreencom/kendex/releases/download/{MAIN_BUILD_TAG}/feed.json"
+        ),
+        "https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu".to_owned(),
+        "https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage".to_owned(),
+    ]
+}
+
+const MAIN_RECORD: &str = "<root>/.local/bin/kendex\nmain\n";
+
 /// A main build's tag carries no `v`, and its AppImage is named for the
-/// version it built, so a pinned main build reads both from its own feed.
+/// version it built, so a pinned main build reads both from its own feed and
+/// its command follows the main channel.
 #[test]
 fn a_pinned_main_build_installs_from_its_own_feed() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
-    pinned_main_build_fetches_its_feed(&script).unwrap_or_else(|run| panic!("{run}"));
+    let run = pin_main_build(&script);
+    assert!(run.succeeded, "{}", run.report());
+    assert_eq!(run.fetched, main_build_fetches(), "{}", run.report());
+    assert_eq!(run.recorded, MAIN_RECORD, "{}", run.report());
 }
 
-/// The control for the row above: a copy of `install.sh` that prefixes the
-/// main-build tag, reads only the rolling build's feed, or records a main
-/// build as a release turns it red.
+/// Which of the row's checks a mutant breaks while the others still hold.
+enum Breaks {
+    /// No URL is requested under the tag as given.
+    Tag,
+    /// The downloads are not the ones the feed names; the record reads main.
+    Downloads,
+    /// The record is not main's; every download matches.
+    Record,
+}
+
+/// The control for the row above: each copy of `install.sh` breaks one of
+/// its checks.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_main_build_read_as_a_release_turns_its_row_red() {
+fn each_main_build_rule_breaks_its_own_check() {
     let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
     let source = fs::read_to_string(real).unwrap();
-    for (from, to) in [
-        ("    main-build-*) ;;\n", ""),
-        ("rolling-main|main-build-*)", "rolling-main)"),
+    let as_tagged = format!("/releases/download/{MAIN_BUILD_TAG}/");
+    for (from, to, breaks) in [
+        ("    main-build-*) ;;\n", "", Breaks::Tag),
+        (
+            "  rolling-main|main-build-*) main_feed=1; record_channel=main ;;\n",
+            "  rolling-main) main_feed=1; record_channel=main ;;\n  main-build-*) main_feed=0; record_channel=main ;;\n",
+            Breaks::Downloads,
+        ),
         (
             "main_feed=1; record_channel=main",
             "main_feed=1; record_channel=release",
+            Breaks::Record,
         ),
     ] {
         assert_eq!(
@@ -323,10 +366,24 @@ fn a_main_build_read_as_a_release_turns_its_row_red() {
         let dir = tempfile::tempdir().unwrap();
         let script = rooted(&dir).join("install-mutant.sh");
         fs::write(&script, source.replace(from, to)).unwrap();
-        assert!(
-            pinned_main_build_fetches_its_feed(&script).is_err(),
-            "{from:?} removed"
-        );
+        let run = pin_main_build(&script);
+        match breaks {
+            Breaks::Tag => assert!(
+                !run.fetched.iter().any(|url| url.contains(&as_tagged)),
+                "{from:?}: {}",
+                run.report()
+            ),
+            Breaks::Downloads => assert!(
+                run.succeeded && run.fetched != main_build_fetches() && run.recorded == MAIN_RECORD,
+                "{from:?}: {}",
+                run.report()
+            ),
+            Breaks::Record => assert!(
+                run.succeeded && run.fetched == main_build_fetches() && run.recorded != MAIN_RECORD,
+                "{from:?}: {}",
+                run.report()
+            ),
+        }
     }
 }
 
