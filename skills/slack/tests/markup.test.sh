@@ -65,7 +65,7 @@ assert_eq "$RC=$(jq -r '.result.texts | join(";")' <<<"$OUT")" "0=$BEFORE;$BEFOR
 for cache in original no-cache no-expiry; do
   case "$cache" in
     no-cache) sk_mutant repository-cache markup.py 'cached = self.repositories.get\(root\)' 'cached = None' ;;
-    no-expiry) sk_mutant repository-expiry markup.py '(cached = self.repositories.get\(root\)\n        if cached is not None and )now - cached\[0\] < METADATA_SECONDS' '\1True' ;;
+    no-expiry) sk_mutant repository-expiry markup.py '(cached = self.repositories.get\(root\)\n        now = self.clock\(\)\n        if cached is not None and )now - cached\[0\] < METADATA_SECONDS' '\1True' ;;
   esac
   for fixture in success exit; do
     REPOSITORY="$(sk_tracker_root "repository-$cache-$fixture" '' org/repo)"
