@@ -518,10 +518,11 @@ fi
 # it. The readers of ORCH_TMUX_VERIFY_SECS, and what reaches each:
 #   the brief waits    a claude launch with no --cmd, no resumed session and
 #                      no resume-or-fresh relaunch route, hosted or local
-#   tmux_wait_harness  two callers: the premise ahead of the account read,
-#                      so whatever lane_account_ok reaches, and the
-#                      harness-screen wait of a hosted claude, codex or pi
-#                      relaunch with no --cmd and no brief
+#   tmux_wait_composer a cloud session, its composer wait with no brief, the
+#                      premise ahead of its account read
+#   tmux_wait_harness  two callers: the premise ahead of open_tmux's account
+#                      read, and the harness-screen wait of a hosted claude,
+#                      codex or pi relaunch with no --cmd and no brief
 #   lane_account_ok    a local claude, codex or copilot lane with a --lane and
 #                      no --cmd, and a cloud session
 #   cloud_cli_wait     a cloud session, before anything is typed after its
@@ -1808,8 +1809,8 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT
 # keeping the premise inside the brief check left those two reading the pane
 # the instant after the keystrokes.
 #
-# Two callers read the answer differently. As the premise ahead of the account
-# read it is BEST EFFORT, never a verdict: no harness screen inside the bound is
+# Two callers read the answer differently. As the premise ahead of open_tmux's
+# account read it is BEST EFFORT, never a verdict: no harness screen inside the bound is
 # not a refusal, the read still happens, and the caller says on both lines that
 # it was taken without the premise. The resume-or-fresh relaunch in open_tmux
 # treats the same answer as a refusal: the lane is not launched. A pane drawing
@@ -1921,8 +1922,9 @@ tmux_wait_ssh_gone() { # PANE
 # disagreement closes the window and fails the item, and every outcome that is
 # not an observation leaves a healthy lane running with its reason named.
 #
-# PREMISE is `met` once tmux_wait_harness has the pane showing the harness's own
-# screen, `unmet` where that wait came back empty, and `skipped` where there was
+# PREMISE is `met` once tmux_wait_harness, or for a cloud session the composer
+# wait, has the pane showing the harness's own screen, `unmet` where
+# tmux_wait_harness came back empty, and `skipped` where there was
 # no premise to make. /proc/<pid>/environ is a snapshot taken at execve, so a
 # wrapper that sets the account and only then execs the harness reads as the
 # value it was handed for as long as it runs: a reading taken while the wrapper
