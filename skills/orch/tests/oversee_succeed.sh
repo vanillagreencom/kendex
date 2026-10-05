@@ -1842,23 +1842,36 @@ expect_copilot() {
     printf '1|oversee-succeed: copilot-account-unknown pane=%s\n' "$CALLER_PANE"
   fi
 }
-while IFS='|' read -r tree env expected; do
+# SOURCE names the harness ahead of the pane and leaves the account to it: a
+# fleet record naming harness copilot and no account, as register wrote one
+# from a Copilot pane with no --account, or --harness copilot.
+while IFS='|' read -r tree env source expected; do
   copilot_node_caller "$tree" ${env:+"$env"}
+  args=()
+  case "$source" in
+    record)
+      jq --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --argjson start "$SERVER_START" \
+        '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, harness: "copilot", server_start: $start}' \
+        "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv "$FLEET_STATE.tmp" "$FLEET_STATE" ;;
+    harness) args=(--harness copilot) ;;
+  esac
   case "$expected" in
     copilot:*) expected="$(expect_copilot "${expected#copilot:}")" ;;
     *) expected="1|oversee-succeed: $expected pane=$CALLER_PANE" ;;
   esac
-  run_succeed "nodecopilot$tree" '' --print-launch-line -- --model claude-fable-5.1 --reasoning-effort high --allow-all
+  run_succeed "nodecopilot$tree$source" '' --print-launch-line ${args[@]+"${args[@]}"} -- --model claude-fable-5.1 --reasoning-effort high --allow-all
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$expected" \
-    "a pane over the $tree process tree, with no record and no --harness, prints its line ${env:+(}${env}${env:+)}"
+    "a pane over the $tree process tree, the harness named by ${source:-the pane}, prints its line ${env:+(}${env}${env:+)}"
 done <<ROWS
-MainThread||copilot:$H/.1copilot
-copilot||copilot:$H/.1copilot
-loader||copilot:$H/.1copilot
-direct||copilot:$H/.1copilot
-MainThread|unset COPILOT_HOME; export HOME='$H'|copilot:$H/.copilot
-other||harness-unnamed
-deep||harness-unnamed
+MainThread|||copilot:$H/.1copilot
+copilot|||copilot:$H/.1copilot
+loader|||copilot:$H/.1copilot
+direct|||copilot:$H/.1copilot
+MainThread|unset COPILOT_HOME; export HOME='$H'||copilot:$H/.copilot
+MainThread||record|copilot:$H/.1copilot
+MainThread||harness|copilot:$H/.1copilot
+other|||harness-unnamed
+deep|||harness-unnamed
 ROWS
 # A process table that cannot be read names nothing: the pane is unreadable.
 mkdir -p "$TMP_ROOT/psfail"
@@ -1899,7 +1912,7 @@ nodedepthctl@lib/lane-context.sh@"\$name_re" 1 2 pids)@"\$name_re" 1 "" pids)@de
 nodeselfctl@lib/lane-context.sh@"\$name_re" 1 2 pids)@"\$name_re" 0 2 pids)@direct@@harness-unnamed
 nodecophomectl@lib/lane-context.sh@            COPILOT_HOME=*)@            COPILOT_HOME-X=*)@MainThread@@copilot:$H/.copilot
 nodehomectl@lib/lane-context.sh@copilot_home="\$home/.copilot"@copilot_home=""@MainThread@unset COPILOT_HOME; export HOME='$H'@copilot-account-unknown
-nodeacctctl@oversee-succeed@  CALLER_CFG="\$LANE_PANE_ACCOUNT"@  :@MainThread@@copilot-account-unknown
+nodeacctctl@oversee-succeed@|| CALLER_CFG="\$LANE_PANE_ACCOUNT"@|| :@MainThread@@copilot-account-unknown
 ROWS
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":200}}}' > "$FIXTURE_DIR/.1copilot.json"
 fleet_state
