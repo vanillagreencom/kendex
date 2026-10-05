@@ -194,21 +194,36 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
         run: >-
           classifier/.agents/skills/harness-ci/scripts/harness-only
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
-      - name: kendex, for the render class
+      # Neither network step fails this job: without them the render proof is
+      # unavailable and the class falls to `standard`. The warning step
+      # annotates the run when either did not succeed; a classifier error
+      # still fails the job.
+      - id: kendex
+        name: kendex, for the render class
         if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
         env:
           # The first release whose `kendex verify --json` prints a version 1
           # document; the render proof reads that document and nothing else.
           # Replace the placeholder with one of the kendex repository's
           # per-main-build pre-release tags, spelled as below, whose
           # `kendex verify --json` prints a version 1 document; copied as it
-          # stands, the install fails and this job fails with it.
+          # stands, the install fails and the `render` class is out of reach.
           KENDEX_VERSION: main-build-<n>-<attempt>-<sha>
         run: curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
-      - name: the source mirror the render proof re-renders from
+      - id: mirror
+        name: the source mirror the render proof re-renders from
         if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
         run: kendex source refresh
         working-directory: subject
+      - name: warn when the render proof lost a prerequisite
+        if: steps.render-reach.outputs.harness_only == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
+        env:
+          KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
+          MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
+        run: >-
+          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME"
       - id: classify
         env:
           ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
