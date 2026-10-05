@@ -122,7 +122,7 @@ fn run_script(
             "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) url=\"$1\"; shift ;; esac; done\n\
              echo \"$url\" >> \"{log}\"\n{miss}\
              case \"$url\" in\n\
-               */rolling-main/feed.json)\n\
+               */feed.json)\n\
                  printf '%s\\n' '{{' \
                    '  \"version\": \"5.0.1+main.42.0123456789abcdef0123456789abcdef01234567\",' \
                    '  \"commit\": \"0123456789abcdef0123456789abcdef01234567\",' \
@@ -251,6 +251,73 @@ fn pinned_versions_with_and_without_v_request_the_same_download() {
             "https://github.com/vanillagreencom/kendex/releases/download/v1.7.0/kendex-x86_64-unknown-linux-gnu\n"
         );
         assert!(root.join(".local/bin/kendex").is_file());
+    }
+}
+
+const MAIN_BUILD_TAG: &str = "main-build-42-1-0123456789abcdef0123456789abcdef01234567";
+
+/// Whether `script` pinned to a main build fetched that build's feed, then
+/// the command and the AppImage that feed names.
+#[allow(clippy::unwrap_used)]
+fn pinned_main_build_fetches_its_feed(script: &Path) -> Result<(), String> {
+    let home = tempfile::tempdir().unwrap();
+    let root = rooted(&home);
+    let (output, urls) = run_script(
+        script,
+        "Linux",
+        "x86_64",
+        None,
+        &root,
+        &[],
+        SUDO_STUB,
+        &["--version", MAIN_BUILD_TAG],
+    );
+    let feed = format!(
+        "https://github.com/vanillagreencom/kendex/releases/download/{MAIN_BUILD_TAG}/feed.json"
+    );
+    let fetched: Vec<&str> = urls.lines().take(3).collect();
+    let expected = [
+        feed.as_str(),
+        "https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu",
+        "https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage",
+    ];
+    match output.status.success() && fetched == expected {
+        true => Ok(()),
+        false => Err(format!("{output:?}\n{urls}")),
+    }
+}
+
+/// A main build's tag carries no `v`, and its AppImage is named for the
+/// version it built, so a pinned main build reads both from its own feed.
+#[test]
+fn a_pinned_main_build_installs_from_its_own_feed() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    pinned_main_build_fetches_its_feed(&script).unwrap_or_else(|run| panic!("{run}"));
+}
+
+/// The control for the row above: a copy of `install.sh` that prefixes the
+/// main-build tag, or reads only the rolling build's feed, turns it red.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_main_build_read_as_a_release_turns_its_row_red() {
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let source = fs::read_to_string(real).unwrap();
+    for (from, to) in [
+        ("    main-build-*) ;;\n", ""),
+        ("rolling-main|main-build-*)", "rolling-main)"),
+    ] {
+        assert_eq!(
+            source.matches(from).count(),
+            1,
+            "install.sh holds {from:?} once"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let script = rooted(&dir).join("install-mutant.sh");
+        fs::write(&script, source.replace(from, to)).unwrap();
+        assert!(
+            pinned_main_build_fetches_its_feed(&script).is_err(),
+            "{from:?} removed"
+        );
     }
 }
 

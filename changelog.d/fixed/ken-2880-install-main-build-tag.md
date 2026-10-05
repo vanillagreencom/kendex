@@ -1,0 +1,1 @@
+- `install.sh --version main-build-N-A-SHA` installs that published main build, reading its command and AppImage from the build's own feed instead of a missing `v`-prefixed tag.
