@@ -24,8 +24,10 @@ A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: r
 
 **Trivial diffs skip review by rule, not by asking.** Trivial is the shared CI classifier's class for the whole branch:
 
+Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Use that checkout's classifier against `[WORKTREE_PATH]`:
+
 ```bash
-.agents/skills/harness-ci/scripts/change-class --event pull_request --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH] --output /dev/null
+"[REVIEW_BASE_CHECKOUT]/.agents/skills/harness-ci/scripts/change-class" --event pull_request --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH] --output /dev/null
 ```
 
 An answer `change_class=trivial` with `measured=true` in the classifier diagnostic goes straight to § 9 with verdict `pass`. Any other answer, a failure included, runs the review.
