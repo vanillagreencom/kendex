@@ -77,6 +77,9 @@ kendex.settings.toml [env] > default):
                                under COMMIT_GUARDS_CHANGELOG_COLLATE=1, the
                                release commit's own declaration: any other
                                edit to it is not an entry
+  COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS  declares packages; a fragment
+                               a pattern places through its package slot is
+                               that package's entry, never the program's
 
 `[no-changelog]` anywhere in the header escapes the changelog rule.
 
@@ -226,19 +229,29 @@ if [ -n "$REQUIRED" ]; then
       break
     fi
     # shellcheck disable=SC2086
-    if gg_path_matches "$f" $GG_CHANGELOG_PATTERNS; then
+    gg_path_matches "$f" $GG_CHANGELOG_PATTERNS || continue
+    # A package's entry moves that package's version, never the program's,
+    # so it is no entry for a program change.
+    gg_path_glob_section "$f"
+    gg_fragment_package "$f"
+    if [ -z "$GG_FRAGMENT_PACKAGE" ]; then
       entry="$f"
       break
     fi
   done <"$GG_TMP/written.z"
 
   if [ -n "$touched" ] && [ -z "$entry" ]; then
+    program=""
+    for pat in $GG_CHANGELOG_PATTERNS; do
+      gg_package_pattern "$pat" || program="${program:+$program }$pat"
+    done
+    program="$(gg_scrubbed "$program")"
     case "$HEADER" in
       *"[no-changelog]"*) gg_message changelog-waived "$touched" "The header waives the changelog entry." ;;
       *)
         # The record does not satisfy this rule without the release declaration.
-        violation changelog-missing "$touched:$GG_CHANGELOG_SHOWN" "Changed without a changelog entry." \
-          "write one of: $GG_CHANGELOG_SHOWN" \
+        violation changelog-missing "$touched:$program" "Changed without a changelog entry." \
+          "write one of: $program" \
           "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
         [ -z "$GG_CHANGELOG_RECORD" ] \
           || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"

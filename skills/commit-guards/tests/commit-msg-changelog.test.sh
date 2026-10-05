@@ -179,6 +179,24 @@ for row in "${rows[@]}"; do
   assert_eq "$label" "$expect" "$(judge "$env" "$msg")"
 done
 
+echo "=== a package's fragment is no entry for a program change ==="
+PKGS='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md'
+fx_crate_package() { base "$1"; touch_crate added; fragment changelog.d/linear/fixed/y.md; git -C "$R" add -A; }
+rows=(
+  "a crates/ change whose only fragment is a package's owes a program entry, the remedy naming the program pattern alone|fx_crate_package package-only|$PKGS|$CRATE|rc=1 ${OK}$CRATE;$(owed crates/core/lib.rs)"
+  "control: a program fragment beside the package pattern is the entry|fx_crate_fragment package-program|$PKGS|$CRATE|rc=0 ${OK}$CRATE"
+)
+for row in "${rows[@]}"; do
+  IFS='|' read -r label fixture env msg expect <<<"$row"
+  $fixture
+  assert_eq "$label" "$expect" "$(judge "$env" "$msg")"
+done
+# Must-fail control on a disposable copy: every matched fragment an entry.
+gg_mutant ANY_FRAGMENT commit-msg '    if [ -z "$GG_FRAGMENT_PACKAGE" ]; then' '    if true; then'
+R="$ROOT/package-only"
+assert_eq "control: counting every fragment, the package's excuses the crate change" \
+  "rc=0 ${OK}$CRATE" "$(CM="$ANY_FRAGMENT" judge "$PKGS" "$CRATE")"
+
 echo "=== the paths are configuration, validated like every other ==="
 SPACED="COMMIT_GUARDS_CHANGELOG_COLLATE=1,COMMIT_GUARDS_CHANGELOG_RECORD=docs/My Changelog.md"
 rows=(

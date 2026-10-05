@@ -66,3 +66,24 @@ gg_project_rel() { # VAR SCRIPT_DIR WORKTREE -> sets VAR to the prefix
     "$worktree"/*) eval "$__name=\"\${project#\"\$worktree/\"}/\"" ;;
   esac
 }
+
+# What a SKILL.md declares: its frontmatter's `name` and its `metadata:`
+# block's `version`, each value on its own line, double or single quotes
+# taken off. Nonzero when the frontmatter or either value is missing, so an
+# unreadable package never compares equal to another.
+gg_skill_id() { # FILE
+  LC_ALL=C awk '
+    function value(l) {
+      sub(/^[^:]*:[ \t]*/, "", l); sub(/[ \t]+$/, "", l)
+      if (l ~ /^".*"$/ || l ~ /^\047.*\047$/) l = substr(l, 2, length(l) - 2)
+      return l
+    }
+    { sub(/\r$/, "") }
+    NR == 1 { if ($0 != "---") { bad = 1; exit } next }
+    $0 == "---" { closed = 1; exit }
+    /^[^ \t]/ { meta = ($0 ~ /^metadata:[ \t]*$/) }
+    /^name:/ { name = value($0) }
+    meta && /^[ \t]+version:/ { version = value($0) }
+    END { if (bad || !closed || name == "" || version == "") exit 1; print name; print version }
+  ' "$1"
+}

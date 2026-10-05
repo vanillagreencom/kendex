@@ -17,7 +17,8 @@
 # fold carries them as its own refusal.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CE="$(cd "$TEST_DIR/.." && pwd)/scripts/changelog-entries"
+SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+CE="$SKILL_DIR/scripts/changelog-entries"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 unset COMMIT_GUARDS_CHANGELOG_PATHS COMMIT_GUARDS_CHANGELOG_RECORD \
@@ -368,15 +369,16 @@ run_rows \
   "every fragment that survives its delete is named, escaped, after the record was replaced|fx_rm_fails||rm|rc=2 ${ERR}fragment-survivor=changelog.d/fixed/a\\ b.md;${ERR}fragment-survivor=changelog.d/fixed/pending.md;${ERR}collate-survivors=CHANGELOG.md|FOLDED2|changelog.d/fixed~changelog.d/fixed/a b.md~changelog.d/fixed/pending.md"
 
 echo "=== a package's entries fold under its own heading in Packages, never the program's sections ==="
-# A fragment one directory below the root is its package's: it folds under
-# one level-4 heading per package naming the version its package file
-# states, or the bare name where it has none, in the order the walk met the
-# packages and Keep a Changelog order within each.
-PKG_ENV='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md'
-packages() { # NAME [RECORD] — a package at 2.0.0, a program fragment and three package fragments
+# A fragment placed through the package slot is its package's: it folds
+# under one level-4 heading per package naming the version its package file
+# states, or the bare name of a versionless hook, in the order the walk met
+# the packages and Keep a Changelog order within each.
+PKG_ENV='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md hooks/*.sh'
+packages() { # NAME [RECORD] — a skill at 2.0.0, a hook, a program fragment and three package fragments
   repo "$1" "${2:-$RECORD}"
-  mkdir -p "$R/skills/pkg"
+  mkdir -p "$R/skills/pkg" "$R/hooks"
   printf -- '---\nname: pkg\nmetadata:\n  version: "2.0.0"\n---\n' >"$R/skills/pkg/SKILL.md"
+  printf 'echo hook\n' >"$R/hooks/hookx.sh"
   git -C "$R" add -A
   git -C "$R" commit -qm 'chore: package'
   frag fixed pending.md '- Folded in.\n'
@@ -455,6 +457,40 @@ fx_packages_appended() { packages packages-appended "$PACKAGES_IN"; }
 run_rows \
   "package entries fold under per-package headings with their versions; the program sections hold the program's alone; every package directory goes|fx_packages|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
   "a record's Packages part is accepted and its blocks kept ahead of the new ones|fx_packages_appended|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_APPENDED|-"
+# Must-fail controls on disposable copies: package fragments routed to the
+# program's sections, and a record scope refusing the Packages heading.
+PROGRAM_ONLY='# Changelog
+
+## [Unreleased]
+
+### Added
+
+- An entry the record already carries.
+- Pkg added.
+
+### Removed
+
+- **Breaking:** Pkg removed.
+
+### Fixed
+
+- Folded in.
+- Hook fixed.
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- A released entry.
+'
+fx_packages_routed() { packages packages-routed; }
+fx_packages_refused() { packages packages-refused "$PACKAGES_IN"; }
+gg_mutant ROUTED lib/changelog-collate.sh '    if [ -n "$pkg" ]; then' '    if false; then'
+gg_mutant REFUSED lib/changelog-record-scope.sh 'if ! gg_is_section "$low" && [ "$low" != "$GG_PACKAGES_PART" ]; then' 'if ! gg_is_section "$low"; then'
+CE="${ROUTED%/lib/*}/changelog-entries" run_rows \
+  "control: routed to the program's sections, the package entries join them and their directories stay|fx_packages_routed|$PKG_ENV||rc=0 $(folded 4 entries)|PROGRAM_ONLY|changelog.d/hookx~changelog.d/pkg"
+CE="${REFUSED%/lib/*}/changelog-entries" run_rows \
+  "control: a record scope refusing the Packages heading refuses the record|fx_packages_refused|$PKG_ENV||rc=1 ${ERR}record-section=CHANGELOG.md:Packages;${ERR}violations=1:4|SEED|changelog.d/fixed~changelog.d/fixed/pending.md~changelog.d/hookx~changelog.d/hookx/fixed~changelog.d/hookx/fixed/c.md~changelog.d/pkg~changelog.d/pkg/added~changelog.d/pkg/added/b.md~changelog.d/pkg/removed~changelog.d/pkg/removed/a.md"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

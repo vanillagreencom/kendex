@@ -61,24 +61,15 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   eval "$__c=\$__common"
 }
 
-# The package a scripts directory declares: the `name:` line and the
-# `metadata:` block's `version:` line of the SKILL.md beside it, verbatim.
-# kendex switches a skill off by renaming that file to SKILL.md.disabled and
-# leaves the hooks armed, so the switched-off name is read where the live one
-# is absent. Nonzero when the file, its frontmatter or either line is
-# missing, so an unreadable package never compares equal to another
-# unreadable one.
+# The package a scripts directory declares: the name and version of the
+# SKILL.md beside it, read by lib/skill-roots.sh's gg_skill_id. kendex
+# switches a skill off by renaming that file to SKILL.md.disabled and leaves
+# the hooks armed, so the switched-off name is read where the live one is
+# absent.
 gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
   local __name="$1" __id="" __file="$2/../SKILL.md"
   [ -f "$__file" ] || __file="$2/../SKILL.md.disabled"
-  __id="$(LC_ALL=C awk '
-    NR == 1 { if ($0 != "---") { bad = 1; exit } next }
-    $0 == "---" { closed = 1; exit }
-    /^name:/ { name = $0 }
-    /^[^[:space:]]/ { meta = ($0 == "metadata:"); next }
-    meta && /^[[:space:]]+version:/ { version = $0 }
-    END { if (bad || !closed || name == "" || version == "") exit 1; print name; print version }
-  ' "$__file" 2>/dev/null)" || return 1
+  __id="$(gg_skill_id "$__file" 2>/dev/null)" || return 1
   eval "$__name=\$__id"
 }
 
