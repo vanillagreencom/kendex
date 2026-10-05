@@ -58,6 +58,7 @@ hooks = [
   "block-bare-cd",
   "block-repo-copy",
   "block-unsafe-rm",
+  "command-safety",
   "block-argv-kill",
   "block-worktree-refresh",
   "pre-commit-check",
