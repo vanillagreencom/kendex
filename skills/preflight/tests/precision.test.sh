@@ -427,8 +427,10 @@ repo_root() {
   git rev-parse --show-toplevel
 }
 EOF
+mkdir -p "$R/pkg/scripts/lib"
+cp "$R/scripts/lib/common.sh" "$R/pkg/scripts/lib/common.sh"
 run_pf
-clean "a new sourced lib without a strict-mode preamble is not a finding" 1
+clean "a new sourced lib without a strict-mode preamble, at the root or nested, is not a finding" 2
 
 echo "=== control: the same bytes executed, and real fail-open shapes inside a lib, still fail ==="
 cp "$R/scripts/lib/common.sh" "$R/scripts/common.sh"
@@ -464,6 +466,13 @@ run_pf
 fires "the shipped scripts/lib tree is no longer exempt, and a sibling directory never was" \
   "scripts/lib/common.sh:0: [fail-open]" \
   "tools/libs/near.sh:0: [fail-open]"
+
+echo "=== control: an emptied setting exempts no tree ==="
+printf '[env]\nPREFLIGHT_SOURCED_LIB_GLOBS = ""\n' >"$R/kendex.settings.toml"
+run_pf
+fires "an empty sourced-library set holds every new shell file to the strict-mode shape" \
+  "tools/lib/owned-root.sh:0: [fail-open]" \
+  "scripts/lib/common.sh:0: [fail-open]"
 
 echo "=== a test-<name> suite outside a tests/ tree sets its own rules ==="
 seed toolsuite

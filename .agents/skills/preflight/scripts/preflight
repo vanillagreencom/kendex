@@ -62,10 +62,11 @@ Lanes:
                   mode: a new shell file that does not set -e, -u and
                   pipefail, unless it is non-executable under a sourced-library
                   tree (PREFLIGHT_SOURCED_LIB_GLOBS), where it is sourced and
-                  the preamble would set the calling shell's mode instead. Swallowed status: an added
-                  grep, find, git, jq, diff or cmp at a command position whose
-                  status a trailing || true (or || :) discards. The same text
-                  quoted inside a message is not the shape.
+                  the preamble would set the calling shell's mode instead.
+                  Swallowed status: an added grep, find, git, jq, diff or cmp
+                  at a command position whose status a trailing || true (or
+                  || :) discards. The same text quoted inside a message is not
+                  the shape.
   early-close-pipe
                   an added line in a file that turns pipefail on which pipes
                   a shell writer into a reader that stops before EOF. The
