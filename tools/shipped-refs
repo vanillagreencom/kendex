@@ -63,7 +63,8 @@ ID_PREFIX=D
 ID_WIDTH=3
 ROOTS="skills hooks agents pi-extensions"
 # The names crates/core/src/pi_ext/files.rs SKIPPED holds, which
-# copy_package leaves out at any depth of a Pi package.
+# copy_package leaves out at any depth of a Pi package;
+# shipped_refs_pi_skipped_is_the_copy_list there holds this copy to it.
 PI_SKIPPED="node_modules .git .turbo .next .cache build out coverage .pi .test-output"
 
 explain() { # KEY — the English for one key, and the whole of it

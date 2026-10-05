@@ -4,6 +4,8 @@ use crate::error::{CoreError, Result};
 
 /// Never copied or hashed: dependency trees and build output are recreated
 /// at the destination rather than carried across.
+/// `shipped_refs_pi_skipped_is_the_copy_list` holds `tools/shipped-refs`'s
+/// copy to this one.
 const SKIPPED: &[&str] = &[
     "node_modules",
     ".git",
@@ -294,6 +296,28 @@ mod tests {
         assert!(!message.contains('\u{202e}'), "{message}");
         assert!(message.contains("\\u{1b}"), "{message}");
         assert!(message.contains("\\u{202e}"), "{message}");
+    }
+
+    /// `tools/shipped-refs` judges only the Pi package files an install
+    /// holds; its copy of the list is held to [`SKIPPED`] both ways, so a
+    /// name added on one side alone reds here.
+    #[test]
+    fn shipped_refs_pi_skipped_is_the_copy_list() {
+        let script = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/shipped-refs"),
+        )
+        .expect("tools/shipped-refs is readable");
+        let listed = script
+            .lines()
+            .find_map(|line| line.strip_prefix("PI_SKIPPED=\""))
+            .and_then(|rest| rest.strip_suffix('"'))
+            .expect("tools/shipped-refs declares PI_SKIPPED as one quoted line");
+        let script_names: std::collections::BTreeSet<&str> = listed.split(' ').collect();
+        assert!(
+            script_names.len() >= 2,
+            "the PI_SKIPPED reader found {script_names:?}; the reader is broken"
+        );
+        assert_eq!(script_names, SKIPPED.iter().copied().collect());
     }
 
     #[test]
