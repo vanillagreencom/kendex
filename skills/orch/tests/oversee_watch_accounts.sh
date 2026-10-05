@@ -137,6 +137,65 @@ assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
   "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
   "the account's return is judged against its reading before the gap" "$ERR"
 
+# A hosted credential the provider holds while a lane runs on it reads
+# held/unmeasured on alternate passes. Its reset lies ahead of any run, so no
+# row reports a reset. One row per pass: the reading the
+# listing answers, then the account event that pass prints, or `-` for none,
+# where the pass is a heartbeat. A held reading under the status the last
+# unmeasured reading had is no news and leaves the row on the measured reading
+# before it; a new unmeasured status is news, and so is the measured reading
+# after it.
+HELD_FLAP=(
+  "ok room 80 2099-01-01T00:00:00Z|-"
+  "held unmeasured - -|change=status,headroom was=ok/room"
+  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=held/unmeasured"
+  "held unmeasured - -|-"
+  "ok room 80 2099-01-01T00:00:00Z|-"
+  "held unmeasured - -|-"
+  "ok walled 2 2099-01-01T00:00:00Z|change=headroom was=ok/room"
+  "held unmeasured - -|-"
+  "expired unmeasured - -|change=status,headroom was=ok/walled"
+  "held unmeasured - -|change=status was=expired/unmeasured"
+)
+
+# held_flap_run CASE — runs the HELD_FLAP passes under WATCH_BIN and sets
+# FLAP_GOT to one `<pass>: <event tail or ->` line per pass.
+held_flap_run() {
+  local n=0 row reading event
+  new_case "$1"
+  for row in "${HELD_FLAP[@]}"; do
+    reading="${row%%|*}"
+    # shellcheck disable=SC2086 # the reading is four words, one per field
+    accounts "$((++n))" "$(jq -c '.measured_through = "host"' <<<"$(account claude $reading)")"
+  done
+  FLAP_GOT=""
+  for ((n = 1; n <= ${#HELD_FLAP[@]}; n++)); do
+    watch_pass
+    event="$(grep '^EVENT account ' <<<"$OUT" | sed 's/.* change=/change=/' || true)"
+    if [[ -z "$event" ]]; then
+      [[ "$(head -1 <<<"$OUT")" == "$HEARTBEAT" ]] && event=- || event="no-heartbeat rc=$RC"
+    fi
+    FLAP_GOT+="$n: $event"$'\n'
+  done
+}
+
+FLAP_WANT=""
+for ((i = 0; i < ${#HELD_FLAP[@]}; i++)); do FLAP_WANT+="$((i + 1)): ${HELD_FLAP[$i]#*|}"$'\n'; done
+held_flap_run held_flap
+assert_eq "$FLAP_GOT" "$FLAP_WANT" \
+  "a held credential's alternation is news once, a measured change and a new unmeasured status are news, and the quiet passes are heartbeats" "$ERR"
+assert_eq "$(awk -F'\t' '$1 == "account" { print $3 }' "$STATE_DIR/owner_repo__none")" "held|unmeasured|-|held" \
+  "the row holds the last reading compared and the status of the last unmeasured one"
+
+# Control: a disposable copy that never skips a repeated unmeasured status
+# reports the alternation on every pass again.
+FLAP_MUTANT="$(mutant_scripts flap-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/flap-mutant/github"
+mutate_file "$FLAP_MUTANT" '[[ "$status" != "$unmeasured" ]] || continue' ':'
+WATCH_BIN="$FLAP_MUTANT" held_flap_run held_flap_control
+assert_contains "$FLAP_GOT" $'\n4: change=status,headroom was=ok/room\n' \
+  "control: comparing every held reading reports the repeated held pass again" "$ERR"
+
 # A baseline reset no date can read settles no reset, is noted once, and the
 # status and headroom changes beside it are still reported.
 new_case reset_unparsed

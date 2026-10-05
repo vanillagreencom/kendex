@@ -399,7 +399,15 @@ The long pass's events, checked and reported in this order:
                              it. `config_dir` names the credentials, since
                              two accounts can share an alias. The first
                              reading of an account is its baseline and an
-                             unchanged account says nothing
+                             unchanged account says nothing. A reading with
+                             verdict=unmeasured under the status the
+                             account's last unmeasured reading had says
+                             nothing either and is not compared: the next
+                             measured reading is compared with the last one
+                             measured, so a hosted credential the provider
+                             holds while a lane runs on it, unmeasured on
+                             alternate passes, is news once. `was=` is the
+                             reading compared with
   EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the

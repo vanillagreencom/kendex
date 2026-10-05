@@ -276,7 +276,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
-#   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
+#   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last unmeasured reading, or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread> <first id>
@@ -3479,20 +3479,37 @@ account_roster_read() {
 # time that moved while still ahead is a different bucket binding, not a reset.
 # An account the listing stops naming keeps its row, so one a provider drops
 # for a pass is compared against its last reading when it comes back.
+#
+# A reading that measured nothing (`verdict=unmeasured`) under the status word
+# the account's last unmeasured reading had is no news and leaves the row on
+# the reading before it, so the next measured reading is compared with the
+# last one measured. A hosted provider holding a credential while a lane runs
+# on it reads unmeasured on alternate passes; were each alternation news,
+# --max-loops quiet passes, and so the heartbeat, would never come.
+# The first unmeasured reading under a new status word is still news, which is
+# how a login that died reaches the overseer as `status=expired`; that it died
+# again after a measured pass reaches the heartbeat's roster alone, since
+# nothing here tells it from a held credential's next alternation.
 check_accounts() {
-  local key value fields prior state="${PW_SEEN[0]}" change
-  local was_status was_verdict was_resets status verdict resets reset_epoch
+  local key value fields prior state="${PW_SEEN[0]}" change row
+  local was_status was_verdict was_resets was_unmeasured status verdict resets reset_epoch unmeasured
   account_roster_read || return 0
   while IFS=$'\t' read -r key value fields; do
     [[ -n "$key" ]] || continue
     if ! prior="$(lane_row_get account "$state" "$key")"; then
       die state-read-failed "" "account=$key" "row=account"
     fi
-    [[ "$prior" != "$value" ]] || continue
-    state="$(lane_row_set account "$state" "$key" "$value")"
-    [[ -n "$prior" ]] || continue
-    IFS='|' read -r was_status was_verdict was_resets <<<"$prior"
+    IFS='|' read -r was_status was_verdict was_resets was_unmeasured <<<"$prior"
     IFS='|' read -r status verdict resets <<<"$value"
+    unmeasured="${was_unmeasured:--}"
+    if [[ "$verdict" == unmeasured ]]; then
+      [[ "$status" != "$unmeasured" ]] || continue
+      unmeasured="$status"
+    fi
+    row="$value|$unmeasured"
+    [[ "$prior" != "$row" ]] || continue
+    state="$(lane_row_set account "$state" "$key" "$row")"
+    [[ -n "$prior" ]] || continue
     change=""
     [[ "$was_status" == "$status" ]] || change+=",status"
     [[ "$was_verdict" == "$verdict" ]] || change+=",headroom"
