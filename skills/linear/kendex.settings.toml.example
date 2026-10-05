@@ -15,9 +15,8 @@ LINEAR_TEAM = "" # required
 LINEAR_TEAM_PREFIX = "PROJ"
 
 # The labels that route an issue to an agent, separated by commas. With a
-# list, creating an issue that carries none of them is refused, because
-# nothing would pick that issue up. Left out of this file, the agent labels
-# the repository's label taxonomy lists stand in. Empty turns the refusal off.
+# list here, creating an issue that carries none of them is refused, because
+# nothing would pick that issue up. Empty turns the refusal off.
 LINEAR_AGENT_LABELS = ""
 
 # Whether a new issue must say who runs into the problem. Any value turns it

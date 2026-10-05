@@ -1,1 +1,1 @@
-- linear: `issues create` requires a `Reached by:` line unless `LINEAR_REQUIRE_REACH` is empty, and with `LINEAR_AGENT_LABELS` unset reads agent labels from the label taxonomy.
+- linear: `issues create` requires a `Reached by:` line unless `LINEAR_REQUIRE_REACH` is set empty.
