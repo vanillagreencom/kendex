@@ -288,7 +288,6 @@ done <<'ROWS'
 own-list||tools/secrets-excludes
 own-setting|yes|tools/pr-excludes
 ROWS
-POLICY_SUBJECT="$R"
 row "a policy root that cannot be entered refuses" \
   "rc=2 secrets: policy-root=$TMP/no-checkout" "$R" --policy-root "$TMP/no-checkout"
 NOT_REPO="$TMP/not-a-repo"
@@ -310,7 +309,6 @@ a well-formed judged list is validated and the scan runs||docs/*\tgenerated pros
 a judged setting the lane cannot use refuses|/abs/excludes||rc=2 secrets: path-absolute=excludes:/abs/excludes
 a judged row without a reason refuses||docs/*\n|rc=2 secrets: exclusion-reason=tools/secrets-excludes:1
 ROWS
-BAD_JUDGED_LIST="$R"
 
 echo "=== the tool: missing or too old is a gap outside CI and on --staged, a refusal on a CI range or --all ==="
 NO_TOOL_PATH="$TMP/no-tool-bin"
@@ -447,21 +445,20 @@ git -C "$MERGE" checkout -q evil
 gg_mutant LANE secrets 'grep -Fxq -- "$COMMIT" "$shallow"' 'grep -Fxq -- "$COMMIT" /dev/null'
 row "control: a shallow boundary read as a root commit judges every line it holds" \
   "rc=1 secrets: secret=key.pem:1:private-key" "$SHALLOW" --against HEAD^1
-gg_mutant LANE secrets 'cd -- "$POLICY_ROOT" 2>"$GG_TMP/policy-root.err"' 'true'
-row "control: a lane that stays in the judged repository reads its own row" \
-  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$POLICY"
-gg_mutant LANE secrets 'cd -- "$START_DIR" || gg_fail repository-cd' 'true || gg_fail repository-cd'
-row "control: a lane that never returns to the judged repository scans the policy root and passes" \
-  "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$POLICY"
-gg_mutant LANE secrets '|| gg_fail_cause policy-root "$POLICY_ROOT" "$GG_TMP/policy-root.err" "cannot enter the policy root"' '|| true'
-row "control: a lane that ignores an unenterable policy root reads the judged repository's own row" \
-  "rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0" "$POLICY_SUBJECT" --policy-root "$TMP/no-checkout"
-gg_mutant LANE secrets 'git rev-parse --show-toplevel >/dev/null 2>"$GG_TMP/policy-root.err"' 'true'
-row "control: without the repository check a non-git policy root fails under the wrong key" \
-  "rc=2 secrets: repository-root=1" "$POLICY_SUBJECT" --policy-root "$NOT_REPO"
-gg_mutant LANE secrets 'gg_load_excludes "$JUDGED_EXCLUDES"' 'true'
-row "control: a lane that skips the judged list passes its malformed row" \
-  "rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0" "$BAD_JUDGED_LIST" --policy-root "$POLICY"
+# One row per rule of the --policy-root block, its subject and policy root
+# named as fixtures under $TMP. The remedy naming the policy root is prose.
+while IFS='^' read -r label from to subject root expect; do
+  gg_mutant LANE secrets "$from" "$to"
+  row "control: $label" "$expect" "$TMP/$subject" --policy-root "$TMP/$root"
+done <<'ROWS'
+a lane that stays in the judged repository reads its own row^cd -- "$POLICY_ROOT" 2>"$GG_TMP/policy-root.err"^true^own-setting^trusted-policy^rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0
+a lane that ignores an unenterable policy root reads the judged repository's own row^|| gg_fail_cause policy-root "$POLICY_ROOT" "$GG_TMP/policy-root.err" "cannot enter the policy root"^|| true^own-setting^no-checkout^rc=0 secrets: summary=violations=0 files=0 scope=staged skipped=0
+without the repository check a non-git policy root fails under the wrong key^git rev-parse --show-toplevel >/dev/null 2>"$GG_TMP/policy-root.err"^true^own-setting^not-a-repo^rc=2 secrets: repository-root=1
+a lane that loads no list from the policy root fails the path its row excludes^gg_load_excludes "$EXCLUDES_FILE"^true^excluded^trusted-policy^rc=1 secrets: secret=fixtures/cred.txt:1:aws-access-token
+a lane that never returns to the judged repository scans the policy root and passes^cd -- "$START_DIR" || gg_fail repository-cd^true || gg_fail repository-cd^own-setting^trusted-policy^rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0
+a lane that skips the judged setting passes its absolute path^JUDGED_EXCLUDES="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_SECRETS_EXCLUDES "tools/secrets-excludes" excludes)"^JUDGED_EXCLUDES=tools/secrets-excludes^a judged setting the lane cannot use refuses^trusted-policy^rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0
+a lane that skips the judged list passes its malformed row^gg_load_excludes "$JUDGED_EXCLUDES"^true^a judged row without a reason refuses^trusted-policy^rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0
+ROWS
 gg_mutant LANE secrets '--config "$GG_TMP/gitleaks.toml"' '--log-level warn'
 row "control: without the config flag the environment's configuration allowlists the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$ENV_TOML" "$ENV_CONFIG"
