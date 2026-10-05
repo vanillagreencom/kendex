@@ -722,9 +722,16 @@ while IFS='|' read -r command clause_rc kept_guard; do
   mkdir -p "$ROOT/pkg"
   cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
   clause_mutant="$ROOT/pkg/worktree/scripts/worktree"
-  clause_src="$(cat "$clause_mutant")" || exit 1
   assert_eq "$(grep -cF "$keep_guard" "$clause_mutant" || true)" "1" "control finds the keep-mode guard [$command]"
-  printf '%s\n' "${clause_src/"$keep_guard"/$kept_guard}" >"$clause_mutant"
+  # A line-level awk cut: bash 3.2's ${var/pattern/...} over the whole script
+  # runs for minutes once the pattern is present.
+  F="$keep_guard" T="$kept_guard" awk '
+    BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] }
+    { i = index($0, f); if (i) $0 = substr($0, 1, i - 1) t substr($0, i + length(f)); print }
+  ' "$clause_mutant" >"$clause_mutant.edit" || exit 1
+  # Written over in place, so the copy keeps its executable bit.
+  cat -- "$clause_mutant.edit" >"$clause_mutant"
+  rm -f -- "${clause_mutant:?}.edit"
   assert_eq "$(grep -cF "KEEP_ON_CONFLICT\" == true && $kept_guard" "$clause_mutant" || true)" "1" \
     "control cuts the clause only in its private copy [$command]"
   clause_got="$(WORKTREE_SCRIPT="$clause_mutant" run "$command")"
