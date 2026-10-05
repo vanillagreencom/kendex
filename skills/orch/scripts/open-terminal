@@ -1768,8 +1768,8 @@ launch_write() { # OPERATION TITLE PANE EXPECT ACTION VALUE
 #   1  neither within the window: the stuck or dead pane the failure exit is for
 #   3  a nudge did not land, which launch_write has already reported
 #   4  a capture failed, which tmux_launch_verify reads as it reads 1
-# An empty BRIEF is a caller with no brief sent yet, a cloud session's first
-# prompt: the wait is then the readiness half alone and never returns 2.
+# An empty BRIEF is a caller with no brief to send, a cloud session whose
+# brief is its launch line's description: the wait is then the readiness half alone and never returns 2.
 # The loop READS before it decides whether it may still nudge, so the Enter of
 # the final pass is observed like every other: a dialog it dismissed or a draft
 # it submitted lands after the last nudge, and testing the budget before the
@@ -2842,7 +2842,7 @@ cloud_bundle_risk() { # ACCOUNT
 CLOUD_SESSION_RE='https://claude\.ai/code/((session|cse)_[[:alnum:]_-]+)'
 
 # The cloud session id the pane's scrollback shows, into CLOUD_SESSION: the
-# first session URL whose text the first prompt PROMPT does not carry, the one
+# first session URL whose text the description PROMPT does not carry, the one
 # the CLI printed, so a brief quoting an earlier session's URL never names
 # this one wherever the TUI draws it. Read once a second for up to
 # LANE_SSH_PROMPT_SECS, the bound sized for another machine answering, since
@@ -2900,30 +2900,32 @@ cloud_cli_wait() { # PANE
   done
 }
 
-# One launch=cloud-session item. The session clones this repository's
-# github.com remote at the item branch, so the item's worktree is made and its
-# branch pushed from the base tip first. The item's window then opens in that
-# worktree and runs `claude --cloud` interactively under the lane's account
-# and model, --ref naming the pushed branch, so the CLI clones it or refuses,
-# and a refusal is a failed launch. Once claude runs in the pane and its
-# composer is up, the account it runs on is read back as a local lane's is,
-# and its first prompt is the brief file closed by the session words, sent as
-# a local lane's brief is resent. Its session id is the launch record: a
-# launch whose pane shows none stops there. The record carries the kind, the
-# account, that id, the window and the local worktree as mail_root. The
-# repository card the session may show is the operator's or the master's to
-# answer. A failure after the create leaves the tree standing as the item's
-# claim, one after the push its branch on origin, and one after the window
-# opened that window, with whatever the CLI printed in it, except an account
-# mismatch, which closes it. Status 75 is an item another session owns; 1 a
-# failure, its keyed line printed.
+# One launch=cloud-session item. `claude --cloud DESCRIPTION` clones the
+# checkout's github.com remote at its current branch, so the item's worktree
+# is made and its branch pushed from the base tip first. The item's window
+# then runs `claude --cloud=DESCRIPTION` there under the lane's account and
+# model, the description, sent as the session's first message, being the
+# brief closed by the session words; the `=` form keeps one opening with `-`
+# the option's value. The pane's shell reads it from the worktree's git
+# directory, so no brief text is typed and `worktree remove` takes the file.
+# Once claude runs in the pane and its composer is up, the account is read
+# back as a local lane's is. Its session id is the launch record: a launch
+# whose pane shows none stops there. A failure after the create leaves the
+# tree standing as the item's claim, one after the push its branch on origin,
+# and one after the window opened that window, except an account mismatch,
+# which closes it. Status 75 is an item another session owns; 1 a failure,
+# its keyed line printed.
 cloud_session_launch() {
-  local wt branch model cmd form line pane session prompt rc=0 launched_at record_rc=0
+  local wt model cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
   [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
-  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }
+  # A detached worktree has no current branch for the CLI to clone.
+  git -C "$wt" symbolic-ref --short HEAD >/dev/null || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }
+  prompt="$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT"
+  prompt_file="$(git -C "$wt" rev-parse --absolute-git-dir)/cloud-prompt" && printf '%s' "$prompt" > "$prompt_file" \
+    || { ot_message cloud-prompt-failed "item=$item" >&2; return 1; }
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
   model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" || return 1
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
@@ -2935,10 +2937,10 @@ cloud_session_launch() {
   # environment, not this script's, so the line clears CCR_FORCE_BUNDLE there:
   # set, it bundles the checkout. On an account whose GitHub App check reads
   # an installed App as missing (anthropics/claude-code#81776), the CLI bundles
-  # the checkout or refuses --ref; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-  # set it clones. That variable goes once that bug is fixed, KEN-2741 being
-  # its removal point.
-  cmd="claude --cloud --model $(lane_single_quote "$model") --ref $(lane_single_quote "$branch")"
+  # the checkout; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set it clones.
+  # That variable goes once that bug is fixed, KEN-2741 being its removal
+  # point.
+  cmd="claude --model $(lane_single_quote "$model") --cloud=\"\$(cat -- $(lane_single_quote "$prompt_file"))\""
   form="$(lane_launch_form "$cmd" claude "${LANE_ENV#*=}")" || return 1
   LANE_FORM="$form"
   cmd="$(lane_launch_line "$cmd" claude "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$form")" || return 1
@@ -2951,8 +2953,7 @@ cloud_session_launch() {
     0) ;;
     1 | 3)
       # Once claude ran, a pane back at the window's shell is the CLI's own
-      # exit, a --ref it cannot honor among them. A refused nudge has printed
-      # its own line.
+      # exit. A refused nudge has printed its own line.
       if lane_pane_by_id "$pane" && is_bare_shell "$LANE_PANE_CMD"; then
         ot_message cloud-launch-failed "item=$item" >&2
       elif [[ "$rc" -eq 1 ]]; then
@@ -2964,8 +2965,6 @@ cloud_session_launch() {
   esac
   # The composer is claude's own screen, the premise the account read rests on.
   lane_account_ok "$pane" "$title" met || { tmux_window_close "$pane" "$title" || true; return 1; }
-  prompt="$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT"
-  launch_write brief-send "$title" "$pane" claude text "$prompt" || return 1
   rc=0
   cloud_session_read "$pane" "$prompt" || rc=$?
   case "$rc" in

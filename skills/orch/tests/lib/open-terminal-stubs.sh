@@ -77,10 +77,10 @@ STUBEOF
 # N pane_current_command reads after the line, the harness from the next.
 # $OT_HARNESS_EXITS=M is a harness that refuses its arguments: after M reads
 # running it, the pane is back at its shell. $OT_SCREEN_FILE names a file
-# holding the screen a cloud session draws once its first prompt is sent, the
-# log's second paste after its launch line: shown from the $OT_SCREEN_ON-th
-# capture after that paste (default 1), whole under `-S -` and its last five
-# lines, a pane five rows tall, without it.
+# holding the screen a cloud session draws once its composer is up: shown from
+# the $OT_SCREEN_ON-th capture (default 1) after the one that drew the
+# $OT_COMPOSER_ON_ENTER composer, whole under `-S -` and its last five lines, a
+# pane five rows tall, without it.
 cat > "$1/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -179,7 +179,10 @@ case "${1:-}" in
     # The connected screen a row spells out, from a file because a screen is
     # several lines while run_ot's env list is one.
     elif [[ "$state" == ssh && -n "${OT_SSH_SCREEN:-}" ]]; then cat "$OT_SSH_SCREEN"
-    elif [[ -n "${OT_SCREEN_FILE:-}" ]] && (( $(awk '/^load-buffer / { p++ } p >= 2 && /^capture-pane / { c++ } END { print c + 0 }' "$OT_TMUX_LOG") >= ${OT_SCREEN_ON:-1} )); then
+    elif [[ -n "${OT_SCREEN_FILE:-}" ]] && (( $(awk -v n="${OT_COMPOSER_ON_ENTER:-1}" '
+        /^send-keys .* Enter$/ { e++ }
+        /^capture-pane / { if (up) c++; else if (e >= n) up = 1 }
+        END { print c + 0 }' "$OT_TMUX_LOG") >= ${OT_SCREEN_ON:-1} )); then
       if [[ " $* " == *' -S - '* ]]; then cat "$OT_SCREEN_FILE"; else tail -n 5 "$OT_SCREEN_FILE"; fi
     elif [[ -n "${OT_COMPOSER_ON_ENTER:-}" ]]; then
       enters="$(grep -c '^send-keys .* Enter$' "$OT_TMUX_LOG")" || true
