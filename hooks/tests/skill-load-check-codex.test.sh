@@ -38,13 +38,14 @@
 # output, and the text after Output: is the event's whole output except under
 # the limit below the file's size, where it opens with the truncation warning;
 # each row takes one read's lines, and the no-event row also drops the read's
-# event, as a rollout in Codex's default Legacy history mode holds none. The
-# fixtures hold the figures. The fixture projections omit account metadata,
-# not status; the truncated one also drops the events' output fields and keeps
-# only the head, the cut marker and the tail of the long text. The cut-line
-# rows plant the first half of a captured line: as the last line, which Codex
-# may still be writing when the hook reads, and ahead of whole records, as a
-# rollout Codex reopened after an interruption holds.
+# event, as a Legacy rollout (an older Codex, or a thread whose app server
+# refused pagination) holds none. The fixtures hold the figures. The fixture
+# projections omit account metadata, not status; the truncated one also drops
+# the events' output fields and keeps only the head, the cut marker and the
+# tail of the long text. The cut-line rows plant the first half of a captured
+# line: as the last line, which Codex may still be writing when the hook
+# reads, and ahead of whole records, as a rollout Codex reopened after an
+# interruption holds.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail

@@ -681,8 +681,9 @@ esac
 # and under one above it or with only cmd came back whole with no warning. A
 # direct read counts only when its output opens without that line, judged
 # from the function_call_output alone: Codex writes a direct call's
-# CommandExecution event only in its Paginated history mode, and a rollout in
-# the default Legacy mode holds none.
+# CommandExecution event only in Paginated history mode, and a Legacy rollout
+# (an older Codex, or a thread whose app server refused pagination) holds
+# none.
 # Codex 0.160.0 functions.exec records a JavaScript custom_tool_call instead.
 # Its Script completed header follows a failed shell read too, so it proves
 # only that the script reached its end. Each awaited exec_command writes its
