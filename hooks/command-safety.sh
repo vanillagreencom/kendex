@@ -7,6 +7,7 @@
 # summary: Refuses shell commands matching a project's declared deny pattern, and every command while its settings file cannot be read.
 # safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
+# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
