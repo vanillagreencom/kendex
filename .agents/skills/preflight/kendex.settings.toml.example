@@ -12,3 +12,9 @@ PREFLIGHT_JSONC_GLOBS = "**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json *
 # the base branch; correcting one this branch added is not reported. A value
 # replaces the list shown here.
 PREFLIGHT_MIGRATION_GLOBS = "**/migrations/V*__*.sql **/db/migration/V*__*.sql"
+
+# The folders that hold shell libraries other scripts source, separated by
+# spaces. A new shell file anywhere below one, without the executable bit,
+# needs no strict-mode preamble, which would change the calling script's
+# mode. A value replaces the list shown here.
+PREFLIGHT_SOURCED_LIB_GLOBS = "**/scripts/lib"

@@ -28,7 +28,9 @@ The checker selects changed files from Git. Each check reads the file types it s
 
 `PREFLIGHT_MIGRATION_GLOBS` names migrations whose recorded checksum makes an edit unsafe.
 
-Set either value in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. [references/lanes.md](references/lanes.md) lists the shipped sets.
+`PREFLIGHT_SOURCED_LIB_GLOBS` names the directories that hold sourced shell libraries. A new file anywhere under one, without the executable bit, needs no strict-mode preamble.
+
+Set any of these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. [references/lanes.md](references/lanes.md) lists the shipped sets.
 
 ## Wiring
 

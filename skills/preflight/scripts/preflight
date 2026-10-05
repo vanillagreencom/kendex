@@ -60,9 +60,9 @@ Lanes:
   fail-open       three shapes. Mktemp assignment: an =$(mktemp ...)
                   assignment added to a file that never sets errexit. Strict
                   mode: a new shell file that does not set -e, -u and
-                  pipefail, unless it is non-executable under a scripts/lib/
-                  tree, where it is sourced and the preamble would set the
-                  calling shell's mode instead. Swallowed status: an added
+                  pipefail, unless it is non-executable under a sourced-library
+                  tree (PREFLIGHT_SOURCED_LIB_GLOBS), where it is sourced and
+                  the preamble would set the calling shell's mode instead. Swallowed status: an added
                   grep, find, git, jq, diff or cmp at a command position whose
                   status a trailing || true (or || :) discards. The same text
                   quoted inside a message is not the shape.
@@ -170,10 +170,14 @@ Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
   PREFLIGHT_JSONC_GLOBS      .json paths whose producer writes JSON with
                              comments
   PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes
+  PREFLIGHT_SOURCED_LIB_GLOBS
+                             directories whose whole tree holds sourced shell
+                             libraries (default **/scripts/lib)
 
 Each replaces its shipped set rather than adding to it. Emptied, the JSONC
-set exempts nothing and every .json file is parsed as strict JSON, while an
-empty migration set leaves applied-migration-edited quiet.
+set exempts nothing and every .json file is parsed as strict JSON, an empty
+migration set leaves applied-migration-edited quiet, and an empty
+sourced-library set holds every new shell file to the strict-mode shape.
 
 Optional tools: shellcheck for shellcheck-errors and masked-returns, jq for
 JSON, taplo or python3 with tomllib for TOML. A needed lane whose tool is
@@ -692,6 +696,16 @@ is_jsonc_path() { # PATH — file kind or configured JSONC-by-convention path
     *.json) pf_path_matches_globs "$JSONC_GLOBS" "$1" ;;
     *) return 1 ;;
   esac
+}
+
+SOURCED_LIB_GLOBS="${PREFLIGHT_SOURCED_LIB_GLOBS-**/scripts/lib}"
+
+is_sourced_lib_tree() { # PATH — under a directory a configured glob names
+  local dir="$1"
+  while :; do
+    case "$dir" in */*) dir="${dir%/*}" ;; *) return 1 ;; esac
+    pf_path_matches_globs "$SOURCED_LIB_GLOBS" "$dir" && return 0
+  done
 }
 
 TOML_PY='import sys, tomllib
@@ -1279,7 +1293,7 @@ while IFS= read -r f; do
   test_tree_role "$f" "$is_sh" && own_rules=1
   is_new=0
   if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
-  # A file under a scripts/lib/ tree with no executable bit cannot be run or
+  # A file under a sourced-library tree with no executable bit cannot be run or
   # exec'd, so it is sourced: it runs in the caller's shell, where a strict-mode
   # preamble would switch errexit, nounset and pipefail on for the caller
   # instead of protecting the lib. The preamble check stands down for those.
@@ -1287,15 +1301,13 @@ while IFS= read -r f; do
   # other fail-open shape a lib carries is judged either way. The bit is read
   # where the content is: the index under staged scope, the work tree otherwise.
   sourced_lib=0
-  case "/$f" in
-    */scripts/lib/*)
-      if [ "$MODE" = "staged" ]; then
-        case "$(git ls-files -s -- "$f" 2>/dev/null)" in 100644\ *) sourced_lib=1 ;; esac
-      elif [ ! -x "$cpath" ]; then
-        sourced_lib=1
-      fi
-      ;;
-  esac
+  if is_sourced_lib_tree "$f"; then
+    if [ "$MODE" = "staged" ]; then
+      case "$(git ls-files -s -- "$f" 2>/dev/null)" in 100644\ *) sourced_lib=1 ;; esac
+    elif [ ! -x "$cpath" ]; then
+      sourced_lib=1
+    fi
+  fi
   # Installed-artifact subtrees hold vendored tooling a refresh rewrites
   # wholesale: the prose is upstream's claims and the code its authoring
   # choices, so the citation lane and the lanes judging how a file is

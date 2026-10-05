@@ -33,4 +33,4 @@ Run preflight in the validate step, before the project's own validation command.
 
 Fix what a finding reports; never widen a lane's exclusions to clear it.
 
-Lanes, scopes, settings, output and exit codes are in `preflight --help`. Diff construction and the `unwired-suite`, `data-syntax` and `applied-migration-edited` glob grammars are [references/lanes.md](references/lanes.md). Hook and CI wiring is [README.md](README.md) § Wiring.
+Lanes, scopes, settings, output and exit codes are in `preflight --help`. Diff construction and the `unwired-suite`, `data-syntax`, `applied-migration-edited` and `fail-open` sourced-library glob grammars are [references/lanes.md](references/lanes.md). Hook and CI wiring is [README.md](README.md) § Wiring.

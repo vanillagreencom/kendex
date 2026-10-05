@@ -1,6 +1,6 @@
 # Lane details
 
-What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and which globs `data-syntax` and `applied-migration-edited` ship.
+What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and which globs `data-syntax`, `applied-migration-edited` and the strict-mode shape of `fail-open` ship.
 
 ## Diff construction
 
@@ -28,13 +28,17 @@ A comment (full-line or trailing), dependency key, or package path is not an inv
 
 ## Glob semantics
 
-A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Both glob settings read this grammar.
+A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Every glob setting reads this grammar.
 
 ## `data-syntax` JSONC paths
 
 The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead, and `PREFLIGHT_JSONC_GLOBS` names those paths. The shipped set is `**/tsconfig*.json`, `**/jsconfig*.json`, `**/.vscode/*.json`, `**/.devcontainer/*.json` and `**/*-color-theme.json`, which is VS Code's convention plus the two TypeScript manifests.
 
 The lane has no JSONC parser and leaves these files to the producer that declares the dialect.
+
+## `fail-open` sourced-library trees
+
+`PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files: a path is in a sourced-library tree when one of its parent directories matches a glob, so the tree's whole depth is covered. The shipped set is `**/scripts/lib`. A project that keeps its libraries elsewhere, such as `tools/lib`, lists that directory, and lists `**/scripts/lib` beside it to keep the shipped tree.
 
 ## `applied-migration-edited` glob set
 

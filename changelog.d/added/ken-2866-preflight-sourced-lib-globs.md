@@ -1,0 +1,1 @@
+- preflight: `PREFLIGHT_SOURCED_LIB_GLOBS` names the sourced shell library directories, such as `tools/lib`, whose new non-executable files need no strict-mode preamble.
