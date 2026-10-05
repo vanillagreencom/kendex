@@ -199,10 +199,10 @@ pf_world() {
     swallowsubst) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\nn="$(git rev-list --count HEAD || true)"\necho "$n"\n' >"$R/scripts/existing.sh" ;;
     rustenv)
       mkdir -p "$R/tests"
-      printf 'fn fixture() {\n    unsafe { std::env::set_var("KEY", "value"); }\n}\n' >"$R/tests/env.rs"
+      printf 'fn fixture() {\n    unsafe { %s::set_var("KEY", "value"); }\n}\n' "${2:-std::env}" >"$R/tests/env.rs"
       ;;
     rustremove)
-      printf 'use std::env;\n#[cfg(test)]\nmod tests {\n    fn fixture() { unsafe { env::remove_var("KEY"); } }\n}\n' >"$R/src/lib.rs"
+      printf 'use std::env;\n#[cfg(test)]\nmod tests {\n    fn fixture() { unsafe { %s::remove_var("KEY"); } }\n}\n' "${2:-env}" >"$R/src/lib.rs"
       ;;
     rusttestfn)
       printf '#[test]\nfn case() { unsafe { std::env::remove_var("KEY"); } }\n' >"$R/src/lib.rs"
@@ -293,6 +293,8 @@ pf_world() {
 IFS= read -r -d '' rows <<'ROWS' || :
 Rust test files cannot set the process environment|rustenv|-|-|1|tests/env.rs:2: [rust-test-env-mutation]|-
 Rust inline test modules cannot remove process environment|rustremove|-|-|1|src/lib.rs:4: [rust-test-env-mutation]|-
+Rust absolute set calls retain staged test scope|rustenv ::std::env|--staged|-|1|tests/env.rs:2: [rust-test-env-mutation]|-
+Rust absolute remove calls retain all-file test scope|rustremove ::std::env|--all|-|1|src/lib.rs:4: [rust-test-env-mutation]|-
 Rust test functions cannot mutate process environment|rusttestfn|--staged|-|1|src/lib.rs:2: [rust-test-env-mutation]|-
 Rust array return types retain staged test scope|rustsignature array|--staged|-|1|src/lib.rs:5: [rust-test-env-mutation]|-
 Rust array return types retain all-file test scope|rustsignature array|--all|-|1|src/lib.rs:5: [rust-test-env-mutation]|-

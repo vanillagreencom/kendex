@@ -67,7 +67,7 @@ function code_line(s,    out, c, pair, n, token) {
       else if (c == ";" && !sig_parens && !sig_brackets && !sig_angles) pending_test = 0
     }
     if ((file_test || test_depth) && (i == 1 || substr(code, i - 1, 1) !~ /[[:alnum:]_:]/) &&
-        rest ~ /^(std[[:space:]]*::[[:space:]]*)?env[[:space:]]*::[[:space:]]*(set_var|remove_var)[[:space:]]*\(/) hit = 1
+        rest ~ /^((::[[:space:]]*)?std[[:space:]]*::[[:space:]]*)?env[[:space:]]*::[[:space:]]*(set_var|remove_var)[[:space:]]*\(/) hit = 1
   }
   if (hit) print NR
 }
