@@ -103,7 +103,7 @@ run() {
   fi
   : >"$CURL_LOG"
   (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub KENDEX_USER_EMAIL= CURL_LOG="$CURL_LOG" \
+    LINEAR_API_KEY_OVERRIDE=stub KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= CURL_LOG="$CURL_LOG" \
     "$BASH" "$LINEAR" "$@") >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   writes=$(jq -r 'select(.query | test("^\\s*mutation")) | .query | capture("\\{\\s*(?<f>[A-Za-z]+)").f' "$CURL_LOG" | paste -sd, -)
   guard=$(grep -m1 -E '^linear: (refused=cross-team|cross-team-guard=)' "$TMP_ROOT/err" || true)
