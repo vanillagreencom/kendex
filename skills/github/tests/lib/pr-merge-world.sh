@@ -205,8 +205,8 @@ word() {
     merge-fail:*) W_ENV+=("STUB_MERGE_EXIT=1" "STUB_MERGE_STDERR=$(merge_stderr_of "$v")") ;;
     graphql:fail) W_ENV+=("STUB_POST_GRAPHQL_FAIL=true") ;;
     post-view-fail) W_ENV+=("STUB_POST_VIEW_FAIL=true") ;;
-    replies:unreasoned) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Declined: frozen"}]}}]') ;;
-    replies:two) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Out of scope, tracked."}]}},{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Declined: frozen"}]}}]') ;;
+    replies:unreasoned) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot","databaseId":3003},"authorAssociation":"NONE","body":"The caller can pass an empty list here."},{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Declined: frozen"}]}}]') ;;
+    replies:two) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot","databaseId":3003},"authorAssociation":"NONE","body":"The caller can pass an empty list here."},{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Out of scope, tracked."}]}},{"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot","databaseId":3003},"authorAssociation":"NONE","body":"The caller can pass an empty list here."},{"author":{"login":"pr-author","__typename":"User","databaseId":1001},"body":"Declined: frozen"}]}}]') ;;
     replies:fail) W_ENV+=("STUB_THREADS_FAIL=true") ;;
     review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;

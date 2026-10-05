@@ -91,16 +91,20 @@ planted() { # planted LABEL SHAPE VARIANT   SHAPE: move | sub | del:N
   fi
   return 0
 }
-# A thread node as the reader returns it. TRUNCATED says GitHub holds one
-# comment more than the read returned.
-thread() { # thread COMMENT_JSON… (comma-joined) [TRUNCATED]
-  local n
-  n=$(jq 'length' <<<"[$1]")
-  [ "${2:-false}" = false ] || n=$((n + 1))
-  printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$n" "$1"
+# A thread node as the reader returns it, oldest comment first, the first
+# being the finding the thread opens. TRUNCATED says GitHub holds one comment
+# more than the read returned. thread() puts the replies under a review bot's
+# finding that says nothing either rule reads; rooted() takes the finding too.
+rooted() { # rooted ROOT_JSON REPLY_JSON… (comma-joined, may be empty) [TRUNCATED]
+  local nodes="$1${2:+,}${2:-}" n
+  n=$(jq 'length' <<<"[$nodes]")
+  [ "${3:-false}" = false ] || n=$((n + 1))
+  printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$n" "$nodes"
 }
-human() { printf '{"body":%s,"author":{"login":"author","__typename":"User","databaseId":1}}' "$(jq -Rn --arg b "$1" '$b')"; }
-bot()   { printf '{"body":%s,"author":{"login":"copilot","__typename":"Bot","databaseId":3}}' "$(jq -Rn --arg b "$1" '$b')"; }
+thread() { rooted "$(bot 'The caller can pass an empty list here.')" "$@"; }
+human()  { printf '{"body":%s,"author":{"login":"author","__typename":"User","databaseId":1}}' "$(jq -Rn --arg b "$1" '$b')"; }
+bot()    { printf '{"body":%s,"author":{"login":"copilot","__typename":"Bot","databaseId":3}}' "$(jq -Rn --arg b "$1" '$b')"; }
+member() { printf '{"body":%s,"author":{"login":"maintainer","__typename":"User","databaseId":4},"authorAssociation":"MEMBER"}' "$(jq -Rn --arg b "$1" '$b')"; }
 
 # unreasoned is the THIRD field. The helpers split the line and read that
 # field, rather than globbing for the digit anywhere in it: a glob is right
@@ -177,7 +181,9 @@ echo "=== the two thread rules over hand-written threads ==="
 # `truncated untracked unreasoned`, so a row that moves one rule cannot pass
 # on a neighbouring rule's count. A row is `label|line|thread...`; a thread is
 # `t:`, or `t+:` for one holding more comments than the read returned, then
-# its comments oldest first, ` + ` apart, each `H=` (a person) or `B=` (a bot).
+# its replies oldest first, ` + ` apart, each `H=` (the PR author), `B=` (a
+# bot) or `M=` (a repository member). `r:` and `r+:` read the first comment
+# as the thread's own finding instead of putting the replies under thread()'s.
 #
 # The untracked-claim rule keeps the narrow `Declined:` form, and `Declined
 # under the cap, tracked separately` is the reply that is why: it names no
@@ -187,18 +193,30 @@ echo "=== the two thread rules over hand-written threads ==="
 # mechanism is untouched by the path strip: it takes the name and leaves the
 # sentence, the same way the count strip takes one token.
 thread_of() { # thread_of SPEC -> one reviewThreads node
-  local flags="${1%%:*}" rest="${1#*:}" truncated=false nodes="" c
-  case "$flags" in *+) truncated=true ;; esac
+  local flags="${1%%:*}" rest="${1#*:}" truncated=false root="" nodes="" c node
+  case "$flags" in
+    t|r) ;;
+    t+|r+) truncated=true ;;
+    *) echo "thread_of: a thread spec opens with t, t+, r or r+: $1" >&2; exit 1 ;;
+  esac
   while :; do
     case "$rest" in *' + '*) c="${rest%% + *}"; rest="${rest#* + }" ;; *) c="$rest"; rest="" ;; esac
     case "$c" in
-      H=*) nodes="$nodes${nodes:+,}$(human "${c#H=}")" ;;
-      B=*) nodes="$nodes${nodes:+,}$(bot "${c#B=}")" ;;
+      H=*) node=$(human "${c#H=}") ;;
+      B=*) node=$(bot "${c#B=}") ;;
+      M=*) node=$(member "${c#M=}") ;;
       *) echo "thread_of: a comment names no author: $c" >&2; exit 1 ;;
+    esac
+    case "$flags:$root" in
+      r*:) root="$node" ;;
+      *) nodes="$nodes${nodes:+,}$node" ;;
     esac
     [ -n "$rest" ] || break
   done
-  thread "$nodes" "$truncated"
+  case "$flags" in
+    r*) rooted "$root" "$nodes" "$truncated" ;;
+    *)  thread "$nodes" "$truncated" ;;
+  esac
 }
 page_row() { # page_row ROW — one page, one assertion on the whole line
   local row="$1" label want rest nodes="" spec out
@@ -244,7 +262,11 @@ for row in \
   "a Declined: reply with a naked track-word is never a claim|0 0 0|t:H=Declined: the caller is tracked by the loader already" \
   "a path inside a mechanism still passes|0 0 0|t:H=Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs." \
   "a thread holding more comments than the read returned is truncated, its replies unjudged|1 0 0|t+:H=Declined: frozen" \
-  "a truncated thread beside a judged one leaves the judged one counted|1 0 1|t+:H=Tracked: KEN-1|t:H=Declined: frozen"
+  "a truncated thread beside a judged one leaves the judged one counted|1 0 1|t+:H=Tracked: KEN-1|t:H=Declined: frozen" \
+  "a member's finding with a track-word is no reply|0 0 0|r:M=Is this tracked anywhere? The caller can pass an empty list." \
+  "a reply under a member's finding is judged|0 1 0|r:M=Is this tracked anywhere? + H=Out of scope, tracked." \
+  "a reply naming an issue under a member's tracked finding passes|0 0 0|r:M=Should this be tracked? + H=Tracked: KEN-12" \
+  "a truncated thread under a member's finding is truncated|1 0 0|r+:M=Is this tracked anywhere?"
 do page_row "$row"; done
 [ "$((PASS + FAIL))" -gt "$TABLE_BEFORE" ] || { echo "page_row: no row was asserted" >&2; exit 2; }
 
@@ -268,6 +290,24 @@ else
 
   out=$(rpage "$(thread "$(human 'Declined: the caller already guards the empty case, so the branch cannot run.')")")
   not_counted "$out" && ok "reverted: the real reason stays uncounted in both states" || bad "reverted: the real reason stays uncounted in both states" "$out"
+fi
+
+echo
+echo "--- must-fail probe: the root skip, removed ---"
+# Same jq with the thread's first comment read as a reply again. A member's
+# finding saying "tracked" must turn into an untracked claim nobody wrote,
+# while the reply under it counts in both states: a probe where both moved
+# would prove the fixture, not the skip.
+ROOTED="$(sed 's/\.comments\.nodes\[1:\]\[\]/.comments.nodes[]/' <<<"$prog")"
+if ! planted "the root skip, removed" sub "$ROOTED"; then :
+else
+  finding=$(member 'Is this tracked anywhere? The caller can pass an empty list.')
+  out=$(page "$(rooted "$finding" "")")
+  [ "$out" = "0 0 0" ] && ok "live: the member's finding is no reply" || bad "live: the member's finding is no reply" "$out"
+  out=$(page_with "$ROOTED" "$(rooted "$finding" "")")
+  [ "$out" = "0 1 0" ] && ok "removed: it reads as an untracked claim" || bad "removed: it reads as an untracked claim" "$out"
+  out=$(page_with "$ROOTED" "$(rooted "$finding" "$(human 'Declined: frozen')")")
+  [ "$out" = "0 0 1" ] && ok "removed: the reply under it is still the standing one" || bad "removed: the reply under it is still the standing one" "$out"
 fi
 
 echo

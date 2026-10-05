@@ -43,7 +43,8 @@ Whose words count:
   app is not the app. Anyone else's review or reply is read as if it were
   not there.
 
-A thread's standing reply is its newest counted comment that is
+A thread's first comment is the finding it opens, never a reply. Its
+standing reply is its newest counted later comment that is
 `Fixed in <sha>`, `Declined: ...` or carries a track word. A decline
 opening with the word without the colon is still a decline for
 unreasoned-decline. What a decline must say is reviewer conduct:
@@ -248,15 +249,18 @@ AUTHOR_TRUST_DEF='def rest_actor: {id: (.user.id // null), login: (.user.login /
 '
 
 # The two thread rules, over every review thread node the reader returned:
-# `truncated untracked unreasoned`. A thread's disposition is its newest
-# counted comment that is a Fixed in <sha>/Declined: reply or carries a
-# track-word; other comments never move it. Resolving the thread does not
+# `truncated untracked unreasoned`. A thread's first comment is the finding
+# it opens: a member's finding that says "tracked" is not a claim anyone
+# answered with. Only the later comments are replies; the truncation test
+# still counts every node. A thread's disposition is its newest counted reply
+# that is a Fixed in <sha>/Declined: reply or carries a track-word; other
+# comments never move it. Resolving the thread does not
 # clear an untracked claim, since the claimant is also the resolver. A
 # comment that does not count is skipped: a review bot quoting a reply is
 # not one. A thread holding more comments than the read returned cannot be
 # judged, so it is counted as truncated and fails.
 THREAD_RULES_JQ="$REPLY_FORMS_DEF$AUTHOR_TRUST_DEF"'
-  def replies: [.comments.nodes[] | select(graphql_actor | reply_source($author; $viewer)) | (.body // "")];
+  def replies: [.comments.nodes[1:][] | select(graphql_actor | reply_source($author; $viewer)) | (.body // "")];
   def standing: [replies[] | select(disposition or tracking)] | last // empty;
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   def readable: (.comments.nodes | type) == "array"

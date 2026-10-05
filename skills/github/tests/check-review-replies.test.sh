@@ -87,7 +87,11 @@ review() { # ACCOUNT STATE COMMIT BODY
 comment() { # ACCOUNT BODY
   jq -cn --argjson u "$(rest_actor "$1")" --arg b "$2" '$u + {body: $b}'
 }
-thread_node() { # ACCOUNT BODY [ACCOUNT BODY]... — one thread, oldest comment first
+# A thread's first comment is the finding it opens. rooted_node takes it as its
+# first pair; thread_node puts its replies under a review bot's finding that
+# says nothing the thread rules read.
+thread_node() { rooted_node copilot 'The caller can pass an empty list here.' "$@"; }
+rooted_node() { # ACCOUNT BODY [ACCOUNT BODY]... — one thread, oldest comment first
   local nodes="" login type assoc id
   while [ "$#" -gt 0 ]; do
     read -r login type assoc id <<<"$(account "$1")"
@@ -415,6 +419,8 @@ the reading identity's lone tracking claim fails on a person's PR|author|thread_
 the reading identity's reasoned decline replaces the author's untracked claim|author|thread_node author 'Out of scope, tracked.' app 'Declined: the caller rejects the empty case first.'|$PASSED
 a User named like the app does not replace the app author's untracked claim|app|thread_node app 'Out of scope, tracked.' impostor 'Fixed in 1a2b3c4'|$FAILED | untracked-claim count=1
 a User named like the app does not replace the author's claim as the reading identity|author|thread_node author 'Out of scope, tracked.' impostor 'Fixed in 1a2b3c4'|$FAILED | untracked-claim count=1
+a maintainer's finding saying tracked is no reply and passes|author|rooted_node maintainer 'Is this tracked anywhere? The caller can pass an empty list.'|$PASSED
+a reply under a maintainer's finding is judged|author|rooted_node maintainer 'Is this tracked anywhere?' author 'Out of scope, tracked.'|$FAILED | untracked-claim count=1
 a thread holding more comments than one read returns fails|author|jq -cn '{comments: {totalCount: 101, nodes: [{author: {login: "pr-author", __typename: "User"}, body: "Tracked: KEN-1"}]}}'|$FAILED | thread-replies state=truncated threads=1
 ROWS
 
