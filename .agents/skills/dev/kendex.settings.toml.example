@@ -14,6 +14,12 @@ DEV_VALIDATE_CMD = "" # required
 # Submit reuses only a DEV_VALIDATE_CMD result.
 DEV_VALIDATE_RANGE_CMD = ""
 
+# The status check context, as the base branch's rulesets name it, whose
+# pull request run covers DEV_VALIDATE_CMD, for example "CI". A review-comment
+# fix round on an open pull request then leaves its validation to that check
+# where the base requires it. Empty validates every fix round locally.
+DEV_VALIDATE_CI_CONTEXT = ""
+
 # Seconds either command may run before it is stopped. A stopped run is
 # neither a pass nor a failure; the agent then runs, one at a time, the test
 # files for each script the change touches. The same number decides how long

@@ -278,6 +278,11 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # Submit reuses only the full run; CI runs what tools/ci-job-set selects.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
+# The required CI context runs the tools/guard lanes through tools/ci-job-set,
+# so a review-comment fix round on an open pull request leaves its validation
+# to that check.
+DEV_VALIDATE_CI_CONTEXT = "CI"
+
 # The bound on either run, in whole seconds. `tools/guard --full` takes well
 # under an hour on the supported hosts; past this the run is signalled, killed
 # outright ten seconds later, and the round records a failed validation. The

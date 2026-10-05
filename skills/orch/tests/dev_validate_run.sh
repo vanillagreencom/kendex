@@ -73,7 +73,7 @@ run_script() { # SCRIPT ARG...
   # suite also runs under dev-validate-run itself, which sets one. A row that
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
-    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u REVIEW_GATE_STANDARD_CONTEXTS \
+    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u DEV_VALIDATE_CI_CONTEXT \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -749,79 +749,61 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
 
-# --- A ci request runs nothing where the base branch's CI runs the validation --
-# Projects whose validation command is `echo full`, whose range command prints
-# that it ran, and whose settings name CI among the contexts the base
-# requires. Each holds one workflow, or none, at the origin base branch; each
-# row's run is a ci request, and the classifier stub answers the class, the
-# docs verdict and the measured marker.
-ci_workflow() { # KIND — the workflow text a ci_proj of that kind holds
-  case "$1" in
-    runs) printf 'name: CI\non: pull_request\njobs:\n  ci:\n    name: CI\n    steps:\n      - run: echo full\n' ;;
-    echo) printf 'name: CI\non: [pull_request, merge_group]\njobs:\n  ci:\n    name: CI\n    steps:\n      - run: echo "no lane yet"\n' ;;
-    push) printf 'name: CI\non: [push, workflow_dispatch]\njobs:\n  ci:\n    name: CI\n    if: github.event.pull_request.number\n    steps:\n      - run: echo full\n' ;;
-    unrequired) printf 'name: Lint\n"on":\n  pull_request:\njobs:\n  lint:\n    name: Lint\n    steps:\n      - run: echo full\n' ;;
-    comment) printf 'name: CI\non:\n  - pull_request\njobs:\n  ci:\n    name: "CI"\n    steps:\n      # - run: echo full\n      - run: echo lint\n' ;;
-    *) printf 'ci_workflow: kind=%s\n' "$1" >&2; return 1 ;;
-  esac
-}
-ci_proj() { # NAME KIND — none holds no workflow; head-only holds runs at HEAD alone
+# --- A ci request runs nothing where the base requires the named context -------
+# Projects whose validation command is `echo full` and whose range command
+# prints that it ran. Each names the context that runs its validation, or
+# none, in DEV_VALIDATE_CI_CONTEXT. The gh on PATH is a stub: asked for the
+# rules of the base branch main, it prints the contexts STUB_REQUIRED names,
+# one per line, and exits STUB_GH_EXIT; asked anything else, it fails. Each
+# row's run is a ci request; the classifier stub answers the class, the docs
+# verdict and the measured marker.
+GH_STUB_BIN="$TMP_ROOT/gh-stub"
+mkdir -p "$GH_STUB_BIN"
+cat > "$GH_STUB_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+[[ "$1 $2" == "api repos/{owner}/{repo}/rules/branches/main" ]] || exit 9
+[[ -z "${STUB_REQUIRED:-}" ]] || tr ',' '\n' <<<"$STUB_REQUIRED"
+exit "${STUB_GH_EXIT:-0}"
+SH
+chmod +x "$GH_STUB_BIN/gh"
+ci_proj() { # NAME CONTEXT — CONTEXT empty leaves the setting unset
   local dir
   dir="$(make_mode_proj "$1" 'echo range')"
-  printf 'REVIEW_GATE_STANDARD_CONTEXTS = " Deploy ; CI "\n' >> "$dir/kendex.settings.toml"
+  [[ -z "$2" ]] || printf 'DEV_VALIDATE_CI_CONTEXT = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
   printf 'tmp/\n' > "$dir/.gitignore"
-  # Every project holds a .github file outside workflows/, so a read of all of
-  # .github finds a workflow in each.
-  mkdir -p "$dir/.github"
-  printf 'notes\n' > "$dir/.github/copilot-instructions.md"
-  if [[ "$2" != none ]]; then
-    mkdir -p "$dir/.github/workflows"
-    if [[ "$2" == head-only ]]; then
-      git -C "$dir" add -A
-      git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q -m base-tip
-      git -C "$dir" update-ref refs/remotes/origin/main HEAD
-      ci_workflow runs > "$dir/.github/workflows/ci.yml"
-    else
-      ci_workflow "$2" > "$dir/.github/workflows/ci.yml"
-    fi
-  fi
   git -C "$dir" add -A
   git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q -m ignore
-  [[ "$2" == head-only ]] || git -C "$dir" update-ref refs/remotes/origin/main HEAD
+  git -C "$dir" update-ref refs/remotes/origin/main HEAD
   printf '%s\n' "$dir"
 }
-for kind in runs none echo push unrequired comment head-only; do
-  printf -v "proj_ci_${kind//-/_}" '%s' "$(ci_proj "proj-ci-$kind" "$kind")"
-done
-proj_ci="$proj_ci_runs"
+proj_ci="$(ci_proj proj-ci CI)"
+proj_ci_unset="$(ci_proj proj-ci-unset '')"
 ci_head="$(git -C "$proj_ci" rev-parse HEAD)"
-# label|workflow kind|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
+# label|setting named (yes/no)|contexts the base requires|gh exit|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
 CI_ROWS=(
-  "a measured micro diff is left to CI|runs|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured small diff is left to CI|runs|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured standard diff is left to CI|runs|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a project with no workflow runs the range command|none|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a workflow that only echoes runs the range command|echo|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a workflow no pull request starts runs the range command|push|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a workflow under no required context runs the range command|unrequired|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a workflow naming the command in a comment alone runs the range command|comment|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a workflow the base branch does not hold runs the range command|head-only|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a render diff, whose checks CI stands down, runs the range command|runs|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a trivial diff outside the docs set runs the range command|runs|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard diff of docs alone runs the range command|runs|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard class the classifier fell back to runs the range command|runs|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range"
-  "a class with no measured marker runs the range command|runs|change_class=micro|false||state=done guard-exit=0 validate=pass range|range"
-  "a docs verdict that did not read runs the range command|runs|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range"
+  "a measured micro diff under a required context is left to CI|yes|Lint,CI|0|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured small diff under a required context is left to CI|yes|CI|0|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured standard diff under a required context is left to CI|yes|CI|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a project that names no context runs the range command|no|CI|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a context the base does not require runs the range command|yes|Lint,CI-extra|0|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a rules read that fails runs the range command|yes|CI|1|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a render diff, whose checks CI stands down, runs the range command|yes|CI|0|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a trivial diff outside the docs set runs the range command|yes|CI|0|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a standard diff of docs alone runs the range command|yes|CI|0|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
+  "a standard class the classifier fell back to runs the range command|yes|CI|0|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range"
+  "a class with no measured marker runs the range command|yes|CI|0|change_class=micro|false||state=done guard-exit=0 validate=pass range|range"
+  "a docs verdict that did not read runs the range command|yes|CI|0|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range"
 )
 # ci_rows SCRIPT — one line per row: its label, its stderr file, then the
 # verdict, what the command printed and the recorded mode, tab-separated.
 ci_rows() {
-  local row label workflow answer docs measured proj ci_dir var
+  local row label named required gh_exit answer docs measured proj ci_dir
   for row in "${CI_ROWS[@]}"; do
-    IFS='|' read -r label workflow answer docs measured _ _ <<<"$row"
-    var="proj_ci_${workflow//-/_}"
-    proj="${!var}"
-    STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
+    IFS='|' read -r label named required gh_exit answer docs measured _ _ <<<"$row"
+    proj="$proj_ci"
+    [[ "$named" == yes ]] || proj="$proj_ci_unset"
+    STUB_REQUIRED="$required" STUB_GH_EXIT="$gh_exit" RUN_PATH="$GH_STUB_BIN:$PATH" \
+      STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
       run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
     ci_dir="$(run_dir_of "$OUT")"
     printf '%s\t%s\t%s %s|%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
@@ -831,14 +813,19 @@ ci_rows() {
 CI_SCRIPT="$LAYOUT/orch/scripts/dev-validate-run"
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
 for row in "${CI_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ want_out want_mode <<<"$row"
+  IFS='|' read -r label _ _ _ _ _ _ want_out want_mode <<<"$row"
   got_line="$(awk -F'\t' -v want="$label" '$1 == want' <<<"$CI_GOT")"
   IFS=$'\t' read -r _ err got <<<"$got_line"
   assert_eq "$got" "$want_out|$want_mode" "$label" "$err"
 done
+# ci_run [ARG...] — a micro ci request in proj_ci, whose base requires CI.
+ci_run() {
+  STUB_REQUIRED=CI STUB_GH_EXIT=0 RUN_PATH="$GH_STUB_BIN:$PATH" \
+    STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+    run_script "$@" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+}
 # The ci run's record, its wait and its exit: no command ran, so no time passed.
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+ci_run "$CI_SCRIPT"
 ci_dir="$(run_dir_of "$OUT")"
 assert_eq "$RC $(sed -n 2p <<<"$OUT" | sed 's/ at=[^ ]* / at=T /')" \
   "0 state=done guard-exit=0 at=T validate=pass run-dir=$ci_dir log=$ci_dir/log" \
@@ -849,15 +836,13 @@ assert_eq "$(sed -E 's/started-at=[^ ]+ ended-at=[^ ]+$/started-at=T ended-at=T/
   "its record names the ci mode, a pass, the HEAD it started at and no wall time" "$ERR"
 # Under --attached a ci run still prints its started line first, then the done
 # line, since no child runs to print it before.
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD --attached
+ci_run "$CI_SCRIPT" --attached
 assert_eq "$RC $(sed -n 1p <<<"$OUT" | cut -d' ' -f1) $(verdict_of "$OUT")" \
   "0 state=started state=done guard-exit=0 validate=pass" \
   "an attached ci run prints its started line, then its done line" "$ERR"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && "$validate_mode" != ci ]]' '[[ "$attached" == true ]]'
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT.mutant" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD --attached
+ci_run "$CI_SCRIPT.mutant" --attached
 assert_eq "$(sed -n 1p <<<"$OUT" | cut -d' ' -f1)" "state=done" \
   "control: an attached ci run that skips its started line opens on the done line" "$ERR"
 # One control per rule the ci route holds: each mutant copy sits beside the
@@ -870,19 +855,15 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW
   IFS=$'\t' read -r _ _ got <<<"$got_line"
   assert_eq "$got" "state=done guard-exit=0 validate=pass |ci" "control: with $1, '$4' fails"
 }
-# shellcheck disable=SC2016 # the script's own text, not expansions
-ci_control 'the workflows read at HEAD' 'ref="refs/remotes/origin/$base_branch"' 'ref=HEAD' \
-  'a workflow the base branch does not hold runs the range command'
-ci_control 'the trigger unread' 'LC_ALL=C grep -Eq' 'true || LC_ALL=C grep -Eq' \
-  'a workflow no pull request starts runs the range command'
-# shellcheck disable=SC2016
-ci_control 'the command unread' '&& grep -Fq -- "$validate_cmd" <<<"$text" ' '' \
-  'a workflow that only echoes runs the range command'
-# shellcheck disable=SC2016
-ci_control 'the required context unread' 'grep -Fxq -- "$context" <<<"$names"' 'true' \
-  'a workflow under no required context runs the range command'
-ci_control 'comment lines read' " | grep -Ev '^[[:space:]]*#'" '' \
-  'a workflow naming the command in a comment alone runs the range command'
+ci_control 'the setting defaulting to CI' 'DEV_VALIDATE_CI_CONTEXT "")"' 'DEV_VALIDATE_CI_CONTEXT CI)"' \
+  'a project that names no context runs the range command'
+# shellcheck disable=SC2016 # the script's own text, not an expansion
+ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$required"' 'true' \
+  'a context the base does not require runs the range command'
+ci_control 'a failed rules read kept' "2>/dev/null)\" \\
+    || return 1" "2>/dev/null)\" \\
+    || true" \
+  'a rules read that fails runs the range command'
 ci_control 'render among the covered classes' \
   'micro|small|standard) if ci_runs_validation' 'micro|small|standard|render) if ci_runs_validation' \
   'a render diff, whose checks CI stands down, runs the range command'
@@ -892,29 +873,25 @@ ci_control 'the measured marker unread' ' && "$CHANGE_CLASS_MEASURED" == true' '
   'a standard class the classifier fell back to runs the range command'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
-# A ci run left to CI runs no command, so a project that sets no range command
-# still records ci. Control: resolving the range mode first, as a range run
-# does, records full and runs the whole battery.
-printf '[env]\nDEV_VALIDATE_CMD = "echo full"\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nREVIEW_GATE_STANDARD_CONTEXTS = "CI"\n' \
-  > "$proj_ci/kendex.settings.toml"
+# The rules read names the base branch: a read of another branch's rules is
+# one the stub fails, so the micro row runs range.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'rules/branches/$uri' 'rules/branches/x$uri'
+ci_run "$CI_SCRIPT.mutant"
+assert_eq "$(start_line "$(run_dir_of "$OUT")" validate-mode)" "range" \
+  "control: a rules read of another branch leaves the micro row to range" "$ERR"
+# A ci run left to CI reads neither command, so a project that sets neither
+# passes it. Control: resolving the range mode first, as a range run does,
+# reads the empty DEV_VALIDATE_CMD and refuses.
+printf '[env]\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' > "$proj_ci/kendex.settings.toml"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" '[[ "$validate_mode" == ci ]] || resolve_range_mode' 'resolve_range_mode'
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
-assert_eq "$RC $(verdict_of "$OUT") $(output_of "$OUT" 2>/dev/null)|$(start_line "$(run_dir_of "$OUT")" validate-mode)" \
-  "0 state=done guard-exit=0 validate=pass |ci" \
-  "a ci run left to CI in a project that sets no range command runs nothing" "$ERR"
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT.mutant" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
-assert_eq "$(start_line "$(run_dir_of "$OUT")" validate-mode)" "full" \
-  "control: a ci run that resolves the range mode first records full" "$ERR"
-# A project that sets no validation command has nothing a workflow can be
-# shown to run, so its ci request runs as range does and is refused there.
-printf '[env]\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nREVIEW_GATE_STANDARD_CONTEXTS = "CI"\n' > "$proj_ci/kendex.settings.toml"
-STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+ci_run "$CI_SCRIPT"
+assert_eq "$RC $(verdict_of "$OUT")" "0 state=done guard-exit=0 validate=pass" \
+  "a ci run left to CI in a project that sets no command passes" "$ERR"
+ci_run "$CI_SCRIPT.mutant"
 assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: empty-validate-cmd setting=DEV_VALIDATE_CMD" \
-  "a ci request in a project that sets no validation command is refused" "$ERR"
+  "control: a ci run that resolves the range mode first is refused" "$ERR"
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
 # --- The real classifier weighs uncommitted render edits -----------------------
