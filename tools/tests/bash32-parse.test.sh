@@ -147,12 +147,8 @@ else
 fi
 
 # --- 2. the tree parses, which is the assertion the lane exists to make ---
-run "$PARSE"
-if [ "$RC" -eq 0 ]; then
-  ok "every covered tree parses under a real Bash 3.2"
-else
-  bad "the covered set does not parse under Bash 3.2 (exit $RC)" "$OUT"
-fi
+# Made by the lane itself, never here: tools/guard --full runs it over the
+# covered set, and so does the guards-scans shard of skill-tests.yml.
 
 # --- 3. teeth ------------------------------------------------------------
 # The planted defect is the one from the failure this lane answers: a `case`

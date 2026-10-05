@@ -311,9 +311,10 @@ stand_case() { # LABEL WANT-STATUS WANT-FIRST [ARG...] — ARGs follow --only cl
     bad "$1" "want rc=$2 first=$3, got rc=$rc first=${said:--}$reached"
   fi
 }
-plant() { # FILE SED-SCRIPT — an edit that has to change the file
-  sed "$2" "$1.intact" >"$1"
-  if cmp -s "$1" "$1.intact"; then
+plant() { # FILE SED-SCRIPT [BASE] — an edit to BASE, FILE.intact by default, that has to change it
+  local base="${3:-$1.intact}"
+  sed "$2" "$base" >"$1"
+  if cmp -s "$1" "$base"; then
     printf 'the planted edit changed nothing: %s\n' "$2" >&2
     exit 2
   fi
@@ -496,7 +497,9 @@ fi
 # for the announcement the overseer's directive brings, runs the inbox command
 # under it, which moves the cursor, and answers. STANDIN_ECHO=0 answers without
 # repeating the announcement, as a lane that polled its inbox by itself would.
-# Each run waits out the row's own delay before the directive is sent.
+# Each run waits out the row's own delay before the directive is sent, which
+# the copy these rows run shortens from thirty seconds to one; it reaches
+# lane-mail through the stand-in tree's own skills directory.
 echo "=== a monitored delivery passes, and one with no announcement fails ==="
 cat >"$ROWS_BIN/claude" <<'STANDIN'
 #!/usr/bin/env bash
@@ -537,19 +540,20 @@ verdict_case() { # LABEL QUESTION SMOKE ENV=VAL RESULT CLAUSE — CLAUSE is the 
     bad "$1" "want $5 with '$6', got: ${STAND_ROW:--}"
   fi
 }
+ln -s -- "$REPO/skills" "$STAND/skills"
+plant "$STAND_SMOKE" 's/^WAKE_DELAY=30$/WAKE_DELAY=1/'
+cp "$STAND_SMOKE" "$STAND_SMOKE.wake"
 ANNOUNCED_CLAUSE="'lane-mail: mail=SMOKE-2 new=1'"
 verdict_case "a lane its monitor woke, that read the directive and repeated the announcement, passes" \
-  mail-wake "$SMOKE" STANDIN_ECHO=1 pass "delivery=monitor:"
+  mail-wake "$STAND_SMOKE" STANDIN_ECHO=1 pass "delivery=monitor:"
 verdict_case "a lane that moved the cursor and answered with no announcement fails on it" \
-  mail-wake "$SMOKE" STANDIN_ECHO=0 fail "$ANNOUNCED_CLAUSE"
+  mail-wake "$STAND_SMOKE" STANDIN_ECHO=0 fail "$ANNOUNCED_CLAUSE"
 
-# The controls run a copy of the script in the stand-in tree, which reaches
-# lane-mail through its own skills directory, with one guard changed.
-ln -s -- "$REPO/skills" "$STAND/skills"
-plant "$STAND_SMOKE" 's/^WAKE_ANNOUNCED="lane-mail: mail=\$WAKE_ITEM new=1"$/WAKE_ANNOUNCED="lane-mail: mail=$MAIL_ITEM new=1"/'
+# The controls change one guard in that copy.
+plant "$STAND_SMOKE" 's/^WAKE_ANNOUNCED="lane-mail: mail=\$WAKE_ITEM new=1"$/WAKE_ANNOUNCED="lane-mail: mail=$MAIL_ITEM new=1"/' "$STAND_SMOKE.wake"
 verdict_case "control: an announcement guard that misses the real announcement fails the monitored delivery" \
   mail-wake "$STAND_SMOKE" STANDIN_ECHO=1 fail "'lane-mail: mail=SMOKE-1 new=1'"
-plant "$STAND_SMOKE" '/! grep -qF -- "\$WAKE_ANNOUNCED"/s/^  elif /  elif false \&\& /'
+plant "$STAND_SMOKE" '/! grep -qF -- "\$WAKE_ANNOUNCED"/s/^  elif /  elif false \&\& /' "$STAND_SMOKE.wake"
 verdict_case "control: with no announcement guard an answer with no announcement passes" \
   mail-wake "$STAND_SMOKE" STANDIN_ECHO=0 pass "delivery=monitor:"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
@@ -802,16 +806,16 @@ case "$prompt" in
       n=$((n + 1))
       denied=""
       if [ "$STANDIN_HOOKS" != 0 ] && { [ "$STANDIN_FEED" != helper ] || [ "$n" -eq 1 ]; }; then
+        if [ "$STANDIN_SHAPE" = bad ]; then
+          payload=$(jq -nc --arg c "$cmd" '{toolName:"bash",toolArgs:{cmd:$c}}')
+        else
+          payload=$(jq -nc --arg c "$cmd" '{toolName:"bash",toolArgs:{command:$c}}')
+        fi
         for h in $STANDIN_HOOK_NAMES; do
           [ "$h" != "$STANDIN_SKIP_HOOK" ] || continue
-          if [ "$STANDIN_SHAPE" = bad ]; then
-            payload=$(jq -nc --arg c "$cmd" '{toolName:"bash",toolArgs:{cmd:$c}}')
-          else
-            payload=$(jq -nc --arg c "$cmd" '{toolName:"bash",toolArgs:{command:$c}}')
-          fi
           hook="$PWD/.github/hooks/$h.sh"
           # shellcheck disable=SC2086 # drop is empty or `-u NAME`
-          said=$( (cd "${STANDIN_HOOK_CWD:-$PWD}" && env $drop bash "$hook" <<<"$payload") 2>&1 >/dev/null) && hrc=0 || hrc=$?
+          said=$({ cd "${STANDIN_HOOK_CWD:-$PWD}" && ${drop:+env} $drop bash "$hook" <<<"$payload"; } 2>&1 >/dev/null) && hrc=0 || hrc=$?
           if [ "$hrc" = 2 ] && [ -z "$denied" ]; then
             case "$STANDIN_DENIAL" in
               reason) denied="Denied by preToolUse hook: ${said%%$'\n'*}" ;;
