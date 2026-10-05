@@ -85,6 +85,18 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 check() { # DESC EXPECTED ACTUAL
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
 }
+# A table loop that read no rows asserted nothing. sandbox.sh's copy cannot be
+# sourced: it resets PASS and FAIL, makes its own sandbox and replaces the EXIT
+# trap.
+require_rows() { # TABLE COUNT
+  [ "$2" -gt 0 ] || { echo "the $1 table executed no rows" >&2; exit 1; }
+}
+status=0
+(require_rows probe 0) 2>/dev/null || status=$?
+check "a table that executed no rows fails the floor" 1 "$status"
+status=0
+(require_rows probe 1) || status=$?
+check "a table that executed a row passes the floor" 0 "$status"
 
 # The stub scripts root. Each stub writes what the shipped script writes, in
 # the places it writes it: the verdict line on stdout and appended to
@@ -330,7 +342,7 @@ while IFS='|' read -r name class docs paths expected; do
   check "$name: classify exits 0" "0" "$status"
   check "$name: every output line" "$expected" "$(outputs)"
 done < <(class_rows)
-[ "$rows" -eq 7 ] || { echo "the class table read $rows rows" >&2; exit 1; }
+require_rows class "$rows"
 check "the step says why the lanes answered as they did" \
   "lanes: lanes=false cause=docs-only" "$(grep '^lanes: ' "$TMP/err")"
 
@@ -431,7 +443,7 @@ done <<'ROWS'
 elif [ "$docs" = docs_only=true ]; then@elif false; then@docs-only-standard
   lanes=true lanes_cause="$class"@  lanes=false lanes_cause="$class"@standard
 ROWS
-[ "$mutants" -eq 4 ] || { echo "the lanes mutant table read $mutants rows" >&2; exit 1; }
+require_rows "lanes mutant" "$mutants"
 
 # --- 3. The refusals --------------------------------------------------------
 
@@ -474,8 +486,7 @@ lanes-reader-unreadable root=$TMP/no-lanes-lib|LANES_FROM=$TMP/decl/good CLASSIF
 proof-failed status=2|STUB_PROOF_EXIT=2
 proof-unreadable lines=tree= workflow=.github/workflows/ci.yml reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
 ROWS
-[ "$refusal_rows" -eq 20 ] ||
-  { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
+require_rows refusal "$refusal_rows"
 
 # A classify with no proof beside it is a broken action, refused before
 # either wrapped script runs.
@@ -697,7 +708,7 @@ while IFS='|' read -r name decl class docs paths outside expected; do
   rows=$((rows + 1))
   check "lane row $name" "$expected" "$(lane_answer "$CLASSIFY" "$name")"
 done < <(lane_rows)
-[ "$rows" -eq 17 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
+require_rows lane "$rows"
 
 # GitHub reads a `::warning` line off the step's stdout; a declaration the
 # step could not use says so there, and one it read says nothing.
@@ -743,7 +754,7 @@ declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.githu
 { declaration_note="cause=unreadable"; return 1; }@:@unreadable@lib
 ROWS
 ROW_CLASSIFIER=""
-[ "$mutants" -eq 17 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
+require_rows "lane mutant" "$mutants"
 
 # The refusal of a lanes-from naming the judged tree, planted away.
 needle='[ "$lanes_root" != "$judged_root" ] ||'
@@ -810,7 +821,7 @@ while IFS= read -r row; do
   queue_row "$row"
   check "queue row $row" "$Q_EXPECTED" "$(queue_answer "$CLASSIFY" "$row")"
 done < <(queue_rows | cut -d'|' -f1)
-[ "$rows" -eq 10 ] || { echo "the queue table read $rows rows" >&2; exit 1; }
+require_rows queue "$rows"
 # The lane: line's cause, per row that reaches each branch of the deferral,
 # and the one annotation a missing reader raises on the step's stdout.
 for row in pr-deferred pr-unconfirmed pr-reader-absent pr-judged-reader-absent; do
@@ -898,7 +909,7 @@ done <<'ROWS'
     while :; do@    for _ in once; do@pr-both-marks@lib
 ROWS
 ROW_CLASSIFIER=""
-[ "$mutants" -eq 9 ] || { echo "the queue mutant table read $mutants rows" >&2; exit 1; }
+require_rows "queue mutant" "$mutants"
 # The loop's own control: a copy that keeps the rule's behaviour must read as
 # still answering its row, or the loop reports kills it never saw.
 check "a behaviour-preserving queue mutant reads as still answering its row" survives \
@@ -947,7 +958,7 @@ while IFS='|' read -r name decl class docs paths outside record expected; do
   rows=$((rows + 1))
   check "proof row $name" "$expected" "$(proof_answer "$CLASSIFY" "$name")"
 done < <(proof_rows)
-[ "$rows" -eq 12 ] || { echo "the proof table read $rows rows" >&2; exit 1; }
+require_rows proof "$rows"
 check "a proof's stand-down names the run on the lane's line" \
   "lane: name=check verdict=false cause=proof-reused run=42" \
   "$(proof_answer "$CLASSIFY" lanes-decl-partial >/dev/null; grep '^lane: name=check ' "$TMP/err")"
@@ -1022,7 +1033,7 @@ while IFS='|' read -r name event decl class docs paths outside reuse record env 
   rows=$((rows + 1))
   check "record row $name" "$expected" "$(record_answer "$CLASSIFY" "$name")"
 done < <(record_rows)
-[ "$rows" -eq 12 ] || { echo "the record table read $rows rows" >&2; exit 1; }
+require_rows record "$rows"
 check "the step names the record it wrote" "record: path=$RECORD_DIR/record tree=t1 covers=all" \
   "$(record_answer "$CLASSIFY" pr-all >/dev/null; grep '^record: ' "$TMP/err")"
 check "a push says why it leaves no record" "record: skipped cause=unrecorded-event event=push" \
@@ -1148,7 +1159,7 @@ elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried@class
   pull_request | merge_group)@  pull_request | merge_group | push)@record:push@classify
 ROWS
 ROW_CLASSIFIER=""
-[ "$mutants" -eq 17 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
+require_rows "proof mutant" "$mutants"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
