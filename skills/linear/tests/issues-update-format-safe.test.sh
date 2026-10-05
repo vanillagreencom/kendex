@@ -49,7 +49,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 run_update() {
-  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ \
     bash "$LINEAR" issues update "$@")
 }
 

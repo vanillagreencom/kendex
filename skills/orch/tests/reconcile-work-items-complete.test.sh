@@ -85,7 +85,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 
 complete() { # ID MET
   (cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" \
     "$BASH" "$R/.agents/skills/linear/scripts/linear.sh" issues complete "$1" --done-when-met "$2")
 }
 

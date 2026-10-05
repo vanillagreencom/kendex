@@ -48,8 +48,9 @@ ROWS
 # through as the create's teamId, and the label lookups scope by that same id.
 # Uppercase hex is a UUID to resolve_team_id, so no name lookup runs for it.
 # The fixture has no team of this id, so only the workspace label resolves.
+# The UUID is also the configured team, so the cross-team guard reads nothing.
 TEAM_UUID=9A1B2C3D-4E5F-4A6B-8C7D-0E1F2A3B4C5D
-run_status rc run_label_team_request "$PROJECT" uuid "" \
+run_status rc run_label_team_request "$PROJECT" uuid "" LINEAR_TEAM="$TEAM_UUID" \
   create --team "$TEAM_UUID" --title "Team UUID" --labels "skills,agent:runtime"
 assert_eq "uuid: create succeeds" "$rc" 0
 assert "uuid: no team lookup, and the create and its label lookups send the one team id" \
@@ -66,8 +67,10 @@ assert "uuid: create sends only workspace labels for a team that owns none" \
 printf 'x' >"$TMP_ROOT/asset.bin"
 
 # The team resolves before the label lookups: a team that matches nothing
-# refuses as itself, with no label lookup and no upload.
-run_status rc run_label_team_request "$PROJECT" unknown-team "" LINEAR_AGENT_LABELS=agent:runtime \
+# refuses as itself, with no label lookup and no upload. It is also the
+# configured team, so the create's own resolution, not the cross-team guard,
+# meets it.
+run_status rc run_label_team_request "$PROJECT" unknown-team "" LINEAR_AGENT_LABELS=agent:runtime LINEAR_TEAM=ghost \
   create --team ghost --title "Unknown team" --labels "agent:runtime" --attach "$TMP_ROOT/asset.bin"
 assert_file_contains "unknown-team: the refusal names the team" \
   "$TMP_ROOT/unknown-team.err" "Team not found: ghost"

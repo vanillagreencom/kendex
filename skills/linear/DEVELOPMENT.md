@@ -6,7 +6,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 
 1. Create `scripts/commands/<resource>.sh`, sourcing `../lib/common.sh` (auth, the GraphQL wire, resolvers, argument guards).
 2. Add a `show_help()` and register the resource in `scripts/linear.sh`.
-3. Register write actions that need a configured team with `linear_guard_write_action` (below).
+3. Register write actions that need a configured team with `linear_guard_write_action` (below), and guard a verb that creates an issue or changes an existing issue's fields with the cross-team guard (below).
 4. Update the Commands table in `SKILL.md`.
 
 The GraphQL transport is `graphql_request` in `scripts/lib/common.sh`; cursor traversal and nested completion are `scripts/lib/pages.sh` (`graphql_pages` for a root collection, `graphql_query` for one entity or a mutation reply); output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
@@ -26,7 +26,16 @@ The dispatcher enforces the configured-team requirement for writes that do not a
 
 Read paths omit the team filter when the target is empty; they never send an empty or guessed team name. `statuses` and `cycles` reads apply `LINEAR_TEAM` as their default filter; `issues list` filters by team only when `--team` is passed, and that asymmetry is load-bearing for cross-team listings.
 
-The guard proves a team is configured, not that a write lands in it. A mutation addressed by an existing entity ID or identifier routes by that ID inside the workspace the key reaches. Issue writes resolve states and labels under the issue's own team. Newly created team-scoped entities land in the named team. The guard does not check whether an existing identifier belongs to `LINEAR_TEAM`.
+The guard proves a team is configured, not that a write lands in it. A mutation addressed by an existing entity ID or identifier routes by that ID inside the workspace the key reaches. Issue writes resolve states and labels under the issue's own team. Newly created team-scoped entities land in the named team.
+
+### Cross-team guard
+
+Linear lets the fleet's one app token write in every team, whatever team access the app's settings name, so `common.sh` keeps issue writes in `LINEAR_TEAM`. `linear_guard_issue_team ACTION REF...` runs before an existing-issue verb that changes state, assignee, priority, labels, project or cycle: `issues.sh`'s `main` calls it for `update`, `activate`, `block`, `unblock` and `complete`, and `bulk_update_issues` for every identifier it collected. `linear_guard_create_team` runs in `create_issue` after the checks that need no request. Reads, `comments create` and relations never call either.
+
+- An identifier's team is its prefix, upper-cased. Any other reference, a UUID, is read for `issue.team.key`; a failed read refuses as `refused=cross-team-unread`.
+- A prefix equal to `LINEAR_TEAM` passes with no request. Otherwise `linear_own_team` resolves `LINEAR_TEAM` once per invocation through `resolve_team_node`, since the setting may name the team rather than key it, and the prefix must equal that key. A create compares team ids.
+- The refusal is the keyed `linear: refused=cross-team ... route=peer-mail` line, then a `fix=` line naming `lane-mail peer send --repo`. With no `LINEAR_TEAM`, both guards print `linear: cross-team-guard=inactive action=<verb> cause=no-team` and let the write through.
+- An identifier moved to another team keeps resolving in Linear under its old prefix; the guard judges the prefix it was given.
 
 `kendex.settings.toml.example` marks `LINEAR_TEAM` `# required`, so a project gets the key and its comment when this skill arrives, and the arrival writes no other key in that file; what an arrival writes, and when, is kendex's `docs/authoring/settings.md`. The written `LINEAR_TEAM = ""` is inert: empty is exactly the unset case, so an unedited seed keeps writes that need a configured team refused.
 
@@ -49,7 +58,7 @@ for t in skills/linear/tests/*.test.sh; do bash "$t" || echo "FAIL $t"; done
 skills/linear/tests/must-fail-controls.sh
 ```
 
-Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use.
+Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use. A suite that changes an existing issue sets `LINEAR_TEAM` to that issue's prefix, or the cross-team guard refuses the write or sends a team lookup the shim does not expect; a suite that sources `issues.sh` without the shim sets it too, since the checkout's own `LINEAR_TEAM` would otherwise send that lookup to Linear.
 
 `tests/issues-activate-agent.test.sh` and `tests/issues-update-unknown-label-refuses.test.sh` use projected live Linear responses in `tests/lib/fixtures/` for cross-team labels. The curl fixture applies the request's team filter to the recorded duplicate names. Their controls remove the scope or the refusal, so either error must turn the suite red.
 

@@ -96,7 +96,7 @@ esac
 SH
 chmod +x "$PROJECT/bin/curl"
 
-printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
+printf '[env]\nLINEAR_TEAM = "TEAM"\n' >"$PROJECT/kendex.settings.toml"
 
 printf 'PNGDATA' >"$TMP_ROOT/shot.png"
 printf '%%PDF-1.4' >"$TMP_ROOT/notes.pdf"

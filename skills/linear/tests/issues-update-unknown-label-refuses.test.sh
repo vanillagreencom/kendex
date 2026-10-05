@@ -58,7 +58,7 @@ chmod +x "$PROJECT/bin/curl"
 run_update() {
   ( cd -- "$PROJECT" \
     && env -i HOME="$TMP_ROOT" \
-       CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=TestTeam \
+       CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=ISS \
        "$LINEAR" issues update ISS-1 --labels "$1" ) >"$TMP_ROOT/out.txt" 2>"$ERR_FILE"
 }
 
@@ -78,7 +78,7 @@ printf 'x' >"$TMP_ROOT/asset.bin"
 attach_rc=0
 ( cd -- "$PROJECT" \
   && env -i HOME="$TMP_ROOT" \
-     CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=TestTeam \
+     CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=ISS \
      "$LINEAR" issues update ISS-1 --labels "ghost-label" --attach "$TMP_ROOT/asset.bin" ) \
      >"$TMP_ROOT/out.txt" 2>"$ERR_FILE" || attach_rc=$?
 

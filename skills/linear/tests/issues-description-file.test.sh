@@ -63,7 +63,7 @@ MD
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
 create_rc=0
-create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$create_log" \
+create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$create_log" \
   bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file" 2>&1)" || create_rc=$?
 assert_eq "issues create --description-file exits zero" "$create_rc" 0
 
@@ -83,7 +83,7 @@ assert "the issueCreate payload carries the markdown description verbatim" \
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
 update_rc=0
-update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
+update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$update_log" \
   bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file" 2>&1)" || update_rc=$?
 assert_eq "issues update --description-file exits zero" "$update_rc" 0
 
@@ -102,7 +102,7 @@ assert_fails() {
   local label="$1" expected="$2"
   shift 2
   local err_file="$TMP_ROOT/err.txt" rc=0
-  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= \
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= \
     bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file" || rc=$?
 
   assert_ne "$label: exits nonzero" "$rc" 0

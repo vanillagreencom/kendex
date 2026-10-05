@@ -104,7 +104,7 @@ run_activate() {
   [[ -z "$agent" ]] || args+=(--agent "$agent")
   : >"$log"
   (cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
     KENDEX_USER_EMAIL="$email" FAKE_ASSIGNEE="$assignee" FAKE_FAIL="$fail" \
     CURL_PAYLOAD_LOG="$log" \
     "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues activate "${args[@]}") \

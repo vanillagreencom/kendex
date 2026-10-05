@@ -55,7 +55,7 @@ run_complete() {
   shift 2
   : >"$payload_log"
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
     CURL_PAYLOAD_LOG="$payload_log" \
     LINEAR_COMPLETE_TEST_CASE="$scenario" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@")

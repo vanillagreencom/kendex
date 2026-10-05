@@ -16,7 +16,8 @@ Usage: auth-check [--strict]
 Reports credential validity, its actor, the resolved Linear team, and its source.
 Credential precedence: pre-minted app token, app pair, personal key.
 Run this before the first mutation that needs a configured team in a project.
-Existing-issue writes use the issue team without a configured target.
+Existing-issue writes use the issue team without a configured target; with
+one, a field change to another team's issue is refused.
 
 Options:
   --strict    Exit 1 when no target is configured for writes that need a

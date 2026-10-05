@@ -63,24 +63,27 @@ printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$PROJECT/bin/curl"
 
-# Usage: run_team_ref NAME LINEAR-ARGS...
+# Usage: run_team_ref NAME LINEAR-ARGS...; OWN_TEAM is the configured
+# LINEAR_TEAM, vsys (no team the fixture knows) when unset.
 run_team_ref() {
   local name="$1"
   shift
   : >"$TMP_ROOT/$name.jsonl"
   (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
+    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM="${OWN_TEAM:-vsys}" KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
     FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
     "$BASH" "$PROJECT/.agents/skills/linear/scripts/linear.sh" "$@") \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
 }
 
 # Columns: call site | its arguments, REF standing for the team reference |
-# the path of the team id in the request that follows the lookup.
-while IFS='|' read -r site args path; do
+# the path of the team id in the request that follows the lookup | the
+# configured LINEAR_TEAM, empty for vsys. An issue create's --team must name
+# the configured team, so its row configures KEN.
+while IFS='|' read -r site args path own; do
   for ref in KEN kendex ghost; do
     # shellcheck disable=SC2086 # the arguments column is several words
-    run_status rc run_team_ref "$site-$ref" ${args//REF/$ref}
+    OWN_TEAM="$own" run_status rc run_team_ref "$site-$ref" ${args//REF/$ref}
     if [[ "$ref" == ghost ]]; then
       assert_file_contains "$site: ghost refuses as not found" "$TMP_ROOT/$site-$ref.err" "Team not found: ghost"
       assert_ne "$site: ghost exits nonzero" "$rc" 0
@@ -95,7 +98,7 @@ while IFS='|' read -r site args path; do
 done <<'ROWS'
 cycles list|cycles list --team REF|.variables.filter.team.id.eq
 cycles create|cycles create --team REF --start 2026-10-05 --end 2026-10-18|.variables.input.teamId
-issues create|issues create --team REF --title Ref|.variables.input.teamId
+issues create|issues create --team REF --title Ref|.variables.input.teamId|KEN
 labels create|labels create --team REF --name ref-label|.variables.input.teamId
 teams get|teams get REF|.variables.id
 statuses list|statuses list --team REF|.variables.filter.team.id.eq
@@ -140,7 +143,7 @@ ROWS
 # The issue's team is named ENG, which is another team's key: its state
 # resolves under the id the issue read carries, with no team lookup at all.
 ENX_TEAM_ID=3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73
-run_status rc run_team_ref update-state issues update KEN-2413 --state "In Progress"
+OWN_TEAM=KEN run_status rc run_team_ref update-state issues update KEN-2413 --state "In Progress"
 assert_eq "issues update --state: succeeds for a team named ENG" "$rc" 0
 assert "issues update --state: sends no team lookup" \
   jq -s -e 'length > 0 and all(.query | contains("teams(filter:") | not)' "$TMP_ROOT/update-state.jsonl"

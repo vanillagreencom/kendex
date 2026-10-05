@@ -788,6 +788,89 @@ linear_guard_write_action() {
     linear_require_team_target
 }
 
+# Cross-team guard
+# -----------------------------------------------------------------------------
+# Every lane writes with one app token, and Linear lets an app token write in
+# every public team whatever team access the app's settings name, so no
+# credential keeps a lane out of another team's issues. These guards do: an
+# issue create and a change to an existing issue's fields land only in this
+# checkout's own team (LINEAR_TEAM). Reads, comments and relations are not
+# guarded. No setting turns the guards off; with no LINEAR_TEAM they say they
+# are inactive and let the write through.
+
+# This checkout's team as a {id, key, name} node, read once per invocation into
+# LINEAR_OWN_TEAM. Call it in the command's own shell, not `$(...)`.
+LINEAR_OWN_TEAM=""
+linear_own_team() {
+    [[ -n "$LINEAR_OWN_TEAM" ]] && return 0
+    LINEAR_OWN_TEAM=$(resolve_team_node "$DEFAULT_TEAM") || {
+        LINEAR_OWN_TEAM=""
+        return 1
+    }
+}
+
+linear_cross_team_inactive() {
+    echo "linear: cross-team-guard=inactive action=$1 cause=no-team" >&2
+}
+
+# The refusal: one keyed line naming what was refused, both teams and the
+# route, then where cross-team work goes.
+# Usage: linear_cross_team_refusal ACTION TEAM_KEY [ISSUE]
+linear_cross_team_refusal() {
+    local action="$1" team="$2" issue="${3:-}" own
+    own=$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")
+    echo "linear: refused=cross-team action=$action${issue:+ issue=$issue} team=$team own-team=$own route=peer-mail" >&2
+    echo "fix=Nothing was sent. Give the work to the overseer of the repository that tracks $team with lane-mail peer send --repo [REPO]." >&2
+}
+
+# Refuse, before any write, a field change to an issue outside this checkout's
+# team. An identifier's team is its prefix, judged with no request; any other
+# reference (a UUID) is read for its team. A prefix equal to LINEAR_TEAM
+# passes with no request; otherwise LINEAR_TEAM is resolved to its key.
+# Usage: linear_guard_issue_team ACTION REF... || exit 1
+linear_guard_issue_team() {
+    local action="$1" ref team vars result
+    shift
+    if [[ -z "$DEFAULT_TEAM" ]]; then
+        linear_cross_team_inactive "$action"
+        return 0
+    fi
+    for ref in "$@"; do
+        if [[ "$ref" =~ ^[A-Za-z0-9]+-[0-9]+$ ]]; then
+            team=$(tr '[:lower:]' '[:upper:]' <<<"${ref%-*}")
+        else
+            vars=$(jq -cn --arg id "$ref" '{id: $id}')
+            if ! result=$(graphql_query 'query IssueTeam($id: String!) { issue(id: $id) { team { key } } }' "$vars") \
+                || ! team=$(jq -er '.issue.team.key | strings | select(length > 0)' <<<"$result"); then
+                echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2
+                echo "The issue's team could not be read (see the previous error), so nothing was sent." >&2
+                return 1
+            fi
+        fi
+        [[ "$team" == "$DEFAULT_TEAM" ]] && continue
+        linear_own_team || return 1
+        [[ "$team" == "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]] && continue
+        linear_cross_team_refusal "$action" "$team" "$ref"
+        return 1
+    done
+}
+
+# Refuse an issue create whose --team names another team than LINEAR_TEAM.
+# Usage: linear_guard_create_team "$explicit_team" || return 1
+linear_guard_create_team() {
+    local explicit="$1" target
+    [[ -n "$explicit" && "$explicit" != "$DEFAULT_TEAM" ]] || return 0
+    if [[ -z "$DEFAULT_TEAM" ]]; then
+        linear_cross_team_inactive create
+        return 0
+    fi
+    target=$(resolve_team_node "$explicit") || return 1
+    linear_own_team || return 1
+    [[ "$(jq -r '.id' <<<"$target")" == "$(jq -r '.id' <<<"$LINEAR_OWN_TEAM")" ]] && return 0
+    linear_cross_team_refusal create "$(jq -r '.key' <<<"$target")"
+    return 1
+}
+
 # Resolve project name or UUID to UUID
 # Usage: resolve_project_id "Project name" or resolve_project_id "uuid-here"
 #
@@ -845,7 +928,7 @@ resolve_project_id() {
 # key and another team's name is refused as ambiguous, naming both.
 # Usage: resolve_team_id "$LINEAR_TEAM_TARGET"
 resolve_team_id() {
-    local team_ref="$1"
+    local team_ref="$1" node
 
     # Check if it's already a UUID
     if [[ "$team_ref" =~ $LINEAR_UUID_PATTERN ]]; then
@@ -853,10 +936,22 @@ resolve_team_id() {
         return 0
     fi
 
-    # Look up by key or name. A FAILED query must propagate as the API
-    # failure it is (rate limit, outage) — "Team not found" is only true for
-    # a successful lookup that returned no match.
+    node=$(resolve_team_node "$team_ref") || return 1
+    jq -r '.id' <<<"$node"
+}
+
+# Resolve a team UUID, key or name to its {id, key, name} node, refusing an
+# unknown or ambiguous reference as resolve_team_id does.
+# Usage: node=$(resolve_team_node "$LINEAR_TEAM")
+resolve_team_node() {
+    local team_ref="$1"
+
+    # Look up by key or name, or by id for a UUID. A FAILED query must
+    # propagate as the API failure it is (rate limit, outage) — "Team not
+    # found" is only true for a successful lookup that returned no match.
     local query='query GetTeam($name: String!, $after: String) { teams(filter: {or: [{key: {eq: $name}}, {name: {eq: $name}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id key name } } }'
+    [[ ! "$team_ref" =~ $LINEAR_UUID_PATTERN ]] \
+        || query='query GetTeamById($name: ID!, $after: String) { teams(filter: {id: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id key name } } }'
     # Build variables and diagnostics with jq: a team name containing a
     # quote or backslash must neither break the request JSON nor the error.
     local vars result
@@ -876,7 +971,7 @@ resolve_team_id() {
             return 1
             ;;
         1)
-            jq -r '.[0].id' <<<"$teams"
+            jq -c '.[0]' <<<"$teams"
             ;;
         *)
             jq -c --arg team "$team_ref" \

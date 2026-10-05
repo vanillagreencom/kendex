@@ -11,7 +11,7 @@ ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 
 rc=0
 out="$(
-    LINEAR_API_KEY_OVERRIDE=test-token bash -euo pipefail -c '
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC bash -euo pipefail -c '
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
@@ -58,7 +58,7 @@ assert_jq "the aggregate diagnostic names every item and its outcome" "$out" '
 # parse and reported the committed update as a failure.
 warn_rc=0
 warn_out="$(
-    LINEAR_API_KEY_OVERRIDE=test-token bash -euo pipefail -c '
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC bash -euo pipefail -c '
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
@@ -74,7 +74,7 @@ warn_out="$(
 )" || warn_rc=$?
 warn_err_rc=0
 warn_err="$(
-    LINEAR_API_KEY_OVERRIDE=test-token bash -euo pipefail -c '
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC bash -euo pipefail -c '
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"

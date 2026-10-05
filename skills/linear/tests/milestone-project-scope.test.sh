@@ -128,7 +128,7 @@ run() {
   local rc=0 err
   : >"$CURL_LOG"
   (cd "$PROJECT" && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam LINEAR_REQUIRE_REACH= "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$TMP_ROOT/err" || rc=$?
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=ISS LINEAR_REQUIRE_REACH= "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$TMP_ROOT/err" || rc=$?
   err="$(sed "s#$TMP_ROOT#<root>#g" "$TMP_ROOT/err" | paste -sd';' -)"
   printf 'rc=%s wire=%s%s' "$rc" "$(wire)" "${err:+ $err}"
 }
@@ -158,10 +158,10 @@ expected() {
 # after the upload strands the asset in Linear storage with no issue
 # referencing it. The ambiguity rows need the lookup, not just the arguments,
 # so they are the ones proving the whole resolution runs ahead of the upload.
-CREATE='issues create --title t --team TestTeam --labels agent:rust --priority 3 --description d'
+CREATE='issues create --title t --team ISS --labels agent:rust --priority 3 --description d'
 printf 'x' >"$TMP_ROOT/asset.bin"
 ROWS='
-issues create files the issue under the project own milestone|$CREATE --project Dup --milestone Alpha|0|GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),GetTeam(name=TestTeam),GetLabel(name=agent:rust),CreateIssue(input.projectMilestoneId=alpha-here)|-
+issues create files the issue under the project own milestone|$CREATE --project Dup --milestone Alpha|0|GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),GetTeam(name=ISS),GetLabel(name=agent:rust),CreateIssue(input.projectMilestoneId=alpha-here)|-
 --project wins over the project the issue is already in|issues update ISS-1 --project Dup --milestone Alpha|0|GetIssue(),GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),UpdateIssue(input.projectMilestoneId=alpha-here)|-
 two milestones of that name in the project is a refusal, not a pick|$CREATE --project Dup --milestone Twin|1|GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)|ambiguous:Twin
 a failed lookup reports the API failure, not a miss|$CREATE --project Dup --milestone Boom|1|GetProject(name=Dup),GetMilestone(name=Boom,projectId=live-uuid)|failed:Boom

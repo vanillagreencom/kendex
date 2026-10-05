@@ -292,9 +292,11 @@ case "$query" in
     '{data: (if $fail == "team" then del(.issue.team) else . end)}' "$FIXTURE_DIR/label-team-issue.json"
   ;;
 *"teams(filter:"*)
-  jq -cj --argjson payload "$payload" '
+  # The recording carries no team keys; these are the live teams' keys.
+  jq -cj --argjson payload "$payload" --argjson keys '{"kendex":"KEN","vsys":"VSY","fleet":"FLT"}' '
     {data: {teams: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: ([.issueLabels.nodes[].team
-      | select(. != null and .name == $payload.variables.name)] | unique | map({id}))}}}' \
+      | select(. != null) | . + {key: $keys[.name]}
+      | select(.name == $payload.variables.name or .key == $payload.variables.name)] | unique | map({id, key}))}}}' \
     "$FIXTURE_DIR/issue-team-labels.json"
   ;;
 *"workflowStates(filter:"*)
@@ -316,7 +318,8 @@ SH
 }
 
 # Each request has its own payload log and failure input. The configured team
-# differs from the recorded issue's team.
+# is the recorded issue's team by its key, KEN, while the recording names that
+# team by its name, kendex.
 # Leading NAME=VALUE arguments after FAIL are added to the child environment
 # after the defaults, so one replaces a default of the same name.
 # Usage: run_label_team_request PROJECT NAME FAIL [NAME=VALUE...] ISSUES-ARGS...
@@ -330,7 +333,7 @@ run_label_team_request() {
 	done
 	: >"$TMP_ROOT/$name.jsonl"
 	(cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$project/bin:$PATH" \
-		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
+		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=KEN KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= \
 		FIXTURE_FAIL="$fail" \
 		FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
 		${extra_env[@]+"${extra_env[@]}"} \

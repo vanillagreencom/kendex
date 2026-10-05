@@ -96,7 +96,7 @@ assert "--clear-estimate with --estimate 0 builds estimate: null" \
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
 cap="$TMP/bulk-clear.json"
 out="$(
-    CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token \
+    CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
         bash -uo pipefail -c '
             cd "$TMP"
             capture="$CAPTURE_FILE"
@@ -118,7 +118,7 @@ assert "bulk-update forwards --clear-estimate as estimate: null" \
 
 # --- bulk-update rejects an out-of-range estimate per item ----------------
 out="$(
-    LINEAR_API_KEY_OVERRIDE=test-token \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
         bash -uo pipefail -c '
             cd "$TMP"
             issues_sh="$1"

@@ -47,6 +47,13 @@ Workflow Actions (composite operations for dev):
                  (--include-children-of <ID> for bundles; --container when the
                  target is a container parent closing after its children)
 
+Cross-team guard: with LINEAR_TEAM set, update, bulk-update, activate, block,
+unblock and complete refuse an issue of another team before any write, with
+`linear: refused=cross-team action=<verb> issue=<ID> team=<KEY>
+own-team=<KEY> route=peer-mail`. Reads and relations, like comments, reach
+every team. With LINEAR_TEAM unset they run and print
+`linear: cross-team-guard=inactive action=<verb> cause=no-team`.
+
 Output Formats (all query commands):
   --format=safe         Flat, null-safe array (DEFAULT)
   --format=compact      Minimal fields for workflow routing (no description/url/timestamps)
@@ -93,7 +100,8 @@ Bulk Update:
 
 Create Options:
   --title <text>        Issue title (required)
-  --team <ref>          Team key or name (default: $LINEAR_TEAM; required when unset)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; required when unset);
+                        another team than $LINEAR_TEAM is refused
   --description <text>  Issue description
   --description-file <path>  Read description from file (preferred for markdown)
   --label(s) <a,b,c>    Comma-separated label names
@@ -675,6 +683,7 @@ bulk_update_issues() {
         echo '{"error": "No update options provided. Example: bulk-update PROJ-1 PROJ-2 --state \"Backlog\""}' >&2
         return 1
     fi
+    linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
 
     # Process each issue
     local results=()
@@ -1212,6 +1221,7 @@ create_issue() {
     # before any API call.
     linear_set_team_target "$team"
     linear_require_team_target || return 1
+    local explicit_team="$team"
     team="$LINEAR_TEAM_TARGET"
 
     if [ -z "$title" ]; then
@@ -1254,6 +1264,9 @@ create_issue() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
+
+    # The first request: the checks above need none, so they refuse first.
+    linear_guard_create_team "$explicit_team" || return 1
 
     # Resolve --project and --milestone BEFORE uploading: each can still
     # refuse — an unknown project, a milestone name with no project, an
@@ -3340,6 +3353,7 @@ main() {
         ;;
     update)
         require_issue_ref update "${1:-}"
+        linear_guard_issue_team update "$1" || exit 1
         update_issue "$@"
         ;;
     archive)
@@ -3369,18 +3383,22 @@ main() {
     # Composite workflow actions
     activate)
         require_issue_ref activate "${1:-}"
+        linear_guard_issue_team activate "$1" || exit 1
         activate_issue "$@"
         ;;
     block)
         require_issue_ref block "${1:-}"
+        linear_guard_issue_team block "$1" || exit 1
         block_issue "$@"
         ;;
     unblock)
         require_issue_ref unblock "${1:-}"
+        linear_guard_issue_team unblock "$1" || exit 1
         unblock_issue "$@"
         ;;
     complete)
         require_issue_ref complete "${1:-}"
+        linear_guard_issue_team complete "$1" || exit 1
         complete_issue "$@"
         ;;
     validate-completion)

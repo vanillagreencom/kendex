@@ -182,6 +182,8 @@ w_empty() { printf 'LINEAR_TEAM is exported as an empty value, which overrides t
 #   help               one help document, no call
 #   ok-parse           the action's own unknown-option line for --help, no call
 #   ok WIRE            exit 0, one call per operation in WIRE
+#   inactive ACTION WIRE  ok WIRE, then the cross-team guard's line that it is
+#                      inactive for ACTION with no team configured
 #   auth RC TEAM SOURCE FILE WRITES [WARNING...]   the report (one call);
 #                      a warning is noteam, envkey, shadow:ENV:PROJECT or
 #                      empty:PROJECT
@@ -196,6 +198,11 @@ expected() {
   ok\ *)
     wire="${spec#ok }"
     printf 'rc=0 calls=%s wire=%s' "$(printf '%s' "$wire" | tr -cd ')' | wc -c | tr -d ' ')" "$wire"
+    ;;
+  inactive\ *)
+    w="${spec#inactive }"
+    w="${w%% *}"
+    printf '%s linear: cross-team-guard=inactive action=%s cause=no-team' "$(expected "ok ${spec#inactive "$w" }")" "$w"
     ;;
   auth\ *)
     # shellcheck disable=SC2086  # the spec's fields are its words
@@ -226,8 +233,8 @@ expected() {
 # line, quoted as a shell would. expect is a spec for `expected`.
 ROWS='
 issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
-issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
-issues update uses the issue team instead of the configured team|Configured|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
+issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|inactive update GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
+issues update resolves under the issue team, not the configured spelling of it|TEAM|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(name="backend",teamName="IssueTeam",inline-team),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),UpdateIssue()
 comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
@@ -237,15 +244,15 @@ initiatives create is refused|none|-|err|initiatives create --name "Phase 1"|ref
 a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")
 a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|ok CreateComment(input.body="--team\n")
 --team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|ok CreateComment(input.body="see --team CC for context\n")
-a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team"|ok GetIssue(),UpdateIssue(input.title="--team")
-a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC"|ok GetIssue(),UpdateIssue(input.title="--team=CC")
+a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team"|inactive update GetIssue(),UpdateIssue(input.title="--team")
+a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC"|inactive update GetIssue(),UpdateIssue(input.title="--team=CC")
 a --team=CC title on create is free text|none|-|err|issues create --title "--team=CC"|refused
 the issues comment redirect makes no call|none|-|err|issues comment TEAM-1 --body "--team=CC"|redirect
 a blank configured value stays unset|blank|-|err|issues create --title "Blank team"|refused
 an exported empty LINEAR_TEAM shadows the project file and refuses|Configured||err|issues create --title "Empty export"|refused
 issues --help needs no team, whatever the action (issues answers it before the gate)|none|-|out|issues update --help|help
 the --help of a guarded action passes the dispatcher gate to its own parser|none|-|err|cycles update --help|ok-parse
-an explicit --team resolves that team and creates under it|none|-|err|issues create --title "Explicit target" --team Explicit|ok GetTeam(name="Explicit"),CreateIssue(input.title="Explicit target",input.teamId="team-uuid")
+an explicit --team resolves that team and creates under it|none|-|err|issues create --title "Explicit target" --team Explicit|inactive create GetTeam(name="Explicit"),CreateIssue(input.title="Explicit target",input.teamId="team-uuid")
 a configured LINEAR_TEAM is the team resolved|Configured|-|err|issues create --title "Configured target"|ok GetTeam(name="Configured"),CreateIssue(input.title="Configured target",input.teamId="team-uuid")
 comments create reaches the API with a configured team|Configured|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
 a --team-shaped body is written verbatim under a configured team|Configured|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")

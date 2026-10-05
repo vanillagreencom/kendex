@@ -3,9 +3,11 @@
 # Which Linear team this project writes to, and how its issues are read and
 # created.
 
-# The target for writes that need a configured team.
-# Existing-issue writes use the issue team without this setting.
-# Creating an issue, project, cycle or label can name one for that call.
+# The target for writes that need a configured team, and the one team whose
+# issues this project creates or changes: a create in, or a field change to
+# an issue of, another team is refused. Comments, relations and reads reach
+# every team.
+# Creating a project, cycle or label can name another team for that call.
 # There is no default: while this is empty, writes that need a configured
 # team are refused rather than guessing a team inside the key's workspace.
 LINEAR_TEAM = "" # required
