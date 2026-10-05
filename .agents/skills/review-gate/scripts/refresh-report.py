@@ -7,9 +7,11 @@ unanswered review thread, root being the thread's first comment id and the
 rest its REST review-comment fields. The head's generated inventory binds each
 reported path. Review text is data; only the upstream verifier confirms a
 defect. GitHub issue titles carry a fingerprint of the package, the path
-inside it and the head lines the comment names (its wording for a file-level
-or base-side comment). Every consumer and later refresh reviewing that line
-finds the same issue, open or closed.
+inside it and the head lines the comment names, with their surrounding lines
+where that text repeats in the file (its wording for a file-level or
+base-side comment). A consumer or later run reviewing that line finds the
+issue, open or closed, once GitHub search has indexed it; runs that overlap
+within that lag can each file one. Only an issue a GitHub App wrote counts.
 
 A finding is filed upstream only where kendex report --dry-run routes its one
 package to vanillagreencom/kendex with a package label. Every other finding is
@@ -62,6 +64,11 @@ RETIRED = Path(__file__).parent.parent / "retired-settings.json"
 # GitHub search caps a query at 256 characters besides its operators and
 # qualifiers; three 64-character fingerprints fit, four would not with spaces.
 SEARCH_TERMS = 3
+# Lines on each side that tell apart reviewed text repeated in one file.
+CONTEXT = 3
+# gh api stderr for a primary or secondary rate limit, which GitHub answers
+# with HTTP 403 or 429 like an access denial; checked before the denial.
+RATE_LIMIT = re.compile(r"HTTP 429\b|rate limit", re.IGNORECASE)
 
 
 def settings_report():
@@ -115,8 +122,10 @@ def main():
         """The text a line comment was shown at head, else the review text.
 
         A comment on the head side names its last line and, for a range, its
-        first. A file-level or base-side comment names no head line, so its
-        wording is all that identifies it.
+        first. Text that occurs once in the file is the line wherever it
+        moves; repeated text (fi, a fence) takes CONTEXT lines on each side.
+        A file-level or base-side comment names no head line, so its wording
+        is all that identifies it.
         """
         end = finding.get("line")
         if end is None or finding.get("side") != "RIGHT":
@@ -126,7 +135,11 @@ def main():
         lines = read("git", "show", f"{head}:{finding['path']}").splitlines()
         if not 1 <= start <= end <= len(lines):
             raise ValueError(f"review lines {start}-{end} are outside {finding['path']} at {head}")
-        return "\n".join(lines[start - 1:end])
+        window = lines[start - 1:end]
+        size = len(window)
+        if sum(lines[i:i + size] == window for i in range(len(lines) - size + 1)) == 1:
+            return "\n".join(window)
+        return ["\n".join(window), lines[max(start - 1 - CONTEXT, 0):end + CONTEXT]]
 
     read("git", "fetch", "--no-tags", "origin", head)
     inventory = json.loads(read("git", "show", head + ":.kendex-generated.json"))
@@ -147,6 +160,8 @@ def main():
         result = subprocess.run(args, input=None if payload is None else json.dumps(payload),
                                 capture_output=True, text=True, env=issue_env)
         if result.returncode:
+            if RATE_LIMIT.search(result.stderr):
+                raise RuntimeError(f"rate-limited endpoint={endpoint}\n{result.stderr}")
             # GitHub emits these status codes when an installation cannot
             # access the repository or its Issues permission was narrowed.
             if re.search(r"HTTP (401|403|404)\b", result.stderr):
@@ -155,7 +170,12 @@ def main():
         return json.loads(result.stdout)
 
     def search(markers):
-        """Every issue, open or closed, whose title may carry one of markers."""
+        """Every issue, open or closed, whose title may carry one of markers.
+
+        Anyone can open an issue on the public tracker and close their own,
+        so only one a GitHub App wrote, which no outside user can author as
+        or close, answers a finding.
+        """
         terms = " OR ".join(m.removeprefix("[kendex-render:").removesuffix("]") for m in markers)
         pages = api("search/issues?" + urlencode({"q": f"repo:{UPSTREAM} is:issue in:title {terms}",
                                                   "per_page": 100}))
@@ -163,7 +183,8 @@ def main():
                                                   and isinstance(p.get("items"), list) for p in pages):
             # An incomplete search cannot prove that no issue answers a finding.
             raise RuntimeError("incomplete upstream issue search")
-        return [i for page in pages for i in page["items"] if "pull_request" not in i]
+        return [i for page in pages for i in page["items"]
+                if "pull_request" not in i and (i.get("user") or {}).get("type") == "Bot"]
 
     rows = []
     for finding in json.load(sys.stdin):
@@ -200,8 +221,9 @@ def main():
                 rest = parts[parts.index(name) + 1:] if name in parts else ()
                 inner = PurePosixPath(*rest) if rest else PurePosixPath(parts[-1])
                 # One package line is one finding in every consumer and every
-                # refresh: the identity holds no consumer repository, rendered
-                # path or review wording, only what the reviewer was shown.
+                # refresh: the identity holds no consumer repository or
+                # rendered path, and the review wording only where reviewed()
+                # falls back to it.
                 identity = json.dumps([name, str(inner), reviewed(finding)],
                                       ensure_ascii=False, separators=(",", ":"))
                 row["marker"] = f"[kendex-render:{hashlib.sha256(identity.encode()).hexdigest()}]"
@@ -227,6 +249,7 @@ def main():
             token = ""
 
     results = []
+    posted = {}
     for row in rows:
         finding, label, marker, evidence = row["finding"], row["label"], row["marker"], row["evidence"]
         path, note = finding["path"], row["note"]
@@ -250,10 +273,13 @@ def main():
                 elif existing:
                     url = filed = existing["html_url"]
                     note = "Existing open report"
-                    if run not in existing["body"]:
-                        # Update the issue with this run's evidence. Its title
-                        # retains the stable identity and no other write occurs.
+                    # Each folded thread leaves its own text and evidence on
+                    # the issue once. Its title retains the stable identity
+                    # and no other write occurs.
+                    record = f"Review evidence: {evidence}\n"
+                    if record not in (existing.get("body") or "") and record not in posted.setdefault(marker, ""):
                         result = api(f"repos/{UPSTREAM}/issues/{existing['number']}/comments", {"body": body})
+                        posted[marker] += body
                         url = result["html_url"]
                 else:
                     created = api(f"repos/{UPSTREAM}/issues", {"title": row["title"], "body": body,

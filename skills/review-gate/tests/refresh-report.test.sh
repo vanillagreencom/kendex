@@ -131,25 +131,28 @@ if name=="git":
  if sys.argv[1]=="fetch": sys.exit(0)
  if sys.argv[-1].endswith(".kendex-generated.json"):
   print(json.dumps([".agents/skills/review-gate/SKILL.md",".agents/skills/review-gate/scripts/test.sh",
+                    ".claude/agents/maintainer.md",".claude/agents/runtime.md",
                     ".claude/skills/review-gate/SKILL.md",".github/agents/reviewer.agent.md",
                     ".kendex-generated.json",".kendex-lock.json"]))
  elif sys.argv[-1].endswith(".kendex-lock.json"): print(Path(os.environ["HISTORICAL_LOCK"]).read_text())
  else: sys.stdout.write(w["files"][sys.argv[-1].split(":",1)[1]])
 elif name=="kendex":
  assert os.environ["GH_TOKEN"]=="consumer"
- assert sys.argv[1:5]==["report","--asset","review-gate","--scope"]
+ assert sys.argv[1:3]==["report","--asset"] and sys.argv[4]=="--scope"
  if os.environ.get("REAL_KENDEX"):
   os.execv(os.environ["REAL_KENDEX"], ["kendex",*sys.argv[1:]])
  lock=json.loads(Path(".kendex-lock.json").read_text())
- owned=any(e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
+ owned=any(e["name"]==sys.argv[3] and e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
  # The CLI names --repo only for a kendex-owned package.
  route=" --repo vanillagreencom/kendex --label ci-infra" if owned else ""
  print("would run: gh issue create"+route+" --title test",file=sys.stderr)
 else:
  assert name=="gh" and os.environ["GH_TOKEN"]=="upstream"
  assert sys.argv[1]=="api" and sys.argv[2].startswith(("repos/vanillagreencom/kendex/issues","search/issues?"))
- if w.get("deny"):
-  print("gh: Resource not accessible by integration (HTTP 403)",file=sys.stderr); sys.exit(1)
+ # fail: [scope, stderr], scope being every call, writes only or searches only.
+ scope,message=w.get("fail") or (None,None)
+ if scope=="all" or scope==("write" if "--input" in sys.argv else "search"):
+  print(message,file=sys.stderr); sys.exit(1)
  if "--input" in sys.argv:
   p=json.load(sys.stdin)
   w["writes"].append(p)
@@ -157,17 +160,20 @@ else:
    result={"html_url":"https://github.com/vanillagreencom/kendex/issues/1#comment"}
   else:
    number=len(w["issues"])+1
-   result=dict(p,number=number,state="open",state_reason=None,
+   result=dict(p,number=number,state="open",state_reason=None,user={"login":"kendex[bot]","type":"Bot"},
                html_url=f"https://github.com/vanillagreencom/kendex/issues/{number}")
    w["issues"].append(result)
   state.write_text(json.dumps(w)); print(json.dumps(result))
  else:
-  # GitHub search: whole-token title matches, closed issues included
-  # unless the query narrows to is:open.
+  # GitHub search: substring title matches, closed issues included unless
+  # the query narrows to is:open. Free text past 256 characters, qualifiers
+  # and OR operators aside, is refused as GitHub refuses it.
   from urllib.parse import parse_qs, urlsplit
   q=parse_qs(urlsplit(sys.argv[2]).query)["q"][0]
   assert q.startswith("repo:vanillagreencom/kendex is:issue ") and " in:title " in q
   terms=q.split(" in:title ",1)[1].split(" OR ")
+  if len(" ".join(terms))>256:
+   print("gh: Validation Failed: The search is longer than 256 characters. (HTTP 422)",file=sys.stderr); sys.exit(1)
   w.setdefault("searches",[]).append(terms); state.write_text(json.dumps(w))
   items=[i for i in w["issues"] if any(t in i["title"] for t in terms)
          and ("is:open" not in q or i["state"]=="open")]
@@ -181,9 +187,13 @@ env={'PATH':str(root/'bin')+':/usr/bin:/bin','HOME':str(root),'GH_TOKEN':'consum
      'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world),'HISTORICAL_LOCK':str(root/'historical-lock.json'),
      'REAL_KENDEX':real_cli,'KENDEX_REAL_HOME':'1','KENDEX_BACKGROUND_REFRESH':'off'}
 (root/'kendex.toml').write_text('schema = 6\n')
-(root/'.kendex-lock.json').write_text(json.dumps({'version':11,'entries':{'skill:review-gate:codex':{
- 'name':'review-gate','kind':'skill','harness':'codex','source':'kendex',
- 'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}}}))
+def entry(name, kind, harness):
+ return {'name':name,'kind':kind,'harness':harness,'source':'kendex',
+         'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}
+(root/'.kendex-lock.json').write_text(json.dumps({'version':11,'entries':{
+ 'skill:review-gate:codex':entry('review-gate','skill','codex'),
+ 'agent:runtime:claude':entry('runtime','agent','claude'),
+ 'agent:maintainer:claude':entry('maintainer','agent','claude')}}))
 (root/'historical-lock.json').write_bytes((root/'.kendex-lock.json').read_bytes())
 findings=[{'root':10,'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
            'url':'https://github.com/acme/repo/pull/1#discussion_r10'}]
@@ -192,10 +202,14 @@ results=[]
 # The package's SKILL.md at the source, and as a consumer renders it with a
 # project-instructions block that shifts every line.
 skill_md=['---','name: review-gate','---','','Run the gate.','Then read the verdict.','']
+# A script with two `fi` lines, and two single-file packages sharing a line.
+agent='---\nname: x\n---\nDo the work.\n'
 files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
-       '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:])}
+       '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:]),
+       '.agents/skills/review-gate/scripts/test.sh':'if a; then\n  x\nfi\nif b; then\n  y\nfi\n',
+       '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent}
 def reset(**extra):
- world.write_text(json.dumps(dict(issues=[],writes=[],files=files,**extra))); summary.write_text('')
+ world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
 def attempt(driver, rows, overrides):
  return subprocess.run(['python3',str(driver),'a'*40,'1'],input=json.dumps(rows),text=True,
                        capture_output=True,env=dict(env,**(overrides or {})),cwd=root)
@@ -215,8 +229,11 @@ assert findings[0]['path'] in issue['body'] and findings[0]['url'] in issue['bod
 assert not (root/'should-not-exist').exists()
 assert len(run()['writes'])==1
 assert results[0]['issue']==issue['html_url']
-# A later run's evidence comment leaves the finding filed under the issue.
-assert len(run(overrides={'GITHUB_RUN_ID':'43'})['writes'])==2
+# A later run's thread already on the issue adds nothing; a new thread's
+# evidence comment leaves the finding filed under the issue.
+assert len(run(overrides={'GITHUB_RUN_ID':'43'})['writes'])==1
+later_thread=dict(findings[0],root=11,url='https://github.com/acme/repo/pull/1#discussion_r11')
+assert len(run(rows=[later_thread],overrides={'GITHUB_RUN_ID':'43'})['writes'])==2
 assert results[0]['issue']==issue['html_url'] and results[0]['note']=='Existing open report'
 # Identical text from a fresh inline comment must reuse one issue. Different
 # text must keep its own issue.
@@ -249,10 +266,21 @@ assert package_line()=='one'
 # The fold stops at the line: another line of the same file, a base-side
 # comment and a file-level comment are their own findings, and the
 # wording identifies the last two.
+# Text repeated in one file is told apart by its surrounding lines, a range
+# and a single line sharing its end are two findings, and a single-file
+# package folds by its own name.
 other_line=dict(consumer_a,line=5,start_line=None)
+same_end=dict(consumer_a,root=31,start_line=None)
 base_side=dict(consumer_a,side='LEFT')
+first_fi=dict(consumer_a,root=32,path='.agents/skills/review-gate/scripts/test.sh',line=3,start_line=None)
+repeated_text=[first_fi, dict(first_fi,root=33,line=6)]
+agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=4,start_line=None)
+agents=[agent_a, dict(agent_a,root=61,body='Another wording.'), dict(agent_a,root=62,path='.claude/agents/maintainer.md')]
 for rows, issues in [
  ([consumer_a, other_line], 2),
+ ([consumer_a, same_end], 2),
+ (repeated_text, 2),
+ (agents, 2),
  ([base_side, dict(base_side,body='Another wording.')], 2),
  ([dict(consumer_a,line=None,start_line=None), dict(consumer_b,line=None,start_line=None)], 2),
  ([consumer_a, consumer_b], 1),
@@ -260,6 +288,22 @@ for rows, issues in [
  reset(); assert len(run(rows=rows)['issues'])==issues, rows
  # Search indexes a new issue late; one run's repeat rides on its own filing.
  assert len({r['issue'] for r in results})==issues
+# Each thread folded onto this run's own filing leaves its text and evidence.
+def folded_evidence(driver=skill/'scripts/refresh-report.py'):
+ reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
+ return [w['body'] for w in writes if 'title' not in w]
+comments=folded_evidence()
+assert len(comments)==1 and consumer_b['url'] in comments[0] and '> '+consumer_b['body'] in comments[0]
+# An issue an outside user wrote carrying the marker, open or closed, answers
+# nothing and gets no comment: the finding is filed anew.
+reset(); spoofed_title=run(rows=[consumer_a])['issues'][0]['title']
+def spoofed(state, driver=skill/'scripts/refresh-report.py'):
+ planted=dict(number=1,title=spoofed_title,body='Planted.',state=state,state_reason=None if state=='open' else 'completed',
+              user={'login':'someone','type':'User'},html_url='https://github.com/vanillagreencom/kendex/issues/1')
+ reset(issues=[planted]); writes=run(driver,rows=[consumer_a])['writes']
+ return [w.get('title') for w in writes]==[spoofed_title] and results[0]['issue'].endswith('/issues/2')
+for state in ('open','closed'):
+ assert spoofed(state), state
 # A comment naming lines past the head file is no line it was shown.
 reset(); refused=attempt(skill/'scripts/refresh-report.py',[dict(consumer_a,line=99)],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
@@ -267,15 +311,35 @@ assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # incomplete search proves no absence and files nothing.
 many=[dict(consumer_a,root=50+n,line=None,start_line=None,body=f'Defect {n}.') for n in range(4)]
 reset(); searched=run(rows=many)
-assert len(searched['issues'])==4 and max(map(len,searched['searches']))<=3
+assert len(searched['issues'])==4 and len({r['issue'] for r in results})==4
 assert sorted(t for q in searched['searches'] for t in q)==sorted(i['title'][15:79] for i in searched['issues'])
 reset(incomplete=True); refused=attempt(skill/'scripts/refresh-report.py',[consumer_a],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
-for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
+# No token, a token denied everywhere and one that can search but not write
+# each leave the filing link. A rate limit is no access answer: the run fails
+# and waits for the next one.
+denied='gh: Resource not accessible by integration (HTTP 403)'
+access='kendex Issues access is unavailable'
+for overrides, extra, note in [
+ ({'KENDEX_ISSUES_TOKEN':''}, {}, 'Issues token unavailable'),
+ ({}, {'fail':['all',denied]}, access),
+ ({}, {'fail':['write',denied]}, access),
+]:
  reset(**extra); result=run(overrides=overrides)
  assert result['writes']==[] and 'issues/new?' in summary.read_text()
- assert results[0]['root']==10 and results[0]['issue'] is None
+ assert results==[{'root':10,'issue':None,'note':note}], extra
  assert findings[0]['url'] in summary.read_text()
+rate_limits=[
+ 'gh: API rate limit exceeded for installation ID 1234. If you reach out to GitHub Support for help, please include the request ID AB12:3C4D. (HTTP 403)',
+ 'gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)',
+ 'gh: Too Many Requests (HTTP 429)',
+]
+def rate_limited(message, driver=skill/'scripts/refresh-report.py'):
+ reset(fail=['search',message]); result=attempt(driver,findings,None)
+ return result.returncode!=0 and 'rate-limited endpoint=search/issues?' in result.stderr \
+        and json.loads(world.read_text())['writes']==[]
+for message in rate_limits:
+ assert rate_limited(message), message
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
 
@@ -340,13 +404,13 @@ for needle,replacement,rows,expect in [
 # reported with its filing link, and a finding reported under the evidence
 # comment rather than the issue, each turn a case above red.
 for needle,replacement,overrides,runs in [
- ('            url = "https://github.com/" + UPSTREAM', '            url = filed = "https://github.com/" + UPSTREAM', {'KENDEX_ISSUES_TOKEN':''}, [{}]),
- ('url = result["html_url"]', 'url = filed = result["html_url"]', {}, [{}, {'GITHUB_RUN_ID':'43'}]),
+ ('            url = "https://github.com/" + UPSTREAM', '            url = filed = "https://github.com/" + UPSTREAM', {'KENDEX_ISSUES_TOKEN':''}, [(findings,{})]),
+ ('url = result["html_url"]', 'url = filed = result["html_url"]', {}, [(findings,{}), ([later_thread],{'GITHUB_RUN_ID':'43'})]),
 ]:
  assert source.count(needle)==1
  mutant=root/'filed.py'; mutant.write_text(source.replace(needle,replacement))
  reset()
- for extra in runs: run(mutant,overrides=dict(overrides,**extra))
+ for rows, extra in runs: run(mutant,rows=rows,overrides=dict(overrides,**extra))
  assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
 # Filing a package kendex report routes elsewhere turns its not-filed row red.
 # The filing link and the issue need the title only a routed finding has, so
@@ -375,6 +439,9 @@ for needle,replacement,expect in [
  assert package_line(mutant)==expect, needle
 for needle,replacement,rows,issues in [
  ('                    known[marker] = created\n', '                    pass\n', [consumer_a, consumer_b], 2),
+ ('start = start or end', 'start = end', [consumer_a, same_end], 1),
+ ('        return ["\\n".join(window), lines[max(start - 1 - CONTEXT, 0):end + CONTEXT]]\n',
+  '        return "\\n".join(window)\n', repeated_text, 1),
  ('if end is None or finding.get("side") != "RIGHT":', 'if end is None:', [base_side, dict(base_side,body='Another wording.')], 1),
 ]:
  assert source.count(needle)==1, needle
@@ -392,7 +459,24 @@ for needle,replacement,rows,extra in [
 needle='SEARCH_TERMS = 3\n'
 assert source.count(needle)==1
 mutant=root/'batch.py'; mutant.write_text(source.replace(needle,'SEARCH_TERMS = 4\n'))
-reset(); assert max(map(len,run(mutant,rows=many)['searches']))==4
+reset(); assert attempt(mutant,many,None).returncode!=0
+# Text that occurs once is the line wherever a consumer's render moves it;
+# context for every line splits one package line across consumers.
+for needle,replacement,check,expect in [
+ ('for i in range(len(lines) - size + 1)) == 1:', 'for i in range(len(lines) - size + 1)) == 0:', package_line, 'consumers'),
+ ('if record not in (existing.get("body") or "") and record not in posted.setdefault(marker, ""):',
+  'if run not in existing["body"]:', folded_evidence, []),
+ ('and (i.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
+ ('if RATE_LIMIT.search(result.stderr):', 'if False:', lambda d: rate_limited(rate_limits[0],d), False),
+]:
+ assert source.count(needle)==1, needle
+ mutant=root/'context.py'; mutant.write_text(source.replace(needle,replacement))
+ assert check(mutant)==expect, needle
+# A token that searches but cannot write reaches the per-row access handler.
+needle='            except PermissionError as error:\n                note = str(error)\n'
+assert source.count(needle)==1
+mutant=root/'write-deny.py'; mutant.write_text(source.replace(needle,'            except KeyError:\n                pass\n'))
+reset(fail=['write',denied]); assert attempt(mutant,findings,None).returncode!=0
 PY
 then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
