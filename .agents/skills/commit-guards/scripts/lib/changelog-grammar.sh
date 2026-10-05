@@ -66,7 +66,10 @@ gg_fragment_package() { # PATH
 # GG_TMP/packages.z: five NUL-terminated fields a row, the name, the package
 # directory, the mode, the sha and the path. A SKILL.md names its directory
 # and versions everything under it; any other file names itself, less its
-# extension, and carries no version, so its directory field is empty.
+# extension, and carries no version, so its directory field is empty. A
+# glob declares a file at its own depth only, so hooks/*.sh leaves the
+# helpers under hooks/tests/ undeclared, and one name has one package file,
+# since a fragment directory can resolve to only one of them.
 gg_package_files() {
   local rec f name dir rest
   : >"$GG_TMP/packages.z"
@@ -74,11 +77,13 @@ gg_package_files() {
   while IFS= read -r -d '' rec; do
     f="${rec#*"$GG_TAB"}"
     # shellcheck disable=SC2086
-    gg_path_matches "$f" $GG_CHANGELOG_PACKAGES || continue
+    gg_path_placer "$f" $GG_CHANGELOG_PACKAGES || continue
     case "$f" in
       */SKILL.md) dir="${f%SKILL.md}"; name="${dir%/}"; name="${name##*/}" ;;
       *) dir=""; name="${f##*/}"; name="${name%.*}" ;;
     esac
+    ! gg_package_row "$name" \
+      || gg_fail package-duplicate "$(gg_shown "$GG_PACKAGE_PATH"):$(gg_shown "$f")" "Both files declare the package $(gg_shown "$name"); rename one or narrow COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS."
     rest="${rec#* }"
     printf '%s\0%s\0%s\0%s\0%s\0' "$name" "$dir" "${rec%% *}" "${rest%% *}" "$f" >>"$GG_TMP/packages.z" \
       || gg_fail package-files "$(gg_shown "$f")" "Could not record the package file."

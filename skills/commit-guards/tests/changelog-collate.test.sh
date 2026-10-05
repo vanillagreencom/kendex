@@ -374,11 +374,15 @@ echo "=== a package's entries fold under its own heading in Packages, never the 
 # states, or the bare name of a versionless hook, in the order the walk met
 # the packages and Keep a Changelog order within each.
 PKG_ENV='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md hooks/*.sh'
-packages() { # NAME [RECORD] — a skill at 2.0.0, a hook, a program fragment and three package fragments
+packages() { # NAME [RECORD [EXTRA]] — a skill at 2.0.0, a hook, the EXTRA file, a program fragment and three package fragments
   repo "$1" "${2:-$RECORD}"
   mkdir -p "$R/skills/pkg" "$R/hooks"
   printf -- '---\nname: pkg\nmetadata:\n  version: "2.0.0"\n---\n' >"$R/skills/pkg/SKILL.md"
   printf 'echo hook\n' >"$R/hooks/hookx.sh"
+  if [ -n "${3:-}" ]; then
+    mkdir -p "$R/$(dirname "$3")"
+    printf 'echo helper\n' >"$R/$3"
+  fi
   git -C "$R" add -A
   git -C "$R" commit -qm 'chore: package'
   frag fixed pending.md '- Folded in.\n'
@@ -454,8 +458,12 @@ PACKAGES_APPENDED='# Changelog
 '
 fx_packages() { packages packages; }
 fx_packages_appended() { packages packages-appended "$PACKAGES_IN"; }
+# A test helper hooks/*.sh reaches only by `*` crossing `/` declares nothing,
+# so the skill of its name keeps its versioned heading.
+fx_packages_nested() { packages packages-nested "$RECORD" hooks/tests/lib/pkg.sh; }
 run_rows \
   "package entries fold under per-package headings with their versions; the program sections hold the program's alone; every package directory goes|fx_packages|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
+  "a nested hooks/tests/lib/pkg.sh leaves skills/pkg the package and its heading versioned|fx_packages_nested|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
   "a record's Packages part is accepted and its blocks kept ahead of the new ones|fx_packages_appended|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_APPENDED|-"
 # Must-fail controls on disposable copies: package fragments routed to the
 # program's sections, and a record scope refusing the Packages heading.

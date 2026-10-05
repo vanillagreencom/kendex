@@ -54,7 +54,7 @@ source "$SCRIPT_DIR/lib/changelog-collate.sh"
 # A package file's version is its SKILL.md frontmatter's.
 # shellcheck source=lib/skill-roots.sh
 source "$SCRIPT_DIR/lib/skill-roots.sh"
-# A staged run inside an amend compares against the amended commit's parent.
+# A staged run compares against the commit's parent, which an amend moves.
 # shellcheck source=lib/commit-parent.sh
 source "$SCRIPT_DIR/lib/commit-parent.sh"
 # The --collate lane rewrites the record in place.
@@ -87,17 +87,17 @@ fragments and record sections count as those entries in each mode, and what a
 major, minor or patch increase refuses among them, is the commit-guards
 skill's CHECKS.md, section Version bumps. A minor or patch refusal names the
 first offending entry.
-COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS selects package files: a SKILL.md
-names its directory and versions it by its frontmatter metadata.version; any
-other file names itself, less its extension, and carries no version. A
-fragment a pattern places through its package slot, <root>/*/<section>/<name>,
+COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS selects package files, each at its
+glob's own depth and one per name: a SKILL.md names its directory and
+versions it by its frontmatter metadata.version; any other file names itself,
+less its extension, and carries no version. A fragment a pattern places through its package slot, <root>/*/<section>/<name>,
 is that package's entry and never the program's, and must name a declared
 package. A change under a versioned package's directory must raise its
 version, judged against the package fragments the same change adds.
-The default compares the commit's parent (HEAD, or HEAD's parent in an amend)
-to the index; --base compares HEAD's merge base with REF to the index;
---against compares REF itself to the index. Fragments always come from the
-index. A first version has no prior version to increase.
+The default compares the commit's parent to the index, the parent CHECKS.md,
+section Version bumps, defines; --base compares HEAD's merge base with REF to
+the index; --against compares REF itself to the index. Fragments always come
+from the index. A first version has no prior version to increase.
 
 A tracked path under a fragment root that the globs do not cover is refused
 too — it is a fragment nothing would ever fold in. A root is a pattern's

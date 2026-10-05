@@ -117,27 +117,39 @@ gg_path_segments() { # PATH — how many `/`-separated segments it has
 # with a glob in the middle places whatever reaches ITS depth. An additional pattern
 # shape is answered by the pattern, not by another rule beside this one.
 gg_path_glob_section() { # PATH — sets GG_PATH_SECTION and GG_PATH_PLACER, empty when nothing places it
-  local path="$1" pat want have dir
+  local path="$1" dir
   GG_PATH_SECTION=""
   GG_PATH_PLACER=""
-  have="$(gg_path_segments "$path")"
   # One segment is a bare file name: it sits in no directory, so no pattern
   # can place it under a section.
-  [ "$have" -ge 2 ] || return 0
-  for pat in $GG_PATH_GLOBS; do
+  case "$path" in */*) ;; *) return 0 ;; esac
+  # shellcheck disable=SC2086
+  gg_path_placer "$path" $GG_PATH_GLOBS || return 0
+  dir="${path%/*}"
+  GG_PATH_SECTION="${dir##*/}"
+}
+
+# The first PATTERN that matches PATH at the pattern's own depth, in
+# GG_PATH_PLACER. `*` crossing `/` lets a pattern match a path deeper than
+# itself, and that path is not one the pattern names.
+gg_path_placer() { # PATH PATTERN... — 0 when some pattern places PATH
+  local path="$1" pat have=""
+  shift
+  GG_PATH_PLACER=""
+  for pat in "$@"; do
     # $pat must expand unquoted to act as a glob.
     # shellcheck disable=SC2254
     case "$path" in
       $pat) ;;
       *) continue ;;
     esac
-    want="$(gg_path_segments "$pat")"
-    [ "$want" -eq "$have" ] || continue
-    dir="${path%/*}"
-    GG_PATH_SECTION="${dir##*/}"
+    # Counted only once a pattern matches: a caller walks the whole index.
+    [ -n "$have" ] || have="$(gg_path_segments "$path")"
+    [ "$(gg_path_segments "$pat")" -eq "$have" ] || continue
     GG_PATH_PLACER="$pat"
     return 0
   done
+  return 1
 }
 
 gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full path

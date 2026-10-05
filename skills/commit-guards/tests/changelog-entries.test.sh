@@ -559,12 +559,14 @@ echo "=== a package's entries move its own version, never the program's ==="
 # skills/<name>/SKILL.md declares a versioned one, whose frontmatter
 # metadata.version its change raises, and hooks/<name>.sh a versionless one.
 # Every row commits app.json at 1.9.0, skills/pkg at the row's prior
-# version, skills/other at 1.0.0 and hooks/hookx.sh, plus the row's base
-# fragment, then stages its own. Fragment paths are under changelog.d.
-PKG_GLOBS='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md hooks/*.sh'
+# version, skills/other at 1.0.0, hooks/hookx.sh and a nested
+# hooks/tests/lib/helper.sh, plus the row's base fragment, then stages its
+# own change and fragment. Fragment paths are under changelog.d.
+PKG_GLOBS='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md hooks/*.sh agents/*.md'
 PKG_ENV="$PKG_GLOBS,COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json"
 skill() { printf -- '---\nname: %s\nmetadata:\n  author: test\n  version: "%s"\ntags: [x]\n---\n\n# %s\n' "$1" "$2" "$1"; } # NAME VERSION
 PKG='skills/pkg/SKILL.md'
+RUN='skills/pkg/run.sh'
 PKG_NOMATCH="${ERR}no-matches=changelog.d/*/*.md changelog.d/*/*/*.md"
 APP_MINOR="${ERR}minor-breaking=app.json:1.9.0:1.10.0;${ERR}entry-preview=$BREAK"
 UNBUMPED="rc=1 ${ERR}package-unbumped=$PKG:1.0.0;$(summary 1 0)"
@@ -575,25 +577,28 @@ pkg_repo() { # NAME PRIOR BASE-FRAGMENT — committed
   put skills/pkg/run.sh 'echo one\n'
   put skills/other/SKILL.md "$(skill other 1.0.0)\n"
   put hooks/hookx.sh 'echo hook\n'
+  put hooks/tests/lib/helper.sh 'echo helper\n'
   [ -z "$3" ] || put "changelog.d/$3" "$BREAK\n"
   stage
   git -C "$R" commit -qm base
 }
 for row in \
-  "package-only|package-only Breaking entry: the kendex minor passes and the package takes its major|1.10.0|1.0.0|2.0.0|y||pkg/removed/entry.md|$BREAK|rc=0 $(within 1)" \
+  "package-only|package-only Breaking entry: the kendex minor passes and the package takes its major|1.10.0|1.0.0|2.0.0|$RUN||pkg/removed/entry.md|$BREAK|rc=0 $(within 1)" \
   "program-breaking|program Breaking entry: the kendex minor is refused, it proposes a major|1.10.0|1.0.0|1.0.0|||removed/entry.md|$BREAK|rc=1 $APP_MINOR;$(summary 1 1)" \
-  "package-minor|package Breaking entry: the package's minor is refused|1.9.0|1.0.0|1.1.0|y||pkg/removed/entry.md|$BREAK|rc=1 ${ERR}minor-breaking=$PKG:1.0.0:1.1.0;${ERR}entry-preview=$BREAK;$(summary 1 1)" \
-  "package-patch|package Added entry: the package's patch is refused|1.9.0|1.0.0|1.0.1|y||pkg/added/entry.md|$ADD|rc=1 ${ERR}patch-added=$PKG:1.0.0:1.0.1;${ERR}entry-preview=$ADD;$(summary 1 1)" \
-  "zero-minor|a 0.x package minor with its own Breaking entry is not judged|1.9.0|0.1.0|0.2.0|y||pkg/removed/entry.md|$BREAK|rc=0 $(within 1)" \
-  "unbumped|a package change with no version raise is refused|1.9.0|1.0.0|1.0.0|y||||$UNBUMPED" \
-  "bumped|control: the same change with a patch raise passes|1.9.0|1.0.0|1.0.1|y||||rc=0 $PKG_NOMATCH" \
+  "package-minor|package Breaking entry: the package's minor is refused|1.9.0|1.0.0|1.1.0|$RUN||pkg/removed/entry.md|$BREAK|rc=1 ${ERR}minor-breaking=$PKG:1.0.0:1.1.0;${ERR}entry-preview=$BREAK;$(summary 1 1)" \
+  "package-patch|package Added entry: the package's patch is refused|1.9.0|1.0.0|1.0.1|$RUN||pkg/added/entry.md|$ADD|rc=1 ${ERR}patch-added=$PKG:1.0.0:1.0.1;${ERR}entry-preview=$ADD;$(summary 1 1)" \
+  "zero-minor|a 0.x package minor with its own Breaking entry is not judged|1.9.0|0.1.0|0.2.0|$RUN||pkg/removed/entry.md|$BREAK|rc=0 $(within 1)" \
+  "unbumped|a package change with no version raise is refused|1.9.0|1.0.0|1.0.0|$RUN||||$UNBUMPED" \
+  "bumped|control: the same change with a patch raise passes|1.9.0|1.0.0|1.0.1|$RUN||||rc=0 $PKG_NOMATCH" \
   "fragment-only|a fragment alone is no package change|1.9.0|1.0.0|1.0.0|||pkg/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
-  "earlier|an earlier change's Breaking entry is that release's, not this patch's|1.9.0|1.0.0|1.0.1|y|pkg/removed/old.md|||rc=0 $(within 1)" \
-  "edited|so is an earlier Breaking entry this patch edits|1.9.0|1.0.0|1.0.1|y|pkg/removed/old.md|pkg/removed/old.md|$BREAK Spelled out.|rc=0 $(within 1)" \
-  "other|another package's Breaking entry leaves this major unnamed|1.9.0|1.0.0|2.0.0|y||other/removed/entry.md|$BREAK|rc=1 ${ERR}major-breaking=$PKG:1.0.0:2.0.0;$(summary 1 1)" \
-  "hook|a versionless hook package's fragment is accepted|1.9.0|1.0.0|1.0.0|||hookx/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
-  "misspelled|a Breaking fragment naming no declared package is refused, naming its directory|1.9.0|1.0.0|1.0.1|y||linaer/removed/entry.md|$BREAK|rc=1 ${ERR}fragment-package=changelog.d/linaer;$(summary 1 0)" \
-  "unversioned|a package file with no metadata.version is a collection error|1.9.0|1.0.0|none|y||||rc=2 ${ERR}version-read=$PKG"; do
+  "earlier|an earlier change's Breaking entry is that release's, not this patch's|1.9.0|1.0.0|1.0.1|$RUN|pkg/removed/old.md|||rc=0 $(within 1)" \
+  "edited|so is an earlier Breaking entry this patch edits|1.9.0|1.0.0|1.0.1|$RUN|pkg/removed/old.md|pkg/removed/old.md|$BREAK Spelled out.|rc=0 $(within 1)" \
+  "other|another package's Breaking entry leaves this major unnamed|1.9.0|1.0.0|2.0.0|$RUN||other/removed/entry.md|$BREAK|rc=1 ${ERR}major-breaking=$PKG:1.0.0:2.0.0;$(summary 1 1)" \
+  "hook|a versionless hook's change and fragment are accepted, no version read|1.9.0|1.0.0|1.0.0|hooks/hookx.sh||hookx/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
+  "nested-helper|a fragment named for a nested hooks/tests helper names no package|1.9.0|1.0.0|1.0.0|||helper/fixed/entry.md|- Fix a typo.|rc=1 ${ERR}fragment-package=changelog.d/helper;$(summary 1 0)" \
+  "duplicate|an agent and a skill of one name are refused, naming both files|1.9.0|1.0.0|1.0.0|agents/pkg.md||||rc=2 ${ERR}package-duplicate=agents/pkg.md:$PKG" \
+  "misspelled|a Breaking fragment naming no declared package is refused, naming its directory|1.9.0|1.0.0|1.0.1|$RUN||linaer/removed/entry.md|$BREAK|rc=1 ${ERR}fragment-package=changelog.d/linaer;$(summary 1 0)" \
+  "unversioned|a package file with no metadata.version is a collection error|1.9.0|1.0.0|none|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
   IFS='|' read -r name label app_next pkg_prior pkg_next change base_frag frag fragment expected <<<"$row"
   pkg_repo "package-$name" "$pkg_prior" "$base_frag"
   put app.json "{\"version\":\"$app_next\"}\n"
@@ -601,7 +606,7 @@ for row in \
     none) put "$PKG" '---\nname: pkg\n---\n' ;;
     *) put "$PKG" "$(skill pkg "$pkg_next")\n" ;;
   esac
-  [ -z "$change" ] || put skills/pkg/run.sh 'echo two\n'
+  [ -z "$change" ] || put "$change" 'echo two\n'
   [ -z "$frag" ] || put "changelog.d/$frag" "$fragment\n"
   stage
   assert_eq "$label" "$expected" "$(run "$PKG_ENV" '')"
@@ -670,9 +675,11 @@ fi
 
 # Must-fail controls on a disposable copy of the scripts: each plants the
 # defect its rule exists against, and the row that pins the rule turns red.
-control() { # LABEL FIXTURE EXPECT FROM TO
+control() { # LABEL FIXTURE EXPECT FROM TO [SCRIPT]
   local judge
-  gg_mutant judge changelog-entries "$4" "$5"
+  gg_mutant judge "${6:-changelog-entries}" "$4" "$5"
+  judge="${judge%/*}"
+  judge="${judge%/lib}/changelog-entries"
   R="$TMP/$2"
   assert_eq "control: $1" "$3" "$(CE="$judge" run "$PKG_ENV" '')"
 }
@@ -682,6 +689,12 @@ control 'without the unbumped refusal the unraised change passes' package-unbump
   "rc=0 $PKG_NOMATCH" 'refuse package-unbumped' ': package-unbumped'
 control 'without the package lookup a misspelled package directory passes' package-misspelled \
   "rc=0 $(within 1)" 'if [ -n "$GG_FRAGMENT_PACKAGE" ] && ! gg_package_row "$GG_FRAGMENT_PACKAGE"; then' 'if false; then'
+control 'a package glob matching across / declares the nested helper' package-nested-helper \
+  "rc=0 $(within 1)" 'gg_path_placer "$f" $GG_CHANGELOG_PACKAGES || continue' 'gg_path_matches "$f" $GG_CHANGELOG_PACKAGES || continue' lib/changelog-grammar.sh
+control 'without the duplicate refusal the agent shadows the skill' package-duplicate \
+  "rc=0 $PKG_NOMATCH" '! gg_package_row "$name"' '! false' lib/changelog-grammar.sh
+control 'version-checking a versionless package refuses the hook change' package-hook \
+  "rc=2 ${ERR}version-read=hooks/hookx.sh" '[ -n "$dir" ] || continue' '[ -n "$dir" ] || dir="$pf"'
 if [ -r "/proc/$$/cmdline" ]; then
   gg_mutant judge changelog-entries '[ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")' ':'
   amend_repo amend-head "$judge"
