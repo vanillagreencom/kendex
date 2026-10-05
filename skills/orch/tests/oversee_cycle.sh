@@ -52,11 +52,17 @@ printf 'change_class=%s\n' "$(cat "$CASE/class")"
 SH
 # `cat --item ITEM PATH` serves PATH from the case's host directory, exit 2
 # where it holds no such file, as a provider answers; `touch` answers.
+# The kinds kendex owns, local and claude-cloud, are the real dispatcher's
+# answers, its refusal of a provider verb included, and any other host
+# declares a provider's files=verb line.
 rm -- "$LAYOUT/orch/scripts/lane-host"
+export OVERSEE_CYCLE_REAL_LANE_HOST="$TEST_DIR/../scripts/lane-host"
 cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CASE/lane-host.calls"
+case "$ORCH_LANE_HOST" in local | claude-cloud) exec "$OVERSEE_CYCLE_REAL_LANE_HOST" "$@" ;; esac
 case "$1" in
+  capabilities) printf 'kind=ssh\tfiles=verb\n' ;;
   cat) [[ -f "$CASE/host$4" ]] || exit 2; cat -- "$CASE/host$4" ;;
   touch) exit 0 ;;
   *) exit 9 ;;
@@ -854,6 +860,38 @@ new_case legacy-tier; printf micro > "$CASE/class"; timeline 1000
 got="$(record KEN-1 micro)"
 assert_contains "$(cat "$CASE/err")" 'oversee-cycle: launch-tier-missing item=KEN-1' "legacy launch warns instead of inventing inputs"
 assert_eq "$(state '.lanes[0].cycle.tier_inputs')" 'null' "legacy inputs remain unknown"
+
+echo "=== a claude-cloud record: the tier it states, no rounds read ==="
+# The launch records the tier the brief's item-tier line states, or null
+# where none does. Its host kind declares files=none, so no workflow state is
+# read: the dispatcher refuses every provider verb under that kind.
+# cloud_case NAME TIER — KEN-1 as open-terminal records a cloud lane, TIER
+# being its JSON tier.
+cloud_case() {
+  new_case "$1"; printf standard > "$CASE/class"; timeline 1000
+  edit_json "$CASE/state/workflow-state-oversee.json" \
+    "(.lanes[] | select(.item == \"KEN-1\")) += {host: \"claude-cloud\", kind: \"claude-cloud\", mail_root: \"$TMP_ROOT/cloud-wt\", tier: $2, tier_inputs: null}"
+}
+# cloud_seen TIER — a record of KEN-1 with no --tier: its tier, escape and
+# rounds, and the stderr lines the read printed.
+cloud_seen() {
+  local got
+  cloud_case "cloud-$1" "$1"
+  got="$(record KEN-1 '')"
+  printf '%s %s %s %s unread=%s lane-host=%s' "$(cut -d' ' -f1 <<<"$got")" "$(field tier "$got")" "$(field escaped "$got")" \
+    "$(field review "$got")" "$(grep -c rounds-unread "$CASE/err" || true)" "$(grep -c '^lane-host: ' "$CASE/err" || true)"
+}
+assert_eq "$(cloud_seen '"small"')" 'rc=0 tier=small escaped=true review=- unread=0 lane-host=0' \
+  "a cloud record's stated tier stands with no --tier, and a files=none kind reads no rounds and prints nothing"
+assert_eq "$(cloud_seen null)" 'rc=0 tier=- escaped=- review=- unread=0 lane-host=0' \
+  "a cloud record that states no tier records none, with no escape judged"
+control m-files-none oversee-cycle 'elif lane_capability files files && [[ "$files" == none ]]; then' 'elif lane_capability files files && false; then'
+assert_eq "$(cloud_seen '"small"')" 'rc=0 tier=small escaped=true review=- unread=1 lane-host=2' \
+  "control: a cloud record read for its rounds prints rounds-unread and the dispatcher's refusals"
+control m-tier-none oversee-cycle '  none) ;;' '  none) usage_error --tier ;;'
+assert_eq "$(cloud_seen null | cut -d' ' -f1)" 'rc=2' \
+  "control: a stated null tier taken as missing refuses the record"
+RUN_BIN=""
 
 echo "pass: $PASS  fail: $FAIL"
 [[ "$FAIL" -eq 0 ]]

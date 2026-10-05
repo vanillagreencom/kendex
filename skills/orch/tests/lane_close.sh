@@ -1744,6 +1744,74 @@ MUTANT="$(mutant cloud-window-order '    remove_item_files
 assert_eq "$(cloud_files_refused "$MUTANT")" 'rc=1 refused=1 kill=1' \
   'control: a stop=none close that kills the window before the files go fails the kill=0 pin'
 
+echo '=== a cloud close deletes the item branch its default branch contains ==='
+# A cloud session pushes its commits to origin, so the local item branch
+# stays at the base tip the launch pushed, which the default branch contains
+# once anything merges. The close runs the real worktree skill over a real
+# repository: its remove deletes that branch on ancestry, and the record reads
+# done. The tree beside the fixture links lane-close and its stubs as
+# lib_mutant lays them out, with the worktree skill copied in.
+real_worktree_tree() { # NAME [LANE_CLOSE] — prints the tree's lane-close
+  local dir="$TMP_ROOT/realwt-$1" sibling
+  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
+  for sibling in workflow-state lane-host lane-mail dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh \
+    lib/lane-state.sh lib/lane-host-slots.sh lib/lane-capabilities.sh; do
+    ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
+  done
+  ln -s "${2:-$SCRIPTS/lane-close}" "$dir/skills/orch/scripts/lane-close"
+  ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  cp -R "$TEST_DIR/../../worktree" "$dir/skills/worktree"
+  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
+}
+# gh answers nothing, so the item branch has no pull request on it.
+QUIET_BIN="$TMP_ROOT/quiet-bin"
+mkdir -p "$QUIET_BIN"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$QUIET_BIN/gh"
+chmod +x "$QUIET_BIN/gh"
+# cloud_branch_close NAME SCRIPT WORKTREE — a repository whose item worktree ken-1 is
+# made and pushed at the base tip by the WORKTREE CLI, a merge on origin's
+# main after it, and the cloud record closed by SCRIPT from that repository. CLOUD_BRANCH reads what
+# stands after: the close's exit, the local item branch, the worktree and
+# the record's status.
+cloud_branch_close() {
+  local root="$TMP_ROOT/cloud-$1" wt worktree="$3"
+  git init -q --bare "$root/origin.git"
+  git init -q "$root/repo"
+  git -C "$root/repo" symbolic-ref HEAD refs/heads/main
+  git -C "$root/repo" config gc.auto 0
+  git -C "$root/repo" config maintenance.auto false
+  git -C "$root/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+  git -C "$root/repo" remote add origin "$root/origin.git"
+  git -C "$root/repo" push -q origin main
+  git -C "$root/repo" fetch -q origin
+  git -C "$root/repo" remote set-head origin main
+  wt="$(cd "$root/repo" && PATH="$QUIET_BIN:$PATH" "$worktree" create KEN-1 2>"$root/create.err")" \
+    || { cat "$root/create.err" >&2; return 1; }
+  (cd "$root/repo" && PATH="$QUIET_BIN:$PATH" "$worktree" push KEN-1 --set-upstream >/dev/null 2>&1)
+  git -C "$root/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'squash merge of the session branch'
+  git -C "$root/repo" push -q origin main
+  git -C "$root/repo" fetch -q origin
+  jq -n --arg root "$wt" '{lanes:[{item:"KEN-1",tracker:"linear",repo:null,harness:"claude",window:null,account:"/lane",
+    host:"claude-cloud",kind:"claude-cloud",mail_root:$root,session_id:"session_01CLOUD",launched_at:"2026-09-20T00:00:00Z",status:"running"}]}' >"$STATE"
+  : >"$STATE_CALLS"
+  set +e
+  (cd "$root/repo" && PATH="$QUIET_BIN:$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_STATE_CALLS="$STATE_CALLS" \
+    LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_TMUX_CALLS="$CALLS" "$2" KEN-1 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err")
+  RC=$?
+  set -e
+  CLOUD_BRANCH="rc=$RC branch=$(git -C "$root/repo" show-ref --verify --quiet refs/heads/ken-1 && echo kept || echo deleted) worktree=$([[ -d "$wt" ]] && echo kept || echo removed) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+REAL_CLOSE="$(real_worktree_tree plain)"
+cloud_branch_close plain "$REAL_CLOSE" "$TMP_ROOT/realwt-plain/skills/worktree/scripts/worktree"
+assert_eq "$CLOUD_BRANCH" 'rc=0 branch=deleted worktree=removed status=done' \
+  'a cloud close deletes the local item branch its default branch contains and records the item done' "$TMP_ROOT/err"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-branch '"$WORKTREE" remove "$mail_root" >&2' 'git worktree remove --force "$mail_root" >&2')"
+REAL_CLOSE="$(real_worktree_tree kept "$MUTANT")"
+cloud_branch_close kept "$REAL_CLOSE" "$TMP_ROOT/realwt-kept/skills/worktree/scripts/worktree"
+assert_eq "$CLOUD_BRANCH" 'rc=0 branch=kept worktree=removed status=done' \
+  'control: a cloud close that removes the worktree outside the worktree skill keeps the item branch' "$TMP_ROOT/err"
+
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"

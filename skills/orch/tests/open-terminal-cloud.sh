@@ -15,8 +15,12 @@
 # a claude under a launcher's shell is no exit and an unreadable process table
 # stops the launch, the session id the claude.ai session URL in the pane
 # carries, and the lane record naming
-# the kind, the account, that id and the window, and the standard tier
-# whatever orch words the brief quotes. A kind whose
+# the kind, the account, that id and the window, and the tier the brief's
+# item-tier line states, null with no line, whatever orch words the brief
+# quotes. The session words name the item branch the session pushes to, put
+# the first commit ahead of the draft pull request, and say when that pull
+# request is marked ready, and a launch that observed no card prints no
+# cloud-card-owed line. A kind whose
 # launch this build does not make refuses as kind-unbuilt.
 #
 # The suite runs a copy of open-terminal beside the real lane-host, which
@@ -121,11 +125,12 @@ screen() { printf '%s\n' "$@" > "$SCREEN"; }
 # The overseer's brief, the item's whole task, quotes and all, and the
 # description claude takes for it, closed by the session words. It opens with
 # `-`, which only the --cloud= form keeps the option's value, and quotes an
-# orch tier word, as an issue's text can.
+# orch tier word, as an issue's text can. The session words name the item
+# branch, the stub worktree's lowercased item, wherever they say {branch}.
 BRIEF="$TMP_ROOT/brief.md"
 # shellcheck disable=SC2016  # the brief's own backticks.
 printf '%s\n' "- Fix the parser's \"--flag\" handling." '' 'Done when: `parse --flag` exits 0 under /orch small runs.' > "$BRIEF"
-PROMPT="$(cat "$BRIEF")"$'\n\n'"$SESSION_TEXT"
+PROMPT="$(cat "$BRIEF")"$'\n\n'"${SESSION_TEXT//\{branch\}/cc-1}"
 
 # run_ot [SCRIPT=PATH] [ENV=VALUE...] -- ARGS... — one cloud launch of ARGS
 # from the repo in tmux session `fleet`; sets RC, ERR and OUT, and resets the
@@ -215,10 +220,54 @@ assert_eq "$(pasted 1)" "$LAUNCH_LINE" \
   "the window runs claude --cloud interactively under the lane's account, the lane's model by its id, the description read from the worktree's git directory, CCR_FORCE_BUNDLE cleared and the #81776 workaround"
 assert_eq "$(described) pasted=$(typed 2)" "cloud=brief ref=0 pasted=none" \
   "claude takes the brief file's text closed by the session words as its --cloud= description, never the mailbox words, with no --ref and nothing pasted after its line"
-assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-1 $TMP_ROOT/wt/CC-1 running standard" \
-  "the record names the host and kind, the account, the session id the pane's URL carries, the window, and the standard tier the brief's orch words leave"
-assert_eq "owed=$(grep -cxF 'open-terminal: cloud-card-owed item=CC-1 session=session_01CLOUD' <<<"$ERR" || true)" "owed=1" \
-  "the launch leaves the repository card to the operator and says so"
+assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-1 $TMP_ROOT/wt/CC-1 running null" \
+  "the record names the host and kind, the account, the session id the pane's URL carries, the window, and no tier, the brief carrying no item-tier line"
+OWED='open-terminal: cloud-card-owed item=CC-1'
+assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=0" \
+  "a session that shows no card prints no cloud-card-owed line"
+
+echo "=== a brief's item-tier line is the cloud lane's tier ==="
+BRIEF_TIER="$TMP_ROOT/brief-tier.md"
+{ cat "$BRIEF"; printf '%s\n' 'tier=small brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3'; } > "$BRIEF_TIER"
+CLOUD_TIER=(--host claude-cloud --harness claude --lane "$LANE_DIR" --launch-flags "--model sonnet --effort high" --brief-file "$BRIEF_TIER" --state-dir "$STATE")
+tier_record() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | first | [.tier, .tier_inputs] | tojson'; }
+run_ot -- "${CLOUD_TIER[@]}" CC-36
+assert_eq "rc=$RC $(tier_record CC-36)" 'rc=0 ["small",{"estimate":12,"delta":40,"paths":3}]' \
+  "a cloud launch records the tier and inputs the brief's item-tier line states" "$TMP_ROOT/err"
+
+echo "=== the session words name the item branch and the pull request's steps ==="
+# steps LIB — the session words lib/lane-launch.sh at LIB closes a brief on:
+# whether they name {branch} as the push target, put the first commit ahead of
+# opening the draft pull request, mark it ready when done and leave it draft
+# with the blocker otherwise.
+steps() {
+  local text before
+  text="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")" || { echo "unread"; return; }
+  before="${text%%open a draft pull request*}"
+  printf 'push=%s order=%s ready=%s draft=%s' "$(grep -c 'push every commit to {branch}' <<<"$text" || true)" \
+    "$([[ "$before" != "$text" && "$before" == *"first commit and push it"* ]] && echo commit-first || echo pr-first)" \
+    "$(grep -c 'When the work is done, mark the pull request ready for review' <<<"$text" || true)" \
+    "$(grep -c 'leave it draft with the blocker under ## Lane status' <<<"$text" || true)"
+}
+STEPS_WANT="push=1 order=commit-first ready=1 draft=1"
+assert_eq "$(steps "$SCRIPTS_DIR/lib/lane-launch.sh")" "$STEPS_WANT" \
+  "the session words push to the item branch, commit before the draft pull request, and mark it ready only when done"
+# Controls, each in a copy of the lib: STEP_EDITS is NAME|OLD -> NEW, one per
+# step, the step removed or put back where the earlier words had it.
+STEP_EDITS=(
+  'push target|, and push every commit to {branch} on origin, never to a claude/ branch, since your overseer finds your work by that branch name -> '
+  'commit first|Make your first commit and push it before you open a pull request, since GitHub opens none on a branch with no commit ahead of its base, then open a draft -> Push the item branch and open a draft pull request as your first step, then open a draft'
+  'ready step| When the work is done, mark the pull request ready for review. -> '
+  'draft step| Until then, and while a blocker stands, leave it draft with the blocker under ## Lane status. -> '
+)
+for i in "${!STEP_EDITS[@]}"; do
+  edit="${STEP_EDITS[$i]#*|}"
+  lib="$TMP_ROOT/steps-lib-$i"
+  cp -R "$SCRIPTS_DIR/lib" "$lib"
+  mutate_file "$lib/lane-launch.sh" "${edit%% -> *}" "${edit#* -> }"
+  assert_eq "red=$([[ "$(steps "$lib/lane-launch.sh")" != "$STEPS_WANT" ]] && echo yes || echo no)" "red=yes" \
+    "control: session words without the ${STEP_EDITS[$i]%%|*} fail the steps row"
+done
 
 echo "=== the session words run no kendex-bound arming command ==="
 # The words are the cloud session's first message, and the session runs the
@@ -529,7 +578,7 @@ detached_row() { # SCRIPT ROW ITEM — the launch, its result in DETACHED
   run_ot SCRIPT="$1" "${2#*|}" OT_COMPOSER_ON_ENTER=99 OT_SCREEN_ON=0 -- "${CLOUD[@]}" "$3"
   DETACHED="rc=$RC unread=$(grep -cxF "open-terminal: lane-unobserved item=$3 reason=cli-exited" <<<"$ERR" || true) refused=$(grep -c -e '^pane-write: ' -e '^open-terminal: pane-refused ' <<<"$ERR" || true) record=$(record "$3")"
 }
-detached_want() { echo "rc=0 unread=1 refused=0 record=claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:$1 $TMP_ROOT/wt/$1 running standard"; }
+detached_want() { echo "rc=0 unread=1 refused=0 record=claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:$1 $TMP_ROOT/wt/$1 running null"; }
 for i in "${!DETACHED_ROWS[@]}"; do
   detached_row "$OT" "${DETACHED_ROWS[$i]}" "CC-7$i"
   assert_eq "$DETACHED" "$(detached_want "CC-7$i")" \
@@ -574,19 +623,19 @@ cause_control 0 "jq -e '(.env.CCR_FORCE_BUNDLE // null | tostring) != \"1\"' \"\
 # shellcheck disable=SC2016
 cause_control 2 'kendex_github_origin_slug "$CLAIM_ROOT" >/dev/null' 'true'
 # shellcheck disable=SC2016
-mutant task-close 'prompt="$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_SESSION_TEXT"' 'prompt="$BRIEF_TEXT"$'"'"'\n\n'"'"'"$LAUNCH_UNATTENDED_TEXT"'
+mutant task-close 'words="$LAUNCH_SESSION_TEXT"' 'words="$LAUNCH_UNATTENDED_TEXT"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-6
 assert_eq "$(described)" "cloud=other ref=0" \
   "control: a description closing on the mailbox words fails the description row"
 # shellcheck disable=SC2016
 mutant record-kind '"$HOST_KIND" \' '"" \'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-7
-assert_eq "$(record CC-7)" "claude-cloud null $LANE_DIR session_01CLOUD fleet:CC-7 $TMP_ROOT/wt/CC-7 running standard" \
+assert_eq "$(record CC-7)" "claude-cloud null $LANE_DIR session_01CLOUD fleet:CC-7 $TMP_ROOT/wt/CC-7 running null" \
   "control: a record written without the kind fails the record row"
 # shellcheck disable=SC2016
 mutant record-window 'lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$wt"' 'lane_record_write "$RECORD_MODE" "$wt_id" "" "$wt"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-8
-assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-8 running standard" \
+assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-8 running null" \
   "control: a record written with no window fails the record row"
 # The detached probe kept, moved after the nudge: the exits row's nudge meets
 # the shell and is refused.
@@ -616,7 +665,7 @@ done
 # The branch read kept, moved below the push: the unread row meets the
 # description write first and fails.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-BRANCH_READ='  git -C "$wt" symbolic-ref --short HEAD >/dev/null || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }'
+BRANCH_READ='  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }'
 # shellcheck disable=SC2016
 PUSH='  "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }'
 mutant branch-after-push "$BRANCH_READ"$'\n' ""
@@ -758,10 +807,36 @@ for i in "${!SESSION_EDITS[@]}"; do
     "control: without its rule, the $name row records another session or none" "$TMP_ROOT/err"
 done
 # shellcheck disable=SC2016
-mutant tier-brief '[[ "$HOST_LAUNCH" == cloud-session ]] || TIER_TEXT+=' 'TIER_TEXT+='
+mutant tier-brief 'cloud-session ]]; then RUN_TEXT=""' 'cloud-session ]]; then RUN_TEXT="$BRIEF_TEXT"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-12
 assert_eq "$(record CC-12)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-12 $TMP_ROOT/wt/CC-12 running small" \
   "control: a tier read from the brief's quoted orch words fails the record row"
+# A verb-less command read as start: the record row states standard, a tier
+# the cloud launch never judged.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutant tier-start '| first | .verb) as $verb' '| first | .verb // "start") as $verb'
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-37
+assert_eq "$(record CC-37)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-37 $TMP_ROOT/wt/CC-37 running standard" \
+  "control: a verb-less launch recorded as start fails the record row"
+# shellcheck disable=SC2016
+mutant tier-line 'if $verb == null then $inputs.tier elif' 'if $verb == null then null elif'
+run_ot SCRIPT="$MUTANT" -- "${CLOUD_TIER[@]}" CC-38
+assert_eq "$(tier_record CC-38)" '[null,{"estimate":12,"delta":40,"paths":3}]' \
+  "control: a tier not read from the item-tier line fails the item-tier row"
+# The card line restored on every launch: the no-card row fails.
+# shellcheck disable=SC2016
+mutant card-owed '  ot_message cloud-session-started "item=$item" "session=$session"' \
+  '  ot_message cloud-session-started "item=$item" "session=$session"
+  printf '"'"'open-terminal: cloud-card-owed item=%s session=%s\n'"'"' "$item" "$session" >&2'
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
+assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=1" \
+  "control: a launch printing cloud-card-owed with no card observed fails the no-card row" "$TMP_ROOT/err"
+# The branch left unfilled: the description names no item branch.
+# shellcheck disable=SC2016
+mutant branch-fill '    prompt+="${words%%\{branch\}*}$branch"' '    prompt+="${words%%\{branch\}*}{branch}"'
+run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
+assert_eq "$(described)" "cloud=other ref=0" \
+  "control: session words with {branch} unfilled fail the description row"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

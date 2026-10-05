@@ -140,7 +140,6 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     cloud-record-failed) text='The cloud session started, session= names it, but its lane record could not be written to the oversee workflow state, so the watch cannot carry it; workflow-state names the cause above this line. Record the lane by hand per oversee.md § 3 Lane record with that session id, host and kind claude-cloud and the item'"'"'s window, or, before a second launch, archive the session from the claude.ai sidebar, close the window, then run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
     cloud-account-refused) text='The account check on the line above refused the pane after claude --cloud had created the session, which runs the item'"'"'s brief on the account the pane runs, the observed= value of a lane-mismatch line. session= names it, none where the item'"'"'s window showed no claude.ai session URL within ORCH_LANE_SSH_PROMPT_SECS or could not be read. Archive that session from the claude.ai sidebar of the account it runs on; the window is closed, which ends only its local client. Then before a second launch run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
     cloud-session-started) text='The cloud session started on the pushed item branch.' ;;
-    cloud-card-owed) text='The session may ask for access to the repository, in the item'"'"'s window while its client runs there and on its claude.ai page once the CLI has exited; open-terminal does not answer that card. The operator answers it there, or the master'"'"'s cloud-approve does.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
     host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
@@ -357,7 +356,8 @@ Options:
                     written as the tmux launch writes it, a sonnet or haiku
                     alias as its model id, and DESCRIPTION the brief file's
                     text closed by the session words of
-                    lib/lane-launch.sh, which the pane's shell reads from
+                    lib/lane-launch.sh, which name the item branch as the
+                    one the session pushes to, and which the pane's shell reads from
                     the worktree's git directory (refused as
                     cloud-prompt-failed where it cannot be written); the
                     CLI clones the pushed item branch, the worktree's
@@ -381,10 +381,10 @@ Options:
                     cloud-composer-stuck where the composer does not come up,
                     and as cloud-session-unread where no URL shows within
                     ORCH_LANE_SSH_PROMPT_SECS, the bound for a cloud machine
-                    provisioned. The session's
-                    repository card is left to the operator or the master's
-                    cloud-approve
-                    (cloud-card-owed). A hosted launch needs tmux mode, a resolved --lane
+                    provisioned. The record's tier is the brief's item-tier
+                    line's, null with no line: the session runs no orch
+                    workflow, so orch words the brief quotes are no tier.
+                    A hosted launch needs tmux mode, a resolved --lane
                     and --harness claude, codex, pi or copilot. It creates no local worktree: `lane-host create`
                     receives the lane's config dir as --account, the window
                     types `ssh` to the returned target, waits for the remote

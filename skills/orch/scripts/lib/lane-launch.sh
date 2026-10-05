@@ -662,14 +662,18 @@ LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this p
 # above (../../schemas/lane-host.md § Host kinds): a cloud session has no mailbox,
 # so it reaches its overseer through its branch and pull request and nothing
 # else, and never asks. It works on the item branch the session cloned, which
-# open-terminal pushed, so no worktree create meets that branch already checked
-# out. It names the steps the kind never takes, each one a
-# mailbox, a tracker the cloud cannot reach, a merge under another identity or
-# a wait on a person. A cloud machine has no kendex and no tools/setup, so it
+# open-terminal pushed and fills in at each {branch}, so no worktree create
+# meets that branch already checked out. A cloud session pushes to a claude/
+# branch unless its prompt names another, and the overseer's watch finds a
+# lane's pull request and its merge by the item branch, so the words name it.
+# The draft pull request follows the first commit, since GitHub opens none on
+# a branch with no commit ahead of its base. It names the steps the kind never
+# takes, each one a mailbox, a tracker the cloud cannot reach, a merge under
+# another identity or a wait on a person. A cloud machine has no kendex and no tools/setup, so it
 # arms the commit hooks only through the commit-guards script where the
 # checkout carries it, and otherwise commits under the gates that hold the
 # merge. It holds no apostrophe or backtick, as the words above hold none.
-LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch: work on it as checked out, and create no worktree and no other branch. You reach your overseer through your branch and pull request and nothing else: push the item branch and open a draft pull request as your first step, keep where the work stands under a ## Lane status heading in the pull request body, and name a blocker in a pull request comment. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person. Where .agents/skills/commit-guards/scripts/install-git-hooks is present, arm the commit hooks with it before your first commit. Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge.'
+LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch {branch}: work on it as checked out, create no worktree and no other branch, and push every commit to {branch} on origin, never to a claude/ branch, since your overseer finds your work by that branch name. You reach your overseer through your branch and pull request and nothing else. Where .agents/skills/commit-guards/scripts/install-git-hooks is present, arm the commit hooks with it before your first commit. Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge. Make your first commit and push it before you open a pull request, since GitHub opens none on a branch with no commit ahead of its base, then open a draft pull request from {branch}. Keep where the work stands under a ## Lane status heading in the pull request body, and name a blocker in a pull request comment. When the work is done, mark the pull request ready for review. Until then, and while a blocker stands, leave it draft with the blocker under ## Lane status. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person.'
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in

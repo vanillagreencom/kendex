@@ -20,6 +20,8 @@
 # not true is no class. --repo
 # defaults to the lane record's repo, then this checkout's. The recorded launch
 # tier wins; a differing --tier refuses as tier-mismatch naming launch and given.
+# A record whose tier is null, a launch that judged none, takes --tier where
+# given and otherwise records none, printed `-`, with escaped null.
 # An old record with no tier warns as launch-tier-missing and requires --tier.
 # --commit records a single-commit direct push. The caller must refuse a
 # multi-commit push: no push-before value is an input. The supplied commit's
@@ -35,7 +37,9 @@
 # lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
 # ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
 # read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
-# the reason on stderr.
+# the reason on stderr. A lane whose host kind declares files=none
+# (lane-host capabilities), a Claude cloud session, keeps no state this
+# machine can read: its rounds are null and nothing is read or printed.
 #
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
@@ -163,6 +167,8 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 source "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=lib/lane-capabilities.sh
+source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # shellcheck source=../../github/scripts/lib/gh-repo.sh
 source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
@@ -284,23 +290,31 @@ if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | fi
   refuse state-unreadable "$STATE_FILE"
 fi
 [[ -n "$lane" ]] || refuse record-missing "$ITEM"
-launch_tier="$(jq -r '.tier // empty' <<<"$lane")" || refuse state-unreadable "$STATE_FILE"
-if [[ -n "$launch_tier" ]]; then
-  if [[ -n "$TIER" && "$TIER" != "$launch_tier" ]]; then
-    printf 'oversee-cycle: tier-mismatch item=%s launch=%s given=%s\n' "$ITEM" "$launch_tier" "$TIER" >&2
-    exit 1
-  fi
-  TIER="$launch_tier"
-else
-  printf 'oversee-cycle: launch-tier-missing item=%s\n' "$ITEM" >&2
-fi
-case "$TIER" in micro | small | standard) ;; *) usage_error --tier ;; esac
+launch_tier="$(jq -r 'if has("tier") then .tier // "none" else "missing" end' <<<"$lane")" \
+  || refuse state-unreadable "$STATE_FILE"
+case "$launch_tier" in
+  none) ;;
+  missing)
+    printf 'oversee-cycle: launch-tier-missing item=%s\n' "$ITEM" >&2
+    [[ -n "$TIER" ]] || usage_error --tier ;;
+  *)
+    if [[ -n "$TIER" && "$TIER" != "$launch_tier" ]]; then
+      printf 'oversee-cycle: tier-mismatch item=%s launch=%s given=%s\n' "$ITEM" "$launch_tier" "$TIER" >&2
+      exit 1
+    fi
+    TIER="$launch_tier" ;;
+esac
+case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 [[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
 LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
 LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
 
-rounds=null rounds_unread=""
-if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+rounds=null rounds_unread="" files=""
+if ! lane_capabilities_read "$LANE_HOST" "${LANE_HOST_SPEC:-local}" 2>"$WORK/state.err"; then
+  rounds_unread="$WORK/state.err"
+elif lane_capability files files && [[ "$files" == none ]]; then
+  :
+elif ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
   "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
@@ -415,6 +429,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      gate_green: $s.gate_met, ci_green: $s.ci_green, armed: ($s.armed // $s.queued),
      merged: $s.merged} as $stamps
   | (if $class == "" then null else $class end) as $class
+  | (if $tier == "" then null else $tier end) as $tier
   | $t.ci_merge_group_secs as $merge_group
   | (if $class == null then null else $targets[$class] + ($merge_group // 0) end) as $target
   | (if $stamps.launched == null or $stamps.merged == null then null
@@ -449,7 +464,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
              else null end),
      missing: $missing, rounds: $rounds,
      pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),
-     escaped: (if $class == null then null
+     escaped: (if $class == null or $tier == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))
                  or ($tier == "small" and $class == "standard") end),
      refixed: (if $s.first_gate_met == null or $s.last_push == null then null
@@ -467,7 +482,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
 
 line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
   "cycle item=\($item) " + (if .commit == null then "pr=\(.pr)" else "commit=\(.commit)" end)
-  + " class=\(.class | n) tier=\(.tier) target=\(.target | n)"
+  + " class=\(.class | n) tier=\(.tier | n) target=\(.target | n)"
   + " merge_group=\(.merge_group | n)"
   + " actual=\(.actual | n) open=\(.open | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
   + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"

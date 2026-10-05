@@ -264,18 +264,21 @@ elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
   exit 1
 fi
 # The launch brief is the declared interface, not a harness status read.
-# Its workflow word names what runs; the item-tier line retains the inputs
-# without calling a tracker or classifying the item again. Older callers
-# supply no line, so their inputs are explicitly unknown. A cloud session runs
-# no orch tier and its brief is the issue's own text, so the template alone,
-# empty there, is read: it records standard.
-TIER_TEXT="$CMD_TEMPLATE"
-[[ "$HOST_LAUNCH" == cloud-session ]] || TIER_TEXT+=$'\n'"$BRIEF_TEXT"
-LAUNCH_TIER_RECORD="$(jq -cn --arg text "$TIER_TEXT" '
+# The tier is the orch workflow the launched command runs: the template with
+# the brief it places, or with no template open-terminal's own, which runs
+# start. A command naming none records the tier the brief's item-tier line
+# states, and with no line none: a launch states no tier it did not judge. A
+# cloud session runs Claude Code's cloud, no orch workflow, so orch words its
+# brief quotes from the issue are never its tier. The item-tier line retains
+# the inputs without calling a tracker or classifying the item again. Older
+# callers supply no line, so their inputs are explicitly unknown.
+if [[ "$HOST_LAUNCH" == cloud-session ]]; then RUN_TEXT=""
+else RUN_TEXT="${CMD_TEMPLATE:-/orch start}"$'\n'"$BRIEF_TEXT"; fi
+LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
   def count: if . == "-" then null else tonumber end;
-  ([ $text | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb // "start") as $verb
-  | ([ $text | capture("tier=(?:micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)") ] | first) as $inputs
-  | {tier: (if $verb == "start" then "standard" else $verb end),
+  ([ $run | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb) as $verb
+  | ([ $text | capture("tier=(?<tier>micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)") ] | first) as $inputs
+  | {tier: (if $verb == null then $inputs.tier elif $verb == "start" then "standard" else $verb end),
      tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
 ')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
@@ -2957,14 +2960,21 @@ cloud_cli_wait() { # PANE
 # except an account refusal, which closes it once the session is read. Status
 # 75 is an item another session owns; 1 a failure, its keyed line printed.
 cloud_session_launch() {
-  local wt model cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0 detached=false exit_rc=0
+  local wt branch words model cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0 detached=false exit_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
   [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
   # A detached worktree has no current branch for the CLI to clone.
-  git -C "$wt" symbolic-ref --short HEAD >/dev/null || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }
-  prompt="$BRIEF_TEXT"$'\n\n'"$LAUNCH_SESSION_TEXT"
+  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }
+  # The session words name the item branch at each {branch}, spliced rather
+  # than substituted as start_cmd splices {brief}.
+  words="$LAUNCH_SESSION_TEXT" prompt="$BRIEF_TEXT"$'\n\n'
+  while [[ "$words" == *"{branch}"* ]]; do
+    prompt+="${words%%\{branch\}*}$branch"
+    words="${words#*\{branch\}}"
+  done
+  prompt+="$words"
   prompt_file="$(git -C "$wt" rev-parse --absolute-git-dir)/cloud-prompt" && printf '%s' "$prompt" > "$prompt_file" \
     || { ot_message cloud-prompt-failed "item=$item" >&2; return 1; }
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
@@ -3038,7 +3048,6 @@ cloud_session_launch() {
     esac
   fi
   ot_message cloud-session-started "item=$item" "session=$session"
-  ot_message cloud-card-owed "item=$item" "session=$session" >&2
   [[ "$FLEET" == true ]] || return 0
   LAUNCH_PREPARE="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" LAUNCH_ALLOW_ALL=null
   lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$wt" "$session" "$launched_at" || record_rc=$?
