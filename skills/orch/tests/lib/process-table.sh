@@ -34,7 +34,7 @@
 #                     arm reads both, so a row meaning `idle` keeps a REAL
 #                     process, names that pid in the table, and asserts it
 #                     before the wake rather than waiting for `ps` to show it
-#   `pgrep -P`        `lane_state` runs it through `pane_has_child` when the
+#   `pgrep -P`        `lane_state` runs it through `pane_runs_program` when the
 #                     pane's foreground command is a bare shell;
 #                     lib/oversee-watch-harness.sh owns that stub, and a suite
 #                     with a row reaching it sources that library as well

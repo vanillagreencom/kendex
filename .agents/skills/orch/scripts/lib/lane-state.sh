@@ -247,25 +247,47 @@ is_bare_shell() {
   return 1
 }
 
-# Does the pane's process have a child? A foreground shell does not mean the
-# lane is over: a lane started by typing the wrapper at an interactive prompt
-# (`hclaude --resume <id>`, the normal way to resume) keeps that shell as the
-# pane process and the harness as its child, so the pane reads `fish` for the
-# lane's whole life. Only a shell with nothing under it is finished.
+# Does anything but a shell run under the pane's process? A foreground shell
+# does not mean the lane is over: a lane started by typing the wrapper at an
+# interactive prompt (`hclaude --resume <id>`, the normal way to resume) keeps
+# that shell as the pane process and the harness as its child, so the pane
+# reads `fish` for the lane's whole life. A harness resumed by a script the
+# shell runs leaves that script's shell behind it once the harness exits, the
+# pane reading `fish` over `fish` with nothing else below. So shells are walked
+# through and any other process is the lane: only a shell with nothing but
+# shells under it is finished.
 #
-# Returns 0 for a child and 1 for none — pgrep's own two answers — and 2 for
-# anything else, which is not an answer at all: pgrep documents 2 for a syntax
-# error and 3 for a fatal one, and a pgrep missing from PATH leaves 127. The
-# raw status is kept in LANE_PROBE_RC so a caller's note can name what
-# happened. `ps --ppid` is procps-only and BSD ps rejects it with status 1,
-# the same status it uses for no match, which read every pane as childless.
-# One probe per bare-shell lane per pass; no walking of the tree below.
+# Returns 0 for a process that is no shell and 1 for none — pgrep's own two
+# answers — and 2 for anything else, which is not an answer at all: pgrep
+# documents 2 for a syntax error and 3 for a fatal one, and a pgrep missing
+# from PATH leaves 127. The raw status is kept in LANE_PROBE_RC so a caller's
+# note can name what happened. `ps --ppid` is procps-only and BSD ps rejects it
+# with status 1, the same status it uses for no match, which read every pane as
+# childless. `pgrep -l` prints `PID NAME` on procps and BSD alike. One probe
+# per shell in the pane's tree, and so one per lane whose harness is the pane
+# shell's child.
 LANE_PROBE_RC=0
-pane_has_child() {
-  LANE_PROBE_RC=0
-  pgrep -P "$1" >/dev/null 2>&1 || LANE_PROBE_RC=$?
-  [[ "$LANE_PROBE_RC" -le 1 ]] || return 2
-  return "$LANE_PROBE_RC"
+pane_runs_program() { # PID
+  local shells="$1" next pid rows child name
+  while [[ -n "$shells" ]]; do
+    next=""
+    for pid in $shells; do
+      LANE_PROBE_RC=0
+      rows="$(pgrep -l -P "$pid" 2>/dev/null)" || LANE_PROBE_RC=$?
+      case "$LANE_PROBE_RC" in
+        0) ;;
+        1) continue ;;
+        *) return 2 ;;
+      esac
+      while read -r child name; do
+        is_bare_shell "$name" || { LANE_PROBE_RC=0; return 0; }
+        next+="${next:+ }$child"
+      done <<<"$rows"
+    done
+    shells="$next"
+  done
+  LANE_PROBE_RC=1
+  return 1
 }
 
 # Read the provider's documented status verb, not the local ssh process.
@@ -627,11 +649,14 @@ lane_stop_identity() { # PID START HARNESS
 # restarted by hand in its pane runs under a pid the record never named, and a
 # record written before launch identities were recorded names none. The turn
 # is stopped by the record's wake, WAKE_PID and WAKE_START (lane_stop_wake).
+# An empty PANE_PID is a lane no pane carries: no harness runs under a pane
+# that is gone, so past a live recorded identity there is nothing to stop.
 # A harness stop that fails still stops the turn, and still returns the
 # harness's failure: a retry of a stop that ended the harness but not the turn
 # finds no harness, and would otherwise never reach the turn. On status 0
 # LANE_STOP_COUNT is how many harness processes were signalled and
-# LANE_STOP_IDENTITY says which identity stopped them, `recorded` or `pane`; a
+# LANE_STOP_IDENTITY says which identity stopped them, `recorded` or `pane`, or
+# `none` for a lane with no pane and no live recorded identity, a stop of 0; a
 # harness the pane named that exited before its signal is a stop of 0. On
 # status 1 LANE_STOP_TARGET is `harness` or `wake`, the first stop that
 # failed, and LANE_STOP_CAUSE is lane_stop_identity's, or for the harness one
@@ -670,6 +695,11 @@ lane_stop_launch() { # PANE_PID PID START HARNESS
       3) unread=identity-stale ;;
       *) return 1 ;;
     esac
+  fi
+  if [[ -z "$1" ]]; then
+    lane_stop_reset
+    LANE_STOP_IDENTITY=none
+    return 0
   fi
   rc=0
   identity="$(lane_harness_identity "$1" "$4")" || rc=$?
@@ -842,7 +872,8 @@ lane_pane_observe() { # WINDOW
 #
 #   gone      no window: there is no lane here to ask about
 #   exited    the window outlived its harness: the provider confirms the
-#             remote harness has ended, or a local shell has no child
+#             remote harness has ended, or a local shell runs nothing but
+#             shells
 #   walled    the account is spent and said so below the lane's last turn,
 #             and no ACCOUNT reading says the wall has lifted
 #   asking    a dialog is up and waiting on an answer
@@ -868,7 +899,8 @@ lane_pane_observe() { # WINDOW
 #            One call per invocation; a failure returns unjudged without
 #            falling back to the local ssh child or the screen.
 #   LANE_EXIT_SOURCE is `provider` for a confirmed remote exit, `pane` for
-#            a childless local shell, and empty for every other verdict.
+#            a local shell running nothing but shells, and empty for every
+#            other verdict.
 #
 # A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE, by every caller
 # that passes ROWS: the Stop and PreToolUse rows the lane-mail-check hook
@@ -931,9 +963,9 @@ lane_state() {
       2) printf -v "$_ls_out" unjudged; return 0 ;;
     esac
   elif is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
-    pane_has_child "$_ls_pid" || _ls_rc=$?
-    # 1 is "no child" and the whole of `exited`. 2 is a probe that could not
-    # run, never an answer: the pane rungs below still get their say, and
+    pane_runs_program "$_ls_pid" || _ls_rc=$?
+    # 1 is "nothing but shells" and the whole of `exited`. 2 is a probe that
+    # could not run, never an answer: the pane rungs below still get their say, and
     # LANE_PROBE_RC carries the status for the caller's note.
     if [[ "$_ls_rc" -eq 1 ]]; then LANE_EXIT_SOURCE=pane; printf -v "$_ls_out" exited; return 0; fi
   fi

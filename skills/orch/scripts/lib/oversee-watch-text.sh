@@ -59,14 +59,15 @@ The long pass's events, checked and reported in this order:
                              `record`, the exit status `overseer-run`
                              wrote into the fleet state's overseer.exit once
                              the launch line returned, over a bare shell with
-                             nothing under it; `rows`, a SessionEnd row its
-                             harness wrote to the file the fleet state's
-                             overseer.session_rows names, over that same bare
-                             shell; `process`, a pane whose process is a bare
-                             shell with nothing under it; `pane`, the named
-                             fallback where no row can judge, the pane
-                             captured and read by the shared judge, with an
-                             overseer-fallback notice naming the cause.
+                             nothing but shells under it; `rows`, a SessionEnd
+                             row its harness wrote to the file the fleet
+                             state's overseer.session_rows names, over that
+                             same bare shell; `process`, a pane whose process
+                             is a bare shell with nothing but shells under it;
+                             `pane`, the named fallback where no row can
+                             judge, the pane captured and read by the shared
+                             judge, with an overseer-fallback notice naming
+                             the cause.
                              record= is carried where no successor is launched
                              for want of a line: the fleet state's overseer
                              record by its server and pane, or none. Nothing
@@ -305,9 +306,10 @@ The long pass's events, checked and reported in this order:
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
                              the line: the remedy is one relaunch, which
                              reads the item's worktree and PR, not a screen
-  EVENT lane-exited <lane>   childless local shell on two consecutive passes, or
-                             provider exit now despite live SSH, for a listed
-                             hosted lane whose running record names the harness.
+  EVENT lane-exited <lane>   local shell with nothing but shells under it on two
+                             consecutive passes, or provider exit now despite
+                             live SSH, for a listed hosted lane whose running
+                             record names the harness.
                              Closing lines follow. Failed provider reads stay
                              unjudged; unusable local probes keep the lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted

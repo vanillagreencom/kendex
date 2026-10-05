@@ -64,6 +64,14 @@ export STUB_DIR
 export PATH="$TMP_ROOT/bin:$PATH"
 printf '4242\n' > "$STUB_DIR/kids-100.txt"   # pid 100 has a child
 printf '2' > "$STUB_DIR/probe-fail-102"  # pid 102's probe cannot run
+# A harness resumed by a script the pane's shell ran: 103 keeps the script's
+# shell once the harness exits, 104 still runs the harness under it, and 105's
+# probe of that shell cannot run.
+printf '5003 fish\n' > "$STUB_DIR/kids-103.txt"
+printf '5004 fish\n' > "$STUB_DIR/kids-104.txt"
+printf '5005 claude\n' > "$STUB_DIR/kids-5004.txt"
+printf '5006 fish\n' > "$STUB_DIR/kids-105.txt"
+printf '2' > "$STUB_DIR/probe-fail-5006"
 
 # The screens, each named for what a lane showing it is doing. The Codex and
 # Copilot ones are the byte-exact captures under fixtures/, the Copilot ones off
@@ -113,6 +121,9 @@ no window is gone, whatever its last screen said|gone|claude|100|idle|||gone
 a bare shell with nothing under it is exited|listed|bash|101|shell|||exited
 a login shell reports itself dashed and is exited all the same|listed|-bash|101|shell|||exited
 a bare shell WITH a child is the lane, not its grave|listed|fish|100|idle|||idle
+a shell with only shells under it is exited, whatever screen its harness left|listed|fish|103|idle|||exited
+a harness under a shell under the pane's shell is the lane|listed|fish|104|idle|||idle
+a probe that cannot run below the pane's shell leaves the screen to answer|listed|fish|105|idle|||idle
 a probe that cannot run leaves the screen to answer, never exited|listed|bash|102|idle|||idle
 a spent account outranks the prompt its banner sits above|listed|claude|100|walled|||walled
 a banner whose account reads room again is a lifted wall, and the prompt under it answers|listed|claude|100|walled||room|idle
@@ -140,6 +151,13 @@ a copilot composer holding a draft is the same live input|listed|node|100|copilo
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
 ROWS
+
+# Control: a walk that stops at the pane's own children reads the shell a
+# resume script left as the lane, the pane that held lane-close to its timeout.
+SHELL_WALK_MUTANT="$(mutant_scripts shell-walk lib/lane-state.sh)" || exit 1
+mutate_file "$SHELL_WALK_MUTANT/lib/lane-state.sh" 'is_bare_shell "$name" || { LANE_PROBE_RC=0; return 0; }' '{ LANE_PROBE_RC=0; return 0; }'
+shell_walk_control="$(source "$SHELL_WALK_MUTANT/lib/lane-state.sh" && lane_state row_state listed fish 103 "$(screen_for idle)" && printf '%s' "$row_state")" || exit 1
+assert_eq "$shell_walk_control" idle "control: without the walk through shells a shell over a shell reads as the lane"
 
 # The provider creates the remote harness; tmux holds only its live ssh child.
 echo "=== lane-state § remote harness: one provider read, no ssh-child verdict ==="

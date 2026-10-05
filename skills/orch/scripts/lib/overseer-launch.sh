@@ -1146,7 +1146,7 @@ ol_record_exit_clear() { # SERVER PANE
 # that session on that server takes it: a line that outlived its record, a
 # successor's having replaced it, says nothing about the session recorded now.
 # oversee-watch reads it as the session's death where the pane's process is a
-# bare shell with nothing under it, the state this return leaves.
+# bare shell with nothing but shells under it, the state this return leaves.
 # Returns 1 with the writer's words in DEP_ERR.
 ol_record_exit() { # SERVER PANE STATUS
   local at start

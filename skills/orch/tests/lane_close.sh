@@ -1099,9 +1099,9 @@ assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=
   'rc=0 kill=1 status=done' 'a session-qualified record resolves the pane whose session name matches'
 
 write_state running claude '' linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
-run_close "$SCRIPT"
+LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$SCRIPT"
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=kendex:KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 missing=1 host=0 status=running' 'a local record whose qualified window no pane carries refuses pane-missing'
+  'rc=1 missing=1 host=0 status=running' 'a local record on an open item whose qualified window no pane carries refuses pane-missing'
 
 write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash duplicate; claude_screen
 run_close "$SCRIPT"
@@ -1382,6 +1382,35 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
 LANE_CLOSE_TRACKER_FAIL=3 run_close "$SCRIPT"
 assert_eq "$(windowless_unread)" 'rc=1 read=1 missing=0 host=0 status=running' \
   'a hosted record with no pane whose tracker read fails refuses tracker-read-failed before any host call'
+# A local lane's window gone with its item finished, a reboot among the
+# causes: no pane is left to read an identity off, so a record naming none has
+# no harness to stop, and the close ends the record and the item's files.
+local_windowless() { # SCRIPT
+  write_state running claude ''; : >"$ROWS"; printf '\n' >"$SCREEN"
+  PATH="$LOCAL_PATH" run_close "$1"
+  LOCAL_WINDOWLESS_GOT="rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) unread=$(grep -c 'cause=identity-unread' <<<"$ERR" || true) host=$(host_call_count) window=$(grep -cE '^(new-window|kill-window) ' "$CALLS" || true) wait=$(exit_wait_count) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+proc_table_write "$PROC_TABLE"
+local_windowless "$SCRIPT"
+assert_eq "$LOCAL_WINDOWLESS_GOT" 'rc=0 missing=0 unread=0 host=0 window=0 wait=0 removed=1 status=done' \
+  'a local record with no pane and no launch identity on a terminal item closes with no exit wait'
+local_windowless "$(lib_mutant no-pane '  if [[ -z "$1" ]]; then' '  if false; then')"
+assert_eq "$LOCAL_WINDOWLESS_GOT" 'rc=1 missing=0 unread=1 host=0 window=0 wait=0 removed=0 status=running' \
+  'control: a stop that reads a pane where none is left refuses as identity-unread'
+write_state running claude ''; : >"$ROWS"; printf '\n' >"$SCREEN"
+LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$SCRIPT"
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=KEN-1$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 missing=1 status=running' 'a local record with no pane on an open item refuses pane-missing'
+# The recorded harness can outlive its window, one renamed or moved: the
+# launch identity still names it, and the close stops it.
+if proc_table_readable; then
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ''; : >"$ROWS"; printf '\n' >"$SCREEN"
+  start_local_harness claude
+  PATH="$LOCAL_PATH" run_close "$SCRIPT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") wait=$(exit_wait_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=gone wait=0 status=done' 'a local record with no pane stops the harness its launch identity names'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+fi
 for args in '--park --pr 7' --keep-sandbox; do
   write_state running claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
   # shellcheck disable=SC2086  # the row's options are several words
@@ -1657,14 +1686,14 @@ MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
 # The windowless close's three rules, each planted out on its own copy.
-WINDOWLESS='[[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?'
+WINDOWLESS='[[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?'
 MUTANT="$(mutant windowless-none "$WINDOWLESS" 'false || tracker_rc=$?')"
 write_state running claude /host; : >"$ROWS"; run_close "$MUTANT"
-assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'rc=1 missing=1' 'control: without the hosted exemption a hosted record with no pane refuses'
-MUTANT="$(mutant windowless-all "$WINDOWLESS" '[[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?')"
-write_state running claude '' linear '' 'kendex:KEN-1'; : >"$ROWS"; run_close "$MUTANT"
-assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'missing=0' 'control: an exemption widened to every record takes a local record past pane-missing'
-MUTANT="$(mutant windowless-open "$WINDOWLESS" '[[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] || tracker_rc=$?')"
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" 'rc=1 missing=1' 'control: without the windowless close a hosted record with no pane refuses'
+MUTANT="$(mutant windowless-hosted "$WINDOWLESS" '[[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?')"
+local_windowless "$MUTANT"
+assert_eq "$LOCAL_WINDOWLESS_GOT" 'rc=1 missing=1 unread=0 host=0 window=0 wait=0 removed=0 status=running' 'control: a windowless close kept to hosted records strands a finished local record at pane-missing'
+MUTANT="$(mutant windowless-open "$WINDOWLESS" '[[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] || tracker_rc=$?')"
 write_state running claude /host; : >"$ROWS"
 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: without the terminal-item gate a hosted record with no pane closes an open item'

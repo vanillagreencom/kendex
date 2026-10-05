@@ -119,8 +119,8 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, an idle lane whose tracker item is
-terminal, in a full close a hosted record whose window no pane carries on a
-terminal item, or a record whose host kind declares stop=none, in any state,
+terminal, in a full close a record whose window no pane carries on a terminal
+item, or a record whose host kind declares stop=none, in any state,
 which the close ends on this machine alone (the stop=none paragraph below).
 A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
@@ -163,9 +163,12 @@ local lane, an exited one included, an idle one's in the same stop as its
 harness, and refuses as stop-failed target=wake where it does not end. A wake identity whose process has exited or whose pid a later
 process holds is a turn already over.
 A record already marked stopped can close its kept sandbox without a pane.
-A full close of a hosted record whose window no pane carries, on an item its
-tracker answers terminal, closes with no lane state read and no exit wait:
-the harness is stopped through lane-host stop and the host closed.
+A full close of a record whose window no pane carries, on an item its
+tracker answers terminal, closes with no lane state read and no exit wait: a
+hosted harness is stopped through lane-host stop and the host closed, and a
+local one by the launch identity the record names where that process still
+runs; with no pane to read an identity off, a record naming none, or a stale
+one, has no harness left to stop.
 A record whose host kind declares stop=none (lane-host capabilities), a Claude
 cloud session, has no harness or sandbox this machine can stop: the close
 removes the item's files as below, then kills the record's window where a
@@ -877,8 +880,11 @@ if [[ -n "$pane_id" ]]; then
   lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 else
-  # A hosted lane's sandbox outlives its window; elsewhere it reads as open.
-  tracker_rc=0; [[ -n "$host" && "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?
+  # A window gone with its work finished, a tmux restart or a reboot among the
+  # causes, closes all the same: a hosted lane through its provider, a local
+  # one by its record's launch identity alone, no pane being left to read one
+  # off. A park or a kept sandbox is a lane still wanted, and reads as open.
+  tracker_rc=0; [[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?
   case "$tracker_rc" in
     0) state=windowless ;;
     1) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;

@@ -2763,16 +2763,16 @@ overseer_context_wedged() { # PANE IDENTITY
 # and returns 1: its state settles nothing.
 #
 # An exit status `overseer-run` wrote into the record, over a pane whose
-# process is a bare shell with nothing under it, settles it first, as
+# process is a bare shell with nothing but shells under it, settles it first, as
 # `exited`, OV_SOURCE `record`. The harness's own rows settle it next
 # (lib/session-rows.sh), OV_SOURCE `rows`: a SessionEnd for any reason but
 # `clear` or `resume` is `exited` only over a pane whose process is a bare
-# shell with nothing under it, and live over a running process; a usage-limit
+# shell with nothing but shells under it, and live over a running process; a usage-limit
 # StopFailure is `walled` whatever the screen shows, and overseer_judge holds
 # it to the account judgement; a StopFailure naming a prompt-too-long error
 # is `exited`, OV_SOURCE `context`, the harness up and its window full
 # (session_rows_verdict's `wedged`). A session its rows call live is still `exited` when
-# the pane's process is a bare shell with nothing under it, which a harness
+# the pane's process is a bare shell with nothing but shells under it, which a harness
 # killed before its SessionEnd hook ran leaves, OV_SOURCE `process`: a process
 # fact, read as lib/lane-state.sh's own rung reads it, never the screen.
 #
@@ -2796,7 +2796,7 @@ overseer_pane_read() { # PANE
   # The session is read through the runtime's `inspect` alone
   # (lib/overseer-launch.sh § ol_session_inspect), the one read its launchers
   # take of it: its window, its server and the process fact every rung below
-  # rests on, `exited` being a bare shell with nothing under it.
+  # rests on, `exited` being a bare shell with nothing but shells under it.
   if ! DEP_ERR="$errf" ol_session_inspect "$pane"; then
     overseer_note overseer-unreadable "pane=$pane" "field=inspect"
     return 1
@@ -2820,7 +2820,7 @@ overseer_pane_read() { # PANE
   # are not this pane's. An exit status is `overseer-run`'s, written once the
   # launch line returned (lib/overseer-launch.sh § ol_record_exit), and it
   # settles the session, `source=record`, only over the state that return
-  # leaves: a bare shell with nothing under it. A harness the person started
+  # leaves: a bare shell with nothing but shells under it. A harness the person started
   # again in the same pane is a child of that shell, and the status is an
   # earlier session's.
   cause=unrecorded exit_status=""
@@ -3163,9 +3163,9 @@ check_lanes() {
   # a shell, so a session that hit its limit, crashed, or quit leaves the
   # shell in the foreground — a window that exists, a pane that matches no
   # question prompt, and a slot held until someone looks. A bare shell with
-  # nothing running under it IS that lane, finished; its closing lines carry
+  # nothing but shells running under it IS that lane, finished; its closing lines carry
   # why. A provider-confirmed exit is news in this pass. A local shell takes
-  # two consecutive passes: a live harness can hold a childless shell in
+  # two consecutive passes: a live harness can hold a shell with no harness under it in
   # the foreground for one poll, and relaunching a working lane costs more
   # than one interval. The first pass is a `lane-exited` row keyed by the
   # pane, so the second can be the next run's first; that second pass marks
