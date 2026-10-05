@@ -32,6 +32,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 R="$TMP_ROOT/repo"
 mkdir -p "$R/.cache/linear" "$R/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/descriptions"
 git -C "$R" init -q
+git -C "$R" config gc.auto 0
+git -C "$R" config maintenance.auto false
 cp -R "$LINEAR_SKILL" "$R/.agents/skills/linear"
 
 desc='## Done when
