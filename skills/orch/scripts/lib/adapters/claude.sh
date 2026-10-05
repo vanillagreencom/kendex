@@ -21,7 +21,7 @@
 # model no row names has no window, and its sessions are reported unmeasured
 # rather than judged against a guess: too small a figure hands a session off
 # early, too large one lets it run into its wall.
-LANE_ADAPTER_CLAUDE_WINDOWS='*fable*=1000000 *opus*=1000000 claude-sonnet-5=1000000 claude-haiku-4-5=200000 claude-haiku-4-5-20251001=200000'
+LANE_ADAPTER_CLAUDE_WINDOWS='*fable*=1000000 *opus*=1000000 claude-sonnet-5=1000000 claude-sonnet-5-5=1000000 claude-haiku-4-5=200000 claude-haiku-4-5-20251001=200000'
 
 # lane_adapter_claude_window MODEL — the window MODEL runs (`claude-opus-5-5`,
 # `opus[1m]`), empty where no row matches it. The one rule both a
@@ -46,7 +46,7 @@ lane_adapter_claude_window() { # MODEL
 # MODEL itself for any other spelling.
 lane_adapter_claude_model_id() { # MODEL
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    sonnet) printf '%s\n' claude-sonnet-5 ;;
+    sonnet) printf '%s\n' claude-sonnet-5-5 ;;
     haiku) printf '%s\n' claude-haiku-4-5 ;;
     *) printf '%s\n' "${1:-}" ;;
   esac

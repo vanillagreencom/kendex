@@ -138,10 +138,11 @@ while IFS='|' read -r label want args; do
   assert_eq "$(launch row "$@")" "$want" "$label"
 done <<ROWS
 claude on a model with a window passes|passed|${FLEET[*]} --harness claude --launch-flags '--model opus --effort high'
-claude on sonnet, written as claude-sonnet-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
+claude on sonnet, written as claude-sonnet-5-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
 claude on haiku, written as claude-haiku-4-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'
 claude on the attached --model=sonnet passes the same way|passed|${FLEET[*]} --harness claude --launch-flags '--model=sonnet --effort high'
 a claude --cmd on the bare sonnet alias, run as written, is refused|open-terminal: launch-window-unknown harness=claude model=sonnet|${FLEET[*]} --harness claude --cmd "claude --model sonnet --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
+a claude --cmd on claude-sonnet-5-5 passes|passed|${FLEET[*]} --harness claude --cmd "claude --model claude-sonnet-5-5 --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
 claude on a model whose window no row names is refused|open-terminal: launch-window-unknown harness=claude model=claude-sonnet-4-6|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-4-6 --effort high'
 claude naming no model is refused the same way|open-terminal: launch-window-unknown harness=claude model=none|${FLEET[*]} --harness claude
 codex passes, its rollout naming its window|passed|${FLEET[*]} --harness codex --launch-flags '-m gpt-6-astra -c model_reasoning_effort=high'

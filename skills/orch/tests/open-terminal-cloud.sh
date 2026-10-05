@@ -172,7 +172,7 @@ pasted() {
 }
 # `ran` where the pane took an Nth paste, `none` where it did not.
 typed() { [[ "$(pasted "$1")" == none ]] && echo none || echo ran; }
-LAUNCH_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 env CLAUDE_CONFIG_DIR='$LANE_DIR' claude --model 'claude-sonnet-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-1/.git/cloud-prompt')\""
+LAUNCH_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 env CLAUDE_CONFIG_DIR='$LANE_DIR' claude --model 'claude-sonnet-5-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-1/.git/cloud-prompt')\""
 # The launch line run as the pane's shell runs it, `clear` and `claude` this
 # suite's stubs, claude writing its arguments to $ARGV: `cloud=brief` where
 # its one --cloud= value is the first prompt, `other` where a --cloud word is
@@ -329,7 +329,7 @@ LAUNCHER_BIN="$TMP_ROOT/launcher-bin"
 mkdir -p "$LAUNCHER_BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$LAUNCHER_BIN/eclaude"
 chmod +x "$LAUNCHER_BIN/eclaude"
-LAUNCHER_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 '$LAUNCHER_BIN/eclaude' --model 'claude-sonnet-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-16/.git/cloud-prompt')\""
+LAUNCHER_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 '$LAUNCHER_BIN/eclaude' --model 'claude-sonnet-5-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-16/.git/cloud-prompt')\""
 run_ot PATH="$LAUNCHER_BIN:$BIN:$OT_BIN:$PATH" -- "${CLOUD[@]}" CC-16
 assert_eq "rc=$RC line=$([[ "$(pasted 1)" == "$LAUNCHER_LINE" ]] && echo launcher || echo other)" "rc=0 line=launcher" \
   "the lane's launcher, by the path the judge resolved and with no env prefix, starts the CLI" "$TMP_ROOT/err"
