@@ -1395,8 +1395,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f2badab4534ea72b1a95f40868c7b3c3a868c03d06f655d26a2fb83cf737ffff",
-      "renderedHash": "8e202801960b0bfa313b0056bcdfacd919fcffdb6ccb51b962246aa6441dbcca",
+      "sourceHash": "e739b19d7ab9fe43d44633a0adba8e99e55177c652a43ad7f300207d9c83fd36",
+      "renderedHash": "d75dceb4ef10d227b18710b68661f268f0bc45cae59d8607c529566f619157fd",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
@@ -1420,8 +1420,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "30d551c61339970b35041e1e58ef0a58e873652d90b0f56e4666b04ea313dbc0",
-      "renderedHash": "5b8ea485830be0f842637e140b30e315c898487e87c86459d96e7629a248cf70",
+      "sourceHash": "52f3f355251553189ae4513658a8a382b39f6aab13c864b3cceb7eba17c9379f",
+      "renderedHash": "a9fba3a49df9271bbc1d4bfc0aefd67bca29455b9c2a84cc1ee1264a65b1c648",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
@@ -1445,8 +1445,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "e783e5a62e42c55bf57f0c1e285d6cd9d73899dfca766c91a04e5587afc2f523",
-      "renderedHash": "98ac7383c595dc193ffebdf5b566f62ceb068297ebc1feaf135b46fd25cf5680",
+      "sourceHash": "ac95f48ac904ecbca62209920731d06717225e9b09a9f2818c7313afbc98846b",
+      "renderedHash": "a0b308c5fe8d9148e067477ad50b13953fe7f99f1eda72f6d60e12a07f510cc4",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
@@ -1470,8 +1470,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "60880b4a520ca15ea3e758f4875fc358df540ef10f14ca3a8d67acc653cc2d3a",
-      "renderedHash": "6ed5d147201d4688917f95dd83b93301047edf950a1263751b3fa773b4bed9d7",
+      "sourceHash": "ec231af174422fdb747e0cb22489249847189029ce6b35f838e8670b54a71182",
+      "renderedHash": "bb92b2d95bf4f74c8ad6395a75886f56c9fb3b533ea93e90dcf821d958ae8e61",
       "enabled": true,
       "upstreamSkills": [
         "reviewer"
@@ -2131,6 +2131,37 @@
         }
       ]
     },
+    "hook:block-argv-kill:copilot": {
+      "name": "block-argv-kill",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-argv-kill",
+        "paths": [
+          ".github/hooks/block-argv-kill.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:block-argv-kill:pi": {
       "name": "block-argv-kill",
       "kind": "hook",
@@ -2216,6 +2247,40 @@
         "event": "PreToolUse",
         "command": "p='.codex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
         "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-bare-cd:copilot": {
+      "name": "block-bare-cd",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-bare-cd",
+        "paths": [
+          ".github/hooks/block-bare-cd.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
       },
       "reasons": [
         {
@@ -2332,6 +2397,40 @@
         }
       ]
     },
+    "hook:block-repo-copy:copilot": {
+      "name": "block-repo-copy",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-repo-copy",
+        "paths": [
+          ".github/hooks/block-repo-copy.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:block-repo-copy:pi": {
       "name": "block-repo-copy",
       "kind": "hook",
@@ -2372,8 +2471,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f3cffdbd3bc2f931b2be648a1f987c9db0753d25dfa3d693d41f8b6c2b07321c",
-      "renderedHash": "1d93641cbacd1499f961cda8b1921bdee126f218a87cc2c2d514fad2ea131d75",
+      "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2406,8 +2505,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f3cffdbd3bc2f931b2be648a1f987c9db0753d25dfa3d693d41f8b6c2b07321c",
-      "renderedHash": "1d93641cbacd1499f961cda8b1921bdee126f218a87cc2c2d514fad2ea131d75",
+      "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2434,14 +2533,48 @@
         }
       ]
     },
+    "hook:block-unsafe-rm:copilot": {
+      "name": "block-unsafe-rm",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-unsafe-rm",
+        "paths": [
+          ".github/hooks/block-unsafe-rm.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/block-unsafe-rm.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:block-unsafe-rm:pi": {
       "name": "block-unsafe-rm",
       "kind": "hook",
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "f3cffdbd3bc2f931b2be648a1f987c9db0753d25dfa3d693d41f8b6c2b07321c",
-      "renderedHash": "1d93641cbacd1499f961cda8b1921bdee126f218a87cc2c2d514fad2ea131d75",
+      "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2530,6 +2663,37 @@
         }
       ]
     },
+    "hook:block-worktree-refresh:copilot": {
+      "name": "block-worktree-refresh",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
+      "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "block-worktree-refresh",
+        "paths": [
+          ".github/hooks/block-worktree-refresh.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:block-worktree-refresh:pi": {
       "name": "block-worktree-refresh",
       "kind": "hook",
@@ -2567,8 +2731,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
-      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
+      "sourceHash": "24fda11c033cb3595703788071e31a063be9c1274d94f64c855805f6faa2e280",
+      "renderedHash": "2f13a94f854f4bc936a01f75218cdf4bc52cf74f566be9cce6bd9c9b09c51854",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2584,6 +2748,15 @@
       },
       "reasons": [
         {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "block-unsafe-rm",
+            "harness": "claude"
+          }
+        },
+        {
           "reason": "member-of",
           "bundle": {
             "source": ".",
@@ -2598,8 +2771,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
-      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
+      "sourceHash": "24fda11c033cb3595703788071e31a063be9c1274d94f64c855805f6faa2e280",
+      "renderedHash": "2f13a94f854f4bc936a01f75218cdf4bc52cf74f566be9cce6bd9c9b09c51854",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2615,6 +2788,55 @@
       },
       "reasons": [
         {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "block-unsafe-rm",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        }
+      ]
+    },
+    "hook:command-safety:copilot": {
+      "name": "command-safety",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "24fda11c033cb3595703788071e31a063be9c1274d94f64c855805f6faa2e280",
+      "renderedHash": "2f13a94f854f4bc936a01f75218cdf4bc52cf74f566be9cce6bd9c9b09c51854",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "command-safety",
+        "paths": [
+          ".github/hooks/command-safety.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
+      },
+      "reasons": [
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "block-unsafe-rm",
+            "harness": "copilot"
+          }
+        },
+        {
           "reason": "member-of",
           "bundle": {
             "source": ".",
@@ -2629,8 +2851,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b9da109efb7c9e1ce729b43bbdb6f47539ad435515aba7f184d950ceb3593f8d",
-      "renderedHash": "32aca42779ae0b987ad7c8fcb2a1e2adcd21ebf6180332d03a061cb170bb69d3",
+      "sourceHash": "24fda11c033cb3595703788071e31a063be9c1274d94f64c855805f6faa2e280",
+      "renderedHash": "2f13a94f854f4bc936a01f75218cdf4bc52cf74f566be9cce6bd9c9b09c51854",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2645,6 +2867,15 @@
         "matcher": "Bash"
       },
       "reasons": [
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "block-unsafe-rm",
+            "harness": "pi"
+          }
+        },
         {
           "reason": "member-of",
           "bundle": {
@@ -2678,6 +2909,15 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -2743,6 +2983,37 @@
         }
       ]
     },
+    "hook:doc-drift-check:copilot": {
+      "name": "doc-drift-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "aff0b32e5272e43dcab87679f725b80ea750f54def2f905a9a9b2a9d222ca5c1",
+      "renderedHash": "624bc2d5bfef79f8f88db7973ecf6932172f570ab049a38ff6cf968ff96b81f4",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "doc-drift-check",
+        "paths": [
+          ".github/hooks/doc-drift-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "agentStop",
+        "command": "p='.github/hooks/doc-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:doc-drift-check:pi": {
       "name": "doc-drift-check",
       "kind": "hook",
@@ -2780,8 +3051,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8c2c9d2ce81a76af0e5258e7dfebea981c77d467830ecb4b4af6b3e49a7ee8bb",
-      "renderedHash": "1c0798ac1293225cc465587f6d725c110e1b853bbdc2bd82a76abc6e669988b7",
+      "sourceHash": "655b2dde319a193b6dc4f124a7e820fc9a9f090a081d0c00f082c92666fbb5f7",
+      "renderedHash": "3e359973a80ab254f8977c51deab74b49781a8ba290648bc353c37ade5171069",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2861,8 +3132,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8c2c9d2ce81a76af0e5258e7dfebea981c77d467830ecb4b4af6b3e49a7ee8bb",
-      "renderedHash": "1c0798ac1293225cc465587f6d725c110e1b853bbdc2bd82a76abc6e669988b7",
+      "sourceHash": "655b2dde319a193b6dc4f124a7e820fc9a9f090a081d0c00f082c92666fbb5f7",
+      "renderedHash": "3e359973a80ab254f8977c51deab74b49781a8ba290648bc353c37ade5171069",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2918,14 +3189,86 @@
         }
       ]
     },
+    "hook:lane-mail-check:copilot": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "655b2dde319a193b6dc4f124a7e820fc9a9f090a081d0c00f082c92666fbb5f7",
+      "renderedHash": "3e359973a80ab254f8977c51deab74b49781a8ba290648bc353c37ade5171069",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-check",
+        "paths": [
+          ".github/hooks/lane-mail-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "agentStop",
+        "command": "p='.github/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "doc-drift-check",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-deliver",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-halt",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-end-row",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "session-start-row",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
     "hook:lane-mail-check:pi": {
       "name": "lane-mail-check",
       "kind": "hook",
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8c2c9d2ce81a76af0e5258e7dfebea981c77d467830ecb4b4af6b3e49a7ee8bb",
-      "renderedHash": "1c0798ac1293225cc465587f6d725c110e1b853bbdc2bd82a76abc6e669988b7",
+      "sourceHash": "655b2dde319a193b6dc4f124a7e820fc9a9f090a081d0c00f082c92666fbb5f7",
+      "renderedHash": "3e359973a80ab254f8977c51deab74b49781a8ba290648bc353c37ade5171069",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3062,6 +3405,42 @@
         }
       ]
     },
+    "hook:lane-mail-deliver:copilot": {
+      "name": "lane-mail-deliver",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
+      "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-deliver",
+        "paths": [
+          ".github/hooks/lane-mail-deliver.sh"
+        ]
+      },
+      "registration": {
+        "event": "postToolUse",
+        "command": "p='.github/hooks/lane-mail-deliver.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
     "hook:lane-mail-deliver:pi": {
       "name": "lane-mail-deliver",
       "kind": "hook",
@@ -3170,6 +3549,42 @@
         }
       ]
     },
+    "hook:lane-mail-halt:copilot": {
+      "name": "lane-mail-halt",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
+      "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-halt",
+        "paths": [
+          ".github/hooks/lane-mail-halt.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/lane-mail-halt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
     "hook:lane-mail-halt:pi": {
       "name": "lane-mail-halt",
       "kind": "hook",
@@ -3260,6 +3675,40 @@
         "event": "PreToolUse",
         "command": "p='.codex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
         "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:pre-commit-check:copilot": {
+      "name": "pre-commit-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9cfb9a5bc52fce1d9905393dae32b71b4e7f4e46a2faf395e2013b90d1d45cf7",
+      "renderedHash": "602384c51f33f872c736fe92b4afcc4f14c1b117ddf54e2a5da66750dc1131cc",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "pre-commit-check",
+        "paths": [
+          ".github/hooks/pre-commit-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "preToolUse",
+        "command": "p='.github/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "bash|powershell"
       },
       "reasons": [
         {
@@ -3389,6 +3838,60 @@
         }
       ]
     },
+    "hook:reviewer-stop-check:codex": {
+      "name": "reviewer-stop-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "347ff2d2efbbbdcd44057a6f27cd32f7dff575da40193ff9c4e9255a41e58c92",
+      "renderedHash": "0de34894a07a612efce5bac7079891a07d9cbea953450b1cb0b62cd42c9e6b68",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "reviewer-stop-check",
+        "paths": [
+          ".codex/hooks/reviewer-stop-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "SubagentStop",
+        "command": "p='.codex/hooks/reviewer-stop-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:reviewer-stop-check:copilot": {
+      "name": "reviewer-stop-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "347ff2d2efbbbdcd44057a6f27cd32f7dff575da40193ff9c4e9255a41e58c92",
+      "renderedHash": "0de34894a07a612efce5bac7079891a07d9cbea953450b1cb0b62cd42c9e6b68",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "reviewer-stop-check",
+        "paths": [
+          ".github/hooks/reviewer-stop-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "subagentStop",
+        "command": "p='.github/hooks/reviewer-stop-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
     "hook:session-drift-check:claude": {
       "name": "session-drift-check",
       "kind": "hook",
@@ -3457,14 +3960,48 @@
         }
       ]
     },
+    "hook:session-drift-check:copilot": {
+      "name": "session-drift-check",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4edd7b91593ef0d09e23c600c4c6c4fea094204d145e1988f61d2941fc7d3be7",
+      "renderedHash": "7c196604ed79f86a7372a53123d7a36b75f743b6d0e99060cb02479c8b1b50d2",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-drift-check",
+        "paths": [
+          ".github/hooks/session-drift-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "sessionStart",
+        "command": "p='.github/hooks/session-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:session-end-row:claude": {
       "name": "session-end-row",
       "kind": "hook",
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4fa4d429309f76e318da67bf44756893580da9380e7140c32768785006f9fb70",
-      "renderedHash": "bf74dd2fbf2f02fb239e40e2ad2960a4e2f43654587ddc3ce1aa3ba79a48d334",
+      "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3499,8 +4036,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4fa4d429309f76e318da67bf44756893580da9380e7140c32768785006f9fb70",
-      "renderedHash": "bf74dd2fbf2f02fb239e40e2ad2960a4e2f43654587ddc3ce1aa3ba79a48d334",
+      "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3529,14 +4066,50 @@
         }
       ]
     },
+    "hook:session-end-row:copilot": {
+      "name": "session-end-row",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-end-row",
+        "paths": [
+          ".github/hooks/session-end-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "sessionEnd",
+        "command": "p='.github/hooks/session-end-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
     "hook:session-end-row:pi": {
       "name": "session-end-row",
       "kind": "hook",
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4fa4d429309f76e318da67bf44756893580da9380e7140c32768785006f9fb70",
-      "renderedHash": "bf74dd2fbf2f02fb239e40e2ad2960a4e2f43654587ddc3ce1aa3ba79a48d334",
+      "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3637,6 +4210,42 @@
         }
       ]
     },
+    "hook:session-start-row:copilot": {
+      "name": "session-start-row",
+      "kind": "hook",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c82fdd3abd19b87cac8a6bbe1af920136e0706a2718532e3870724e897567780",
+      "renderedHash": "5e2f5050fc7c0f83761b27ba4c26e5ad3ac864684c0a67871a66da866eb19a76",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "session-start-row",
+        "paths": [
+          ".github/hooks/session-start-row.sh"
+        ]
+      },
+      "registration": {
+        "event": "sessionStart",
+        "command": "p='.github/hooks/session-start-row.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "copilot"
+          }
+        }
+      ]
+    },
     "hook:session-start-row:pi": {
       "name": "session-start-row",
       "kind": "hook",
@@ -3679,8 +4288,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "da95cfb93851f30387d3a72b506b1cc6b8bfc901ca4330cd4014889285dd84b9",
-      "renderedHash": "0b300d5c1ae4853151cc35283c23ff951d58e71cd152abc57d5e6ad6bf525034",
+      "sourceHash": "885e4353396a3f63a5d446e0d658c3490686165c3bb43c697530d85e11205607",
+      "renderedHash": "cae55895d28cb2b5ecf8743e47fdcf4187a4b42b583b24e0547173888c673482",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3715,8 +4324,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "da95cfb93851f30387d3a72b506b1cc6b8bfc901ca4330cd4014889285dd84b9",
-      "renderedHash": "0b300d5c1ae4853151cc35283c23ff951d58e71cd152abc57d5e6ad6bf525034",
+      "sourceHash": "885e4353396a3f63a5d446e0d658c3490686165c3bb43c697530d85e11205607",
+      "renderedHash": "cae55895d28cb2b5ecf8743e47fdcf4187a4b42b583b24e0547173888c673482",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3751,8 +4360,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "da95cfb93851f30387d3a72b506b1cc6b8bfc901ca4330cd4014889285dd84b9",
-      "renderedHash": "0b300d5c1ae4853151cc35283c23ff951d58e71cd152abc57d5e6ad6bf525034",
+      "sourceHash": "885e4353396a3f63a5d446e0d658c3490686165c3bb43c697530d85e11205607",
+      "renderedHash": "cae55895d28cb2b5ecf8743e47fdcf4187a4b42b583b24e0547173888c673482",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3787,8 +4396,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "da95cfb93851f30387d3a72b506b1cc6b8bfc901ca4330cd4014889285dd84b9",
-      "renderedHash": "0b300d5c1ae4853151cc35283c23ff951d58e71cd152abc57d5e6ad6bf525034",
+      "sourceHash": "885e4353396a3f63a5d446e0d658c3490686165c3bb43c697530d85e11205607",
+      "renderedHash": "cae55895d28cb2b5ecf8743e47fdcf4187a4b42b583b24e0547173888c673482",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -4213,8 +4822,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "beb2f3fb1f9c661383c4f497f38622067fa60bdc063cfc680be73f19b85b41c2",
-      "renderedHash": "71d524bb3100c7b5f3f811a3db0fe7b955dd6c8333f247be15a87dcd8cdbaa68",
+      "sourceHash": "8f0088387ef911556230c033adcf77446e29a905ae92ef8315154c20e44c5970",
+      "renderedHash": "344dda4a7961008c258a57fe579903eff64d9a381d16768ea93042565b0ffa95",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4263,8 +4872,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "beb2f3fb1f9c661383c4f497f38622067fa60bdc063cfc680be73f19b85b41c2",
-      "renderedHash": "71d524bb3100c7b5f3f811a3db0fe7b955dd6c8333f247be15a87dcd8cdbaa68",
+      "sourceHash": "8f0088387ef911556230c033adcf77446e29a905ae92ef8315154c20e44c5970",
+      "renderedHash": "344dda4a7961008c258a57fe579903eff64d9a381d16768ea93042565b0ffa95",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4312,8 +4921,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "beb2f3fb1f9c661383c4f497f38622067fa60bdc063cfc680be73f19b85b41c2",
-      "renderedHash": "71d524bb3100c7b5f3f811a3db0fe7b955dd6c8333f247be15a87dcd8cdbaa68",
+      "sourceHash": "8f0088387ef911556230c033adcf77446e29a905ae92ef8315154c20e44c5970",
+      "renderedHash": "344dda4a7961008c258a57fe579903eff64d9a381d16768ea93042565b0ffa95",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4361,8 +4970,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "beb2f3fb1f9c661383c4f497f38622067fa60bdc063cfc680be73f19b85b41c2",
-      "renderedHash": "71d524bb3100c7b5f3f811a3db0fe7b955dd6c8333f247be15a87dcd8cdbaa68",
+      "sourceHash": "8f0088387ef911556230c033adcf77446e29a905ae92ef8315154c20e44c5970",
+      "renderedHash": "344dda4a7961008c258a57fe579903eff64d9a381d16768ea93042565b0ffa95",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4410,8 +5019,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8a4acf76c644d742476f4d0960a6db9d111678dbf72fea7f6ae476231252d464",
-      "renderedHash": "016b04411cccb27ee80cdf487c9a838bcd5273a5d47658b6b42a203f57854583",
+      "sourceHash": "7dcfade8334d14c43dcd1ce9a5be0b37f98303f07cfd5d04114eaf4a2a120517",
+      "renderedHash": "89725e61579dfd896cda2dc1e71d5ad10cd33f8b16005495bc1e272af894e978",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4448,6 +5057,15 @@
           "by": {
             "source": ".",
             "kind": "hook",
+            "name": "command-safety",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
             "name": "skill-load-check",
             "harness": "claude"
           }
@@ -4474,8 +5092,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8a4acf76c644d742476f4d0960a6db9d111678dbf72fea7f6ae476231252d464",
-      "renderedHash": "016b04411cccb27ee80cdf487c9a838bcd5273a5d47658b6b42a203f57854583",
+      "sourceHash": "7dcfade8334d14c43dcd1ce9a5be0b37f98303f07cfd5d04114eaf4a2a120517",
+      "renderedHash": "89725e61579dfd896cda2dc1e71d5ad10cd33f8b16005495bc1e272af894e978",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4503,6 +5121,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "command-safety",
             "harness": "codex"
           }
         },
@@ -4537,8 +5164,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8a4acf76c644d742476f4d0960a6db9d111678dbf72fea7f6ae476231252d464",
-      "renderedHash": "016b04411cccb27ee80cdf487c9a838bcd5273a5d47658b6b42a203f57854583",
+      "sourceHash": "7dcfade8334d14c43dcd1ce9a5be0b37f98303f07cfd5d04114eaf4a2a120517",
+      "renderedHash": "89725e61579dfd896cda2dc1e71d5ad10cd33f8b16005495bc1e272af894e978",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4574,8 +5201,31 @@
           "by": {
             "source": ".",
             "kind": "hook",
+            "name": "command-safety",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
             "name": "skill-load-check",
             "harness": "copilot"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
           }
         }
       ]
@@ -4586,8 +5236,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "8a4acf76c644d742476f4d0960a6db9d111678dbf72fea7f6ae476231252d464",
-      "renderedHash": "016b04411cccb27ee80cdf487c9a838bcd5273a5d47658b6b42a203f57854583",
+      "sourceHash": "7dcfade8334d14c43dcd1ce9a5be0b37f98303f07cfd5d04114eaf4a2a120517",
+      "renderedHash": "89725e61579dfd896cda2dc1e71d5ad10cd33f8b16005495bc1e272af894e978",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4615,6 +5265,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "command-safety",
             "harness": "pi"
           }
         },
@@ -5024,8 +5683,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
-      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
+      "sourceHash": "4946a4bf6add55fa461c2af76d09fc1e47306d5c0de375a992264d5d23b4f332",
+      "renderedHash": "022e5883e356a064ebbd6e2a361c8a93f33209022f296e4c986847d50f06f273",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5056,8 +5715,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
-      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
+      "sourceHash": "4946a4bf6add55fa461c2af76d09fc1e47306d5c0de375a992264d5d23b4f332",
+      "renderedHash": "022e5883e356a064ebbd6e2a361c8a93f33209022f296e4c986847d50f06f273",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5087,8 +5746,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
-      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
+      "sourceHash": "4946a4bf6add55fa461c2af76d09fc1e47306d5c0de375a992264d5d23b4f332",
+      "renderedHash": "022e5883e356a064ebbd6e2a361c8a93f33209022f296e4c986847d50f06f273",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5118,8 +5777,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "c5915942f468b0733db3f3930d62b3c95c9358be8072751b8c46526495469d41",
-      "renderedHash": "129bba0fe82be9fddeec5a0f8effbd8929975ac6a9690163ae90891ba891e060",
+      "sourceHash": "4946a4bf6add55fa461c2af76d09fc1e47306d5c0de375a992264d5d23b4f332",
+      "renderedHash": "022e5883e356a064ebbd6e2a361c8a93f33209022f296e4c986847d50f06f273",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5221,6 +5880,13 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
         }
       ]
     },
@@ -5259,8 +5925,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
-      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
+      "sourceHash": "769af3c21aa03516eb3a3e46d336bd444068cb3a3f198da8a4a36ff99f1233d6",
+      "renderedHash": "1d75557a54b9759ffb18b501fc87b2c0287e3bbfc00b9aa5aeb5ba5bf37b5679",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5309,8 +5975,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
-      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
+      "sourceHash": "769af3c21aa03516eb3a3e46d336bd444068cb3a3f198da8a4a36ff99f1233d6",
+      "renderedHash": "1d75557a54b9759ffb18b501fc87b2c0287e3bbfc00b9aa5aeb5ba5bf37b5679",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5358,8 +6024,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
-      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
+      "sourceHash": "769af3c21aa03516eb3a3e46d336bd444068cb3a3f198da8a4a36ff99f1233d6",
+      "renderedHash": "1d75557a54b9759ffb18b501fc87b2c0287e3bbfc00b9aa5aeb5ba5bf37b5679",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5407,8 +6073,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "4f06c8142c8a9106c9baae5bf23f81cc74be56db7a305eda5d701df1b0629cbd",
-      "renderedHash": "4bc7ae8e865b5c88559fa42def2bd2eb12ea07cadcbabf2ec2ba8ae1cf4221bb",
+      "sourceHash": "769af3c21aa03516eb3a3e46d336bd444068cb3a3f198da8a4a36ff99f1233d6",
+      "renderedHash": "1d75557a54b9759ffb18b501fc87b2c0287e3bbfc00b9aa5aeb5ba5bf37b5679",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5761,8 +6427,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
-      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
+      "sourceHash": "ff1a5c0d5b1b4662cba342de4d7a0e8dece4d8dab8a0702f07d83fe09b926912",
+      "renderedHash": "eec0f2196bc3e69c02e1c63598928e9cc909b3ebfa331cbd37c8fa3cb7cf8f46",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5790,8 +6456,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
-      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
+      "sourceHash": "ff1a5c0d5b1b4662cba342de4d7a0e8dece4d8dab8a0702f07d83fe09b926912",
+      "renderedHash": "eec0f2196bc3e69c02e1c63598928e9cc909b3ebfa331cbd37c8fa3cb7cf8f46",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5818,8 +6484,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
-      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
+      "sourceHash": "ff1a5c0d5b1b4662cba342de4d7a0e8dece4d8dab8a0702f07d83fe09b926912",
+      "renderedHash": "eec0f2196bc3e69c02e1c63598928e9cc909b3ebfa331cbd37c8fa3cb7cf8f46",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5846,8 +6512,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "aec9ca7123782d5928e22eed5c979aec022284bcb40970159d29da86b62a5f45",
-      "renderedHash": "edd82602bdb56d222233006488907d21e0cf470b31a3dba7c34dad579f87f1c8",
+      "sourceHash": "ff1a5c0d5b1b4662cba342de4d7a0e8dece4d8dab8a0702f07d83fe09b926912",
+      "renderedHash": "eec0f2196bc3e69c02e1c63598928e9cc909b3ebfa331cbd37c8fa3cb7cf8f46",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6041,8 +6707,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "37b031ed6c6936c55a35fffb4ff026b647105eb2f40eaabbe1299954bdaa554e",
-      "renderedHash": "667e9766ddc05d88adb762922101deb1d80fe491ed860bef1de4d71ad86bac0c",
+      "sourceHash": "074179f1f7dd83564b2420c56c7ddd8c6c435282d4db1482e4e66a82ad2d0379",
+      "renderedHash": "8a8ece2186cabd70b027f8a1b4b153e92794d05690419bddff4bd0a8a7c82fcb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6073,8 +6739,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "37b031ed6c6936c55a35fffb4ff026b647105eb2f40eaabbe1299954bdaa554e",
-      "renderedHash": "667e9766ddc05d88adb762922101deb1d80fe491ed860bef1de4d71ad86bac0c",
+      "sourceHash": "074179f1f7dd83564b2420c56c7ddd8c6c435282d4db1482e4e66a82ad2d0379",
+      "renderedHash": "8a8ece2186cabd70b027f8a1b4b153e92794d05690419bddff4bd0a8a7c82fcb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6104,8 +6770,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "37b031ed6c6936c55a35fffb4ff026b647105eb2f40eaabbe1299954bdaa554e",
-      "renderedHash": "667e9766ddc05d88adb762922101deb1d80fe491ed860bef1de4d71ad86bac0c",
+      "sourceHash": "074179f1f7dd83564b2420c56c7ddd8c6c435282d4db1482e4e66a82ad2d0379",
+      "renderedHash": "8a8ece2186cabd70b027f8a1b4b153e92794d05690419bddff4bd0a8a7c82fcb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6135,8 +6801,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "37b031ed6c6936c55a35fffb4ff026b647105eb2f40eaabbe1299954bdaa554e",
-      "renderedHash": "667e9766ddc05d88adb762922101deb1d80fe491ed860bef1de4d71ad86bac0c",
+      "sourceHash": "074179f1f7dd83564b2420c56c7ddd8c6c435282d4db1482e4e66a82ad2d0379",
+      "renderedHash": "8a8ece2186cabd70b027f8a1b4b153e92794d05690419bddff4bd0a8a7c82fcb",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6166,8 +6832,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f9019350ab07c8932a8eea2aab81eecc0a456e9055a0f3b18f08039a396d7dc",
-      "renderedHash": "e913dcd50d068841207baf7c30b3b5c514b192f03b6d4b2584dbbfba5c7ad70b",
+      "sourceHash": "608ff1747a0df04817a9f60834457999904ae4f97fe7c1d4bfe2f0fecfffaf78",
+      "renderedHash": "a4b0f14600868c304a43414022c357edc067e99dc6e7db54ceacb0bbe7b3e14f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6243,8 +6909,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f9019350ab07c8932a8eea2aab81eecc0a456e9055a0f3b18f08039a396d7dc",
-      "renderedHash": "e913dcd50d068841207baf7c30b3b5c514b192f03b6d4b2584dbbfba5c7ad70b",
+      "sourceHash": "608ff1747a0df04817a9f60834457999904ae4f97fe7c1d4bfe2f0fecfffaf78",
+      "renderedHash": "a4b0f14600868c304a43414022c357edc067e99dc6e7db54ceacb0bbe7b3e14f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6319,8 +6985,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f9019350ab07c8932a8eea2aab81eecc0a456e9055a0f3b18f08039a396d7dc",
-      "renderedHash": "e913dcd50d068841207baf7c30b3b5c514b192f03b6d4b2584dbbfba5c7ad70b",
+      "sourceHash": "608ff1747a0df04817a9f60834457999904ae4f97fe7c1d4bfe2f0fecfffaf78",
+      "renderedHash": "a4b0f14600868c304a43414022c357edc067e99dc6e7db54ceacb0bbe7b3e14f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6377,6 +7043,15 @@
             "name": "slack",
             "harness": "copilot"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "copilot"
+          }
         }
       ]
     },
@@ -6386,8 +7061,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "9f9019350ab07c8932a8eea2aab81eecc0a456e9055a0f3b18f08039a396d7dc",
-      "renderedHash": "e913dcd50d068841207baf7c30b3b5c514b192f03b6d4b2584dbbfba5c7ad70b",
+      "sourceHash": "608ff1747a0df04817a9f60834457999904ae4f97fe7c1d4bfe2f0fecfffaf78",
+      "renderedHash": "a4b0f14600868c304a43414022c357edc067e99dc6e7db54ceacb0bbe7b3e14f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6540,8 +7215,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "60849521180ed6888d4ba075618f459c2998d2de9e6901e973ba9a7347e3b524",
-      "renderedHash": "e7136d2494f3d2002a76a8093eabc290c4a2993384f82c56f38c5c7c23f2e5ff",
+      "sourceHash": "5343eb9c9eeba7c94b46e421868fa51c52121aa61c61cb3cdcf05d7ec9a12bd4",
+      "renderedHash": "f5fd87b989c906968211e8dd461f5124cbb736141055d678d62e5186d8e83d5a",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6570,8 +7245,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "60849521180ed6888d4ba075618f459c2998d2de9e6901e973ba9a7347e3b524",
-      "renderedHash": "e7136d2494f3d2002a76a8093eabc290c4a2993384f82c56f38c5c7c23f2e5ff",
+      "sourceHash": "5343eb9c9eeba7c94b46e421868fa51c52121aa61c61cb3cdcf05d7ec9a12bd4",
+      "renderedHash": "f5fd87b989c906968211e8dd461f5124cbb736141055d678d62e5186d8e83d5a",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6599,8 +7274,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "60849521180ed6888d4ba075618f459c2998d2de9e6901e973ba9a7347e3b524",
-      "renderedHash": "e7136d2494f3d2002a76a8093eabc290c4a2993384f82c56f38c5c7c23f2e5ff",
+      "sourceHash": "5343eb9c9eeba7c94b46e421868fa51c52121aa61c61cb3cdcf05d7ec9a12bd4",
+      "renderedHash": "f5fd87b989c906968211e8dd461f5124cbb736141055d678d62e5186d8e83d5a",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6612,6 +7287,13 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
         }
       ]
     },
@@ -6621,8 +7303,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "60849521180ed6888d4ba075618f459c2998d2de9e6901e973ba9a7347e3b524",
-      "renderedHash": "e7136d2494f3d2002a76a8093eabc290c4a2993384f82c56f38c5c7c23f2e5ff",
+      "sourceHash": "5343eb9c9eeba7c94b46e421868fa51c52121aa61c61cb3cdcf05d7ec9a12bd4",
+      "renderedHash": "f5fd87b989c906968211e8dd461f5124cbb736141055d678d62e5186d8e83d5a",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6739,8 +7421,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
-      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
+      "sourceHash": "f3dab0958522303b1ceab62584789277426db0822f120cc150fcc7102aa348c8",
+      "renderedHash": "a02d7255ecb15231f19f14b832193576fab543d9d9c42707aad40bde676f46aa",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6771,8 +7453,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
-      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
+      "sourceHash": "f3dab0958522303b1ceab62584789277426db0822f120cc150fcc7102aa348c8",
+      "renderedHash": "a02d7255ecb15231f19f14b832193576fab543d9d9c42707aad40bde676f46aa",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6802,8 +7484,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
-      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
+      "sourceHash": "f3dab0958522303b1ceab62584789277426db0822f120cc150fcc7102aa348c8",
+      "renderedHash": "a02d7255ecb15231f19f14b832193576fab543d9d9c42707aad40bde676f46aa",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6833,8 +7515,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "490fc7f4d3b89e758c99f24e2da4d2c030ffb5c82576299d57ead94ee00b0b10",
-      "renderedHash": "d9db401b1d4701e153f7b33b7e940cfffdc91033e0949b749c36450c9e000d1c",
+      "sourceHash": "f3dab0958522303b1ceab62584789277426db0822f120cc150fcc7102aa348c8",
+      "renderedHash": "a02d7255ecb15231f19f14b832193576fab543d9d9c42707aad40bde676f46aa",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6864,8 +7546,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0af83be5062228876027a68e18eb10ba7dd61c53cba405cd438c4a47f76209bf",
-      "renderedHash": "3d8447a4d1d3de1d51c284fa0ae6dd40e3ee1b69b47fdab67d619cab29b483ba",
+      "sourceHash": "d76fc66a3de6de4825104a016cdc3008cf277f0ba305b7a19567488eab7c372e",
+      "renderedHash": "c41925b23a284c9bfdb31f2aa08eeb7ac7363fe3b3a84a7f523f77f9dfe61488",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6896,8 +7578,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0af83be5062228876027a68e18eb10ba7dd61c53cba405cd438c4a47f76209bf",
-      "renderedHash": "3d8447a4d1d3de1d51c284fa0ae6dd40e3ee1b69b47fdab67d619cab29b483ba",
+      "sourceHash": "d76fc66a3de6de4825104a016cdc3008cf277f0ba305b7a19567488eab7c372e",
+      "renderedHash": "c41925b23a284c9bfdb31f2aa08eeb7ac7363fe3b3a84a7f523f77f9dfe61488",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6927,8 +7609,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0af83be5062228876027a68e18eb10ba7dd61c53cba405cd438c4a47f76209bf",
-      "renderedHash": "3d8447a4d1d3de1d51c284fa0ae6dd40e3ee1b69b47fdab67d619cab29b483ba",
+      "sourceHash": "d76fc66a3de6de4825104a016cdc3008cf277f0ba305b7a19567488eab7c372e",
+      "renderedHash": "c41925b23a284c9bfdb31f2aa08eeb7ac7363fe3b3a84a7f523f77f9dfe61488",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6958,8 +7640,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "0af83be5062228876027a68e18eb10ba7dd61c53cba405cd438c4a47f76209bf",
-      "renderedHash": "3d8447a4d1d3de1d51c284fa0ae6dd40e3ee1b69b47fdab67d619cab29b483ba",
+      "sourceHash": "d76fc66a3de6de4825104a016cdc3008cf277f0ba305b7a19567488eab7c372e",
+      "renderedHash": "c41925b23a284c9bfdb31f2aa08eeb7ac7363fe3b3a84a7f523f77f9dfe61488",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6989,8 +7671,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "256409782b22924f8b736b995cad9b927d20a4bc5606b72f59bfb0ac572b933d",
-      "renderedHash": "1ec0440088dc5bff0eed138a8d62f6e3aad94f18614bb0c113c216ea191af48c",
+      "sourceHash": "cff1c3b5e12e7c01f2c347202fe76cfc32469f2ef5f319b0485af91cc008d438",
+      "renderedHash": "e61885f3055b7b0b08dac8c6f6202406738d0407c91af5a4914d43c32bfd56de",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7021,8 +7703,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "256409782b22924f8b736b995cad9b927d20a4bc5606b72f59bfb0ac572b933d",
-      "renderedHash": "1ec0440088dc5bff0eed138a8d62f6e3aad94f18614bb0c113c216ea191af48c",
+      "sourceHash": "cff1c3b5e12e7c01f2c347202fe76cfc32469f2ef5f319b0485af91cc008d438",
+      "renderedHash": "e61885f3055b7b0b08dac8c6f6202406738d0407c91af5a4914d43c32bfd56de",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7052,8 +7734,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "256409782b22924f8b736b995cad9b927d20a4bc5606b72f59bfb0ac572b933d",
-      "renderedHash": "1ec0440088dc5bff0eed138a8d62f6e3aad94f18614bb0c113c216ea191af48c",
+      "sourceHash": "cff1c3b5e12e7c01f2c347202fe76cfc32469f2ef5f319b0485af91cc008d438",
+      "renderedHash": "e61885f3055b7b0b08dac8c6f6202406738d0407c91af5a4914d43c32bfd56de",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7083,8 +7765,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "256409782b22924f8b736b995cad9b927d20a4bc5606b72f59bfb0ac572b933d",
-      "renderedHash": "1ec0440088dc5bff0eed138a8d62f6e3aad94f18614bb0c113c216ea191af48c",
+      "sourceHash": "cff1c3b5e12e7c01f2c347202fe76cfc32469f2ef5f319b0485af91cc008d438",
+      "renderedHash": "e61885f3055b7b0b08dac8c6f6202406738d0407c91af5a4914d43c32bfd56de",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7203,8 +7885,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "dd09cda45bb8cee2bc5fdd630b2cdf8caab84339458014203c1b305b59cdbac1",
-      "renderedHash": "014115705d1015953804ac8785cbeda366b447ecbee9f01467c3e4d313744f5c",
+      "sourceHash": "7918cafbe4b8e5ce49538c709c2ee076aede6a058c561fa08db37afa6b054fae",
+      "renderedHash": "75ce3f3fbaa86555263e466451e4e69c49f3634d7161695036e5a5692f91ff39",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7226,8 +7908,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "dd09cda45bb8cee2bc5fdd630b2cdf8caab84339458014203c1b305b59cdbac1",
-      "renderedHash": "014115705d1015953804ac8785cbeda366b447ecbee9f01467c3e4d313744f5c",
+      "sourceHash": "7918cafbe4b8e5ce49538c709c2ee076aede6a058c561fa08db37afa6b054fae",
+      "renderedHash": "75ce3f3fbaa86555263e466451e4e69c49f3634d7161695036e5a5692f91ff39",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7248,8 +7930,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "dd09cda45bb8cee2bc5fdd630b2cdf8caab84339458014203c1b305b59cdbac1",
-      "renderedHash": "014115705d1015953804ac8785cbeda366b447ecbee9f01467c3e4d313744f5c",
+      "sourceHash": "7918cafbe4b8e5ce49538c709c2ee076aede6a058c561fa08db37afa6b054fae",
+      "renderedHash": "75ce3f3fbaa86555263e466451e4e69c49f3634d7161695036e5a5692f91ff39",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7270,8 +7952,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "dd09cda45bb8cee2bc5fdd630b2cdf8caab84339458014203c1b305b59cdbac1",
-      "renderedHash": "014115705d1015953804ac8785cbeda366b447ecbee9f01467c3e4d313744f5c",
+      "sourceHash": "7918cafbe4b8e5ce49538c709c2ee076aede6a058c561fa08db37afa6b054fae",
+      "renderedHash": "75ce3f3fbaa86555263e466451e4e69c49f3634d7161695036e5a5692f91ff39",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7292,8 +7974,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "75aa49739fcf44ac86c685ca214e4e0da0347af7a1c12f2ad9855ff158df28d4",
-      "renderedHash": "e2fc0f2d96cc707334b710d31185d7c676664dda59964d9e7839487323b73f23",
+      "sourceHash": "a279b8f2cc78d4e6603227fad38328cc4534a9b9739a40a04bb8fdfaf2e26edd",
+      "renderedHash": "2d2509292a28542392d32c7d673433dd1284eb13b7215f26a47bd4ddde2c2769",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7324,8 +8006,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "75aa49739fcf44ac86c685ca214e4e0da0347af7a1c12f2ad9855ff158df28d4",
-      "renderedHash": "e2fc0f2d96cc707334b710d31185d7c676664dda59964d9e7839487323b73f23",
+      "sourceHash": "a279b8f2cc78d4e6603227fad38328cc4534a9b9739a40a04bb8fdfaf2e26edd",
+      "renderedHash": "2d2509292a28542392d32c7d673433dd1284eb13b7215f26a47bd4ddde2c2769",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7355,8 +8037,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "75aa49739fcf44ac86c685ca214e4e0da0347af7a1c12f2ad9855ff158df28d4",
-      "renderedHash": "e2fc0f2d96cc707334b710d31185d7c676664dda59964d9e7839487323b73f23",
+      "sourceHash": "a279b8f2cc78d4e6603227fad38328cc4534a9b9739a40a04bb8fdfaf2e26edd",
+      "renderedHash": "2d2509292a28542392d32c7d673433dd1284eb13b7215f26a47bd4ddde2c2769",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7386,8 +8068,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "75aa49739fcf44ac86c685ca214e4e0da0347af7a1c12f2ad9855ff158df28d4",
-      "renderedHash": "e2fc0f2d96cc707334b710d31185d7c676664dda59964d9e7839487323b73f23",
+      "sourceHash": "a279b8f2cc78d4e6603227fad38328cc4534a9b9739a40a04bb8fdfaf2e26edd",
+      "renderedHash": "2d2509292a28542392d32c7d673433dd1284eb13b7215f26a47bd4ddde2c2769",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7504,7 +8186,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "b1abb52430c72e07130bfd45c2ff3a297be5e9c4"
+      "commit": "ee635a83e913c13b79dc12e4ee2c97c395cc5704"
     }
   }
 }
