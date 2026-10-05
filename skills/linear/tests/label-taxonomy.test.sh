@@ -351,3 +351,20 @@ assert_ne "audit-absent: refused" "$rc" 0
 assert_file_contains "audit-absent: no taxonomy has nothing to audit against" \
   "$TMP_ROOT/audit-absent.err" "linear-labels: taxonomy-absent taxonomy=$NO_TAXONOMY/.agents/skills/project-management/SKILL.md"
 assert_not "audit-absent: no issue is read" grep -q AuditIssues "$TMP_ROOT/audit-absent.jsonl"
+
+# `labels declared` splits by the declared set the refusals above read.
+run_status rc run_labels declared "" "$LABELS_PROJECT" "$LABELS_PROJECT/.agents/skills/linear" declared "skills,legacy, bug,agent:runtime,harness"
+assert_eq "declared: succeeds" "$rc" 0
+assert "declared: keeps the declared names in list order and drops the rest" \
+  jq -e '. == {kept: ["skills", "bug", "agent:runtime"], dropped: ["legacy", "harness"]}' "$TMP_ROOT/declared.out"
+assert_not "declared: no request is sent" test -s "$TMP_ROOT/declared.jsonl"
+
+run_status rc run_labels declared-none "" "$NO_TAXONOMY" "$NO_TAXONOMY/.agents/skills/linear" declared "legacy,bug"
+assert_eq "declared-none: succeeds" "$rc" 0
+assert "declared-none: no taxonomy keeps every name" \
+  jq -e '. == {kept: ["legacy", "bug"], dropped: []}' "$TMP_ROOT/declared-none.out"
+
+run_status rc run_labels declared-differ "" "$TMP_ROOT/differ" "$TMP_ROOT/differ/.agents/skills/linear" declared bug
+assert_ne "declared-differ: refused" "$rc" 0
+assert_file_contains "declared-differ: an unreadable taxonomy splits nothing" \
+  "$TMP_ROOT/declared-differ.err" "linear-labels: taxonomy-unreadable"

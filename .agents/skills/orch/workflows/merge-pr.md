@@ -172,7 +172,7 @@ Active children pause the merge and ask the user per orphan — was the work lan
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
 ```
 
-Read `.title`, `.project.id`, and the joined label names for the new bundle, and take `[BUNDLE_PRIORITY]` as the highest priority across `[SAFE_IDS]` (Linear: `1`=Urgent…`4`=Low, lower wins; default `3`). Build `[BUNDLE_DESC]` per `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is this rebundle run: `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
+Read `.title`, `.project.id` and the label names, and split the names, joined by commas, by the taxonomy the create refuses against with `linear.sh labels declared "[NAMES]"`: `.kept`, joined the same way, is `[PARENT_LABELS]`, and `.dropped`, printed in this step's output, is `[DROPPED_LABELS]` (`none` when empty). A non-zero exit **aborts the merge**. Take `[BUNDLE_PRIORITY]` as the highest priority across `[SAFE_IDS]` (Linear: `1`=Urgent…`4`=Low, lower wins; default `3`). Build `[BUNDLE_DESC]` per `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is this rebundle run: `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[PARENT_TITLE] follow-ups" --description "[BUNDLE_DESC]" --project "[PARENT_PROJECT]" --labels "[PARENT_LABELS]" --priority [BUNDLE_PRIORITY] --format=ids
@@ -189,7 +189,7 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 ```
 
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE] --body "Pending children rebundled under [NEW_BUNDLE] before merge to avoid cascade-Done."
+.agents/skills/linear/scripts/linear.sh comments create [ISSUE] --body "Pending children rebundled under [NEW_BUNDLE] before merge to avoid cascade-Done. Labels the taxonomy does not declare, left off the bundle: [DROPPED_LABELS]."
 ```
 
 ## 5. Execute The Merge

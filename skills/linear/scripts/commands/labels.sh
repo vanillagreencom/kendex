@@ -19,6 +19,8 @@ Actions:
   delete  Delete a label
   audit   List labels on the team's open issues that the taxonomy does not
           declare, and team labels whose name a workspace label also uses
+  declared <a,b>  Split a label list into {kept, dropped} by the taxonomy, in
+          list order; with no taxonomy every name is kept. Sends no request.
 
 List Options:
   --team <ref>          Filter by team key or name (workspace labels if omitted)
@@ -396,6 +398,14 @@ audit_labels() {
         <<<"$declared"$'\n'"$issues"$'\n'"$labels"
 }
 
+declared_labels() {
+    local declared
+    declared=$(linear_declared_labels) || return 1
+    jq -cn --arg list "${1-}" --argjson declared "${declared:-null}" '$list | split(",")
+        | map(gsub("^ +| +$"; "") | select(length > 0)) | map(select($declared == null or IN($declared[]))) as $kept
+        | {kept: $kept, dropped: (. - $kept)}'
+}
+
 # Main routing
 action="${1:-help}"
 shift || true
@@ -412,6 +422,9 @@ case "$action" in
         ;;
     audit)
         audit_labels "$@"
+        ;;
+    declared)
+        declared_labels "$@"
         ;;
     update)
         if [ -z "${1:-}" ]; then
