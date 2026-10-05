@@ -1,6 +1,6 @@
 # Refresh
 
-Covers: crates/cli/src/commands/refresh.rs, crates/core/src/engine/removal.rs, crates/cli/src/commands/update_pi.rs
+Covers: crates/cli/src/commands/refresh.rs, crates/core/src/engine/removal.rs, crates/cli/src/commands/update_pi.rs, crates/core/src/engine/mod.rs, crates/core/src/engine/planned.rs, crates/core/src/engine/report_types.rs, crates/core/src/engine/scope_writes.rs
 
 ## Scope cleanup
 
