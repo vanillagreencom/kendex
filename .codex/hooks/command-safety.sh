@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns the hook off. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
 # summary: Refuses shell commands matching a project's deny pattern, a kilobyte or megabyte systemd-run memory cap by default, and every command while its settings file cannot be read.
-# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: When executed, blocks command text matching the project's policy, or the shipped default where the project sets none, before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -38,7 +38,7 @@ refuse() { # KEY VALUE [CAUSE]
       settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; the loader's line below names what to fix" ;;
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
-      refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
+      refused=policy) echo "the command text matches COMMAND_SAFETY_DENY_PATTERN, this project's setting or, where it sets none, the hook's default" ;;
       exit=*) echo "the command safety check could not complete" ;;
     esac
     # The cause a command this hook ran wrote, captured at the site and

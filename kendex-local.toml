@@ -1269,7 +1269,7 @@ name = "hooks"
 globs = ["hooks/**"]
 reviewer_only = true
 instructions = '''
-`hooks/command-safety.sh` uses `COMMAND_SAFETY_DENY_PATTERN` to reject matching command text. Nonmatching commands pass. Matching is textual, including quoted text. The default `^$` pattern leaves matching inactive. An explicitly empty or invalid pattern is refused when the hook evaluates the policy. Input or settings read failures also cause refusal.
+`hooks/command-safety.sh` uses `COMMAND_SAFETY_DENY_PATTERN` to reject matching command text. Nonmatching commands pass. Matching is textual, including quoted text. An absent setting applies the hook's default, which refuses a `systemd-run` memory cap in kilobytes or megabytes; the value `^$` turns matching off. An explicitly empty or invalid pattern is refused when the hook evaluates the policy. Input or settings read failures also cause refusal.
 '''
 
 [[bot-instructions.surface]]
