@@ -84,9 +84,8 @@ for needle, refused, deprecated, models in [
  mutant.write_text(changed)
  assert settings(refused, deprecated, models, mutant) == ''
 # Consumer settings: a retired key, a retired default under its own key and
-# each refresh or classifier note make one row; a current value, a retired
-# value under another key and an unlisted key make none. Rows are untrusted
-# text.
+# each classifier note make one row; a current value, a retired value under
+# another key and an unlisted key make none. Rows are untrusted text.
 gate = '- <code>PR_REVIEW_GATE</code>'
 timeout = '- <code>SECOND_OPINION_TIMEOUT = &quot;300&quot;</code>'
 unset = 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS'

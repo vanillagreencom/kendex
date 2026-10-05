@@ -89,8 +89,6 @@ case "$1" in
   --version) printf 'kendex 7.8.9 (release-build)\n'; exit "${TEST_VERSION_EXIT:-0}" ;;
   refresh)
     : >"$TEST_STATE/refreshed"
-    # A row's warnings, as refresh prints them beside its report.
-    [ -z "$TEST_REFRESH_NOTES" ] || printf '%s\n' "$TEST_REFRESH_NOTES" >&2
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
     if [ -n "$TEST_REFRESH_SKILL" ]; then
       rm -rf -- .agents/skills/review-gate
@@ -397,7 +395,7 @@ for mode in report committed-control notes-control; do
         '^    committed\+=\(' 's/^    committed+=(/    : # &/' ;;
     notes-control)
       file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        'cause=queue-settings-unreadable.) setting_notes\+=\(' '/cause=queue-settings-unreadable/s/setting_notes+=("\$line")/:/' ;;
+        'setting_notes\+=\(' 's/setting_notes+=("\$line")/:/' ;;
   esac
   commit "$repo"
   git -C "$repo" push -q origin main
@@ -434,47 +432,33 @@ for mode in report committed-control notes-control; do
 done
 # change-class prints a queue-only line on every verdict. Only a cause that
 # names the repository's settings joins Consumer settings: a clean consumer
-# and a refresh whose own path is a queue path keep the section out. A
-# doc-drift-check warning from kendex refresh joins it too. The forward
-# control forwards every queue-only line; the drift control drops the
-# refresh warning.
-drift='doc-drift-check: [hooks.doc-drift-check] in kendex.toml names a retired hook; entry skipped'
+# and a refresh whose own path is a queue path keep the section out. The
+# control forwards every queue-only line.
 for row in \
-  'clean|||' \
-  'queue-path|queue-only: queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*||' \
-  'settings-unreadable|queue-only: queue_only=true cause=queue-settings-unreadable||- <code>queue-only: queue_only=true cause=queue-settings-unreadable</code>' \
-  "doc-drift||$drift|- <code>$drift</code>" \
-  'forward-control|||' \
-  "drift-control||$drift|"; do
-  IFS='|' read -r name notes refresh_notes expected <<<"$row"
+  'clean||' \
+  'queue-path|queue-only: queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|' \
+  'settings-unreadable|queue-only: queue_only=true cause=queue-settings-unreadable|- <code>queue-only: queue_only=true cause=queue-settings-unreadable</code>' \
+  'forward-control||'; do
+  IFS='|' read -r name notes expected <<<"$row"
   reset_default
   cp "$TMP/stale-runner" "$runner"
   rm -f -- "${repo:?}/kendex.settings.toml"
-  case "$name" in
-    forward-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        "cause=queue-list-undeclared' \\|" \
-        "s/'queue-only: '\\*' cause=queue-list-undeclared'/'queue-only: '*/" ;;
-    drift-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-        "^    'doc-drift-check: '\\*) setting_notes" \
-        "s/^    'doc-drift-check: '\\*) setting_notes+=(\"\\\$line\")/    'doc-drift-check: '*) :/" ;;
-  esac
+  if [ "$name" = forward-control ]; then
+    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      "cause=queue-list-undeclared' \\|" \
+      "s/'queue-only: '\\*' cause=queue-list-undeclared'/'queue-only: '*/"
+  fi
   commit "$repo"
   git -C "$repo" push -q origin main
   : >"$TMP/state/calls"
-  CLASS_NOTES="$notes" REFRESH_NOTES="$refresh_notes"
+  CLASS_NOTES="$notes"
   run_refresh "notes-$name" pass render
-  unset CLASS_NOTES REFRESH_NOTES
+  unset CLASS_NOTES
   rows="$(grep -F -- '- <code>' "$TMP/state/body")" || rows=""
   if [ "$name" = forward-control ]; then
     if [ "$RC" -eq 0 ] && grep -qxF '## Consumer settings' "$TMP/state/body"; then
       ok 'control: forwarding every queue-only line turns the clean-consumer assertion red'
     else bad 'queue-only forwarding control' "$OUT"; fi
-  elif [ "$name" = drift-control ]; then
-    if [ "$RC" -eq 0 ] && ! grep -qxF '## Consumer settings' "$TMP/state/body"; then
-      ok 'control: a dropped refresh warning turns the doc-drift-check assertion red'
-    else bad 'refresh warning forwarding control' "$OUT"; fi
   elif [ -z "$expected" ]; then
     if refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
         ! grep -qxF '## Consumer settings' "$TMP/state/body" && [ -z "$rows" ]; then
@@ -482,8 +466,8 @@ for row in \
     else bad "$name classifier queue-only line" "$OUT"; fi
   elif refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
       grep -qxF '## Consumer settings' "$TMP/state/body" && [ "$rows" = "$expected" ]; then
-    ok "$name setting note appears under Consumer settings"
-  else bad "$name setting note" "$OUT"; fi
+    ok "$name classifier queue-only line appears under Consumer settings"
+  else bad "$name classifier queue-only line" "$OUT"; fi
 done
 # A report that cannot read the retired list stops before publication or
 # merge changes.
@@ -539,7 +523,7 @@ for mode in absent absent-control current current-control; do
   : >"$TMP/state/calls"
   case "$mode" in
     absent*) run_refresh stale pass render ;;
-    current*) REFRESH_NOTES="$drift" run_refresh current pass render ;;
+    current*) run_refresh current pass render ;;
   esac
   case "$mode" in
     absent)
@@ -554,9 +538,8 @@ for mode in absent absent-control current current-control; do
       if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
           grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
           grep -qxF '## Deprecated models' "$TMP/state/summary" &&
-          grep -qxF -- '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' "$TMP/state/summary" &&
-          grep -qxF -- "- <code>$drift</code>" "$TMP/state/summary"; then
-        ok 'a run with no render change reports the Astra pin and the refresh warning in its run summary'
+          grep -qxF -- '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' "$TMP/state/summary"; then
+        ok 'a run with no render change reports the Astra pin in its run summary'
       else bad 'no-change deprecated model summary' "$OUT"; fi ;;
     current-control)
       if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&

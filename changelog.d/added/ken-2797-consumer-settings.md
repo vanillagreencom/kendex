@@ -1,1 +1,1 @@
-- The kendex refresh pull request lists retired settings and defaults, unset or unreadable queue settings and doc-drift-check refresh warnings, and flags Fable or Astra pins even without orch.
+- The kendex refresh pull request lists retired settings and defaults and unset or unreadable queue settings, and flags Fable or Astra pins even without orch.
