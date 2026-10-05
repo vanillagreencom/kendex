@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply::{self, Op};
-use kendex_core::engine::{DeclarationStatus, PlanOptions, audit, plan_apply};
+use kendex_core::engine::{DeclarationStatus, EngineReport, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, Scope};
 
@@ -72,11 +72,38 @@ fn refresh_options() -> PlanOptions {
 }
 
 /// The note `refresh_failures` in the CLI's `engine_common.rs` turns into
-/// a failed refresh; this is its machine-read spelling.
-fn not_found_notes(notes: &[String]) -> Vec<&String> {
-    notes
+/// a failed refresh; this is its machine-read spelling. Only the key of
+/// each such note comes back: a failure message prints these, and a note
+/// may quote plan material.
+fn not_found_keys(report: &EngineReport) -> Vec<String> {
+    report
+        .notes
         .iter()
         .filter(|note| note.contains("not found in source"))
+        .map(|note| note.split(':').next().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// The names of the hook warnings, the view a failure message prints.
+fn hook_warning_names(report: &EngineReport) -> Vec<String> {
+    report
+        .warnings
+        .iter()
+        .filter(|w| w.kind == ItemKind::Hook)
+        .map(|w| w.name.clone())
+        .collect()
+}
+
+/// The paths the plan trashes, the view a failure message prints.
+fn trash_paths(report: &EngineReport) -> Vec<PathBuf> {
+    report
+        .plan
+        .ops
+        .iter()
+        .filter_map(|op| match &op.op {
+            Op::Trash { path, .. } => Some(path.clone()),
+            _ => None,
+        })
         .collect()
 }
 
@@ -89,34 +116,22 @@ fn a_retired_hook_still_declared_is_skipped_with_one_warning_and_swept() {
     let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
     assert_eq!(report.declaration_status, DeclarationStatus::Complete);
-    assert!(
-        not_found_notes(&report.notes).is_empty(),
-        "{:?}",
-        report.notes
-    );
-    let retired: Vec<_> = report
+    assert_eq!(not_found_keys(&report), Vec::<String>::new());
+    assert_eq!(hook_warning_names(&report), ["doc-drift-check"]);
+    let retired = report
         .warnings
         .iter()
-        .filter(|w| w.kind == ItemKind::Hook && w.name == "doc-drift-check")
-        .collect();
-    assert_eq!(retired.len(), 1, "{:?}", report.warnings);
-    assert_eq!(retired[0].harness, None);
+        .find(|w| w.kind == ItemKind::Hook && w.name == "doc-drift-check")
+        .unwrap();
+    assert_eq!(retired.harness, None);
     // The line the consumer refresh report (KEN-2797) forwards from a
     // `kendex refresh` capture: the hook name, a colon, one space.
     assert!(
-        retired[0].message.starts_with("doc-drift-check: "),
-        "{}",
-        retired[0].message
+        retired.message.starts_with("doc-drift-check: "),
+        "the warning message is not keyed by the hook name"
     );
-    assert!(
-        report
-            .plan
-            .ops
-            .iter()
-            .any(|op| matches!(&op.op, Op::Trash { path, .. } if path == &f.script)),
-        "{:?}",
-        report.plan.ops
-    );
+    let trashed = trash_paths(&report);
+    assert!(trashed.contains(&f.script), "trashed: {trashed:?}");
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.script.exists(), "the stranded copy comes out");
 }
@@ -132,25 +147,15 @@ fn an_unknown_hook_name_keeps_the_refusal() {
     let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
     assert_eq!(report.declaration_status, DeclarationStatus::Incomplete);
-    let notes = not_found_notes(&report.notes);
-    assert_eq!(notes.len(), 1, "{:?}", report.notes);
+    assert_eq!(not_found_keys(&report), ["other-check"]);
     assert!(
-        notes[0].starts_with("other-check: not found in source 'cat'"),
-        "{}",
-        notes[0]
-    );
-    assert!(
-        report.warnings.iter().all(|w| w.name != "other-check"),
-        "{:?}",
-        report.warnings
-    );
-    assert!(
-        !report
-            .plan
-            .ops
+        report
+            .notes
             .iter()
-            .any(|op| matches!(&op.op, Op::Trash { path, .. } if path == &f.script)),
-        "{:?}",
-        report.plan.ops
+            .any(|note| note.starts_with("other-check: not found in source 'cat'")),
+        "the refusal note does not open with the hook name and the source"
     );
+    assert_eq!(hook_warning_names(&report), Vec::<String>::new());
+    let trashed = trash_paths(&report);
+    assert!(!trashed.contains(&f.script), "trashed: {trashed:?}");
 }
