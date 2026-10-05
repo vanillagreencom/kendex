@@ -103,3 +103,10 @@ control_expect "the unstaged report shows the assertion the suite failed on"
 control_replace tests/must-fail-controls.sh 1 \
 	"		} | sed 's/^/         | /'" \
 	'		} >/dev/null'
+
+# 16. The wait for every mutation of a control, back to the last one alone. Jobs
+#     finish in any order, so a first mutation still running reads as passed.
+control_expect "a control whose first mutation finishes last is judged on it"
+control_replace tests/must-fail-controls.sh 1 \
+	'			for ((k = 1; k <= n; k++)); do' \
+	'			for ((k = n; k <= n; k++)); do'

@@ -102,7 +102,7 @@ assert_file_contains "the targeted run counts the orphan" \
 
 # --- a control that does not red its suite is a failure --------------------
 # The runner judges each control in a background job and turns its status into
-# the verdict when that batch is reaped. Nothing above reaches that path: every
+# the verdict when that job is waited for. Nothing above reaches that path: every
 # control there works, so the count is always "0 failing" and the line could be
 # deleted with all of it still green. Here the mutation lands (the tree really
 # changes, so it is not NOOP) on a file the suite never reads, which leaves the
@@ -124,12 +124,11 @@ assert_file_contains "the failing control is counted, not just printed" \
     "$TMP/green.log" "1 controls, 1 failing, 0 orphaned"
 
 # --- a junk job width is refused ------------------------------------------
-# Not clamped and not defaulted. Left to reach the batching predicate, a width
+# Not clamped and not defaulted. Left to reach the slot predicate, a width
 # outside the grammar decides two ways and neither is the one the caller asked
 # for: on Bash 4.4 and newer arithmetic honours set -u, so the unbound name
 # aborts the run with controls already launched, and on 4.0 through 4.2 the
-# same name reads as 0, the batch collapses to one, and the whole roster runs
-# serially.
+# same name reads as 0 and the runner waits for a slot no job will free.
 jobs_log="$TMP/jobs.log"
 CONTROL_JOBS=some bash "$matched/tests/must-fail-controls.sh" >"$jobs_log" 2>&1
 rc=$?
@@ -138,9 +137,9 @@ assert_file_contains "the refusal names the setting and the value" \
     "$jobs_log" "CONTROL_JOBS must be a positive integer, got: some"
 assert_file_lacks "a refused width judges nothing" "$jobs_log" "controls, "
 
-# A width outside signed 64-bit arithmetic is junk of the same kind: the
-# batching predicate compares against the wrap, reads 2^64 as zero, and reaps
-# after every launch, so the roster runs one control at a time.
+# A width outside signed 64-bit arithmetic is junk of the same kind: the slot
+# predicate compares against the wrap, reads 2^64 as zero, and waits the same
+# way.
 wide_log="$TMP/jobs-wide.log"
 CONTROL_JOBS=18446744073709551616 bash "$matched/tests/must-fail-controls.sh" >"$wide_log" 2>&1
 rc=$?

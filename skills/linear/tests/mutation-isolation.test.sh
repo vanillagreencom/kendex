@@ -27,6 +27,8 @@
 #     mutation whose line the file lacks is BADCTRL
 #   - under UNSTAGED the runner prints the assertion the suite failed on, so
 #     the committer reads it there rather than in a second run
+#   - a control is judged once every mutation's run is in, so one whose first
+#     mutation finishes after its last is judged on that first mutation
 #
 # One table. A row names the fixture, the control it writes, the cap, what it
 # keeps of the run, and the run's verdict block whole: the exit status, every
@@ -42,6 +44,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
 assert_tmpdir TMP
+# Two slots on any machine: the `late` row's first mutation waits on its
+# second, which a single slot would never start.
+export CONTROL_JOBS=2
 
 # A one-suite skill over four values and an inert fifth file. Two of its claims
 # share a prefix, so a control naming the shorter one is refused unless the
@@ -121,6 +126,13 @@ control_replace scripts/b.sh 1 '"'"'B=1'"'"' '"'"'B=2'"'"'' ;;
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=2'"'"'
 control_expect "b is one"
 control_replace scripts/inert.sh 1 '"'"'INERT=1'"'"' '"'"'INERT=2'"'"'' ;;
+    # The first mutation leaves the suite passing, and finishes only once the
+    # runner has recorded the second's status, three levels above its copy:
+    # the runner then has the last mutation in and the first still out.
+    late) body='control_expect "a is one"
+control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; until [ -e "$D/../../../mutation2.rc" ]; do sleep 0.05; done'"'"'
+control_expect "b is one"
+control_replace scripts/b.sh 1 '"'"'B=1'"'"' '"'"'B=2'"'"'' ;;
     # The run reddens on the clock rather than on the mutation.
     capped) body='control_expect "a is one"
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; sleep 2'"'"'' ;;
@@ -194,6 +206,7 @@ the misnamed report names the mutation and the assertion|plain|misnamed|-|verdic
 the shared report names the assertion|plain|shared|-|verdicts|rc=1;SHARED alpha.test.sh two mutations name one assertion: a is one;1 controls, 1 failing, 0 orphaned
 the unnamed report names the mutation|plain|unnamed|-|verdicts|rc=1;NOEXPECT alpha.test.sh mutation 2 names no assertion;1 controls, 1 failing, 0 orphaned
 the green report names its suite|plain|green|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 2, its only break;1 controls, 1 failing, 0 orphaned
+a control whose first mutation finishes last is judged on it|plain|late|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 the timeout report names the mutation and the cap|plain|capped|1|verdicts|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
 the ungated report says what it refuses|plain|ungated|-|verdicts|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
 the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned

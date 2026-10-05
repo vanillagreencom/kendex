@@ -436,7 +436,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -987,6 +987,7 @@ jobs:
           fail=0
           failed=""
           for t in "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
+            case "$t" in skills/linear/tests/must-fail-controls.sh) continue ;; esac
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -998,6 +999,16 @@ jobs:
             echo "FAILED SUITES:$failed"
           fi
           exit "$fail"
+
+      # ---- shard: linear-controls — the linear skill's must-fail control
+      # battery, which the step above skips. It reruns each linear suite once
+      # from a copy and once per mutation of its control, 388 suite runs, and
+      # took 587s and 606s of the linear shard on runs 37293196678 and
+      # 37306284963, which ran 14m41s and hit the 15-minute ceiling. Like the
+      # linear CLI it needs Bash 4, so the macOS leg excludes it.
+      - name: linear must-fail controls
+        if: matrix.shard == 'linear-controls'
+        run: bash skills/linear/tests/must-fail-controls.sh
 
       # ---- shard: worktree — the roster that held half of `rest`'s time.
       # `rest` ran 735-845s on the macOS leg over 79 files, 780s of it on run
@@ -1378,12 +1389,15 @@ jobs:
       matrix:
         shard: *skill-suite-shards
         os: [macos-latest]
-        # These packages contain no shell suites.
+        # node and pi-claude-bridge contain no shell suites, and
+        # linear-controls runs the linear suites, which need Bash 4.
         exclude:
           - os: macos-latest
             shard: node
           - os: macos-latest
             shard: pi-claude-bridge
+          - os: macos-latest
+            shard: linear-controls
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

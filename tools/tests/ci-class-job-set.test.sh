@@ -45,7 +45,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -worktree -rest -slack -node -pi-claude-bridge"
+NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -linear-controls -worktree -rest -slack -node -pi-claude-bridge"
 ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-succeed +orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
@@ -104,8 +104,9 @@ micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guard
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
 micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
-micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +guards-tools
-micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear +guards-commit
+micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear -linear-controls +guards-tools
+micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
 micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest

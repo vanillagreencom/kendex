@@ -47,9 +47,9 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # it recorded when it launched them: every lane on this machine runs these
 # same suites out of its own worktree, so an argv match would reach theirs
 # too. Bash ignores INT in the async children of a shell without job control,
-# so Ctrl-C never reaches them on its own; TERM does. The `timeout` child each
-# control spawned is a grandchild this does not reach; it retires itself
-# within SUITE_TIMEOUT.
+# so Ctrl-C never reaches them on its own; TERM does. The job body each one
+# runs in a subshell, and the `timeout` under it, are grandchildren this does
+# not reach; each retires itself within SUITE_TIMEOUT.
 # One trap each, so the code a wrapper reads says which signal arrived: an
 # interrupt and a kill are the same cleanup but not the same event.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
@@ -66,14 +66,22 @@ die() {
 	exit 2
 }
 
-# A junk width otherwise reaches the batching predicate, where Bash 4.4 and
-# newer abort on the unbound name mid-roster and 4.0 through 4.2 read it as 0
-# and run every control one at a time. The digit count is part of the grammar:
+# A junk width otherwise reaches the slot predicate, where Bash 4.4 and newer
+# abort on the unbound name mid-roster and 4.0 through 4.2 read it as 0 and
+# wait for a slot no job will free. The digit count is part of the grammar:
 # 19 digits or more is past what signed 64-bit shell arithmetic holds, and the
-# predicate compares against the wrap, which reaps every iteration when it
-# lands at or below zero.
+# predicate compares against the wrap, which waits the same way when it lands
+# at or below zero.
 [[ "$CONTROL_JOBS" =~ ^[1-9][0-9]{0,17}$ ]] ||
 	die "CONTROL_JOBS must be a positive integer, got: $CONTROL_JOBS"
+
+# Each job writes its launch number here as it finishes, so the runner blocks
+# on a read until a slot frees instead of waiting out a whole batch: `wait -n`
+# would do the same, but this skill supports Bash 4.0 and newer (README
+# § Setup) and `wait -n` arrived in 4.3. Opened read-write so neither end
+# blocks the open.
+{ mkfifo "$WORK/done" && exec 3<>"$WORK/done"; } ||
+	die "cannot open the job completion pipe in $WORK"
 
 control_die() {
 	printf 'control %s: %s\n' "$CONTROL_NAME" "$*" >&2
@@ -161,43 +169,70 @@ control_write() {
 
 # --- runner -----------------------------------------------------------------
 
+# Indexed by launch number. A pid is dropped once its job has been waited
+# for, so the interrupt traps never signal a number the system has since given
+# to someone else's process.
 PIDS=()
 JOBS=()
+LAUNCHED=0
+RUNNING=0
 SELECTED=()
 NEXT=0
 FAILURES=0
 
-# launch JOB COMMAND... — COMMAND in the background, logging to JOB's log.
+# launch JOB COMMAND... — COMMAND in the background once a slot is free.
 launch() {
-	local job="$1"
+	local job="$1" n="$LAUNCHED"
 	shift
-	"$@" >"$WORK/$job.log" 2>&1 &
-	PIDS+=("$!")
-	JOBS+=("$job")
-	[[ ${#PIDS[@]} -lt "$CONTROL_JOBS" ]] || reap
+	while [[ "$RUNNING" -ge "$CONTROL_JOBS" ]]; do
+		settle
+	done
+	JOBS[n]="$job"
+	run_job "$n" "$@" &
+	PIDS[n]="$!"
+	LAUNCHED=$((LAUNCHED + 1))
+	RUNNING=$((RUNNING + 1))
 }
 
-# Wait out the launched batch, record each job's status, then print what
-# that batch completed. `wait -n` would keep the pipe full
-# instead of draining it in batches, but this skill supports Bash 4.0 and
-# newer (README § Setup) and `wait -n` arrived in 4.3.
+# run_job N COMMAND... — COMMAND logging to job N's log, then N on the
+# completion pipe, exiting with COMMAND's status. COMMAND runs in a subshell
+# of its own, so a job that exits, or dies on a signal, still announces itself
+# rather than leaving the runner blocked on a line that never comes. One line
+# is one write, well under the pipe's atomic size, so lines never interleave.
+run_job() {
+	local n="$1" rc
+	shift
+	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&-
+	rc=$?
+	printf '%s\n' "$n" >&3
+	return "$rc"
+}
+
+# Wait for the next job to finish, record its status, then print what it
+# completed.
 #
-# Printing here rather than after the last batch is what a run killed by CI,
+# Printing here rather than after the last job is what a run killed by CI,
 # a wrapper timeout or Ctrl-C leaves behind: the verdicts already reached.
-reap() {
-	local i
-	for ((i = 0; i < ${#PIDS[@]}; i++)); do
-		wait "${PIDS[i]}"
-		printf '%s\n' "$?" >"$WORK/${JOBS[i]}.rc"
-	done
-	PIDS=()
-	JOBS=()
+settle() {
+	local n
+	read -r -u 3 n || die "the job completion pipe closed"
+	wait "${PIDS[n]}"
+	printf '%s\n' "$?" >"$WORK/${JOBS[n]}.rc"
+	unset 'PIDS[n]' 'JOBS[n]'
+	RUNNING=$((RUNNING - 1))
 	flush
 }
 
-# Print each verdict in roster order up to the first not yet in. Batches are
-# reaped whole in launch order, so a control's last mutation reaped means all
-# were. A control scores once, printing its lowest-numbered failing mutation.
+# Wait out every running job; the mutations need the checks' counts.
+drain() {
+	while [[ "$RUNNING" -gt 0 ]]; do
+		settle
+	done
+}
+
+# Print each verdict in roster order up to the first not yet in. Jobs finish
+# in any order, so a control is in only once every one of its mutations is.
+# A control scores once, printing its lowest-numbered failing mutation.
 flush() {
 	local stem n k log
 	while [[ "$NEXT" -lt ${#SELECTED[@]} ]]; do
@@ -206,7 +241,9 @@ flush() {
 		log="$WORK/$stem.log"
 		if [[ "$(cat "$WORK/$stem.rc")" -eq 0 ]]; then
 			n="$(cat "$WORK/$stem.count")"
-			[[ -f "$WORK/$stem/mutation$n.rc" ]] || return 0
+			for ((k = 1; k <= n; k++)); do
+				[[ -f "$WORK/$stem/mutation$k.rc" ]] || return 0
+			done
 			log=""
 			for ((k = n; k >= 1; k--)); do
 				[[ "$(cat "$WORK/$stem/mutation$k.rc")" -eq 0 ]] ||
@@ -465,14 +502,14 @@ main() {
 		SELECTED+=("$stem")
 		launch "$stem" prepare_one "$suite" "$stem"
 	done
-	reap
+	drain
 	for stem in ${SELECTED[@]+"${SELECTED[@]}"}; do
 		[[ "$(cat "$WORK/$stem.rc")" -eq 0 ]] || continue
 		for ((k = 1; k <= $(cat "$WORK/$stem.count"); k++)); do
 			launch "$stem/mutation$k" mutate_one "$stem.test.sh" "$stem" "$k"
 		done
 	done
-	reap
+	drain
 
 	[[ "$total" -gt 0 ]] || die "selection matched no suites"
 

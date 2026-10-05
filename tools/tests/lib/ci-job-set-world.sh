@@ -90,7 +90,7 @@ record() { # EVENT CLASS DOCS PATH... — a proving run's record, its lines join
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","worktree","rest","slack","node","pi-claude-bridge"]'
+ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","linear-controls","worktree","rest","slack","node","pi-claude-bridge"]'
 ORCH='"orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest"'
 # The runner lists the shell shards expand on, as ci-job-set spells them.
 LINUX='["ubuntu-latest"]'
