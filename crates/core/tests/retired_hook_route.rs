@@ -1,7 +1,8 @@
-//! A declaration naming a hook the catalog retired is skipped with a
-//! warning carrying the manifest edit, and the copies it installed come
-//! out in the sweep; every other name the catalog does not carry keeps the
-//! refusal that fails a refresh, so a retired name cannot hide a typo.
+//! A declaration naming a retired hook is skipped with a warning carrying
+//! the manifest edit, whether or not the catalog still carries the hook,
+//! and the copies an earlier release installed come out in the sweep;
+//! every other name the catalog does not carry keeps the refusal that
+//! fails a refresh, so a retired name cannot hide a typo.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -21,6 +22,7 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
     scope: Scope,
+    project: PathBuf,
     script: PathBuf,
     catalog_copy: PathBuf,
 }
@@ -58,9 +60,40 @@ fn installed(name: &str) -> Fixture {
         _tmp: tmp,
         env,
         scope,
+        project,
         script,
         catalog_copy,
     }
+}
+
+/// A project an earlier release installed the retired hook `name` into,
+/// from a catalog that carried it. This release installs no retired hook,
+/// so the fixture installs a stand-in and renames it to `name` in every
+/// file the install wrote.
+#[allow(clippy::unwrap_used)]
+fn installed_by_an_earlier_release(name: &str) -> Fixture {
+    const STAND_IN: &str = "stand-in-check";
+    let mut f = installed(STAND_IN);
+    for file in [
+        f.project.join("kendex.toml"),
+        f.project.join(".kendex-lock.json"),
+        f.project.join(".claude/settings.json"),
+    ] {
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains(STAND_IN),
+            "{} names no stand-in",
+            file.display()
+        );
+        fs::write(&file, text.replace(STAND_IN, name)).unwrap();
+    }
+    let script = f.script.with_file_name(format!("{name}.sh"));
+    fs::rename(&f.script, &script).unwrap();
+    let catalog_copy = f.catalog_copy.with_file_name(format!("{name}.sh"));
+    fs::rename(&f.catalog_copy, &catalog_copy).unwrap();
+    f.script = script;
+    f.catalog_copy = catalog_copy;
+    f
 }
 
 /// Refresh's plan: the sweep on, orphan removal off.
@@ -94,6 +127,22 @@ fn hook_warning_names(report: &EngineReport) -> Vec<String> {
         .collect()
 }
 
+/// The paths a plan op other than a trash writes whose file name opens with
+/// `name`, the view a failure message prints.
+fn written_hook_files(report: &EngineReport, name: &str) -> Vec<PathBuf> {
+    report
+        .plan
+        .ops
+        .iter()
+        .filter(|op| !matches!(op.op, Op::Trash { .. }))
+        .flat_map(|op| op.op.touched())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|file| file.to_string_lossy().starts_with(name))
+        })
+        .collect()
+}
+
 /// The paths the plan trashes, the view a failure message prints.
 fn trash_paths(report: &EngineReport) -> Vec<PathBuf> {
     report
@@ -107,33 +156,46 @@ fn trash_paths(report: &EngineReport) -> Vec<PathBuf> {
         .collect()
 }
 
+/// One row per catalog state: the retired hook removed, and the hook still
+/// carried, as the KEN-2967 stub is.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_retired_hook_still_declared_is_skipped_with_one_warning_and_swept() {
-    let f = installed("doc-drift-check");
-    fs::remove_file(&f.catalog_copy).unwrap();
+    for catalog_carries_it in [false, true] {
+        let f = installed_by_an_earlier_release("doc-drift-check");
+        if !catalog_carries_it {
+            fs::remove_file(&f.catalog_copy).unwrap();
+        }
 
-    let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
-    assert_eq!(report.declaration_status, DeclarationStatus::Complete);
-    assert_eq!(not_found_keys(&report), Vec::<String>::new());
-    assert_eq!(hook_warning_names(&report), ["doc-drift-check"]);
-    let retired = report
-        .warnings
-        .iter()
-        .find(|w| w.kind == ItemKind::Hook && w.name == "doc-drift-check")
-        .unwrap();
-    assert_eq!(retired.harness, None);
-    // The line the consumer refresh report (KEN-2797) forwards from a
-    // `kendex refresh` capture: the hook name, a colon, one space.
-    assert!(
-        retired.message.starts_with("doc-drift-check: "),
-        "the warning message is not keyed by the hook name"
-    );
-    let trashed = trash_paths(&report);
-    assert!(trashed.contains(&f.script), "trashed: {trashed:?}");
-    apply::execute(&f.env, &report.plan).unwrap();
-    assert!(!f.script.exists(), "the stranded copy comes out");
+        let row = format!("catalog carries it: {catalog_carries_it}");
+        assert_eq!(
+            report.declaration_status,
+            DeclarationStatus::Complete,
+            "{row}"
+        );
+        assert_eq!(not_found_keys(&report), Vec::<String>::new(), "{row}");
+        assert_eq!(hook_warning_names(&report), ["doc-drift-check"], "{row}");
+        let retired = report
+            .warnings
+            .iter()
+            .find(|w| w.kind == ItemKind::Hook && w.name == "doc-drift-check")
+            .unwrap();
+        assert_eq!(retired.harness, None, "{row}");
+        // The line the consumer refresh report (KEN-2797) forwards from a
+        // `kendex refresh` capture: the hook name, a colon, one space.
+        assert!(
+            retired.message.starts_with("doc-drift-check: "),
+            "{row}: the warning message is not keyed by the hook name"
+        );
+        let written = written_hook_files(&report, "doc-drift-check");
+        assert_eq!(written, Vec::<PathBuf>::new(), "{row}");
+        let trashed = trash_paths(&report);
+        assert!(trashed.contains(&f.script), "{row}: trashed: {trashed:?}");
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert!(!f.script.exists(), "{row}: the stranded copy comes out");
+    }
 }
 
 /// The must-fail control: a hook name that is merely absent keeps the
