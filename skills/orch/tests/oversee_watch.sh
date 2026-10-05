@@ -74,6 +74,11 @@
 #       lists it in between; a pass that fails before reporting leaves the
 #       absence for the next pass; each repeat-mode refusal exits 2 with its
 #       keyed first line
+#   8d. ORCH_CONNECTED_REPOS: each listed repository is read by the merged
+#       lookup and the heartbeat's open pull request list after the --repo
+#       values or the resolved default, in repeat mode too, once and in one
+#       spelling, with one must-fail control per rule; a setting orch-env
+#       cannot read exits 2 before any pass, with its control
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -1690,6 +1695,85 @@ for row in \
   assert_eq "$(sed -n 1p "$err")" "${want//%S/$STUB_DIR}" "$label: names its key and value first" "$err"
   [[ -z "$detail" ]] || assert_contains "$(sed -n 3p "$err")" "$detail" "$label: the detail line names the rule that refused it"
 done
+
+# --- 8d. ORCH_CONNECTED_REPOS adds watched repositories --------------------
+# Each entry the setting lists is read after the --repo values, the items
+# repository first, and an entry a --repo already names is read once. The
+# reads proven are the merged lookup for the item and the heartbeat's open
+# pull request list. The repeat row hands its pass a --repo for every
+# repository the wrapper settled, and that pass reads the setting again.
+# connected_case NAME SETTING MODE [WATCH] — MODE is `repo` (--repo owner/repo),
+# `default` (no --repo, `gh repo view` answering owner/repo) or `repeat`
+# (--repo owner/repo under --repeat over one running record for issue-5, the
+# state taken away after the first pass), each one long pass. SETTING
+# `absent` sets nothing.
+# Sets CONNECTED_MERGED and CONNECTED_OPEN to the repository of each merged
+# lookup and each heartbeat open pull request line, in the order asked.
+connected_case() {
+  local name="$1" setting="$2" mode="$3" env_args=() args=()
+  new_case "$name"
+  printf '9\tissue-9\titems side\n' > "$STUB_DIR/open.owner_repo.txt"
+  printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
+  [[ "$setting" == absent ]] || env_args+=("ORCH_CONNECTED_REPOS=$setting")
+  case "$mode" in
+    repo) args=(--repo owner/repo --max-loops 1 --since 2026-08-15T09:00:00Z --item issue-5) ;;
+    default)
+      printf 'owner/repo\n' > "$STUB_DIR/repoview.txt"
+      args=(--no-repo --max-loops 1 --since 2026-08-15T09:00:00Z --item issue-5) ;;
+    repeat)
+      write_state "$STUB_DIR/state.json" "$(lane_record issue-5 '' '' /w/issue-5 running)"
+      repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+      env_args+=(PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH")
+      args=(--repo owner/repo --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json") ;;
+  esac
+  err="$TMP_ROOT/e-$name"
+  out="$(WATCH_BIN="${4:-}" run_watch ${env_args[@]+"${env_args[@]}"} -- "${args[@]}" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  CONNECTED_MERGED="$(awk '/--head issue-5 --state merged/ { for (i = 1; i < NF; i++) if ($i == "--repo") { printf "%s%s", sep, $(i + 1); sep = " " } }' "$STUB_DIR/gh.calls")"
+  CONNECTED_OPEN="$(awk -F'\t' '$2 ~ /^[0-9]+$/ && $3 == "issue-9" { printf "%s%s", sep, $1; sep = " " }' <<<"$out")"
+}
+for row in \
+  "connected_listed|Other/Repo owner/repo|repo|0|owner/repo other/repo|a listed repository is read after --repo, once, in one spelling" \
+  "connected_default|other/repo|default|0|owner/repo other/repo|a listed repository is read after the resolved default" \
+  "connected_repeat|other/repo owner/repo|repeat|2|owner/repo other/repo|repeat mode's pass reads a listed repository the wrapper handed it" \
+  "connected_absent|absent|repo|0|owner/repo|with no setting only --repo is read"; do
+  IFS='|' read -r name setting mode want_rc want label <<<"$row"
+  connected_case "$name" "$setting" "$mode"
+  assert_eq "rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN" "rc=$want_rc merged=$want open=$want" "$label" "$err"
+done
+# One must-fail control per rule, each turning the first row's assertion red:
+# the entry added, an entry --repo names skipped, and the entry lowercased.
+connected_control() { # NAME OLD NEW LABEL
+  local scripts got
+  scripts="$(mutant_scripts "$1/orch" oversee-watch)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
+  mutate_file "$scripts/oversee-watch" "$2" "$3"
+  connected_case "$1" "Other/Repo owner/repo" repo "$scripts/oversee-watch"
+  got="rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN"
+  assert_eq "red=$([[ "$got" != "rc=0 merged=owner/repo other/repo open=owner/repo other/repo" ]] && echo yes || echo no)" \
+    "red=yes" "control: $4 ($got)" "$err"
+}
+connected_control connected-add '    REPOS+=("$repo")' '    :' "the add removed"
+connected_control connected-skip '    if grep -qxF -- "$repo" <<<"$repos_seen"; then continue; fi' '    :' "the skip removed"
+connected_control connected-case "    repo=\"\$(printf '%s' \"\$repo\" | tr '[:upper:]' '[:lower:]')\"" '    :' "the lowercasing removed"
+# A setting orch-env refuses to read ends the watch before any pass rather than
+# watching fewer repositories: ORCH_CONSUMER_REPOS is the retired setting
+# orch-env refuses on every read.
+connected_unread_case() { # NAME [WATCH]
+  new_case "$1"
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch ORCH_CONSUMER_REPOS=x/y -- --repo owner/repo 2>"$err" </dev/null)" && rc=0 || rc=$?
+  CONNECTED_UNREAD="$(grep -c '^oversee-watch: connected-repos-unread setting=ORCH_CONNECTED_REPOS$' "$err" || true)"
+}
+connected_unread_case connected_unread
+assert_eq "rc=$rc unread=$CONNECTED_UNREAD out=$out" "rc=2 unread=1 out=" \
+  "a setting orch-env cannot read exits 2 naming it, with no pass run" "$err"
+UNREAD_MUTANT_DIR="$TMP_ROOT/connected-unread-mutant"
+UNREAD_MUTANT="$(mutant_scripts connected-unread-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$UNREAD_MUTANT_DIR/github"
+mutate_file "$UNREAD_MUTANT" '    || die connected-repos-unread' '    || true || die connected-repos-unread'
+connected_unread_case connected_unread_control "$UNREAD_MUTANT"
+assert_eq "rc=$rc unread=$CONNECTED_UNREAD" "rc=0 unread=0" \
+  "control: with the refusal removed the watch runs on without the setting" "$err"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

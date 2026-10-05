@@ -574,7 +574,9 @@ Options:
   --repo OWNER/REPO   repository; repeatable and case-normalized. Every
                       check reads all of them; triage and lane rows persist
                       in the first one's baseline, mail rows in the file
-                      beside it
+                      beside it. ORCH_CONNECTED_REPOS below adds more after
+                      them; with none given, the first is the repository
+                      this checkout resolves to
   --hosted ITEM=REMOTE_ROOT
                       the item's lane lives on another host; its mailbox is
                       read through `lane-host` against REMOTE_ROOT rather
@@ -798,6 +800,12 @@ Environment:
                               credential, keeps prior rows and makes no alert
                               API call. With ORCH_SECURITY_ALERTS=off it is
                               not read
+  ORCH_CONNECTED_REPOS        blank-separated OWNER/REPO list, read through
+                              orch-env in this checkout: each entry is a
+                              watched repository after the --repo values, an
+                              entry they already name skipped. Each one adds
+                              its reads to every long pass, as a --repo does.
+                              An unreadable setting exits 2
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -961,6 +969,7 @@ ow_message() { # REASON FIELD=VALUE...
     auth-failed) text='No configured GitHub credential works. Run gh auth login.' ;;
     repo-unresolved) text='Specify a repository because GitHub could not resolve it.' ;;
     repo-duplicate) text='Name each repository once.' ;;
+    connected-repos-unread) text='orch-env could not read ORCH_CONNECTED_REPOS in this checkout, so the watched repositories are unknown. Its own words are above.' ;;
     pr-list-failed) text='The GitHub PR list command failed.' ;;
     pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
     outside-list-failed) text='The GitHub list of open issues and pull requests the outside-contribution check reads failed.' ;;
