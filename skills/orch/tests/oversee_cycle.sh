@@ -510,23 +510,28 @@ ROWS
 
 echo "=== a miss always records a cause ==="
 # A miss's cause is the wait its phase reads, else its phase, else unread
-# where a missing stamp leaves no phase; a met record names none.
-#   label|merged|ci_green|line|cause written
-miss_cause_case() { # NAME MERGED CI_GREEN
+# where a missing stamp leaves no phase; a met record names none. A merge
+# with neither an arm nor a queue event, as pr-merge's admin route merges,
+# reads its phase and its gate waits from the stamps it has: the merged gap
+# opens at ci_green.
+#   label|merged|ci_green|armed|line|cause written
+miss_cause_case() { # NAME MERGED CI_GREEN [ARMED] — ARMED `null` drops armed and queued
   new_case "$1"
   printf micro > "$CASE/class"
   timeline "$2"
   [[ "$3" != null ]] || edit_json "$CASE/timeline.json" '.stamps.ci_green = null'
+  [[ "${4:-}" != null ]] || edit_json "$CASE/timeline.json" '.stamps.armed = null | .stamps.queued = null'
 }
-while IFS='|' read -r label merged ci want stored; do
-  miss_cause_case "miss-cause-${label// /-}" "$merged" "$ci"
+while IFS='|' read -r label merged ci armed want stored; do
+  miss_cause_case "miss-cause-${label// /-}" "$merged" "$ci" "$armed"
   got="$(record KEN-1 micro)"
-  assert_eq "$(field verdict "$got") $(field phase "$got") $(field cause "$got")" "$want" "$label"
+  assert_eq "$(field verdict "$got") $(field phase "$got") $(field phase_secs "$got") $(field cause "$got") $(field bot_wait "$got")" "$want" "$label"
   assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.cause')" "$stored" "$label: the record carries it"
 done <<'ROWS'
-a miss with a stamp missing reads no phase and records unread|5000|null|verdict=miss phase=- cause=unread|"unread"
-a miss on merged records its phase|5000|360|verdict=miss phase=merged cause=merged|"merged"
-a met record names no cause|800|360|verdict=met phase=merged cause=-|null
+a miss with a stamp missing reads no phase and records unread|5000|null|420|verdict=miss phase=- phase_secs=- cause=unread bot_wait=-|"unread"
+a miss on merged records its phase|5000|360|420|verdict=miss phase=merged phase_secs=4580 cause=merged bot_wait=180|"merged"
+an admin-route merge, never armed or queued, reads its phase from the stamps it has|5000|360|null|verdict=miss phase=merged phase_secs=4640 cause=merged bot_wait=180|"merged"
+a met record names no cause|800|360|420|verdict=met phase=merged phase_secs=380 cause=- bot_wait=180|null
 ROWS
 
 echo "=== refusals ==="
@@ -791,6 +796,17 @@ control m-miss-cause oversee-cycle 'def miss_cause: .cause // .phase // "unread"
 miss_cause_case c-miss-cause 5000 null
 assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=-" \
   "control: without the fallback a miss with a stamp missing records no cause"
+
+control m-unarmed oversee-cycle '$missing - ["launched", "first_commit", "armed"]' '$missing - ["launched", "first_commit"]'
+miss_cause_case c-unarmed 5000 360 null
+got="$(record KEN-1 micro)"
+assert_eq "$(field phase "$got") $(field cause "$got")" "phase=- cause=unread" \
+  "control: with armed required in the span an admin-route merge reads no phase and records unread"
+
+control m-unarmed-waits oversee-cycle '  | (if ($gate // 0) == 0 or' '  | (if ($missing | length) > 0 or ($gate // 0) == 0 or'
+miss_cause_case c-unarmed-waits 5000 360 null
+assert_eq "$(field bot_wait "$(record KEN-1 micro)")" "bot_wait=-" \
+  "control: with every null stamp blocking the split an admin-route merge reads no gate waits"
 RUN_BIN=""
 
 echo
