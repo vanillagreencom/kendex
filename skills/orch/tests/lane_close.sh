@@ -1749,14 +1749,16 @@ echo '=== a cloud close deletes the item branch its default branch contains ==='
 # stays at the base tip the launch pushed, which the default branch contains
 # once anything merges. The close runs the real worktree skill over a real
 # repository: its remove deletes that branch on ancestry, and the record reads
-# done. The tree beside the fixture links lane-close and its stubs as
-# lib_mutant lays them out, with the worktree skill copied in.
+# done. The tree beside the fixture links lane-close, every entry of its
+# lib directory and its stubs, with the worktree skill copied in.
 real_worktree_tree() { # NAME [LANE_CLOSE] — prints the tree's lane-close
-  local dir="$TMP_ROOT/realwt-$1" sibling
+  local dir="$TMP_ROOT/realwt-$1" sibling entry
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  for sibling in workflow-state lane-host lane-mail dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh \
-    lib/lane-state.sh lib/lane-host-slots.sh lib/lane-capabilities.sh; do
+  for sibling in workflow-state lane-host lane-mail dev-validate-run lanes; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
+  done
+  for entry in "$SCRIPTS"/lib/*; do
+    ln -s "$entry" "$dir/skills/orch/scripts/lib/${entry##*/}"
   done
   ln -s "${2:-$SCRIPTS/lane-close}" "$dir/skills/orch/scripts/lane-close"
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
