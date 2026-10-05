@@ -9,10 +9,11 @@
 # rule: an entry has no character, line or byte limit, so one that states its
 # outcome passes however long it runs or however it is wrapped.
 #
-# Ordinary checks judge fragments and configured JSON version bumps. Which
-# fragments and record sections are a bump's release entries, in each mode,
-# and what each bump level refuses among them is ../CHECKS.md § Version bumps;
-# this file implements that rule rather than restating it.
+# Ordinary checks judge fragments, configured JSON version bumps and package
+# versions. Which fragments and record sections are a bump's release
+# entries, in each mode, and what each bump level refuses among them is
+# ../CHECKS.md § Version bumps; this file implements that rule rather than
+# restating it.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -80,6 +81,11 @@ fragments and record sections count as those entries in each mode, and what a
 major, minor or patch increase refuses among them, is the commit-guards
 skill's CHECKS.md, section Version bumps. A minor or patch refusal names the
 first offending entry.
+COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS selects package files whose frontmatter
+metadata.version versions the package in their directory. A fragment one
+directory below its root, <root>/<package>/<section>/<name>, is that package's
+entry and never the program's. A change under a package's directory must
+raise its version, judged against the package fragments the same change adds.
 The default compares HEAD to the index; --base compares HEAD's merge base
 with REF to the index; --against compares REF itself to the index. Fragments
 always come from the index. A first version has no prior version to increase.
@@ -92,8 +98,9 @@ nowhere, and a README.md directly under a root documents the format rather
 than being an entry.
 
 --collate judges, and on a clean verdict folds every accepted fragment into
-the record's [Unreleased] section under the heading its own section names,
-then deletes the fragment files and the section directory each leaves empty.
+the record's [Unreleased] section under the heading its own section names, a
+package's under its own heading in the section's Packages part, then deletes
+the fragment files and the section directory each leaves empty.
 The release caller must set COMMIT_GUARDS_CHANGELOG_COLLATE=1. It refuses,
 writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes.
 Collate before changing release files; commit or restore pending edits first.
@@ -113,6 +120,8 @@ kendex.settings.toml [env] > default):
                                   scope)
   COMMIT_GUARDS_CHANGELOG_VERSION_PATHS  JSON version-file globs
                                   (default empty = no version check)
+  COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS  package-file globs
+                                  (default empty = no package check)
 
 COMMIT_GUARDS_CHANGELOG_COLLATE=1 authorizes --collate and lets commit-msg
 count the release record as its required changelog change. Ordinary fragment
@@ -276,6 +285,10 @@ while IFS= read -r -d '' rec; do
   fi
   checked=$((checked + 1))
   printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
+  # A package's entry is its own release's, judged against its own version
+  # below; the program's version reads the program's entries alone.
+  gg_fragment_package "$f"
+  [ -z "$GG_FRAGMENT_PACKAGE" ] || continue
   LC_ALL=C awk -v entry_query=1 -v whole_entry=1 -v entry_section="$sec" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >>"$GG_TMP/fragment-entries" \
     || gg_fail breaking-read "$(gg_shown "$f")" "Could not read the release entry."
 done <"$GG_TMP/files.z"
@@ -284,12 +297,61 @@ done <"$GG_TMP/files.z"
 # keeps this catalog lane independent of any repo layout.
 version_paths="$(gg_setting COMMIT_GUARDS_CHANGELOG_VERSION_PATHS "")" || exit 2
 version_paths="$(gg_config_path_list "$version_paths" changelog-version)" || exit 2
+package_paths="$(gg_setting COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS "")" || exit 2
+package_paths="$(gg_config_path_list "$package_paths" changelog-package)" || exit 2
+
+VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
 
 read_version() { # SHA PATH -> version, refusing unreadable or malformed manifests
   gg_read_blob "$1" "$2" version
-  jq -er '.version | select(type == "string") | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"))' \
+  jq -er --arg re "$VERSION_RE" '.version | select(type == "string") | select(test($re))' \
     "$GG_TMP/blob" 2>"$GG_TMP/dependency.err" \
     || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected a JSON string version in major.minor.patch form."
+}
+
+# A package file's version is its frontmatter's metadata.version, the field a
+# catalog SKILL.md already carries; a double-quoted or plain scalar.
+# shellcheck disable=SC2016
+FRONTMATTER_VERSION_AWK='
+{ sub(/\r$/, "") }
+NR == 1 { if ($0 != "---") exit; next }
+$0 == "---" { exit }
+/^metadata:[ \t]*$/ { meta = 1; next }
+meta && /^[^ \t]/ { meta = 0 }
+meta && /^[ \t]+version:/ {
+  v = $0
+  sub(/^[ \t]+version:[ \t]*/, "", v); sub(/[ \t]+$/, "", v)
+  if (v ~ /^".*"$/) v = substr(v, 2, length(v) - 2)
+  print v
+  exit
+}
+'
+
+read_package_version() { # SHA PATH -> version, refusing a package file without one
+  local v
+  gg_read_blob "$1" "$2" version
+  v="$(LC_ALL=C awk "$FRONTMATTER_VERSION_AWK" <"$GG_TMP/blob")" \
+    || gg_fail version-read "$(gg_shown "$2")" "Could not read the frontmatter."
+  jq -enr --arg v "$v" --arg re "$VERSION_RE" '$v | select(test($re))' 2>"$GG_TMP/dependency.err" \
+    || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected frontmatter metadata.version in major.minor.patch form."
+}
+
+# The package a fragment directory names is the directory its package file
+# sits in, by that directory's own name: changelog.d/linear/ is skills/linear.
+package_version() { # NAME -> the version NAME's package file states; nothing when NAME has none
+  local rec f mode rest sha dir
+  [ -n "$package_paths" ] || return 0
+  while IFS= read -r -d '' rec; do
+    f="${rec#*"$GG_TAB"}"
+    # shellcheck disable=SC2086
+    gg_path_matches "$f" $package_paths || continue
+    case "$f" in */*) dir="${f%/*}" ;; *) continue ;; esac
+    [ "${dir##*/}" = "$1" ] || continue
+    mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
+    gg_mode_is_regular "$mode" || gg_fail version-mode "$(gg_shown "$f"):$mode" "A package file must be a regular file."
+    read_package_version "$sha" "$f"
+    return 0
+  done <"$GG_TMP/files.z"
 }
 
 record_entries() { # PATH LEVEL VERSION — adds the release's entry rows to $GG_TMP/evidence
@@ -302,7 +364,7 @@ record_entries() { # PATH LEVEL VERSION — adds the release's entry rows to $GG
     gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Release evidence must be a regular text file."
     gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Release evidence must be text."
     LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" -v release_alone="$RELEASE_ALONE" \
-      "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >"$GG_TMP/record-entries" || status=$?
+      -v packages_part="$GG_PACKAGES_PART" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >"$GG_TMP/record-entries" || status=$?
     [ "$status" -ne 3 ] || gg_fail version-record-fence "$(gg_shown "$path")" "An unclosed code fence prevents reading the release section."
     [ "$status" -eq 0 ] || gg_fail breaking-read "$(gg_shown "$path"):$status" "The changelog grammar failed (awk exit $status)."
     # A released row is the release's own section answering alone: the
@@ -337,8 +399,58 @@ refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the eviden
   violations=$((violations + 1))
 }
 
-if [ -n "$version_paths" ]; then
-  breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
+bump_of() { # OLD NEW PATH — sets BUMP to major, minor, patch or none
+  # Decimal strings avoid shell integer overflow and jq number rounding;
+  # the suffixes come off first, so a suffix change alone is no increase.
+  if ! BUMP="$(jq -nr --arg old "$1" --arg new "$2" '
+    def nums: sub("[-+].*$"; "") | split(".") | map([length, .]);
+    ($old | nums) as $o | ($new | nums) as $n
+    | first(range(3) | select($n[.] != $o[.]) | if $n[.] > $o[.] then ["major", "minor", "patch"][.] else "none" end) // "none"
+  ' 2>"$GG_TMP/dependency.err")"; then
+    gg_fail_cause version-compare "$(gg_shown "$3")" "$GG_TMP/dependency.err" "Could not compare the versions."
+  fi
+}
+
+judge_release() { # VALUE BUMP — refuses what the bump's level forbids among $GG_TMP/evidence
+  case "$2" in
+    major)
+      first_entry breaking >/dev/null || refuse major-breaking "$1" \
+        "A major increase needs a Breaking entry naming the break." \
+        "Write - **Breaking:** with the break and migration note in this release's changelog."
+      ;;
+    minor)
+      refuse_entry breaking minor-breaking "$1" "A minor release holds no Breaking entry." "$breaking_remedy"
+      ;;
+    patch)
+      refuse_entry added patch-added "$1" "A patch release adds no new capability, and this one adds." "Release the addition as a minor."
+      refuse_entry breaking patch-breaking "$1" "A patch release breaks nothing, and this one breaks." "$breaking_remedy"
+      ;;
+  esac
+}
+
+# A package's release entries: the fragments naming it that this diff adds,
+# since the package releases with the change itself; a fragment an earlier
+# change added was that release's.
+package_entries() { # NAME — fills $GG_TMP/evidence
+  local meta f srcmode dstmode srcsha dstsha status
+  : >"$GG_TMP/evidence"
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
+    [ "$status" = A ] || continue
+    gg_mode_is_regular "$dstmode" || continue
+    gg_matches_path_glob "$f" || continue
+    gg_path_glob_section "$f"
+    gg_is_section "$GG_PATH_SECTION" || continue
+    gg_fragment_package "$f"
+    [ "$GG_FRAGMENT_PACKAGE" = "$1" ] || continue
+    gg_changelog_blob "$dstsha" "$f" || continue
+    LC_ALL=C awk -v entry_query=1 -v whole_entry=1 -v entry_section="$GG_PATH_SECTION" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >>"$GG_TMP/evidence" \
+      || gg_fail breaking-read "$(gg_shown "$f")" "Could not read the release entry."
+  done <"$GG_TMP/changes.z"
+}
+
+breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
+if [ -n "$version_paths" ] || [ -n "$package_paths" ]; then
   diff_args=(--cached)
   # --against REF can name a branch's tip from before a restack past a
   # release, so that release's bump reaches the comparison beside the
@@ -358,8 +470,11 @@ if [ -n "$version_paths" ]; then
       RELEASE_ALONE=1
       ;;
   esac
-  git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames --diff-filter=AMT -- >"$GG_TMP/versions.z" 2>"$GG_TMP/dependency.err" \
+  git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames -- >"$GG_TMP/changes.z" 2>"$GG_TMP/dependency.err" \
     || gg_fail_cause version-diff "$?" "$GG_TMP/dependency.err" "Could not collect version changes."
+fi
+
+if [ -n "$version_paths" ]; then
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     selected=0
     for pattern in $version_paths; do
@@ -368,20 +483,14 @@ if [ -n "$version_paths" ]; then
     [ "$selected" -eq 1 ] || continue
     # --raw emits srcmode dstmode srcsha dstsha status, followed by the path.
     read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
+    [ "$status" != D ] || continue
     gg_mode_is_regular "$dstmode" || gg_fail version-mode "$(gg_shown "$f"):$dstmode" "A configured version file must be a regular JSON file."
     new="$(read_version "$dstsha" "$f")" || exit 2
     [ "$srcmode" != 000000 ] || continue
     gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$f"):$srcmode" "The prior version file must be regular JSON."
     old="$(read_version "$srcsha" "$f")" || exit 2
-    # Decimal strings avoid shell integer overflow and jq number rounding;
-    # the suffixes come off first, so a suffix change alone is no increase.
-    if ! bump="$(jq -nr --arg old "$old" --arg new "$new" '
-      def nums: sub("[-+].*$"; "") | split(".") | map([length, .]);
-      ($old | nums) as $o | ($new | nums) as $n
-      | first(range(3) | select($n[.] != $o[.]) | if $n[.] > $o[.] then ["major", "minor", "patch"][.] else "none" end) // "none"
-    ' 2>"$GG_TMP/dependency.err")"; then
-      gg_fail_cause version-compare "$(gg_shown "$f")" "$GG_TMP/dependency.err" "Could not compare the versions."
-    fi
+    bump_of "$old" "$new" "$f"
+    bump="$BUMP"
     case "$bump" in
       major) ;;
       # The release standard's compatibility rules start at 1.0.
@@ -403,22 +512,50 @@ if [ -n "$version_paths" ]; then
         record_entries "$RECORD" 2 "$new"
       fi
     fi
-    value="$(gg_shown "$f"):$old:$new"
-    case "$bump" in
-      major)
-        first_entry breaking >/dev/null || refuse major-breaking "$value" \
-          "A major increase needs a Breaking entry naming the break." \
-          "Write - **Breaking:** with the break and migration note in this release's changelog."
+    judge_release "$(gg_shown "$f"):$old:$new" "$bump"
+  done <"$GG_TMP/changes.z"
+fi
+
+# A package releases with every change to its directory, so that change
+# raises the version its package file states, by the same rule against the
+# package's own entries.
+if [ -n "$package_paths" ]; then
+  while IFS= read -r -d '' rec; do
+    pf="${rec#*"$GG_TAB"}"
+    # shellcheck disable=SC2086
+    gg_path_matches "$pf" $package_paths || continue
+    pkg_prefix=""; case "$pf" in */*) pkg_prefix="${pf%/*}/" ;; esac
+    changed=0
+    pf_meta=""
+    while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+      case "$f" in "$pkg_prefix"*) changed=1 ;; *) continue ;; esac
+      if [ "$f" = "$pf" ]; then pf_meta="$meta"; fi
+    done <"$GG_TMP/changes.z"
+    [ "$changed" -eq 1 ] || continue
+    mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
+    gg_mode_is_regular "$mode" || gg_fail version-mode "$(gg_shown "$pf"):$mode" "A package file must be a regular file."
+    new="$(read_package_version "$sha" "$pf")" || exit 2
+    old="$new"
+    if [ -n "$pf_meta" ]; then
+      read -r srcmode dstmode srcsha dstsha status <<<"${pf_meta#:}"
+      # A new package has no prior version to raise.
+      [ "$srcmode" != 000000 ] || continue
+      gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$pf"):$srcmode" "The prior package file must be a regular file."
+      old="$(read_package_version "$srcsha" "$pf")" || exit 2
+    fi
+    bump_of "$old" "$new" "$pf"
+    case "$BUMP" in
+      none)
+        refuse package-unbumped "$(gg_shown "$pf"):$old" "A change to this package must raise its version." \
+          "Raise metadata.version by the release-version rule: a Breaking entry is a major, a new capability or setting a minor, anything else a patch."
+        continue
         ;;
-      minor)
-        refuse_entry breaking minor-breaking "$value" "A minor release holds no Breaking entry." "$breaking_remedy"
-        ;;
-      patch)
-        refuse_entry added patch-added "$value" "A patch release adds no new capability, and this one adds." "Release the addition as a minor."
-        refuse_entry breaking patch-breaking "$value" "A patch release breaks nothing, and this one breaks." "$breaking_remedy"
-        ;;
+      minor | patch) [ "${old%%.*}" != 0 ] || continue ;;
     esac
-  done <"$GG_TMP/versions.z"
+    pkg_name="${pkg_prefix%/}"
+    package_entries "${pkg_name##*/}"
+    judge_release "$(gg_shown "$pf"):$old:$new" "$BUMP"
+  done <"$GG_TMP/files.z"
 fi
 
 # The release operation reads the destination only when it has entries to fold.

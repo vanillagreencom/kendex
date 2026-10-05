@@ -1,1 +1,0 @@
-- harness-ci: a `:queue` lane in `.github/ci-lanes.conf` skips matching pull requests and runs in the merge queue they go to, once they and the default branch carry a kendex refresh reading it.

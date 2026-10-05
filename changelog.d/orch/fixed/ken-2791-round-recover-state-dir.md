@@ -1,0 +1,1 @@
+- `round-recover` takes `--state-dir`, so a hosted lane that keeps its workflow state in its own worktree can recover a stalled dev round.

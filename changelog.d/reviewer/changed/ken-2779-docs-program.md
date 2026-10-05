@@ -1,0 +1,1 @@
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.

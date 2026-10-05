@@ -63,7 +63,7 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
       section)
         low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
         # Heading TEXT, so it may hold anything a line holds.
-        if ! gg_is_section "$low"; then
+        if ! gg_is_section "$low" && [ "$low" != "$GG_PACKAGES_PART" ]; then
           GG_RECORD_WHY="names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section"
           GG_RECORD_KEY=record-section
           GG_RECORD_VALUE="$RECORD:$b"
@@ -72,8 +72,8 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
         # Line numbers, never a heading to search for again: lib/changelog-collate.sh
         # splits the record at these, rather than asking the grammar a second
         # time and getting an opinion that agreed until it did not. A section
-        # name is one of GG_SECTIONS, so it holds no newline and the rows can
-        # be a plain string.
+        # name is one of GG_SECTIONS or GG_PACKAGES_PART, so it holds no
+        # newline and the rows can be a plain string.
         GG_RECORD_SECLINES="$GG_RECORD_SECLINES$a$GG_TAB$low
 "
         ;;
@@ -100,7 +100,7 @@ gg_record_structure() { # 0 when the staged record's shape is one a release can 
       refuse "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$GG_RECORD_WHY" \
         "open one — a release folds the fragments into it and has nowhere to put them otherwise"
       ;;
-    *) refuse "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$GG_RECORD_WHY" "section one of: $GG_SECTIONS" ;;
+    *) refuse "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$GG_RECORD_WHY" "section one of: $GG_SECTIONS $GG_PACKAGES_PART" ;;
   esac
   return 1
 }

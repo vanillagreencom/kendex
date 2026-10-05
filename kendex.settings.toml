@@ -298,15 +298,20 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The fragment scope of the changelog-entries lane. The two-segment glob
 # keeps changelog.d/README.md out — its bullets document the format and are
-# not entries. CHANGELOG.md is the lane's other scope,
+# not entries. changelog.d/<package>/<section>/ holds a catalog package's
+# entries, which move that package's version and never kendex's. CHANGELOG.md is the lane's other scope,
 # COMMIT_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there
 # are the collator's, so only lines this commit ADDS under [Unreleased] are
 # refused and the released history no one may rewrite is never measured.
-COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
+COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md changelog.d/*/*/*.md"
 
 # The app version equals the workspace version (crates/cli/tests/compat.rs).
 # Package manifests keep their own adjacent release records.
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extensions/*/package.json"
+
+# Catalog skills release with every merge, so each change to one raises the
+# metadata.version its SKILL.md states. Agents and hooks carry no version.
+COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = "skills/*/SKILL.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the

@@ -4,12 +4,15 @@
 
 This standard applies to kendex, its apps, Pi packages, GitHub releases, and the AUR and Homebrew recipes that pin those releases.
 
-- Write each kendex consumer change as one list item in `changelog.d/<section>/<name>.md`. Use `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. State the outcome.
+- Write each kendex program change, under `crates/`, `ui/`, `packaging/` or the CLI, as one list item in `changelog.d/<section>/<name>.md`. Use `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. State the outcome.
+- Write each catalog package change, a skill, hook or agent, as one list item in `changelog.d/<package>/<section>/<name>.md`, `<package>` being its directory or file name. One entry names one package.
+- The kendex version counts program changes only. A package entry never moves the kendex version or causes a kendex release, whatever its section or Breaking mark.
+- Packages version independently. A change to a skill raises its own `metadata.version` in that commit, by the release-version rule. Hooks and agents carry no version.
 - Start a breaking-change item with `- **Breaking:**`. Name the break and include its migration note in that item.
-- Collate accepted fragments into `CHANGELOG.md` at release. Move the pending entries under the new version heading.
+- Collate accepted fragments into `CHANGELOG.md` at release. Program entries fold under their sections; package entries fold under `### Packages`, one `#### <package> <version>` heading per package with the version it states at release. Move the pending entries under the new version heading.
 - Pi packages keep their channel record in their own `CHANGELOG.md` under `### Unreleased`. A package major needs a `- **Breaking:**` entry there. Rename the heading to the new version at release, keeping the entry.
 - Choose the version and the fragment section by [the release-version rule](../skills/commit-guards/CHECKS.md#release-versions).
-- From 1.0, a change that would break a consumer keeps the old form working, with one warning that names the new form, for at least one minor release. Its removal waits for a major release.
+- From 1.0, a change that would break a consumer of the kendex program keeps the old form working, with one warning that names the new form, for at least one minor release. Its removal waits for a major release. A package marks its own break with its own major.
 - The consumer refresh route's old forms, the step 6 rows of the consumer refresh design's deletion list (the design is attached to KEN-2601), are removed one minor release after every consumer runs the shared refresh workflow, not at a major release. Before Build B merges, each consumer's default branch holds the adopter that reads the new form (that design's migration order, step 3), so no reader of the old form remains.
 - Package-manager recipes pin the published kendex version. They do not choose a separate bump or write separate release notes.
 

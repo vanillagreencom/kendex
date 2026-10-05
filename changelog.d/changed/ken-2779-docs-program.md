@@ -1,1 +1,0 @@
-- The docs-writing, decider, dev, reviewer and planning skills hold architecture docs to one principle each, decision records to a short body, and plans and research to the tracker.

@@ -33,6 +33,32 @@ gg_changelog_scopes() {
     || gg_fail changelog-overlap "$GG_CHANGELOG_RECORD" "COMMIT_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
 }
 
+# The package a placed fragment belongs to: the directories between its
+# placing pattern's root and its section directory, as in
+# changelog.d/<package>/<section>/<name>. A fragment with none there is the
+# repository's own program entry. Run after gg_path_glob_section placed PATH;
+# sets GG_FRAGMENT_PACKAGE, empty for a program entry. A pattern naming one
+# file roots nowhere, so what it places belongs to no package.
+gg_fragment_package() { # PATH
+  local rest="$1" root
+  GG_FRAGMENT_PACKAGE=""
+  case "$GG_PATH_PLACER" in
+    *[*?[]*) ;;
+    *) return 0 ;;
+  esac
+  root="$(gg_path_glob_root "$GG_PATH_PLACER")" || return 1
+  [ -z "$root" ] || rest="${rest#"$root"/}"
+  rest="${rest%/*}"
+  case "$rest" in
+    */*) GG_FRAGMENT_PACKAGE="${rest%/*}" ;;
+  esac
+}
+
+# The record's part for package entries: one `### Packages` heading in a
+# release section, a level-4 heading per package beneath it. Its entries are
+# the packages' releases, never the program's, so the version check skips it.
+GG_PACKAGES_PART="packages"
+
 # A fragment is one Markdown list item: it opens with a hyphen and a space,
 # and every later line indents under it. A second marker or a heading would
 # be a second entry, or would end the section it is folded into. The
@@ -163,7 +189,8 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # with that section alone, after a "released<TAB>heading" row: those are the
 # entries the release publishes, and pending ones wait for the next release.
 # With whole_entry=1 the input is one fragment, whose entry_section names its
-# directory.
+# directory. packages_part, GG_PACKAGES_PART, names the part whose entries
+# are no release entry of the record's own version.
 GG_UNRELEASED_AWK='
 BEGIN { if (!release_level) release_level = 2 }
 function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
@@ -221,6 +248,7 @@ function heading_text(l,   i, n, t) {
       part = ""
     } else if (release_level == 2 && lvl == 3) part = tolower(heading_text(line))
     if (scope == "") next
+    if (packages_part != "" && part == packages_part) next
     if (named_breaking(line)) { rows[++count] = "breaking\t" line; row_scope[count] = scope }
     if (part == "added" && line ~ /^- /) { rows[++count] = "added\t" line; row_scope[count] = scope }
     next

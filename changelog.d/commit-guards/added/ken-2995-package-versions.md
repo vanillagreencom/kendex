@@ -1,0 +1,1 @@
+- A skill package versions on its own: `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` names the files whose `metadata.version` each change to their package must raise, judged against the fragments under `changelog.d/<package>/` that change adds; those entries move no program version and collate under `### Packages`.

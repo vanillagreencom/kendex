@@ -1,0 +1,1 @@
+- A root `package.json` beside the changelog record is judged from `changelog.d` and that record; a root `CHANGELOG.md` with `###` headings needs `COMMIT_GUARDS_CHANGELOG_RECORD` empty.

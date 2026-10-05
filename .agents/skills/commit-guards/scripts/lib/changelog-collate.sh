@@ -29,11 +29,16 @@
 # carrying the staging file to the exit trap so an interrupt leaves nothing
 # behind.
 #
+# A package's fragments fold into the section's one `### Packages` part,
+# under a level-4 heading naming the package and the version its own file
+# states: the program's sections hold the program's entries alone.
+#
 # Needs lib/common.sh and lib/changelog-grammar.sh sourced first, and runs on
 # the state the walk and the record scope filled in: GG_TMP/frags.z, RECORD,
 # RECORD_SHA and the GG_RECORD_* bounds. gg_install_file comes
-# from lib/atomic-install.sh, and resolution is at call time, so that one has
-# only to be sourced before gg_changelog_collate runs.
+# from lib/atomic-install.sh, and package_version from changelog-entries;
+# resolution is at call time, so each has only to be defined before
+# gg_changelog_collate runs.
 #
 # Sourced, never executed.
 
@@ -53,10 +58,14 @@ gg_collate_assemble() {
   local sec
   cat "$GG_TMP/collate.pre" || return 1
   cat "$GG_TMP/collate.lead" || return 1
-  for sec in $GG_SECTIONS; do
+  for sec in $GG_SECTIONS $GG_PACKAGES_PART; do
     if [ -s "$GG_TMP/collate.sec.$sec" ] || [ -s "$GG_TMP/collate.frag.$sec" ]; then
       printf '\n### %s\n\n' "$(gg_section_heading "$sec")" || return 1
       cat "$GG_TMP/collate.sec.$sec" || return 1
+      # A package block opens on its heading, which needs a blank line above.
+      if [ "$sec" = "$GG_PACKAGES_PART" ] && [ -s "$GG_TMP/collate.sec.$sec" ] && [ -s "$GG_TMP/collate.frag.$sec" ]; then
+        printf '\n' || return 1
+      fi
       cat "$GG_TMP/collate.frag.$sec" || return 1
     fi
   done
@@ -66,8 +75,25 @@ gg_collate_assemble() {
   cat "$GG_TMP/collate.post" || return 1
 }
 
+# The 1-based position of NAME in GG_TMP/collate.pkgs.z, in GG_COLLATE_PKG,
+# appending NAME when it is new: one block per package, in the order the
+# walk first met it.
+gg_collate_package_index() { # NAME
+  local name i=0
+  while IFS= read -r -d '' name; do
+    i=$((i + 1))
+    if [ "$name" = "$1" ]; then
+      GG_COLLATE_PKG="$i"
+      return 0
+    fi
+  done <"$GG_TMP/collate.pkgs.z"
+  printf '%s\0' "$1" >>"$GG_TMP/collate.pkgs.z" \
+    || gg_fail collate-package "$(gg_shown "$1")" "Could not record the package; nothing was written."
+  GG_COLLATE_PKG=$((i + 1))
+}
+
 gg_changelog_collate() { # folds this run's accepted fragments into the record
-  local sec path rec f d shown dirty survivors noun rc=0 count=0 nl
+  local sec path rec f d shown dirty survivors noun name version rc=0 count=0 i nl
   nl="
 "
 
@@ -103,6 +129,10 @@ ${shown%"$nl"}"
     : >"$GG_TMP/collate.frag.$sec"
     : >"$GG_TMP/collate.sec.$sec"
   done
+  : >"$GG_TMP/collate.sec.$GG_PACKAGES_PART"
+  : >"$GG_TMP/collate.frag.$GG_PACKAGES_PART"
+  : >"$GG_TMP/collate.pkgs.z"
+  : >"$GG_TMP/collate.pkgdirs"
   : >"$GG_TMP/collate.frags"
   : >"$GG_TMP/collate.dirs"
   : >"$GG_TMP/collate.pre"
@@ -118,7 +148,16 @@ ${shown%"$nl"}"
     path="${rec#*"$GG_TAB"}"
     [ -f "$path" ] \
       || gg_fail fragment-missing "$(gg_shown "$path")" "The fragment is in the index but not a file on disk; nothing was written."
-    printf '%s\0' "$path" >>"$GG_TMP/collate.sel.$sec"
+    gg_path_glob_section "$path"
+    gg_fragment_package "$path"
+    if [ -n "$GG_FRAGMENT_PACKAGE" ]; then
+      gg_collate_package_index "$GG_FRAGMENT_PACKAGE"
+      printf '%s\0' "$path" >>"$GG_TMP/collate.pkg.$GG_COLLATE_PKG.$sec"
+      d="${path%/*}"
+      printf '%s\0' "${d%/*}" >>"$GG_TMP/collate.pkgdirs"
+    else
+      printf '%s\0' "$path" >>"$GG_TMP/collate.sel.$sec"
+    fi
     printf '%s\0' "$path" >>"$GG_TMP/collate.frags"
     # The directory each fragment sits in, so an emptied one can go with it
     # without this run spelling the fragment tree a second time.
@@ -134,6 +173,25 @@ ${shown%"$nl"}"
         || gg_fail fragment-read "$(gg_shown "$f")" "The fragment could not be read; nothing was written."
     done <"$GG_TMP/collate.sel.$sec"
   done
+  # One block per package: its heading, then its entries in section order.
+  i=0
+  while IFS= read -r -d '' name; do
+    i=$((i + 1))
+    # package_version names its own failure.
+    version="$(package_version "$name")" || exit 2
+    {
+      [ "$i" -eq 1 ] || printf '\n'
+      printf '#### %s%s\n\n' "$name" "${version:+ $version}"
+    } >>"$GG_TMP/collate.frag.$GG_PACKAGES_PART" \
+      || gg_fail collate-package "$(gg_shown "$name")" "Could not write the package heading; nothing was written."
+    for sec in $GG_SECTIONS; do
+      [ -f "$GG_TMP/collate.pkg.$i.$sec" ] || continue
+      while IFS= read -r -d '' f; do
+        LC_ALL=C awk 1 "$f" >>"$GG_TMP/collate.frag.$GG_PACKAGES_PART" \
+          || gg_fail fragment-read "$(gg_shown "$f")" "The fragment could not be read; nothing was written."
+      done <"$GG_TMP/collate.pkg.$i.$sec"
+    done
+  done <"$GG_TMP/collate.pkgs.z"
 
   [ -f "$RECORD" ] || gg_fail record-missing "$(gg_shown "$RECORD")" "The collation destination is missing; nothing was written."
   # Where the section begins, which level-3 headings it holds and where it
@@ -199,6 +257,9 @@ ${survivors%"$nl"}"
   while IFS= read -r -d '' d; do
     rmdir -- "$d" 2>/dev/null || true
   done <"$GG_TMP/collate.dirs"
+  while IFS= read -r -d '' d; do
+    rmdir -- "$d" 2>/dev/null || true
+  done <"$GG_TMP/collate.pkgdirs"
 
   if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
   gg_message folded "$count:$(gg_shown "$RECORD")" "Folded $count $noun into the Unreleased section."

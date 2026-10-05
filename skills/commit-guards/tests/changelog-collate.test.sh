@@ -367,5 +367,94 @@ run_rows \
   "a rename that fails names the destination, with the record byte-identical, no staging file, and the fragment kept|fx_mv_fails||mv|rc=2 ${ERR}replace-file=CHANGELOG.md|SEED|$ONE" \
   "every fragment that survives its delete is named, escaped, after the record was replaced|fx_rm_fails||rm|rc=2 ${ERR}fragment-survivor=changelog.d/fixed/a\\ b.md;${ERR}fragment-survivor=changelog.d/fixed/pending.md;${ERR}collate-survivors=CHANGELOG.md|FOLDED2|changelog.d/fixed~changelog.d/fixed/a b.md~changelog.d/fixed/pending.md"
 
+echo "=== a package's entries fold under its own heading in Packages, never the program's sections ==="
+# A fragment one directory below the root is its package's: it folds under
+# one level-4 heading per package naming the version its package file
+# states, or the bare name where it has none, in the order the walk met the
+# packages and Keep a Changelog order within each.
+PKG_ENV='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md'
+packages() { # NAME [RECORD] — a package at 2.0.0, a program fragment and three package fragments
+  repo "$1" "${2:-$RECORD}"
+  mkdir -p "$R/skills/pkg"
+  printf -- '---\nname: pkg\nmetadata:\n  version: "2.0.0"\n---\n' >"$R/skills/pkg/SKILL.md"
+  git -C "$R" add -A
+  git -C "$R" commit -qm 'chore: package'
+  frag fixed pending.md '- Folded in.\n'
+  frag pkg/removed a.md '- **Breaking:** Pkg removed.\n'
+  frag pkg/added b.md '- Pkg added.\n'
+  frag hookx/fixed c.md '- Hook fixed.\n'
+}
+PACKAGES_OUT='# Changelog
+
+## [Unreleased]
+
+### Added
+
+- An entry the record already carries.
+
+### Fixed
+
+- Folded in.
+
+### Packages
+
+#### hookx
+
+- Hook fixed.
+
+#### pkg 2.0.0
+
+- Pkg added.
+- **Breaking:** Pkg removed.
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- A released entry.
+'
+PACKAGES_IN='# Changelog
+
+## [Unreleased]
+
+### Packages
+
+#### other 1.1.0
+
+- Other changed.
+
+## [1.0.0] - 2026-01-01
+'
+PACKAGES_APPENDED='# Changelog
+
+## [Unreleased]
+
+### Fixed
+
+- Folded in.
+
+### Packages
+
+#### other 1.1.0
+
+- Other changed.
+
+#### hookx
+
+- Hook fixed.
+
+#### pkg 2.0.0
+
+- Pkg added.
+- **Breaking:** Pkg removed.
+
+## [1.0.0] - 2026-01-01
+'
+fx_packages() { packages packages; }
+fx_packages_appended() { packages packages-appended "$PACKAGES_IN"; }
+run_rows \
+  "package entries fold under per-package headings with their versions; the program sections hold the program's alone; every package directory goes|fx_packages|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
+  "a record's Packages part is accepted and its blocks kept ahead of the new ones|fx_packages_appended|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_APPENDED|-"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
