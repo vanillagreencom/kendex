@@ -29,10 +29,17 @@
 # through .output, each event holding the whole file while the printed output
 # opens with the warning and keeps a part; the whole capture is the same read
 # with no limit, its event line long enough that a multibyte character
-# straddles a 4095-byte boundary of jq's raw line reader. The fixture
-# projections omit account metadata, not status; the truncated one also drops
-# the events' output fields and keeps only the head, the cut marker and the
-# tail of the long text.
+# straddles a 4095-byte boundary of jq's raw line reader. The direct capture
+# is a gpt-5.5 thread, a model Codex 0.160.0 gives exec_command itself rather
+# than functions.exec, reading the demo skill three times: under
+# max_output_tokens 50 the output after its header opens with the truncation
+# warning and keeps a part, while under 20000 and with only cmd it arrives
+# whole; each row takes one read's lines. The fixture projections omit
+# account metadata, not status; the truncated one also drops the events'
+# output fields and keeps only the head, the cut marker and the tail of the
+# long text. The cut-line rows plant the first half of a captured line: as the
+# last line, which Codex may still be writing when the hook reads, and ahead
+# of whole records, as a rollout Codex reopened after an interruption holds.
 # The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
@@ -210,6 +217,11 @@ ROWS
 # The measured functions.exec wrappers run one literal shell read, or a batch
 # of printed statements, and print their output. These rows keep the authentic envelope and output; each defect
 # changes a private copy, never the captured fixtures.
+half_line() { # LINE: the first half of that transcript line, unterminated
+  local line
+  line=$(sed -n "$1p" "$TRANSCRIPT")
+  printf '%s' "${line:0:$((${#line} / 2))}"
+}
 functions_exec_row() { # FIXTURE SCENARIO WANT LABEL [SKILL]
   local fixture="$1" scenario="$2" want="$3" label="$4" command skill
   cp -- "$HOOK" "$JUDGE"
@@ -257,11 +269,19 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL [SKILL]
       .payload.input |= if test("[.]output[)]") then sub("[.]output[)]"; ".output.slice(0, 0))")
         else sub("[}][)][)]"; "}).slice(0, 0))") end
     else . end' "$TEST_DIR/fixtures/$fixture.jsonl" >"$TRANSCRIPT"
+  case "$scenario" in
+    lines:*) sed -n "${scenario#lines:}p" "$TRANSCRIPT" >"$TRANSCRIPT.edit" ;;
+    half-last) { cat -- "$TRANSCRIPT"; half_line 1; } >"$TRANSCRIPT.edit" ;;
+    cut-then-whole) { half_line 3; echo; cat -- "$TRANSCRIPT"; } >"$TRANSCRIPT.edit" ;;
+    half-read) { sed -n 1,2p "$TRANSCRIPT"; half_line 3; } >"$TRANSCRIPT.edit" ;;
+    *) ;;
+  esac
+  [ ! -e "$TRANSCRIPT.edit" ] || mv -- "$TRANSCRIPT.edit" "$TRANSCRIPT"
   case "$fixture:$scenario" in
     *-truncated-reads:*) skill=$5; command=skill-capture-command ;;
     *-failed:*) skill=missing-KEN-2484; command=skill-capture-command ;;
     *-batched:failed-read) skill=missing; command=skill-capture-command ;;
-    *-batched:* | *-truncated:* | *-unprinted:* | *-child-*:*) skill=demo; command=skill-capture-command ;;
+    *-batched:* | *-truncated:* | *-unprinted:* | *-child-*:* | *-direct:*) skill=demo; command=skill-capture-command ;;
     *) skill=linear; command=.agents/skills/linear/scripts/linear.sh ;;
   esac
   payload=$(jq -n -c --arg t "$TRANSCRIPT" --arg c "$command" \
@@ -320,7 +340,14 @@ truncated|skill-load-check-codex-0.160.0-truncated|original|rc=2 first=skill-loa
 truncated-cut-raw|skill-load-check-codex-0.160.0-truncated|cut-raw|rc=2 first=skill-load-check: unloaded=demo|functions.exec truncated output cuts a raw read
 truncated-whole-raw|skill-load-check-codex-0.160.0-truncated|whole-raw|rc=0 first=-|functions.exec truncated output keeps a whole raw read
 child-whole|skill-load-check-codex-0.160.0-child-whole|original|rc=0 first=-|functions.exec child whole escaped read
-child-cut|skill-load-check-codex-0.160.0-child-cut|original|rc=2 first=skill-load-check: unloaded=demo|functions.exec child reads cut by max_output_tokens
+child-cut-text|skill-load-check-codex-0.160.0-child-cut|lines:1,4|rc=2 first=skill-load-check: unloaded=demo|functions.exec child text read cut by max_output_tokens
+child-cut-raw|skill-load-check-codex-0.160.0-child-cut|lines:5,8|rc=2 first=skill-load-check: unloaded=demo|functions.exec child raw read cut by max_output_tokens
+direct-cut|skill-load-check-codex-0.160.0-direct|lines:1,3|rc=2 first=skill-load-check: unloaded=demo|direct read cut by max_output_tokens
+direct-limit|skill-load-check-codex-0.160.0-direct|lines:4,6|rc=0 first=-|direct read under a max_output_tokens that keeps it whole
+direct-whole|skill-load-check-codex-0.160.0-direct|lines:7,9|rc=0 first=-|direct read with only cmd
+half-last|skill-load-check-codex-0.160.0|half-last|rc=0 first=-|functions.exec read before a half-written last line
+cut-then-whole|skill-load-check-codex-0.160.0|cut-then-whole|rc=0 first=-|functions.exec read after a cut line mid-file
+half-read|skill-load-check-codex-0.160.0|half-read|rc=2 first=skill-load-check: unloaded=linear|functions.exec read whose output line is half-written
 ROWS
 }
 # One wrapper, one skill judged per row.
@@ -359,9 +386,12 @@ exec_output_position_row() { exec_rows foreign-output; }
 exec_script_start_row() { exec_rows batched-leading-js; }
 exec_contiguous_row() { exec_rows batched-interleaved-js; }
 exec_cut_row() {
-  truncated_reads_rows cut-tail; truncated_reads_rows cut-head; exec_rows truncated-cut-raw; exec_rows child-cut
+  truncated_reads_rows cut-tail; truncated_reads_rows cut-head; exec_rows truncated-cut-raw
+  exec_rows child-cut-text; exec_rows child-cut-raw
 }
-exec_unmarked_cut_row() { exec_rows child-cut; }
+exec_unmarked_cut_row() { exec_rows child-cut-text; }
+direct_cut_row() { exec_rows direct-cut; }
+cut_line_row() { exec_rows half-last; exec_rows cut-then-whole; exec_rows half-read; }
 exec_whole_row() { truncated_reads_rows whole; truncated_reads_rows whole-last; exec_rows truncated-whole-raw; }
 exec_print_form_row() { truncated_reads_rows whole; exec_rows child-whole; }
 exec_reader_row() { exec_rows child-whole; }
@@ -403,13 +433,21 @@ skill_load_control exec-contiguous "$HOOK" '          $statements[.].offset == $
 skill_load_control exec-cut "$HOOK" '              | $printed | contains($whole)' \
   '              | true' HOOK exec_cut_row 'functions.exec truncated output cuts the tail of a read' \
   'functions.exec truncated output cuts the head of a read' 'functions.exec truncated output cuts a raw read' \
-  'functions.exec child reads cut by max_output_tokens'
-# The rule before this one judged the printed text only under the script's
-# own truncation warning, which an exec_command cut printed inside the JSON
-# result object never raises.
+  'functions.exec child text read cut by max_output_tokens' 'functions.exec child raw read cut by max_output_tokens'
+# Judges the printed text only under the script's own truncation warning,
+# which an exec_command cut printed inside the JSON result object never
+# raises.
 skill_load_control exec-unmarked-cut "$HOOK" '              | $printed | contains($whole)' \
   '              | . or ($texts | any(test("^Warning: truncated output")) | not)' HOOK exec_unmarked_cut_row \
-  'functions.exec child reads cut by max_output_tokens'
+  'functions.exec child text read cut by max_output_tokens'
+# Judges a direct read by its exit header alone.
+skill_load_control direct-cut "$HOOK" '            and (.[1:] | join("\nOutput:")' \
+  '              | ""' HOOK direct_cut_row 'direct read cut by max_output_tokens'
+# Refuses the transcript on the first line that does not parse.
+skill_load_control cut-line "$HOOK" '# for SKILL.md; no shell text is executed by this hook.' \
+  '  printf "%s\n" "$CANDIDATES" | jq -c . >/dev/null 2>&1 || refuse transcript unread cut-line' \
+  HOOK cut_line_row 'functions.exec read before a half-written last line' \
+  'functions.exec read after a cut line mid-file' 'functions.exec read whose output line is half-written'
 skill_load_control exec-whole "$HOOK" '    | ($texts | join("")) as $printed' \
   '    | select($texts | any(test("^Warning: truncated output")) | not)' HOOK exec_whole_row \
   'functions.exec truncated output keeps a whole read' \
@@ -417,11 +455,19 @@ skill_load_control exec-whole "$HOOK" '    | ($texts | join("")) as $printed' \
 skill_load_control exec-print-form "$HOOK" '    | ($texts | join("")) as $printed' \
   '    | ($statements | map(.json = false)) as $statements' HOOK exec_print_form_row \
   'functions.exec truncated output keeps a whole read' 'functions.exec child whole escaped read'
-# The raw line reader the rollout was parsed with before: jq -R, each line
-# through fromjson.
-skill_load_control exec-reader "$HOOK" "  RS=\$(printf '\\036')" \
-  '  RS=""; jq() { if [ "$1" = --seq ]; then shift; set -- -R "${@/\[inputs | objects/[inputs | fromjson? | objects}"; fi; command jq "$@"; }' \
-  HOOK exec_reader_row 'functions.exec child whole escaped read'
+# Passes every candidate line through jq's raw line reader before it is
+# judged. Only a jq whose raw reader decodes each buffer of a line alone, as
+# 1.7 does, changes the child-whole event line that way; on one that decodes
+# across buffers no reader edit can redden that row, which then pins only
+# that a whole escaped read counts.
+CHILD_WHOLE="$TEST_DIR/fixtures/skill-load-check-codex-0.160.0-child-whole.jsonl"
+if jq -R -c 'fromjson? // empty' "$CHILD_WHOLE" | cmp -s - <(jq -c . "$CHILD_WHOLE"); then
+  printf '  skip  control exec-reader: %s decodes a raw line across buffers, so the child-whole line reads whole\n' "$(jq --version)"
+else
+  skill_load_control exec-reader "$HOOK" '# for SKILL.md; no shell text is executed by this hook.' \
+    '  CANDIDATES=$(printf "%s\n" "$CANDIDATES" | jq -R -c "fromjson? // empty")' \
+    HOOK exec_reader_row 'functions.exec child whole escaped read'
+fi
 skill_load_control exec-event-output "$HOOK" '        and (.aggregated_output' \
   '          | if type == "string" then . else "" end' HOOK exec_event_output_row \
   'functions.exec truncated output with no event output' 'functions.exec batched read cut from a truncated output'
