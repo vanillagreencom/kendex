@@ -600,8 +600,9 @@ command_safety_cause() { # FILE — what the lane's own tools said, replayed
   rm -f -- "$1"
 }
 
-# The rows are what the source states about itself: the doc names the calls
-# its example blocks and the validation it allows.
+# The doc names three calls its example blocks and one it allows: the first
+# three refuse rows and scripts/validate qml. The other rows are the guard's
+# own; the doc states none of them.
 command_safety_policy docs/authoring/command-safety.md <<'ROWS'
 refuse|qs -c vshell
 refuse|qs -p quickshell/vshell

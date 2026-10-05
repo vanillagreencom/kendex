@@ -334,16 +334,33 @@ grep_at="$(awk '/^grep: / { print NR; exit }' <<<"$OUT")"
     "rc=$RC keyed=${keyed_at:--} grep=${grep_at:--} out=$OUT"
 cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
-# A pattern broad enough to catch what the source documents as allowed is the
-# other direction of the same rule, and the only one no row drove: a qs call
-# on a test fixture is a command the doc names as left alone.
+# A pattern broad enough to catch an allowed command is the other direction of
+# the same rule. The doc allows only scripts/validate qml, which no qs pattern
+# reaches; the qs call on a test fixture is the guard's own allow row, the
+# command a pattern broadened to every qs call catches.
 awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"qs\""; next } { print }' \
   "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-over=docs/authoring/command-safety.md"* ]] \
   && [[ "$OUT" == *"  qs -c test-fixture"* ]] \
-  && ok "a policy broadened over a documented-allowed command reds, naming the command" \
-  || bad "a policy broadened over a documented-allowed command reds, naming the command" "rc=$RC out=$OUT"
+  && ok "a policy broadened over an allowed command reds, naming the command" \
+  || bad "a policy broadened over an allowed command reds, naming the command" "rc=$RC out=$OUT"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
+
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"\""; next } { print }' \
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-empty=docs/authoring/command-safety.md"* ]] \
+  && ok "an emptied doc policy reds with its own clause" \
+  || bad "an emptied doc policy reds with its own clause" "rc=$RC out=$OUT"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
+
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print } { print }' \
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-lines=docs/authoring/command-safety.md"* ]] \
+  && ok "a doc that spells the policy assignment twice reds with its own clause" \
+  || bad "a doc that spells the policy assignment twice reds with its own clause" "rc=$RC out=$OUT"
 cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
 # The loader answers from the process environment before the file it is given.
