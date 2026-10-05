@@ -57,7 +57,7 @@ Options (a flag a command does not take is a usage failure):
 
 Mutations (claim, refresh, release, sweep) serialize on a lock in the
 repository's common dir, through flock(1) where it is on PATH and a mkdir
-mutex otherwise.
+mutex otherwise; either refuses after waiting 60 seconds for it.
 
 Exit codes: 0 success, 1 usage/Git failure, 3 no lock, 4 non-guard lock,
 5 enumeration failure or a lease sweep could not evaluate, 75 foreign
@@ -245,18 +245,20 @@ release_guard_mutex() {
 # one takes two independent locks and serializes nothing. It sits beside the
 # single-host assumption the lock's location in the common dir already makes.
 # When neither mechanism can take the lock the command fails loudly rather
-# than running unguarded.
+# than running unguarded. Both wait the same bound, so a caller such as the
+# session-start hook gets this refusal rather than a wait with no end.
+readonly GUARD_MUTEX_WAIT_SECONDS=60
 acquire_guard_mutex() {
 	local common="$1" lock_path tries=0
 	lock_path="$common/kendex-worktree-session-guard.lock"
 	if command -v flock >/dev/null 2>&1; then
 		exec 9>"$lock_path" || fail guard-lock-open "$lock_path" "Cannot open the session lock file."
-		flock -x 9 || fail guard-lock-acquire "$lock_path" "Cannot acquire the session lock."
+		flock -x -w "$GUARD_MUTEX_WAIT_SECONDS" 9 || fail guard-lock-timeout "$lock_path" "Cannot acquire the session lock within ${GUARD_MUTEX_WAIT_SECONDS}s; another guard process holds it."
 		return 0
 	fi
 	# Armed before the loop, never after it wins: with no holder liveness a
 	# leaked directory is never reclaimed, so every later mutation on this
-	# repository would wait 60s and fail. release_guard_mutex is a no-op while
+	# repository would wait the bound and fail. release_guard_mutex is a no-op while
 	# GUARD_MUTEX_DIR is empty, so arming early costs nothing. One command
 	# boundary is still uncovered — a signal handled between mkdir returning
 	# and the assignment below — because recording the directory before mkdir
@@ -265,7 +267,7 @@ acquire_guard_mutex() {
 	trap release_guard_mutex EXIT
 	while ! mkdir -- "$lock_path.d" 2>/dev/null; do
 		tries=$((tries + 1))
-		[[ "$tries" -lt 600 ]] || fail guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this directory."
+		[[ "$tries" -lt $((GUARD_MUTEX_WAIT_SECONDS * 10)) ]] || fail guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this directory."
 		sleep 0.1
 	done
 	GUARD_MUTEX_DIR="$lock_path.d"

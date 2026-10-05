@@ -383,6 +383,53 @@ second_code=$?
 set -e
 assert_eq "$second_code" "75" "with the mutex free only the first owner holds the lease"
 
+# A claim behind a holder that never lets go refuses by name once the guard's
+# own wait runs out, rather than waiting until its caller kills it. A flock
+# first on PATH shortens whatever `-w` the guard passes to one second, so the
+# row proves the bound is passed and refused on, not its length.
+BOUND_BIN="$TMP_ROOT/bound-bin"
+mkdir -p "$BOUND_BIN"
+cat >"$BOUND_BIN/flock" <<EOF
+#!/usr/bin/env bash
+args=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -w) args+=(-w 1); shift 2 ;;
+    *) args+=("\$1"); shift ;;
+  esac
+done
+exec $(command -v flock) "\${args[@]}"
+EOF
+chmod +x "$BOUND_BIN/flock"
+BOUND_WT="$MUTEX_ROOT/trees/bounded"
+git -C "$MUTEX_ROOT/main" worktree add -q -b bounded "$BOUND_WT" main
+bounded_wait_row() { # GUARD
+  local lock="$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock" bound_rc=0 bound_err
+  exec 8>"$lock"
+  flock -x 8
+  bound_err=$(PATH="$BOUND_BIN:$PATH" timeout 5 "$1" claim "$BOUND_WT" --owner OWNER-B 2>&1 >/dev/null) || bound_rc=$?
+  exec 8>&-
+  assert_eq "rc=$bound_rc record=${bound_err%%$'\n'*} state=$(guard_status_code "$BOUND_WT" "$MUTEX_ROOT/main")" \
+    "rc=1 record=worktree-guard-lock-timeout: $lock state=3" \
+    "a claim the mutex holds past the guard's bound refuses by name and writes no lease"
+}
+bounded_wait_row "$GUARD_SCRIPT"
+
+# Must-fail control: a guard copy that waits on flock with no bound is cut off
+# by the row's own timeout instead.
+BOUND_CONTROL="$TMP_ROOT/bound-control"
+cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$BOUND_CONTROL"
+BOUND_ANCHOR='flock -x -w "$GUARD_MUTEX_WAIT_SECONDS" 9'
+assert_eq "$(grep -cF -- "$BOUND_ANCHOR" "$BOUND_CONTROL/worktree-session-guard")" "1" \
+  "control: the flock bound anchor appears once in the guard"
+BOUND_ANCHOR=$BOUND_ANCHOR awk '{ i = index($0, ENVIRON["BOUND_ANCHOR"]); if (i) $0 = substr($0, 1, i - 1) "flock -x 9" substr($0, i + length(ENVIRON["BOUND_ANCHOR"])); print }' \
+  "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" >"$BOUND_CONTROL/worktree-session-guard"
+assert_eq "$(grep -cF -- "$BOUND_ANCHOR" "$BOUND_CONTROL/worktree-session-guard")" "0" \
+  "control: the planted guard drops the flock bound"
+bound_control_log="$(PASS=0 FAIL=0; bounded_wait_row "$BOUND_CONTROL/worktree-session-guard")"
+assert_eq "$(grep -c '^  FAIL  ' <<<"$bound_control_log")" "1" \
+  "control: the planted guard fails the bounded-wait row"
+
 echo "=== claim --owner takes over the session's env-owned lease ==="
 
 # A session-start hook claims under the env ladder; the workflow then claims

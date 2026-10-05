@@ -1155,6 +1155,8 @@ issue_branch_name() {
 # private git dir. It is the one route from an issue ID to a hosted tree that
 # does not go through HEAD: the hosted path carries no issue ID, and a paused
 # restack leaves the tree detached, so its branch is not registered to it.
+# Its presence is also how the worktree-session-claim hook knows this skill
+# laid the tree out, without running this script.
 readonly WORKTREE_ISSUE_RECORD="kendex-issue"
 
 record_worktree_issue() { # WT ISSUE
@@ -3441,21 +3443,6 @@ case "${1:-}" in
     [[ -d "$WT_PATH" ]] && echo "true" || echo "false"
     ;;
 
-  managed)
-    # Whether this skill laid the worktree out: an issue tree directly under
-    # the base dir, or the hosted lane path. The worktree-session-claim hook
-    # claims only these; a harness's own worktree (`claude --worktree`, an
-    # isolation worktree) sits elsewhere and is removed by that harness.
-    WT_PATH="${2:?Error: managed requires a worktree path}"
-    if is_registered_project_worktree "$WT_PATH" && ! same_canonical_dir "$WT_PATH" "$PROJECT_ROOT" &&
-       { same_canonical_dir "$(dirname "$WT_PATH")" "$TREES_DIR" ||
-         same_canonical_dir "$WT_PATH" "$(worktree_new_path hosted 2>/dev/null)"; }; then
-      echo "true"
-    else
-      echo "false"
-    fi
-    ;;
-
   merged)
     # The read-only half of the reuse refusal, for a caller that must decide
     # before it asks for a tree: a relaunch skips `create --reuse` entirely on
@@ -3914,7 +3901,7 @@ case "${1:-}" in
     ;;
 
   *)
-    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|managed|merged|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|merged|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     echo "Run: $0 --help" >&2
     exit 1
     ;;

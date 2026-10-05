@@ -3,23 +3,19 @@
 # name: worktree-session-claim
 # event: SessionStart
 # matcher:
-# description: Claims the linked git worktree a session starts in when the worktree skill laid it out (`worktree managed`), so `worktree cleanup` and `worktree remove` leave a tree a session works in even when no workflow claimed it. It runs the worktree skill's `worktree-session-guard claim <worktree root>` from this hook's own install, never from the open repository, with no `--owner`, so the lease carries the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A later `claim --owner <ISSUE_ID>` from the orchestrating workflow takes that lease over rather than refusing it, and a start under the owner the lease records refreshes its heartbeat. It clears the repository-selecting `GIT_*` variables a harness launched from a git hook inherits, and bounds each claim with `timeout` or `gtimeout`, retrying once when the bound cuts it off. A session in a main checkout, outside a repository, in a submodule or in a worktree a harness made for itself claims nothing and says nothing. It never refuses a session start: each case below is reported at exit 0 on stderr as a keyed line and a line of English, with the guard's own output under them for `held=` and `unclaimed=`. A lock under another owner name or tool, the workflow's issue lease included, is `worktree-session-claim: held=<worktree root>`, a guard or worktree script that fails is `unclaimed=<worktree root>`, a guard the walk from this hook's directory does not find is `guard=<hook directory>`, and a claim run without a bound, where neither utility is on PATH, is first reported as `unbounded=<worktree root>`. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
-# summary: Marks the git worktree a session starts in as that session's, so cleanup does not delete a worktree someone opened by hand and is still working in.
-# safety: Runs git rev-parse in the session's directory and, from this hook's own install, the worktree skill's `worktree managed`, which loads the repository's kendex settings and `.env.local` as every worktree command does, and its worktree-session-guard, which writes the worktree's git lock file under the repository's git directory. It refuses nothing and exits 0.
-# timeout: 30
+# description: Claims the linked git worktree a session starts in when the worktree skill created it, so `worktree cleanup` and `worktree remove` leave a tree a session works in even when no workflow claimed it. A tree counts as the skill's when its private git dir holds the `kendex-issue` record every `worktree create` that returns a tree writes; the hook reads that one file and runs no worktree command, so a tree a harness made for itself (`claude --worktree`, an isolation worktree) or one made before the record existed is not claimed. It runs the worktree skill's `worktree-session-guard claim <worktree root>` from this hook's own install, never from the open repository, with no `--owner`, so the lease carries the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A later `claim --owner <ISSUE_ID>` from the orchestrating workflow takes that lease over rather than refusing it, and a start under the owner the lease records refreshes its heartbeat. It clears the repository-selecting `GIT_*` variables a harness launched from a git hook inherits. The guard bounds its own wait on its repository-wide lock, and this hook's timeout sits above that bound. A session in a main checkout, outside a repository or in a submodule claims nothing and says nothing. It never refuses a session start. What it could not do is reported at exit 0 on stderr as a keyed line and a line of English, with the failing command's own output under them: `worktree-session-claim: held=<worktree root>` means a lock under another owner name or tool, the workflow's issue lease included, holds the tree and stays; `unclaimed=<worktree root>` means the claim failed and the tree holds no lease; `guard=<hook directory>` means no guard is installed beside this hook. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
+# summary: Marks a git worktree the worktree skill created as the session's when a session starts in it, so cleanup does not delete a worktree someone opened by hand and is still working in.
+# safety: Runs git rev-parse in the session's directory, reads one file in the worktree's private git dir, and runs the worktree skill's worktree-session-guard from this hook's own install, which writes the worktree's git lock file under the repository's git directory. It executes no file from the repository, loads no project settings or `.env.local`, refuses nothing and exits 0.
+# timeout: 75
 # harnesses: [claude, codex, pi, copilot, gemini]
 # requires-skills: [worktree]
 # ---
 
 set -euo pipefail
 
-report() { # KEY VALUE ENGLISH [CAUSE]
+notice() { # KEY VALUE ENGLISH [CAUSE]
   printf 'worktree-session-claim: %s=%s\n%s\n' "$1" "$2" "$3" >&2
   [ -z "${4:-}" ] || printf '%s\n' "$4" >&2
-}
-
-notice() { # KEY VALUE ENGLISH [CAUSE]
-  report "$@"
   exit 0
 }
 
@@ -34,6 +30,13 @@ GIT_DIR_PATH=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || ex
 COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
 [ "$GIT_DIR_PATH" != "$COMMON_DIR" ] || exit 0
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# Only a tree the worktree skill created is claimed, and that is a fact the
+# skill recorded, never one this hook asks the skill's scripts for: they load
+# the repository's settings and `.env.local` as shell. A harness's own
+# worktree is removed by that harness, and a lock nothing releases at session
+# end would make it refuse.
+[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0
 
 # The guard comes from this hook's own install, by the walk
 # hooks/lane-mail-check.sh owns for its reader: from the hook's physical
@@ -72,37 +75,12 @@ fi
 [ -n "$FOUND" ] || notice guard "${HOOK_DIR:-unlocatable}" \
   "worktree-session-guard is not installed with this hook, so this worktree is not claimed and cleanup may remove it; install the worktree skill in the same scope"
 
-# A harness's own worktree (`claude --worktree`, an isolation worktree) is
-# removed by that harness, and a lock nothing releases at session end would
-# make it refuse; only a tree the worktree skill laid out is claimed.
 rc=0
-MANAGED=$("${FOUND%/*}/worktree" managed "$ROOT" 2>&1) || rc=$?
-case "$rc:$MANAGED" in
-  0:true) ;;
-  0:false) exit 0 ;;
-  *) notice unclaimed "$ROOT" \
-    "the worktree skill could not say whether it laid out this worktree (exit $rc), so this session claimed nothing and cleanup may remove it" "$MANAGED" ;;
-esac
-
-# The guard waits on its repository-wide mutex, so each attempt is bounded and
-# one the bound cuts off is retried once, both inside this hook's timeout.
-BOUND=$(command -v timeout || command -v gtimeout) || BOUND=""
-claim() {
-  rc=0
-  if [ -n "$BOUND" ]; then
-    CAUSE=$("$BOUND" --kill-after=2 8 "$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
-  else
-    CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
-  fi
-}
-[ -n "$BOUND" ] || report unbounded "$ROOT" \
-  "neither timeout nor gtimeout is on PATH, so the claim runs once with no bound but this hook's own timeout; install coreutils for a bounded claim with a retry"
-claim
-case "$rc" in 124 | 137) claim ;; esac
+CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
 case "$rc" in
   0) ;;
   75) notice held "$ROOT" \
-    "a lock under another owner name than this session's holds this worktree, so cleanup leaves it while that lock stands; the guard's lines below name the lock" "$CAUSE" ;;
+    "a lock under another owner name than this session's holds this worktree, so cleanup leaves it while that lock stands" "$CAUSE" ;;
   *) notice unclaimed "$ROOT" \
     "worktree-session-guard could not claim this worktree (exit $rc), so cleanup may remove it while this session works" "$CAUSE" ;;
 esac

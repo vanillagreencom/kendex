@@ -3,7 +3,7 @@
 #
 # The hook claims the linked worktree a session starts in through the
 # worktree skill's session guard, found from the hook's own install, when the
-# worktree skill laid that tree out. Each row installs the hook and the guard
+# worktree skill created that tree. Each row installs the hook and the guard
 # under a fixture HOME the way a global install lays them out, starts the hook
 # in one directory of a fixture repository, and pins the hook's exit status,
 # its stdout, the keyed first line of its stderr, the guard's keyed line under
@@ -32,8 +32,9 @@ OUT_FILE="$TMP_ROOT/stdout"
 . "$TEST_DIR/lib/first-line.sh"
 
 # TREE sits where the worktree skill lays an issue tree out, under the default
-# base dir beside the checkout; HARNESS_TREE where Claude Code's
-# `claude --worktree` puts its own.
+# base dir beside the checkout, and carries the issue record `worktree create`
+# writes; HARNESS_TREE sits where Claude Code's `claude --worktree` puts its
+# own, with no record.
 MAIN="$TMP_ROOT/repo/main"
 TREE="$TMP_ROOT/repo/.worktrees/main/tree"
 HARNESS_TREE="$MAIN/.claude/worktrees/agent"
@@ -48,22 +49,8 @@ git -C "$MAIN" commit -q --allow-empty -m init
 git -C "$MAIN" worktree add -q -b tree "$TREE" main
 git -C "$MAIN" worktree add -q -b agent "$HARNESS_TREE" main
 mkdir -p "$TREE/sub"
+printf 'tree\n' >"$(git -C "$TREE" rev-parse --absolute-git-dir)/kendex-issue"
 GUARD="$WORKTREE_SCRIPTS/worktree-session-guard"
-
-# A PATH holding every command the test's own PATH holds but timeout and
-# gtimeout, for the row where neither utility is installed.
-NO_BOUND="$TMP_ROOT/no-bound"
-mkdir -p "$NO_BOUND"
-IFS=: read -r -a path_dirs <<<"$PATH"
-for dir in "${path_dirs[@]}"; do
-  [ -d "$dir" ] || continue
-  ln -s "$dir"/* "$NO_BOUND/" 2>/dev/null || :
-done
-rm -f -- "$NO_BOUND/timeout" "$NO_BOUND/gtimeout"
-if [ ! -x "$NO_BOUND/git" ] || PATH="$NO_BOUND" command -v timeout >/dev/null; then
-  echo "worktree-session-claim: fixture=no-bound-path" >&2
-  exit 1
-fi
 
 # The world a row names, setting WORLD_HOME and WORLD_HOOKS, the directory
 # the hook runs from: `installed` lays the hook and the guard out where a
@@ -127,7 +114,6 @@ a project install in the worktree claims it|project|-|tree|USER=alice|0|-|-|alic
 a hook in a harness root outside the home claims through the home's guard|relocated|-|tree|USER=alice|0|-|-|alice
 a session already holding its lease keeps it|installed|alice|tree|USER=alice|0|-|-|alice
 an inherited GIT_DIR does not move the claim|installed|-|tree|GIT_DIR=$MAIN/.git USER=alice|0|-|-|alice
-a claim with no timeout utility runs unbounded and says so|installed|-|tree|PATH=$NO_BOUND USER=alice|0|worktree-session-claim: unbounded=TREE|-|alice
 a main checkout claims nothing|installed|-|main|USER=alice|0|-|-|none
 a worktree a harness made for itself claims nothing|installed|-|harness|USER=alice|0|-|-|none
 a directory outside any repository claims nothing|installed|-|outside|USER=alice|0|-|-|none
@@ -184,32 +170,35 @@ assert_eq "rc=$rc first=$(first_line) guard=$(grep -Fxc -- "worktree-guard-owner
   "rc=0 first=worktree-session-claim: held=$TREE guard=1 owner=ISSUE-1" \
   "a session restarted under its issue lease reports it held and keeps it"
 
-# A claim waits on the guard's repository-wide mutex. One holder keeps it past
-# the first bounded attempt and lets go before the second ends, so the claim
-# lands only through the retry. Real time is the point of this row: it proves
-# the bound and the retry are wired, nothing about their exact lengths.
-retry_row() { # LABEL
-  local lock="$MAIN/.git/kendex-worktree-session-guard.lock" ready holder rc=0
-  release_all
-  install_world installed
-  ready="$TMP_ROOT/held.$RANDOM"
-  if command -v flock >/dev/null 2>&1; then
-    flock -x "$lock" sh -c ': >"$1"; sleep 9' _ "$ready" &
-  else
-    mkdir -- "$lock.d"
-    sh -c ': >"$1"; sleep 9; rmdir -- "$2"' _ "$ready" "$lock.d" &
-  fi
-  holder=$!
-  until [ -e "$ready" ]; do sleep 0.1; done
-  run_hook_in "$TREE" USER=alice || rc=$?
-  wait "$holder"
-  assert_eq "rc=$rc first=$(first_line) owner=$(lease_owner "$TREE")" "rc=0 first=- owner=alice" "$1"
+# The worktree skill's scripts load the main checkout's `.env.local` as shell,
+# so a hook that ran one would run the repository's code at every session
+# start. A row: label|dir|owner, the session starting in TREE or HARNESS_TREE
+# under a `.env.local` that creates a file when anything sources it.
+ENV_ROWS="a skill-created worktree runs no project file|tree|alice
+a harness's own worktree runs no project file|harness|none"
+env_rows() {
+  local label dir want_owner cwd ran="$TMP_ROOT/env-ran"
+  printf ': >"%s"\n' "$ran" >"$MAIN/.env.local"
+  while IFS='|' read -r label dir want_owner; do
+    release_all
+    install_world installed
+    rm -f -- "$ran"
+    case "$dir" in
+      tree) cwd=$TREE ;;
+      harness) cwd=$HARNESS_TREE ;;
+    esac
+    run_hook_in "$cwd" USER=alice || :
+    assert_eq "ran=$([ -e "$ran" ] && echo yes || echo no) owner=$(lease_owner "$cwd")" \
+      "ran=no owner=$want_owner" "$label"
+  done <<<"$ENV_ROWS"
+  rm -f -- "${MAIN:?}/.env.local"
 }
-HAS_BOUND=false
-if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-  HAS_BOUND=true
-  retry_row "a claim the guard mutex holds past one attempt lands on the retry"
-fi
+env_rows
+
+# The record the hook reads is the one the worktree script writes; a rename
+# on one side alone would leave every tree unclaimed.
+assert_eq "$(grep -cxF 'readonly WORKTREE_ISSUE_RECORD="kendex-issue"' "$WORKTREE_SCRIPTS/worktree" || :) $(grep -cF '"$GIT_DIR_PATH/kendex-issue"' "$HOOK" || :)" \
+  "1 1" "the hook reads the issue record the worktree script writes"
 
 # A planted copy of the hook with LINE, which must stand once as a whole line,
 # replaced by REPLACEMENT; the rows it names are the ones that go red.
@@ -226,8 +215,8 @@ control() { # NAME LINE REPLACEMENT ROWS-FUNCTION EXPECTED-FAILS [ARG]
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that never runs the guard leaves the tree unclaimed.
-  control no-claim 'claim' 'exit 0' claim_rows \
-    "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;a claim with no timeout utility runs unbounded and says so;another owner's lease is reported and kept;another owner's lease is reported and kept: the guard's keyed line is replayed;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;"
+  control no-claim 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' 'exit 0' claim_rows \
+    "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;another owner's lease is reported and kept;another owner's lease is reported and kept: the guard's keyed line is replayed;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;"
 
   # A hook that drops what the guard wrote.
   control no-cause '  [ -z "${4:-}" ] || printf '"'"'%s\n'"'"' "$4" >&2' '  :' claim_rows \
@@ -248,16 +237,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "an inherited GIT_DIR does not move the claim;"
 
   # A hook that claims whatever tree it starts in locks a harness's own.
-  control unmanaged '  0:false) exit 0 ;;' '  0:false) ;;' claim_rows \
+  control unmarked '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' claim_rows \
     "a worktree a harness made for itself claims nothing;"
+  control unmarked-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' env_rows \
+    "a harness's own worktree runs no project file;"
 
-  # A hook that claims unbounded in silence.
-  control silent-unbounded '[ -n "$BOUND" ] || report unbounded "$ROOT" \' '[ -n "$BOUND" ] || : \' claim_rows \
-    "a claim with no timeout utility runs unbounded and says so;"
-
-  if [ "$HAS_BOUND" = true ]; then
-    control no-retry 'case "$rc" in 124 | 137) claim ;; esac' ':' retry_row "no retry;" "no retry"
-  fi
+  # A hook that asks the worktree script runs the repository's `.env.local`.
+  control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' \
+    'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' env_rows \
+    "a skill-created worktree runs no project file;"
 fi
 
 echo

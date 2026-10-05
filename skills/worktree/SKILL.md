@@ -34,7 +34,6 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 | `remove` | Remove worktree, clean symlinks, prune branches |
 | `cleanup` | Remove worktrees whose branches are merged; `--targets-only` prunes build output instead, keeping every worktree and branch |
 | `path` / `exists` | Print / check the worktree path for an issue ID; `path --hosted` prints the hosted lane path |
-| `managed` | Print `true` when this skill laid out the worktree at a path: an issue tree under the base dir or the hosted lane path |
 | `merged` | Print the commit the issue tree's pull request merged as, asking about the branch that tree has checked out; exit 1 when none did, 2 when the lookup could not answer, a detached tree included (`merged --help`) |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase and pinned `--force-with-lease`; on a merge-queue base with no up-to-date rule it pushes a cleanly merging branch unrebased and refuses a conflicting one toward `create --restack`. The `rebase-map:` contract for remapping pre-rebase SHAs is in `push --help` |
@@ -62,7 +61,7 @@ A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirna
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. The catalog's `worktree-session-claim` hook claims a worktree this skill laid out when a session starts in it, and the orchestrating workflow's `claim --owner <ISSUE_ID>` takes that lease over. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
+`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. The catalog's `worktree-session-claim` hook claims a worktree this skill created when a session starts in it, and the orchestrating workflow's `claim --owner <ISSUE_ID>` takes that lease over. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
 
 ## Reclaiming build output
 
