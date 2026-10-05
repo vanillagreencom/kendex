@@ -1,6 +1,7 @@
 //! A declaration naming a retired hook is skipped with a warning carrying
 //! the manifest edit, whether or not the catalog still carries the hook,
-//! and the copies an earlier release installed come out in the sweep;
+//! derives no companion its header requires, and the copies an earlier
+//! release installed come out in the sweep;
 //! every other name the catalog does not carry keeps the refusal that
 //! fails a refresh, so a retired name cannot hide a typo.
 #![cfg(unix)]
@@ -156,20 +157,40 @@ fn trash_paths(report: &EngineReport) -> Vec<PathBuf> {
         .collect()
 }
 
-/// One row per catalog state: the retired hook removed, and the hook still
-/// carried, as the KEN-2967 stub is.
+/// The hook the retired stub's header requires in the companion row.
+const COMPANION: &str = "companion-check";
+
+/// One row per catalog state: the retired hook removed; still carried, as
+/// the KEN-2967 stub is; and carried with a header requiring a companion
+/// the catalog also carries, as the pre-retirement header required
+/// lane-mail-check. A retired declaration derives no companion either.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_retired_hook_still_declared_is_skipped_with_one_warning_and_swept() {
-    for catalog_carries_it in [false, true] {
+    for (row, carried, requires_companion) in [
+        ("catalog removed it", false, false),
+        ("catalog carries it", true, false),
+        ("catalog carries it requiring a companion", true, true),
+    ] {
         let f = installed_by_an_earlier_release("doc-drift-check");
-        if !catalog_carries_it {
+        if !carried {
             fs::remove_file(&f.catalog_copy).unwrap();
+        }
+        if requires_companion {
+            let stub = fs::read_to_string(&f.catalog_copy).unwrap();
+            let requiring = stub.replacen(
+                "# ---\nexit",
+                &format!("# requires: [{COMPANION}]\n# ---\nexit"),
+                1,
+            );
+            assert_ne!(requiring, stub, "{row}: the stub header took no requires");
+            fs::write(&f.catalog_copy, requiring).unwrap();
+            let companion = f.catalog_copy.with_file_name(format!("{COMPANION}.sh"));
+            fs::write(companion, HOOK.replace("NAME", COMPANION)).unwrap();
         }
 
         let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
-        let row = format!("catalog carries it: {catalog_carries_it}");
         assert_eq!(
             report.declaration_status,
             DeclarationStatus::Complete,
@@ -189,8 +210,10 @@ fn a_retired_hook_still_declared_is_skipped_with_one_warning_and_swept() {
             retired.message.starts_with("doc-drift-check: "),
             "{row}: the warning message is not keyed by the hook name"
         );
-        let written = written_hook_files(&report, "doc-drift-check");
-        assert_eq!(written, Vec::<PathBuf>::new(), "{row}");
+        for name in ["doc-drift-check", COMPANION] {
+            let written = written_hook_files(&report, name);
+            assert_eq!(written, Vec::<PathBuf>::new(), "{row}: {name}");
+        }
         let trashed = trash_paths(&report);
         assert!(trashed.contains(&f.script), "{row}: trashed: {trashed:?}");
         apply::execute(&f.env, &report.plan).unwrap();

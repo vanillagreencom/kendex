@@ -685,6 +685,9 @@ fn wanted_by(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Option<Wanted> {
+    if super::desired::retired_hook(kind, parent).is_some() {
+        return None;
+    }
     let own: CatalogKey = (parent_decl.source.clone(), parent_decl.rev.clone());
     let (env, scope) = (catalogs.env, catalogs.scope);
     let OpenCatalog {

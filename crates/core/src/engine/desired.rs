@@ -545,10 +545,9 @@ fn compute(
                 continue;
             };
             super::catalog::notes(&config, &decl.source, &mut state);
-            // Ahead of the catalog lookup, so a catalog still carrying the
-            // hook installs nothing for it. The declaration is accounted
-            // for: its installed copies are stranded, so the sweep takes
-            // them the way it takes a harness dropped from a declaration.
+            // Ahead of the catalog lookup: a carried hook installs nothing.
+            // Its installed copies are stranded, so the sweep takes them the
+            // way it takes a harness dropped from a declaration.
             if let Some(warning) = retired_hook(kind, name) {
                 state
                     .processed
@@ -668,10 +667,10 @@ impl ItemCtx<'_> {
 
 /// Hooks the catalog retired that a consumer manifest may still declare.
 /// A declaration naming one is skipped with a warning carrying the manifest
-/// edit, whether or not the catalog still carries the hook, where every
-/// other name the catalog does not carry is refused, so a refresh at that
-/// consumer still runs. KEN-2892 removes the route one minor release after
-/// it ships, the owner's ruling for this one route.
+/// edit and derives no companion, whether or not the catalog still carries
+/// the hook, where every other name the catalog does not carry is refused,
+/// so a refresh at that consumer still runs. KEN-2892 removes the route one
+/// minor release after it ships, the owner's ruling for this one route.
 const RETIRED_HOOKS: &[&str] = &["doc-drift-check"];
 
 /// The warning a retired hook's declaration gets in place of the refusal.
@@ -681,7 +680,7 @@ const RETIRED_HOOKS: &[&str] = &["doc-drift-check"];
 /// refresh report (KEN-2797) forwards every `kendex refresh` line opening
 /// `<hook>: `, and the CLI prints a message keyed by its own name as that
 /// line.
-fn retired_hook(kind: ItemKind, name: &str) -> Option<super::ItemWarning> {
+pub(super) fn retired_hook(kind: ItemKind, name: &str) -> Option<super::ItemWarning> {
     (kind == ItemKind::Hook && RETIRED_HOOKS.contains(&name)).then(|| super::ItemWarning {
         kind,
         name: name.to_owned(),
