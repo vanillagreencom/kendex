@@ -121,13 +121,17 @@
 #          pushed head validates. It runs no command and passes at once, with
 #          a zero-second wall time, only where the project names the status
 #          check context that runs its validation in DEV_VALIDATE_CI_CONTEXT
-#          and the base branch requires that context, through its rulesets or
-#          its classic branch protection, as GitHub reports them for the
-#          repository gh resolves (GH_REPO, else the worktree).
+#          and the base branch of the worktree branch's open pull request
+#          requires that context, through its rulesets or its classic branch
+#          protection, as GitHub reports them for the repository gh resolves
+#          (GH_REPO, else the worktree). The base is the pull request's own,
+#          which a stacked pull request sets to a branch other than the
+#          default.
 #          Anywhere else it runs as range does, records the mode that ran,
 #          and names why as the ci-fallback= line of start:
 #            setting-empty       DEV_VALIDATE_CI_CONTEXT is empty, the default
-#            base-unresolved     the base branch could not be named
+#            base-unresolved     no open pull request for the worktree's
+#                                branch names a base gh could read
 #            rules-unread        a rule read failed and neither read that
 #                                answered names the context
 #            context-unrequired  both reads answered and neither names it
@@ -455,7 +459,7 @@ CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((
 
 # Whether the pull request CI validates the change, as --help's ci mode states
 # it: the current directory's project names the context, and the base branch
-# requires it. Where it does not, sets ci_fallback to the cause --help names.
+# of the current branch's open pull request requires it. Where it does not, sets ci_fallback to the cause --help names.
 # A read that fails is no proof, and the run validates locally; its stderr
 # goes to ci.log in the class scratch directory, which the run directory
 # keeps.
@@ -468,7 +472,8 @@ ci_runs_validation() {
     ci_fallback=setting-empty
     return 1
   fi
-  if ! base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")" \
+  if ! base_branch="$(gh pr view --json baseRefName,state --jq 'select(.state == "OPEN") | .baseRefName' 2>>"$log")" \
+    || [[ -z "$base_branch" ]] \
     || ! uri="$(jq -rn --arg v "$base_branch" '$v | @uri' 2>>"$log")"; then
     ci_fallback=base-unresolved
     return 1

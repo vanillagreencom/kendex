@@ -16,9 +16,9 @@ DEV_VALIDATE_RANGE_CMD = ""
 
 # The status check context whose pull request run covers DEV_VALIDATE_CMD,
 # for example "CI". A review-comment fix round on an open pull request then
-# leaves its validation to that check where the base branch requires it,
-# through a ruleset or classic branch protection. Empty validates every fix
-# round locally.
+# leaves its validation to that check where the pull request's base branch
+# requires it, through a ruleset or classic branch protection. Empty
+# validates every fix round locally.
 DEV_VALIDATE_CI_CONTEXT = ""
 
 # Seconds either command may run before it is stopped. A stopped run is

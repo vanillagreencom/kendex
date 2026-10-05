@@ -753,29 +753,47 @@ mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
 # Projects whose validation command is `echo full` and whose range command
 # prints that it ran. Each names the context that runs its validation, or
 # none, in DEV_VALIDATE_CI_CONTEXT. The gh on PATH is a stub that answers the
-# two reads of the base branch main the way GitHub's API does, applying the
-# --jq filter it is handed to a JSON payload built from the world the row
-# names, then exiting with that world's status; any other call fails. Each
+# pull request read and the two rule reads of the default branch main, and of
+# a stacked base feature/parent that requires nothing, the way gh does,
+# applying the --jq filter it is handed to a JSON payload built from the world
+# the row names, then exiting with that world's status; any other call fails.
+# Each
 # row's run is a ci request; the classifier stub answers the class, the docs
 # verdict and the measured marker.
 GH_STUB_BIN="$TMP_ROOT/gh-stub"
 mkdir -p "$GH_STUB_BIN"
 cat > "$GH_STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
-[[ "${1:-}" == api ]] || exit 9
-path="$2"
+case "${1:-} ${2:-}" in
+  "pr view") path=pr-view ;;
+  "api "*) path="$2" ;;
+  *) exit 9 ;;
+esac
 shift 2
 filter=""
 while (( $# > 0 )); do
   case "$1" in
     --jq) filter="$2"; shift 2 ;;
     --paginate) shift ;;
+    --json) [[ "$path" == pr-view && "$2" == baseRefName,state ]] || exit 9; shift 2 ;;
     *) exit 9 ;;
   esac
 done
 [[ -n "$filter" ]] || exit 9
 list() { jq -cn --arg v "$1" '$v | split(",") | map(select(. != ""))'; }
 case "$path" in
+  pr-view)
+    payload="$(jq -cn --arg base "${STUB_PR_BASE:-main}" --arg state "${STUB_PR_STATE:-OPEN}" '{baseRefName: $base, state: $state}')"
+    status="${STUB_PR_EXIT:-0}"
+    ;;
+  'repos/{owner}/{repo}/rules/branches/feature%2Fparent')
+    payload='[]'
+    status=0
+    ;;
+  'repos/{owner}/{repo}/branches/feature%2Fparent')
+    payload='{"name":"feature/parent","protection":{"enabled":false,"required_status_checks":{"contexts":[],"checks":[]}}}'
+    status=0
+    ;;
   'repos/{owner}/{repo}/rules/branches/main')
     payload="$(jq -cn --argjson req "$(list "${STUB_RULES:-}")" --argjson other "$(list "${STUB_OTHER:-}")" '
       [{type: "required_status_checks", parameters: {required_status_checks: ($req | map({context: ., integration_id: 15368}))}},
@@ -807,8 +825,14 @@ chmod +x "$GH_STUB_BIN/gh"
 #   rules-fail      the ruleset read prints CI, then fails
 #   classic-absent  the branch payload carries no protection key
 #   classic-fail    the classic read prints CI, then fails
+#   stacked         main requires CI; the pull request's base,
+#                   feature/parent, requires nothing
+#   pr-merged       main requires CI; the branch's pull request is merged
+#   pr-unread       main requires CI; the pull request read prints main's
+#                   name, then fails
 ci_world() {
-  export STUB_RULES=Lint STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0
+  export STUB_RULES=Lint STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
+    STUB_PR_BASE=main STUB_PR_STATE=OPEN STUB_PR_EXIT=0
   case "$1" in
     rules) STUB_RULES=Lint,CI ;;
     classic) STUB_CLASSIC=CI ;;
@@ -818,6 +842,9 @@ ci_world() {
     rules-fail) STUB_RULES=CI STUB_RULES_EXIT=1 ;;
     classic-absent) STUB_CLASSIC=absent ;;
     classic-fail) STUB_CLASSIC=CI STUB_CLASSIC_EXIT=1 ;;
+    stacked) STUB_RULES=Lint,CI STUB_PR_BASE=feature/parent ;;
+    pr-merged) STUB_RULES=Lint,CI STUB_PR_STATE=MERGED ;;
+    pr-unread) STUB_RULES=Lint,CI STUB_PR_EXIT=1 ;;
     *) printf 'ci_world: world=%s\n' "$1" >&2; return 1 ;;
   esac
 }
@@ -847,6 +874,9 @@ CI_ROWS=(
   "a ruleset read that fails runs the range command|yes|rules-fail|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
   "a branch payload with no protection runs the range command|yes|classic-absent|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
   "a classic read that fails runs the range command|yes|classic-fail|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|rules-unread"
+  "a stacked pull request whose own base requires nothing runs the range command|yes|stacked|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|context-unrequired"
+  "a branch whose pull request is merged runs the range command|yes|pr-merged|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|base-unresolved"
+  "a pull request read that fails runs the range command|yes|pr-unread|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|base-unresolved"
   "a render diff, whose checks CI stands down, runs the range command|yes|rules|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a trivial diff outside the docs set runs the range command|yes|rules|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a standard diff of docs alone runs the range command|yes|rules|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
@@ -942,6 +972,17 @@ ci_control 'a missing protection read as empty' 'error("protection unreadable")'
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
 ci_control 'classic protection unread' '"repos/{owner}/{repo}/branches/$uri"' '"repos/{owner}/{repo}/branchesx/$uri"' \
   "a context classic protection's contexts require is left to CI" \
+  'state=done guard-exit=0 validate=pass range|range|rules-unread'
+ci_control "the default branch read instead of the pull request's base" \
+  "gh pr view --json baseRefName,state --jq 'select(.state == \"OPEN\") | .baseRefName'" \
+  '"$SCRIPT_DIR/resolve-base-branch" "$worktree"' \
+  'a stacked pull request whose own base requires nothing runs the range command'
+ci_control 'the pull request state unread' 'select(.state == "OPEN") | .baseRefName' '.baseRefName' \
+  'a branch whose pull request is merged runs the range command'
+ci_control 'a failed pull request read kept' ".baseRefName' 2>>\"\$log\")\"" ".baseRefName' 2>>\"\$log\" || true)\"" \
+  'a pull request read that fails runs the range command'
+ci_control 'an empty base read as a branch' $'    || [[ -z "$base_branch" ]] \\\n' '' \
+  'a branch whose pull request is merged runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|rules-unread'
 ci_control 'an unread rule named as unrequired' 'if [[ "$unread" == true ]]; then' 'if false; then' \
   'a ruleset read that fails runs the range command' \
