@@ -7,11 +7,10 @@ unanswered review thread, root being the thread's first comment id and the
 rest its REST review-comment fields. The head's generated inventory binds each
 reported path. Review text is data; only the upstream verifier confirms a
 defect. GitHub issue titles carry a fingerprint of the package, the path
-inside it and the head lines the comment names, with their surrounding lines
-where that text repeats in the file (its wording for a file-level or
-base-side comment). A consumer or later run reviewing that line finds the
-issue, open or closed, once GitHub search has indexed it; runs that overlap
-within that lag can each file one. Only an issue a GitHub App wrote counts.
+inside it, and the head lines the comment names with their ordinal among
+identical windows in that file (its wording for a file-level or base-side
+comment). The lookup is GitHub issue search over every state, App-authored
+issues only, plus this run's own filings.
 
 A finding is filed upstream only where kendex report --dry-run routes its one
 package to vanillagreencom/kendex with a package label. Every other finding is
@@ -64,8 +63,6 @@ RETIRED = Path(__file__).parent.parent / "retired-settings.json"
 # GitHub search caps a query at 256 characters besides its operators and
 # qualifiers; three 64-character fingerprints fit, four would not with spaces.
 SEARCH_TERMS = 3
-# Lines on each side that tell apart reviewed text repeated in one file.
-CONTEXT = 3
 # gh api stderr for a primary or secondary rate limit, which GitHub answers
 # with HTTP 403 or 429 like an access denial; checked before the denial.
 RATE_LIMIT = re.compile(r"HTTP 429\b|rate limit", re.IGNORECASE)
@@ -119,12 +116,12 @@ def main():
         return subprocess.check_output(args, env=consumer_env, text=True)
 
     def reviewed(finding):
-        """The text a line comment was shown at head, else the review text.
+        """The head lines a comment names and their ordinal, else its text.
 
         A comment on the head side names its last line and, for a range, its
-        first. Text that occurs once in the file is the line wherever it
-        moves; repeated text (fi, a fence) takes CONTEXT lines on each side.
-        A file-level or base-side comment names no head line, so its wording
+        first. The ordinal counts identical windows above it in the file at
+        head, so repeated text (fi, a fence) keys each position apart. A
+        file-level or base-side comment names no head line, so its wording
         is all that identifies it.
         """
         end = finding.get("line")
@@ -136,10 +133,8 @@ def main():
         if not 1 <= start <= end <= len(lines):
             raise ValueError(f"review lines {start}-{end} are outside {finding['path']} at {head}")
         window = lines[start - 1:end]
-        size = len(window)
-        if sum(lines[i:i + size] == window for i in range(len(lines) - size + 1)) == 1:
-            return "\n".join(window)
-        return ["\n".join(window), lines[max(start - 1 - CONTEXT, 0):end + CONTEXT]]
+        ordinal = sum(lines[i:i + len(window)] == window for i in range(start - 1))
+        return ["\n".join(window), ordinal]
 
     read("git", "fetch", "--no-tags", "origin", head)
     inventory = json.loads(read("git", "show", head + ":.kendex-generated.json"))
@@ -220,10 +215,8 @@ def main():
                 # file itself for a single-file package matched by stem.
                 rest = parts[parts.index(name) + 1:] if name in parts else ()
                 inner = PurePosixPath(*rest) if rest else PurePosixPath(parts[-1])
-                # One package line is one finding in every consumer and every
-                # refresh: the identity holds no consumer repository or
-                # rendered path, and the review wording only where reviewed()
-                # falls back to it.
+                # The identity holds no consumer repository or rendered path,
+                # and the review wording only where reviewed() falls back to it.
                 identity = json.dumps([name, str(inner), reviewed(finding)],
                                       ensure_ascii=False, separators=(",", ":"))
                 row["marker"] = f"[kendex-render:{hashlib.sha256(identity.encode()).hexdigest()}]"
@@ -231,8 +224,8 @@ def main():
         row["note"] = "Issues token unavailable" if row["label"] else unrouted
         rows.append(row)
 
-    # Every state counts: a closed issue is the upstream answer, so a later
-    # refresh or another consumer files nothing new for the same line.
+    # Every state counts: a closed match is the upstream answer and files
+    # nothing.
     known = {}
     markers = list(dict.fromkeys(r["marker"] for r in rows if r["marker"]))
     if token and markers:
@@ -249,7 +242,6 @@ def main():
             token = ""
 
     results = []
-    posted = {}
     for row in rows:
         finding, label, marker, evidence = row["finding"], row["label"], row["marker"], row["evidence"]
         path, note = finding["path"], row["note"]
@@ -273,13 +265,11 @@ def main():
                 elif existing:
                     url = filed = existing["html_url"]
                     note = "Existing open report"
-                    # Each folded thread leaves its own text and evidence on
-                    # the issue once. Its title retains the stable identity
-                    # and no other write occurs.
+                    # A thread whose evidence the issue body lacks adds its
+                    # text and evidence as a comment.
                     record = f"Review evidence: {evidence}\n"
-                    if record not in (existing.get("body") or "") and record not in posted.setdefault(marker, ""):
+                    if record not in (existing.get("body") or ""):
                         result = api(f"repos/{UPSTREAM}/issues/{existing['number']}/comments", {"body": body})
-                        posted[marker] += body
                         url = result["html_url"]
                 else:
                     created = api(f"repos/{UPSTREAM}/issues", {"title": row["title"], "body": body,

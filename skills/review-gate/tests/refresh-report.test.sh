@@ -202,11 +202,12 @@ results=[]
 # The package's SKILL.md at the source, and as a consumer renders it with a
 # project-instructions block that shifts every line.
 skill_md=['---','name: review-gate','---','','Run the gate.','Then read the verdict.','']
-# A script with two `fi` lines, and two single-file packages sharing a line.
+# A script whose `fi` windows repeat with identical surrounding lines, and two
+# single-file packages sharing a line.
 agent='---\nname: x\n---\nDo the work.\n'
 files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
        '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:]),
-       '.agents/skills/review-gate/scripts/test.sh':'if a; then\n  x\nfi\nif b; then\n  y\nfi\n',
+       '.agents/skills/review-gate/scripts/test.sh':'run() {\n  if a; then\n    x\n  fi\n}\n\n'*3,
        '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent}
 def reset(**extra):
  world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
@@ -266,20 +267,23 @@ assert package_line()=='one'
 # The fold stops at the line: another line of the same file, a base-side
 # comment and a file-level comment are their own findings, and the
 # wording identifies the last two.
-# Text repeated in one file is told apart by its surrounding lines, a range
-# and a single line sharing its end are two findings, and a single-file
-# package folds by its own name.
+# Each position of text repeated in one file, surrounding lines and all, is
+# its own finding, as are the frontmatter fences; a range and a single line
+# sharing its end are two findings, and a single-file package folds by its
+# own name.
 other_line=dict(consumer_a,line=5,start_line=None)
 same_end=dict(consumer_a,root=31,start_line=None)
 base_side=dict(consumer_a,side='LEFT')
-first_fi=dict(consumer_a,root=32,path='.agents/skills/review-gate/scripts/test.sh',line=3,start_line=None)
-repeated_text=[first_fi, dict(first_fi,root=33,line=6)]
+first_fi=dict(consumer_a,root=32,path='.agents/skills/review-gate/scripts/test.sh',line=4,start_line=None)
+repeated_text=[first_fi, dict(first_fi,root=33,line=10)]
+fences=[dict(consumer_a,root=34,line=1,start_line=None), dict(consumer_a,root=35,line=3,start_line=None)]
 agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=4,start_line=None)
 agents=[agent_a, dict(agent_a,root=61,body='Another wording.'), dict(agent_a,root=62,path='.claude/agents/maintainer.md')]
 for rows, issues in [
  ([consumer_a, other_line], 2),
  ([consumer_a, same_end], 2),
  (repeated_text, 2),
+ (fences, 2),
  (agents, 2),
  ([base_side, dict(base_side,body='Another wording.')], 2),
  ([dict(consumer_a,line=None,start_line=None), dict(consumer_b,line=None,start_line=None)], 2),
@@ -288,6 +292,16 @@ for rows, issues in [
  reset(); assert len(run(rows=rows)['issues'])==issues, rows
  # Search indexes a new issue late; one run's repeat rides on its own filing.
  assert len({r['issue'] for r in results})==issues
+# One occurrence of repeated text, reviewed again after two lines are
+# prepended above it, folds into its issue.
+def shifted(driver=skill/'scripts/refresh-report.py'):
+ reset(); run(driver,rows=[dict(first_fi,line=10)])
+ moved=json.loads(world.read_text()); moved['files'][first_fi['path']]='#!/bin/sh\n\n'+files[first_fi['path']]
+ world.write_text(json.dumps(moved))
+ later=run(driver,rows=[dict(first_fi,root=36,line=12,url='https://github.com/acme/repo/pull/2#discussion_r36')],
+           overrides={'GITHUB_RUN_ID':'43'})
+ return len(later['issues']), results[0]['note']
+assert shifted()==(1,'Existing open report')
 # Each thread folded onto this run's own filing leaves its text and evidence.
 def folded_evidence(driver=skill/'scripts/refresh-report.py'):
  reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
@@ -440,8 +454,7 @@ for needle,replacement,expect in [
 for needle,replacement,rows,issues in [
  ('                    known[marker] = created\n', '                    pass\n', [consumer_a, consumer_b], 2),
  ('start = start or end', 'start = end', [consumer_a, same_end], 1),
- ('        return ["\\n".join(window), lines[max(start - 1 - CONTEXT, 0):end + CONTEXT]]\n',
-  '        return "\\n".join(window)\n', repeated_text, 1),
+ ('return ["\\n".join(window), ordinal]', 'return ["\\n".join(window), 0]', repeated_text, 1),
  ('if end is None or finding.get("side") != "RIGHT":', 'if end is None:', [base_side, dict(base_side,body='Another wording.')], 1),
 ]:
  assert source.count(needle)==1, needle
@@ -460,12 +473,12 @@ needle='SEARCH_TERMS = 3\n'
 assert source.count(needle)==1
 mutant=root/'batch.py'; mutant.write_text(source.replace(needle,'SEARCH_TERMS = 4\n'))
 reset(); assert attempt(mutant,many,None).returncode!=0
-# Text that occurs once is the line wherever a consumer's render moves it;
-# context for every line splits one package line across consumers.
+# Keying a window by its line number splits a moved occurrence; the
+# evidence, author and rate-limit rules each turn their case red.
 for needle,replacement,check,expect in [
- ('for i in range(len(lines) - size + 1)) == 1:', 'for i in range(len(lines) - size + 1)) == 0:', package_line, 'consumers'),
- ('if record not in (existing.get("body") or "") and record not in posted.setdefault(marker, ""):',
-  'if run not in existing["body"]:', folded_evidence, []),
+ ('return ["\\n".join(window), ordinal]', 'return ["\\n".join(window), start]', shifted,
+  (2,'Filed for upstream confirmation')),
+ ('if record not in (existing.get("body") or ""):', 'if run not in existing["body"]:', folded_evidence, []),
  ('and (i.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
  ('if RATE_LIMIT.search(result.stderr):', 'if False:', lambda d: rate_limited(rate_limits[0],d), False),
 ]:
