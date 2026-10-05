@@ -61,6 +61,32 @@ BEFORE='[HTIO-5](https://linear.app/workspace/issue/HTIO-5) NEW-6'
 AFTER='HTIO-5 [NEW-6](https://linear.app/workspace/issue/NEW-6)'
 assert_eq "$RC=$(jq -r '.result.texts | join(";")' <<<"$OUT")" "0=$BEFORE;$BEFORE;$BEFORE;$AFTER;$AFTER" 'cached keys stay linked until expiry, then refreshed keys link'
 
+# Repeated relay posts share repository discovery, including a failed gh read.
+for cache in original no-cache no-expiry; do
+  case "$cache" in
+    no-cache) sk_mutant repository-cache markup.py 'cached = self.repositories.get\(root\)' 'cached = None' ;;
+    no-expiry) sk_mutant repository-expiry markup.py '(cached = self.repositories.get\(root\)\n        if cached is not None and )now - cached\[0\] < METADATA_SECONDS' '\1True' ;;
+  esac
+  for fixture in success exit; do
+    REPOSITORY="$(sk_tracker_root "repository-$cache-$fixture" '' org/repo)"
+    PREVIOUS='[#2](https://github.com/org/repo/pull/2)'
+    if [ "$fixture" = exit ]; then
+      printf '1\n' > "$REPOSITORY/github.exit"
+      PREVIOUS='#2'
+    fi
+    REFRESHED='[#2](https://github.com/org/changed/pull/2)'
+    sk_markup "$REPOSITORY" lifetime github refresh
+    GOT="$RC=$(jq -r '[(.result.reads | join(",")), (.result.texts | join(";"))] | join(" ")' <<<"$OUT")"
+    WANT="0=1,1,1,2,2 $PREVIOUS;$PREVIOUS;$PREVIOUS;$REFRESHED;$REFRESHED"
+    if [ "$cache" = original ]; then
+      assert_eq "$GOT" "$WANT" "repository $fixture discovery stays cached until expiry, then refreshes"
+    else
+      sk_assert_red "$GOT" "$WANT" "control: repository $fixture lifetime fails with $cache"
+    fi
+  done
+  sk_bin_reset
+done
+
 # Real producers can fail or return incomplete JSON; no stale links survive.
 for fixture in exit json slug keys item empty; do
   BROKEN="$(sk_tracker_root "broken-$fixture" Team '')"
