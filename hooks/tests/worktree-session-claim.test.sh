@@ -104,7 +104,7 @@ run_hook_in() { # DIR [ENV...]
 #           the worktree root and HOOKDIR for the hook's directory
 #   guard   the guard's keyed line the hook replays under its own, as a whole
 #           line of stderr (worktree-session-guard's messages.sh records),
-#           `-` for a row where the guard does not run or says nothing
+#           `-` for a row where the hook replays nothing of the guard's
 #   owner   the lease owner after the hook on the session's worktree, `none`
 #           for no lock
 ROWS="a session in a linked worktree claims it under USER|installed|-|tree|USER=alice|0|-|-|alice
@@ -117,7 +117,7 @@ an inherited GIT_DIR does not move the claim|installed|-|tree|GIT_DIR=$MAIN/.git
 a main checkout claims nothing|installed|-|main|USER=alice|0|-|-|none
 a worktree with no issue record claims nothing|installed|-|harness|USER=alice|0|-|-|none
 a directory outside any repository claims nothing|installed|-|outside|USER=alice|0|-|-|none
-another owner's lease is reported and kept|installed|bob|tree|USER=alice|0|worktree-session-claim: held=TREE|worktree-guard-owner-conflict: path=TREE owner=bob|bob
+another owner's lease is kept silently|installed|bob|tree|USER=alice|0|-|-|bob
 a guard that fails is reported|installed|-|tree|-|0|worktree-session-claim: unclaimed=TREE|worktree-guard-owner-required: claim|none
 a guard missing from the install is reported|bare|-|tree|USER=alice|0|worktree-session-claim: guard=HOOKDIR|-|none
 a global hook does not run the open worktree's guard|repo-only|-|tree|USER=alice|0|worktree-session-claim: guard=HOOKDIR|-|none"
@@ -156,19 +156,23 @@ claim_rows
 
 # The workflow's claim under the issue ID after the hook's: one session, so
 # the lease passes rather than refusing the workflow. A later start of that
-# session under the env ladder reports the issue lease held and leaves it.
-release_all
-install_world installed
-run_hook_in "$TREE" USER=alice
-rc=0
-env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice \
-  "$GUARD" claim "$TREE" --owner ISSUE-1 >/dev/null 2>&1 || rc=$?
-assert_eq "rc=$rc owner=$(lease_owner "$TREE")" "rc=0 owner=ISSUE-1" "the workflow's issue claim takes over the hook's lease"
-rc=0
-run_hook_in "$TREE" USER=alice || rc=$?
-assert_eq "rc=$rc first=$(first_line) guard=$(grep -Fxc -- "worktree-guard-owner-conflict: path=$TREE owner=ISSUE-1" "$ERR_FILE" || :) owner=$(lease_owner "$TREE")" \
-  "rc=0 first=worktree-session-claim: held=$TREE guard=1 owner=ISSUE-1" \
-  "a session restarted under its issue lease reports it held and keeps it"
+# session under the env ladder, a resume or compaction of the lane, leaves the
+# issue lease and writes nothing.
+takeover_rows() {
+  local rc=0
+  release_all
+  install_world installed
+  run_hook_in "$TREE" USER=alice
+  env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice \
+    "$GUARD" claim "$TREE" --owner ISSUE-1 >/dev/null 2>&1 || rc=$?
+  assert_eq "rc=$rc owner=$(lease_owner "$TREE")" "rc=0 owner=ISSUE-1" "the workflow's issue claim takes over the hook's lease"
+  rc=0
+  run_hook_in "$TREE" USER=alice || rc=$?
+  assert_eq "rc=$rc stdout=$(wc -c <"$OUT_FILE" | tr -d ' ') stderr=$(wc -c <"$ERR_FILE" | tr -d ' ') owner=$(lease_owner "$TREE")" \
+    "rc=0 stdout=0 stderr=0 owner=ISSUE-1" \
+    "a session restarted under its issue lease keeps it silently"
+}
+takeover_rows
 
 # The worktree skill's scripts load the main checkout's `.env.local` as shell,
 # so a hook that ran one would run the repository's code at every session
@@ -216,11 +220,18 @@ control() { # NAME LINE REPLACEMENT ROWS-FUNCTION EXPECTED-FAILS [ARG]
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that never runs the guard leaves the tree unclaimed.
   control no-claim 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' 'exit 0' claim_rows \
-    "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;another owner's lease is reported and kept;another owner's lease is reported and kept: the guard's keyed line is replayed;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;"
+    "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;"
 
   # A hook that drops what the guard wrote.
   control no-cause '  [ -z "${4:-}" ] || printf '"'"'%s\n'"'"' "$4" >&2' '  :' claim_rows \
-    "another owner's lease is reported and kept: the guard's keyed line is replayed;a guard that fails is reported: the guard's keyed line is replayed;"
+    "a guard that fails is reported: the guard's keyed line is replayed;"
+
+  # A hook that reports a lock already holding the tree tells every resumed
+  # lane its own issue lease is foreign.
+  control held-notice '  0 | 75) ;;' '  0) ;; 75) notice held "$ROOT" "a lock holds this worktree" "$CAUSE" ;;' claim_rows \
+    "another owner's lease is kept silently;"
+  control held-notice-takeover '  0 | 75) ;;' '  0) ;; 75) notice held "$ROOT" "a lock holds this worktree" "$CAUSE" ;;' takeover_rows \
+    "a session restarted under its issue lease keeps it silently;"
 
   # A hook that takes the open repository's guard whatever its own install
   # runs code the repository planted.
