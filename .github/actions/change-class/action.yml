@@ -93,8 +93,7 @@ outputs:
       true where the change must run in a merge group before it lands, false
       where it need not: the value of the shipped change-class's
       `queue-only:` line, which github.sh pr-merge asks again before the
-      admin route. A `:queue` lane is deferred off a pull request only where
-      this value is true. Empty where the classifier root predates this
+      admin route. Empty where the classifier root predates this
       output, and where the step failed, whose wiring error is the answer;
       read empty as true.
     value: ${{ steps.classify.outputs.queue_only }}
