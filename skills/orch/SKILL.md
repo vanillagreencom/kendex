@@ -79,7 +79,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `pr-view-json` | PR view JSON; `status=no_pr` exits 0 and routes to PR creation, not an error |
 | `resolve-base-branch` | Print a worktree's base branch; exits 1 rather than guess |
 | `sync-base` | Resolve, fetch, and fast-forward the checkout that owns the base branch; prints the branch name |
-| `container-close` | Serialize a Linear container close across linked checkouts; prints `closed` or `deferred`, with closed diagnostics on stderr |
+| `container-close` | Serialize a Linear container close across linked checkouts; prints `closed`, `deferred` or a rate-limit `held`, with closed diagnostics on stderr |
 | `base-freshness` | Gate the review cycle on a current base, or on a clean merge onto a merge-queue base; unverifiable = stale |
 | `review-artifact-check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON |

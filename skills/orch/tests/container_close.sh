@@ -91,12 +91,24 @@ case "$resource:$action" in
   issues:complete)
     summary=""
     while [[ $# -gt 0 ]]; do case "$1" in --summary-file) summary="$2"; shift 2 ;; *) shift ;; esac; done
+    ratelimit="$(cat "$root/ratelimit.complete.once" 2>/dev/null || true)"
+    rm -f "$root/ratelimit.complete.once"
+    rate_line='{"error":"Rate limited. Requests-Reset=2026-10-05T16:00:00Z","code":"RATELIMITED","requests_reset":"2026-10-05T16:00:00Z"}'
+    if [[ "$ratelimit" == comment ]]; then
+      printf 'ratelimit\n' >> "$root/complete.calls"
+      printf '%s\n' "$rate_line" '{"error": "Completion summary comment failed for PARENT-1. Issue state unchanged."}' >&2
+      exit 1
+    fi
     if [[ -n "$summary" ]]; then
       cp "$summary" "$root/summary.body"; printf 'summary\n' >> "$root/summary.calls"; touch "$root/summary.posted"; printf 'summary\n' >> "$root/complete.args"
     else printf 'state-only\n' >> "$root/complete.args"; fi
     printf 'close\n' >> "$root/complete.calls"
     mkdir -p "$root/complete.entries"; : > "$root/complete.entries/$$"
     [[ ! -e "$root/fail.complete.once" ]] || { rm -f "$root/fail.complete.once"; exit 9; }
+    if [[ "$ratelimit" == update ]]; then
+      printf '%s\n' "$rate_line" '{"error": "State transition to Done failed after the summary comment was posted."}' >&2
+      exit 1
+    fi
     if [[ -e "$root/hold.complete" ]]; then while [[ ! -e "$root/release.complete" ]]; do sleep 0.02; done; fi
     printf 'Done\n' > "$root/parent.state"
     jq 'map(if .state_type == "canceled" then .state = "Done" | .state_type = "completed" else . end)' "$root/children.json" > "$root/children.next.$$"
@@ -118,11 +130,14 @@ export FAKE_LINEAR_ROOT="$TMP_ROOT/state"
 export PATH="$TMP_ROOT/bin:$PATH"
 export REAL_FLOCK
 mkdir "$FAKE_LINEAR_ROOT" "$SANDBOX/tmp"
+HELD_DIR="$SANDBOX/tmp/container-close-held/PARENT-1"
 
 reset_state() {
   printf 'In Progress\n' > "$FAKE_LINEAR_ROOT/parent.state"
   printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
-  rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls"
+  rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
+    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
+  [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"; mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
 run_close() { (cd "$CALLER_ONE" && "$SCRIPT" "$SANDBOX" PARENT-1); }
@@ -179,6 +194,68 @@ assert_eq "$out" "closed PARENT-1" "partial completion retries the state transit
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/summary.calls" | tr -d ' ')" "1" "partial completion retry posts no second summary"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" $'summary\nstate-only' "validated summary evidence selects a state-only retry"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "2" "partial completion retries mutation once"
+
+# A rate-limited completion is a hold, never a failure: the parent stays open
+# and unread, the reset reaches stdout, and the summary the run built is kept
+# so the resumed run posts it. The resume below fails every PR lookup, so only
+# a reused summary can close it.
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+rc=0; out="$(run_close 2>"$TMP_ROOT/held.err")" || rc=$?
+assert_eq "$rc:$out" "0:held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited completion holds with its reset" "$TMP_ROOT/held.err"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "a held completion leaves the parent open"
+assert_eq "$(tail -n 1 "$FAKE_LINEAR_ROOT/linear.calls")" "issues:complete" "a held completion reads nothing after the rate limit"
+assert_file_contains "$TMP_ROOT/held.err" '"code":"RATELIMITED"' "a held completion forwards the rate-limit line"
+assert_file_contains "$TMP_ROOT/held.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held completion names its kept summary"
+assert_file_contains "$HELD_DIR/summary.md" "CHILD-1 ✓ one — PR #101" "a held completion keeps the summary it built"
+printf 'exit\n' > "$FAKE_LINEAR_ROOT/gh.mode"
+rc=0; out="$(run_close 2>"$TMP_ROOT/resume.err")" || rc=$?
+assert_eq "$rc:$out" "0:closed PARENT-1" "the resumed run closes on the kept summary without a PR lookup" "$TMP_ROOT/resume.err"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "the resumed run posts the kept summary"
+[[ ! -e "$HELD_DIR" ]] && pass "a closed parent releases its held inputs" || fail "a closed parent releases its held inputs"
+
+# Controls: the hold branch and the kept-summary reuse, each disabled in a copy.
+HOLD_MUTANT="$SANDBOX/skills/orch/scripts/container-close-hold-mutant"
+REUSE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-reuse-mutant"
+assert_eq "$(grep -Fc 'if [[ -n "$REQUESTS_RESET" ]]; then' "$SCRIPT")" "1" "hold control finds the hold branch"
+assert_eq "$(grep -Fc 'if [[ -f "$HELD_SUMMARY" ]] && cmp' "$SCRIPT")" "1" "reuse control finds the kept-summary reuse"
+awk 'index($0, "if [[ -n \"$REQUESTS_RESET\" ]]; then") { sub(/if /, "if false \\&\\& ") } { print }' "$SCRIPT" > "$HOLD_MUTANT"
+awk 'index($0, "if [[ -f \"$HELD_SUMMARY\" ]] && cmp") { sub(/if /, "if false \\&\\& ") } { print }' "$SCRIPT" > "$REUSE_MUTANT"
+chmod +x "$HOLD_MUTANT" "$REUSE_MUTANT"
+cmp -s "$SCRIPT" "$HOLD_MUTANT" && fail "hold control changes the copy" || pass "hold control changes the copy"
+cmp -s "$SCRIPT" "$REUSE_MUTANT" && fail "reuse control changes the copy" || pass "reuse control changes the copy"
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+rc=0; out="$(cd "$CALLER_ONE" && "$HOLD_MUTANT" "$SANDBOX" PARENT-1 2>/dev/null)" || rc=$?
+assert_eq "$rc:$out" "1:" "hold control exposes a rate limit reported as a failed close"
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+run_close >/dev/null 2>&1
+printf 'exit\n' > "$FAKE_LINEAR_ROOT/gh.mode"
+rc=0; out="$(cd "$CALLER_ONE" && "$REUSE_MUTANT" "$SANDBOX" PARENT-1 2>/dev/null)" || rc=$?
+assert_eq "$rc:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "1:In Progress" "reuse control exposes a resume that looks the PRs up again"
+
+# A kept summary lists the children it was built from; a changed set rebuilds.
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+run_close >/dev/null 2>&1
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+assert_eq "$(run_close 2>/dev/null)" "closed PARENT-1" "a changed child set resumes the close"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #102" "a changed child set rebuilds the kept summary"
+
+# Rate-limited after the summary posted: the hold keeps no summary, and the
+# resume sets Done without posting a second one.
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'update\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+assert_eq "$(run_close 2>/dev/null)" "held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited state transition holds"
+assert_eq "$(run_close 2>/dev/null)" "closed PARENT-1" "a held state transition resumes"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" $'summary\nstate-only' "a held state transition resumes without the summary"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/summary.calls" | tr -d ' ')" "1" "a held state transition posts one summary"
 
 for validation_mode in exit false string_all_ok missing_parent duplicate_parent empty_state wrong_state_type wrong_summary_type; do
   reset_state
