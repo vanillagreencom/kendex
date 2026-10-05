@@ -450,6 +450,11 @@ pub(super) fn plan(
 #[cfg(all(test, unix))]
 mod own_inventory;
 
+/// This repository's committed renders, held to the bytes this pass
+/// renders.
+#[cfg(all(test, unix))]
+mod own_renders;
+
 /// The document's on-disk shape, which is what a merge reads.
 #[cfg(test)]
 mod tests;

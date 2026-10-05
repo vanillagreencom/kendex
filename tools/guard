@@ -905,7 +905,8 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
 # deliberately has no copy. Judge the same candidate for configuration,
 # source existence, and render bytes: the index at commit time, the worktree
 # under --full and --range. One ordered-pair reader owns both instruction block shapes;
-# kendex verify owns the rendered bytes inside them.
+# `cargo test -p kendex-core --lib own_renders` holds the rendered bytes inside
+# them to what this tree renders.
 worktree_reads=1
 [ "$MODE" != default ] || worktree_reads=0
 render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
