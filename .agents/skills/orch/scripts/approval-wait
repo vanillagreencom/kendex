@@ -4,9 +4,7 @@
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
 # merge-pr and ci-fix. --request-review prints the same enum after skipping
 # an off gate or requesting Copilot, or a fallback line with its cause when
-# no request went out; --copilot-route, consumed by submit-pr, prints the
-# same answers with no request. --json stdout is consumed by their gate
-# routing.
+# no request went out. --json stdout is consumed by their gate routing.
 # The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
 
@@ -111,6 +109,10 @@ approval_message() {
       printf 'approval-wait: copilot-requests-invalid value=%q\n' "$COPILOT_REQUESTS"
       printf '%s\n' 'PR_COPILOT_REQUESTS must be on or off.'
       ;;
+    copilot-fallback-unsent)
+      printf 'approval-wait: copilot-fallback-unsent pr=%s head=%s item=%s path=%q\n' "$PR_NUM" "$1" "$ITEM" "$2"
+      printf '%s\n' "The copilot-fallback notice for this head did not go out; the next poll sends it again. The wait goes on."
+      ;;
     copilot-request-refused)
       printf 'approval-wait: copilot-request-refused pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$request_rc"
       printf '%s\n' "The Copilot review request for PR #$PR_NUM in $REPO exited nonzero; the caller asks the overseer for the head approval instead and names this cause."
@@ -158,7 +160,6 @@ Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      [--item ID]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
        approval-wait <PR#> --request-review --base-checkout PATH
-       approval-wait <PR#> --copilot-route --base-checkout PATH
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
 result on stdout: a stable status line with English below, or a JSON object
@@ -196,11 +197,6 @@ vs proceeded deterministically (kendex#538, kendex#642).
                                                    (copilot-request-refused on stderr)
                  The caller then asks the overseer for the head approval, naming
                  the cause, and waits for no Copilot review.
-  --copilot-route
-                 --request-review's answer without its request: approval when a
-                 Copilot review may come, so the caller waits for it;
-                 fallback cause=off when PR_COPILOT_REQUESTS is off; off for an
-                 off gate.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -246,11 +242,26 @@ Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                         when no max_wait positional is passed (default
                         900)
   PR_COPILOT_REQUESTS   on | off — whether --request-review asks Copilot
-                        for a review, and whether --copilot-route answers
-                        fallback (default on). Read from the caller's
-                        project, as auth is, never from --base-checkout:
-                        Copilot spend is the caller's account's. Any other
-                        value exits 2
+                        for a review, and whether a wait in a lane sends the
+                        Copilot fallback notice below (default on). Read
+                        from the caller's project, as auth is, never from
+                        --base-checkout: Copilot spend is the caller's
+                        account's. Any other value exits 2
+
+Copilot fallback notice: under PR_COPILOT_REQUESTS=off no Copilot review
+will come, so the overseer's approval is what ends a wait. A wait whose
+--item names a lane, its mailbox tmp/lane-mail/<ITEM> standing in this
+checkout, asks for that approval: the first poll that reads a head with no
+approval, no CHANGES_REQUESTED and no open thread sends
+`lane-mail notice --item <ITEM>` with the first line
+  copilot-fallback PR #<N> head <FULL_SHA> cause=off
+and under it the lane status file, tmp/lane-status-<ITEM>.md, the overseer
+reads before it approves. Once per head: the notice file the send reads,
+tmp/lane-mail/<ITEM>/copilot-fallback-<FULL_SHA>.md, created exclusively, is
+the key, so a later poll or a second wait on that head sends nothing, and a
+new head sends again. A failed send prints copilot-fallback-unsent on
+stderr and removes that file, so the next poll asks again; it never ends
+the wait. With no --item, or no mailbox, nothing is sent.
 
 Timeout (PR_REVIEW_ON_TIMEOUT / --on-timeout): when the gate signal never
 arrives before the deadline, "block" reports "timeout" (exit 1) and the
@@ -359,8 +370,7 @@ Long waiter launch:
 Exit codes:
   0  approved / proceeded (deadline reached under
      PR_REVIEW_ON_TIMEOUT=proceed); --resolve-mode printed a mode;
-     --request-review or --copilot-route printed off, approval or a
-     fallback line
+     --request-review printed off, approval or a fallback line
   1  changes requested, unresolved comments pending, timeout,
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
@@ -377,8 +387,6 @@ JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
 REQUEST_REVIEW=false
-# --copilot-route: --request-review's routing with no request sent.
-ROUTE_ONLY=false
 BASE_CHECKOUT=""
 ON_TIMEOUT_FLAG=""
 ITEM=""
@@ -391,11 +399,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
-    --request-review|--copilot-route)
-      REQUEST_REVIEW=true
-      [[ "$1" == --request-review ]] || ROUTE_ONLY=true
-      shift
-      ;;
+    --request-review) REQUEST_REVIEW=true; shift ;;
     --base-checkout)
       [[ -n "${2:-}" ]] || { approval_message base-checkout-invalid >&2; exit 2; }
       BASE_CHECKOUT="$2"
@@ -453,7 +457,7 @@ if $REQUEST_REVIEW || $RESOLVE_MODE || [[ -n "$BASE_CHECKOUT" ]]; then
 fi
 # Read before the move into the base checkout, so it is the caller's setting.
 COPILOT_REQUESTS=on
-if $REQUEST_REVIEW; then
+if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then
   COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2
   case "$COPILOT_REQUESTS" in
     on|off) ;;
@@ -780,7 +784,7 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
     if [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
-    elif ! $ROUTE_ONLY; then
+    else
       request_rc=0
       gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
       if [[ "$request_rc" -ne 0 ]]; then
@@ -1014,6 +1018,27 @@ read_base_ref() {
   fi
 }
 
+# copilot_fallback_notice HEAD: in a lane, ask the overseer once for HEAD's
+# approval. The notice file is the once-per-head key, so it is created
+# exclusively and removed only by the send that failed to deliver it.
+copilot_fallback_notice() {
+  local box notice text
+  [ -n "$LANE_MAIL_FILE" ] && [ -n "$1" ] || return 0
+  box="${LANE_MAIL_FILE%/*}"
+  [ -d "$box" ] || return 0
+  notice="$box/copilot-fallback-$1.md"
+  text="copilot-fallback PR #$PR_NUM head $1 cause=off"$'\n'"Lane status: tmp/lane-status-$ITEM.md"
+  if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then
+    # An earlier poll or wait on this head created it, or the write failed.
+    [ -e "$notice" ] || approval_message copilot-fallback-unsent "$1" "$notice" >&2
+    return 0
+  fi
+  if ! "$SCRIPT_DIR/lane-mail" notice --item "$ITEM" --file "$notice" >&2; then
+    rm -f -- "${notice:?}"
+    approval_message copilot-fallback-unsent "$1" "$notice" >&2
+  fi
+}
+
 resolve_auto_review_targets
 
 update_elapsed
@@ -1109,6 +1134,7 @@ while true; do
     emit_result "comments"
     exit 1
   fi
+  [ "$COPILOT_REQUESTS" = on ] || copilot_fallback_notice "$last_head_sha"
 
   # --- head-change bookkeeping for the proceed-on-timeout guard ---
   if [ "$last_head_sha" != "$prev_head_sha" ]; then

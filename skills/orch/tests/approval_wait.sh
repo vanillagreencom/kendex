@@ -396,6 +396,12 @@ run_wait() {
   local env_list="$1" env_args=()
   shift
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  RUN_ITEM=""
+  local arg prev=""
+  for arg in "$@"; do
+    [[ "$prev" != --item ]] || RUN_ITEM="$arg"
+    prev="$arg"
+  done
   mkdir -p "$RUN"
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
@@ -434,6 +440,10 @@ count_lines() { # FILE — 0 when it was never written
 #   error_line  first line of the JSON error, spaces encoded as +
 #   stderr_line the first line of stderr, spaces encoded as +
 #   mail        the count on an `approval-wait: mail=` stdout line
+#   fallback_heads  the head each copilot-fallback notice in the mailbox of
+#               the run's --item names, in send order; `none` when none went
+#               out. The overseer reads the head off that first line
+#   unsent      copilot-fallback-unsent lines on stderr
 observe() {
   local got="" token name
   for token in $1; do
@@ -449,6 +459,8 @@ observe() {
       error_line) got="$got error_line=$(json '.error | split("\n")[0]' | tr ' ' '+')" ;;
       mail) got="$got mail=$(sed -n '1s/^approval-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       stderr_line) got="$got stderr_line=$(sed -n '1p' "$RUN/stderr" | tr ' ' '+')" ;;
+      fallback_heads) got="$got fallback_heads=$(fallback_heads)" ;;
+      unsent) got="$got unsent=$(grep -c '^approval-wait: copilot-fallback-unsent ' "$RUN/stderr" || true)" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       rules_reads) got="$got rules_reads=$(count_lines "$RUN/rules-reads")" ;;
       rules_url) got="$got rules_url=$(sed -n '$p' "$RUN/rules-reads" 2>/dev/null)" ;;
@@ -462,6 +474,14 @@ observe() {
   printf '%s' "${got# }"
 }
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
+fallback_heads() {
+  local file="$WAIT_REPO/tmp/lane-mail/$RUN_ITEM/to-overseer.jsonl" heads
+  [[ -f "$file" ]] || { printf 'none'; return 0; }
+  heads="$(jq -r '.text | split("\n")[0]
+    | capture("^copilot-fallback PR #[0-9]+ head (?<head>[^ ]+)").head' "$file")" || heads=UNPARSEABLE
+  heads="$(paste -sd, - <<<"$heads")"
+  printf '%s' "${heads:-none}"
+}
 
 # table DEFAULT_ARGS ROW... — one run and one assertion per row. A row is
 # `label|args|env|expect`; empty args mean DEFAULT_ARGS. Positional args are
@@ -670,6 +690,27 @@ echo "=== unread lane mail ends the wait early ==="
 table "$APPROVAL" \
   "a directive written mid-wait returns the keyed line with exit 5|1 30 30 --json --mode approval --item KEN-2|STUB_APPROVAL_MODE=none,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-2/to-lane.jsonl|rc=5 mail=1"
 
+echo "=== PR_COPILOT_REQUESTS=off: a wait in a lane asks the overseer once per head ==="
+# No Copilot review will come, so the wait asks the overseer for the head
+# approval itself. Rows on one item share its mailbox, so a row's
+# fallback_heads is every notice that item has sent so far: a second wait on
+# the same head adds none and a new head adds its own. Polls fall 61 virtual seconds apart, past lane-mail's
+# minute repeat check, so only the wait's own once-per-head key can hold a
+# repeat back. A wait with no lane mailbox, with requests on, or on an approved
+# head sends nothing, and a send that fails leaves the wait running and tries
+# again on the next poll.
+mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-9" "$TMP_ROOT/repo/tmp/lane-mail/KEN-8" \
+  "$TMP_ROOT/repo/tmp/lane-mail/KEN-6/to-overseer.jsonl"
+table '1 61 61 --json --mode approval --item KEN-9' \
+  'a wait on an unapproved head sends one notice over two polls||PR_COPILOT_REQUESTS=off|rc=1 status=timeout fallback_heads=headsha1' \
+  'a second wait on the same head sends nothing||PR_COPILOT_REQUESTS=off|rc=1 status=timeout fallback_heads=headsha1' \
+  'a new head sends its own notice|1 61 183 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=off,STUB_HEAD_MODE=changes|rc=1 status=timeout fallback_heads=headsha1,headsha2' \
+  'requests on send nothing|1 61 61 --json --mode approval --item KEN-8||rc=1 status=timeout fallback_heads=none' \
+  'an approved head sends nothing|1 61 61 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved fallback_heads=none' \
+  'a wait outside a lane sends nothing|1 61 61 --json --mode approval --item KEN-7|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_heads=none' \
+  'a failed send is retried and ends no wait|1 61 61 --json --mode approval --item KEN-6|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=2' \
+  'an unknown setting is refused|1 61 61 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=junk|rc=2 stdout=empty stderr_line=approval-wait:+copilot-requests-invalid+value=junk'
+
 echo "=== must-fail controls: each resolution rule and the route's two orderings ==="
 # Each control edits a copy of approval-wait in a project of its own, never
 # the tracked file, and asserts its substitution matched exactly once. The
@@ -688,6 +729,11 @@ echo "=== must-fail controls: each resolution rule and the route's two orderings
 #   changes-over-approval  a CHANGES_REQUESTED review blocks beside an
 #                          APPROVED decision, so an approved head with a
 #                          thread answers changes_requested, not comments
+#   fallback-once          the notice file is no longer created
+#                          exclusively, so a second wait on a head the first
+#                          already announced sends it again
+#   fallback-outside-lane  a missing mailbox no longer ends the notice, so a
+#                          wait outside a lane tries to send one
 # The same project's unmutated copy answers each row first, so a control
 # reddens its row through its mutation alone.
 MUTANT_REPO="$TMP_ROOT/mutant"
@@ -696,6 +742,7 @@ cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_REPO/.agents/skills/orch/scripts
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_REPO/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$MUTANT_REPO/.agents/skills/review-gate"
 git -C "$MUTANT_REPO" init -q
+mkdir -p "$MUTANT_REPO/tmp/lane-mail/KEN-9"
 MUTANT_SCRIPT="$MUTANT_REPO/.agents/skills/orch/scripts/approval-wait"
 PRISTINE="$TMP_ROOT/approval-wait.pristine"
 cp "$MUTANT_SCRIPT" "$PRISTINE"
@@ -756,6 +803,13 @@ control approved-first '  if [ "$approved" = true ] && [ "$last_unresolved" -eq 
 # shellcheck disable=SC2016,SC1003 # the lines are matched literally, unexpanded; each ends in a backslash
 control changes-over-approval '  if [ "$approved" = false ] \' '  if [ "$approved" = true ] \' \
   "$APPROVAL" 'STUB_APPROVAL_MODE=approved_with_changes,STUB_THREADS_UNRESOLVED=1' 'rc=1 status=comments'
+# shellcheck disable=SC2016 # the lines are matched literally, unexpanded
+control fallback-once '  if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then' \
+  '  if ! (set +o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then' \
+  '1 61 61 --json --mode approval --item KEN-9' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout fallback_heads=headsha1'
+# shellcheck disable=SC2016 # the lines are matched literally, unexpanded
+control fallback-outside-lane '  [ -d "$box" ] || return 0' '  : # [ -d "$box" ] || return 0' \
+  '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout unsent=0 fallback_heads=none'
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails

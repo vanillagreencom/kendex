@@ -245,15 +245,9 @@ For `off`, skip the wait and go to § 5. The internal review, CI, and comment-hy
 
 A retarget changes the base without touching the head, so every path below that re-resolves the mode runs this section's command again and records what it prints, and § 6.1 re-runs it before gate 4.
 
-**Who acts.** The lane waits and triages under its own credential, and never approves its own PR. The overseer approves a head only as [copilot-head-notices.md](../references/copilot-head-notices.md) sets, reached by pr-watch's `awaiting-stale` line ([oversee-events.md](../references/oversee-events.md), `pr-watch`) or a Copilot notice a lane sends: [review-pr-comments.md](review-pr-comments.md#72-copilot-head-route) § 7.2 sends each kind, and [gates.md § Copilot requests](../references/gates.md#copilot-requests) and step 1 below also send `copilot-fallback`. The lane's own `timeout` row below keeps it waiting or asks the user. An approval that arrives ends the wait as `approved`.
+**Who acts.** The lane waits and triages under its own credential, and never approves its own PR. The overseer approves a head only as [copilot-head-notices.md](../references/copilot-head-notices.md) sets, reached by pr-watch's `awaiting-stale` line ([oversee-events.md](../references/oversee-events.md), `pr-watch`) or a Copilot notice from a lane: [review-pr-comments.md](review-pr-comments.md#72-copilot-head-route) § 7.2 sends each kind, [gates.md § Copilot requests](../references/gates.md#copilot-requests) sends `copilot-fallback` on a refused request, and under `PR_COPILOT_REQUESTS=off` the wait in step 1 sends it itself, once per head (`approval-wait --help`). The lane's own `timeout` row below keeps it waiting or asks the user. An approval that arrives ends the wait as `approved`.
 
-1. **Wait.** First read the Copilot route through the same consumer base:
-
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --copilot-route --base-checkout [REVIEW_BASE_CHECKOUT]
-   ```
-
-   A `fallback` line means no Copilot review will come: unless this head already has a Copilot review or a `copilot-fallback` notice already went out for it, send that notice for it at once, as [gates.md § Copilot requests](../references/gates.md#copilot-requests) sets, and the overseer's approval ends the wait below. `approval` and `off` send nothing. A nonzero exit is no route: take the `error` row below. Otherwise poll for the verdict and new comments together:
+1. **Wait.** Poll for the verdict and new comments together:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]

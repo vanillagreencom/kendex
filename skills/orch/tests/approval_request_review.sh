@@ -88,10 +88,7 @@ for row in \
   'unknown Copilot request setting at resolution|--resolve-mode|"enforce"|junk||0|0|approval|0|' \
   'base checkout cannot turn Copilot requests off|--request-review|"enforce"||off|0|0|approval|1|' \
   'unknown Copilot request setting|--request-review|"enforce"|junk||0|2||0|' \
-  'unreadable Copilot request setting|--request-review|"enforce"|\"off||0|2||0|' \
-  'Copilot route with requests on|--copilot-route|"enforce"|||0|0|approval|0|' \
-  'Copilot route with requests off|--copilot-route|"enforce"|off||0|0|fallback cause=off|0|' \
-  'Copilot route on an off gate|--copilot-route|"off"|||0|0|off|0|'; do
+  'unreadable Copilot request setting|--request-review|"enforce"|\"off||0|2||0|'; do
   IFS='|' read -r label action setting caller_copilot base_copilot request_exit want_rc want_out want_requests want_err <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
   write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"
@@ -108,7 +105,7 @@ assert_eq "$(cat "$REQUEST_LOG")" "$BASE|pr edit 42 --repo consumer/repo --add-r
 assert_contains "$(cat "$QUERY_LOG")" "$BASE|api repos/consumer/repo/rules/branches/feature%2Fbase --paginate" \
   'the trusted native owner reads stacked-base rules from the consumer directory' "$ERR"
 
-for action in --request-review --copilot-route --resolve-mode; do
+for action in --request-review --resolve-mode; do
   for context in '' "$TMP_ROOT/missing"; do
     base_args=()
     [[ -z "$context" ]] || base_args=(--base-checkout "$context")
@@ -129,8 +126,7 @@ for row in \
   'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
   'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0' \
   'copilot-setting-unreadable~"enforce"~\"off~~0~PR_COPILOT_REQUESTS on)" || exit 2~PR_COPILOT_REQUESTS on)" || COPILOT_REQUESTS=on~2~~0' \
-  'copilot-setting-at-resolution~"enforce"~junk~~0~if $REQUEST_REVIEW; then~if true; then~0~approval~0~--resolve-mode' \
-  'route-only~"enforce"~~~0~    elif ! $ROUTE_ONLY; then~    elif true; then~0~approval~0~--copilot-route'; do
+  'copilot-setting-at-resolution~"enforce"~junk~~0~if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then~if true; then~0~approval~0~--resolve-mode'; do
   IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests action <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"
   write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$caller_copilot"

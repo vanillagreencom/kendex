@@ -54,8 +54,8 @@ PR_REVIEW_WAIT_SECS = "900"
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Whether orch asks Copilot for a review or re-review. "off" sends no
-# request and asks the overseer for the head approval at once instead; set it
-# when the Copilot review budget is spent.
+# request; a lane's approval wait asks the overseer for each head's approval
+# instead, once per head. Set it when the Copilot review budget is spent.
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
