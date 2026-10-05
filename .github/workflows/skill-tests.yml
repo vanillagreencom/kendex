@@ -79,10 +79,13 @@ name: Skill Tests
 # run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
 # pooled rest, and the orch shard comment gives the figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
-# `rest`; `rest` lands
-# at 235-267s, inside the ceiling, while `render-lint` is a target whose cost
-# is one expensive test, so no target seam reaches inside it and it stands at
-# 801-1012s, ABOVE the ceiling, until that test is itself divided.
+# `rest`. `render-lint` is a target whose cost is one expensive test, so no
+# target seam reaches inside it and it stands at 801-1012s, ABOVE the
+# ceiling, until that test is itself divided. `rest` landed at 235-267s and
+# has since grown past the ceiling, to a completed maximum of 720s: nearly
+# all of it is the one `integration` harness, which no `--test` seam divides.
+# It stands past its figure pending a test-name split inside that harness,
+# and answers to the step bound the comment above its test step gives.
 #
 # The cargo lanes' test steps each carry a `timeout-minutes` set above the
 # measured maximum of the step they bound, with headroom, so a hang there
@@ -1647,10 +1650,11 @@ jobs:
     # Each leg reserves its compile bound plus its test bound plus 5 minutes
     # for setup and cleanup, and the ceiling below is that sum for every leg
     # of this job, not the CLI legs alone. Compile is 20 on all four. Test is
-    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; it is 12 on
-    # `rest` and on the `whole` legs kendex-core and kendex-app run, so each
-    # of those three reserves 20 + 12 + 5 = 37 and takes the 40 below.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || 40 }}
+    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; it is 20 on
+    # `rest`, which reserves 20 + 20 + 5 = 45; it is 12 on the `whole` legs
+    # kendex-core and kendex-app run, so each of those two reserves
+    # 20 + 12 + 5 = 37 and takes the 40 below.
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || matrix.leg == 'rest' && 45 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1730,8 +1734,14 @@ jobs:
       - name: compile
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
-      # Measured maxima of the step this bounds, over those same runs: 267s
-      # for `rest`, 534s for kendex-core whole and 81s for kendex-app whole.
+      # Measured maxima of the step this bounds, over those same runs: 534s
+      # for kendex-core whole and 81s for kendex-app whole. `rest` is
+      # re-measured over 688 completed steps of the pull request and merge
+      # group runs created 2026-10-02 to 2026-10-05: a 720s maximum, and
+      # a median that rose from 537s to 669s across those four days as the
+      # `integration` harness grew from 548 tests in 525s to 586 in 708s.
+      # Its bound is 20 minutes, 480s above that maximum: headroom that
+      # growth erodes, so the leg is pending the split the header names.
       # `render-lint` is bounded at 1012s, the maximum its test reached
       # BEFORE its comments pass was split across scopes; its post-split
       # macOS seconds come from this change's own runs, and the bound is due
@@ -1742,7 +1752,7 @@ jobs:
       # 0 tests and half a second today, well inside the bound above.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || 12 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 20 || 12 }}
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && matrix.leg == 'rest' && github.token || '' }}
