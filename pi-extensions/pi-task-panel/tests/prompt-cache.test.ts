@@ -16,7 +16,9 @@ const SYSTEM_PROMPT = "The host's unchanged system prompt.";
 
 test("task changes preserve the system prompt and earlier request messages", async () => {
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
-	const base = mkdtempSync(join(fileURLToPath(new URL("../../../tmp/", import.meta.url)), "task-panel-prompt-cache-"));
+	const scratch = fileURLToPath(new URL("../../../tmp/", import.meta.url));
+	mkdirSync(scratch, { recursive: true });
+	const base = mkdtempSync(join(scratch, "task-panel-prompt-cache-"));
 	try {
 		const agentDir = join(base, "agent");
 		mkdirSync(agentDir);
@@ -71,8 +73,12 @@ test("task changes preserve the system prompt and earlier request messages", asy
 		await resumed.tools.get("tasks_write").execute("call", { action: "replace", tasks: [{ content: "first", status: "completed" }, { content: "second", status: "completed" }] }, undefined, undefined, ctx);
 		expect(resumed.handlers.get("before_agent_start")!({ systemPrompt: SYSTEM_PROMPT }, ctx)).toBeUndefined();
 		await write({ action: "start_task", task: "first" });
+		const beforeCompaction = start()?.message;
+		expect(beforeCompaction).toBeDefined();
+		branch.push({ type: "custom_message", ...beforeCompaction });
+		expect(start()).toBeUndefined();
 		branch.push({ type: "compaction" });
-		expect(start()?.message).toBeDefined();
+		expect(start()?.message).toEqual(beforeCompaction);
 		branch.length = 0;
 		expect(start()?.message).toBeDefined();
 	} finally {
