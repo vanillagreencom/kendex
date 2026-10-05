@@ -129,6 +129,12 @@ esac
 exit 0
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/tmux"
+# Every tmux wait polls the pane once per `sleep 1`, and the stub above serves
+# its screens in call order, never by time, so each launch reads time through
+# the virtual clock: a wait makes the same looks in no wall time.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$BIN" "$TMP_ROOT/clock"
 
 # $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
 # PATH here: unset, the branch below it would resolve whatever terminal the
@@ -499,6 +505,27 @@ launch_table \
   "a codex tmux lane with no --lane reads the timeout nowhere and is not aborted by a broken one|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false" \
   "a codex lane launch refuses a broken timeout, which its account check waits on|tmux-codex-lane|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true" \
   "a copilot lane launch refuses it the same way, its account check waiting on it too|tmux-copilot-lane|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true"
+
+echo "=== open-terminal claude handoff: the waits run on the virtual clock ==="
+# A composer that never comes up waits its whole ORCH_TMUX_VERIFY_SECS bound:
+# thirty seconds of looks, spent on the virtual clock in under that much wall
+# time. The inverse waives the clock, and a two-second ceiling ends the same
+# launch inside its wait.
+clock_before="$(cat "$STUB_CLOCK")"
+real_before="$(date +%s)"
+run tmux ORCH_TMUX_VERIFY_SECS=30 - echo
+real_spent=$(( $(date +%s) - real_before ))
+assert_eq "$(observe 'rc stderr~open-terminal:+composer-stuck') $(( $(cat "$STUB_CLOCK") - clock_before >= 30 )) $(( real_spent < 30 ))" \
+  "rc=1 stderr~open-terminal:+composer-stuck=true 1 1" \
+  "control: a thirty-second verify bound is reached on the virtual clock with less than that in wall time" "$ERR"
+set +e
+STUB_CLOCK='' "$(command -v timeout || command -v gtimeout)" 2 \
+  env TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=30 LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub \
+  OT_CAPTURE="$TMP_ROOT/ceiling-capture" ORCH_STATE_DIR="$TMP_ROOT/ceiling-state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" \
+  "$OT" --tmux --harness claude cc-737 >/dev/null 2>&1
+ceiling_rc=$?
+set -e
+assert_eq "$ceiling_rc" "124" "control: with the clock waived the same wait is real and outlasts a two-second ceiling"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

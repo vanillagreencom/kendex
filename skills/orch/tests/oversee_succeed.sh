@@ -226,6 +226,19 @@ new_known_claude_caller() {
   tm display-message -p -t "$CALLER_PANE" 'fixture: known caller command=#{pane_current_command}'
 }
 
+# A row whose successor never shows a running turn waits its whole --wait-secs
+# bound and needs nothing real to happen inside it, so it runs with
+# VIRTUAL_CLOCK set: the script reads time through the virtual clock, seeded at
+# the real epoch, and spends the bound in no wall time. Every other row keeps
+# the real clock, since its waits are the settle reads and running-turn looks
+# of a real successor pane: two reads a second apart is what a settle claims,
+# and a pane that draws in real time cannot be raced on a faster clock.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+CLOCK_BIN="$TMP_ROOT/clock-bin"
+mkdir -p "$CLOCK_BIN"
+virtual_clock_install "$CLOCK_BIN" "$TMP_ROOT/clock"
+
 # succeed-env ROW PREFERENCE ARGS... — the script under an explicit, whole
 # environment, with TMUX and TMUX_PANE taken from the caller of this file: the
 # test passes them, and a pane's own shell already carries them.
@@ -279,9 +292,16 @@ fi
 # A fleet lane provider answering accounts from the file LANE_HOST_ACCOUNTS
 # names. Such a row sets RUN_DIR to a repository too: lane-host takes its
 # project from the working directory, and the work directory is none.
+clock="STUB_CLOCK=" clock_path=""
+if [ -n "\${VIRTUAL_CLOCK:-}" ]; then
+  "$STUB_REAL_DATE" +%s > "$STUB_CLOCK"
+  clock="STUB_CLOCK=$STUB_CLOCK"
+  clock_path="$CLOCK_BIN:"
+fi
 lh=""
 [ -z "\${LANE_HOST_ACCOUNTS:-}" ] || lh="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host LANE_HOST_STUB_ACCOUNTS=\$LANE_HOST_ACCOUNTS LANE_HOST_STUB_LOG=$TMP_ROOT/host.log"
-cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i HOME="$H" PATH="\${PATH_PREFIX:+\$PATH_PREFIX:}$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
+cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i HOME="$H" PATH="\${PATH_PREFIX:+\$PATH_PREFIX:}\$clock_path$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
+  STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \$clock \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
@@ -891,7 +911,7 @@ fleet_state
 tm swap-window -d -s "$CALLER_WINDOW" -t "$KEEP_WINDOW"
 IDLE_LAYOUT="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
 touch "$TMP_ROOT/idle"
-run_succeed idle 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 run_succeed idle 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
 idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
 idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
@@ -907,7 +927,7 @@ mutate_file "$IDLECTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || ol_fleet_l
 new_caller "$MARK"
 fleet_state
 touch "$TMP_ROOT/idle"
-SUCCEED_BIN="$IDLECTL/oversee-succeed" run_succeed idlectl 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 SUCCEED_BIN="$IDLECTL/oversee-succeed" run_succeed idlectl 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(idle_log)" \
   "1|oversee-succeed: successor-not-working|" \
@@ -927,7 +947,7 @@ chmod +x "$LOGFAIL/workflow-state"
 new_caller "$MARK"
 fleet_state
 touch "$TMP_ROOT/idle"
-SUCCEED_BIN="$LOGFAIL/oversee-succeed" run_succeed logfail 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 SUCCEED_BIN="$LOGFAIL/oversee-succeed" run_succeed logfail 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(grep -e '^oversee-succeed: fleet-log-unwritten ' -e '^oversee-succeed: successor-not-working ' -e '^fixture: ' <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)|$(idle_log)" \
   "1|oversee-succeed: fleet-log-unwritten key=successor-not-working step=append;fixture: append refused;oversee-succeed: successor-not-working window=@N waited=N;|yes|0|" \
@@ -1050,7 +1070,7 @@ seed_overseer() {
 seed_overseer
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"
-run_succeed restore 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 run_succeed restore 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
 assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec account) line=$(recorded_line)" \
   "1|generation=5 pane=%900 account=/seed/.claude line=$SEED_LINE" \
@@ -2057,7 +2077,7 @@ new_caller "$MARK"
 new_dead_pane
 fleet_state
 touch "$TMP_ROOT/idle"
-run_succeed deadidle '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 run_succeed deadidle '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(idle_log)" \
   "1|oversee-succeed: successor-not-working|" \
@@ -2069,7 +2089,7 @@ new_caller "$MARK"
 new_dead_pane
 fleet_state
 touch "$TMP_ROOT/idle"
-SUCCEED_BIN="$DEADLOGCTL/oversee-succeed" run_succeed deadlogctl '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 SUCCEED_BIN="$DEADLOGCTL/oversee-succeed" run_succeed deadlogctl '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(idle_log | cut -d' ' -f1-4)" \
   "1|close overseer oversee-succeed: successor-not-working" \
@@ -2744,42 +2764,44 @@ assert_eq "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_op
   "a successor whose account could not be observed: named on stderr, launch stands"
 
 # --wait-secs is ONE deadline over the account read and the running-turn wait,
-# which the help tells a caller to size its shell timeout by. Wall clock, not
-# the reported figure: it is exactly what the budgeting under test decides, so
-# asserting it would assert the defect as readily as the fix. An
-# unobservable launch that never works spends the read's whole cap and then the
-# rest of the budget, which is the longest this path can take. Where no
+# which the help tells a caller to size its shell timeout by. The clock around
+# the call, not the reported figure: that is exactly what the budgeting under
+# test decides, so asserting it would assert the defect as readily as the fix.
+# An unobservable launch that never works spends the read's whole cap and then
+# the rest of the budget, which is the longest this path can take. Where no
 # per-process environment is readable the read answers at once instead and the
-# seconds go to the wait; the seconds the budget adds are what this row pins
-# either way, which is what a caller sizes its timeout by.
+# seconds go to the wait; the ceiling is what this row pins either way, which
+# is what a caller sizes its timeout by.
 #
-# The figure is taken off `date +%s` around the whole call, so it also carries
-# what the run does besides waiting: the shim's fork and capture, the window it
-# opens, the lane launch, the last inspect pass and the teardown. That work
-# costs whole seconds more on the macOS runner than on Linux, so no one figure
-# for it holds on both. The same run under a one-second --wait-secs carries the
-# same work, and the row pins the difference between the two: the seconds the
-# longer budget added, which one deadline holds to BOUND_WAIT - BOUND_BASE_WAIT
-# and two deadlines push past by the read's half of the budget. BOUND_CLOCK is
-# the second two truncated `date +%s` differences can disagree by, and
-# SCHED_SLACK the runner's lateness over the longer run.
+# The run waits on the virtual clock, so the figure is how far that clock moved
+# across the whole call: every wait the script made, and none of the work it
+# did besides waiting, which costs whole seconds more on the macOS runner than
+# on Linux. The ceiling is the promise succ_budget_bound's floor states,
+# --wait-secs plus at most one settle; two deadlines push past it by the read's
+# half of the budget. BOUND_CLOCK is the second the clock's real-epoch seed can
+# sit past the reading taken before the call.
 BOUND_WAIT=16
-BOUND_BASE_WAIT=1
 BOUND_CLOCK=1
-BOUND_CEILING=$(( BOUND_WAIT - BOUND_BASE_WAIT + BOUND_CLOCK + SCHED_SLACK ))
-bound_run() { # NAME WAIT_SECS — the run's wall-clock seconds, in BOUND_ELAPSED
-  local started
-  new_caller "$MARK"
-  started=$(date +%s)
-  succeed_shim "$1" 'claude:fable:high' --wait-secs "$2"
-  BOUND_ELAPSED=$(( $(date +%s) - started ))
-}
+BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + BOUND_CLOCK ))
+new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
-bound_run bound-base "$BOUND_BASE_WAIT"
-bound_base_rc=$RC bound_base=$BOUND_ELAPSED
-bound_run bound "$BOUND_WAIT"
-assert_eq "$bound_base_rc|$RC|$(in_range within "$(( BOUND_ELAPSED - bound_base ))" '' "$BOUND_CEILING")" \
-  "1|1|within" "a run that never works returns inside one --wait-secs bound, not the sum of two"
+bound_real="$(date +%s)"
+VIRTUAL_CLOCK=1 succeed_shim bound 'claude:fable:high' --wait-secs "$BOUND_WAIT"
+bound_elapsed=$(( $(cat "$STUB_CLOCK") - bound_real ))
+bound_real=$(( $(date +%s) - bound_real ))
+assert_eq "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" \
+  "1|within" "a run that never works returns inside one --wait-secs bound, not the sum of two"
+assert_eq "$(( bound_elapsed >= BOUND_WAIT )) $(( bound_real < BOUND_WAIT ))" "1 1" \
+  "control: the whole --wait-secs bound is spent on the virtual clock in less than that in wall time"
+# The inverse: the same run with the clock waived spends its bound in real
+# seconds, and a two-second ceiling ends it inside them.
+touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
+new_caller "$MARK"
+bound_waived_rc=0
+TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.4claude" \
+  "$(command -v timeout || command -v gtimeout)" 2 "$TMP_ROOT/succeed-env" boundwaived 'claude:fable:high' --wait-secs "$BOUND_WAIT" \
+  >/dev/null 2>&1 || bound_waived_rc=$?
+assert_eq "$bound_waived_rc" "124" "control: with the clock waived the bound is real and outlasts a two-second ceiling"
 
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 

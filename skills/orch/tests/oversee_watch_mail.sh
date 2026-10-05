@@ -891,9 +891,19 @@ fi
 printf 'long end %s\n' "$n" >> "$STUB_DIR/cadence.log"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-logging.sh" "$TMP_ROOT/bin/pr-watch-slow.sh"
+# The cadence rows wait whole mail intervals, so the watch reads time through
+# the virtual clock: `date -u +%s` and each tick's `sleep` are the clock's, the
+# passes keep their order, and the intervals cost no wall time. Seeded at the
+# real epoch per run; the clock's advance is what the control below reads.
+# shellcheck source=lib/virtual-clock.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/virtual-clock.sh"
+CLOCK_BIN="$TMP_ROOT/clock-bin"; mkdir -p "$CLOCK_BIN"
+virtual_clock_install "$CLOCK_BIN" "$TMP_ROOT/clock"
 cadence_run() { # [ENV...] -- ARGS...
   mail_reset KEN-70
-  CADENCE_OUT="$(run_watch ORCH_WATCH_MAIL_INTERVAL=1 \
+  _virtual_clock_seed
+  CADENCE_SEED="$(cat "$STUB_CLOCK")"
+  CADENCE_OUT="$(run_watch ORCH_WATCH_MAIL_INTERVAL=1 PATH="$CLOCK_BIN:$TMP_ROOT/bin:$PATH" \
     OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-logging.sh" REAL_LANE_MAIL="$LANE_MAIL" \
     OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-slow.sh" "$@" 2>"$STUB_DIR/cadence.err")" || true
   CADENCE_LOG="$(cat "$STUB_DIR/cadence.log" 2>/dev/null)" || CADENCE_LOG=""
@@ -930,6 +940,22 @@ new_case mail_cadence_overrun
 cadence_run LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70
 assert_eq "$(overrun_facts)" "mail-during=several overlap=0" \
   "a long pass overrunning its interval holds up no mail pass and overlaps no long pass" "$STUB_DIR/cadence.err"
+# Three mail passes ran a second apart under the held long pass, so the clock
+# moved at least two seconds; the inverse waives it, and a one-second ceiling
+# ends the same run inside those real seconds.
+assert_eq "$(( $(cat "$STUB_CLOCK") - CADENCE_SEED >= 2 ))" "1" \
+  "control: the mail intervals under the held long pass elapsed on the virtual clock"
+new_case mail_cadence_waived
+mail_reset KEN-70
+printf '#!/usr/bin/env bash\nexec "%s" 1 "$PWD/.agents/skills/orch/scripts/oversee-watch" "$@"\n' \
+  "$(command -v timeout || command -v gtimeout)" > "$TMP_ROOT/watch-ceiling"
+chmod +x "$TMP_ROOT/watch-ceiling"
+waived_rc=0
+WATCH_BIN="$TMP_ROOT/watch-ceiling" run_watch ORCH_WATCH_MAIL_INTERVAL=1 PATH="$CLOCK_BIN:$TMP_ROOT/bin:$PATH" STUB_CLOCK= \
+  OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-logging.sh" REAL_LANE_MAIL="$LANE_MAIL" \
+  OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-slow.sh" LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70 \
+  >/dev/null 2>&1 || waived_rc=$?
+assert_eq "$waived_rc" "124" "control: with the clock waived the mail intervals are real and outlast a one-second ceiling"
 
 # --- the overseer mailbox, read through its own cursor ----------------------
 # One note across three runs, each with a state directory of its own: a

@@ -69,7 +69,13 @@ EOF
 #!/usr/bin/env bash
 # Whole seconds advance the clock and return; that is every wait a waiter and
 # its gh stub make. Anything else is a real sleep, so an unexpected fractional
-# wait still waits rather than silently passing.
+# wait still waits rather than silently passing, unless the case sets
+# STUB_SLEEP_FRACTIONS=skip: a loop that bounds itself by counting fractional
+# tries, never by reading the clock, then spends its tries in no wall time.
+if [[ -n "${STUB_CLOCK:-}" && "${STUB_SLEEP_FRACTIONS:-}" == skip && "${1:-}" =~ ^[0-9]*\.[0-9]+$ ]]; then
+  [[ -f "$STUB_CLOCK" ]] || { echo "virtual clock: STUB_CLOCK names no file: $STUB_CLOCK" >&2; exit 1; }
+  exit 0
+fi
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
   if [[ -n "${STUB_CLOCK:-}" ]]; then
     [[ -f "$STUB_CLOCK" ]] || { echo "virtual clock: STUB_CLOCK names no file: $STUB_CLOCK" >&2; exit 1; }

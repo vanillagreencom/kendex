@@ -43,6 +43,33 @@ source "$TEST_DIR/lib/lanes-fixture.sh"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
+# The rows that wait out a retry window or a lock read time through the virtual
+# clock: a row naming `clock=virtual` runs `lanes` with CLOCK_BIN first on its
+# PATH, on a clock moved up to the real epoch just before, so the figures it
+# stamps stay within seconds of the fixtures' real ones, and never back, so a
+# record an earlier clocked row stamped is never read as stamped in the future.
+# Every other row keeps the real clock: its credentials and records are
+# stamped off the real one.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+CLOCK_BIN="$TMP_ROOT/clock-bin"; mkdir -p "$CLOCK_BIN"
+virtual_clock_install "$CLOCK_BIN" "$TMP_ROOT/clock"
+# flock as orch_take_lock asks it, `flock -w N FD`: the real non-blocking take,
+# and a held lock's N seconds waited out on the virtual clock. Its own
+# directory, since the rows without flock put CLOCK_BIN on PATH as well.
+FLOCK_BIN="$TMP_ROOT/flock-bin"; mkdir -p "$FLOCK_BIN"
+REAL_FLOCK="$(command -v flock || true)"
+[[ -z "$REAL_FLOCK" ]] || cat > "$FLOCK_BIN/flock" <<STUBEOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == -w && \$# -eq 3 && -n "\${STUB_CLOCK:-}" ]]; then
+  "$REAL_FLOCK" -n "\$3" && exit 0
+  printf '%s' "\$(( \$(cat "\$STUB_CLOCK") + \$2 ))" > "\$STUB_CLOCK"
+  exit 1
+fi
+exec "$REAL_FLOCK" "\$@"
+STUBEOF
+[[ -z "$REAL_FLOCK" ]] || chmod +x "$FLOCK_BIN/flock"
+
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
 
@@ -88,10 +115,20 @@ DEAD_PID=2147483647
 # `env` arguments that may override the defaults (an alias list carries
 # commas). Sets OUT, RC and ERR.
 RUN_SEQ=0
+CLOCK_SEED=""
 run_lanes() {
-  local env_list="$1" env_args=()
+  local env_list="$1" env_args=() items=() item clock_path=""
   shift
-  [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
+  [[ -z "$env_list" ]] || IFS=';' read -ra items <<<"$env_list"
+  for item in ${items[@]+"${items[@]}"}; do
+    if [[ "$item" == clock=virtual ]]; then
+      clock_path="$CLOCK_BIN:"
+      [[ "$(cat "$STUB_CLOCK")" -ge "$("$STUB_REAL_DATE" +%s)" ]] || _virtual_clock_seed
+      CLOCK_SEED="$(cat "$STUB_CLOCK")"
+    else
+      env_args+=("$item")
+    fi
+  done
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/store"
   ERR="$RUN/stderr"
@@ -99,7 +136,7 @@ run_lanes() {
     LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
     FETCH_SEQ_DIR="$RUN/fetchseq" TOKEN_LOG="$RUN/token.log" CODEX_LOG="$RUN/codex.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
-    PATH="$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
+    PATH="$clock_path$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
   RC=$?
 }
 
@@ -760,7 +797,7 @@ make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "a usage endpoint answering 503 reads unreachable with that code in its detail, not the fixed offline sentence|FETCH_STATUS=503|$LIST|first.status=unreachable first.headroom_pct=null claude.cause=usage_query_refused_with_HTTP_503" \
-  "a usage endpoint answering 429 reads rate_limited on the same judgement the token endpoint takes|FETCH_STATUS=429|$LIST|first.status=rate_limited claude.cause=usage_query_refused_with_HTTP_429" \
+  "a usage endpoint answering 429 reads rate_limited on the same judgement the token endpoint takes|FETCH_STATUS=429;clock=virtual|$LIST|first.status=rate_limited claude.cause=usage_query_refused_with_HTTP_429" \
   "a usage query that could not be run at all still reads unreachable, with no code to name|ORCH_LANES_FETCH_CMD=false|$LIST|first.status=unreachable claude.cause=usage_query_could_not_be_run" \
   "a usage endpoint answering 2xx with no body reads unreachable, naming the code it answered|FETCH_STATUS=204|$LIST|first.status=unreachable claude.cause=usage_query_answered_HTTP_204_with_no_body"
 
@@ -826,7 +863,7 @@ new_home usage-refusal-retry-after
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
-  "a usage refusal is waited out for the endpoint's own Retry-After|FETCH_STATUS=429;FETCH_RETRY_AFTER=900|$LIST|first.status=rate_limited refusalwindow=900"
+  "a usage refusal is waited out for the endpoint's own Retry-After|FETCH_STATUS=429;FETCH_RETRY_AFTER=900;clock=virtual|$LIST|first.status=rate_limited refusalwindow=900"
 
 # A refusal the state directory cannot hold leaves every caller re-posting each
 # pass, so the failure is a keyed notice naming the directory; the lane is still
@@ -839,7 +876,7 @@ rm -rf -- "${UNRECORDED_STATE:?}"
 mkdir -p "$UNRECORDED_STATE"
 : > "$UNRECORDED_STATE/usage"
 table \
-  "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
+  "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE;clock=virtual|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
 
 echo "=== the real POST and GET, read through a curl shim ==="
 # Every other row injects ORCH_LANES_TOKEN_CMD or ORCH_LANES_FETCH_CMD, so none
@@ -913,7 +950,7 @@ table \
   "a real usage answer of 503 reads unreachable with that code in its detail|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-503|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503"
 curl_home curl-usage-interim 3600
 table \
-  "a Retry-After on an interim block is not the refusal's, so a 429 naming none takes the default window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry|$LIST|first.status=rate_limited refusalwindow=300"
+  "a Retry-After on an interim block is not the refusal's, so a 429 naming none takes the default window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry;clock=virtual|$LIST|first.status=rate_limited refusalwindow=300"
 
 echo "=== codex windows route by duration, not by position ==="
 # OpenAI's primary/secondary windows do not map to session/weekly by position:
@@ -1501,7 +1538,7 @@ new_home ratelimit-cold
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 COLD_STATE="$TMP_ROOT/ratelimit-cold-state"
-COLD_ENV="OVERSEE_WATCH_STATE_DIR=$COLD_STATE;ORCH_LANE_DIRS=$H/.claude"
+COLD_ENV="OVERSEE_WATCH_STATE_DIR=$COLD_STATE;ORCH_LANE_DIRS=$H/.claude;clock=virtual"
 # The retry is refused with a window of its own. The first refusal's 1-second
 # window has passed by the time the retry answers, so only a record of the
 # RETRY's refusal keeps the next caller off the endpoint.
@@ -1518,7 +1555,7 @@ table \
 rm -f -- "${FIXTURE_DIR:?}/.claude.status.2"
 COLD_OK_STATE="$TMP_ROOT/ratelimit-cold-ok-state"
 table \
-  "with the second request answering, that same lane reads ok on what the retry brought back|OVERSEE_WATCH_STATE_DIR=$COLD_OK_STATE;ORCH_LANE_DIRS=$H/.claude|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
+  "with the second request answering, that same lane reads ok on what the retry brought back|OVERSEE_WATCH_STATE_DIR=$COLD_OK_STATE;ORCH_LANE_DIRS=$H/.claude;clock=virtual|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
 COLD_OK_REFUSALS="$(cat "$COLD_OK_STATE"/usage/*.json 2>/dev/null | jq -r 'select(.refusal) | "refusal"' | grep -c . || true)"
 assert_eq "refusals=${COLD_OK_REFUSALS:-0}" "refusals=0" \
   "the answer drops the refusal the first request recorded"
@@ -1531,7 +1568,7 @@ printf '429 1\n' > "$FIXTURE_DIR/.claude.status"
 printf '429 1\n' > "$FIXTURE_DIR/.eclaude.status"
 COLD_PAIR_DIRS="ORCH_LANE_DIRS=$H/.claude:$H/.eclaude"
 table \
-  "two cold lanes refused in one run spend one retry between them|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-state|$LIST|claude.status=rate_limited eclaude.status=rate_limited fetched=claude,claude,eclaude"
+  "two cold lanes refused in one run spend one retry between them|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-state;clock=virtual|$LIST|claude.status=rate_limited eclaude.status=rate_limited fetched=claude,claude,eclaude"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status" "${FIXTURE_DIR:?}/.eclaude.status"
 
 echo "=== a caller naming its own pass interval is served its last figure ==="
@@ -1672,17 +1709,35 @@ assert_eq "$(observe 'rc= key= fetched=')" \
 # A lock that never comes free is a keyed notice, and the lane is still
 # refreshed and answered. The figure is expired first, so this read needs the
 # lock it cannot have.
+# The wait is flock's own ten seconds, spent on the virtual clock through the
+# flock stub, which takes the real lock and finds it held.
 age_usage_record "$LW_STATE" "$H/.claude" 600
-run_lanes "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
+LW_CLOCKED="$LW_ENV;clock=virtual;STUB_SLEEP_FRACTIONS=skip;PATH=$FLOCK_BIN:$CLOCK_BIN:$CLAIM_BIN:$PATH"
+lw_real="$(date +%s)"
+run_lanes "$LW_CLOCKED" pick --lane "$H/.claude" --harness claude --json
+lw_real=$(( $(date +%s) - lw_real ))
 assert_eq "rc=$RC $(observe 'key= fetched=')" \
   "rc=0 key=usage-lock-timeout,lock-file=$LW_LOCK,wait-s=10 fetched=claude" \
   "past the lock wait the read names the lock it could not take and still refreshes the lane" "$ERR"
+if [[ -n "$REAL_FLOCK" ]]; then
+  assert_eq "$(( $(cat "$STUB_CLOCK") - CLOCK_SEED )) $([[ "$lw_real" -lt 10 ]] && echo virtual || echo "real:$lw_real")" \
+    "10 virtual" "control: the ten-second lock wait elapsed on the virtual clock, not the wall clock"
+  # The inverse: with the clock waived the stub hands the wait to the real
+  # flock, and a two-second ceiling ends the read inside it.
+  age_usage_record "$LW_STATE" "$H/.claude" 600
+  printf '#!/usr/bin/env bash\nexec "%s" 2 "%s" "$@"\n' "$(command -v timeout || command -v gtimeout)" "$LANES" > "$TMP_ROOT/lanes-ceiling"
+  chmod +x "$TMP_ROOT/lanes-ceiling"
+  LANES_SHIPPED="$LANES"; LANES="$TMP_ROOT/lanes-ceiling"
+  run_lanes "$LW_CLOCKED;STUB_CLOCK=" pick --lane "$H/.claude" --harness claude --json
+  LANES="$LANES_SHIPPED"
+  assert_eq "$RC" "124" "control: with the clock waived the lock wait is real and outlasts a two-second ceiling" "$ERR"
+fi
 release_usage_lock "$LW_LOCK"
 # The same fallback where flock is absent: the mutex a holder left behind is
 # waited out, named, and the lane is still refreshed.
 age_usage_record "$LW_STATE" "$H/.claude" 600
 mkdir -- "$LW_LOCK.d"
-run_lanes "$LW_ENV;PATH=$CLAIM_BIN:$NOFLOCK" pick --lane "$H/.claude" --harness claude --json
+run_lanes "$LW_ENV;clock=virtual;STUB_SLEEP_FRACTIONS=skip;PATH=$CLOCK_BIN:$CLAIM_BIN:$NOFLOCK" pick --lane "$H/.claude" --harness claude --json
 assert_eq "rc=$RC $(observe 'key= fetched=')" \
   "rc=0 key=usage-lock-timeout,lock-file=$LW_LOCK,wait-s=10 fetched=claude" \
   "without flock, a held mutex past the wait is named and the lane is still refreshed" "$ERR"
@@ -2246,14 +2301,17 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   table \
     "a bound written with a leading zero is read in base 10 and still bounds the provider|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
   # A full per-home cap on provider calls, through the real dispatcher at the
-  # shipped slot wait and bound: a slot naming this suite's own shell, alive
-  # throughout, fills a cap of 1 in a home of its own. lane-host's 30-second
-  # slot wait outlasts the 10-second bound, so the read waits for less than
-  # the bound and lane-host refuses as busy before the bound can end it.
+  # shipped slot wait: a slot naming this suite's own shell, alive throughout,
+  # fills a cap of 1 in a home of its own. lane-host's 30-second slot wait
+  # outlasts the 3-second bound, so the read waits for less than the bound and
+  # lane-host refuses as busy before the bound can end it. Both waits stay
+  # real: lane-host counts its slot wait in bash's SECONDS and the bound is
+  # timeout's, so the bound is the smallest that leaves the shipped one-second
+  # margin between them.
   BUSY_HOME="$TMP_ROOT/busy-home"
   mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots"
   : > "$BUSY_HOME/.cache/orch/lane-host-slots/slot.$$"
-  BUSY_ENV="$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;HOME=$BUSY_HOME;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=30;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=10"
+  BUSY_ENV="$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;HOME=$BUSY_HOME;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=30;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=3"
   table \
     "a read lane-host refuses at its per-home cap answers 1 under lane-host-busy before the bound ends it|$BUSY_ENV|host-accounts --no-cache|rc=1 lines=0 key=lane-host-busy,step=accounts,item=-"
   # Control: with the slot wait left longer than the bound, the bound cuts the
@@ -2510,7 +2568,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.fclaude.json"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.gclaude.json"
 printf 'account=%s\tharness=claude\tstatus=unreachable\naccount=%s\tharness=claude\tstatus=unreachable\n' \
   "$H/.fclaude" "$H/.gclaude" > "$TMP_ROOT/cold-both-dark.tsv"
-COLD_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/cold-both-dark.tsv;FETCH_STATUS=429;FETCH_RETRY_AFTER=1"
+COLD_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/cold-both-dark.tsv;FETCH_STATUS=429;FETCH_RETRY_AFTER=1;clock=virtual"
 table \
   "two cold lanes behind unreachable rows spend one retry between them|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude"
 # Control: the measurement forked into a subshell, which spends a retry per

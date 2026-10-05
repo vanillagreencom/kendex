@@ -30,6 +30,20 @@ start_of() { sed -n 's/^start=//p' "$1/start"; }
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
+# The waiter rows below read time through the virtual clock: a run handed
+# RUN_PATH="$CLOCK_BIN:$PATH" waits its budget, grace or cap out in no wall
+# time, and the clock file says how far it moved. Every other run keeps the
+# real clock, for a reason the row it stands in names: the bound rows (timeout
+# kills a real child at a real deadline), the blocking --poll 1 runs (the waiter
+# polls a real child whose end is real), the racy-index row (git judges real
+# mtimes) and the containment rows (a real process's death is polled).
+# shellcheck source=lib/virtual-clock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/virtual-clock.sh"
+CLOCK_BIN="$TMP_ROOT/clock-bin"
+mkdir -p "$CLOCK_BIN"
+virtual_clock_install "$CLOCK_BIN" "$TMP_ROOT/clock"
+clock_now() { cat "$STUB_CLOCK"; }
+
 # A project whose settings carry one validation command and one bound. The
 # environment is passed explicitly so a developer's own DEV_VALIDATE_* never
 # reaches the run: orch-env reads the process environment first.
@@ -501,15 +515,32 @@ assert_eq "$([[ "$term_elapsed" -le 20 ]] && echo within || echo "over:$term_ela
 # A harness reaps a background shell by killing its process group. The run is
 # detached into its own session, so the verdict is still recorded and a later
 # poll still finds it — the whole point of writing it to a file.
-proj_kill="$(make_proj proj-kill "sleep 4; echo survived" 30)"
+# run_started OUT_FILE — the run directory a detached run's started line names,
+# once its child has recorded its pid: the barrier a row kills or polls after.
+# Bounded at ten seconds; a run that never got there fails the row's own
+# assertion with an empty directory.
+run_started() { # OUT_FILE
+  local n=0 dir=""
+  while (( n < 100 )); do
+    dir="$(run_dir_of "$(cat "$1" 2>/dev/null)")"
+    [[ -z "$dir" || ! -s "$dir/pid" ]] || break
+    sleep 0.1
+    n=$((n + 1))
+  done
+  printf '%s\n' "$dir"
+}
+# The command holds until the suite releases it, so the kill lands while no
+# verdict exists, however slow the host.
+KILL_RELEASE="$TMP_ROOT/kill-release"
+proj_kill="$(make_proj proj-kill "until [ -e $KILL_RELEASE ]; do sleep 0.1; done; echo survived" 30)"
 setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS '$RUN' --worktree '$proj_kill' --poll 1 > '$TMP_ROOT/kill.out' 2>&1" &
 caller=$!
-sleep 1
+kill_dir="$(run_started "$TMP_ROOT/kill.out")"
 kill -KILL -- "-$caller" 2>/dev/null || kill -KILL "$caller" 2>/dev/null || true
 wait "$caller" 2>/dev/null || true
-kill_dir="$(run_dir_of "$(cat "$TMP_ROOT/kill.out")")"
 assert_eq "$([[ -n "$kill_dir" && ! -s "$kill_dir/exit" ]] && echo running || echo recorded)" "running" \
   "the caller is killed while the run has recorded no verdict yet"
+: > "$KILL_RELEASE"
 run_script "$RUN" --wait --run-dir "$kill_dir" --budget 30
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
   "a later poll reads the verdict the detached run recorded after that kill" "$ERR"
@@ -519,19 +550,20 @@ assert_eq "$RC" "0" "and exits on it" "$ERR"
 # The poll interval here is ten times the call budget. A wait that slept a whole
 # interval before its next check would return at twenty seconds against a budget
 # of two, and a caller sizes its own harness timeout on the budget it asked for:
-# the elapsed assertion below is what reddens on that.
+# the clock assertion below is what reddens on that. The wait runs on the
+# virtual clock, seeded after the run's real start so its elapsed never reads
+# negative.
 proj_slow="$(make_proj proj-slow "sleep 30" 60)"
 setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS '$RUN' --worktree '$proj_slow' --poll 20 > '$TMP_ROOT/slow.out' 2>&1" &
 started=$!
-sleep 2
-slow_dir="$(run_dir_of "$(cat "$TMP_ROOT/slow.out")")"
-slow_start="$(date +%s)"
-run_script "$RUN" --wait --run-dir "$slow_dir" --budget 2
-slow_elapsed=$(( $(date +%s) - slow_start ))
+slow_dir="$(run_started "$TMP_ROOT/slow.out")"
+_virtual_clock_seed
+slow_start="$(clock_now)"
+RUN_PATH="$CLOCK_BIN:$PATH" run_script "$RUN" --wait --run-dir "$slow_dir" --budget 2
 assert_eq "$(timed_line "$OUT")" "state=running elapsed-secs=N cap-secs=90 run-dir=$slow_dir" \
   "a poll whose call budget ends first reports the run as still going, naming the cap and the directory to poll next" "$ERR"
 assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
-assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
+assert_eq "$(( $(clock_now) - slow_start ))" "2" \
   "and it returns on its own budget rather than a whole poll interval past it"
 run_script "$RUN" --record --run-dir "$slow_dir"
 assert_eq "$OUT rc=$RC" "validate-mode=full selection=unreported verdict=unfinished head= start=$(start_of "$slow_dir") rc=0" \
@@ -545,8 +577,7 @@ wait "$started" 2>/dev/null || true
 proj_lost="$(make_proj proj-lost "sleep 25" 60)"
 setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS '$RUN' --worktree '$proj_lost' --poll 1 > '$TMP_ROOT/lost.out' 2>&1" &
 lost_caller=$!
-sleep 2
-lost_dir="$(run_dir_of "$(cat "$TMP_ROOT/lost.out")")"
+lost_dir="$(run_started "$TMP_ROOT/lost.out")"
 lost_pid="$(cat "$lost_dir/pid")"
 kill -KILL -- "-$lost_pid" 2>/dev/null || kill -KILL "$lost_pid" 2>/dev/null || true
 kill -KILL -- "-$lost_caller" 2>/dev/null || kill -KILL "$lost_caller" 2>/dev/null || true
@@ -562,13 +593,27 @@ assert_eq "$([[ "$lost_elapsed" -le 10 ]] && echo within || echo "over:$lost_ela
   "on the next poll rather than seventy seconds later at the run's cap"
 
 # The same report where the child never ran at all: no process id to find, and
-# no log to name because nothing opened one.
+# no log to name because nothing opened one. The waiter grants a launch ten
+# seconds to record its pid; on the virtual clock the grace is waited out in no
+# wall time, and the elapsed the line reports is that grace exactly.
 absent="$TMP_ROOT/absent"
-write_start "$absent" "$TMP_ROOT" timeout "$(date +%s)" 600 611
-run_script "$RUN" --wait --run-dir "$absent" --budget 60
+_virtual_clock_seed
+write_start "$absent" "$TMP_ROOT" timeout "$(clock_now)" 600 611
+absent_real="$(date +%s)"
+RUN_PATH="$CLOCK_BIN:$PATH" run_script "$RUN" --wait --run-dir "$absent" --budget 60
+absent_real=$(( $(date +%s) - absent_real ))
 assert_eq "$(timed_line "$OUT")" "state=lost elapsed-secs=N cap-secs=611 validate=FAILING run-dir=$absent" \
   "a launch that never ran is lost too, and names no log because none exists" "$ERR"
 assert_eq "$RC" "1" "and exits nonzero" "$ERR"
+assert_eq "$(sed -n 's/^state=lost elapsed-secs=\([0-9]*\) .*$/\1/p' <<<"$OUT") $([[ "$absent_real" -lt 10 ]] && echo virtual || echo "real:$absent_real")" \
+  "10 virtual" "control: the ten-second launch grace elapsed on the virtual clock, not the wall clock" "$ERR"
+# The inverse: with the clock waived the same wait is the wall clock's, and a
+# two-second ceiling ends it before the grace does.
+set +e
+STUB_CLOCK='' "$(command -v timeout || command -v gtimeout)" 2 env PATH="$CLOCK_BIN:$PATH" "$RUN" --wait --run-dir "$absent" --budget 60 >/dev/null 2>&1
+absent_rc=$?
+set -e
+assert_eq "$absent_rc" "124" "control: with the clock waived the grace is real and outlasts a two-second ceiling"
 
 # --- A cap that really has elapsed is a failed validation, never a pass -------
 stale="$TMP_ROOT/stale"
@@ -885,13 +930,15 @@ CI_ROWS=(
   "a class with no measured marker runs the range command|yes|rules|change_class=micro|false||state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a docs verdict that did not read runs the range command|yes|rules|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
 )
-# ci_rows SCRIPT — one line per row: its label, its stderr file, then the
-# verdict, what the command printed, the recorded mode and the recorded
-# ci-fallback, tab-separated.
+# ci_rows SCRIPT [LABEL] — one line per row: its label, its stderr file, then
+# the verdict, what the command printed, the recorded mode and the recorded
+# ci-fallback, tab-separated. LABEL runs that one row alone, which is all a
+# control reads.
 ci_rows() {
   local row label named world answer docs measured proj ci_dir
   for row in "${CI_ROWS[@]}"; do
     IFS='|' read -r label named world answer docs measured _ _ _ <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     proj="$proj_ci"
     [[ "$named" == yes ]] || proj="$proj_ci_unset"
     ci_world "$world"
@@ -952,7 +999,7 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW [EXPECT]
   local got_line got
   cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
   mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
-  got_line="$(ci_rows "$CI_SCRIPT.mutant" | awk -F'\t' -v want="$4" '$1 == want')"
+  got_line="$(ci_rows "$CI_SCRIPT.mutant" "$4")"
   IFS=$'\t' read -r _ _ got <<<"$got_line"
   assert_eq "$got" "${5:-state=done guard-exit=0 validate=pass |ci|}" "control: with $1, '$4' fails"
 }

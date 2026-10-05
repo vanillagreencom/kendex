@@ -115,6 +115,13 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #   flags=     further open-terminal flags, split on whitespace
 #   text=      the pane screen the tmux stub draws, in place of the brief plus
 #              the live-input marker the row's own harness draws
+#   clock=virtual  the launch reads time through the virtual clock, seeded at
+#              the real epoch, so its tmux waits and settle reads cost no wall
+#              time. Only for a row whose tree carries one account throughout:
+#              a row that races a handover keeps the real one.
+#   clock=waived   the same stubs on PATH with the clock waived, and the
+#              launch run under a two-second ceiling: the inverse control
+LAUNCH_CLOCK="$TMP_ROOT/launch-clock"
 lane_launch() {
   local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="KEN-50"
   shift 7
@@ -122,9 +129,13 @@ lane_launch() {
   # A row whose leaf names a path derived from the launch directory pins that
   # directory, since the stub otherwise makes a fresh one per run and no row
   # can spell it.
-  local template="" flags="" text="" fixed_wt="" prefix_home="$lane" opt
+  local template="" flags="" text="" fixed_wt="" prefix_home="$lane" opt clock_path="" clock_file="" ceiling=()
   for opt in "$@"; do
     case "$opt" in
+      clock=virtual)
+        clock_path="$TMP_ROOT/clock-bin:"; clock_file="$LAUNCH_CLOCK"
+        "$STUB_REAL_DATE" +%s > "$LAUNCH_CLOCK"; cp -- "$LAUNCH_CLOCK" "$LAUNCH_CLOCK.seed" ;;
+      clock=waived) clock_path="$TMP_ROOT/clock-bin:"; ceiling=("$(command -v timeout || command -v gtimeout)" 2) ;;
       cmd=*) template="${opt#cmd=}" ;;
       flags=*) flags="${opt#flags=}" ;;
       text=*) text="${opt#text=}" ;;
@@ -178,10 +189,10 @@ lane_launch() {
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
-    OT_LAUNCHED_GATE="$gate" \
+    OT_LAUNCHED_GATE="$gate" STUB_CLOCK="$clock_file" \
     OT_WT_LOG="$runs/worktree.log" OT_WT_FIXED="$fixed_wt" OVERSEE_WATCH_STATE_DIR="$runs/state" \
-    PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
-    "$script" --harness "$harness" --lane "$lane" ${extra[@]+"${extra[@]}"} "$item" 2>&1 )" || rc=$?
+    PATH="$clock_path$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+    ${ceiling[@]+"${ceiling[@]}"} "$script" --harness "$harness" --lane "$lane" ${extra[@]+"${extra[@]}"} "$item" 2>&1 )" || rc=$?
   kill_tree "$tree"
   # Under a template the first word after the prefix is the caller's own
   # command, not the harness word, so the prefix is all this row matches on.
@@ -214,13 +225,13 @@ lane_launch() {
   printf '%s' "${got# }"
 }
 
-assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare" clock=virtual)" \
   "rc=0 form=launcher bare=0" \
   "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" bare claude "$LNBARE" "$LNBARE" - "rc form bare")" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" bare claude "$LNBARE" "$LNBARE" - "rc form bare" clock=virtual)" \
   "rc=0 form=prefix bare=0" \
   "a lane with no launcher on PATH keeps the env prefix"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" self claude "$LNSELF" "$LNSELF" - "rc form bare")" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" self claude "$LNSELF" "$LNSELF" - "rc form bare" clock=virtual)" \
   "rc=0 form=prefix bare=0" \
   "a lane named for the harness itself keeps the env prefix: the harness binary picks its own default account"
 # A codex launch runs under the home it builds for its worktree, and that home
@@ -233,15 +244,15 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" self claude "$LNSELF" "$LNSELF" - "rc 
 CODEXLAUNCHWT="$TMP_ROOT/codex-launcher-wt"
 CODEXSELFWT="$TMP_ROOT/codex-self-wt"
 codex_home_for() { ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_codex_home_path "$1" "$2" ); }
-assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCODEX" - "rc form bare" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCODEX" - "rc form bare" clock=virtual \
   "wt=$CODEXLAUNCHWT" "home=$(codex_home_for "$LNCODEX" "$CODEXLAUNCHWT")")" \
   "rc=0 form=prefix bare=0" \
   "a codex lane keeps the prefix even where its launcher is on PATH: the launcher would overwrite the home carrying the launch's folder trust"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare" clock=virtual \
   "wt=$CODEXSELFWT" "home=$(codex_home_for "$LNCODEXSELF" "$CODEXSELFWT")")" \
   "rc=0 form=prefix bare=0" \
   "a codex lane named for the harness itself keeps the CODEX_HOME prefix"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" - "rc form bare")" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" - "rc form bare" clock=virtual)" \
   "rc=0 form=launcher bare=0" \
   "a lane path written with a trailing slash reaches the same launcher, the spelling --lane and ORCH_LANE_DIRS both carry through"
 
@@ -254,7 +265,7 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" -
 # is the hard-coded 15 here, not ORCH_TMUX_VERIFY_SECS: a --cmd template reads
 # none of the waits the setting is validated for, so the setting is not read for
 # it either.
-assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved probes" "cmd=true {item}" "text=dev@lane:~$")" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved probes" "cmd=true {item}" "text=dev@lane:~$" clock=virtual)" \
   "rc=0 form=prefix verified=0 unobserved=0 probes=0" \
   "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
 
@@ -362,9 +373,18 @@ else
   # stalls for the whole bound — ORCH_TMUX_VERIFY_SECS=5 above, one look per
   # second plus the look that finds the budget spent. The read still happens,
   # and both the launch and the read say it was taken without the premise.
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" no-screen codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised probes" "text=dev@lane:~$")" \
+  # The tree carries one account throughout, so the row reads time through the
+  # virtual clock: the bound is spent there, and its control reads how far the
+  # clock moved against the wall time the launch took.
+  no_screen_real="$(date +%s)"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" no-screen codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised probes" "text=dev@lane:~$" clock=virtual)" \
     "rc=0 verified=0 premise=1 unpremised=1 probes=6" \
     "a screen the premise does not know stalls for the whole bound, and the read that follows is reported unpremised"
+  no_screen_real=$(( $(date +%s) - no_screen_real ))
+  assert_eq "$(( $(cat "$LAUNCH_CLOCK") - $(cat "$LAUNCH_CLOCK.seed") >= 5 )) $(( no_screen_real < 5 ))" "1 1" \
+    "control: the five-second premise bound is reached on the virtual clock with less than that in wall time"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" no-screen-waived codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc" "text=dev@lane:~$" clock=waived)" \
+    "rc=124" "control: with the clock waived the same bound is real and outlasts a two-second ceiling"
 
   # A codex launch runs under the home it built for its worktree, so what the
   # pane carries is that home and not the account directory. The check's
