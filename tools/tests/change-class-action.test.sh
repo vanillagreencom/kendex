@@ -228,6 +228,8 @@ printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
 # since classify reads the head commit, not the worktree.
 subject_git() { git -C "$TMP/subject" -c user.name=suite -c user.email=suite@example.invalid "$@"; }
 subject_git init -q
+subject_git config gc.auto 0
+subject_git config maintenance.auto false
 mkdir -p "$TMP/subject/.agents/skills/harness-ci/scripts/lib"
 cp "$LANES_LIB" "$TMP/subject/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
 subject_git add .agents
