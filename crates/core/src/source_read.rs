@@ -67,7 +67,17 @@ pub struct SealedSource {
 /// three answers to "what is not content" that drift are three different
 /// ideas of what a package contains.
 pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-const TOOL_STATE: &str = ".git node_modules __pycache__ .pytest_cache .venv";
+/// Names tools keep their own state under, wherever in a tree they run:
+/// never part of a skill's source, and never part of an installed render's
+/// identity (`hash::RenderedIdentity::from_path`), so a cache a skill's own
+/// script leaves in its render reads as neither content nor an edit.
+pub(crate) const TOOL_STATE: [&str; 5] = [
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+];
 
 /// The entries at a skill's own top level that a render leaves out: the
 /// package's test suites, its evaluation sets and its maintainer notes. An
@@ -337,7 +347,7 @@ impl SealedSource {
             true => &NOT_CONTENT,
             false => &[],
         };
-        let skip: Vec<_> = skip.iter().copied().chain(TOOL_STATE.split(' ')).collect();
+        let skip: Vec<_> = skip.iter().chain(&TOOL_STATE).copied().collect();
         self.walk(dir, Prune { skip: &skip, top })
     }
 

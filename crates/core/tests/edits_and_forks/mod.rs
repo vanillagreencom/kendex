@@ -16,6 +16,7 @@ mod vacant;
 
 mod forks;
 mod missing_files;
+mod tool_caches;
 
 use std::fs;
 use std::path::{Path, PathBuf};

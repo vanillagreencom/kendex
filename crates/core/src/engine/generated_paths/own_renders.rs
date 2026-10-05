@@ -217,9 +217,10 @@ fn record(env: &Env, root: &Path) -> Result<Lock, String> {
 /// every untracked one Git does not ignore, as the working tree holds them.
 /// The path returned is the copy's root.
 ///
-/// The planner reads every file in a render tree, so an ignored file there,
-/// such as the `__pycache__` a run of a skill's Python scripts leaves, makes
-/// it plan the tree over again. No commit carries that file, and no clone
+/// The planner reads every file in a render tree but the tool caches a
+/// skill's source leaves out (`source_read::TOOL_STATE`), so any other
+/// ignored file there, such as an editor's swap file, makes it plan the
+/// tree over again. No commit carries that file, and no clone
 /// `tools/lock-record` refreshes holds it, so the check judges this copy
 /// and leaves the checkout's leftovers out.
 ///

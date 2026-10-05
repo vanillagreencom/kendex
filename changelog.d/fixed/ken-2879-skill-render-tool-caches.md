@@ -1,0 +1,1 @@
+- `kendex verify` and `kendex refresh` no longer count a tool cache in an installed skill, such as `__pycache__`, as an edit.

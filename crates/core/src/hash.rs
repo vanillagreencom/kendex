@@ -182,6 +182,11 @@ impl RenderedIdentity {
 
     /// Identity for a file or tree already on disk.
     ///
+    /// A tree's identity leaves out the tool caches a skill's source
+    /// leaves out ([`crate::source_read::TOOL_STATE`]): the render was
+    /// written without them, and a skill's own script writes them back on
+    /// every run.
+    ///
     /// `owned_untracked` is for a kendex output whose destination Git does
     /// not track, such as a Pi package copied from tracked catalog text.
     pub fn from_path(path: &Path, owned_untracked: bool) -> Result<Self> {
@@ -467,6 +472,12 @@ fn collect_plain_files(
             let Some(name) = entry.file_name() else {
                 continue;
             };
+            if crate::source_read::TOOL_STATE
+                .iter()
+                .any(|cache| name == std::ffi::OsStr::new(cache))
+            {
+                continue;
+            }
             collect_plain_files(&entry, &relative.join(name), depth + 1, files)?;
         }
     } else if meta.is_file() {
