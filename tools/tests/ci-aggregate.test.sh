@@ -23,10 +23,9 @@
 #      against a selection and an event, with GitHub's implicit success() where a
 #      condition carries no status function. A merge group runs the class
 #      job set its pull request ran, less the two jobs held to the
-#      pull-request event. The macOS legs run on either event where the
-#      selection lists them. A dead classifier runs every
-#      gated job, both platform legs and the whole shard roster. A pull
-#      request's run is cancelled by its next push; no other run is. The `CI` job needs every job but the aggregators and
+#      pull-request event. macOS skill suites run on main pushes alone.
+#      A dead classifier runs every gated job and the whole Linux shard roster. A pull
+#      request's run is cancelled by its next push; no other run is. The `CI` job needs every job that can run on a gated event but the aggregators and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
 #      function, one that ignores the class on a merge group, a matrix with
@@ -93,8 +92,20 @@ check "must-fail: a changes job calling tools/ci-job-set without --event-parity 
   "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
 
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
-matrix_expr() { # WORKFLOW KEY
-  sed -n "s/^        $2: \\\${{ \\(.*\\) }}\$/\\1/p" "$1"
+matrix_expr() { # WORKFLOW KEY [JOB]
+  local raw
+  raw="$(awk -v job="${3:-skill-suites-shard}:" -v key="$2:" '
+    /^  [A-Za-z0-9_-]+:/ { active = ($1 == job) }
+    active && /^        / && $1 == key { sub(/^        [^:]+: /, ""); print }
+  ' "$1")"
+  case "$raw" in
+    '&'*) raw="${raw#* }" ;;
+    '*'*) raw="$(sed -n "s/^        $2: &${raw#\*} //p" "$1")" ;;
+  esac
+  case "$raw" in
+    '${{'*) printf '%s' "${raw:4:${#raw}-7}" ;;
+    \[*) printf "fromJSON('%s')" "$(printf '%s' "$raw" | sed 's/\([a-z][a-z-]*\)/"\1"/g')" ;;
+  esac
 }
 
 # `LANE:JOB` for every job whose own condition reads a lane.
@@ -147,14 +158,15 @@ aggregate_lanes() { # WORKFLOW [AGGREGATE]
     }
   ' "$1" | LC_ALL=C sort -u
 }
-PUBLISHED_LANE='^needs\.changes\.outputs\.[a-z_]+$'
+PUBLISHED_LANE='needs\.changes\.outputs\.[a-z_]+'
 # `LANE:JOB` for each lane held to a published selection, and `?:JOB` for one
 # whose selection resolves to nothing, which matches no lane.
 aggregate_pairs() { # WORKFLOW [AGGREGATE]
-  aggregate_lanes "$@" | LANE="$PUBLISHED_LANE" awk -F '\t' '
-    $3 == "" { print "?:" $2; next }
-    $3 ~ ENVIRON["LANE"] { sub(/^needs\.changes\.outputs\./, "", $3); print $3 ":" $2 }
-  ' | LC_ALL=C sort -u
+  aggregate_lanes "$@" | while IFS=$'\t' read -r agg job expr; do
+    if [ -z "$expr" ]; then printf '?:%s\n' "$job"; continue; fi
+    printf '%s\n' "$expr" | grep -oE "$OUTPUT_NAME" |
+      sed "s/^needs\\.changes\\.outputs\\.//; s/\$/:$job/" || true
+  done | LC_ALL=C sort -u
 }
 # `JOB<tab>EXPR` for each lane held to anything but a published selection:
 # the event conditions a job is held to.
@@ -315,7 +327,7 @@ pull_request|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests
 merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
 merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows skill-suites-shard
+merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows
 merge_group|$SOURCE_PROOF_ROW|
 ROWS
 [ "$job_rows" -ge 14 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
@@ -340,26 +352,47 @@ done
 check "a dead classifier runs every gated job" "$EVERY_GATED" \
   "$(running "$WORKFLOW" "$ALL_OFF" failure)"
 
-# EVENT|RESULT|SELECTION|LEGS. The matrix expands the runner list the
-# selection published, on either event, and both legs where nothing was
-# published.
+# EVENT|RESULT|SELECTION|LEGS. Required skill suites use Linux alone.
 leg_rows=0
 while IFS='|' read -r event result sel expected; do
   leg_rows=$((leg_rows + 1))
   check "the matrix expands $expected on $event at $result under '$sel'" "$expected" \
     "$(legs "$WORKFLOW" "$sel" "$result" "$event")"
 done <<ROWS
-pull_request|success|$ALL_ON|["ubuntu-latest","macos-latest"]
-merge_group|success|$ALL_ON|["ubuntu-latest","macos-latest"]
-pull_request|success|$ORCH_CODE_ROW|["ubuntu-latest","macos-latest"]
-merge_group|success|$ORCH_CODE_ROW|["ubuntu-latest","macos-latest"]
-merge_group|success|$ORCH_PROOF_ROW|["macos-latest"]
+pull_request|success|$ALL_ON|["ubuntu-latest"]
+merge_group|success|$ALL_ON|["ubuntu-latest"]
+pull_request|success|$ORCH_CODE_ROW|["ubuntu-latest"]
+merge_group|success|$ORCH_CODE_ROW|["ubuntu-latest"]
+merge_group|success|$ORCH_PROOF_ROW|["ubuntu-latest"]
 pull_request|success|$one_skill|["ubuntu-latest"]
 merge_group|success|$one_skill|["ubuntu-latest"]
-pull_request|failure|$ALL_OFF|["ubuntu-latest","macos-latest"]
-merge_group|failure|$ALL_OFF|["ubuntu-latest","macos-latest"]
+pull_request|failure|$ALL_OFF|["ubuntu-latest"]
+merge_group|failure|$ALL_OFF|["ubuntu-latest"]
 ROWS
 [ "$leg_rows" -ge 9 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
+
+# The push job reads the skipped classifier's fallback through its shard
+# alias. These are source and expression checks, not a hosted execution.
+macos_condition() { # WORKFLOW
+  job_ifs "$1" | awk -F '\t' '$1 == "skill-suites-macos" { print $2 }'
+}
+while IFS='|' read -r event result expected; do
+  check "macOS skill suites run=$expected on $event with classification $result" "$expected" \
+    "$(gh_eval value "$(context_json "$event" "$result" "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$WORKFLOW")")"
+done <<'ROWS'
+pull_request|success|false
+pull_request|failure|false
+merge_group|success|false
+merge_group|failure|false
+push|skipped|true
+ROWS
+check "the main-push macOS matrix uses macOS alone" '["macos-latest"]' \
+  "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
+check "main pushes run the full shard roster through the alias" "$ROSTER" \
+  "$(gh_eval value "$(context_json push skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+plant "$WORKFLOW" "github.event_name == 'push'" "github.event_name != 'push'" "$TMP/wf-macos-pr.yml" skill-suites-macos
+check "must-fail: macOS skill suites moved onto a PR run there" true \
+  "$(gh_eval value "$(context_json pull_request success "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-pr.yml")")"
 
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
@@ -483,16 +516,29 @@ check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none"
 # as it does; it runs on both gated events whatever its needs did, and the
 # classifier it reads runs on both.
 
-ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against every job but the aggregators
-  local wf="$1" ci
+ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on gated events
+  local wf="$1" ci job expr main_only=""
   ci="$(jobs_named "$wf" CI)"
-  set_gap "$(job_needs "$wf" | cut -f1 | LC_ALL=C sort | comm -23 - <(aggregators "$wf"))" \
+  while IFS=$'\t' read -r job expr; do
+    case "$expr" in *needs.*) continue ;; esac
+    if [ "$(gh_eval value '{"github":{"event_name":"pull_request"}}' "$expr")" = false ] &&
+       [ "$(gh_eval value '{"github":{"event_name":"merge_group"}}' "$expr")" = false ]; then
+      main_only="$main_only$job\n"
+    fi
+  done < <(job_ifs "$wf")
+  set_gap "$(job_needs "$wf" | cut -f1 | LC_ALL=C sort | comm -23 - <({ aggregators "$wf"; printf '%b' "$main_only"; } | LC_ALL=C sort -u))" \
     "$(job_needs "$wf" | awk -F '\t' -v j="$ci" '$1 == j { print $2 }' | tr ',' '\n')"
 }
 check "one job is named CI" "ci" "$(jobs_named "$WORKFLOW" CI | tr '\n' ' ' | sed 's/ $//')"
 AGGREGATORS="$(aggregators "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 check "the aggregators are read out of the workflow" "cargo-tests cargo-tests-macos ci skill-suites" "$AGGREGATORS"
-check "CI needs every job but the aggregators" "missing= extra=" "$(ci_needs_gap "$WORKFLOW")"
+check "CI needs every gated-event job but the aggregators" "missing= extra=" "$(ci_needs_gap "$WORKFLOW")"
+plant "$WORKFLOW" "needs: [changes, skill-suites-shard, ui-tests, bot-instructions]" \
+  "needs: [changes, skill-suites-shard, skill-suites-macos, ui-tests, bot-instructions]" "$TMP/wf-required-macos.yml" skill-suites
+check "must-fail: required skill suites can name a macOS push dependency" skill-suites-macos \
+  "$(job_needs "$TMP/wf-required-macos.yml" | awk -F '\t' '$1 == "skill-suites" { print $2 }' | tr ',' '\n' | grep -x skill-suites-macos)"
+check "required contexts have no macOS skill-suite dependency" '' \
+  "$(job_needs "$WORKFLOW" | awk -F '\t' '$1 == "ci" || $1 == "skill-suites" { print $2 }' | tr ',' '\n' | grep -x skill-suites-macos || true)"
 # EVENT|RESULT|RUNS
 ci_rows=0
 while IFS='|' read -r event result runs; do
@@ -583,14 +629,13 @@ case " $(running "$TMP/wf-no-status.yml" "$ALL_OFF" failure) " in
   *) ok "must-fail: a condition with no status function stands down under a dead classifier" ;;
 esac
 
-# The runner key reading no selection expands both legs on a diff whose
-# selection named one, and on a merge group whose proof stood the Linux leg
-# down.
-plant "$WORKFLOW" "|| needs.changes.outputs.shell_os)" "|| '[\"ubuntu-latest\", \"macos-latest\"]')" \
-  "$TMP/wf-os-unread.yml"
-check "must-fail: a runner key reading no selection expands both legs" \
-  '["ubuntu-latest","macos-latest"] ["ubuntu-latest","macos-latest"]' \
-  "$(legs "$TMP/wf-os-unread.yml" "$one_skill") $(legs "$TMP/wf-os-unread.yml" "$ORCH_PROOF_ROW" success merge_group)"
+# A required shell job that ignores the selected runner repeats proven Linux
+# work when the remaining selection is macOS alone.
+plant "$WORKFLOW" "needs.changes.outputs.shell_os != '[\"macos-latest\"]'" "true" \
+  "$TMP/wf-os-unread.yml" skill-suites-shard
+check "must-fail: a job ignoring runner proof repeats the Linux shell job" \
+  'cargo-macos cargo-tests-windows skill-suites-shard' \
+  "$(running "$TMP/wf-os-unread.yml" "$ORCH_PROOF_ROW" success merge_group)"
 
 # The shard key reading no selection expands the whole roster on a diff that
 # selected one package.
@@ -607,7 +652,7 @@ awk '
   }
   skip && /^        / { next }
   { skip = 0; print }
-  job == "skill-suites-shard" && $0 == "    steps:" {
+  job == "skill-suites-shard" && $0 ~ /^    steps:/ {
     print "      - name: doc-limits (document byte ceilings)"
     print "        run: skills/doc-limits/scripts/doc-limits"
     inserted++

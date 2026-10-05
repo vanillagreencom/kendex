@@ -23,20 +23,22 @@ name: Skill Tests
 # run left, `tools/ci-job-set` re-derives what it ran from it and stands
 # those lanes down, so such a group runs nothing the pull request did. The
 # pull request selects every lane, shard and runner the merge group selects
-# for the same paths, the macOS legs included, and the `changes` job's call
+# for the same paths, and the `changes` job's call
 # of `tools/ci-job-set --event-parity` refuses a selection that differs by
 # event; so the pull request's required
 # checks hold the whole merge-group job set, and an admin merge lands only
 # on a green run of that set. The aggregators
 # still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
-# reports into, the three aggregators excepted. The push to main
+# reports into, the three aggregators and macOS skill suites excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
-# so it runs only the compile steps: each cargo lane builds its targets with
+# so its cargo lanes run only the compile steps: each cargo lane builds its targets with
 # `--no-run` and saves the compile cache under the merged lockfile, and every
-# test step is conditioned off. Whatever else does NOT run on every event
-# carries its own `if:` saying why. GitHub enforces approval and thread
+# cargo test step is conditioned off. Whatever else does NOT run on every event
+# carries its own `if:` saying why. macOS skill suites run the full roster on
+# main pushes. They test Bash 3.2 and BSD tools without delaying required CI.
+# GitHub enforces approval and thread
 # resolution independently of CI job selection.
 #
 # Every job names its GitHub-hosted runner in `runs-on:`, directly or through
@@ -90,8 +92,7 @@ name: Skill Tests
 # and on the Linux `rest` and `orch-terminal` legs that build kendex-cli from
 # the checkout first, and 15 on every other Linux leg. The per-shard figures
 # behind each budget are in the comment above it.
-# Every pull request pays its selected shards on the pull request, the Linux
-# and macOS legs alike, and the merge queue stands them down where the proof
+# Every pull request pays its selected Linux shards, and the merge queue stands them down where the proof
 # above holds, so the slowest of them is charged once per merge there. It is
 # charged twice where the group runs them again: a base that moved or an
 # entry queued ahead gives the group a tree no pull request run tested, and
@@ -388,8 +389,7 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the selected shell shards a second time, on the pull
-  # request and in the merge group, on the runner whose /bin/bash is 3.2.57,
+  # THE macOS LEG runs the full shell roster on main pushes, on the runner whose /bin/bash is 3.2.57,
   # the shell every skill claims to support (skills/AGENTS.md).
   # tools/bash32-lint scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
@@ -428,7 +428,7 @@ jobs:
     # selected this lane out. The status function is what lifts the implicit
     # `success()`, which would stand the shards down on exactly the diffs
     # nothing classified.
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.shell_shards == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -437,28 +437,8 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
-        # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
-        # the BSD userland, over the same selected shards. A job-level `if:`
-        # cannot reach `matrix`, so the leg is dropped from the matrix rather
-        # than conditioned inside it, and a leg that never expands bills no
-        # macOS runner. Which runners run is tools/ci-job-set's `shell_os`
-        # list, the same on the pull request and in the merge group, so a
-        # macOS-only failure surfaces on the pull request; a leg the pull
-        # request run already ran on this tree stands down in the merge
-        # group. A dead classifier publishes nothing, so
-        # the result term ahead of the selection is what runs both legs
-        # rather than neither.
-        os: ${{ fromJSON(needs.changes.result != 'success' && '["ubuntu-latest", "macos-latest"]' || needs.changes.outputs.shell_os) }}
-        # tools/ci-job-set's LINUX_ONLY_SHARDS names the shards excluded
-        # here and lights no macOS leg for a selection of them alone, which
-        # would expand to no combination; tools/tests/orch-shard-partition.test.sh
-        # holds the two lists together.
-        exclude:
-          - os: macos-latest
-            shard: node
-          - os: macos-latest
-            shard: pi-claude-bridge
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
     # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
@@ -478,7 +458,7 @@ jobs:
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
-    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal') && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -488,11 +468,11 @@ jobs:
     # ORCH_REQUIRE_KENDEX does the same for the orch suite
     # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
     # kendex hooks-off and which the `orch-terminal` shard runs.
-    env:
+    env: &skill-suite-env
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-    steps:
+    steps: &skill-suite-steps
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -1387,6 +1367,29 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
+  # macOS queues and slower process launches do not hold required PR checks.
+  # On main pushes changes is skipped, so the shared matrix expression uses
+  # its full-roster fallback. The suite steps and budgets have one owner.
+  skill-suites-macos:
+    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: *skill-suite-shards
+        os: [macos-latest]
+        # These packages contain no shell suites.
+        exclude:
+          - os: macos-latest
+            shard: node
+          - os: macos-latest
+            shard: pi-claude-bridge
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: *skill-suite-timeout
+    env: *skill-suite-env
+    steps: *skill-suite-steps
+
   # Full UI validation reaches the required aggregator on every PR and
   # queue event.
   ui-tests:
@@ -1455,7 +1458,7 @@ jobs:
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards }}
+          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
           UI: ${{ needs.changes.outputs.ui }}
           BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
         run: |
@@ -1931,7 +1934,8 @@ jobs:
 
   # The aggregate CI context follows the repository required-checks ruleset.
   # Every other job
-  # in this workflow reports into it, the three aggregators above excepted:
+  # in this workflow reports into it, the three aggregators and main-push
+  # macOS skill suites excepted:
   # it holds every lane they hold, plus Preflight and Markdown,
   # and they keep the per-repository ruleset's names until that ruleset is
   # retired. The shape and the reasons are the Skill suites
@@ -1956,7 +1960,7 @@ jobs:
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards }}
+          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
           UI: ${{ needs.changes.outputs.ui }}
           BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
           CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}

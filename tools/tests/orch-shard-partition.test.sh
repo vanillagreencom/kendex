@@ -664,12 +664,12 @@ esac
 # over nothing, a job GitHub starts with an empty runs-on and fails; one
 # named there and not excluded here stands down a leg the matrix would run.
 
-# The shards the skill-suites-shard matrix excludes on macos-latest, read as
+# The shards the main-push macOS matrix excludes, read as
 # YAML sequence items the way cargo_excluded_legs reads them.
 macos_excluded_shards() { # macos_excluded_shards <workflow>
   awk '
     function flush() { if (os == "macos-latest" && shard != "") print shard; os = ""; shard = "" }
-    /^  skill-suites-shard:/ { job = 1; next }
+    /^  skill-suites-macos:/ { job = 1; next }
     job && /^  [A-Za-z0-9_-]+:/ { job = 0 }
     !job || NF == 0 || $1 == "#" { next }
     { n = 0; while (substr($0, n + 1, 1) == " ") n++ }
@@ -705,9 +705,20 @@ fi
 # Linux runs every shell suite. macOS runs the same files except linear's
 # Bash-4-only suites, whose existing runtime-contract suite runs under Bash 3.
 # The matrix's exclusions must not remove a shell roster on either runner.
-shell_os="$(sed -n "s/^        os: .*'\[\(.*\)\]'.*$/\1/p" "$WORKFLOW" | tr -d ' \"' | tr ',' '\n')"
+shell_os="$(sed -n 's/^        os: \[\(.*\)\]$/\1/p' "$WORKFLOW" | tr -d ' \"' | tr ',' '\n')"
 check "the shell matrix retains each original OS exactly once" \
   $'ubuntu-latest\nmacos-latest' "$shell_os"
+shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { job = $1 }
+    /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:") { print job " " $2 }
+  ' "$1"
+}
+check "both shell runners use the same suite steps" \
+  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: *skill-suite-steps' "$(shared_steps "$WORKFLOW")"
+sed 's/steps: \*skill-suite-steps/steps: []/' "$WORKFLOW" > "$TMP/mac-empty.yml"
+check "must-fail: a macOS job with no shared steps loses its suite alias" \
+  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: []' "$(shared_steps "$TMP/mac-empty.yml")"
 check "the linear roster has one injectable shell-version branch" "1" \
   "$(grep -cF 'if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then' "$WORKFLOW")"
 
