@@ -691,11 +691,11 @@ build keep-mutant conflict
 mkdir -p "$ROOT/pkg"
 cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
 keep_mutant="$ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$' "$keep_mutant")" "1" \
+assert_eq "$(grep -c 'keep_unrebased_worktree rebase "\$CONFLICT_FILES"$' "$keep_mutant")" "1" \
   "control finds the rebase arm's keep exit"
-sed -i.bak 's/keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$/: "keep cut"/' "$keep_mutant"
+sed -i.bak 's/keep_unrebased_worktree rebase "\$CONFLICT_FILES"$/: "keep cut"/' "$keep_mutant"
 rm -f -- "${keep_mutant:?}.bak"
-assert_eq "$(grep -c 'keep_unrebased_worktree "\$CONFLICT_FILES" "--restack"$' "$keep_mutant")" "0" \
+assert_eq "$(grep -c 'keep_unrebased_worktree rebase "\$CONFLICT_FILES"$' "$keep_mutant")" "0" \
   "control cuts it only in its private copy"
 keep_mutant_rc=0
 (cd "$MAIN" && "$keep_mutant" create "$ISSUE" --reuse --keep-on-conflict \

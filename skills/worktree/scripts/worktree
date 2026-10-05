@@ -1184,15 +1184,21 @@ report_created_worktree() {
 # is handed back there, set up as a completed reuse would be, for a caller that
 # needs a session in it more than a rebased branch. A caller needing the base
 # omits the flag and keeps the failure.
-keep_unrebased_worktree() { # CONFLICT_FILES RESTACK_FLAGS
+keep_unrebased_worktree() { # rebase|replay CONFLICT_FILES
+  local operation restack_flags
+  case "$1" in
+    rebase) operation="Rebase" restack_flags="--restack" ;;
+    replay) operation="Cherry-pick replay" restack_flags="--restack --replay" ;;
+    *) worktree_message keep-operation-unknown "$1" >&2; exit 1 ;;
+  esac
   release_issue_claim_lock
   setup_app_worktree "$WT_PATH" || exit 1
-  worktree_message reuse-unrebased "$WT_PATH" "Rebase onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-rebase head." >&2
-  if [[ -n "$1" ]]; then
+  worktree_message reuse-unrebased "$WT_PATH" "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." >&2
+  if [[ -n "$2" ]]; then
     echo "Conflicting files:" >&2
-    sed 's/^/  /' <<<"$1" >&2
+    sed 's/^/  /' <<<"$2" >&2
   fi
-  echo "Restack it when ready: $0 create $ISSUE $2" >&2
+  echo "Restack it when ready: $0 create $ISSUE $restack_flags" >&2
   report_created_worktree
   exit "$REUSE_UNREBASED_EXIT"
 }
@@ -2779,7 +2785,7 @@ case "${1:-}" in
               if [[ "$ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
                 cancel_pending_restack_authorization "$WT_PATH"
                 if [[ "$KEEP_ON_CONFLICT" == true ]]; then
-                  keep_unrebased_worktree "$CONFLICT_FILES" "--restack --replay"
+                  keep_unrebased_worktree replay "$CONFLICT_FILES"
                 fi
                 restore_unshadowed_worktree_setup "$WT_PATH"
               fi
@@ -2855,7 +2861,7 @@ case "${1:-}" in
             if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
               cancel_pending_restack_authorization "$WT_PATH"
               if [[ "$KEEP_ON_CONFLICT" == true ]]; then
-                keep_unrebased_worktree "$CONFLICT_FILES" "--restack"
+                keep_unrebased_worktree rebase "$CONFLICT_FILES"
               fi
               restore_unshadowed_worktree_setup "$WT_PATH"
             fi
