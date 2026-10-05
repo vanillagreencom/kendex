@@ -440,9 +440,11 @@ count_lines() { # FILE — 0 when it was never written
 #   error_line  first line of the JSON error, spaces encoded as +
 #   stderr_line the first line of stderr, spaces encoded as +
 #   mail        the count on an `approval-wait: mail=` stdout line
-#   fallback_heads  the head each copilot-fallback notice in the mailbox of
-#               the run's --item names, in send order; `none` when none went
-#               out. The overseer reads the head off that first line
+#   fallback_notices  each copilot-fallback notice in the mailbox of the
+#               run's --item, in send order, as HEAD:CAUSE:LANE_STATUS: the
+#               head and cause= fields of its first line and the path its
+#               `Lane status:` second line names, the three the overseer
+#               routes on; `none` when none went out
 #   unsent      copilot-fallback-unsent lines on stderr
 observe() {
   local got="" token name
@@ -459,7 +461,7 @@ observe() {
       error_line) got="$got error_line=$(json '.error | split("\n")[0]' | tr ' ' '+')" ;;
       mail) got="$got mail=$(sed -n '1s/^approval-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       stderr_line) got="$got stderr_line=$(sed -n '1p' "$RUN/stderr" | tr ' ' '+')" ;;
-      fallback_heads) got="$got fallback_heads=$(fallback_heads)" ;;
+      fallback_notices) got="$got fallback_notices=$(fallback_notices)" ;;
       unsent) got="$got unsent=$(grep -c '^approval-wait: copilot-fallback-unsent ' "$RUN/stderr" || true)" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       rules_reads) got="$got rules_reads=$(count_lines "$RUN/rules-reads")" ;;
@@ -474,13 +476,17 @@ observe() {
   printf '%s' "${got# }"
 }
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
-fallback_heads() {
-  local file="$WAIT_REPO/tmp/lane-mail/$RUN_ITEM/to-overseer.jsonl" heads
+fallback_notices() {
+  local file="$WAIT_REPO/tmp/lane-mail/$RUN_ITEM/to-overseer.jsonl" notices
   [[ -f "$file" ]] || { printf 'none'; return 0; }
-  heads="$(jq -r '.text | split("\n")[0]
-    | capture("^copilot-fallback PR #[0-9]+ head (?<head>[^ ]+)").head' "$file")" || heads=UNPARSEABLE
-  heads="$(paste -sd, - <<<"$heads")"
-  printf '%s' "${heads:-none}"
+  # capture yields nothing on a line it does not match, so a notice that
+  # went out malformed would read as none: make that an error instead.
+  notices="$(jq -r '.text | split("\n")
+    | (.[0] | capture("^copilot-fallback PR #[0-9]+ head (?<head>[^ ]+) cause=(?<cause>[^ ]+)$") // error("first line")) as $first
+    | (.[1] | capture("^Lane status: (?<path>[^ ]+)$") // error("second line")) as $second
+    | "\($first.head):\($first.cause):\($second.path)"' "$file" 2>/dev/null)" || notices=UNPARSEABLE
+  notices="$(paste -sd, - <<<"$notices")"
+  printf '%s' "${notices:-none}"
 }
 
 # table DEFAULT_ARGS ROW... — one run and one assertion per row. A row is
@@ -693,7 +699,7 @@ table "$APPROVAL" \
 echo "=== PR_COPILOT_REQUESTS=off: a wait in a lane asks the overseer once per head ==="
 # No Copilot review will come, so the wait asks the overseer for the head
 # approval itself. Rows on one item share its mailbox, so a row's
-# fallback_heads is every notice that item has sent so far: a second wait on
+# fallback_notices is every notice that item has sent so far: a second wait on
 # the same head adds none and a new head adds its own. Polls fall 61 virtual seconds apart, past lane-mail's
 # minute repeat check, so only the wait's own once-per-head key can hold a
 # repeat back. A wait with no lane mailbox, with requests on, or on an approved
@@ -702,12 +708,12 @@ echo "=== PR_COPILOT_REQUESTS=off: a wait in a lane asks the overseer once per h
 mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-9" "$TMP_ROOT/repo/tmp/lane-mail/KEN-8" \
   "$TMP_ROOT/repo/tmp/lane-mail/KEN-6/to-overseer.jsonl"
 table '1 61 61 --json --mode approval --item KEN-9' \
-  'a wait on an unapproved head sends one notice over two polls||PR_COPILOT_REQUESTS=off|rc=1 status=timeout fallback_heads=headsha1' \
-  'a second wait on the same head sends nothing||PR_COPILOT_REQUESTS=off|rc=1 status=timeout fallback_heads=headsha1' \
-  'a new head sends its own notice|1 61 183 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=off,STUB_HEAD_MODE=changes|rc=1 status=timeout fallback_heads=headsha1,headsha2' \
-  'requests on send nothing|1 61 61 --json --mode approval --item KEN-8||rc=1 status=timeout fallback_heads=none' \
-  'an approved head sends nothing|1 61 61 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved fallback_heads=none' \
-  'a wait outside a lane sends nothing|1 61 61 --json --mode approval --item KEN-7|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_heads=none' \
+  'a wait on an unapproved head sends one notice over two polls||PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md' \
+  'a second wait on the same head sends nothing||PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md' \
+  'a new head sends its own notice|1 61 183 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=off,STUB_HEAD_MODE=changes|rc=1 status=timeout fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md,headsha2:off:tmp/lane-status-KEN-9.md' \
+  'requests on send nothing|1 61 61 --json --mode approval --item KEN-8||rc=1 status=timeout fallback_notices=none' \
+  'an approved head sends nothing|1 61 61 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved fallback_notices=none' \
+  'a wait outside a lane sends nothing|1 61 61 --json --mode approval --item KEN-7|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=none' \
   'a failed send is retried and ends no wait|1 61 61 --json --mode approval --item KEN-6|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=2' \
   'an unknown setting is refused|1 61 61 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=junk|rc=2 stdout=empty stderr_line=approval-wait:+copilot-requests-invalid+value=junk'
 
@@ -806,10 +812,10 @@ control changes-over-approval '  if [ "$approved" = false ] \' '  if [ "$approve
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fallback-once '  if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then' \
   '  if ! (set +o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then' \
-  '1 61 61 --json --mode approval --item KEN-9' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout fallback_heads=headsha1'
+  '1 61 61 --json --mode approval --item KEN-9' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fallback-outside-lane '  [ -d "$box" ] || return 0' '  : # [ -d "$box" ] || return 0' \
-  '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout unsent=0 fallback_heads=none'
+  '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout unsent=0 fallback_notices=none'
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails

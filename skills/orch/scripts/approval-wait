@@ -161,10 +161,11 @@ Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
        approval-wait <PR#> --request-review --base-checkout PATH
 
-Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
-result on stdout: a stable status line with English below, or a JSON object
-with --json, so callers can route approved vs changes-requested vs timeout
-vs proceeded deterministically (kendex#538, kendex#642).
+Wait for the reviewer-gate verdict on a PR. Every exit path but 2 and 5 emits
+a final result on stdout: a stable status line with English below, or a JSON
+object with --json, so callers can route approved vs changes-requested vs
+timeout vs proceeded deterministically (kendex#538, kendex#642). Exit 2 is a
+stop: stdout stays empty and stderr says why.
 
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 15)
@@ -375,7 +376,9 @@ Exit codes:
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value,
-     unknown flag; or a mode resolution that failed
+     unknown flag; a mode resolution that failed; or a PR_COPILOT_REQUESTS
+     that is unreadable or neither on nor off, read by --request-review and
+     by a wait with --item
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
   5  lane mail, no result: stdout is only `approval-wait: mail=<count>`, or
      `approval-wait: mail-unreadable=<path>` when the mailbox cannot be read

@@ -253,7 +253,7 @@ A retarget changes the base without touching the head, so every path below that 
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]
    ```
 
-   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait emits a JSON result on every exit but `5`.
+   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait emits a JSON result on every exit but `2` and `5`. Exit `2` is a stop: report its stderr line.
 
    | `status` | Action |
    |----------|--------|
