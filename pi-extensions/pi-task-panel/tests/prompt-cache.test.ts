@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
 import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
@@ -15,7 +16,7 @@ const SYSTEM_PROMPT = "The host's unchanged system prompt.";
 
 test("task changes preserve the system prompt and earlier request messages", async () => {
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
-	const base = mkdtempSync(join(process.cwd(), "tmp", "task-panel-prompt-cache-"));
+	const base = mkdtempSync(join(fileURLToPath(new URL("../../../tmp/", import.meta.url)), "task-panel-prompt-cache-"));
 	try {
 		const agentDir = join(base, "agent");
 		mkdirSync(agentDir);
