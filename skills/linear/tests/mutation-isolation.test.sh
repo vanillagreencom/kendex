@@ -29,6 +29,8 @@
 #     the committer reads it there rather than in a second run
 #   - a control is judged once every mutation's run is in, so one whose first
 #     mutation finishes after its last is judged on that first mutation
+#   - a job that finishes frees its slot for the next while the others run on,
+#     so a third mutation starts while the first is still waiting for it
 #
 # One table. A row names the fixture, the control it writes, the cap, what it
 # keeps of the run, and the run's verdict block whole: the exit status, every
@@ -45,7 +47,8 @@ source "$SCRIPT_DIR/lib/assert.sh"
 RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
 assert_tmpdir TMP
 # Two slots on any machine: the `late` row's first mutation waits on its
-# second, which a single slot would never start.
+# second, which a single slot would never start, and the `refill` row's first
+# waits on its third, which a third slot would start without a refill.
 export CONTROL_JOBS=2
 
 # A one-suite skill over four values and an inert fifth file. Two of its claims
@@ -133,6 +136,17 @@ control_replace scripts/inert.sh 1 '"'"'INERT=1'"'"' '"'"'INERT=2'"'"'' ;;
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; until [ -e "$D/../../../mutation2.rc" ]; do sleep 0.05; done'"'"'
 control_expect "b is one"
 control_replace scripts/b.sh 1 '"'"'B=1'"'"' '"'"'B=2'"'"'' ;;
+    # Three mutations on two slots, and the first finishes only once the
+    # runner has recorded the third's status: the third starts only in the
+    # slot the second frees while the first still runs. A runner waiting out
+    # both before launching again never starts it, and the first runs to the
+    # cap.
+    refill) body='control_expect "a is one"
+control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; until [ -e "$D/../../../mutation3.rc" ]; do sleep 0.05; done'"'"'
+control_expect "b is one"
+control_replace scripts/b.sh 1 '"'"'B=1'"'"' '"'"'B=2'"'"'
+control_expect "c is one"
+control_replace scripts/c.sh 1 '"'"'C=1'"'"' '"'"'C=2'"'"'' ;;
     # The run reddens on the clock rather than on the mutation.
     capped) body='control_expect "a is one"
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; sleep 2'"'"'' ;;
@@ -207,6 +221,7 @@ the shared report names the assertion|plain|shared|-|verdicts|rc=1;SHARED alpha.
 the unnamed report names the mutation|plain|unnamed|-|verdicts|rc=1;NOEXPECT alpha.test.sh mutation 2 names no assertion;1 controls, 1 failing, 0 orphaned
 the green report names its suite|plain|green|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 2, its only break;1 controls, 1 failing, 0 orphaned
 a control whose first mutation finishes last is judged on it|plain|late|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
+a slot one job frees is refilled while another still runs|plain|refill|10|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 the timeout report names the mutation and the cap|plain|capped|1|verdicts|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
 the ungated report says what it refuses|plain|ungated|-|verdicts|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
 the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned

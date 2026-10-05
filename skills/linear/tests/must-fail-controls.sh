@@ -47,9 +47,11 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # it recorded when it launched them: every lane on this machine runs these
 # same suites out of its own worktree, so an argv match would reach theirs
 # too. Bash ignores INT in the async children of a shell without job control,
-# so Ctrl-C never reaches them on its own; TERM does. The job body each one
-# runs in a subshell, and the `timeout` under it, are grandchildren this does
-# not reach; each retires itself within SUITE_TIMEOUT.
+# so Ctrl-C never reaches them on its own; TERM does, and each level passes it
+# down: the job to its body (run_job), the body to the `timeout` it is waiting
+# on (timed_suite), and `timeout` to the suite. A body stopped between suite
+# runs dies at once, leaving a copy or diff already started to finish on its
+# own.
 # One trap each, so the code a wrapper reads says which signal arrived: an
 # interrupt and a kill are the same cleanup but not the same event.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
@@ -199,10 +201,16 @@ launch() {
 # of its own, so a job that exits, or dies on a signal, still announces itself
 # rather than leaving the runner blocked on a line that never comes. One line
 # is one write, well under the pipe's atomic size, so lines never interleave.
+# The subshell runs in the background so that a TERM the runner sends this job
+# interrupts the wait and is passed on; a subshell starts with default traps,
+# so the body does not inherit this one.
 run_job() {
-	local n="$1" rc
+	local n="$1" body="" rc
 	shift
-	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&-
+	trap '[[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
+	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&- &
+	body=$!
+	wait "$body"
 	rc=$?
 	printf '%s\n' "$n" >&3
 	return "$rc"
@@ -260,6 +268,22 @@ flush() {
 	done
 }
 
+# timed_suite ROOT SUITE OUT — SUITE run from the copy at ROOT under the cap,
+# its output in OUT, returning its status. In the background for the same
+# reason as run_job's body: a job stopped mid-run passes the TERM to
+# `timeout`, which passes it to the suite, and the job ends there rather than
+# going on to stage a copy under a scratch the runner has removed.
+timed_suite() {
+	local pid="" rc
+	trap '[[ -z $pid ]] || kill -TERM "$pid" 2>/dev/null; exit 143' TERM
+	timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
+	pid=$!
+	wait "$pid"
+	rc=$?
+	trap - TERM
+	return "$rc"
+}
+
 # stage_copy ROOT — a fresh, unmutated copy of the skill at ROOT.
 stage_copy() {
 	mkdir -p "$(dirname "$1")"
@@ -307,7 +331,7 @@ prepare_one() {
 	local suite="$1" stem="$2"
 	local control="$CONTROLS_DIR/$stem.control.sh"
 	local root="$WORK/$stem/linear"
-	local mutations k shared trailing out snapshot="$WORK/$stem/staged"
+	local mutations k shared trailing out rc snapshot="$WORK/$stem/staged"
 
 	if [[ ! -f "$control" ]]; then
 		printf 'MISSING  %-52s no controls/%s.control.sh\n' "$suite" "$stem"
@@ -322,7 +346,10 @@ prepare_one() {
 	# output, then the output's last 40 lines. assert.sh prints a failed
 	# assertion's detail after its FAIL: line, so a tail alone can hold
 	# detail and no FAIL: line.
-	if ! out="$(timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" 2>&1)"; then
+	timed_suite "$root" "$suite" "$WORK/$stem/suite.out"
+	rc=$?
+	out="$(<"$WORK/$stem/suite.out")" || die "cannot read the output of $suite"
+	if [[ "$rc" -ne 0 ]]; then
 		printf 'UNSTAGED %-52s suite fails from an unmutated copy\n' "$suite"
 		{
 			fail_names "$out" | sed 's/^/FAIL: /'
@@ -431,8 +458,9 @@ mutate_one() {
 			return 1
 		fi
 
-		out="$(timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" 2>&1)"
+		timed_suite "$root" "$suite" "$root.out"
 		rc=$?
+		out="$(<"$root.out")" || die "cannot read the output of $suite"
 		if [[ "$rc" -eq 0 ]]; then
 			printf 'GREEN    %-52s suite passed with mutation %d, its only break\n' \
 				"$suite" "$k"
