@@ -37,8 +37,6 @@ Usage: worktree-session-guard <command> [PATH] [options]
 
 Commands:
   claim PATH        Claim a linked worktree, or refresh the same owner's lease.
-                    A lease the session's environment owner holds passes to
-                    --owner, so a session-start claim yields to the issue ID.
   refresh PATH      Refresh the same owner's heartbeat without unlocking.
   release PATH      Release the owner's lease. --stale uses heartbeat age.
   status PATH       Print lock state as JSON.
@@ -49,6 +47,9 @@ Options (a flag a command does not take is a usage failure):
   --owner NAME       claim, refresh, release, status. Lease owner; defaults to
                      KENDEX_SESSION_OWNER, HT_SESSION_OWNER, then USER for
                      mutating owner commands.
+  --adopt            claim, with --owner. Take over a lease held under the
+                     environment owner above, as a session-start claim
+                     leaves it; without it that lease refuses --owner.
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
   --stale            release. Release a lease only when it is past the TTL.
   --force            release. Release a foreign lease regardless of age.
@@ -368,6 +369,7 @@ ttl="$DEFAULT_TTL_MINUTES"
 stale=false
 force=false
 dry_run=false
+adopt=false
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--owner) require_flag_applies --owner 'claim refresh release status'; [[ $# -ge 2 ]] || fail guard-option-value --owner "This option requires a value."; OWNER="$(sanitize_owner "$2")"; owner_set=true; shift 2 ;;
@@ -375,6 +377,7 @@ while [[ $# -gt 0 ]]; do
 		--stale) require_flag_applies --stale 'release'; stale=true; shift ;;
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
 		--dry-run) require_flag_applies --dry-run 'sweep'; dry_run=true; shift ;;
+		--adopt) require_flag_applies --adopt 'claim'; adopt=true; shift ;;
 		--repo) require_flag_applies --repo 'release status list sweep'; [[ $# -ge 2 ]] || fail guard-option-value --repo "This option requires a directory."; repo="$2"; repo_set=true; shift 2 ;;
 		-h | --help) usage; exit 0 ;;
 		*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
@@ -402,9 +405,11 @@ case "$command" in
 			lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" "The worktree lock belongs to another tool." >&2; exit "$EXIT_OWNED"; }
 			recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
 			# A session-start hook claims under the env ladder before the
-			# workflow claims under the issue ID; that is one session, so the
-			# lease passes to the explicit owner rather than refusing it.
-			[[ "$recorded" == "$OWNER" || ( "$command" == claim && -n "$env_owner" && "$recorded" == "$env_owner" ) ]] \
+			# workflow claims under the issue ID. Only that caller says the two
+			# are one session: another --owner claim, such as output-prune's,
+			# relies on this refusal to keep a lease a session took after its
+			# probe.
+			[[ "$recorded" == "$OWNER" || ( "$adopt" == true && -n "$env_owner" && "$recorded" == "$env_owner" ) ]] \
 				|| { claimed_by "${recorded:-unknown}"; exit "$EXIT_OWNED"; }
 			claimed="$(lease_field "$LEASE_TEXT" claimed_epoch 2>/dev/null || true)"
 			[[ "$claimed" =~ ^[0-9]+$ ]] || claimed="$now"

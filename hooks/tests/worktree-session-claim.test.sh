@@ -164,7 +164,7 @@ takeover_rows() {
   install_world installed
   run_hook_in "$TREE" USER=alice
   env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice \
-    "$GUARD" claim "$TREE" --owner ISSUE-1 >/dev/null 2>&1 || rc=$?
+    "$GUARD" claim "$TREE" --owner ISSUE-1 --adopt >/dev/null 2>&1 || rc=$?
   assert_eq "rc=$rc owner=$(lease_owner "$TREE")" "rc=0 owner=ISSUE-1" "the workflow's issue claim takes over the hook's lease"
   rc=0
   run_hook_in "$TREE" USER=alice || rc=$?

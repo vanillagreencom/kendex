@@ -628,6 +628,52 @@ LEASE_RC=0
 "$SESSION_GUARD" status "$WT" --owner KEN-1 --repo "$MAIN" >/dev/null 2>&1 || LEASE_RC=$?
 assert_eq "$LEASE_RC" 0 "an owner-scoped prune leaves the owner's lease held"
 
+# A session claiming the tree between the sweep's read-only probe and its own
+# claim. The scripts copy's guard is a wrapper over GUARD: a status that finds
+# no lease takes one with no --owner under the cleanup's USER, as the
+# session-start hook does, and still answers 3. The sweep's own --owner claim
+# must then be refused, so nothing is deleted under that session and its lease
+# stands. Status exits 0 only for the owner it names.
+RACE_LABEL='a session claiming between the probe and the claim keeps its output and its lease'
+race_row() { # NAME GUARD
+  local scripts="" lease_rc=0 result=""
+  build "$1" cargo tree cargo-out
+  scripts="$ROOT/race-scripts"
+  cp -a "$SCRIPTS_DIR" "$scripts"
+  cp "$2" "$scripts/worktree-session-guard.real"
+  cat >"$scripts/worktree-session-guard" <<'WRAPPER'
+#!/usr/bin/env bash
+set -uo pipefail
+real="${BASH_SOURCE[0]%/*}/worktree-session-guard.real"
+[[ "${1:-}" == status ]] || exec "$real" "$@"
+rc=0
+"$real" "$@" || rc=$?
+if [[ "$rc" == 3 && ! -e "${RACE_MARK:?}" ]]; then
+  : >"$RACE_MARK"
+  "$real" claim "$2" >/dev/null 2>&1 || exit 99
+fi
+exit "$rc"
+WRAPPER
+  chmod +x "$scripts/worktree-session-guard" "$scripts/worktree-session-guard.real"
+  ROW_ENV=("KENDEX_SESSION_OWNER=" "HT_SESSION_OWNER=" "USER=race-session" "RACE_MARK=$ROOT/race-claimed")
+  result="$(WORKTREE_SCRIPT="$scripts/worktree" run 'cleanup --targets-only --apply')"
+  "$SESSION_GUARD" status "$WT" --owner race-session --repo "$MAIN" >/dev/null 2>&1 || lease_rc=$?
+  assert_match "$result lease=$lease_rc" \
+    "rc=1 out= err=worktree-output-prune-claim-failed: worktree=<wt> branch=present left=$CARGO_TREE lease=0" \
+    "$RACE_LABEL"
+}
+race_row race-claim "$SESSION_GUARD"
+
+# Must-fail control: a guard copy that adopts on every claim lets the sweep's
+# claim take the session's lease over, prune under it and release it.
+RACE_CONTROL="$TMP_ROOT/race-control-guard"
+RACE_ANCHOR='env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"'
+awk -v anchor="$RACE_ANCHOR" '{ print } $0 == anchor { print "adopt=true" }' "$SESSION_GUARD" >"$RACE_CONTROL"
+assert_eq "$(grep -cx 'adopt=true' "$RACE_CONTROL")" 1 'control: the race guard copy adopts on every claim'
+race_control_log="$(PASS=0 FAIL=0; race_row race-control "$RACE_CONTROL")"
+assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$race_control_log")" "$RACE_LABEL" \
+  'control: a guard adopting on an env match alone fails the race row'
+
 # A scripts/ copy whose session guard cannot be run. The lease is the only
 # ownership check over this delete, so a guard that cannot answer is a refusal,
 # not an absent lease.

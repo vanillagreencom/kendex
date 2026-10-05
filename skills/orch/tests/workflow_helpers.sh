@@ -283,7 +283,7 @@ assert_file_contains "$start_workflow" 'post_pr_stop: .post_pr_stop' \
 
 # The lease is what stops two sessions working the same tree.
 assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
-  'worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]' \
+  'worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID] --adopt' \
   "start-worktree keeps the session-guard claim step"
 
 echo

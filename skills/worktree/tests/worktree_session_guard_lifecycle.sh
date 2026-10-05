@@ -430,45 +430,58 @@ bound_control_log="$(PASS=0 FAIL=0; bounded_wait_row "$BOUND_CONTROL/worktree-se
 assert_eq "$(grep -c '^  FAIL  ' <<<"$bound_control_log")" "1" \
   "control: the planted guard fails the bounded-wait row"
 
-echo "=== claim --owner takes over the session's env-owned lease ==="
+echo "=== claim --owner --adopt takes over the session's env-owned lease ==="
 
 # A session-start hook claims under the env ladder; the workflow then claims
-# the same tree under the issue ID. A row: label|verb|env|rc|owner after.
-# Each starts from a lease alice took with no --owner.
+# the same tree under the issue ID with --adopt. Any other --owner claim, such
+# as cleanup's own, is refused by that lease. A row: label|args|env|rc|owner
+# after, args following the worktree path. Each starts from a lease alice took
+# with no --owner.
 HANDOVER_WT="$MUTEX_ROOT/trees/handover"
 git -C "$MUTEX_ROOT/main" worktree add -q -b handover "$HANDOVER_WT" main
-HANDOVER="the env owner's lease passes to --owner|claim|USER=alice|0|ISSUE-1
-the ladder's top rung is the env owner|claim|KENDEX_SESSION_OWNER=alice USER=bob|0|ISSUE-1
-another env owner is refused|claim|USER=bob|75|alice
-refresh does not take a lease over|refresh|USER=alice|75|alice"
+HANDOVER="the env owner's lease passes to an adopting --owner|claim --owner ISSUE-1 --adopt|USER=alice|0|ISSUE-1
+the ladder's top rung is the env owner|claim --owner ISSUE-1 --adopt|KENDEX_SESSION_OWNER=alice USER=bob|0|ISSUE-1
+another env owner is refused|claim --owner ISSUE-1 --adopt|USER=bob|75|alice
+an explicit owner without --adopt is refused|claim --owner ISSUE-1|USER=alice|75|alice
+refresh does not take a lease over|refresh --owner ISSUE-1|USER=alice|75|alice"
 handover_rows() { # GUARD
-  local guard="$1" label verb envspec expected_rc expected_owner handover_rc
-  local -a handover_env
-  while IFS='|' read -r label verb envspec expected_rc expected_owner; do
+  local guard="$1" label argspec envspec expected_rc expected_owner handover_rc verb
+  local -a handover_args handover_env
+  while IFS='|' read -r label argspec envspec expected_rc expected_owner; do
+    read -r verb argspec <<<"$argspec"
+    read -r -a handover_args <<<"$argspec"
     read -r -a handover_env <<<"$envspec"
     "$guard" release "$HANDOVER_WT" --force >/dev/null 2>&1 || :
     env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice "$guard" claim "$HANDOVER_WT" >/dev/null
     handover_rc=0
     env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER "${handover_env[@]}" \
-      "$guard" "$verb" "$HANDOVER_WT" --owner ISSUE-1 >/dev/null 2>&1 || handover_rc=$?
+      "$guard" "$verb" "$HANDOVER_WT" "${handover_args[@]}" >/dev/null 2>&1 || handover_rc=$?
     assert_eq "rc=$handover_rc owner=$("$guard" status "$HANDOVER_WT" --repo "$MUTEX_ROOT/main" | jq -r .owner)" \
       "rc=$expected_rc owner=$expected_owner" "$label"
   done <<<"$HANDOVER"
 }
 handover_rows "$GUARD_SCRIPT"
 
-# Must-fail control: a guard copy whose env owner never matches refuses the
-# takeover, so both takeover rows go red.
-HANDOVER_CONTROL="$TMP_ROOT/handover-control"
-cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$HANDOVER_CONTROL"
+# Must-fail controls, each a guard copy with one line planted after the env
+# owner's: one whose env owner never matches refuses the takeover, so both
+# takeover rows go red; one that adopts on every claim admits on an env match
+# alone, so the unflagged claim and the refresh rows go red.
 HANDOVER_ANCHOR='env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"'
-assert_eq "$(grep -cxF -- "$HANDOVER_ANCHOR" "$HANDOVER_CONTROL/worktree-session-guard")" "1" \
+assert_eq "$(grep -cxF -- "$HANDOVER_ANCHOR" "$GUARD_SCRIPT")" "1" \
   "control: the takeover anchor appears once in the guard"
-awk -v anchor="$HANDOVER_ANCHOR" '{ print } $0 == anchor { print "env_owner=" }' \
-  "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" >"$HANDOVER_CONTROL/worktree-session-guard"
-handover_control_log="$(PASS=0 FAIL=0; handover_rows "$HANDOVER_CONTROL/worktree-session-guard")"
-assert_eq "$(grep -c '^  FAIL  ' <<<"$handover_control_log")" "2" \
-  "control: the planted guard fails the two takeover rows"
+HANDOVER_CONTROLS="env owner never matches|env_owner=|the env owner's lease passes to an adopting --owner;the ladder's top rung is the env owner
+adopt on every claim|adopt=true|an explicit owner without --adopt is refused;refresh does not take a lease over"
+while IFS='|' read -r control_label planted expected_fails; do
+  control_dir="$TMP_ROOT/handover-control-${planted%%=*}"
+  cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$control_dir"
+  awk -v anchor="$HANDOVER_ANCHOR" -v planted="$planted" '{ print } $0 == anchor { print planted }' \
+    "$GUARD_SCRIPT" >"$control_dir/worktree-session-guard"
+  assert_eq "$(grep -cxF -- "$planted" "$control_dir/worktree-session-guard")" "1" \
+    "control: $control_label is planted once"
+  handover_control_log="$(PASS=0 FAIL=0; handover_rows "$control_dir/worktree-session-guard")"
+  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$handover_control_log" | paste -s -d ';' -)" "$expected_fails" \
+    "control: the planted guard ($control_label) fails its rows"
+done <<<"$HANDOVER_CONTROLS"
 
 echo "=== release refusal records ==="
 
