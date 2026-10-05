@@ -642,6 +642,58 @@ git -C "$R" reset -q --hard "$suite_lane_head"
 git -C "$R" update-ref -d refs/remotes/origin/main
 FULL_GUARD=0
 
+echo "=== full validation runs, of a skill and of hooks/, the suites the changed files map to ==="
+# Each tree holds a suite named for the changed script and one no changed file
+# maps to, which fails whenever it runs. guard-range.test.sh holds the mapping
+# rule itself; this section holds that --full takes it.
+FULL_GUARD=1
+narrow_head="$(git -C "$R" rev-parse HEAD)"
+mkdir -p "$R/skills/narrow/scripts" "$R/skills/narrow/tests"
+printf '#!/usr/bin/env bash\necho alpha\n' >"$R/skills/narrow/scripts/alpha.sh"
+printf '#!/usr/bin/env bash\necho alpha-ran\n' >"$R/skills/narrow/tests/alpha.test.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/narrow/tests/beta.test.sh"
+printf '#!/usr/bin/env bash\necho narrow\n' >"$R/hooks/narrow.sh"
+printf '#!/usr/bin/env bash\necho narrow-ran\n' >"$R/hooks/tests/narrow.test.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$R/hooks/tests/unreached.test.sh"
+git -C "$R" add skills/narrow hooks
+git -C "$R" commit -q -m "chore: a skill and hooks with a suite no change maps to"
+printf 'echo more\n' >>"$R/skills/narrow/scripts/alpha.sh"
+printf 'echo more\n' >>"$R/hooks/narrow.sh"
+narrow_row_holds() { # — the row's verdict over OUT and RC
+  [ "$RC" -eq 0 ] &&
+    [[ "$OUT" == *"=== skills/narrow/tests/alpha.test.sh"* ]] &&
+    [[ "$OUT" == *"=== hooks/tests/narrow.test.sh"* ]] &&
+    [[ "$OUT" == *"guard-note: suites=1/2 reason=mapped tree=skills/narrow"* ]] &&
+    [[ "$OUT" == *"guard-note: suites=1/3 reason=mapped tree=hooks"* ]] &&
+    [[ "$OUT" != *"beta.test.sh"* ]] && [[ "$OUT" != *"unreached.test.sh"* ]]
+}
+run_guard
+narrow_row_holds \
+  && ok "full validation runs the mapped suites of a skill and of hooks/, and not the rest" \
+  || bad "full validation runs the mapped suites of a skill and of hooks/, and not the rest" "rc=$RC out=$OUT"
+# Two must-fail controls, one per direction: full validation back on whole
+# sets runs the suites nothing maps to, and a dropped selection skips the
+# suites the change maps to. Either turns the row red.
+narrow_controls=(
+  'whole sets under --full|s/case "\$d" in skills\/\* | hooks) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks) run="" ;; esac/'
+  'the mapped selection dropped|s/run="\$run\$sel$/run="$run/'
+)
+for row in "${narrow_controls[@]}"; do
+  name="${row%%|*}"
+  if mutant_guard "${row#*|}"; then
+    OUT=""
+    RC=0
+    OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+    ! narrow_row_holds \
+      && ok "control: with $name the row fails" \
+      || bad "control: with $name the row fails" "rc=$RC out=$OUT"
+  else
+    bad "control: $name could not be planted in a guard copy"
+  fi
+done
+git -C "$R" reset -q --hard "$narrow_head"
+FULL_GUARD=0
+
 echo "=== a test binary's death by a signal is named apart from a failing test ==="
 FULL_GUARD=1
 # A workspace for the test run; the rustup stub above answers the cross-target

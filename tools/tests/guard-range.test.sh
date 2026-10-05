@@ -558,14 +558,6 @@ for row in "${MAP_ROWS[@]}"; do
     || bad "$label" "$VERDICT out=$OUT"
 done
 [ "$((PASS + FAIL))" -eq "$((before + ${#MAP_ROWS[@]}))" ] || { echo "a suite-map row asserted nothing" >&2; exit 2; }
-change append skills/mapped/tests/tool.sh
-OUT=""
-RC=0
-OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --full 2>&1 </dev/null)" || RC=$?
-[ "$(started)" = "$MAPPED_ALL" ] \
-  && ok "inverse: the same one-suite diff under --full runs the whole set" \
-  || bad "inverse: the same one-suite diff under --full runs the whole set" "rc=$RC started=$(started)"
-back_to_mapped
 # Each rule is what its row stands on: with it broken, the row's diff runs
 # another set.
 # label~how~paths~sed expression breaking the rule~suites that start, sorted
@@ -607,7 +599,7 @@ MAP_CONTROLS=(
   "control: with each path's suites overwriting the last only the last path's run~append~skills/mapped/scripts/tool skills/mapped/tests/other.sh~s/^            run=\"\$run\$sel$/            run=\"\$sel/~other"
   "control: with the no-runner loop reading the whole set every suite runs~append~skills/plain/scripts/alpha.sh~s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/~$PLAIN_ALL"
   "control: without the .test strip the script's suite goes unmatched and the whole set runs~append~skills/plain/scripts/alpha.sh~/base=\"\${base%.test}\"/d~$PLAIN_ALL"
-  "control: with the range mapping skills alone a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ range:skills\/\* | range:hooks) run=\"\" ;;/ range:skills\/*) run=\"\" ;;/~$HOOKS_ALL"
+  "control: with the mapping taking skills alone a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ in skills\/\* | hooks) run=\"\" ;;/ in skills\/*) run=\"\" ;;/~$HOOKS_ALL"
   "control: with a render's path kept whole a changed hook render runs the whole hooks set~append~.codex/hooks/demo.sh~s/^        rel=\"\${f#\*hooks\/}\"$/        rel=\"\$f\"/~$HOOKS_ALL"
   "control: without the hook arm a changed hook runs the whole hooks set~append~hooks/alpha.sh~/^    hooks:\*.sh) echo script ;;$/d~$HOOKS_ALL"
 )
