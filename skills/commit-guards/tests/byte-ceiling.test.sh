@@ -125,10 +125,10 @@ run_rows \
   "a 300 KB text file passes the default ceiling|text_file large-text document.md|||rc=0 $(ok 1 "$STAGED" 200)" \
   "a 300 KB binary fails the default ceiling|staged large-binary blob.bin 300|||rc=1 $(over blob.bin 307200 300 200);$(failed 1 2 200)"
 
-text_baseline() { text_file "$1" source.rs; baseline 'source.rs\t999999\n'; }
+text_baseline() { text_file "$1" document.md; baseline 'document.md\t999999\n'; }
 text_to_binary() { text_file text-to-binary source.rs; commit; put source.rs 300; }
 run_rows \
-  "a text baseline cannot impose a ceiling on source|text_baseline source-baseline||--all|rc=0 $(ok 2 "$SWEEP" 200)" \
+  "a text baseline cannot impose a ceiling on Markdown|text_baseline source-baseline||--all|rc=0 $(ok 2 "$SWEEP" 200)" \
   "changing large text to binary adds a blob|text_to_binary|||rc=1 $(over source.rs 307200 300 200);$(failed 1 1 200)"
 
 # The text cases turn red when a disposable copy loses content classification.
@@ -157,7 +157,7 @@ needle = '  if [ "$size" -gt "$CEILING_BYTES" ]; then'
 assert s.count(needle) == 1
 p.write_text(s.replace(needle, '  if false; then'))
 EDIT
-staged binary-control blob.bin 300
+staged binary-control blob.md 300
 control_rc=0
 (cd "$R" && "$MUTANT" --staged >/dev/null 2>&1) || control_rc=$?
 assert_eq "control: removing the binary refusal permits the large blob" 0 "$control_rc"
@@ -253,7 +253,7 @@ run_rows \
   "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged unmerged-staged|$C=1||rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1" \
   "--all refuses it too, where ls-files would size one blob per stage|fx_unmerged unmerged-all|$C=1|--all|rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1"
 
-echo "=== lockfiles and Markdown are exempt by basename; declared asset trees by an excludes row with a reason ==="
+echo "=== lockfiles are exempt by basename; binary Markdown is judged by content; declared asset trees use an excludes row with a reason ==="
 fx_lock() { repo "$1"; put "${2:-package-lock.json}" 2; } # NAME [PATH]
 fx_lock_twin() { fx_lock "$1" "$2"; cp "$R/$2" "$R/${3:-data.json}"; git -C "$R" add -A; } # NAME EXEMPT [TWIN]
 fx_lock_suffix() { repo lock-suffix; put not-package-lock.json 2; }
@@ -269,10 +269,10 @@ run_rows \
   "an oversized .kendex-lock.json, the install record kendex generates, passes and is not counted|fx_lock kendex-lock .kendex-lock.json|$C=1||rc=0 $(ok 0)" \
   "control: the same bytes as data.json beside it fail while the kendex lock is still not counted|fx_lock_twin kendex-lock-twin .kendex-lock.json|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
   "control: a basename that only ends in a lockfile's name is not exempt|fx_lock_suffix|$C=1||rc=1 $(over not-package-lock.json 2048 2 1);$(failed 1 1)" \
-  "an oversized README.md passes and is not counted: a document has no byte limit|fx_lock markdown README.md|$C=1||rc=0 $(ok 0)" \
-  "a nested Markdown file is exempt too: the basename suffix is what is judged|fx_lock markdown-nested docs/guide.md|$C=1||rc=0 $(ok 0)" \
-  "control: the same bytes as notes.sh beside it fail while the Markdown file is still not counted|fx_lock_twin markdown-twin README.md notes.sh|$C=1||rc=1 $(over notes.sh 2048 2 1);$(failed 1 1)" \
-  "control: a basename whose .md is not its suffix is not exempt|fx_md_suffix|$C=1||rc=1 $(over notes.md.bak 2048 2 1);$(failed 1 1)" \
+  "an oversized binary README.md fails by content|fx_lock markdown README.md|$C=1||rc=1 $(over README.md 2048 2 1);$(failed 1 1)" \
+  "a nested binary Markdown file fails by content too|fx_lock markdown-nested docs/guide.md|$C=1||rc=1 $(over docs/guide.md 2048 2 1);$(failed 1 1)" \
+  "control: identical binary bytes in Markdown and source files both fail|fx_lock_twin markdown-twin README.md notes.sh|$C=1||rc=1 $(over README.md 2048 2 1);$(over notes.sh 2048 2 1);$(failed 2 2)" \
+  "control: a binary file with an .md.bak suffix fails by content|fx_md_suffix|$C=1||rc=1 $(over notes.md.bak 2048 2 1);$(failed 1 1)" \
   "control: an asset fails without an excludes row|asset asset-bare|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 1)" \
   "an excludes row exempts the declared tree; the list itself is a staged file and is counted|fx_excluded|$C=1||rc=0 $(ok 1)" \
   "a pattern without a reason is exit 2 naming the line|fx_no_reason|$C=1||rc=2 ${ERR}exclusion-reason=$EXCL:1" \

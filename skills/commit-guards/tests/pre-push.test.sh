@@ -406,7 +406,7 @@ diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged
 DIVERGED=""
 diverged DIVERGED diverged
 assert_eq "a force push that would grow the destination's own file is refused" \
-  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.txt:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
+  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.md:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
   "$(push_ref "$DIVERGED" topic --force-with-lease)"
 
 # The must-fail control: the same push judged from the ancestor the two share

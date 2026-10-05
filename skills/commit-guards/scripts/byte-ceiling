@@ -2,8 +2,6 @@
 # byte-ceiling — tracked binary files a change puts over the byte ceiling fail
 # (default 200 KB). A touched file already over the ceiling may stay the
 # same size or shrink, so adoption does not freeze the work that reduces it.
-# A Markdown file is outside the ceiling: a document has no byte limit, and
-# the load-point documents are doc-limits' to measure.
 #
 # Modes (mutually exclusive):
 #   --staged (default)  files added, changed, or type-changed in the staged
@@ -60,8 +58,7 @@ An existing oversized binary file may hold or shrink, but may not grow.
 --staged (default) checks the staged additions and changes; --base REF checks
 additions and changes since the merge-base with REF; --against REF checks
 them between REF's own tree and HEAD; --all sweeps every tracked file.
-Lockfiles and Markdown files (basename ending .md) are exempt built-in;
-declared asset trees live in the excludes list.
+Lockfiles are exempt built-in; declared asset trees live in the excludes list.
 
 --base and --against differ only where REF and HEAD have diverged, and there
 the difference decides. --base asks what this branch adds over the ancestor
@@ -174,18 +171,6 @@ is_lockfile() { # PATH
   for l in $LOCKFILE_BASENAMES; do
     [ "$base" = "$l" ] && return 0
   done
-  return 1
-}
-
-# A document has no byte, line or count limit: the files a harness loads
-# every turn are doc-limits' to measure, and every other document is shaped
-# by its owner's review. The exemption is the basename's suffix, so a
-# Markdown file at any depth is outside the ceiling and the near-ceiling
-# notice alike.
-is_markdown() { # PATH
-  case "${1##*/}" in
-    *.md) return 0 ;;
-  esac
   return 1
 }
 
@@ -307,7 +292,6 @@ while IFS= read -r -d '' sha \
   && IFS= read -r -d '' srcmode \
   && IFS= read -r -d '' f; do
   is_lockfile "$f" && continue
-  is_markdown "$f" && continue
   gg_is_excluded "$f" && continue
   size="$(git cat-file -s "$sha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause blob-size "$f:$sha" "$GG_TMP/dependency.err" "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
   checked=$((checked + 1))
