@@ -31,9 +31,9 @@ File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`
 | Rejected | `**Rejected**:` the main alternative and why it lost |
 | Revisit when | `**Revisit when**:` the condition that re-opens the choice |
 
-Optional metadata lines, each one line: `**Supersedes**:` or `**Refines**:` naming the earlier decision and the scope taken from it, and `**Applies to**:` for a scoped decision.
+Optional metadata lines, each one line: `**Supersedes**:` or `**Refines**:` naming the earlier decision and the scope taken from it, and `**Applies to**:` for a scoped decision. Nothing else: no summary, context, design, verification, impact or appendix section. A measurement, a test name or a run order belongs to the issue, the test or the code.
 
-One blank line separates every `**Key**: value` line from the next, metadata included: Markdown joins consecutive lines into one paragraph, so unseparated lines render run together. Nothing else: no summary, context, design, verification, impact or appendix section. A measurement, a test name or a run order belongs to the issue, the test or the code.
+Each `**Key**: value` line, metadata included, is its own paragraph, with one blank line before the next: `../templates/decision-entry.md`.
 
 ## Status values
 
