@@ -27,8 +27,9 @@
 #          Empty means no lane is declared.
 #   COVERS_ALL_LANES  `true` where the calling workflow runs every lane
 #          whenever lanes is true, as the harness-ci template's does, and
-#          each lane does the same work on every event: no job or step of
-#          it is gated on the event. Any other value, empty included, says
+#          each lane does the same work on every event, as the harness-ci
+#          skill's references/wiring.md § Per-lane verdicts defines it for
+#          the `:event-uniform` mark. Any other value, empty included, says
 #          it does not. Only it lets a run that reads no declaration record
 #          covers=all.
 #   GH_TOKEN  the job token, which `proof` reads workflow runs with

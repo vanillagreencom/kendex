@@ -73,8 +73,9 @@ inputs:
     description: >-
       true where this workflow runs every lane whenever lanes is true, as
       the harness-ci template does, and each lane does the same work on
-      every event, with no job or step gated on the event: the adopter's
-      assertion, since a later run of the same tree on another event
+      every event, as the harness-ci skill's references/wiring.md
+      § Per-lane verdicts defines it for the `:event-uniform` mark: the
+      adopter's assertion, since a later run of the same tree on another event
       stands its lanes down on it. Only then does a run that reads no lane
       declaration record that it covered every lane. A workflow that
       selects its jobs itself, or runs a lane that works differently on

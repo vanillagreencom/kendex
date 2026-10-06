@@ -583,7 +583,7 @@ CONTROLS
 # group of an orch code diff whose proof is a pull request run over orch's
 # prose, and one of a lane-source diff whose pull request ran the same paths.
 ORCH_GROUP="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
-check "a merge group of an orch code diff with a proof over orch's prose runs the platform lanes alone, over the shards the group selects" \
+check "a merge group of an orch code diff with a proof over orch's prose runs the verify job and the platform lanes, over the shards the group selects" \
   "shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$(field shards <<<"$ORCH_GROUP") queue_macos_shards=$QUEUE_ALL" \
   "$ORCH_PROOF_ROW"
 check "a merge group of a lane-source diff with its pull request's proof runs nothing but the verify job and the queue's macOS legs" \

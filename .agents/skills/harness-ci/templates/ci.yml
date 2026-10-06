@@ -127,12 +127,13 @@ jobs:
           # own copy could stand its lanes down.
           lanes-from: classifier
           # Every lane here runs wherever lanes is true and does the same
-          # work on every event, with no job or step gated on the event, so
-          # a run that reads no declaration records that it covered them
-          # all, and a later run of the same tree stands them down. A
-          # workflow that selects its jobs by anything else, or gates a lane
-          # on the event, leaves this out. A declared lane stands down only
-          # where .github/ci-lanes.conf marks it `:event-uniform`.
+          # work on every event, as the `:event-uniform` mark's definition in
+          # .agents/skills/harness-ci/references/wiring.md § Per-lane verdicts
+          # states, so a run that reads no declaration records that it
+          # covered them all, and a later run of the same tree stands them
+          # down. A workflow that selects its jobs by anything else, or runs
+          # a lane that does not, leaves this out. A declared lane stands
+          # down only where .github/ci-lanes.conf marks it `:event-uniform`.
           covers-all-lanes: true
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
