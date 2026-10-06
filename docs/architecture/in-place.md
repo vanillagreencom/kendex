@@ -30,4 +30,4 @@ A harness reads a project from somewhere other than the working directory's chec
 
 ## Not governed
 
-What a lane may write in its worktree beyond kendex's own verbs: the orch skill. How a render is compared with its source: [generated-paths.md](generated-paths.md).
+What a lane may write in its worktree beyond kendex's own verbs: the orch skill. How a render is compared with its source: [engine.md § The generated-file inventory](engine.md#the-generated-file-inventory).

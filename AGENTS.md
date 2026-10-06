@@ -23,18 +23,15 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 
 ## Read when
 
-- Before changing planning, apply, the manifest, the lock, ownership, take-over or forks: `docs/architecture/engine.md`.
+- Before changing planning, apply, the manifest, the lock, ownership, take-over, forks, the generated-file inventory, verification, workflow adoption, tracked outputs, or the commit, push or pull-request offer: `docs/architecture/engine.md`.
 - Before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier: `docs/architecture/harnesses.md`; the per-harness on-disk facts are `docs/adapters/README.md`.
-- Before changing the source store, discovery, browsing, subscriptions, bundles or the drift snapshot: `docs/architecture/sources.md`.
+- Before changing the source store, discovery, browsing, subscriptions, bundles, the drift snapshot, the community directory, sign-in or the skills.sh lead: `docs/architecture/sources.md`.
 - Before changing project resolution, the worktree guard or in-place packages: `docs/architecture/in-place.md`.
-- Before changing the generated-file inventory, verification, workflow adoption or tracked outputs: `docs/architecture/generated-paths.md`.
 - Before removing or replacing files kendex wrote, or changing the trash: `docs/architecture/trash.md`.
 - Before changing a safety or quality rule: `docs/architecture/scoring.md`.
 - Before changing the release feed, signing, digests or self-replace: `docs/architecture/updates.md`.
-- Before changing the community directory, sign-in or the skills.sh lead: `docs/architecture/registry.md`.
 - Before changing CI, the review gate, the merge route or consumer refresh: `docs/architecture/merge-rail.md`.
 - Before changing repository effects, the arming record or a package's declared checks: `docs/architecture/repo-effects.md`.
-- Before changing the commit, push or pull-request offer: `docs/architecture/commit-offer.md`.
 - Before adding an event, notice, badge, toast or dialog to the desktop app: `docs/architecture/attention.md`.
 - Before reversing a choice a principle doc cites: `docs/decisions/INDEX.md`, found by keyword with the decider skill's `decisions search`.
 - When changing what a catalog may declare: `docs/authoring/README.md`, the product reference the app shows.
