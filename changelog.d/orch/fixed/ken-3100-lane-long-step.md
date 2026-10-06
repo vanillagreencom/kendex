@@ -1,0 +1,1 @@
+- The fleet watch reads a lane's stage from a `- Step:` list item in its status file, so a long-running lane report names the stage instead of `none`.

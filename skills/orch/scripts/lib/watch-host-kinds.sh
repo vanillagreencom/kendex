@@ -312,7 +312,8 @@ lane_step() { # ITEM
   else return 0
   fi
   [[ -f "$file" ]] || return 0
-  if ! LANE_STEP="$(awk 'tolower($0) ~ /^step:/ { sub(/^[^:]*:[ \t]*/, ""); print; exit }' "$file")"; then LANE_STEP=unread
+  # Lanes write the line bare or as a Markdown list item.
+  if ! LANE_STEP="$(awk 'tolower($0) ~ /^([-*][ \t]+)?step:/ { sub(/^[^:]*:[ \t]*/, ""); print; exit }' "$file")"; then LANE_STEP=unread
   elif [[ -z "$LANE_STEP" ]]; then LANE_STEP=none
   fi
 }

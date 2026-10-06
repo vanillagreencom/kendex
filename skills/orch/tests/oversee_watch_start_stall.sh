@@ -200,6 +200,37 @@ for row in "running||14399|" \
   assert_eq "events=$EVENTS" "events=$want" "a $status issue-1 record ${age}s after launch reports '${want:-nothing}'" "$STUB_DIR/err"
 done
 
+echo "=== lane-long reads the Step line bare or as a list item ==="
+# step_case NAME LINE [WATCH_BIN] — one lane past the bound whose status file
+# holds a heading and LINE; STAGE is the stage its lane-long event carries.
+step_case() {
+  local root
+  new_case "$1"
+  root="$(worktree issue-1)"
+  printf '# issue-1 lane status\n\n%s\n- PR: none\n' "$2" > "$root/tmp/lane-status-issue-1.md"
+  write_state "$(launched issue-1 "$root" claude)"
+  WATCH_BIN="${3:-}" watch 14400
+  STAGE="${EVENTS#EVENT lane-long issue-1 age=14400 stage=}"
+}
+# NAME|LINE|STAGE
+for row in "step_bare|Step: range validation|range validation" "step_dash|- Step: range validation|range validation" \
+  "step_star|* step: range validation|range validation" "step_absent|- Stage: range validation|none"; do
+  IFS='|' read -r name line want <<<"$row"
+  step_case "lane_long_$name" "$line"
+  assert_eq "stage=$STAGE" "stage=$want" "$name: '$line' reads stage=$want" "$STUB_DIR/err"
+done
+# Controls: a reader that takes only a bare line reads the list item as none,
+# and one that takes only a list item reads the bare line as none.
+# NAME|PATTERN|LINE
+for row in "bare_only|/^step:/|- Step: range validation" "list_only|/^[-*][ \\t]+step:/|Step: range validation"; do
+  IFS='|' read -r name pattern line <<<"$row"
+  STEP_WATCH="$(mutant_scripts "lane-step-$name/orch" lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-step-$name/github"
+  mutate_file "${STEP_WATCH%/*}/lib/watch-host-kinds.sh" '/^([-*][ \t]+)?step:/' "$pattern"
+  step_case "lane_step_${name}_mutant" "$line" "$STEP_WATCH"
+  assert_eq "stage=$STAGE" "stage=none" "control: a $name reader reads '$line' as none" "$STUB_DIR/err"
+done
+
 echo "=== the window is a setting ==="
 new_case start_stall_bound
 ROOT_1="$(worktree issue-1)"
