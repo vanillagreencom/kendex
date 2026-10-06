@@ -1,0 +1,1 @@
+- Audits keep a Done or Canceled blocker's relation, read `blocked_by_open` for open blockers, and lift a cross-bundle relation with `--peer-rule-violation`.
