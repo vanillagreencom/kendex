@@ -67,9 +67,9 @@ gg_project_rel() { # VAR SCRIPT_DIR WORKTREE -> sets VAR to the prefix
   esac
 }
 
-# What a SKILL.md declares: its frontmatter's `name` and its `metadata:`
-# block's `version`, each value on its own line, double or single quotes
-# taken off. Nonzero when the frontmatter or either value is missing, so an
+# What a SKILL.md declares: its frontmatter's `name`, then its `metadata:`
+# block's `version` on a second line where it states one, double or single
+# quotes taken off. Nonzero when the frontmatter or the name is missing, so an
 # unreadable package never compares equal to another.
 gg_skill_id() { # FILE
   LC_ALL=C awk '
@@ -84,6 +84,6 @@ gg_skill_id() { # FILE
     /^[^ \t]/ { meta = ($0 ~ /^metadata:[ \t]*$/) }
     /^name:/ { name = value($0) }
     meta && /^[ \t]+version:/ { version = value($0) }
-    END { if (bad || !closed || name == "" || version == "") exit 1; print name; print version }
+    END { if (bad || !closed || name == "") exit 1; print name; if (version != "") print version }
   ' "$1"
 }

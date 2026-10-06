@@ -9,7 +9,6 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.1.0"
 tags: [integration]
 ---
 

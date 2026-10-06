@@ -461,10 +461,18 @@ fx_packages_appended() { packages packages-appended "$PACKAGES_IN"; }
 # A test helper hooks/*.sh reaches only by `*` crossing `/` declares nothing,
 # so the skill of its name keeps its versioned heading.
 fx_packages_nested() { packages packages-nested "$RECORD" hooks/tests/lib/pkg.sh; }
+# A SKILL.md that states no metadata.version heads its entries with its name alone.
+fx_packages_versionless() {
+  packages packages-versionless
+  printf -- '---\nname: pkg\n---\n' >"$R/skills/pkg/SKILL.md"
+  git -C "$R" commit -qam 'chore: versionless'
+}
+PACKAGES_VERSIONLESS="${PACKAGES_OUT/'#### pkg 2.0.0'/'#### pkg'}"
 run_rows \
   "package entries fold under per-package headings with their versions; the program sections hold the program's alone; every package directory goes|fx_packages|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
   "a nested hooks/tests/lib/pkg.sh leaves skills/pkg the package and its heading versioned|fx_packages_nested|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
-  "a record's Packages part is accepted and its blocks kept ahead of the new ones|fx_packages_appended|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_APPENDED|-"
+  "a record's Packages part is accepted and its blocks kept ahead of the new ones|fx_packages_appended|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_APPENDED|-" \
+  "a versionless skill's entries fold under its bare name|fx_packages_versionless|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_VERSIONLESS|-"
 # Must-fail controls on disposable copies: package fragments routed to the
 # program's sections, and a record scope refusing the Packages heading.
 PROGRAM_ONLY='# Changelog

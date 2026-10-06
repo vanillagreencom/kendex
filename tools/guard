@@ -152,8 +152,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "that suite failed; its own output above names the case." ;;
     mapped-suites)
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
-    change-class-lib)
-      echo "the orch render's scripts/lib/change-class.sh could not be sourced, so each changed SKILL.md of this run ran every suite that reads the file, whether or not its one change was its metadata.version line." ;;
     suites)
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
@@ -1333,8 +1331,8 @@ scan_load() { # DIR
 # A comment citing a doc reads nothing, nor does a find from any other start
 # or a walk in another language. With FIELD, an extended regular expression,
 # only the readers whose code also matches it are listed.
-doc_readers() { # REL [FIELD]
-  local rel="$1" field="${2-}" i code dir token
+doc_readers() { # REL
+  local rel="$1" i code dir token
   token="(^|[^[:alnum:]._/-])$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
@@ -1344,9 +1342,6 @@ doc_readers() { # REL [FIELD]
   esac
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     code=${SCAN_CODE[i]}
-    if [ -n "$field" ] && ! grep -qE -e "$field" <<<"$code"; then
-      continue
-    fi
     if grep -qF -e "/$rel" <<<"$code" ||
       grep -qE -e "$token" <<<"$code" ||
       grep -qE -e "$dir" <<<"$code" ||
@@ -1386,11 +1381,7 @@ reach_join() { # ROLE PATH
 #     `-`.
 #   - A changed or deleted doc starts the same scan from the files
 #     doc_readers names, each adding its needle by its role. A doc no file
-#     reads runs nothing. FIELD, which the caller passes as version_reader
-#     for a SKILL.md whose one changed line is its metadata.version, narrows
-#     those files to the ones doc_readers lists for it: under the version
-#     rule every change to a skill raises that line, and a reader of the rest
-#     of the file is no reader of it.
+#     reads runs nothing.
 #   - A deleted suite whose reach holds no suite runs nothing.
 #   - A path of no role, a changed module or test module, and a path whose
 #     reach holds no suite map to no suite.
@@ -1402,8 +1393,8 @@ reach_join() { # ROLE PATH
 # deleted suite or a doc no file reads; status 1 is a path mapped to no
 # suite, status 2 a file the scan could not read, and status 3 a role
 # reach_join does not know, a broken guard.
-mapped_suites() { # DIR REL [FIELD]
-  local dir="$1" rel="$2" field="${3-}" role="" i n hit names readers f t name base out="" nl=$'\n'
+mapped_suites() { # DIR REL
+  local dir="$1" rel="$2" role="" i n hit names readers f t name base out="" nl=$'\n'
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   role=$(path_role "$dir" "$rel") || return 1
@@ -1413,7 +1404,7 @@ mapped_suites() { # DIR REL [FIELD]
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
   done
   if [ "$role" = doc ]; then
-    readers=$(doc_readers "$rel" "$field")
+    readers=$(doc_readers "$rel")
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do
       reached[i]=1
@@ -1490,34 +1481,6 @@ mapped_suites() { # DIR REL [FIELD]
   fi
   MAPPED=$out
 }
-# Whether the orch render's lib/change-class.sh, through its
-# metadata_version_only, answers the SKILL.md at PATH as a change of its
-# metadata.version line alone from the suites' base: the decision orch's
-# item-tier makes from the same lib, whose header says what it compares. A
-# file the base lacks is no such change.
-# The lib is sourced on the first SKILL.md the mapping judges, so a run
-# mapping none never needs it. A failed source is a finding, and every
-# SKILL.md of the run then takes the full doc rule: each suite reading the
-# file runs.
-version_lib=""
-version_only() { # PATH
-  if [ -z "$version_lib" ]; then
-    # shellcheck source=../.agents/skills/orch/scripts/lib/change-class.sh
-    if source "$TOOLS_DIR/../.agents/skills/orch/scripts/lib/change-class.sh"; then
-      version_lib=loaded
-    else
-      version_lib=unreadable
-      say change-class-lib unreadable
-    fi
-  fi
-  [ "$version_lib" = loaded ] || return 1
-  git cat-file -e "$suites_base:$1" 2>/dev/null || return 1
-  metadata_version_only <(git show "$suites_base:$1" 2>/dev/null) "$1" 2>/dev/null
-}
-# What code reading that line spells: the dotted key, or the nested key with
-# the space its frontmatter line puts after the colon, which `schema_version`,
-# `--version` and a JSON `"version":` do not.
-version_reader='(^|[^[:alnum:]_-])(metadata\.version|version:[[:space:]])'
 if [ "$MODE" != default ] && lane_on shell_shards; then
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders.
@@ -1571,9 +1534,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             map_status=0
-            field=""
-            if [ "$rel" = SKILL.md ] && version_only "$f"; then field=$version_reader; fi
-            mapped_suites "$d" "$rel" "$field" || map_status=$?
+            mapped_suites "$d" "$rel" || map_status=$?
             sel=$MAPPED
             case "$map_status" in
               0) ;;

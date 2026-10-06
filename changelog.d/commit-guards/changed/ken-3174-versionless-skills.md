@@ -1,0 +1,1 @@
+- A `SKILL.md` that `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` selects and that states no `metadata.version` declares a versionless package: a change to it owes no version raise, and its entries collate under its bare name. `install-git-hooks --check` judges a copy of the package under another skill root by its name and a checksum of its scripts, not by its version.

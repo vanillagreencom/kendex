@@ -18,7 +18,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "qa_labels": ["needs-perf-test", "needs-safety-audit"],
   "near_ceiling": ["byte-ceiling: near-ceiling=assets/demo.bin:189000:204800:92"],
   "validate_rounds": [{ "round_id": "1769600000123456789-1837", "kind": "implement", "mode": "full", "seconds": 3300 }],
-  "restack_skips": [{ "head": "abc123f", "condition": "version-only", "validated_head": "def456a", "paths": ["skills/orch/SKILL.md"] }],
+  "restack_skips": [{ "head": "abc123f", "condition": "version-only", "validated_head": "def456a", "paths": ["pkg/package.json"] }],
   "child_sessions": {
     "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "[ISO_8601_UTC]" },
     "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "[ISO_8601_UTC]" }

@@ -51,7 +51,7 @@ source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
 # shellcheck source=lib/changelog-collate.sh
 source "$SCRIPT_DIR/lib/changelog-collate.sh"
-# A package file's version is its SKILL.md frontmatter's.
+# A package file's version is its SKILL.md frontmatter's, where it states one.
 # shellcheck source=lib/skill-roots.sh
 source "$SCRIPT_DIR/lib/skill-roots.sh"
 # A staged run compares against the commit's parent, which an amend moves.
@@ -95,8 +95,8 @@ skill's CHECKS.md, section Version bumps. A minor or patch refusal names the
 first offending entry.
 COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS selects package files, each at its
 glob's own depth and one per name: a SKILL.md names its directory and
-versions it by its frontmatter metadata.version; any other file names itself,
-less its extension, and carries no version. A fragment a pattern places through its package slot, <root>/*/<section>/<name>,
+versions it by its frontmatter metadata.version, where it states one; any
+other file names itself, less its extension, and carries no version. A fragment a pattern places through its package slot, <root>/*/<section>/<name>,
 is that package's entry and never the program's, and must name a declared
 package. A change under a versioned package's directory must raise its
 version, judged against the package fragments the same change adds.
@@ -569,12 +569,16 @@ if [ -n "$GG_CHANGELOG_PACKAGES" ]; then
     done <"$GG_TMP/changes.z"
     [ "$changed" -eq 1 ] || continue
     new="$(gg_package_version "$mode" "$sha" "$pf")" || exit 2
+    # A package that states no version has none to raise.
+    [ -n "$new" ] || continue
     old="$new"
     if [ -n "$pf_meta" ]; then
       read -r srcmode _ srcsha _ <<<"${pf_meta#:}"
-      # A new package has no prior version to raise.
+      # A new package, or one that states its first version, has no prior
+      # version to raise.
       [ "$srcmode" != 000000 ] || continue
       old="$(gg_package_version "$srcmode" "$srcsha" "$pf")" || exit 2
+      [ -n "$old" ] || continue
     fi
     if ! release_bump "$old" "$new" "$pf"; then
       [ "$BUMP" != none ] || refuse package-unbumped "$(gg_shown "$pf"):$old" "A change to this package must raise its version." \

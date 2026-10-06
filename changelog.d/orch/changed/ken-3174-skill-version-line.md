@@ -1,0 +1,1 @@
+- `item-tier` reads a change to a `SKILL.md` `metadata.version` line as an instruction-file edit, and `restack-skip` re-tests a restack that conflicts in a `SKILL.md` or a render, since catalog skills no longer raise a version line on every change.

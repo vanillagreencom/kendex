@@ -213,8 +213,8 @@ assert_eq "control: a verdict naming kendex guard install first fails that row" 
 echo "=== one project delivered as copies: each copy reads the helper another armed ==="
 # A project delivered to several harnesses holds the package under each skill
 # root, and the copy that arms the repository need not be the copy that checks
-# it. The same project's copy of the same package version is this project's;
-# a copy of another version is not, and neither is another project's copy
+# it. The same project's copy holding the same scripts is this project's;
+# a copy whose scripts differ is not, and neither is another project's copy
 # that the baked project_rel cannot tell apart from this one.
 copied_roots() { # NAME ROOT — the package under .agents and .claude, armed from ROOT
   R="$(new_repo "$1")"
@@ -224,7 +224,7 @@ copied_roots() { # NAME ROOT — the package under .agents and .claude, armed fr
 }
 fx_copied_from_claude() { copied_roots "${1:-copied-from-claude}" .claude; }
 fx_copied_from_agents() { copied_roots "${1:-copied-from-agents}" .agents; INSTALLER_ROOT=.claude/skills; }
-fx_copied_version() { copied_roots "${1:-copied-version}" .claude; edit "$R/.claude/skills/commit-guards/SKILL.md" 's|^  version: ".*"$|  version: "0.0.1"|'; }
+fx_copied_scripts() { copied_roots "${1:-copied-scripts}" .claude; printf '# another copy\n' >>"$R/.claude/skills/commit-guards/scripts/lib/paths.sh"; }
 # kendex switches a skill off by renaming SKILL.md and leaves the hooks armed.
 fx_copied_off() { # [NAME]
   local root=""
@@ -263,12 +263,16 @@ fx_other_project_copy() { # [NAME]
   git -C "$R" worktree add -q -b "$name" "$W"
   INSTALLER_DIR="$R/sub"
 }
-# Must-fail controls edit the checking copy's hook-check.sh, never the tracked
-# file: each must match its target line, which edit() enforces, and replaces
-# or extends that line to drop the behaviour one rule holds.
-mutated() { # FIXTURE NAME SED-EXPRESSION — the fixture, then its checking copy edited
+# Must-fail controls edit the fixture's copies of hook-check.sh, never the
+# tracked file: each must match its target line, which edit() enforces, and
+# replaces or extends that line to drop the behaviour one rule holds. Every
+# copy takes the edit, so the copies' scripts still match one another.
+mutated() { # FIXTURE NAME SED-EXPRESSION — the fixture, then each copy edited
+  local copy=""
   "$1" "$2"
-  edit "${INSTALLER_DIR:-${W:-$R}}/${INSTALLER_ROOT:-.agents/skills}/commit-guards/scripts/lib/hook-check.sh" "$3"
+  while IFS= read -r copy; do
+    edit "$copy" "$3"
+  done <<<"$(find "$R" ${W:+"$W"} -path '*/commit-guards/scripts/lib/hook-check.sh' -type f)"
 }
 UNWIDENED='s#^  \[ "\$there_rel" != "\$here_rel" \] || return 0$#  [ "$there_rel" = "$here_rel" ] || return 1#'
 fx_unwidened() { mutated fx_copied_from_claude unwidened "$UNWIDENED"; }
@@ -277,12 +281,12 @@ fx_unkept() { mutated fx_copied_from_claude unkept 's#^  \[ "\$rel" != "\$INSTAL
 fx_unkept_moved() { mutated fx_copied_moved unkept-moved 's#^  \[ "\$rel" != "\$INSTALLED_SCRIPTS_REL" \] || return 0$#  [ "$rel" != "$INSTALLED_SCRIPTS_REL" ] || return 0; return 1#'; }
 fx_any_place() { mutated fx_other_project_copy any-place 's#^  \[ "\$there_place" = "\$here_place" \] || return 1$#  [ "$there_place" = "$there_place" ] || return 1#'; }
 fx_live_name_only() { mutated fx_copied_off live-name-only 's#^  \[ -f "\$__file" \] || __file="\$2/../SKILL.md.disabled"$#  [ -f "$__file" ] || __file="$2/../SKILL.md"#'; }
-fx_any_version() { mutated fx_copied_version any-version 's#^  \[ "\$there_id" = "\$here_id" \]$#  [ "$there_id" = "$there_id" ]#'; }
+fx_any_scripts() { mutated fx_copied_scripts any-scripts 's#^  \[ "\$there_id" = "\$here_id" \]$#  [ "$there_id" = "$there_id" ]#'; }
 run_rows \
   "a helper armed from the .claude copy reads armed from the .agents copy|fx_copied_from_claude||check||rc=0 $ARMED_CHECK|" \
   "a helper armed from the .agents copy reads armed from the .claude copy|fx_copied_from_agents||check||rc=0 $ARMED_CHECK|" \
   "a linked worktree's .agents copy reads the helper the main checkout's .claude copy armed|fx_copied_wt||check-wt||rc=0 $ARMED_CHECK|" \
-  "a copy of another package version is not this project's|fx_copied_version||check||rc=2 $CND$UNVERIFIED|" \
+  "a copy whose scripts differ is not this project's|fx_copied_scripts||check||rc=2 $CND$UNVERIFIED|" \
   "copies kendex switched off still read the helper another armed|fx_copied_off||check||rc=0 $ARMED_CHECK|" \
   "another project's copy is not this project's, though project_rel matches|fx_other_project_copy||check-wt||rc=2 $CND$UNVERIFIED|" \
   "a moved copy-delivery checkout is drift, not unverifiable|fx_copied_moved||check||rc=1 $NA$MOVED$REARM|" \
@@ -292,7 +296,7 @@ run_rows \
   "must-fail: and reads a moved copy-delivery checkout as unverifiable|fx_unkept_moved||check||rc=2 $CND$UNVERIFIED|" \
   "must-fail: ignoring where the project stands reads another project's copy as consent|fx_any_place||check-wt||rc=0 $ARMED_CHECK|" \
   "must-fail: reading only the live SKILL.md refuses copies kendex switched off|fx_live_name_only||check||rc=2 $CND$UNVERIFIED|" \
-  "must-fail: ignoring the package version reads a copy of another version as this project's|fx_any_version||check||rc=0 $ARMED_CHECK|"
+  "must-fail: ignoring the scripts reads a copy whose scripts differ as this project's|fx_any_scripts||check||rc=0 $ARMED_CHECK|"
 
 echo "=== the helper's head: one per-checkout value, held to the quoter that wrote it ==="
 # The head is compared around the one value that may differ between

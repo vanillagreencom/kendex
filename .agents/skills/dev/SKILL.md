@@ -12,7 +12,6 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.1.3"
 tags: [automation]
 ---
 

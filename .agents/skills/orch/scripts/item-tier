@@ -19,9 +19,7 @@
 #                    launch. A matched rule supplies its class and cause;
 #                    an unmatched path leaves the other inputs unchanged.
 #   --base, --head   the item's changed paths. The shared path rules apply;
-#                    measured branch line counts never select a tier. A
-#                    SKILL.md whose one changed line is its frontmatter's
-#                    metadata.version is no instruction-file edit.
+#                    measured branch line counts never select a tier.
 #
 # --body reads Expected delta through lib/branch-growth.sh and floors the
 # launch estimate with a valid production count. A malformed header is
@@ -168,21 +166,6 @@ fi
 
 [ -z "$floor" ] || consider "$floor" "floor class=$floor"
 
-# Every catalog package change raises metadata.version in its SKILL.md, and
-# its tracked render repeats that line; the raise changes no instruction an
-# agent reads. Both sides of the range's diff go to lib/change-class.sh's
-# metadata_version_only, whose header entry says what it compares; a change
-# it does not answer as version-only, or a side that cannot be read, counts
-# as an instruction-file edit.
-version_raise_only() { # PATH
-  case "$1" in SKILL.md | */SKILL.md) ;; *) return 1 ;; esac
-  local merge_base
-  merge_base="$(git -C "$repo" merge-base "$base" "$head")" &&
-    git -C "$repo" show "$merge_base:$1" >"$scratch/old" 2>/dev/null &&
-    git -C "$repo" show "$head:$1" >"$scratch/new" 2>/dev/null || return 1
-  metadata_version_only "$scratch/old" "$scratch/new"
-}
-
 if [ -n "$base" ]; then
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/item-tier.XXXXXX")" ||
     die scratch-unavailable "could not create a directory for changed paths"
@@ -196,9 +179,6 @@ if [ -n "$base" ]; then
     consider micro branch-paths
     while IFS= read -r -d '' path; do
       change_class_path "$path" launch
-      case "$CHANGE_CLASS_PATH_CAUSE" in
-        instruction-file\ *) ! version_raise_only "$path" || continue ;;
-      esac
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done <"$range_paths"
   fi

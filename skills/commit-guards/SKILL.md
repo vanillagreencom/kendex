@@ -9,7 +9,6 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.2.5"
 tags: [automation]
 repo-effects:
   summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push runs it over the branch, for everyone who commits or pushes here, not only for kendex."
@@ -103,7 +102,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_CHANGELOG_PATHS` | `changelog.d/*/*.md` | Space-separated globs naming the changelog fragments, matched against the full repo-relative path (`*` crosses `/`). |
 | `COMMIT_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collation destination; empty disables collation. |
 | `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` | *(empty)* | JSON version-file globs for the [version-bump check](CHECKS.md#version-bumps); empty disables it. |
-| `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` | *(empty)* | Globs naming the package files that declare packages: a `SKILL.md` whose frontmatter `metadata.version` each commit changing its directory must raise, or a versionless file naming itself ([version-bump check](CHECKS.md#version-bumps)); empty disables package entries. |
+| `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` | *(empty)* | Globs naming the package files that declare packages: a `SKILL.md` whose frontmatter `metadata.version`, where it states one, each commit changing its directory must raise, or a versionless file naming itself ([version-bump check](CHECKS.md#version-bumps)); empty disables package entries. |
 | `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `COMMIT_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `COMMIT_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |

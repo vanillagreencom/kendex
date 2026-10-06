@@ -574,14 +574,19 @@ assert_eq 'a deleted configured version file beside a program fragment passes' "
 echo "=== a package's entries move its own version, never the program's ==="
 # A fragment a pattern places through its package slot names its package;
 # skills/<name>/SKILL.md declares a versioned one, whose frontmatter
-# metadata.version its change raises, and hooks/<name>.sh a versionless one.
+# metadata.version its change raises, or a versionless one where it states
+# none, and hooks/<name>.sh a versionless one.
 # Every row commits app.json at 1.9.0, skills/pkg at the row's prior
 # version, skills/other at 1.0.0, hooks/hookx.sh and a nested
 # hooks/tests/lib/helper.sh, plus the row's base fragment, then stages its
 # own change and fragment. Fragment paths are under changelog.d.
 PKG_GLOBS='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md changelog.d/*/*/*.md,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md hooks/*.sh agents/*.md'
 PKG_ENV="$PKG_GLOBS,COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json"
-skill() { printf -- '---\nname: %s\nmetadata:\n  author: test\n  version: "%s"\ntags: [x]\n---\n\n# %s\n' "$1" "$2" "$1"; } # NAME VERSION
+skill() { # NAME VERSION, none for a SKILL.md that states no version
+  local version=""
+  [ "$2" = none ] || version="$(printf '\n  version: "%s"' "$2")"
+  printf -- '---\nname: %s\nmetadata:\n  author: test%s\ntags: [x]\n---\n\n# %s\n' "$1" "$version" "$1"
+}
 PKG='skills/pkg/SKILL.md'
 RUN='skills/pkg/run.sh'
 PKG_NOMATCH="${ERR}no-matches=changelog.d/*/*.md changelog.d/*/*/*.md"
@@ -615,12 +620,15 @@ for row in \
   "nested-helper|a fragment named for a nested hooks/tests helper names no package|1.9.0|1.0.0|1.0.0|||helper/fixed/entry.md|- Fix a typo.|rc=1 ${ERR}fragment-package=changelog.d/helper;$(summary 1 0)" \
   "duplicate|an agent and a skill of one name are refused, naming both files|1.9.0|1.0.0|1.0.0|agents/pkg.md||||rc=2 ${ERR}package-duplicate=agents/pkg.md:$PKG" \
   "misspelled|a Breaking fragment naming no declared package is refused, naming its directory|1.9.0|1.0.0|1.0.1|$RUN||linaer/removed/entry.md|$BREAK|rc=1 ${ERR}fragment-package=changelog.d/linaer;$(summary 1 0)" \
-  "unversioned|a package file with no metadata.version is a collection error|1.9.0|1.0.0|none|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
+  "versionless|a SKILL.md stating no metadata.version is a versionless package: its change and fragment pass with no raise|1.9.0|none|none|$RUN||pkg/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
+  "version-dropped|a change dropping metadata.version owes no raise|1.9.0|1.0.0|none|$RUN||||rc=0 $PKG_NOMATCH" \
+  "first-version|a change stating a first metadata.version owes no raise|1.9.0|none|1.0.0|$RUN||||rc=0 $PKG_NOMATCH" \
+  "nameless|a package file with no name is a collection error|1.9.0|1.0.0|nameless|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
   IFS='|' read -r name label app_next pkg_prior pkg_next change base_frag frag fragment expected <<<"$row"
   pkg_repo "package-$name" "$pkg_prior" "$base_frag"
   put app.json "{\"version\":\"$app_next\"}\n"
   case "$pkg_next" in
-    none) put "$PKG" '---\nname: pkg\n---\n' ;;
+    nameless) put "$PKG" '---\nmetadata:\n  version: "1.0.0"\n---\n' ;;
     *) put "$PKG" "$(skill pkg "$pkg_next")\n" ;;
   esac
   [ -z "$change" ] || put "$change" 'echo two\n'
@@ -712,6 +720,12 @@ control 'without the duplicate refusal the agent shadows the skill' package-dupl
   "rc=0 $PKG_NOMATCH" '! gg_package_row "$name"' '! false' lib/changelog-grammar.sh
 control 'version-checking a versionless package refuses the hook change' package-hook \
   "rc=2 ${ERR}version-read=hooks/hookx.sh" '[ -n "$dir" ] || continue' '[ -n "$dir" ] || dir="$pf"'
+control 'reading a SKILL.md that states no version as unreadable refuses its change' package-versionless \
+  "rc=2 ${ERR}version-read=$PKG" '*) return 0 ;; esac' '*) gg_fail version-read "$(gg_shown "$3")" "planted" ;; esac' lib/changelog-grammar.sh
+control 'judging a dropped version as a raise refuses the change' package-version-dropped \
+  "rc=1 ${ERR}package-unbumped=$PKG:1.0.0;$(summary 1 0)" '[ -n "$new" ] || continue' ':'
+control 'judging a first version against an absent one refuses the change' package-first-version \
+  "rc=1 ${ERR}major-breaking=$PKG::1.0.0;$(summary 1 0)" '[ -n "$old" ] || continue' ':'
 if [ -r "/proc/$$/cmdline" ]; then
   gg_mutant judge changelog-entries '[ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")' ':'
   amend_repo amend-head "$judge"

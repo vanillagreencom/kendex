@@ -61,15 +61,31 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   eval "$__c=\$__common"
 }
 
-# The package a scripts directory declares: the name and version of the
-# SKILL.md beside it, read by lib/skill-roots.sh's gg_skill_id. kendex
-# switches a skill off by renaming that file to SKILL.md.disabled and leaves
-# the hooks armed, so the switched-off name is read where the live one is
-# absent.
+# Every regular file under a scripts directory, its path and then the POSIX
+# cksum of its bytes, one checksum over the lot: what the lanes would run,
+# whatever version the package's SKILL.md states or omits.
+gg_scripts_sum() { # SCRIPTS_DIR -> the checksum on stdout
+  (
+    cd -- "$1" || exit 1
+    files="$(find . -type f | LC_ALL=C sort)" || exit 1
+    while IFS= read -r f; do
+      printf '%s\n' "$f"
+      cksum <"$f" || exit 1
+    done <<<"$files"
+  ) | cksum
+}
+
+# The package a scripts directory holds: the name the SKILL.md beside it
+# declares, read by lib/skill-roots.sh's gg_skill_id, and the checksum of
+# its scripts. kendex switches a skill off by renaming that file to
+# SKILL.md.disabled and leaves the hooks armed, so the switched-off name is
+# read where the live one is absent.
 gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
-  local __name="$1" __id="" __file="$2/../SKILL.md"
+  local __name="$1" __id="" __sum="" __file="$2/../SKILL.md"
   [ -f "$__file" ] || __file="$2/../SKILL.md.disabled"
   __id="$(gg_skill_id "$__file" 2>/dev/null)" || return 1
+  __sum="$(gg_scripts_sum "$2")" || return 1
+  __id="${__id%%"$GG_NL"*}$GG_NL$__sum"
   eval "$__name=\$__id"
 }
 
@@ -82,8 +98,8 @@ gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
 # project delivered to several harnesses as copies holds the package under
 # each of its skill roots, so the copy that armed the repository and the copy
 # asking may stand under different roots of the same project; that copy has
-# to declare the same package name and version. The declaration is all that
-# compares: it does not prove the other copy's lanes are this copy's bytes.
+# to declare the same package name and hold the same scripts, byte for byte
+# by their checksum.
 #
 # Two other differences look the same at a glance and are not. A scripts
 # directory outside this repository would run another package's lanes as this

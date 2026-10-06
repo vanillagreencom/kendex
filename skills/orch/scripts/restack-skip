@@ -3,8 +3,8 @@
 # whether the last passing validation run already covers it.
 #
 # The cost this removes: two lanes that change one package each raise its
-# metadata.version, so the second to merge restacks over that one line and
-# then re-validates code no line of which moved.
+# version and add changelog entries, so the second to merge restacks over
+# those lines and then re-validates code no line of which moved.
 #
 # The comparison is the tree the last passing run validated, merged with the
 # base's new commits, against the restacked HEAD's tree. The run is the one
@@ -15,8 +15,8 @@
 # conditions:
 #   no-conflict   the merge conflicted nowhere and its tree is HEAD's tree
 #   version-only  every conflict the merge reports is a content conflict in
-#                 a file commit-guards names as a changelog, version, package
-#                 or render file, and each such file in HEAD differs from
+#                 a file commit-guards names as a changelog or version file,
+#                 and each such file in HEAD differs from
 #                 the merge only where its kind allows, every other path
 #                 being the same in both
 # Which file is which is commit-guards' answer, never this script's: it asks
@@ -30,15 +30,13 @@
 #                     never resolved unseen
 #   version           in its top-level version alone, the field the
 #                     worktree's `changelog-entries --unversion` drops
-#   package, render   in its front matter's metadata.version alone, the line
-#                     lib/change-class.sh's drop_metadata_version drops
-# A version, package or render file is read twice, each conflict region
-# replaced once by the base's side and once by the branch's: HEAD must equal
-# both but for that field, so a region that differs in any other line, or a
-# resolution that drops both sides, is never taken unseen. A conflict marker
-# line left in a restacked changelog, package or render file is no line its
-# kind allows, so it is kept and differs from the merge; one left in a version
-# file is JSON `--unversion` cannot read, the classifier-failed cause.
+# A version file is read twice, each conflict region replaced once by the
+# base's side and once by the branch's: HEAD must equal both but for that
+# field, so a region that differs in any other line, or a resolution that
+# drops both sides, is never taken unseen. A conflict marker line left in a
+# restacked changelog file is no line its kind allows, so it is kept and
+# differs from the merge; one left in a version file is JSON `--unversion`
+# cannot read, the classifier-failed cause.
 #
 # Every fact the check cannot read, a run, an object, the classifier or a git
 # answer, is a re-test: a missing fact widens the checks.
@@ -67,8 +65,7 @@
 #   classifier-failed   it could not classify the conflicted paths, or
 #                     could not read a version file's JSON, as when a
 #                     marker is left in it
-#   unclassified      a conflicted path is no changelog, version, package or
-#                     render file
+#   unclassified      a conflicted path is no changelog or version file
 #   diff-failed       the two trees could not be compared
 #   path-shape        a path was added, removed, or is not a regular file of
 #                     one mode on both sides, or HEAD lacks a conflicted file
@@ -76,17 +73,14 @@
 #   path-unconflicted a path differs that the merge did not leave conflicted
 #   hunk              a conflicted file differs from the merge where its
 #                     kind does not allow, a conflict marker left in a
-#                     changelog, package or render file included, or a
-#                     changelog conflict region holds such a line
+#                     changelog file included, or a changelog conflict
+#                     region holds such a line
 # Exit 2 is a usage error, which runs the re-test too.
 
 set -euo pipefail
 
 PROG="restack-skip"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# drop_metadata_version, orch's one filter for a SKILL.md's metadata.version line.
-# shellcheck source=lib/change-class.sh
-. "$SCRIPT_DIR/lib/change-class.sh"
 
 die() { # KEY FIELD...
   {
@@ -274,13 +268,8 @@ merged_side() {
   '
 }
 
-# KIND < FILE — the file less the field commit-guards versions it by.
-unversion() {
-  case "$1" in
-    version) "$classifier" --unversion 2>/dev/null ;;
-    package|render) drop_metadata_version ;;
-  esac
-}
+# < FILE — the version file less the field commit-guards versions it by.
+unversion() { "$classifier" --unversion 2>/dev/null; }
 
 index=0
 paths=""
@@ -288,7 +277,7 @@ while IFS=$'\t' read -r kind path; do
   [[ "$path" == "${conflicted[$index]:-}" ]] || retest classifier-failed "run-dir=$run_dir"
   index=$(( index + 1 ))
   case "$kind" in
-    record|fragment|version|package|render) ;;
+    record|fragment|version) ;;
     *) retest unclassified "path=$path" "run-dir=$run_dir" ;;
   esac
   git cat-file blob "$merged_tree:$path" > "$scratch/merged-blob" 2>/dev/null \
@@ -303,12 +292,12 @@ while IFS=$'\t' read -r kind path; do
       && cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
       || retest hunk "path=$path" "run-dir=$run_dir"
   else
-    unversion "$kind" < "$scratch/head-blob" > "$scratch/head-kept" \
+    unversion < "$scratch/head-blob" > "$scratch/head-kept" \
       || retest classifier-failed "path=$path" "run-dir=$run_dir"
     for side in 1 2; do
       merged_side "$side" < "$scratch/merged-blob" > "$scratch/merged-side" \
         || retest hunk "path=$path" "run-dir=$run_dir"
-      unversion "$kind" < "$scratch/merged-side" > "$scratch/merged-kept" \
+      unversion < "$scratch/merged-side" > "$scratch/merged-kept" \
         || retest classifier-failed "path=$path" "run-dir=$run_dir"
       cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
         || retest hunk "path=$path" "run-dir=$run_dir"
