@@ -1467,11 +1467,18 @@ lane_process_env_readable() {
 }
 
 # The smallest bound an observation can settle inside, in seconds. A settle is
-# two reads a second apart, so a check handed less than this can never verify an
-# account and never catch a mismatch, whatever the pane is doing and whatever
-# the loop in lane_account_check would otherwise have reported. Callers that
-# share one deadline between several waits size their bounds against it.
+# two reads at most a second apart, so a check handed less than this can never
+# verify an account and never catch a mismatch, whatever the pane is doing and
+# whatever the loop in lane_account_check would otherwise have reported.
+# Callers that share one deadline between several waits size their bounds
+# against it.
 LANE_SETTLE_MIN_SECS=1
+
+# ORCH_LANE_SETTLE_MS, milliseconds between the two reads a settle compares: a
+# whole number from 1 to 1000, a second where unset. A test suite whose panes
+# come up in milliseconds shortens it. The ceiling keeps LANE_SETTLE_MIN_SECS
+# true: a longer pause would not fit one settle inside a one-second bound.
+LANE_SETTLE_MS_DEFAULT=1000
 
 # The account the pane is REALLY running on, against the one that was picked.
 # A wrapper on PATH exports the lane variable for its own name, so a launch can
@@ -1479,10 +1486,11 @@ LANE_SETTLE_MIN_SECS=1
 # against the picked one and nothing on screen says so.
 #
 # The guard fails closed on what it OBSERVES and never on what it could not: an
-# observed disagreement returns 1 and the caller closes the window, while no
-# readable per-process environment, no pane pid, a broken descendant probe and
-# no descendant carrying the variable inside the bound each return 0 with the
-# reason named, and leave a healthy lane running.
+# observed disagreement returns 1 and the caller closes the window, while an
+# ORCH_LANE_SETTLE_MS out of range, no readable per-process environment, no
+# pane pid, a broken descendant probe and no descendant carrying the variable
+# inside the bound each return 0 with the reason named, and leave a healthy
+# lane running.
 #
 # The outcome is one tagged value in LANE_ACCOUNT_RESULT, which every caller
 # matches to choose its own message: `skipped`, `verified`, `mismatch`, or
@@ -1491,8 +1499,8 @@ LANE_SETTLE_MIN_SECS=1
 # BOUND is how many seconds the caller gives the reading to settle, never below
 # LANE_SETTLE_MIN_SECS above.
 #
-# An observation counts only once it SETTLES: two reads a second apart carrying
-# the same value. The first non-empty read is not the harness's answer — under
+# An observation counts only once it SETTLES: two reads ORCH_LANE_SETTLE_MS
+# apart carrying the same value. The first non-empty read is not the harness's answer — under
 # the env-prefix form the launch child carries the picked value from its own
 # execve until the wrapper's exec lands, and trusting that read would confirm an
 # account the pane is about to stop running.
@@ -1515,9 +1523,17 @@ LANE_SETTLE_MIN_SECS=1
 # this function's answer, read by the caller that matches on it.
 lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   local pane="$1" name="$2" picked="$3" form="$4" bound="$5" pid observed rc waited=0 settled=""
+  local settle_ms="${ORCH_LANE_SETTLE_MS:-$LANE_SETTLE_MS_DEFAULT}" pause
   LANE_ACCOUNT_OBSERVED=""
   LANE_ACCOUNT_RESULT=skipped
   lane_account_readable "$form" || return 0
+  # A pause outside the setting's range is a reading this check cannot take,
+  # named as such rather than replaced by the default the operator overrode,
+  # and on every host, ahead of the readings a host may not offer.
+  if [[ ! "$settle_ms" =~ ^[1-9][0-9]{0,3}$ ]] || (( settle_ms > 1000 )); then
+    LANE_ACCOUNT_RESULT=unobserved:settle-invalid
+    return 0
+  fi
   lane_process_env_readable || { LANE_ACCOUNT_RESULT=unobserved:no-process-environment; return 0; }
   pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
   # 0 is not a pane's pid, and walking from it reads processes belonging to no
@@ -1533,21 +1549,23 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   # read happened to find, each of which tells an operator something about the
   # pane when what happened is that the caller had no budget left to look.
   (( bound >= LANE_SETTLE_MIN_SECS )) || { LANE_ACCOUNT_RESULT=unobserved:no-settle-budget; return 0; }
+  # A whole second stays the integer `sleep 1`, which every sleep accepts.
+  if (( settle_ms == 1000 )); then pause=1; else printf -v pause '0.%03d' "$settle_ms"; fi
   while :; do
     rc=0
     observed="$(lane_observed_dir "$pid" "$name")" || rc=$?
     [[ "$rc" -eq 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:descendant-probe; return 0; }
     [[ -z "$observed" || "$observed" != "$settled" ]] || break
     settled="$observed"
-    if (( waited >= bound )); then
+    if (( waited >= bound * 1000 )); then
       # A value that never repeated is a pane still changing hands, which is not
       # the same miss as never seeing one at all.
       if [[ -n "$settled" ]]; then LANE_ACCOUNT_RESULT=unobserved:unsettled
       else LANE_ACCOUNT_RESULT=unobserved:no-lane-variable; fi
       return 0
     fi
-    sleep 1
-    waited=$((waited + 1))
+    sleep "$pause"
+    waited=$((waited + settle_ms))
   done
   LANE_ACCOUNT_OBSERVED="$observed"
   if [[ "$(lane_claims_canon "$(lane_launch_home_account "$observed")")" \

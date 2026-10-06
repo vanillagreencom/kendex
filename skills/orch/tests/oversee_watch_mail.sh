@@ -739,8 +739,9 @@ out="$(run_watch -- --max-loops 1 --item KEN-52 2>"$err")"
 assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
   "a lane's event line carries no thread pointer" "$err"
 
-# Hosted lanes over the provider stub, three runs each. Each lane is the pair
-# open-terminal launches for a GitHub item: item issue-N in window gh-N. The
+# Hosted lanes over the provider stub, RUNS runs each, one to three. Each lane
+# is the pair open-terminal launches for a GitHub item: item issue-N in window
+# gh-N. The
 # clone is learned from the worktree's .git file and the handoff read from the
 # clone's state. KEEP gone removes the worktrees after the first run, lands a
 # closing notice in each clone's mailbox and a new handoff record in each
@@ -749,12 +750,13 @@ assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
 # the first record in the lane root's own tmp instead, the clone's state
 # carrying none, as a lane whose launch forbids writing the clone keeps it;
 # HOSTED_RECORD=torn leaves a killed write there.
-hosted_runs() { # CASE LANES KEEP [ENV...]
-  local lanes="$2" keep="$3" n run harness_state record args=()
+hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
+  local lanes="$2" keep="$3" runs="$4" n run harness_state record args=()
   new_case "$1"
-  shift 3
+  shift 4
   HOSTED_DISK="$STUB_DIR/remote"
-  HOSTED_OUT=()
+  HOSTED_RUNS="$runs"
+  HOSTED_OUT=("" "" "" "")
   HOSTED_RC=()
   for n in $lanes; do
     mkdir -p "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
@@ -776,7 +778,7 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
   done
   jq -nc '[$ARGS.positional[] | {number: tonumber, headRefName: "issue-\(.)", mergedAt: "2026-09-14T10:00:00Z"}]' \
     --args $lanes > "$STUB_DIR/merged.json"
-  for run in 1 2 3; do
+  for ((run = 1; run <= runs; run++)); do
     harness_state=running
     # The first pass learns the clone while the harness lives. Its exit is
     # news after the worktree goes, or while it stands in the keep row.
@@ -797,16 +799,22 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
     done
   done
 }
+# The facts of the runs hosted_runs made: a single run reaches no later pass,
+# so it states its handoff and the closes the host logged and nothing a later
+# pass would have said.
 hosted_facts() { # LANES
   local n later out=""
   later="$(printf '%s\n%s\n' "${HOSTED_OUT[2]}" "${HOSTED_OUT[3]}")"
   for n in $1; do
     out+="issue-$n: handoff=$(grep -cx "EVENT handoff issue-$n" <<<"${HOSTED_OUT[1]}" || :)"
-    out+=" notice=$(grep -cx "EVENT lane-notice issue-$n closing-$n" <<<"${HOSTED_OUT[2]}" || :)"
-    out+=" closed=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -c '^kept=' || :)"
-    out+=" refused=$(grep -A1 -x "EVENT lane-close-refused issue-$n" <<<"$later" | grep -cx 'path=/srv/clone' || :)"
+    if (( HOSTED_RUNS > 1 )); then
+      out+=" notice=$(grep -cx "EVENT lane-notice issue-$n closing-$n" <<<"${HOSTED_OUT[2]}" || :)"
+      out+=" closed=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -c '^kept=' || :)"
+      out+=" refused=$(grep -A1 -x "EVENT lane-close-refused issue-$n" <<<"$later" | grep -cx 'path=/srv/clone' || :)"
+    fi
     out+=" closes=$(grep -c "^close --item issue-$n \$" "$STUB_DIR/host.log" || :)"
-    out+=" none=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -cx 'kept=none' || :); "
+    (( HOSTED_RUNS < 2 )) || out+=" none=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -cx 'kept=none' || :)"
+    out+="; "
   done
   printf '%s' "${out%; }"
 }
@@ -823,35 +831,38 @@ CLOSE_NOTE='oversee-watch: lane-close-failed item=issue-2 exit=1'
 READ_NOTE='oversee-watch: handoff-read-failed item=issue-2 path=/srv/lane/issue-2/.git'
 RETRIED="issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1 none=0; $ONE closed=0 refused=0 closes=2 none=0"
 HOSTED_SEQ=0
-# label|lanes|keep|env|facts[|exit|run|keyed line[|event line]]
+# A third run is made only where its row's rule is about a later pass: a lane
+# closed or refused once is never closed again, and a failed close is retried.
+# Where the rule is decided by the first pass that sees the lane exited, two
+# runs; where the first pass decides it, one.
+# label|lanes|keep|runs|env|facts[|exit|run|keyed line[|event line]]
 for row in \
-  "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once|2|gone||$ONE closed=1 refused=0 closes=1 none=0" \
-  "a refused close names the refused checkout's path and is never closed again|2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1 none=0" \
-  "a lane exiting while its worktree stands is not closed|2|keep||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
-  "a failed close is retried alone, the lane closed beside it not closed again|1 2|gone|$FAIL2|$RETRIED|rc=2 note=1|2|$CLOSE_NOTE" \
-  "a close that archived nothing is reported as kept=none|2|gone|LANE_HOST_STUB_CLOSE_EMPTY=1|$ONE closed=1 refused=0 closes=1 none=1" \
-  "a close whose run then fails to commit is not closed again|2|gone|LANE_HOST_STUB_CLOSE_JAM=1|$ONE closed=1 refused=0 closes=1 none=0" \
-  "a failing close still lets its pass report another lane's handoff before exiting 2|1 2|gone|$FAIL2|$RETRIED|rc=2 note=1 out=1|2|$CLOSE_NOTE|EVENT handoff issue-1" \
-  "a hosted read the provider fails is handoff-read-failed, never a missing file|2|gone|LANE_HOST_STUB_CAT_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE" \
-  "a missing file on a host that does not answer is handoff-read-failed|2|absent|LANE_HOST_STUB_TOUCH_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE"; do
-  IFS='|' read -r label lanes keep env expect exit run needle event <<<"$row"
+  "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once|2|gone|3||$ONE closed=1 refused=0 closes=1 none=0" \
+  "a refused close names the refused checkout's path and is never closed again|2|gone|3|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1 none=0" \
+  "a lane exiting while its worktree stands is not closed|2|keep|2||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
+  "a failed close is retried alone, the lane closed beside it not closed again, and the failing pass still reports another lane's handoff before exiting 2|1 2|gone|3|$FAIL2|$RETRIED|rc=2 note=1 out=1|2|$CLOSE_NOTE|EVENT handoff issue-1" \
+  "a close that archived nothing is reported as kept=none|2|gone|2|LANE_HOST_STUB_CLOSE_EMPTY=1|$ONE closed=1 refused=0 closes=1 none=1" \
+  "a close whose run then fails to commit is not closed again|2|gone|3|LANE_HOST_STUB_CLOSE_JAM=1|$ONE closed=1 refused=0 closes=1 none=0" \
+  "a hosted read the provider fails is handoff-read-failed, never a missing file|2|gone|2|LANE_HOST_STUB_CAT_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE" \
+  "a missing file on a host that does not answer is handoff-read-failed|2|absent|2|LANE_HOST_STUB_TOUCH_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE"; do
+  IFS='|' read -r label lanes keep runs env expect exit run needle event <<<"$row"
   read -ra envs <<<"$env"
-  hosted_runs "hosted_$((HOSTED_SEQ += 1))" "$lanes" "$keep" ${envs[@]+"${envs[@]}"}
+  hosted_runs "hosted_$((HOSTED_SEQ += 1))" "$lanes" "$keep" "$runs" ${envs[@]+"${envs[@]}"}
   assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$STUB_DIR/run${run:-2}.err"
   [[ -z "$exit" ]] || assert_eq "$(hosted_exit "$run" "$needle" "$event")" "$exit" "$label: exit status and keyed line" "$STUB_DIR/run$run.err"
 done
 
-HOSTED_RECORD=lane hosted_runs hosted_lane_record 2 keep
-assert_eq "$(hosted_facts 2)" "issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
+HOSTED_RECORD=lane hosted_runs hosted_lane_record 2 keep 1
+assert_eq "$(hosted_facts 2)" "issue-2: handoff=1 closes=0" \
   "a hosted lane's record in its root's own tmp, none in the clone, is reported" "$STUB_DIR/run1.err"
-HOSTED_RECORD=torn hosted_runs hosted_lane_torn 2 keep
+HOSTED_RECORD=torn hosted_runs hosted_lane_torn 2 keep 1
 assert_eq "$(hosted_exit 1 'oversee-watch: handoff-read-failed item=issue-2 path=/srv/lane/issue-2/tmp/workflow-state-issue-2.json')" \
   "rc=2 note=1" "a torn state file in a hosted lane root's tmp is reported by its path on the host" "$STUB_DIR/run1.err"
 LANE_READ_WATCH="$(mutant_scripts lane-read/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-read/github"
 mutate_file "$LANE_READ_WATCH" '  hosted_state_fetch "$1" "$HOSTED_ROOT" tmp "$ITEM_WORKTREE/tmp"' '  :'
-WATCH_BIN="$LANE_READ_WATCH" HOSTED_RECORD=lane hosted_runs hosted_lane_record_control 2 keep
-assert_eq "$(hosted_facts 2)" "issue-2: handoff=0 notice=0 closed=0 refused=0 closes=0 none=0" \
+WATCH_BIN="$LANE_READ_WATCH" HOSTED_RECORD=lane hosted_runs hosted_lane_record_control 2 keep 1
+assert_eq "$(hosted_facts 2)" "issue-2: handoff=0 closes=0" \
   "control: a watch that reads the clone alone misses a record in the lane root's tmp" "$STUB_DIR/run1.err"
 
 # --- the mail pass on its own cadence --------------------------------------

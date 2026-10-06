@@ -266,6 +266,11 @@ hp=""
 lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
 cm="ORCH_HANDOFF_CONTEXT_PCT=\${CONTEXT_PCT:-50}"
+# The pause between the two reads an account settles on. A harness stub here
+# has execed its last process within milliseconds of its launch, so a tenth of
+# a second still keeps the two reads apart, and no launch spends the production
+# second on each read; lane-account-settle.sh holds the pause itself.
+settle="ORCH_LANE_SETTLE_MS=100"
 # A lanes setting the row can spoil, for the one row that needs the account
 # judge itself to fail rather than answer.
 ttl=""
@@ -305,7 +310,7 @@ cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i HOME="$H" PATH="\${PATH_PREFIX:+
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
-  ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
+  ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \$settle \\
   \$hp \$cm \$ttl \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
