@@ -13,7 +13,7 @@ A catalog is someone else's repository. A read that follows a symlink, a name th
 ## Rules
 
 - Do read a catalog through `SealedSource` only; a raw filesystem read in a catalog-reading module fails the `catalog-fs-read` lane of `tools/guard`.
-- Do parse a subscription reference, never guess it: the two validators in `crates/core/src/source_ref.rs`, `parse_typed` for what a person types and `parse_untrusted` for untrusted rows and deep links, refuse a leading `-`, a `..` component and a percent-escape that smuggles a separator.
+- Do parse a subscription reference, never guess it: the two validators in `crates/core/src/source_ref.rs`, `parse_typed` for what a person types and `parse_untrusted` for untrusted rows and deep links, refuse a leading `-`, a `..` component in a repository name or URL, which a local path keeps, and a percent-escape that smuggles a separator.
 - Do refuse a `kendex.toml` name that cannot be a path, with the reason, at `crates/core/src/names.rs`.
 - Do fail discovery closed: a plugin registry wins outright, else a parsed control file declares the layout, else the search runs, and an unreadable control file makes the source unusable with a finding.
 - Do say where a name comes from: a bare name searching every enabled subscription refuses on two offers, naming both spellings, and the default catalog is reached only when nothing else offers the name.
