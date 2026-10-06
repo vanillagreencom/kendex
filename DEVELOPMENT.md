@@ -21,7 +21,7 @@ cargo test                                  # the Rust suites; a crate's integra
 npm test --prefix ui                        # the UI suites
 npm run check --prefix ui                   # types and lint
 skills/<name>/tests/<suite>.test.sh         # one shell suite, run directly
-tools/guard --full                          # everything the commit chain and CI run, less the suites a change does not reach
+tools/guard --full                          # the local full battery: Rust and UI checks with tests, plus the suites a change reaches
 ```
 
 `tools/guard --full` runs the Rust and UI checks with tests, documentation builds and cross-target compilation, the suites a touched skill's or `hooks/`' changed files map to, the suites of every tool and Pi-package tree the branch touched, and the decider skill's `decisions check`, which CI does not run. The documentation build and the cross-target compilation are skipped when the branch touched no crate; `GUARD_FULL_CROSS_DOC=ci` in `.env.local` or the environment leaves them to CI. The Bash 3.2 parse needs docker or podman on a host whose own `bash` is not 3.2, and refuses without one.

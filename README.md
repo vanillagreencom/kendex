@@ -10,7 +10,7 @@ kendex is a desktop app and command-line tool for people who use AI coding tools
 
 - Installs customizations across your coding tools from one setup.
 - Converts agent and skill files into the format each tool reads.
-- Previews every change before it writes anything.
+- Previews a package change before it applies it.
 - Keeps a personal setup and a separate setup for each project.
 - Adopts customizations you already set up by hand: it keeps your files and starts managing them.
 - Browses the [community marketplace](https://kendex.ai) and any package repository you subscribe to.
