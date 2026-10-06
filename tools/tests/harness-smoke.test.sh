@@ -1048,23 +1048,30 @@ plants() { # FILE SED-SCRIPT... — FILE.intact with each edit applied in turn, 
   done
 }
 # Each control() call holds one control's parts: the edit that plants its rule
-# out, empty where control_run's shared fixture edit or a planted file reaches
-# its rows; its label|row|result|clause rows; and the settings that hand them
-# the refused input. A batch runs once and its rows read that one run, so
-# control() refuses a row or setting another control of the batch holds. A
-# planted edit can reach any row of its run, so a control holding one runs in a
-# batch of its own; only edit-free controls share a run. control_run applies
-# the shared edits and the batch's planted edit to the intact copy, runs it
-# once, and reads every row.
+# out, a sed script for the smoke copy or, after --index, a jq filter for the
+# summary the kendex stub prints, empty where control_run's shared fixture edit
+# reaches its rows; its label|row|result|clause rows; and the settings that
+# hand them the refused input. A batch runs once and its rows read that one
+# run, so control() refuses a row or setting another control of the batch
+# holds. A planted edit can reach any row of its run, so a control holding one
+# runs in a batch of its own; only edit-free controls share a run. control_run
+# applies the shared edits and the batch's planted edit to the intact copies,
+# runs once, and reads every row.
 CTL_SED=
+CTL_INDEX=
 CTL_ENVS=()
 CTL_ROWS=
 CTL_HELD=
-control() { # SED ROWS [ENV=VAL]...
-  local sed=$1 rows=$2 held='' q e
+control() { # [--index JQ] SED ROWS [ENV=VAL]...
+  local index='' sed rows held='' q e
+  if [ "$1" = --index ]; then
+    index=$2
+    shift 2
+  fi
+  sed=$1 rows=$2
   shift 2
-  if [ -n "$CTL_SED" ] || { [ -n "$sed" ] && [ -n "$CTL_ROWS" ]; }; then
-    printf 'harness-smoke.test: refused=shared-control edit %s\n' "${sed:-$CTL_SED}" >&2
+  if [ -n "$CTL_SED$CTL_INDEX" ] || { [ -n "$sed$index" ] && [ -n "$CTL_ROWS" ]; }; then
+    printf 'harness-smoke.test: refused=shared-control edit %s\n' "${sed:-${index:-${CTL_SED:-$CTL_INDEX}}}" >&2
     exit 2
   fi
   while IFS='|' read -r _ q _; do
@@ -1081,14 +1088,27 @@ control() { # SED ROWS [ENV=VAL]...
   done <<<"$held"
   CTL_HELD+=$held
   CTL_SED=$sed
+  CTL_INDEX=$index
   [ "$#" -eq 0 ] || CTL_ENVS+=("$@")
   CTL_ROWS+="$rows"$'\n'
 }
 control_run() { # [SED]... — the batch's shared fixture edits
   plants "$STAND_SMOKE" "$@" ${CTL_SED:+"$CTL_SED"}
+  if [ -n "$CTL_INDEX" ]; then
+    jq "$CTL_INDEX" "$STUB_INDEX.intact" >"$STUB_INDEX" || {
+      printf 'harness-smoke.test: planted=index-failed %s\n' "$CTL_INDEX" >&2
+      exit 2
+    }
+    if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
+      printf 'the planted edit changed nothing: %s\n' "$CTL_INDEX" >&2
+      exit 2
+    fi
+  fi
   package_run "$STAND_SMOKE" ${CTL_ENVS[@]+"${CTL_ENVS[@]}"}
   package_table "$CTL_ROWS"
+  cp "$STUB_INDEX.intact" "$STUB_INDEX"
   CTL_SED=
+  CTL_INDEX=
   CTL_ENVS=()
   CTL_ROWS=
   CTL_HELD=
@@ -1231,18 +1251,12 @@ control_run "$INTERACTIVE"
 
 # The session runs only where the skill-load cells read enforced: a summary
 # giving each a reason there leaves both rows excluded with that reason, no
-# session run. The summary is a planted file, so its control runs alone.
-jq '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
-  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' \
-  "$STUB_INDEX.intact" >"$STUB_INDEX"
-if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
-  echo "harness-smoke.test: the planted summary edit changed nothing" >&2
-  exit 2
-fi
-control '' "a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
+# session run.
+control --index '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
+  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' '' \
+  "a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
 and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
 control_run
-cp "$STUB_INDEX.intact" "$STUB_INDEX"
 
 plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot answer:userPromptSubmitted-interactive pending /    row copilot answer:userPromptSubmitted-interactive skipped /; s/^    row copilot event:preCompact pending /    row copilot event:preCompact skipped /'
 package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
