@@ -6,7 +6,8 @@
 //! the inventory, and verify then passes. A workflow the person edited
 //! stays, and verify keeps failing it. A tree one tool drops while the
 //! skill stays is no leaving, and the workflow stays. A kept copy deleted
-//! or edited by hand fails verify on its own row.
+//! or edited by hand, a Pi package's included, fails verify on its own row
+//! while a plain refresh passes.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -201,7 +202,8 @@ fn dropping_the_tool_that_holds_the_template_keeps_the_adopted_workflow() {
 /// A kept retired item is held to its record: its copy on one tool
 /// deleted or edited by hand fails verify on that installation's row
 /// alone, and every other kept installation, the other retired item's
-/// included, still passes.
+/// included, still passes. A plain refresh, which writes none of it,
+/// still passes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
@@ -230,11 +232,8 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
                     "{CATALOG}[retired.skills]\ndeploy = \"\"\n[retired.hooks]\ncheck = \"\"\n"
                 ),
             );
-            let refreshed = kendex(
-                &home,
-                &project,
-                &["refresh", "--scope", "project", "--yes", "--leave"],
-            );
+            let refresh = ["refresh", "--scope", "project", "--yes", "--leave"];
+            let refreshed = kendex(&home, &project, &refresh);
             assert!(refreshed.status.success(), "{case}: {}", said(&refreshed));
             let copy = project.join(copy);
             assert!(
@@ -253,8 +252,10 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
                 false => fs::remove_file(&copy).unwrap(),
             }
 
+            let refreshed = kendex(&home, &project, &refresh);
             let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
 
+            assert!(refreshed.status.success(), "{case}: {}", said(&refreshed));
             assert!(!verified.status.success(), "{case}: {}", said(&verified));
             let document: kendex_core::attest::Document =
                 serde_json::from_slice(&verified.stdout).unwrap();
@@ -277,5 +278,88 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
                 said(&verified)
             );
         }
+    }
+}
+
+const PI_PACKAGE: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+const PI_INDEX: &str = "export const version = 1;\n";
+
+/// A kept retired Pi package deleted or edited by hand is no failure of a
+/// plain refresh, which writes nothing of it, as a hook's or a skill's is
+/// not: verify alone fails its row.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
+    for edited in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = home.join("catalog");
+        let project = home.join("consumer");
+        let package = project.join(".pi/packages/pi-widgets");
+        write(&catalog.join("kendex.toml"), CATALOG);
+        for root in [&catalog.join("pi-extensions/pi-widgets"), &package] {
+            write(&root.join("package.json"), PI_PACKAGE);
+            write(&root.join("index.js"), PI_INDEX);
+        }
+        write(
+            &project.join(".pi/settings.json"),
+            "{\"packages\": [\"./packages/pi-widgets\"]}\n",
+        );
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "schema = 6\n[sources.cat]\n{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                source_path(&catalog)
+            ),
+        );
+        repository(&project);
+        for args in [
+            &["apply", "--yes", "--leave"][..],
+            &["update-pi", "--scope", "project"][..],
+        ] {
+            let ran = kendex(&home, &project, args);
+            assert!(ran.status.success(), "{args:?}: {}", said(&ran));
+        }
+        commit(&project, "installed");
+        write(
+            &catalog.join("kendex.toml"),
+            &format!("{CATALOG}[retired.pi-extensions]\npi-widgets = \"\"\n"),
+        );
+        let refresh = ["refresh", "--scope", "project", "--yes", "--leave"];
+        let kept = kendex(&home, &project, &refresh);
+        assert!(kept.status.success(), "edited={edited}: {}", said(&kept));
+        assert!(package.exists(), "edited={edited}: {}", said(&kept));
+        match edited {
+            true => write(&package.join("index.js"), "export const version = 2;\n"),
+            false => fs::remove_dir_all(&package).unwrap(),
+        }
+
+        let refreshed = kendex(&home, &project, &refresh);
+        let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+
+        assert!(
+            refreshed.status.success(),
+            "edited={edited}: {}",
+            said(&refreshed)
+        );
+        assert!(
+            !verified.status.success(),
+            "edited={edited}: {}",
+            said(&verified)
+        );
+        let document: kendex_core::attest::Document =
+            serde_json::from_slice(&verified.stdout).unwrap();
+        let failed: Vec<(&str, &str)> = document
+            .rows
+            .iter()
+            .filter(|row| row.state == kendex_core::attest::State::Failed)
+            .map(|row| (row.kind.as_str(), row.name.as_str()))
+            .collect();
+        assert_eq!(
+            failed,
+            [("pi-extension", "pi-widgets")],
+            "edited={edited}: {}",
+            said(&verified)
+        );
     }
 }

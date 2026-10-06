@@ -65,6 +65,11 @@ pub enum DriftCause {
     /// exit is on offer: the read is fixed first, and the detail says
     /// where.
     Uncompared,
+    /// A copy its catalog retired, kept as recorded because no prune took
+    /// it, whose files are gone or edited against that record. Nothing
+    /// renders it again, so no refresh writes it and none fails on it: a
+    /// prune takes the record, or removing it by name takes the copy.
+    Retired,
 }
 
 impl DriftCause {

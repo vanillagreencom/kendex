@@ -199,7 +199,10 @@ enum Verdict {
     /// Kept as recorded because its catalog retired it and no prune takes
     /// it (`Retirement::kept`). Nothing renders it again, so its record is
     /// what its installed copy is held to: a copy gone or edited is a
-    /// conflict row. What it requires stays with it as for [`Retained`].
+    /// conflict row with the [`DriftCause::Retired`] cause. What it
+    /// requires stays with it as for [`Retained`].
+    ///
+    /// [`DriftCause::Retired`]: super::DriftCause::Retired
     ///
     /// [`Retained`]: Verdict::Retained
     Retired,
@@ -300,9 +303,7 @@ pub(super) fn orphans(
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Retired => {
-                if let Some(detail) = retired_copy(env, scope, entry) {
-                    drift.push(row(scope, entry, DriftState::Conflict, detail, None));
-                }
+                drift.extend(retired_copy(env, scope, entry));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Left { unneeded } => {
@@ -664,7 +665,19 @@ fn pi_state(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<PackageState>
 /// The conflict a kept retired item's installed copy raises against its
 /// record, or `None` where every recorded file is there with the bytes the
 /// record names. A file counts as there under its switched-off name too.
-fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<String> {
+fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<DriftRow> {
+    let detail = retired_copy_detail(env, scope, entry)?;
+    Some(row(
+        scope,
+        entry,
+        DriftState::Conflict,
+        detail,
+        Some(super::DriftCause::Retired),
+    ))
+}
+
+/// What [`retired_copy`] says, where it says anything.
+fn retired_copy_detail(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<String> {
     let detail = match entry.kind {
         ItemKind::PiExtension => match pi_state(env, scope, entry) {
             Ok(PackageState::Current { .. }) => return None,

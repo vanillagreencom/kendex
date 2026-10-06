@@ -926,7 +926,8 @@ enum ByHand {
 
 /// A kept retired item is held to its record as any recorded item is: a
 /// copy deleted or edited by hand on one tool is a conflict on that tool's
-/// installation alone, the plan `kendex verify` reads failing that row,
+/// installation alone, its cause the retirement a refresh never fails on,
+/// the plan `kendex verify` reads failing that row,
 /// and an untouched copy raises none. A prune then takes the record of a
 /// copy that is gone and holds an edited one.
 #[test]
@@ -960,17 +961,17 @@ fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
 
             let report = audit(&f.env, &f.scope).unwrap();
 
-            let conflicted: Vec<HarnessId> = report
+            let conflicted: Vec<(HarnessId, Option<DriftCause>)> = report
                 .drift
                 .iter()
                 .filter(|row| {
                     row.kind == kind && row.name == name && row.state == DriftState::Conflict
                 })
-                .map(|row| row.harness)
+                .map(|row| (row.harness, row.cause))
                 .collect();
             let changed = match by_hand {
                 ByHand::Untouched => vec![],
-                ByHand::Deleted | ByHand::Edited => vec![harness],
+                ByHand::Deleted | ByHand::Edited => vec![(harness, Some(DriftCause::Retired))],
             };
             assert_eq!(conflicted, changed, "{case}");
 

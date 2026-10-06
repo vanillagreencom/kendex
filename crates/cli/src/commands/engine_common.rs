@@ -338,10 +338,11 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
 }
 
 /// A refresh failure: any per-item failure or a locked item missing from
-/// its source is a hard error. Two Pi rows are not one: an orphaned Pi
+/// its source is a hard error. Three Pi rows are not one: an orphaned Pi
 /// package, which refresh keeps and reports and `apply` or `remove` takes,
-/// and a row whose cause says the plan simply writes it, which this run's
-/// plan settles.
+/// a row whose cause says the plan simply writes it, which this run's plan
+/// settles, and a kept retired package gone or edited, which no refresh
+/// writes and verify fails, as it does a retired hook or skill.
 pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
     report
         .notes
@@ -361,6 +362,7 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                     row.kind == kendex_core::model::ItemKind::PiExtension
                         && row.state != DriftState::Orphaned
                         && row.cause.is_none_or(DriftCause::holds_the_write)
+                        && row.cause != Some(DriftCause::Retired)
                 })
                 .map(|row| format!("{}: {}", row.name, row.detail)),
         )
