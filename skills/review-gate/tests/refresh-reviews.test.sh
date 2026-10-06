@@ -58,7 +58,7 @@ git -C "$REPO" config maintenance.auto false
 git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
 BASE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 HEADS=""
-for number in 1 2 3 4; do
+for number in 1 2 3 4 5; do
   git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "head $number"
   HEADS="$HEADS $(git -C "$REPO" rev-parse HEAD)"
 done
@@ -68,12 +68,16 @@ BASE="$TMP/base.json"
 # shellcheck disable=SC2086 # one argument per head sha
 python3 - "$BASE" "$BASE_SHA" $HEADS <<'PY'
 import json, sys
+from datetime import datetime, timedelta, timezone
 out, base, *heads = sys.argv[1:]
+# Merge times sit hours from the writer's 24-hour bound, on the real clock it reads.
+ago=lambda hours: (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
 bot={'login':'lanes[bot]','type':'Bot'}
 reviewer={'login':'copilot','type':'Bot'}
 human={'login':'person','type':'User'}
 prs=[]
-for number, state, merged, branch in [(1,'open',None,'kendex/refresh'),(2,'closed','now','kendex/refresh'),(3,'closed',None,'kendex/refresh'),(4,'open',None,'feature')]:
+for number, state, merged, branch in [(1,'open',None,'kendex/refresh'),(2,'closed',ago(2),'kendex/refresh'),(3,'closed',None,'kendex/refresh'),
+                                      (4,'open',None,'feature'),(5,'closed',ago(72),'kendex/refresh')]:
     root=number*10
     prs.append({'number':number,'state':state,'merged_at':merged,
         'base':{'sha':base},
@@ -108,10 +112,10 @@ MUTATE
   DRIVER="$TMP/skills/review-gate/$1/refresh-reviews.sh"
 }
 
-# Filed and resolved: each automatic thread on the open and the merged rolling
-# pull request is filed with the lines its comment names, answered with a
-# reply naming its issue and the reporter's note, then resolved. Human threads
-# and other pull requests stay untouched.
+# Filed and resolved: each automatic thread on the open rolling pull request
+# and the one merged 2 hours ago is filed with the lines its comment names, answered with a
+# reply naming its issue and the reporter's note, then resolved. Human threads,
+# other pull requests and the one merged 3 days ago stay untouched.
 filed_and_resolved() {
   [ "$RC" -eq 0 ] && jq -e '
     ([.writes[] | [.kind, .pr]] | sort) == [["reply",1],["reply",2],["resolve",1],["resolve",2]]
@@ -256,7 +260,7 @@ else bad 'live unclaimed findings must stay open' "$OUT"; fi
 cp "$BASE" "$FIXTURE"
 run_writer
 if filed_and_resolved; then
-  ok 'open and merged rolling PRs: each automatic thread is filed, answered with its issue and resolved'
+  ok 'open and recently merged rolling PRs: each automatic thread is filed, answered with its issue and resolved; one merged 3 days ago is skipped'
 else bad 'filed and resolved' "$OUT"; fi
 run_writer
 if idempotent; then
@@ -495,6 +499,7 @@ done <<'FILED'
 filed-mutant|reply="$REPLY_PREFIX$issue. $note$REPLY_TAIL"|reply="$REPLY_PREFIX${issue:+x}. $note$REPLY_TAIL" # $issue
 note-mutant|reply="$REPLY_PREFIX$issue. $note$REPLY_TAIL"|reply="$REPLY_PREFIX$issue$REPLY_TAIL" # $note
 lines-mutant|url: $root.html_url, line: $root.line, start_line: $root.start_line,|url: $root.html_url, line: null, start_line: $root.start_line,
+merged-window-mutant|> now - 86400)|> now - 86400 or true)
 FILED
 mutant unfiled-mutant 'if [ -z "$issue" ]; then' 'if false; then # [ -z "$issue" ]'
 jq '.unfiled=[10]' "$BASE" >"$FIXTURE"

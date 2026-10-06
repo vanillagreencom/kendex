@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Answer automatic review threads on every open or merged same-repository
-# kendex/refresh PR. Run from the consumer checkout after refresh-consumer.sh
+# Answer automatic review threads on every open same-repository kendex/refresh
+# PR and each one merged in the last 24 hours. Run from the consumer checkout after refresh-consumer.sh
 # in the same job, under the refresh workflow's concurrency group, with GH_REPO,
 # its scoped GH_TOKEN and the upstream KENDEX_ISSUES_TOKEN. The default-branch
 # change-class beside this package proves the render class, reading the kendex
@@ -59,7 +59,7 @@ hold() { # KEY PR MESSAGE
 }
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
-    'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
+    'Files automatic review threads on open kendex/refresh pull requests and ones merged in the last 24 hours upstream, replies with the issue and resolves them.' \
     'The workflow also sets GitHub run/summary variables for the reporter.' \
     'Outdated threads get a not-filed reply and resolution.' \
     'Live findings on unclaimed paths, findings routed elsewhere and ones without Issues access stay unfiled.' \
@@ -103,7 +103,9 @@ selected="$(jq -c --arg repo "$GH_REPO" '
   if all(.[]; (.number | type) == "number" and (.state | type) == "string"
       and (.head.ref | type) == "string" and (.head.repo.full_name | type) == "string")
   then [.[] | select(.head.ref == "kendex/refresh" and .head.repo.full_name == $repo)
-    | select(.state == "open" or .merged_at != null)
+    # The window answers a thread that arrives just after a merge. Every older
+    # merged pull request would cost one more GraphQL read on each run.
+    | select(.state == "open" or (.merged_at != null and (.merged_at | fromdateiso8601) > now - 86400))
     | if (.head.sha | type) == "string" and (.head.sha | test("^[0-9a-f]{40}$"))
         and (.user.login | type) == "string" and (.user.login | length) > 0
         and (.base.sha | type) == "string" and (.base.sha | test("^[0-9a-f]{40}$"))
