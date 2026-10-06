@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Decision IDs judged against the base branch: next-id skips a number the base
 # holds, a removed record's row included, check refuses an ID two records
-# share and passes a row whose document is gone, and get refuses an ID on more
-# than one INDEX row. Every row builds its own repositories, so a fetch one run
+# share and passes a row whose document is gone and whose Link cell became the
+# backticked filename, and get refuses an ID on more than one INDEX row. Every row builds its own repositories, so a fetch one run
 # makes never answers for the next.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -47,20 +47,23 @@ clone_repo() { # UPSTREAM DIR — the clone works on its own branch, lane
   git -C "$2" checkout -q -b lane
 }
 
-write_index() { # REPO ROW... — each ROW is ID:LINK[:STATUS]; rows start on line 3
-  local repo="$1" row id link status
+write_index() { # REPO ROW... — each ROW is ID:LINK[:STATUS[:unlinked]]; rows start on line 3
+  local repo="$1" row id link status form cell
   shift
   {
     printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |'
     printf '%s\n' '|------|----|----------|----------|-----------|--------------|--------|------|'
     for row in "$@"; do
-      IFS=: read -r id link status <<<"$row"
-      printf '| 2026-01-10 | %s | PROJ-1 | Decision %s | Reason | Never | %s | [Full](%s) |\n' \
-        "$id" "$id" "${status:-Active}" "$link"
+      IFS=: read -r id link status form <<<"$row"
+      # The decider's removal rule rewrites the Link cell to the backticked filename.
+      cell="[Full]($link)"
+      [[ "$form" != unlinked ]] || cell="\`$link\`"
+      printf '| 2026-01-10 | %s | PROJ-1 | Decision %s | Reason | Never | %s | %s |\n' \
+        "$id" "$id" "${status:-Active}" "$cell"
     done
   } >"$repo/docs/decisions/INDEX.md"
   for row in "$@"; do
-    IFS=: read -r id link status <<<"$row"
+    IFS=: read -r id link _ <<<"$row"
     printf '# %s: Decision\n' "$id" >"$repo/docs/decisions/$link"
   done
 }
@@ -163,16 +166,16 @@ build_edited() { # the lane changes the status of the base's own D035
   write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Superseded by D036"
 }
 
-build_removing() { # the lane removes the base's own D035 document; its row stays, the Link cell as written
+build_removing() { # the lane removes the base's own D035 document; its row stays, the Link cell now the backticked filename against the base's link
   build_ahead "$1"
   git -C "$1/work" pull -q --ff-only origin main
-  write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Removed"
+  write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Removed:unlinked"
   rm "$1/work/docs/decisions/D035-main.md"
 }
 
-build_removed() { # the base merged D035's removal: the row stays, the document is gone; the lane pulled it
+build_removed() { # the base merged D035's removal: the row stays with the backticked filename, the document is gone; the lane pulled it
   build_ahead "$1"
-  write_index "$1/up" D034:D034-first.md "D035:D035-main.md:Removed"
+  write_index "$1/up" D034:D034-first.md "D035:D035-main.md:Removed:unlinked"
   rm "$1/up/docs/decisions/D035-main.md"
   commit_all "$1/up" "main removes D035's document"
   git -C "$1/work" pull -q --ff-only origin main
@@ -445,6 +448,7 @@ next-id-index-absent~    BASE_REASON=index-absent~    BASE_REASON=""~a base with
 check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
 check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
 check-removed-record~    if [[ "$file_count" -gt 1 ]]; then~    if [[ "$file_count" -ne 1 ]]; then~a check that demands a document for every row
+check-removed-record~          status: .[6], link: (.[7] | cell_path), line: $line }~          status: .[6], link: .[7], line: $line }~an identity read from the Link cell as written
 next-id-past-removed~      | { id: .[1], research: .[2],~      | { id: (if .[6] == "Removed" then "" else .[1] end), research: .[2],~a next-id that skips a removed row
 check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
 check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts

@@ -18,7 +18,7 @@ Set `**Status**:` to the value above. For a revisit, rewrite the `**Decision**:`
 
 ## 2. INDEX row
 
-Set the Status column of that decision's row to the same value. For a revisit, rewrite the Decision, Rationale and Revisit When cells with the file. For a removal, write where the reason now lives in the Rationale cell: the code path or the principle doc. Never remove a row and never change its Link cell: the row keeps the ID reserved and a citation resolving, and `decisions check` reads the Link cell as the record's identity across branches.
+Set the Status column of that decision's row to the same value. For a revisit, rewrite the Decision, Rationale and Revisit When cells with the file. For a removal, write where the reason now lives in the Rationale cell: the code path or the principle doc. For a retirement or a removal that deletes the document, rewrite the Link cell to the backticked filename, `[Full](D0NN-x.md)` becoming `` `D0NN-x.md` ``, so no dead link remains; `decisions check` compares the filename the cell resolves to, so the record keeps its identity across branches. Never remove a row: it keeps the ID reserved and a citation resolving.
 
 ## 3. Code markers
 

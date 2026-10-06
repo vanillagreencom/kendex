@@ -1,1 +1,1 @@
-- A routine decision record may be removed once its reason lives in the code or principle doc it governs; its INDEX row keeps the ID reserved under the `Removed` status.
+- A routine decision record may be removed once its reason lives in the code or principle doc it governs; its INDEX row keeps the ID reserved under the `Removed` status, its Link cell rewritten to the bare filename so no dead link remains.

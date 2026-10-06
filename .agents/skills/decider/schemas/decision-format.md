@@ -11,7 +11,7 @@ Canonical constraints for decision documents and their index.
 |------|----|----------|----------|-----------|--------------|--------|------|
 ```
 
-Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell names the record's document and stays as written after that document is gone: `decisions check` reads it as the record's identity across branches. Rows are append-only, never re-sorted or removed: `next-id` allocates past the highest ID in the index and on the base branch, so a deleted row would free its ID for an unrelated choice. Row format: `../templates/index-row.md`.
+Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell names the record's document: as a link, `[Full](D0NN-x.md)`, while the document exists, and as the backticked filename (`` `D0NN-x.md` ``) once it is gone, so no dead link stays in a scope the commit-guards md-refs lane judges. `decisions check` compares the filename the cell resolves to, not the cell as written, so the record keeps its identity across branches through either form. Rows are append-only, never re-sorted or removed: `next-id` allocates past the highest ID in the index and on the base branch, so a deleted row would free its ID for an unrelated choice. Row format: `../templates/index-row.md`.
 
 Below the table: a Format Reference section with one link to this schema and one to the bar, the decider `SKILL.md` § What warrants a decision record, and why. It copies nothing from either.
 
@@ -44,8 +44,8 @@ Each `**Key**: value` line, metadata included, is its own paragraph, with one bl
 | `Active` | In effect — the default for a new decision |
 | `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded: the named components only |
 | `Superseded by [DECISION_ID]` | Fully replaced |
-| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved |
-| `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved |
+| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved, its Link cell the backticked filename |
+| `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved, its Link cell the backticked filename |
 
 A re-assessment that keeps the choice stays `Active` with its text rewritten; one that changes the choice is a new record that supersedes this one (`../workflows/update-decision.md`). `list` returns every decision whose status starts with `Active`, including partial supersessions.
 

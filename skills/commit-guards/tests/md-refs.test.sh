@@ -84,8 +84,9 @@ world_refs() {
 world_dec() { world_refs "$1"; put docs/decisions/D001-first.md '# D001\n\n## Context\n'; }
 world_adr() { world_dec "$1"; put docs/decisions/ADR-0007-x.md '# ADR-0007\n'; }
 # The decider's removal rule: D002's row stays after its document is gone,
-# the Link cell as written; D003 has neither a row nor a document.
-world_row() { world_dec "$1"; put docs/decisions/INDEX.md '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |\n|------|----|----------|----------|-----------|--------------|--------|------|\n| 2026-01-01 | D001 | — | First | Reason | Never | Active | [Full](D001-first.md) |\n| 2026-01-02 | D002 | — | Gone | Reason at `src/x.rs` | Never | Removed | [Full](D002-gone.md) |\n'; }
+# its Link cell the backticked filename; D003 has neither a row nor a document.
+index_rows() { printf '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |\n|------|----|----------|----------|-----------|--------------|--------|------|\n| 2026-01-01 | D001 | — | First | Reason | Never | Active | [Full](D001-first.md) |\n| 2026-01-02 | D002 | — | Gone | Reason at `src/x.rs` | Never | Removed | %s |\n' "$1"; } # D002-LINK-CELL
+world_row() { world_dec "$1"; put docs/decisions/INDEX.md "$(index_rows '`D002-gone.md`')"; }
 world_install() { repo "$1"; put guide.md '# Guide\n\n## Install\n'; }
 world_numbered() { repo "$1"; put guide.md '# Guide\n\n## 1. Install\n\n### 1.1.1 Choose a path\n'; }
 world_parens() { repo "$1"; put guide.md '# Guide\n\n## 1\n\n## Install\n'; put 'guide(foo).md' '# Guide\n\n## Install\n'; }
@@ -349,6 +350,16 @@ done
 run_rows "${rows[@]}" \
   "a README, a doc outside docs/architecture and a reference file are not judged, with the ten scoped files still read|fx_unscoped unscoped||--all|rc=0 $(clean 10 10)" \
   "COMMIT_GUARDS_MD_REFS_PATHS replaces the list|fx_unscoped replaced|COMMIT_GUARDS_MD_REFS_PATHS=docs/*.md|--all|rc=1 $(dead docs/design.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 2 2)"
+
+echo "=== the INDEX in the judged scope: a removed row's Link cell ==="
+# A consumer that widens the list to docs/*.md judges INDEX.md itself, where
+# the linked form of a row whose document is gone is a dead link. The
+# decider's removal rule writes the backticked filename for that reason.
+fx_index_scoped() { world_row "$1"; put AGENTS.md 'Clean.\n'; } # NAME
+fx_index_linked() { fx_index_scoped index-linked; put docs/decisions/INDEX.md "$(index_rows '[Full](D002-gone.md)')"; }
+run_rows \
+  "a removed row's backticked filename passes with INDEX.md in scope|fx_index_scoped index-scoped|COMMIT_GUARDS_MD_REFS_PATHS=docs/*.md|--all|rc=0 $(clean 5 4 0 "$DEC_YES")" \
+  "control: the linked form of a documentless row fails link-target there|fx_index_linked|COMMIT_GUARDS_MD_REFS_PATHS=docs/*.md|--all|rc=1 $(dead docs/decisions/INDEX.md 4 "$(untracked '](D002-gone.md)' docs/decisions/D002-gone.md)");$(failed 1 6 4 0 "$DEC_YES")"
 
 echo "=== citations in comment text and in TOML strings ==="
 SH='#!/usr/bin/env bash\n'

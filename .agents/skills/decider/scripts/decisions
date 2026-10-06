@@ -249,10 +249,11 @@ regex_valid() { # REGEX
 # backticked or bare `.md` filename so an index written from an older row
 # template still resolves its documents instead of silently reporting none.
 #
-# Each row also carries its INDEX line number and its link cell as written,
-# which the duplicate and base checks name and compare. The link, not the whole
-# row, is a record's identity across branches: a status edit on a branch keeps
-# the record it edits.
+# Each row also carries its INDEX line number and the filename its link cell
+# resolves to, which the duplicate and base checks name and compare. That
+# resolved filename, not the cell as written or the whole row, is a record's
+# identity across branches: a status edit, or a removal that rewrites the cell
+# to the backticked filename, keeps the record it edits.
 parse_index() {
   if [[ -z "$INDEX_FILE" || ! -f "$INDEX_FILE" ]]; then
     echo '[]'
