@@ -527,20 +527,32 @@ impl EngineReport {
     }
 
     /// Each package its request asked for ([`EngineReport::asked_for`])
-    /// that this pass skipped on conflict: a row of it is a dead stop the
+    /// that this pass skipped on conflict: a row of it answers a refused
+    /// rendering ([`EngineReport::refused`]), or is a dead stop the
     /// person's own edits do not account for, so what it asked for is not
-    /// on disk. A package held back by their own edits alone keeps them
-    /// where it installs, and its record. What a run's exit is read from.
+    /// on disk. A refused rendering counts whatever the row's cause: edits
+    /// kept in the earlier installation are why those files stay, not why
+    /// the rendering asked for is missing. A package held back by their own
+    /// edits alone keeps them where it installs, and its record. What a
+    /// run's exit is read from.
     pub fn skipped_asked(&self) -> Vec<(ItemKind, String)> {
         let asked = self.asked_for();
+        let refused: BTreeSet<(ItemKind, &str, HarnessId)> = self
+            .refused
+            .iter()
+            .map(|refused| (refused.kind, refused.name.as_str(), refused.harness))
+            .collect();
         let skipped: BTreeSet<(ItemKind, String)> = self
             .drift
             .iter()
             .filter(|row| {
-                row.dead_stop()
-                    && !self
-                        .own_edit_rows
-                        .contains(&(row.kind, row.name.clone(), row.harness))
+                let answers_refusal = row.state == DriftState::Conflict
+                    && refused.contains(&(row.kind, row.name.as_str(), row.harness));
+                answers_refusal
+                    || row.dead_stop()
+                        && !self
+                            .own_edit_rows
+                            .contains(&(row.kind, row.name.clone(), row.harness))
             })
             .map(|row| (row.kind, row.name.clone()))
             .filter(|item| asked.contains(item))

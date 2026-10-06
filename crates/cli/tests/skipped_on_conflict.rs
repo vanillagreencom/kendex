@@ -126,6 +126,9 @@ struct Row {
     before: &'static [(&'static [&'static str], i32)],
     /// Installed skills the person edits once the adds before have run.
     edited: &'static [&'static str],
+    /// Skills whose next rendering every tool refuses, from the moment
+    /// the adds before have run.
+    refused: &'static [&'static str],
     run: Run,
     status: i32,
     names: &'static [&'static str],
@@ -137,7 +140,8 @@ const LINEAR: &[&str] = &["--skill", "linear"];
 
 /// One row per way an item comes to be asked for, and the ways one is
 /// not: an empty repository, a skip of a package or set an earlier add
-/// declared, and an item held back by the person's own edits.
+/// declared, and an item held back by the person's own edits. A refused
+/// rendering is a skip even where those edits keep the earlier copy.
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
@@ -147,6 +151,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &[],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(ORCH),
             status: 0,
             names: &[],
@@ -157,6 +162,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(ORCH),
             status: SKIPPED,
             names: &["skill review-gate"],
@@ -167,6 +173,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(&["--skill", "lead"]),
             status: SKIPPED,
             names: &["skill review-gate"],
@@ -177,6 +184,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(&["--skill", "review-gate,linear"]),
             status: SKIPPED,
             names: &["skill review-gate"],
@@ -187,6 +195,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate", "notes"],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(&["--skill", "review-gate,notes,linear"]),
             status: SKIPPED,
             names: &["skill notes", "skill review-gate"],
@@ -197,6 +206,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &[],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(&["--skill", "twin,linear"]),
             status: SKIPPED,
             names: &["skill twin"],
@@ -207,6 +217,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[],
             edited: &[],
+            refused: &[],
             run: Run::Add(&["--bundle", "gate"]),
             status: SKIPPED,
             names: &["skill review-gate"],
@@ -217,6 +228,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["notes"],
             before: &[(&["--skill", "notes"], SKIPPED)],
             edited: &[],
+            refused: &[],
             run: Run::Add(LINEAR),
             status: 0,
             names: &[],
@@ -227,6 +239,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[(&["--bundle", "gate"], SKIPPED)],
             edited: &[],
+            refused: &[],
             run: Run::Add(LINEAR),
             status: 0,
             names: &[],
@@ -237,6 +250,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &["review-gate"],
             before: &[(ORCH, SKIPPED)],
             edited: &[],
+            refused: &[],
             run: Run::Add(LINEAR),
             status: 0,
             names: &[],
@@ -247,6 +261,7 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &[],
             before: &[(LINEAR, 0)],
             edited: &["linear"],
+            refused: &[],
             run: Run::Add(LINEAR),
             status: 0,
             names: &[],
@@ -257,9 +272,32 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             in_the_way: &[],
             before: &[(LINEAR, 0)],
             edited: &["linear"],
+            refused: &[],
             run: Run::Apply,
             status: 0,
             names: &[],
+            lands: &[],
+        },
+        Row {
+            case: "a named skill refused over the person's own edits",
+            in_the_way: &[],
+            before: &[(LINEAR, 0)],
+            edited: &["linear"],
+            refused: &["linear"],
+            run: Run::Add(LINEAR),
+            status: SKIPPED,
+            names: &["skill linear"],
+            lands: &[],
+        },
+        Row {
+            case: "a declared skill refused over the person's own edits",
+            in_the_way: &[],
+            before: &[(LINEAR, 0)],
+            edited: &["linear"],
+            refused: &["linear"],
+            run: Run::Apply,
+            status: SKIPPED,
+            names: &["skill linear"],
             lands: &[],
         },
     ];
@@ -293,6 +331,12 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             let installed = project.join(format!(".claude/skills/{name}/SKILL.md"));
             let body = fs::read_to_string(&installed).unwrap();
             fs::write(&installed, format!("{body}Mine.\n")).unwrap();
+        }
+        for name in row.refused {
+            write(
+                &catalog.join(format!("skills/{name}/SKILL.md.disabled")),
+                "Off.\n",
+            );
         }
         let output = match row.run {
             Run::Add(items) => add(items),
