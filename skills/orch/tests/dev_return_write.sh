@@ -226,6 +226,13 @@ mutate_file "$CLASS_WRITE" 'class-base=*) validate_class_base="${field#*=}" ;;' 
 WRITE="$CLASS_WRITE"
 table "control: dropping the class base records the round's full pass as the branch's|$CLASS_ARGS|rc=0 .validate_mode=full has:validate_class_base=false"
 WRITE="$WRITE_SHIPPED"
+# Beside the class base the receipt carries what the command covered, which
+# submit reads: its whole battery reuses, a subset never does.
+printf 'validate: lanes=lint,test selection=battery\n' > "$VRUN_FIX_CLASS/log"
+table "a full pass whose command ran its whole battery carries battery beside the class base|$CLASS_ARGS|rc=0 .validate_mode=full .validate_selection=battery .validate_class_base=$FIX_HEAD roundtrip=valid"
+printf 'validate: lanes=lint selection=subset\n' > "$VRUN_FIX_CLASS/log"
+table "a full pass whose command stood lanes down carries subset beside the class base|$CLASS_ARGS|rc=0 .validate_mode=full .validate_selection=subset .validate_class_base=$FIX_HEAD roundtrip=valid"
+rm -- "${VRUN_FIX_CLASS:?}/log"
 
 echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
 # AW's main holds the mac-run workflow, a Package.swift naming neither platform
@@ -625,6 +632,7 @@ utc_at() { jq -nr --argjson t "$1" '$t | todate'; }
 FG_OK="$(foreground_record ok)"
 FG_FAILED="$(foreground_record failed exit=1)"
 FG_UNREPORTED="$(foreground_record unreported selection=unreported -lanes)"
+FG_BATTERY="$(foreground_record battery selection=battery)"
 FG_UNREPORTED_LANES="$(foreground_record unreported-lanes selection=unreported)"
 FG_SUBSET_NOLANES="$(foreground_record subset-nolanes -lanes)"
 FG_BACKWARDS="$(foreground_record backwards ended-at=2025-12-31T23:59:59Z)"
@@ -642,6 +650,7 @@ FG_FAIL="--worktree $WT --kind implement --issue i --round-id $RID --branch b --
 FOREGROUND_ROWS=(
   "a passing record writes the run's mode, wall time and lanes and round-trips|$FG_ARGS --validate pass --validate-record $FG_OK|rc=0 .validate=pass .validate_mode=full .validate_time.started_at=2026-01-01T00:00:00Z .validate_time.seconds=3300 .validate_selection=subset .validate_lanes=lint,test roundtrip=valid"
   "an unreported selection writes no lanes|$FG_ARGS --validate pass --validate-record $FG_UNREPORTED|rc=0 .validate_selection=unreported has:validate_lanes=false roundtrip=valid"
+  "a battery selection writes it with its lanes|$FG_ARGS --validate pass --validate-record $FG_BATTERY|rc=0 .validate_selection=battery .validate_lanes=lint,test roundtrip=valid"
   "a FAILING result beside a failed record|$FG_ARGS --validate FAILING:+scripts/validate --validate-record $FG_FAILED|rc=0 .validate=FAILING:+scripts/validate .validate_mode=full roundtrip=valid"
   "a pass beside a nonzero exit|$FG_FAIL --validate pass --validate-record $FG_FAILED|rc=2 written=no stderr~dev-return-write:+validate-disagrees+validate=pass+run=FAILING=true"
   "no-verdict beside a record, which states no timeout|$FG_FAIL --validate no-verdict --validate-note scoped --validate-record $FG_OK|rc=2 written=no stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=pass=true"
@@ -706,6 +715,13 @@ for control in "${FOREGROUND_CONTROLS[@]}"; do
   table "control: without the $name rule the row's refusal becomes a receipt|$args|$expect"
   WRITE="$WRITE_SHIPPED"
 done
+# The battery selection's control runs the other way: with battery outside the
+# grammar the record that reports it is refused.
+BATTERY_WRITE="$(mutant_scripts record-battery-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$BATTERY_WRITE" "'^(all|subset|battery|unreported)\$'" "'^(all|subset|unreported)\$'"
+WRITE="$BATTERY_WRITE"
+table "control: without battery in the grammar its record is refused|$FG_FAIL --validate pass --validate-record $FG_BATTERY|rc=2 written=no stderr~dev-return-write:+validate-record-value+path=$FG_BATTERY+field=selection+value=battery=true"
+WRITE="$WRITE_SHIPPED"
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # Every value-taking flag refuses a missing value and an option token in its

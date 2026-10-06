@@ -251,6 +251,7 @@ lane_dir="$(validate_run_dir "$TMP_ROOT/lane-record" full)"
 LANE_ROWS=(
   "all lanes|validate: lanes=lint,test selection=all|lanes=lint,test selection=all"
   "subset|validate: lanes=unit-test,types.v2,lint_1 selection=subset|lanes=unit-test,types.v2,lint_1 selection=subset"
+  "whole battery|validate: lanes=lint,test selection=battery|lanes=lint,test selection=battery"
   "no line|build passed|selection=unreported"
   "empty names|validate: lanes= selection=all|selection=unreported"
   "empty element|validate: lanes=lint,,test selection=subset|selection=unreported"
@@ -1139,6 +1140,26 @@ mutant mutant-record-class-base '"${record_class_base:+ class-base=$record_class
 run_script "$MUTANT" --record --run-dir "$round_dir"
 assert_eq "$RC $(record_field class-base "$OUT")" "0 " \
   "control: with the class base unprinted the full run's record reads as the branch's" "$ERR"
+# Beside that class base, submit reads the selection: only a command that ran
+# its whole battery stands for the branch. The last validate: line owns it.
+# label|selection the command reports|record's selection
+ROUND_SELECTION_ROWS=(
+  "a command that ran its whole battery|battery|battery"
+  "a command that stood lanes down for the round's class|subset|subset"
+  "a command that ran every lane the round's class left eligible|all|all"
+)
+for row in "${ROUND_SELECTION_ROWS[@]}"; do
+  IFS='|' read -r label reported want <<<"$row"
+  printf 'validate: lanes=lint,test selection=%s\n' "$reported" >> "$round_dir/log"
+  run_script "$RUN" --record --run-dir "$round_dir"
+  assert_eq "$RC $(record_field selection "$OUT") $(record_field class-base "$OUT")" "0 $want $round_base" \
+    "round-base record: $label" "$ERR"
+done
+printf 'validate: lanes=lint,test selection=battery\n' >> "$round_dir/log"
+mutant mutant-record-no-battery 'selection=(all|subset|battery)$/' 'selection=(all|subset)$/'
+run_script "$MUTANT" --record --run-dir "$round_dir"
+assert_eq "$RC $(record_field selection "$OUT") $(record_field class-base "$OUT")" "0 unreported $round_base" \
+  "control: with battery outside the grammar the whole battery reads as unreported, which submit never reuses" "$ERR"
 mutant mutant-round-base 'class_base="$base_sha"' 'class_base=""'
 # The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
 RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"

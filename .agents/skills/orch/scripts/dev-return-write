@@ -54,9 +54,10 @@
 # its place are its evidence, named in --validate-note, which it requires. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses only a full
-# pass with no validate_class_base, so a range pass recorded as full, a full
-# pass whose class --record reads from a round base recorded without it, or a
-# failed run recorded as a pass, would stand in for the whole battery.
+# pass with no validate_class_base or with validate_selection battery, so a
+# range pass recorded as full, a full pass whose class --record reads from a
+# round base recorded without it, or a failed run recorded as a pass, would
+# stand in for the whole battery.
 # validate_class_base is that base, present only where --record reports one.
 # A pass or no-verdict requires the
 # run, or the record below. A failing round may omit both, because dev-validate-run refuses some
@@ -208,7 +209,7 @@ die() {
       validate-record-line) printf 'Each record line is one KEY=VALUE pair, its key one --help names, given once.\n' ;;
       validate-record-missing) printf 'The foreground validation record names no value for the field; --help lists the required fields.\n' ;;
       validate-record-value) printf 'The value does not match the grammar --help gives for the field.\n' ;;
-      validate-record-lanes) printf 'lanes is required beside selection all or subset and refused beside unreported, as the validation command output contract pairs them.\n' ;;
+      validate-record-lanes) printf 'lanes is required beside selection all, subset or battery and refused beside unreported, as the validation command output contract pairs them.\n' ;;
       validate-record-time) printf 'The run cannot end before it started.\n' ;;
       validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       round-record-unreadable) printf 'A fix receipt names a run only against its round record, and this one carries no base_sha of 40 hex or no delegated_at epoch.\n' ;;
@@ -260,7 +261,8 @@ FAILING result is accepted beside any run. A pass or no-verdict requires it,
 or --validate-record below; a FAILING round with no run omits both and
 records validate_mode null. validate_class_base is the round base --record
 reports the run's class was read from, absent where the class covered the
-branch; submit reuses only a full pass without one. validate_time is
+branch; submit reuses only a full pass without one or with selection
+battery. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
 that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
@@ -276,8 +278,8 @@ per line, each key once:
   started-at=TIME           when the run started, UTC YYYY-MM-DDTHH:MM:SSZ
   ended-at=TIME             when it ended, no earlier than started-at
   exit=N                    the entry point's exit status, 0 to 999
-  selection=all|subset|unreported
-  lanes=NAMES               comma-separated, beside all or subset only
+  selection=all|subset|battery|unreported
+  lanes=NAMES               comma-separated, beside all, subset or battery only
 selection and lanes are the validate: line of the validation command output
 contract (references/artifact-checks.md). Every key but lanes is required.
 The writer derives the wall time from the two times and the verdict from the
@@ -488,7 +490,7 @@ read_validate_record() {
       started-at) record_value "$path" "$key" "$value" "$UTC_TIME"; validate_started_at="$value" ;;
       ended-at) record_value "$path" "$key" "$value" "$UTC_TIME"; validate_ended_at="$value" ;;
       exit) record_value "$path" "$key" "$value" '^(0|[1-9][0-9]{0,2})$'; exit_status="$value" ;;
-      selection) record_value "$path" "$key" "$value" '^(all|subset|unreported)$'; validate_selection="$value" ;;
+      selection) record_value "$path" "$key" "$value" '^(all|subset|battery|unreported)$'; validate_selection="$value" ;;
       # The lane grammar is the validation command output contract's.
       lanes) record_value "$path" "$key" "$value" '^[[:alnum:]_.-]+(,[[:alnum:]_.-]+)*$'; validate_lanes="$value" ;;
       *) die validate-record-line "path=$path" "line=$line_no" ;;

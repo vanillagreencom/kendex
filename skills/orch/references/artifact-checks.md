@@ -15,9 +15,9 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 
 | Item | Contract |
 |------|----------|
-| Line | `validate: lanes=<comma-separated names> selection=all\|subset` |
+| Line | `validate: lanes=<comma-separated names> selection=all\|subset\|battery` |
 | Names | Non-empty ASCII names using letters, digits, `.`, `_` or `-`; no empty comma-separated element |
-| `selection` | Eligible lanes follow the command's invocation mode and applicability rules, including change class and changed paths. `all` means every eligible lane; `subset` means the command chose fewer eligible lanes |
+| `selection` | Eligible lanes follow the command's invocation mode and applicability rules, including change class and changed paths. `all` means every eligible lane; `subset` means the command chose fewer eligible lanes; `battery` means every lane the command has, none stood down for the change class or changed paths |
 | Repeated lines | The last line starting with `validate:` owns the result |
 | Missing or malformed last line | `selection=unreported`, with no `lanes` field; does not change the run verdict |
 | `validate-mode` | Remains `full`, `range` or `ci`; names the invocation, not the lane selection |

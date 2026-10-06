@@ -1,0 +1,1 @@
+- A validation command can report `selection=battery`, and submit then reuses a fix round's full pass that ran the whole battery instead of running that battery again.
