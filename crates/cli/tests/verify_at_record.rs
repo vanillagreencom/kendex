@@ -197,14 +197,8 @@ fn at_record_declares_the_dependencies_the_recorded_commit_required() {
     );
     requires(&world, "first");
     commit(&world.catalog, "second requires first");
-    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
-        let output = kendex(&world.home, &world.project, args);
-        assert!(
-            output.status.success(),
-            "kendex {args:?}: {}",
-            said(&output)
-        );
-    }
+    let output = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+    assert!(output.status.success(), "{}", said(&output));
     commit(&world.project, "refreshed");
     let (refreshed, document) = at_record(&world, None);
     assert!(refreshed.status.success(), "{}", said(&refreshed));
@@ -265,14 +259,8 @@ fn at_record_refuses_a_record_older_than_the_base_record() {
         "\nA paragraph added later.\n",
     );
     commit(&world.catalog, "the catalog moves on");
-    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
-        let output = kendex(&world.home, &world.project, args);
-        assert!(
-            output.status.success(),
-            "kendex {args:?}: {}",
-            said(&output)
-        );
-    }
+    let output = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+    assert!(output.status.success(), "{}", said(&output));
     commit(&world.project, "brought current");
     git(&world.project, &["tag", "current"]);
     git(&world.project, &["checkout", "-q", INSTALLED, "--", "."]);

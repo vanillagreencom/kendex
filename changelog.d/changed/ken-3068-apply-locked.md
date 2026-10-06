@@ -1,0 +1,1 @@
+- `kendex apply` holds every package `.kendex-lock.json` places at the catalog commit it records, so deleting or editing one package's table in `kendex.toml` changes only that package. A new or redeclared table still installs from the newest catalog. `kendex refresh` is the command that brings packages current; `kendex source refresh` followed by `kendex apply` no longer does.

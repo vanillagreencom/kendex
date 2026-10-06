@@ -672,7 +672,7 @@ pub fn missing_commit_problem(
 
 fn unplaced_commit(repo: &str, subject: &str) -> String {
     format!(
-        "{subject} cannot be placed: the mirror of {repo} does not hold it; fix=\"kendex source refresh\"; if still missing after refresh, the record names a commit the source never held"
+        "{subject} cannot be placed: the mirror of {repo} does not hold it; fix=\"kendex source refresh\"; if still missing after refresh, the record names a commit the source never held, and kendex refresh rewrites it"
     )
 }
 

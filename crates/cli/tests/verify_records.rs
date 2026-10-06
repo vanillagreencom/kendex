@@ -1337,8 +1337,9 @@ fn a_recorded_source_or_set_the_pass_cannot_read_fails_the_record_row_by_name() 
 
 /// A scope whose last package is gone keeps a record of its sources, and
 /// that record is held to what the pass reads though the plan writes no
-/// entry: a commit edited on it fails the row, and the next apply puts
-/// the record right again.
+/// entry: a commit edited on it fails the row, and a refresh puts the
+/// record right again. An apply keeps the record's account of where each
+/// source sits, so it is not the step that rewrites one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
@@ -1348,11 +1349,8 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
     let text = fs::read_to_string(&manifest).unwrap();
     let packages = text.find("[skills.second]").unwrap();
     write(&manifest, &text[..packages]);
-    let apply = || {
-        let output = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
-        assert!(output.status.success(), "apply: {}", said(&output));
-    };
-    apply();
+    let output = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+    assert!(output.status.success(), "apply: {}", said(&output));
     let lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(world.project.join(RECORD)).unwrap()).unwrap();
     assert!(
@@ -1378,8 +1376,9 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
         )),
         "{record:?}"
     );
-    apply();
-    commit(&world.project, "applied");
+    let output = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+    assert!(output.status.success(), "refresh: {}", said(&output));
+    commit(&world.project, "refreshed");
     let (_, document) = verify(&world, None);
     let record = row(&document, "record", RECORD, None).unwrap();
     assert_eq!(record.state, State::Ok, "{record:?}");
@@ -1442,10 +1441,8 @@ fn a_mirror_behind_the_record_names_source_refresh_and_recovers() {
     let newer = git(&world.catalog, &["rev-parse", "HEAD"])
         .trim()
         .to_owned();
-    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
-        let output = kendex(&world.home, &world.project, args);
-        assert!(output.status.success(), "{}", said(&output));
-    }
+    let output = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+    assert!(output.status.success(), "{}", said(&output));
     commit(&world.project, "newer install");
     fs::remove_dir_all(&mirror).unwrap();
     fs::rename(saved, &mirror).unwrap();
