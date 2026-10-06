@@ -909,7 +909,7 @@ lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "control: pending drops an answered ask when it judges answers as closes"
 
 new_repo control_answer_unknown
-mutant answer-without-ask $'      lm_owner_ask "$MSGID"\n      BY=text' $'      : "$MSGID"\n      BY=text'
+mutant answer-without-ask $'      lm_ask "$MSGID"\n      [ "$ITEM" != overseer ] || BY=text' $'      : "$MSGID"\n      [ "$ITEM" != overseer ] || BY=text'
 lm send --item overseer --re unknown --delivery-id new:reply --file "$(text a 'b')"
 assert_eq "$RC" "0" "control: bypassing the owner ask lookup admits an answer with no ask"
 
@@ -926,7 +926,7 @@ assert_eq "$RC=$(field "$BOX/to-lane.jsonl" '.kind' | wc -l | tr -d ' ')" "0=2" 
 
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
-mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
+mutant ref-lane-only 'lm_ask_find "$REF" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 

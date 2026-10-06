@@ -247,10 +247,13 @@ assert_eq "$RELAUNCHED" "EVENT lane-question KEN-86 ${RELAUNCH_ASK#id=}" \
 # An answer the lane read sits on a line the cursor counts: the directive sent
 # after it is on the line past the cursor, unread, never taken for read.
 answered_first() {
+  local ask
   mail_reset KEN-85
   receipts KEN-85 "" OVERSEE_WATCH_LANE_MAIL="$LANE_MAIL"
+  printf 'Merge now?\n' > "$TMP_ROOT/ask.txt"
+  ask="$(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" ask --item KEN-85 --file "$TMP_ROOT/ask.txt")"
   printf 'Merge it.\n' > "$TMP_ROOT/answer.txt"
-  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item KEN-85 --root "$CASE_REPO_ROOT" --re some-ask \
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item KEN-85 --root "$CASE_REPO_ROOT" --re "${ask#id=}" \
     --file "$TMP_ROOT/answer.txt" >/dev/null)
   lane_reads KEN-85
   ANSWERED_ID="$(direct KEN-85 'Halt after the answer.')"
