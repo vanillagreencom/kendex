@@ -13,9 +13,9 @@
 | `RATIONALE_SUMMARY` | the key reason | `Battle-tested, ecosystem support` |
 | `REVISIT_WHEN` | the trigger | `Alternative runtime outperforms tokio 2x` |
 | `STATUS` | See `../schemas/decision-format.md` | `Active (ThreadBound → D017)` |
-| `LINK` | `[Full](DECISION_ID-descriptor.md)` while the document exists; the backticked filename once it is gone | `[Full](D034-async-runtime.md)` |
+| `LINK` | See `../schemas/decision-format.md` § INDEX.md: `[Full](DECISION_ID-descriptor.md)` while the document exists, the backticked filename once it is gone | `[Full](D034-async-runtime.md)` |
 
-The Link cell names the decision file; the CLI resolves body search and `get` through it, and `decisions check` compares the filename the cell resolves to as the record's identity across branches. A retired or removed record's cell becomes that filename in a code span (`` `D034-async-runtime.md` ``): the identity holds and no dead link remains.
+The Link cell names the decision file; the CLI resolves body search and `get` through it, and `decisions check` compares the filename the cell resolves to as the record's identity across branches. The cell's form follows the document's existence, as that schema states: a retired or removed record whose pointer document is kept keeps its link, and one whose document is deleted carries the filename in a code span (`` `D034-async-runtime.md` ``), so the identity holds and no dead link remains.
 
 Append new rows at the end of the table, before the `---` separator; never re-sort, even for a decision written up late.
 

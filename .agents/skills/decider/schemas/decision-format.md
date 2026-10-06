@@ -44,8 +44,8 @@ Each `**Key**: value` line, metadata included, is its own paragraph, with one bl
 | `Active` | In effect — the default for a new decision |
 | `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded: the named components only |
 | `Superseded by [DECISION_ID]` | Fully replaced |
-| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved, its Link cell the backticked filename |
-| `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved, its Link cell the backticked filename |
+| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved, its Link cell following § INDEX.md |
+| `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved, its Link cell following § INDEX.md |
 
 A re-assessment that keeps the choice stays `Active` with its text rewritten; one that changes the choice is a new record that supersedes this one (`../workflows/update-decision.md`). `list` returns every decision whose status starts with `Active`, including partial supersessions.
 
