@@ -597,7 +597,7 @@ done
 # The fields are split on ^, since the replaced code holds a pipe.
 # label^old^new^status^cycle^worktree merged exit^tracker env^expected
 MERGED_CONTROLS=(
-  "control: without the cycle reading a recorded merge closes without the flag^  jq -e '.cycle.pr? | numbers' <<<\"\$record\" >/dev/null 2>&1 && return 0^  :^running^7^1^LANE_CLOSE_NONE=1^merged=0"
+  "control: without the cycle reading a recorded merge closes without the flag^  record_merged && return 0^  :^running^7^1^LANE_CLOSE_NONE=1^merged=0"
   "control: worktree merged's exit 1 read as merged passes the flag for an unmerged item^    1) return 1 ;;^    1) return 0 ;;^running^-^1^LANE_CLOSE_NONE=1^merged=1"
   "control: without the finished gate a stale cycle passes the flag for an open item^  if [[ \"\$ITEM_END\" == completed ]] && item_merged; then^  if item_merged; then^running^7^0^LANE_CLOSE_TRACKER_STATE_TYPE=started^merged=1"
   "control: a gate on any terminal state passes the flag for a canceled item^  if [[ \"\$ITEM_END\" == completed ]] && item_merged; then^  if [[ -n \"\$ITEM_END\" ]] && item_merged; then^running^7^0^LANE_CLOSE_TRACKER_STATE_TYPE=canceled^merged=1"
@@ -1068,6 +1068,36 @@ write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped ' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
+
+echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
+# A merged lane whose item stays open for a box the overseer checks itself:
+# its close-out removed its worktree, so the provider answers the stop with
+# the removed-worktree line. SCRIPT closes it with the record carrying pull
+# request CYCLE's merge, or no cycle for -. MERGED_OPEN reads the refusal, the
+# skipped stop, the host close with and without --merged, the window kill, the
+# record, the files kept and their removal.
+merged_open_row() { # SCRIPT CYCLE
+  write_state running claude /host; write_panes python; claude_screen
+  if [[ "$2" != - ]]; then
+    jq --argjson pr "$2" '.lanes[0].cycle = {pr: $pr}' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
+  fi
+  LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$1" --state-dir "$FLEET_DIR"
+  MERGED_OPEN="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=idle pane=%7$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped item=KEN-1 harness=claude cause=worktree-removed$' <<<"$OUT" || true) plain=$(grep -c -x 'close --item KEN-1 host=/host' "$HOST_CALLS" || true) merged=$(grep -c -x 'close --item KEN-1 --merged host=/host' "$HOST_CALLS" || true) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(sed -n 's/^lane-close: item-files-kept item=KEN-1 cause=//p' <<<"$OUT") remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true)"
+}
+# label|cycle|expected
+MERGED_OPEN_ROWS=(
+  "a merged-cycle idle lane with an open item and no worktree closes, its item and files kept|7|rc=0 live=0 skipped=1 plain=1 merged=0 kill=1 status=done kept=open remove=0"
+  "the same lane with no cycle recorded refuses as live and changes nothing|-|rc=1 live=1 skipped=0 plain=0 merged=0 kill=0 status=running kept= remove=0"
+)
+for row in "${MERGED_OPEN_ROWS[@]}"; do
+  IFS='|' read -r label cycle want <<<"$row"
+  merged_open_row "$SCRIPT" "$cycle"
+  assert_eq "$MERGED_OPEN" "$want" "$label"
+done
+MUTANT="$(mutant lane-close-merged-open '      1) record_merged || { message lane-live' '      1) { message lane-live')"
+merged_open_row "$MUTANT" 7
+assert_eq "$(grep -o '^rc=[0-9]* live=[0-9]*' <<<"$MERGED_OPEN")" 'rc=1 live=1' \
+  'control: without the merged-cycle acceptance a merged idle lane on an open item refuses as live'
 
 echo '=== a stopped sandbox answering 4 without the removed-worktree line refuses ==='
 write_state running claude /host; write_panes python; claude_screen
