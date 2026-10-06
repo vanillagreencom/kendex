@@ -620,14 +620,17 @@ pub struct PlanOptions {
     /// declaration held at a commit this machine cannot read, where
     /// `verify --at-record` keeps it held: skipped, the write would de-list
     /// its renders. Under a hold, a write likewise reads fresh every
-    /// follower of a source declared at another repository or revision
-    /// than the record's account of it was written for, where any other
-    /// hold keeps it: held at its recorded commit, the write would keep
-    /// the source's entry and no write would ever apply the edit, while a
-    /// single-package update or an add holds those followers, keeps that
-    /// entry, and leaves the edit pending, and `verify --at-record` holds
-    /// them too but reads the source at the revision declared now
-    /// ([`PlanOptions::never_applied`]).
+    /// follower of a source declared at another revision than the record's
+    /// account of it was written for, where any other hold keeps it: held
+    /// at its recorded commit, the write would keep the source's entry and
+    /// no write would ever apply the edit, while a single-package update or
+    /// an add holds those followers, keeps that entry, and leaves the edit
+    /// pending, and `verify --at-record` holds them too but reads the
+    /// source at the revision declared now ([`PlanOptions::never_applied`]).
+    /// A source declared at another repository has no follower any hold
+    /// can place, since the record installed none from that repository:
+    /// every hold reads its followers fresh from it, and a single-package
+    /// update or an add records the rebind at once.
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
@@ -727,10 +730,11 @@ impl PlanOptions {
     /// A plan that names no package: every follower the record can place
     /// holds at the commit its lock entries record, so a re-render reads
     /// what is installed; one it cannot place resolves fresh, as
-    /// [`PlanOptions::update_only`] says. A source declared at another
-    /// repository or revision than the record was written for still holds,
-    /// since what this reads is the record as it stands. What
-    /// `verify --at-record` checks against, with
+    /// [`PlanOptions::update_only`] says. The followers of a source
+    /// declared at another revision than the record was written for still
+    /// hold, since what this reads is the record as it stands; those of one
+    /// declared at another repository are ones the record cannot place, and
+    /// resolve fresh. What `verify --at-record` checks against, with
     /// [`PlanOptions::never_applied`] set so each source reads at the
     /// revision declared now.
     pub fn at_record() -> Self {

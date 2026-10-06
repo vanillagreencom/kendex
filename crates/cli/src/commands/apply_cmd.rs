@@ -83,13 +83,14 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     }
     // Held at the record: apply has no copy of the manifest before the
     // edit to diff against, and needs none. A deleted table is an orphan
-    // and goes; a new table, or one whose source is now declared at
-    // another repository or revision, is one the record cannot place and
-    // resolves at that source's revision; every other package keeps its
-    // recorded commit whatever the mirror holds. The record keeps no
-    // package's own revision, so a package whose `rev` is removed keeps
-    // the commit it was pinned at. Bringing a catalog current is
-    // refresh's.
+    // and goes; a table with a `rev` of its own, or in a set with one,
+    // reads that revision; of the rest, a new table, or one whose source
+    // is now declared at another repository or revision, is one the record
+    // cannot place and resolves at that source's revision, and every other
+    // package keeps its recorded commit whatever the mirror holds. The
+    // record keeps no package's own revision, so a package whose `rev` is
+    // removed keeps the commit it was pinned at. Bringing a catalog
+    // current is refresh's.
     let options = PlanOptions {
         remove_orphans: true,
         removal_filter: None,
