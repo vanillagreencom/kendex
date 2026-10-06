@@ -366,6 +366,19 @@ jobs:
           fi
           echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
           exit "$status"
+      # The commit lane's changelog check over the whole change, its package
+      # version rule included. The commit chain runs the copy in the
+      # committing worktree, so a branch cut before a rule landed commits
+      # past it; here the merged tree's copy judges the range the changes job
+      # classifies. Both events: a merge group is the run that sees the base
+      # the branch actually merges into.
+      - id: changelog-entries
+        name: changelog-entries (fragments and package versions over the change)
+        if: always()
+        working-directory: candidate
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: skills/commit-guards/scripts/changelog-entries --base "$BASE"
 
   # SHARDED: the shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and

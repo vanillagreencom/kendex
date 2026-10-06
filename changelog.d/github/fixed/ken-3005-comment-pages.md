@@ -1,0 +1,1 @@
+- `find-comment` and `check-review-replies` read every page of a pull request's comments, so a busy pull request's latest summary is found.

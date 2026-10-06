@@ -1,0 +1,1 @@
+- The pull request comment triage finds its own earlier summary under a GitHub App installation token, which answers `gh api user` with 403.
