@@ -46,35 +46,37 @@ COMMAND="${rest#*$'\t'}"
 [ -n "$WD" ] && [ -n "$BASE_EXPR" ] && [ -n "$COMMAND" ] ||
   { echo "changelog-entries-ci: step=incomplete value=[$step]" >&2; exit 1; }
 
-# EVENT | the event payload GitHub sends | its base | its head
+# EVENT | the event payload GitHub sends | its base
 # Each event that runs the step carries both a base and a head commit; BASE
 # must be the base, the commit the range starts from.
-BASE_ROWS='pull_request|{"github":{"event":{"pull_request":{"base":{"sha":"pr-base"},"head":{"sha":"pr-head"}}}}}|pr-base|pr-head
-merge_group|{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}|group-base|group-head'
+BASE_ROWS='pull_request|{"github":{"event":{"pull_request":{"base":{"sha":"pr-base"},"head":{"sha":"pr-head"}}}}}|pr-base
+merge_group|{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}|group-base'
 
-while IFS='|' read -r event context base head; do
-  got="$(gh_eval value "$context" "$BASE_EXPR")"
-  if [ "$got" = "\"$base\"" ]; then
+base_ok() { # EXPR CONTEXT BASE — sets GOT
+  GOT="$(gh_eval value "$2" "$1")"
+  [ "$GOT" = "\"$3\"" ]
+}
+
+while IFS='|' read -r event context base; do
+  if base_ok "$BASE_EXPR" "$context" "$base"; then
     ok "base: $event"
   else
-    bad "base: $event" "expr [$BASE_EXPR] gave [$got], want \"$base\""
+    bad "base: $event" "expr [$BASE_EXPR] gave [$GOT], want \"$base\""
   fi
 done <<<"$BASE_ROWS"
 
-# Control: the same expression reading the head fields gives each event's
-# head, which the rows above reject.
+# Control: the same expression reading the head fields fails each row.
 HEAD_EXPR="${BASE_EXPR//.base.sha/.head.sha}"
 swapped_pr="$HEAD_EXPR"
 HEAD_EXPR="${HEAD_EXPR//.base_sha/.head_sha}"
 if [ "$swapped_pr" = "$BASE_EXPR" ] || [ "$HEAD_EXPR" = "$swapped_pr" ]; then
-  bad "control: the head fields yield no base" "substitution changed nothing in [$BASE_EXPR]"
+  bad "control: the head fields fail the base rows" "substitution changed nothing in [$BASE_EXPR]"
 else
-  while IFS='|' read -r event context base head; do
-    got="$(gh_eval value "$context" "$HEAD_EXPR")"
-    if [ "$got" = "\"$head\"" ] && [ "$got" != "\"$base\"" ]; then
-      ok "control: the head fields yield no base: $event"
+  while IFS='|' read -r event context base; do
+    if base_ok "$HEAD_EXPR" "$context" "$base"; then
+      bad "control: the head fields fail the base rows: $event" "expr [$HEAD_EXPR] gave [$GOT]"
     else
-      bad "control: the head fields yield no base: $event" "expr [$HEAD_EXPR] gave [$got]"
+      ok "control: the head fields fail the base rows: $event"
     fi
   done <<<"$BASE_ROWS"
 fi
