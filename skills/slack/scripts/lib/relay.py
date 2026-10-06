@@ -24,13 +24,12 @@ SLACK_THREAD_DAYS, delivers the top-level messages past the position, and
 reads every open ask and every recently active thread, including parents
 older than the history lookback. A refused thread read does not block the
 other threads or outbound mail; a temporary refusal leaves catch-up due
-on the next poll. A rate limit ends a catch-up, which the first poll past
-Slack's Retry-After resumes, newest thread first, past the threads it read.
-So a message sent while the relay was disconnected, one whose
+on the next poll. So a message sent while the relay was disconnected, one whose
 envelope never arrived, and one acknowledged before a stop cut its delivery
 off land on a catch-up within that lookback, and lane-mail's delivery id judges any repeat.
 The connection opens before the catch-up reads, so no message falls between
-them.
+them. A rate limit ends a catch-up, which the first poll past Slack's
+Retry-After resumes, newest thread first, past the threads it read.
 
 Each poll, every SLACK_POLL_SECONDS, per root: re-resolve the owners when
 the setting moved, retry previously unmarked deliveries, run the catch-up
@@ -410,12 +409,15 @@ class RootRelay:
         """Read one thread; return whether catch-up can finish without retry."""
         # Binding owns the lower boundary; thread.seen owns delivery progress.
         oldest = max(thread.seen, self.binding.bound_at, key=float)
+        since = oldest if thread.parent else None  # with no parent recorded, its page records it
         try:
             replies = list(
-                self.api.paged("conversations.replies", "messages", retries=0, channel=self.channel, ts=thread.ts, oldest=oldest)
+                self.api.paged("conversations.replies", "messages", retries=0, channel=self.channel, ts=thread.ts, oldest=since)
             )
         except Refusal as err:
             return self.thread_refused(err, thread.ts)
+        for parent in [r for r in replies if r["ts"] == thread.ts and thread.parent is None]:
+            self.parent_context(thread.ts, parent)
         replies = [r for r in replies if r["ts"] != thread.ts and float(r["ts"]) > float(oldest)]
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:

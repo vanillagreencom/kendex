@@ -1,8 +1,7 @@
 """The Slack Web API client: one method per call, honouring 429.
 
 Every call is counted with its time so `--status` can print the calls used
-in the last minute. A 429 is honoured by `Retry-After` up to RETRIES times,
-or a call's own `retries`, then refused carrying it;
+in the last minute. A 429 is honoured by `Retry-After` up to `retries` times;
 an `ok: false` answer names Slack's error; an auth error is its own key
 because its remedy is a new token and nothing else.
 

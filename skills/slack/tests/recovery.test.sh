@@ -211,12 +211,13 @@ done
 
 # More threads hold an offline reply than Slack's allowance lets the catch-up
 # read in one window. Each window's 429 ends that poll's catch-up with nothing
-# slept; a poll inside the Retry-After reads nothing; the next window resumes
-# past the threads already read, newest first, until the oldest reply lands
-# and the catch-up completes, every reply once. ALLOW 2 puts the 429 on a
-# thread read, 3 on a directive thread's parent read. Each control breaks one
-# rule: the resume, the order, the hold, the rate limit ending the catch-up,
-# and the parent read allowing no retry.
+# slept; a poll 30 seconds into the Retry-After reads nothing; the next window
+# resumes past the threads already read, newest first, until the oldest reply
+# lands and the catch-up completes, every reply once. Every thread is an owner
+# directive with no parent recorded, so ALLOW 1 lands one reply a window only
+# while the thread read records the parent from its own page and makes no
+# parent read. Each control breaks one rule: the resume, the order, the hold,
+# the hold's length, the rate limit ending the catch-up, and the page parent.
 WANT='["",[],0,true,false,true,true]'
 while read -r allow control; do
   ROOT="$(sk_new_root "allowance-$allow-$control")"
@@ -232,8 +233,9 @@ while read -r allow control; do
     resume) sk_mutant resume relay.py '\} - due, key=float' '}, key=float' ;;
     order) sk_mutant newest-first relay.py 'key=float, reverse=True\)' 'key=float)' ;;
     hold) sk_mutant hold relay.py 'self\.clock\(\) >= self\.catch_up_at' 'True' ;;
+    short-hold) sk_mutant short-hold relay.py 'self\.clock\(\) \+ err\.retry_after' 'self.clock() + 1' ;;
     rate-ends) sk_mutant rate-ends relay.py 'if err\.key in \("slack-auth-failed", "slack-rate-limited"\):' 'if err.key == "slack-auth-failed":' ;;
-    parent-retry) sk_mutant parent-retry relay.py 'retries=0 if path == "catch-up" else RETRIES' 'retries=RETRIES' ;;
+    page-parent) sk_mutant page-parent relay.py 'thread\.ts and thread\.parent is None\]' 'thread.ts and False]' ;;
   esac
   sk_recovery "$ROOT" allowance "$allow"
   GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr --arg new "${REPLIES[4]}" --arg old "${REPLIES[0]}" '[
@@ -252,14 +254,43 @@ while read -r allow control; do
   fi
   sk_bin_reset
 done <<'ROWS'
+1 none
 2 none
-3 none
 2 resume
 2 order
 2 hold
+2 short-hold
 2 rate-ends
-3 parent-retry
+1 page-parent
 ROWS
+
+# A reply also sent to the channel reaches the catch-up through history, where
+# its directive thread has no parent recorded, so its delivery reads the
+# parent. With one conversations.replies call a window, the second broadcast's
+# parent read takes the 429, which ends the catch-up with nothing slept; a
+# later window lands it, each broadcast once. The control lets that parent
+# read wait out the 429.
+for control in none parent-retry; do
+  ROOT="$(sk_new_root "allowance-broadcast-$control")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  TOPICS=()
+  for n in 1 2; do TOPICS+=("$(sk_inject "$CH" U001 "Broadcast topic $n.")"); done
+  sk_poll "$ROOT"
+  CASTS=()
+  for n in 1 2; do CASTS+=("$(sk_inject "$CH" U001 "Offline broadcast $n." "${TOPICS[$((n - 1))]}" '"subtype": "thread_broadcast"')"); done
+  [ "$control" = none ] || sk_mutant parent-retry relay.py 'retries=0 if path == "catch-up" else RETRIES' 'retries=RETRIES'
+  sk_recovery "$ROOT" allowance 1
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr '[.error, [.polls[].slept[]], .polls[-1].caught_up]')"
+  ONCE="$(for c in "${CASTS[@]}"; do jq -s --arg d "$CH:$c" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl"; done | tr '\n' ' ')"
+  if [ "$control" = none ]; then
+    assert_eq "$GOT|$ONCE" '["",[],true]|1 1 ' "a broadcast's catch-up parent read yields to the 429 and every broadcast lands once"
+  else
+    sk_assert_red "$GOT" '["",[],true]' "the parent-retry control waits out the broadcast parent read's 429"
+  fi
+  sk_bin_reset
+done
 
 # An acknowledged live reply whose parent is deleted remains in pending_live
 # after its first refusal, then is dropped once on poll without blocking posts.

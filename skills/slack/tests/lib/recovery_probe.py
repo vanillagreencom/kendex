@@ -79,8 +79,8 @@ try:
     elif mode == "allowance":
         # Slack lets the given count of conversations.replies calls through
         # per window, then answers 429 with a 60-second Retry-After. A second
-        # poll falls inside it; the relay's clock then moves past it. A
-        # running relay's reconnect reads history from the saved position.
+        # poll falls 30 seconds into it; the relay's clock then moves past it.
+        # A running relay's reconnect reads history from the saved position.
         relay.discovered = True
         skew = 0.0
         relay.clock = lambda: time.time() + skew
@@ -96,7 +96,8 @@ try:
         for _ in range(8):
             for path, body in (("faults-reset", {}), ("fault", fault)):
                 urllib.request.urlopen(urllib.request.Request(f"{settings.api_url}/_test/{path}", json.dumps(body).encode()))
-            for _ in range(2):
+            for wait in (0, 30):
+                skew += wait
                 relay.poll("UBOT")
                 polls.append({"caught_up": relay.due is None, "delivered": sorted(relay.state.delivered),
                               "replies": len(replies), "slept": slept[:]})
@@ -104,7 +105,7 @@ try:
                 slept.clear()
             if relay.due is None:
                 break
-            skew += 61
+            skew += 31
     elif mode == "download":
         api.download(sys.argv[4], None, io.BytesIO())
     else:

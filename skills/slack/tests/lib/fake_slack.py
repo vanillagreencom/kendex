@@ -185,7 +185,10 @@ class Workspace:
 
 
     def top_level(self, channel: str):
-        return [m for m in self.messages.get(channel, []) if not m.get("thread_ts") or m["thread_ts"] == m["ts"]]
+        """conversations.history: parents and unthreaded messages, and a reply
+        sent to the channel too, as Slack lists a thread_broadcast."""
+        return [m for m in self.messages.get(channel, [])
+                if not m.get("thread_ts") or m["thread_ts"] == m["ts"] or m.get("subtype") == "thread_broadcast"]
 
     def thread(self, channel: str, ts: str):
         message = next((m for m in self.messages.get(channel, []) if m["ts"] == ts), None)

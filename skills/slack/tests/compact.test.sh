@@ -58,8 +58,8 @@ BEFORE="$(wc -l < "$JOURNAL" | tr -d ' ')"
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=12" "compact prints the lines it dropped"
 assert_eq "$(jq -r '[.t, (.ts // .id // .at)] | join(":")' "$JOURNAL" | tr '\n' ' ')" \
-  "start: out:ASK-OPEN connect:$YOUNG_AT in:$YOUNG mark:$YOUNG seen:$YOUNG " \
-  "the start, the open ask, the young connect, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked, superseded and old connection lines go"
+  "start: out:ASK-OPEN connect:$YOUNG_AT in:$YOUNG mark:$YOUNG parent:$OLD_REPLY seen:$YOUNG " \
+  "the start, the open ask, the young connect, the young delivery, its mark, the parent the open ask's thread read recorded and the last position stay; the resolved, ignored, uploaded, marked, superseded and old connection lines go"
 assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "12" "the file shrank by the lines reported"
 NEXT="$(sk_inject C001 U001 'after compaction')"
 sk_poll "$ROOT"
