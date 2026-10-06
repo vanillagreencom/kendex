@@ -121,6 +121,16 @@ impl Expansion {
             .unwrap_or_default()
     }
 
+    /// Why one package is wanted on any tool, every tool's reasons
+    /// together.
+    pub(super) fn package_reasons(&self, kind: ItemKind, name: &str) -> BTreeSet<Reason> {
+        self.reasons
+            .iter()
+            .filter(|((of_kind, of_name, _), _)| *of_kind == kind && of_name == name)
+            .flat_map(|(_, reasons)| reasons.iter().cloned())
+            .collect()
+    }
+
     pub(super) fn contains(&self, kind: ItemKind, name: &str) -> bool {
         self.items.contains_key(&(kind, name.to_owned()))
     }

@@ -187,3 +187,41 @@ fn a_reused_collection_draws_only_what_needs_the_reader() {
     );
     assert!(text.contains("safety: clean"), "{text}");
 }
+
+/// The collection form ends as the add verb does when a member it was
+/// asked for is skipped on conflict in a run with no terminal: status 3,
+/// one `skipped-on-conflict=` line per member, the line automation keys
+/// on, and the hand-made files left where they were.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_skipped_on_conflict_ends_the_run_on_its_own_status() {
+    let (_tmp, home, project, commit) = world();
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let mine = project.join(".agents/skills/gh/SKILL.md");
+    fs::create_dir_all(mine.parent().unwrap()).unwrap();
+    fs::write(
+        &mine,
+        "---\nname: gh\ndescription: mine\n---\nWritten by hand.\n",
+    )
+    .unwrap();
+    let link = format!("https://kendex.ai/c/{COLLECTION_ID}");
+
+    let run = kendex(&home, &project, &resolver(&commit), &["add", &link, "-y"]);
+    let text = said(&run);
+
+    assert_eq!(run.status.code(), Some(3), "{text}");
+    let named: Vec<&str> = text
+        .lines()
+        .filter_map(|line| {
+            line.split_once("skipped-on-conflict=")
+                .map(|(_, item)| item)
+        })
+        .collect();
+    assert_eq!(named, ["skill gh"], "{text}");
+    assert!(
+        fs::read_to_string(&mine)
+            .unwrap()
+            .contains("Written by hand."),
+        "{text}"
+    );
+}

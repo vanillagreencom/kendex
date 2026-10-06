@@ -40,15 +40,19 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// A catalog where `orch` requires `review-gate`, the set `gate` carries
-/// `review-gate`, and `linear` and `notes` stand alone.
+/// A catalog where `lead` requires `orch`, `orch` requires `review-gate`,
+/// the set `gate` carries `review-gate`, and `linear` and `notes` stand
+/// alone. `twin` ships the name a switched-off copy is kept under, so
+/// every tool refuses to render it.
 fn catalog(home: &Path) {
     let catalog = home.join("catalog");
     for (name, dependencies) in [
+        ("lead", "dependencies:\n  required: [orch]\n"),
         ("orch", "dependencies:\n  required: [review-gate]\n"),
         ("review-gate", ""),
         ("linear", ""),
         ("notes", ""),
+        ("twin", ""),
     ] {
         write(
             &catalog.join(format!("skills/{name}/SKILL.md")),
@@ -57,6 +61,7 @@ fn catalog(home: &Path) {
             ),
         );
     }
+    write(&catalog.join("skills/twin/SKILL.md.disabled"), "Off.\n");
     write(
         &catalog.join("kendex.toml"),
         "[bundles.gate]\ndescription = \"the gate set\"\nskills = [\"review-gate\"]\n",
@@ -94,32 +99,44 @@ fn named(printed: &str) -> Vec<String> {
         .collect()
 }
 
+/// The run a row judges: an add naming these items, which prefixes the
+/// catalog and the harness itself, or an apply of what the manifest
+/// declares.
+enum Run {
+    Add(&'static [&'static str]),
+    Apply,
+}
+
 struct Row {
     case: &'static str,
     /// Hand-made files in the way before anything runs.
     in_the_way: &'static [&'static str],
-    /// Runs before the one judged, each skipping what it names.
-    before: &'static [&'static [&'static str]],
-    run: &'static [&'static str],
+    /// Adds before the one judged, each with the status it ends on.
+    before: &'static [(&'static [&'static str], i32)],
+    /// Installed skills the person edits once the adds before have run.
+    edited: &'static [&'static str],
+    run: Run,
     status: i32,
     names: &'static [&'static str],
     lands: &'static [&'static str],
 }
 
 const ORCH: &[&str] = &["--skill", "orch"];
+const LINEAR: &[&str] = &["--skill", "linear"];
 
-/// One row per way an item comes to be asked for, and the two that are
-/// not: an empty repository, and a skip of a package an earlier add
-/// declared. `add` rows prefix the catalog and the harness themselves.
+/// One row per way an item comes to be asked for, and the ways one is
+/// not: an empty repository, a skip of a package or set an earlier add
+/// declared, and an item held back by the person's own edits.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
     let rows = [
         Row {
             case: "control: empty repository",
             in_the_way: &[],
             before: &[],
-            run: ORCH,
+            edited: &[],
+            run: Run::Add(ORCH),
             status: 0,
             names: &[],
             lands: &["orch", "review-gate"],
@@ -128,25 +145,48 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             case: "a required dependency of a named skill",
             in_the_way: &["review-gate"],
             before: &[],
-            run: ORCH,
+            edited: &[],
+            run: Run::Add(ORCH),
             status: SKIPPED,
             names: &["skill review-gate"],
             lands: &["orch"],
         },
         Row {
+            case: "a dependency two requirements down",
+            in_the_way: &["review-gate"],
+            before: &[],
+            edited: &[],
+            run: Run::Add(&["--skill", "lead"]),
+            status: SKIPPED,
+            names: &["skill review-gate"],
+            lands: &["lead", "orch"],
+        },
+        Row {
             case: "a named skill",
             in_the_way: &["review-gate"],
             before: &[],
-            run: &["--skill", "review-gate,linear"],
+            edited: &[],
+            run: Run::Add(&["--skill", "review-gate,linear"]),
             status: SKIPPED,
             names: &["skill review-gate"],
+            lands: &["linear"],
+        },
+        Row {
+            case: "a named skill every tool refuses to render",
+            in_the_way: &[],
+            before: &[],
+            edited: &[],
+            run: Run::Add(&["--skill", "twin,linear"]),
+            status: SKIPPED,
+            names: &["skill twin"],
             lands: &["linear"],
         },
         Row {
             case: "a member of a named set",
             in_the_way: &["review-gate"],
             before: &[],
-            run: &["--bundle", "gate"],
+            edited: &[],
+            run: Run::Add(&["--bundle", "gate"]),
             status: SKIPPED,
             names: &["skill review-gate"],
             lands: &[],
@@ -154,11 +194,52 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
         Row {
             case: "a package an earlier add declared",
             in_the_way: &["notes"],
-            before: &[&["--skill", "notes"]],
-            run: &["--skill", "linear"],
+            before: &[(&["--skill", "notes"], SKIPPED)],
+            edited: &[],
+            run: Run::Add(LINEAR),
             status: 0,
             names: &[],
             lands: &["linear"],
+        },
+        Row {
+            case: "a member of a set an earlier add declared",
+            in_the_way: &["review-gate"],
+            before: &[(&["--bundle", "gate"], SKIPPED)],
+            edited: &[],
+            run: Run::Add(LINEAR),
+            status: 0,
+            names: &[],
+            lands: &["linear"],
+        },
+        Row {
+            case: "a requirement of a skill an earlier add declared",
+            in_the_way: &["review-gate"],
+            before: &[(ORCH, SKIPPED)],
+            edited: &[],
+            run: Run::Add(LINEAR),
+            status: 0,
+            names: &[],
+            lands: &["linear", "orch"],
+        },
+        Row {
+            case: "a named skill held back by the person's own edits",
+            in_the_way: &[],
+            before: &[(LINEAR, 0)],
+            edited: &["linear"],
+            run: Run::Add(LINEAR),
+            status: 0,
+            names: &[],
+            lands: &[],
+        },
+        Row {
+            case: "a declared skill held back by the person's own edits",
+            in_the_way: &[],
+            before: &[(LINEAR, 0)],
+            edited: &["linear"],
+            run: Run::Apply,
+            status: 0,
+            names: &[],
+            lands: &[],
         },
     ];
     for row in rows {
@@ -177,17 +258,25 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             args.extend(["--yes", "--leave"]);
             kendex(&home, &project, &args)
         };
-        for items in row.before {
+        for (items, status) in row.before {
             let earlier = add(items);
             assert_eq!(
                 earlier.status.code(),
-                Some(SKIPPED),
+                Some(*status),
                 "{}: {}",
                 row.case,
                 said(&earlier)
             );
         }
-        let output = add(row.run);
+        for name in row.edited {
+            let installed = project.join(format!(".claude/skills/{name}/SKILL.md"));
+            let body = fs::read_to_string(&installed).unwrap();
+            fs::write(&installed, format!("{body}Mine.\n")).unwrap();
+        }
+        let output = match row.run {
+            Run::Add(items) => add(items),
+            Run::Apply => kendex(&home, &project, &["apply", "--yes", "--leave"]),
+        };
         let printed = said(&output);
         assert_eq!(
             output.status.code(),
@@ -205,6 +294,14 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
         }
         for name in row.in_the_way {
             assert!(kept(&project, name), "{}: {name} was taken over", row.case);
+        }
+        for name in row.edited {
+            let body = fs::read_to_string(project.join(format!(".claude/skills/{name}/SKILL.md")));
+            assert!(
+                body.is_ok_and(|body| body.ends_with("Mine.\n")),
+                "{}: the edit to {name} was not kept",
+                row.case
+            );
         }
     }
 }

@@ -1185,6 +1185,54 @@ fn a_commit_refusal_leads_with_its_findings_block() {
     assert_eq!(head_subject(&project), "files");
 }
 
+/// An add that skipped the agent it named, in a run with no terminal,
+/// ends on the skip's own status; where the repository's pre-commit hook
+/// also refused the commit the run asked for, the refused commit's 1 is
+/// the status, as for any run whose commit was refused.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_commit_keeps_its_status_over_a_skip() {
+    for (refusing, status) in [(false, 3), (true, 1)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let catalog = scout_and_guard(&home);
+        fs::create_dir_all(project.join(".claude/agents")).unwrap();
+        fs::write(
+            project.join(".claude/agents/scout.md"),
+            "---\nname: scout\ndescription: mine\n---\nWritten by hand.\n",
+        )
+        .unwrap();
+        if refusing {
+            executable(
+                &project.join(".git/hooks/pre-commit"),
+                "#!/bin/sh\necho 'commit-msg: no' >&2\nexit 1\n",
+            );
+        }
+        let source = catalog.to_string_lossy().into_owned();
+        let args = [
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            &source,
+            "--agent",
+            "scout",
+        ];
+        let output = kendex(&home, &project, &args);
+        let text = said(&output);
+        assert_eq!(
+            output.status.code(),
+            Some(status),
+            "refusing={refusing}: {text}"
+        );
+        assert!(
+            text.contains("skipped-on-conflict=agent scout"),
+            "refusing={refusing}: {text}"
+        );
+    }
+}
+
 /// A flag naming a choice a precondition removed refuses with that
 /// precondition's reason, commits nothing, and exits 1; the verb's writes
 /// still stand.

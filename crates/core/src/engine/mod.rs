@@ -3,7 +3,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest, ManifestFile};
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod adopt;
@@ -245,6 +245,7 @@ pub fn plan_scope(
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
+    let wanted = wanted(&manifest, &state);
     plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
     let generated =
         generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
@@ -280,6 +281,7 @@ pub fn plan_scope(
         recorded_gone,
         generated: generated.editing(edited, generated_paths::recorded(env, scope, lock)?),
         installations,
+        wanted,
         stood_in: readings.stood_in(lock),
         record: new_lock,
         held,
@@ -502,7 +504,6 @@ fn installations(
                     name: item.name.clone(),
                     harness: item.harness,
                     positions: item.artifact.positions(),
-                    reasons: item.reasons.clone(),
                 },
             )
         })
@@ -530,11 +531,37 @@ fn installations(
                     path,
                     owns: desired::Owns::Tree,
                 }],
-                reasons: BTreeSet::from([crate::lock::Reason::Requested]),
             },
         );
     }
     Ok(installations)
+}
+
+/// Why each package this pass was asked to install is wanted, by kind and
+/// name: what the closure derived for every package it rendered or
+/// refused to render, what each item planned outside that walk carries (a
+/// plugin, a custom hook, a built-in server), and for each Pi extension
+/// the manifest declares, its declaration. A package its catalog retired
+/// is not in it, whatever the record keeps: nothing renders it again.
+fn wanted(
+    manifest: &Manifest,
+    state: &desired::DesiredState,
+) -> BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>> {
+    let mut wanted = state.derived.clone();
+    for item in &state.items {
+        wanted
+            .entry((item.kind, item.name.clone()))
+            .or_default()
+            .extend(item.reasons.iter().cloned());
+    }
+    for name in manifest.pi_extensions.keys() {
+        wanted
+            .entry((ItemKind::PiExtension, name.clone()))
+            .or_default()
+            .insert(crate::lock::Reason::Requested);
+    }
+    wanted.retain(|item, _| !state.retired.contains_key(item));
+    wanted
 }
 
 /// The manifest this pass reads from and the state it derives: `declared`

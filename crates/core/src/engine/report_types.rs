@@ -254,9 +254,6 @@ pub struct Installation {
     pub name: String,
     pub harness: HarnessId,
     pub positions: Vec<super::desired::Position>,
-    /// Every reason this pass derived it for: asked for by name, carried
-    /// by a set, or required by another installation.
-    pub reasons: BTreeSet<crate::lock::Reason>,
 }
 
 /// What the request behind a pass asked for, against which a skipped
@@ -405,6 +402,11 @@ pub struct EngineReport {
     /// each with the one notice keyed by the set that `notes` also holds;
     /// verify shows it, where it shows no note.
     pub retired_bundles: BTreeMap<String, String>,
+    /// Why each package this pass was asked to install is wanted, by
+    /// kind and name, on any tool: asked for by name, carried by a set,
+    /// or required by another package. A package every tool refused is
+    /// in it; one its catalog retired is not.
+    pub wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// What the request behind this pass asked for.
     pub asked: Asked,
 }
@@ -505,6 +507,7 @@ impl EngineReport {
             generated: super::GeneratedPaths::default(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
+            wanted: BTreeMap::new(),
             stood_in: StoodInRecord::default(),
             record: Lock::default(),
             held: Vec::new(),
@@ -517,66 +520,52 @@ impl EngineReport {
     }
 
     /// Each package this pass derives for what its request asked: under
-    /// [`Asked::Declared`] every installation, and under [`Asked::Named`]
-    /// each item named, each member of a set named, and everything those
-    /// require, however deep. A package the request reaches only through
-    /// a declaration it did not name is not in it.
+    /// [`Asked::Declared`] every package [`EngineReport::wanted`] holds,
+    /// and under [`Asked::Named`] each item named, each member of a set
+    /// named, and everything those require, however deep. A package the
+    /// request reaches only through a declaration it did not name is not
+    /// in it, and neither is one its catalog retired.
     pub fn asked_for(&self) -> BTreeSet<(ItemKind, String)> {
         use crate::lock::Reason;
-        let mut reasons: BTreeMap<(ItemKind, &str), BTreeSet<&Reason>> = BTreeMap::new();
-        for installation in self.installations.values() {
-            reasons
-                .entry((installation.kind, installation.name.as_str()))
-                .or_default()
-                .extend(&installation.reasons);
-        }
         let named = match &self.asked {
-            Asked::Declared => {
-                return reasons
-                    .into_keys()
-                    .map(|(kind, name)| (kind, name.to_owned()))
-                    .collect();
-            }
+            Asked::Declared => return self.wanted.keys().cloned().collect(),
             Asked::Named(named) => named,
         };
-        let mut reached: BTreeSet<(ItemKind, &str)> = named
+        let mut reached: BTreeSet<&(ItemKind, String)> = self
+            .wanted
             .iter()
-            .filter_map(|held| match held {
-                Held::Item { kind, name } => Some((*kind, name.as_str())),
-                Held::Set { .. } => None,
-            })
-            .collect();
-        reached.extend(reasons.iter().filter_map(|(item, why)| {
-            why.iter()
-                .any(|reason| match reason {
+            .filter(|((kind, name), why)| {
+                named.contains(&Held::Item {
+                    kind: *kind,
+                    name: name.clone(),
+                }) || why.iter().any(|reason| match reason {
                     Reason::MemberOf { bundle } => named.contains(&Held::Set {
                         name: bundle.name.clone(),
                     }),
                     Reason::Requested | Reason::RequiredBy { .. } => false,
                 })
-                .then_some(*item)
-        }));
+            })
+            .map(|(item, _)| item)
+            .collect();
         // A requirement can point at a requirer found later in the walk, so
         // the set grows until a pass adds nothing.
         loop {
-            let grew: Vec<(ItemKind, &str)> = reasons
+            let grew: Vec<&(ItemKind, String)> = self
+                .wanted
                 .iter()
                 .filter(|(item, why)| {
-                    !reached.contains(*item)
+                    !reached.contains(item)
                         && why.iter().any(|reason| match reason {
                             Reason::RequiredBy { by } => {
-                                reached.contains(&(by.kind, by.name.as_str()))
+                                reached.contains(&(by.kind, by.name.clone()))
                             }
                             Reason::Requested | Reason::MemberOf { .. } => false,
                         })
                 })
-                .map(|(item, _)| *item)
+                .map(|(item, _)| item)
                 .collect();
             if grew.is_empty() {
-                return reached
-                    .into_iter()
-                    .map(|(kind, name)| (kind, name.to_owned()))
-                    .collect();
+                return reached.into_iter().cloned().collect();
             }
             reached.extend(grew);
         }

@@ -1,6 +1,8 @@
 //! Response styles use the existing whole-file and shared-file writers.
 
+use super::DriftCause;
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
+use super::item_plan::Planned;
 use crate::configedit::{ConfigEdit, marker_block, upsert_marker_block};
 use crate::error::{CoreError, Result};
 use crate::hash::hash_bytes;
@@ -274,12 +276,14 @@ pub(crate) fn file_problem(path: &Path) -> Option<String> {
         .then(|| format!("{} is not a regular file", path.display()))
 }
 
-/// Refuse linked shared files and edits to recorded style content.
+/// Refuse linked shared files and edits to recorded style content. An
+/// edit is the person's own, so it comes back as one, beside the edits
+/// `holds::hold_local_edit` holds for every other kind.
 pub(super) fn conflict(
     item: &Desired,
     existing: Option<&LockEntry>,
     discard: bool,
-) -> Result<Option<String>> {
+) -> Result<Option<Planned>> {
     if item.kind != ItemKind::OutputStyle {
         return Ok(None);
     }
@@ -287,7 +291,7 @@ pub(super) fn conflict(
     if let Artifact::Registration { edits, .. } = &item.artifact {
         for (path, _) in edits {
             if let Some(reason) = file_problem(path) {
-                return Ok(Some(reason));
+                return Ok(Some(Planned::Conflict(reason)));
             }
         }
         for (path, edit) in edits {
@@ -297,20 +301,26 @@ pub(super) fn conflict(
                 let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
                 let owned = matches!(live, Some(OutputStyleRecord::Block { path: owned_path, marker, .. }) if owned_path == path && marker == name);
                 if marker_block(&current, name).is_some() && !owned {
-                    return Ok(Some(
+                    return Ok(Some(Planned::Conflict(
                         "an unrecorded output-style block already occupies the marker".into(),
-                    ));
+                    )));
                 }
             }
         }
     }
-    if let Some(style) = live
+    if let Some(entry) = existing
+        && let Some(style) = live
         && !(discard && matches!(style, OutputStyleRecord::Block { .. }))
         && changed(style)?
     {
-        return Ok(Some(
-            "the installed output style block or selection was edited".into(),
-        ));
+        let cause = match entry.source_hash == item.hash {
+            true => DriftCause::LocalEdit,
+            false => DriftCause::Both,
+        };
+        return Ok(Some(Planned::Edited {
+            cause,
+            detail: "the installed output style block or selection was edited".into(),
+        }));
     }
     Ok(None)
 }

@@ -298,6 +298,11 @@ pub struct DesiredState {
     /// with its pin dropped (`withheld_past_pin`).
     pub judge_pins: bool,
     pub refused: Vec<Refused>,
+    /// Why each package this pass rendered, or tried to, is wanted, by
+    /// kind and name, as the closure derived it on every tool it planned.
+    /// A package refused everywhere has no item to carry its reasons, so
+    /// they live here; `EngineReport::wanted`.
+    pub(super) derived: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// Declarations whose source resolved and whose item was found and
     /// read, each with the provenance it is planned under. What these
     /// produced is the complete truth about them, so a lock entry they did
@@ -752,6 +757,8 @@ fn compute(
             state
                 .processed
                 .insert((kind, name.clone()), provenance.clone());
+            let wanted = expansion.package_reasons(kind, name);
+            state.derived.insert((kind, name.clone()), wanted);
             let mut harnesses = planned.harnesses.clone();
             if harnesses.is_empty() {
                 no_harness_note(kind, name, decl, manifest, &mut state);

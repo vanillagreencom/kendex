@@ -124,7 +124,7 @@ pub(super) fn plan_item(
         ),
     }?;
     let dirty = !matches!(planned, Planned::Clean);
-    // The two refusals differ only in whether the cause is known.
+    // The refusals differ only in whether the cause is known.
     let refused = match planned {
         Planned::Unmanaged {
             cause,
@@ -133,6 +133,7 @@ pub(super) fn plan_item(
             also,
         } => Some((Some(cause), detail, compared, also)),
         Planned::Conflict(detail) => Some((None, detail, None, Vec::new())),
+        Planned::Edited { cause, detail } => Some((Some(cause), detail, None, Vec::new())),
         Planned::Uncompared(detail) => Some((Some(DriftCause::Uncompared), detail, None, vec![])),
         Planned::Drift(state, detail) => {
             drift.push(row(state, detail));
@@ -255,6 +256,13 @@ pub(super) enum Planned {
     Clean,
     Drift(DriftState, String),
     Conflict(String),
+    /// The person's own edit to a part of a shared file kendex recorded
+    /// writing: a decision of their own rather than a dead stop. The
+    /// cause is `LocalEdit`, or `Both` where upstream moved too.
+    Edited {
+        cause: DriftCause,
+        detail: String,
+    },
     /// What sits at the item's position would not read, so nothing was
     /// compared (invariant 12). The detail names the position and the
     /// read's own error; the cause carries that no exit is on offer.
@@ -358,8 +366,8 @@ fn plan_registration(
         return Ok(Planned::Clean);
     };
     let locked = existing.is_some();
-    if let Some(reason) = super::output_style::conflict(item, existing, discard)? {
-        return Ok(Planned::Conflict(reason));
+    if let Some(refused) = super::output_style::conflict(item, existing, discard)? {
+        return Ok(refused);
     }
     // What the record says this installation registered, where that is no
     // longer what it registers: a changed event or matcher is a move, and
@@ -403,7 +411,10 @@ fn plan_registration(
     };
     if matches!(
         planned,
-        Planned::Conflict(_) | Planned::Uncompared(_) | Planned::Unmanaged { .. }
+        Planned::Conflict(_)
+            | Planned::Edited { .. }
+            | Planned::Uncompared(_)
+            | Planned::Unmanaged { .. }
     ) {
         return Ok(planned);
     }

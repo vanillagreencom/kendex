@@ -462,7 +462,8 @@ const PI_INDEX: &str = "export const version = 1;\n";
 
 /// A kept retired Pi package deleted or edited by hand is no failure of a
 /// plain refresh, which writes nothing of it, as a hook's or a skill's is
-/// not: verify alone fails its row.
+/// not: verify alone fails its row. Nor of an apply with no terminal: a
+/// package its catalog retired is not one the manifest asks for.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
@@ -511,12 +512,19 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         }
 
         let refreshed = kendex(&home, &project, &refresh);
+        let applied = kendex(&home, &project, &["apply", "--yes", "--leave"]);
         let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
 
         assert!(
             refreshed.status.success(),
             "edited={edited}: {}",
             said(&refreshed)
+        );
+        assert_eq!(
+            applied.status.code(),
+            Some(0),
+            "edited={edited}: {}",
+            said(&applied)
         );
         assert!(
             !verified.status.success(),
