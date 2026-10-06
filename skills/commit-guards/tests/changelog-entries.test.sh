@@ -719,6 +719,59 @@ if [ -r "/proc/$$/cmdline" ]; then
     "rc=1 ${ERR}package-unbumped=$PKG:1.1.0;$(summary 1 0)" "$(commit -q --amend --no-edit)"
 fi
 
+echo "=== --classify names what the settings make each path ==="
+# One line per path, its kind and the path; the row reads the kinds in
+# argument order. orch's restack-skip parses these lines.
+classify() { # SCRIPT ENVS PATH...
+  local script="$1" envs=() rc=0 out=""
+  [ -z "$2" ] || IFS=',' read -ra envs <<<"$2"
+  shift 2
+  out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" ${envs[@]+"${envs[@]}"} "$script" --classify "$@" 2>&1)" || rc=$?
+  printf 'rc=%s %s' "$rc" "$(printf '%s\n' "$out" | LC_ALL=C cut -f1 | LC_ALL=C paste -sd, -)"
+}
+repo classify
+put CHANGELOG.md '# Changelog\n'
+put changelog.d/fixed/a.md '- An entry.\n'
+put pkg/package.json '{"version": "1.0.0"}\n'
+put pkg/CHANGELOG.md '### Unreleased\n'
+put skills/p/SKILL.md '---\nname: p\nmetadata:\n  version: "1.0.0"\n---\n'
+put skills/p/deep/SKILL.md '---\nname: deep\nmetadata:\n  version: "1.0.0"\n---\n'
+put .agents/skills/p/SKILL.md '---\nname: p\nmetadata:\n  version: "1.0.0"\n---\n'
+put .kendex-generated.json '[".agents/skills/p/SKILL.md"]\n'
+put code.sh 'echo\n'
+stage
+CLASSIFY_ENV='COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=pkg/*.json,COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md'
+CLASSIFY_PATHS='CHANGELOG.md changelog.d/fixed/a.md pkg/CHANGELOG.md pkg/package.json skills/p/SKILL.md .agents/skills/p/SKILL.md skills/p/deep/SKILL.md code.sh other/CHANGELOG.md'
+CLASSIFY_WANT='rc=0 record,fragment,record,version,package,render,none,none,none'
+# shellcheck disable=SC2086 # the path list, split on purpose
+assert_eq 'the record, a fragment, a package record, a version file, a package file and a render are named, the rest none' \
+  "$CLASSIFY_WANT" "$(classify "$CE" "$CLASSIFY_ENV" $CLASSIFY_PATHS)"
+# shellcheck disable=SC2086
+assert_eq 'with no version paths a package.json and its CHANGELOG.md are none' \
+  'rc=0 none,none' "$(classify "$CE" 'COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md' pkg/CHANGELOG.md pkg/package.json)"
+assert_eq '--classify beside a scope is refused' "rc=2 ${ERR}scope-conflict=1:0:1" "$(run "" '--staged --classify code.sh')"
+# One control per rule: the mutant answers otherwise for the path that rule
+# names.
+R="$TMP/classify"
+classify_control() { # LABEL FROM TO
+  local got
+  gg_mutant judge changelog-entries "$2" "$3"
+  # shellcheck disable=SC2086
+  got="$(classify "$judge" "$CLASSIFY_ENV" $CLASSIFY_PATHS)"
+  if [ "$got" != "$CLASSIFY_WANT" ]; then
+    PASS=$((PASS + 1))
+    printf '  ok    control: %s\n' "$1"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  control: %s\n        got the unmutated answer: %s\n' "$1" "$got"
+  fi
+}
+classify_control 'with no package record pkg/CHANGELOG.md is none' \
+  '&& package_record="$(package_record_of "$package_json")" && [ "$package_record" = "$f" ]; then' '&& false; then'
+classify_control 'a package glob matching across / declares the nested SKILL.md' \
+  'elif gg_path_placer "$f" $GG_CHANGELOG_PACKAGES; then' 'elif gg_path_matches "$f" $GG_CHANGELOG_PACKAGES; then'
+classify_control 'with no render inventory the render is none' 'elif generated_path_contains "$f"; then' 'elif false; then'
+
 echo "=== the usage is answered ==="
 repo help
 assert_eq "--help prints the usage and exits 0" "rc=0 changelog-entries: usage=changelog-entries" "$(run "" --help | cut -d';' -f1)"

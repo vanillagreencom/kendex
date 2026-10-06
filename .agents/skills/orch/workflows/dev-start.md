@@ -228,7 +228,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Store Validation Time
 
-Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. [merge-pr-restack.md](merge-pr-restack.md) runs its write for a restack's range run, as kind `restack`. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it, and `oversee-report`'s Validation row reads it.
+Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. [merge-pr-restack.md](merge-pr-restack.md) runs its write for a restack's range run, as kind `restack`. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it and `.restack_skips`, and `oversee-report`'s Validation row reads both.
 
 `[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
 
@@ -238,7 +238,7 @@ Every artifact past the schema gate runs this subsection, implement and fix alik
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] --argjson lanes [VALIDATE_LANES] --argjson selection [VALIDATE_SELECTION] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [({round_id: $round, kind: $kind, mode: $mode, seconds: $seconds} + (if $lanes == null then {} else {lanes: $lanes} end) + (if $selection == null then {} else {selection: $selection} end))])'
 ```
 
-A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive).
+A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive), followed by each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes for a restack that skipped its re-test.
 
 ### Store QA State
 

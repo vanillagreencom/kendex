@@ -1,0 +1,1 @@
+- `changelog-entries --classify PATH...` names what the changelog settings make each path: record, fragment, version, package, render or none.

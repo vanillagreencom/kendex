@@ -76,6 +76,10 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 - Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
 - `COMMIT_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
+### Classify
+
+`--classify PATH...` judges nothing: it prints one line per path, in argument order, of what the settings make it, a tab, then the path. The kinds are `record` (the configured record, or the `CHANGELOG.md` a [package `package.json`](#version-bumps) reads), `fragment`, `version` (a `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` file), `package` (a declared package file), `render` (a path the staged `.kendex-generated.json` lists) and `none`; the first that applies wins. The orch skill's `restack-skip` reads it to know which conflicted files hold only version lines and changelog entries.
+
 ### Release versions
 
 A repository that releases chooses each version by this rule. Where `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` or `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` is set, the [version-bump check](#version-bumps) refuses the increases it lists, and judges a minor or a patch only from 1.0.

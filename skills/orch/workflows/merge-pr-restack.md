@@ -42,13 +42,13 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
-   Exit 0 prints `restack=skip ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, apart from version lines and changelog entries in the files the restack resolved, which `restack-skip --help` lists. It starts no run. Record the skip in workflow state, with `[VALIDATED_HEAD]` the line's `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
+   Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over version lines and changelog entries in the files it left conflicted (`version-only`), which `restack-skip --help` states. It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE] --arg head [HEAD] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '.restack_skips = ((.restack_skips // []) + [{head: $head, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}])'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE] --arg head [HEAD] --arg condition [CONDITION] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '.restack_skips = ((.restack_skips // []) + [{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}])'
    ```
 
-   A lane also adds the skip and its paths to its status file's validation line. Any other exit, whatever it prints, runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
+   A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Store Validation Time](dev-start.md#store-validation-time) sets out. Any other exit, whatever it prints, runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]

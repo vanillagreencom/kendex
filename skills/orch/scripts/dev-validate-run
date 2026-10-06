@@ -104,8 +104,9 @@
 #       Print the newest run in that worktree that ran a full or range command
 #       to a pass and whose start records both the HEAD and the tree it
 #       validated, read-only. restack-skip compares a restacked head with
-#       that tree. A ci run ran nothing and is never one; exit 1 where the
-#       worktree has none.
+#       that tree. A ci run ran nothing and is never one. Exit 1 where the
+#       worktree has none, or where a later full or range run did not pass,
+#       an unfinished one included: that run is named as red.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
@@ -177,8 +178,9 @@
 # second. dev-return-write binds those fields to the delegated round, per
 # schemas/dev-return.md. The tree= line is the tree of the worktree contents
 # the class was read from, committed or not, so what a run validated is known
-# even where the round commits it only after the run; it is absent where that
-# snapshot could not be written.
+# even where the round commits it only after the run; it is absent where the
+# class fell back before its snapshot, on an unresolved base branch or a
+# snapshot that could not be written.
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
@@ -189,7 +191,7 @@
 #   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
 #   validate-mode=full|range                                                  (--resolve-mode)
 #   run-dir=… head=SHA tree=SHA                                               (--last-pass)
-#   last-pass=none                                                            (--last-pass, exit 1)
+#   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
 # for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
@@ -853,28 +855,40 @@ read_sentinel() {
 
 # --- Last pass: the newest run that validated a known tree, read-only --------
 # Run directories are named for the UTC second they started, so the last match
-# in name order is the newest. A directory whose sentinel cannot be read is no
-# pass, and is passed over rather than ending the read.
+# in name order is the newest. A full or range run after that pass that did
+# not pass, one unfinished or whose sentinel cannot be read included, is red:
+# the newest pass no longer speaks for the worktree.
 if [[ "$mode" == last-pass ]]; then
   worktree="$(cd "$worktree" && pwd)"
   found=""
+  red=""
   for start_file in "$worktree"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
     run_dir="${start_file%/start}"
-    [[ -s "$run_dir/exit" ]] || continue
     case "$(start_field "$start_file" validate-mode)" in
       full|range) ;;
       *) continue ;;
     esac
-    verdict="$(read_sentinel 2>/dev/null; printf '%s' "$SENTINEL_VERDICT")" || continue
-    [[ "$verdict" == pass ]] || continue
+    verdict=unfinished
+    if [[ -s "$run_dir/exit" ]]; then
+      verdict="$(read_sentinel 2>/dev/null; printf '%s' "$SENTINEL_VERDICT")" || verdict=unreadable
+    fi
+    if [[ "$verdict" != pass ]]; then
+      red="$run_dir"
+      continue
+    fi
     pass_head="" pass_tree=""
     if ! pass_head="$(start_field "$start_file" head)" || ! pass_tree="$(start_field "$start_file" tree)" \
       || [[ -z "$pass_head" || -z "$pass_tree" ]]; then
       continue
     fi
     found="run-dir=$run_dir head=$pass_head tree=$pass_tree"
+    red=""
   done
+  if [[ -n "$red" ]]; then
+    echo "last-pass=red run-dir=$red"
+    exit 1
+  fi
   if [[ -z "$found" ]]; then
     echo last-pass=none
     exit 1
