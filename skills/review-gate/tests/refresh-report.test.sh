@@ -9,7 +9,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
 if python3 - "$SKILL_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -133,6 +133,7 @@ if name=="git":
  if sys.argv[1]=="fetch": sys.exit(0)
  if sys.argv[-1].endswith(".kendex-generated.json"):
   print(json.dumps([".agents/skills/review-gate/SKILL.md",".agents/skills/review-gate/scripts/test.sh",
+                    ".agents/skills/review-gate/README.md",".agents/skills/ship/SKILL.md",".claude/commands/ship.md",
                     ".claude/agents/maintainer.md",".claude/agents/runtime.md",".codex/agents/runtime.toml",
                     ".claude/skills/review-gate/SKILL.md",".github/agents/reviewer.agent.md",
                     ".kendex-generated.json",".kendex-lock.json"]))
@@ -174,6 +175,7 @@ else:
   from urllib.parse import parse_qs, urlsplit
   q={k:v[0] for k,v in parse_qs(urlsplit(sys.argv[2]).query).items()}
   assert "--paginate" in sys.argv and "--slurp" in sys.argv
+  w["lists"]=w.get("lists",0)+1; state.write_text(json.dumps(w))
   items=[i for i in w["issues"] if "list" not in i.get("lag",[]) and i.get("updated_at","")>=q["since"]
          and q["state"] in ("all",i["state"])]
   print(json.dumps([items]))
@@ -206,7 +208,9 @@ def entry(name, kind, harness):
 (root/'.kendex-lock.json').write_text(json.dumps({'version':11,'entries':{
  'skill:review-gate:codex':entry('review-gate','skill','codex'),
  'agent:runtime:claude':entry('runtime','agent','claude'),
- 'agent:maintainer:claude':entry('maintainer','agent','claude')}}))
+ 'agent:maintainer:claude':entry('maintainer','agent','claude'),
+ 'command:ship:claude':entry('ship','command','claude'),
+ 'command:ship:codex':entry('ship','command','codex')}}))
 (root/'historical-lock.json').write_bytes((root/'.kendex-lock.json').read_bytes())
 findings=[{'root':10,'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
            'url':'https://github.com/acme/repo/pull/1#discussion_r10'}]
@@ -224,7 +228,10 @@ files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
        '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:]),
        '.agents/skills/review-gate/scripts/test.sh':block*3,
        '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent,
-       '.codex/agents/runtime.toml':'name = "x"\ndeveloper_instructions = """\nDo the work.\n"""\n'}
+       '.codex/agents/runtime.toml':'name = "x"\ndeveloper_instructions = """\nDo the work.\n"""\n',
+       '.agents/skills/review-gate/README.md':'Run the gate.\n',
+       '.claude/commands/ship.md':'Ship it.\n',
+       '.agents/skills/ship/SKILL.md':'---\nname: ship\ndescription: Ship.\n---\nShip it.\n'}
 def reset(**extra):
  world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
 def attempt(driver, rows, overrides):
@@ -272,7 +279,12 @@ consumer_b=dict(consumer_a,root=40,path='.claude/skills/review-gate/SKILL.md',bo
                 line=8,start_line=7,url='https://github.com/other/repo/pull/9#discussion_r40')
 second_consumer={'GH_REPO':'other/repo','GITHUB_RUN_ID':'43'}
 def package_line(driver=skill/'scripts/refresh-report.py', lag=()):
- reset(lag=list(lag)); run(driver,rows=[consumer_a]); folded=run(driver,rows=[consumer_b],overrides=second_consumer)
+ reset(lag=list(lag)); filed=run(driver,rows=[consumer_a])
+ # The first consumer filed 50 minutes before the second one runs: inside
+ # the documented index lag, outside a narrowed one.
+ filed['issues'][0]['updated_at']=(datetime.now(timezone.utc)-timedelta(minutes=50)).strftime('%Y-%m-%dT%H:%M:%SZ')
+ world.write_text(json.dumps(filed))
+ folded=run(driver,rows=[consumer_b],overrides=second_consumer)
  if len(folded['issues'])!=1 or results[0]['note']!='Existing open report': return 'consumers'
  folded['issues'][0].update(state='closed',state_reason='not_planned'); world.write_text(json.dumps(folded))
  later=run(driver,rows=[consumer_a],overrides={'GITHUB_RUN_ID':'44'})
@@ -301,6 +313,12 @@ fences=[dict(consumer_a,root=34,line=3,start_line=None), dict(consumer_b,root=35
 agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=3,start_line=None)
 agents=[agent_a, dict(agent_a,root=61,body='Another wording.'), dict(agent_a,root=62,path='.claude/agents/maintainer.md')]
 harnesses=[agent_a, dict(agent_a,root=65,path='.codex/agents/runtime.toml',body='Another wording.')]
+# A command renders as a Claude command file and as a Codex skill tree; a
+# skill's two files sharing a line stay two.
+command_harnesses=[dict(agent_a,root=66,path='.claude/commands/ship.md',line=1),
+                   dict(agent_a,root=67,path='.agents/skills/ship/SKILL.md',line=5,body='Another wording.')]
+skill_files=[dict(agent_a,root=68,path='.agents/skills/review-gate/SKILL.md',line=5),
+             dict(agent_a,root=69,path='.agents/skills/review-gate/README.md',line=1)]
 file_ends=[dict(agent_a,root=63,line=1), dict(agent_a,root=64,line=4,body='Another wording.')]
 for rows, issues in [
  ([consumer_a, other_line], 2),
@@ -311,6 +329,8 @@ for rows, issues in [
  (file_ends, 2),
  (agents, 2),
  (harnesses, 1),
+ (command_harnesses, 1),
+ (skill_files, 2),
  ([base_side, dict(base_side,body='Another wording.')], 2),
  ([dict(consumer_a,line=None,start_line=None), dict(consumer_b,line=None,start_line=None)], 2),
  ([consumer_a, consumer_b], 1),
@@ -359,8 +379,11 @@ assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # Searches stay under GitHub's query length and cover every marker; an
 # incomplete search proves no absence and files nothing.
 many=[dict(consumer_a,root=50+n,line=None,start_line=None,body=f'Defect {n}.') for n in range(4)]
-reset(); searched=run(rows=many)
-assert len(searched['issues'])==4 and len({r['issue'] for r in results})==4
+# Four findings that miss search read the recent issue list once.
+def listed(driver=skill/'scripts/refresh-report.py'):
+ reset(); searched=run(driver,rows=many); return searched, searched.get('lists')
+searched, lists = listed()
+assert len(searched['issues'])==4 and len({r['issue'] for r in results})==4 and lists==1
 assert sorted(t for q in searched['searches'] for t in q)==sorted(i['title'][15:79] for i in searched['issues'])
 reset(incomplete=True); refused=attempt(skill/'scripts/refresh-report.py',[consumer_a],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
@@ -489,6 +512,7 @@ for needle,replacement,expect,lag in [
  ('                    remember(recent())\n', '                    pass\n', 'consumers', ('search',)),
  ('{"state": "all", "since"', '{"state": "open", "since"', 'closed', ('search',)),
  ('datetime.now(timezone.utc) - INDEX_LAG', 'datetime.now(timezone.utc) + INDEX_LAG', 'consumers', ('search',)),
+ ('INDEX_LAG = timedelta(hours=1)', 'INDEX_LAG = timedelta(minutes=1)', 'consumers', ('search',)),
 ]:
  assert source.count(needle)==1, needle
  mutant=root/'identity.py'; mutant.write_text(source.replace(needle,replacement))
@@ -498,7 +522,9 @@ assert source.count(needle)==1
 mutant=root/'own-filing.py'; mutant.write_text(source.replace(needle,'                    pass\n'))
 assert own_filing(mutant)==2
 for needle,replacement,rows,issues in [
- ('if name in parts else ""', 'if name in parts else parts[-1]', harnesses, 2),
+ ('if is_skill else ""', 'if is_skill else parts[-1]', harnesses, 2),
+ ('is_skill = "skill" in kinds[name] and name in parts', 'is_skill = name in parts', command_harnesses, 2),
+ ('is_skill = "skill" in kinds[name] and name in parts', 'is_skill = False', skill_files, 1),
  ('start = start or end', 'start = end', [consumer_a, same_end], 1),
  ('return [text, finding["body"]]', 'return [text]', repeated_text, 1),
  ('return [text, finding["body"]]', 'return [text, finding["body"], start]', same_claim, 2),
@@ -518,6 +544,10 @@ for needle,replacement,rows,extra in [
  assert source.count(needle)==1, needle
  mutant=root/'refusal.py'; mutant.write_text(source.replace(needle,replacement))
  reset(**extra); assert attempt(mutant,rows,None).returncode==0, needle
+needle='if marker not in known and not listed:'
+assert source.count(needle)==1
+mutant=root/'listed.py'; mutant.write_text(source.replace(needle,'if marker not in known:'))
+assert listed(mutant)[1]==len(many)
 needle='SEARCH_TERMS = 3\n'
 assert source.count(needle)==1
 mutant=root/'batch.py'; mutant.write_text(source.replace(needle,'SEARCH_TERMS = 4\n'))

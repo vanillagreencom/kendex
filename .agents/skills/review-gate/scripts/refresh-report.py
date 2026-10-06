@@ -7,12 +7,13 @@ unanswered review thread, root being the thread's first comment id and the
 rest its REST review-comment fields. The head's generated inventory binds each
 reported path. Review text is data; only the upstream verifier confirms a
 defect. GitHub issue titles carry a fingerprint of the package, the path
-inside its directory (none for a single-file package), and the head lines the
-comment names, joined by its wording where that text occurs more than once in
-the file at head (its wording alone for a file-level or base-side comment).
+inside its directory (none for a package the lock records under any kind but
+skill), and the head lines the comment names, joined by its wording where
+that text occurs more than once in the file at head (its wording alone for a
+file-level or base-side comment).
 The lookup counts App-authored issues in every state: GitHub issue search,
-then, on a miss, the issues updated within its indexing lag, plus this run's
-own filings.
+then, on the run's first miss, one read of the issues updated within its
+indexing lag, plus this run's own filings.
 
 A finding is filed upstream only where kendex report --dry-run routes its one
 package to vanillagreencom/kendex with a package label. Every other finding is
@@ -151,7 +152,10 @@ def main():
     records = {e if isinstance(e, str) else e["path"]: e for e in inventory}
     lock_text = read("git", "show", head + ":.kendex-lock.json")
     lock = json.loads(lock_text)
-    names = {e["name"] for e in lock["entries"].values()}
+    kinds = {}
+    for e in lock["entries"].values():
+        kinds.setdefault(e["name"], set()).add(e["kind"])
+    names = set(kinds)
     run = f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     summary = os.environ["GITHUB_STEP_SUMMARY"]
     issue_env = dict(consumer_env, GH_TOKEN=token)
@@ -233,10 +237,16 @@ def main():
             args = shlex.split(command)
             if "--repo" in args and args[args.index("--repo") + 1] == UPSTREAM and "--label" in args:
                 row["label"] = args[args.index("--label") + 1]
-                # The path inside the package directory. A single-file
-                # package matched by stem has none: its rendered filename
-                # differs by harness (runtime.md, runtime.toml).
-                inner = "/".join(parts[parts.index(name) + 1:]) if name in parts else ""
+                # The package's kind, never the render layout, decides the
+                # path inside it. Only a skill is a directory package. Every
+                # other kind is one file whose rendered name and layout
+                # differ by harness: a command is .claude/commands/<name>.md
+                # on Claude and the skill tree .agents/skills/<name>/SKILL.md
+                # on Codex. A command sharing a skill's name renders under
+                # another name there, so a directory named for the package
+                # is the skill's.
+                is_skill = "skill" in kinds[name] and name in parts
+                inner = "/".join(parts[parts.index(name) + 1:]) if is_skill else ""
                 # The identity holds no consumer repository or rendered path,
                 # and the review wording only where reviewed() adds it.
                 identity = json.dumps([name, inner, reviewed(finding)],
@@ -268,6 +278,7 @@ def main():
                     row["note"] = str(error)
             token = ""
 
+    listed = False
     results = []
     for row in rows:
         finding, label, marker, evidence = row["finding"], row["label"], row["marker"], row["evidence"]
@@ -284,8 +295,11 @@ def main():
             url = "https://github.com/" + UPSTREAM + "/issues/new?" + urlencode({"title": row["title"], "body": body})
         if token and label:
             try:
-                if marker not in known:
+                if marker not in known and not listed:
+                    # One read answers every marker of this run, and this
+                    # run's own filings join known as they are made.
                     remember(recent())
+                    listed = True
                 existing = known.get(marker)
                 if existing and existing["state"] != "open":
                     url = filed = existing["html_url"]
