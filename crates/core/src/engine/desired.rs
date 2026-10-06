@@ -491,6 +491,21 @@ impl DesiredState {
         self.declaration_status = super::DeclarationStatus::Incomplete;
     }
 
+    /// Records a declaration whose item was found and read: the provenance
+    /// it is planned under, and why the closure wants it.
+    fn record_read(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        provenance: &str,
+        expansion: &super::expansion::Expansion,
+    ) {
+        let key = (kind, name.to_owned());
+        self.processed.insert(key.clone(), provenance.to_owned());
+        let wanted = expansion.package_reasons(kind, name);
+        self.derived.insert(key, wanted);
+    }
+
     /// Records an item the declared `source`'s catalog retired, kept on
     /// the tools the record holds it on unless this pass prunes. The
     /// person's own declaration outranks a derivation naming the same item.
@@ -754,11 +769,7 @@ fn compute(
                 continue;
             };
             let OpenCatalog { sealed, config, .. } = catalog;
-            state
-                .processed
-                .insert((kind, name.clone()), provenance.clone());
-            let wanted = expansion.package_reasons(kind, name);
-            state.derived.insert((kind, name.clone()), wanted);
+            state.record_read(kind, name, &provenance, &expansion);
             let mut harnesses = planned.harnesses.clone();
             if harnesses.is_empty() {
                 no_harness_note(kind, name, decl, manifest, &mut state);
