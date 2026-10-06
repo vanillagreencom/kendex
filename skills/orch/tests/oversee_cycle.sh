@@ -74,7 +74,7 @@ SH
 # gh answers `repo view` with the case's slug file, owner/repo by default,
 # which is the repository this checkout resolves to. Its `api` answers a
 # repository activity read with the case's activity.json and a compare of
-# the commit with AFTER with the case's compare-AFTER file, the status
+# BASE with HEAD with the case's compare-BASE...HEAD file, the status
 # GitHub gives, failing as GitHub's 404 where the case holds no such file;
 # each api call is logged to gh.calls.
 mkdir -p "$TMP_ROOT/bin"
@@ -84,7 +84,7 @@ if [[ "$1" == api ]]; then
   printf '%s\n' "$*" >> "$CASE/gh.calls"
   case "$*" in
     "api --paginate repos/owner/repo/activity?"*) file="$CASE/activity.json" ;;
-    "api repos/owner/repo/compare/"*" --jq .status") file="$CASE/compare-${2##*...}" ;;
+    "api repos/owner/repo/compare/"*" --jq .status") file="$CASE/compare-${2#*/compare/}" ;;
     *) exit 9 ;;
   esac
   [[ -f "$file" ]] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
@@ -149,6 +149,8 @@ timeline() {
       push_times: [$push], bot_review_times: [], rounds: $rounds}' > "$CASE/timeline.json"
 }
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
+# answer AFTER STATUS: GitHub's compare of the recorded commit with AFTER.
+answer() { printf %s "$2" > "$CASE/compare-$MERGE...$1"; }
 
 # pushes [SECS:AFTER...]: the base branch's push log GitHub answers, each push
 # SECS past T0 leaving the branch at AFTER, newest first as GitHub orders it.
@@ -231,7 +233,7 @@ while IFS='|' read -r name log answers want_merged want_actual want_cause; do
   printf small > "$CASE/class"
   edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
   [[ "$log" == unread ]] || pushes "$(shas "$log")"
-  for answer in $(shas "$answers"); do printf %s "${answer#*=}" > "$CASE/compare-${answer%%=*}"; done
+  for pair in $(shas "$answers"); do answer "${pair%%=*}" "${pair#*=}"; done
   got="$(record KEN-1 '')"
   assert_eq "$(state '.lanes[0].cycle.stamps.merged') $(field actual "$got") $(cut -d' ' -f1 <<<"$got")|$(sed -n 's/^oversee-cycle: merged-unread commit=[^ ]* //p' "$CASE/err")" \
     "${want_merged/AT/\"$(at 1500)\"} $want_actual rc=0|$want_cause" "push time: $name"
@@ -791,15 +793,15 @@ new_case c-push-exact; printf small > "$CASE/class"; pushes "300:$BASE" "1200:$M
 assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
   "control: without the exact match, a push leaving the branch at the commit is compared and goes unplaced"
 control m-push-ahead oversee-cycle '[[ "$status" == ahead ]] || continue' '[[ "$status" == never ]] || continue'
-new_case c-push-ahead; printf small > "$CASE/class"; pushes "1500:$BATCH"; printf ahead > "$CASE/compare-$BATCH"
+new_case c-push-ahead; printf small > "$CASE/class"; pushes "1500:$BATCH"; answer "$BATCH" ahead
 assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
   "control: without the containment answer, a batch push containing the commit goes unplaced"
 control m-push-since oversee-cycle 'select((.at | fromdate) >= ($since | tonumber))' 'select(true)'
-new_case c-push-since; printf small > "$CASE/class"; pushes "-100:$OLD" "1500:$BATCH"; printf ahead > "$CASE/compare-$BATCH"
+new_case c-push-since; printf small > "$CASE/class"; pushes "-100:$OLD" "1500:$BATCH"; answer "$BATCH" ahead
 assert_eq "$(field actual "$(record KEN-1 micro)")|$(sed -n 's/^oversee-cycle: merged-unread commit=[^ ]* //p' "$CASE/err")" 'actual=-|cause=compare-failed' \
   "control: without the launch bound, a push before the launch is compared"
 control m-push-fallback oversee-cycle 'merged: (if $merged == "" then null' 'merged: (if $merged == "" then ($authored | tonumber | todate)'
-new_case c-push-fallback; printf small > "$CASE/class"; pushes "300:$OTHER"; printf diverged > "$CASE/compare-$OTHER"
+new_case c-push-fallback; printf small > "$CASE/class"; pushes "300:$OTHER"; answer "$OTHER" diverged
 assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=60' \
   "control: a stand-in date for an unplaced push turns the null-merged assertion red"
 control m-push-period oversee-cycle 'query+="&time_period=${span%%:*}"' 'query+=""'
