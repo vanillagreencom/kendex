@@ -404,6 +404,7 @@ impl ScopeCheck<'_> {
                             }
                         }
                         ManifestRead::Absent => Remedy::Remove {
+                            kind,
                             name,
                             global: self.global,
                         },
@@ -1033,6 +1034,7 @@ impl ScopeCheck<'_> {
             sections.removed.push(drift(
                 format!("{prefix}{kind} '{name}' is no longer offered by its source"),
                 Some(Remedy::Remove {
+                    kind: package.kind,
                     name: package.name.clone(),
                     global: self.global,
                 }),

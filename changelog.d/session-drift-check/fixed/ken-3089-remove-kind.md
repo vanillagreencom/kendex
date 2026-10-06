@@ -1,0 +1,1 @@
+- The description names the removal the drift report prints for an item gone from its source, `kendex remove --kind <kind> <name>`, with `--global` in a global section.

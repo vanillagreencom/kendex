@@ -10,8 +10,7 @@ use crate::scope::ScopeFilter;
 pub struct ToggleArgs {
     #[arg(required = true)]
     names: Vec<String>,
-    /// Narrow to agent | skill | hook | command | mcp-server | plugin | pi-extension
-    #[arg(long)]
+    #[arg(long, help = format!("Narrow to {}", super::pin::kind_or_plugin_choices()))]
     kind: Option<String>,
     #[arg(short = 'g', long)]
     global: bool,

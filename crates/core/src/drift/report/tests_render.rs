@@ -104,6 +104,7 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 /// verb typed in it, so no command names it and only `update-pi`, which
 /// the hook runs there at global scope alone, is marked.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_run() {
     let main = ProjectTarget::MainCheckout("/w/app".into());
     let own = ProjectTarget::Worktree("/w/lane".into());
@@ -151,12 +152,13 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
         (
             "remove, which has none either and writes where it is typed",
             Remedy::Remove {
+                kind: ItemKind::Skill,
                 name: "gh".into(),
                 global: false,
             },
-            here("kendex remove gh"),
-            elsewhere("kendex remove gh"),
-            here("kendex remove gh"),
+            here("kendex remove --kind skill gh"),
+            elsewhere("kendex remove --kind skill gh"),
+            here("kendex remove --kind skill gh"),
         ),
         (
             "add, the same",
@@ -323,6 +325,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
                 line(
                     "'dev' is no longer offered by its source",
                     Remedy::Remove {
+                        kind: ItemKind::Skill,
                         name: "dev".into(),
                         global: false,
                     },
@@ -342,7 +345,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
     };
     let commands = [
         "kendex fork skill orch",
-        "kendex remove dev",
+        "kendex remove --kind skill dev",
         "kendex add --skill gh",
     ];
 
@@ -376,17 +379,21 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
 #[test]
 fn an_unsafe_identifier_drops_the_remedy_not_the_line() {
     let remedy = Remedy::Remove {
+        kind: ItemKind::Skill,
         name: "evil; rm -rf /".into(),
         global: false,
     };
     assert_eq!(remedy.render(None), None);
     let fine = Remedy::Remove {
+        kind: ItemKind::Hook,
         name: "gh".into(),
         global: true,
     };
     assert_eq!(
         fine.render(None),
-        Some(Fix::Here("kendex remove gh --global".to_owned()))
+        Some(Fix::Here(
+            "kendex remove --kind hook gh --global".to_owned()
+        ))
     );
     assert_eq!(
         Remedy::Add {

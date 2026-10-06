@@ -462,7 +462,7 @@ fn carry_kept_retired_edges(expansion: &mut Expansion, state: &DesiredState) {
             let requires = state.recorded_requires.get(&(*kind, name.clone(), harness));
             for (dep_kind, dep) in requires.into_iter().flatten() {
                 let by = InstallRef {
-                    source: retirement.source.clone(),
+                    source: retirement.by.source.clone(),
                     kind: *kind,
                     name: name.clone(),
                     harness,
@@ -509,7 +509,12 @@ fn withhold_kept_retired(wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredSta
                 });
                 if let Some(companion) = gone {
                     let node = (*kind, name.clone());
-                    spread.push((node, harness, companion.clone(), retirement.source.clone()));
+                    spread.push((
+                        node,
+                        harness,
+                        companion.clone(),
+                        retirement.by.source.clone(),
+                    ));
                 }
             }
         }

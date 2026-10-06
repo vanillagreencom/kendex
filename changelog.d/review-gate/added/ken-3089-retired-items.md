@@ -1,1 +1,1 @@
-- The consumer refresh pull request lists each item the refresh removed as retired, with the catalog's migration.
+- The consumer refresh pull request lists each retired item the refresh removed or held, with the catalog's migration.

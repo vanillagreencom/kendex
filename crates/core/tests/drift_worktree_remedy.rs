@@ -174,7 +174,7 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     );
     assert!(
         report::render_plain(&checked).contains(
-            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
+            "fix: kendex remove --kind agent gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
         ),
         "an absent manifest retains the explicit elsewhere marker"
     );
@@ -247,6 +247,7 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
                 class: report::Class::Drift,
                 text: "'gh' is no longer offered by its source".to_owned().into(),
                 remedy: Some(report::Remedy::Remove {
+                    kind: kendex_core::model::ItemKind::Skill,
                     name: "gh".to_owned(),
                     global: false,
                 }),
@@ -256,7 +257,10 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
 
     let text = report::render_plain(&checked);
     assert!(text.contains("fix: kendex apply\n"), "{text}");
-    assert!(text.contains("fix: kendex remove gh\n"), "{text}");
+    assert!(
+        text.contains("fix: kendex remove --kind skill gh\n"),
+        "{text}"
+    );
     assert!(!text.contains("--project-path"), "{text}");
 }
 
@@ -420,11 +424,15 @@ fn a_project_below_the_worktree_root_that_declares_is_its_own() {
             class: report::Class::Drift,
             text: "'gh' is no longer offered by its source".to_owned().into(),
             remedy: Some(report::Remedy::Remove {
+                kind: kendex_core::model::ItemKind::Skill,
                 name: "gh".to_owned(),
                 global: false,
             }),
         }],
     }];
     let text = report::render_plain(&checked);
-    assert!(text.contains("fix: kendex remove gh\n"), "{text}");
+    assert!(
+        text.contains("fix: kendex remove --kind skill gh\n"),
+        "{text}"
+    );
 }

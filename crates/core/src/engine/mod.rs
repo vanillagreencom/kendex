@@ -142,7 +142,7 @@ mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ForkEdit,
     Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions, Reach, Registrations,
-    RowRemedy, StoodIn, StoodInRecord, Targets,
+    RetiredBy, RetiredStanding, RowRemedy, StoodIn, StoodInRecord, Targets,
 };
 
 pub(super) struct PlanOwnership {
@@ -224,7 +224,7 @@ pub fn plan_scope(
         &mut config_edits,
     )?;
 
-    let (sweepable, said) = plan_removals(
+    let (sweepable, said, retired) = plan_removals(
         env,
         scope,
         &manifest,
@@ -241,7 +241,7 @@ pub fn plan_scope(
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
-    let notices = desired::retired_notices(scope, &state, &new_lock);
+    let notices = desired::retired_notices(scope, &state, &retired);
     state.warnings.extend(notices);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
@@ -271,7 +271,7 @@ pub fn plan_scope(
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
-        retired: state.retired.into_keys().collect(),
+        retired,
         withheld: state.withheld,
         set_changes,
         sweepable,
@@ -331,7 +331,7 @@ fn plan_pi_switches(
 /// Everything a plan takes away, after every write is planned: stale
 /// emitted files, what a refusal or a withholding takes or keeps, then
 /// the orphans, and the Pi records they keep finalized. Returns what a
-/// sweep could still take.
+/// sweep could still take, and where the plan leaves each retired item.
 #[allow(clippy::too_many_arguments)]
 fn plan_removals(
     env: &Env,
@@ -346,7 +346,7 @@ fn plan_removals(
     new_lock: &mut Lock,
     kept: &mut item_plan::KeptAsIs,
     scope_notes: &mut Vec<String>,
-) -> Result<(Vec<SetChange>, set_change::Said)> {
+) -> Result<(Vec<SetChange>, set_change::Said, removal::Retired)> {
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
@@ -365,7 +365,7 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
-    let (sweepable, said) = removal::orphans(
+    let removed = removal::orphans(
         env,
         scope,
         manifest,
@@ -391,7 +391,7 @@ fn plan_removals(
         ops,
         config_edits,
     )?);
-    Ok((sweepable, said))
+    Ok(removed)
 }
 
 /// The files a scope owes beside its items: the project files, and the

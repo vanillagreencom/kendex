@@ -122,7 +122,10 @@ pub enum Remedy {
         to: std::path::PathBuf,
         windows: bool,
     },
+    /// Remove one item by kind and name: a bare name also removes a live
+    /// item of another kind that shares it.
     Remove {
+        kind: ItemKind,
         name: String,
         global: bool,
     },
@@ -161,6 +164,16 @@ pub enum Fix {
     /// reader handed no remedy at all is left with the drift and no way
     /// out of it.
     Elsewhere(String),
+}
+
+impl Fix {
+    /// The command, for a reader outside the drift report, who reads it
+    /// where the line it sits on was planned.
+    pub fn into_command(self) -> String {
+        match self {
+            Fix::Here(command) | Fix::Elsewhere(command) => command,
+        }
+    }
 }
 
 /// The project a project-scope remedy has to name, and whose it is: the
@@ -324,7 +337,9 @@ impl Remedy {
                     command_word(to, false)?
                 ),
             },
-            Remedy::Remove { name, .. } => format!("kendex remove {name}{place}"),
+            Remedy::Remove { kind, name, .. } => {
+                format!("kendex remove --kind {} {name}{place}", kind.name())
+            }
             Remedy::Add { kind, name, .. } => {
                 format!("kendex add --{} {name}{place}", kind.name())
             }

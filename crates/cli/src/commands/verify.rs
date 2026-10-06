@@ -925,7 +925,7 @@ fn declared_packages(
         .filter(|declared| {
             !report
                 .retired
-                .contains(&(declared.kind, declared.name.clone()))
+                .contains_key(&(declared.kind, declared.name.clone()))
         })
         .partition(|declared| {
             report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
@@ -1170,16 +1170,31 @@ fn say_row(
                 .unwrap_or_else(|| row.detail.clone()),
         ),
         Some(row) => Some(match row.remedy {
-            // The kind rides along: a bare name also removes a live item of
-            // another kind that shares it.
-            Some(RowRemedy::Remove) => format!(
-                "{} — refresh takes it, or remove {name} with --kind {kind}",
-                row.detail
-            ),
-            Some(RowRemedy::RemoveEdited) => format!(
-                "{}; its files were edited, which refresh holds — remove {name} with --kind {kind}",
-                row.detail
-            ),
+            Some(remedy) => {
+                // The drift report's own spelling, at the row's scope: a
+                // bare name also removes a live item of another kind that
+                // shares it.
+                let removal = kendex_core::drift::report::Remedy::Remove {
+                    kind: entry.kind,
+                    name: name.clone(),
+                    global: row.scope == Scope::Global,
+                }
+                .render(None)
+                .map(kendex_core::drift::report::Fix::into_command);
+                match (remedy, removal) {
+                    (RowRemedy::Remove, Some(command)) => {
+                        format!("{} — refresh takes it, or {command}", row.detail)
+                    }
+                    (RowRemedy::RemoveEdited, Some(command)) => format!(
+                        "{}; its files were edited, which refresh holds — {command}",
+                        row.detail
+                    ),
+                    (RowRemedy::Remove, None) => row.detail.clone(),
+                    (RowRemedy::RemoveEdited, None) => {
+                        format!("{}; its files were edited, which refresh holds", row.detail)
+                    }
+                }
+            }
             None => row.detail.clone(),
         }),
         None if unreachable_source => {

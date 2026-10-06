@@ -8,7 +8,9 @@
 //! skill stays is no leaving, and the workflow stays. A kept copy deleted
 //! or edited by hand, a Pi package's included, fails verify on its own row
 //! while a plain refresh passes. The kept notice's removal takes only the
-//! retired item, at its own scope.
+//! retired item, at its own scope, and refuses to run keeping the
+//! declaration. A prune holds a retired copy the person edited and names
+//! the removal that takes it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -466,62 +468,73 @@ enum At {
     Global,
 }
 
+/// A skill and a live hook installed under one name, `deploy`, at `at`,
+/// from a catalog that then retires the skill: `(cwd, skill, hook, scope)`,
+/// the scope as `--scope` spells it.
+#[allow(clippy::unwrap_used)]
+fn retired_beside_a_namesake(home: &Path, at: At) -> (PathBuf, PathBuf, PathBuf, &'static str) {
+    let catalog = home.join("catalog");
+    write(&catalog.join("kendex.toml"), CATALOG);
+    write(
+        &catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nDeploy.\n",
+    );
+    write(
+        &catalog.join("hooks/deploy.sh"),
+        &HOOK.replace("name: check", "name: deploy"),
+    );
+    let declared = format!(
+        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
+        source_path(&catalog)
+    );
+    let (manifest, root, scope) = match at {
+        At::Project => (
+            home.join("consumer/kendex.toml"),
+            home.join("consumer"),
+            "project",
+        ),
+        At::Global => (
+            kendex_core::env::Env::host_rooted(home).global_manifest_file(),
+            home.to_path_buf(),
+            "global",
+        ),
+    };
+    write(&manifest, &declared);
+    let cwd = manifest.parent().unwrap().to_path_buf();
+    if let At::Project = at {
+        repository(&cwd);
+    }
+    let installed = kendex(home, &cwd, &["apply", "--scope", scope, "-y", "--leave"]);
+    assert!(installed.status.success(), "{at:?}: {}", said(&installed));
+    let skill = root.join(".claude/skills/deploy");
+    let hook = root.join(".claude/hooks/deploy.sh");
+    for copy in [&skill, &hook] {
+        assert!(
+            copy.exists(),
+            "{at:?}: the fixture installs {}",
+            copy.display()
+        );
+    }
+    write(
+        &catalog.join("kendex.toml"),
+        &format!("{CATALOG}[retired.skills]\ndeploy = \"declare deploy-next\"\n"),
+    );
+    (cwd, skill, hook, scope)
+}
+
 /// A retired skill shares its name with a live hook. The kept notice's
 /// own `kendex remove` takes the skill and leaves the hook, at either
 /// scope: run as printed, without a kind it would take both, and at the
-/// global scope without `-g` it would look in the project.
+/// global scope without `-g` it would look in the project. The same
+/// removal keeping the declaration is refused, since that removal takes
+/// every kind under the name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_kept_notice_removes_the_retired_item_and_spares_a_live_namesake() {
     for at in [At::Project, At::Global] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
-        let catalog = home.join("catalog");
-        write(&catalog.join("kendex.toml"), CATALOG);
-        write(
-            &catalog.join("skills/deploy/SKILL.md"),
-            "---\nname: deploy\ndescription: Deploy\n---\nDeploy.\n",
-        );
-        write(
-            &catalog.join("hooks/deploy.sh"),
-            &HOOK.replace("name: check", "name: deploy"),
-        );
-        let declared = format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
-            source_path(&catalog)
-        );
-        let (manifest, root, scope) = match at {
-            At::Project => (
-                home.join("consumer/kendex.toml"),
-                home.join("consumer"),
-                "project",
-            ),
-            At::Global => (
-                kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
-                home.clone(),
-                "global",
-            ),
-        };
-        write(&manifest, &declared);
-        let cwd = manifest.parent().unwrap().to_path_buf();
-        if let At::Project = at {
-            repository(&cwd);
-        }
-        let installed = kendex(&home, &cwd, &["apply", "--scope", scope, "-y", "--leave"]);
-        assert!(installed.status.success(), "{at:?}: {}", said(&installed));
-        let skill = root.join(".claude/skills/deploy");
-        let hook = root.join(".claude/hooks/deploy.sh");
-        for copy in [&skill, &hook] {
-            assert!(
-                copy.exists(),
-                "{at:?}: the fixture installs {}",
-                copy.display()
-            );
-        }
-        write(
-            &catalog.join("kendex.toml"),
-            &format!("{CATALOG}[retired.skills]\ndeploy = \"declare deploy-next\"\n"),
-        );
+        let (cwd, skill, hook, scope) = retired_beside_a_namesake(&home, at);
 
         let refreshed = kendex(
             &home,
@@ -540,6 +553,13 @@ fn the_kept_notice_removes_the_retired_item_and_spares_a_live_namesake() {
             .map(|(command, _)| command)
             .unwrap_or_else(|| panic!("{at:?}: the notice names no removal: {notice}"));
         let mut args: Vec<&str> = removal.split_whitespace().collect();
+        let kept_declaration = [args.as_slice(), &["--keep-declaration", "--leave"]].concat();
+        let refused = kendex(&home, &cwd, &kept_declaration);
+        let printed = said(&refused);
+        assert!(!refused.status.success(), "{at:?}: {printed}");
+        for copy in [&skill, &hook] {
+            assert!(copy.exists(), "{at:?}: {} went: {printed}", copy.display());
+        }
         args.extend(["--no-sweep", "--leave"]);
 
         let removed = kendex(&home, &cwd, &args);
@@ -551,4 +571,87 @@ fn the_kept_notice_removes_the_retired_item_and_spares_a_live_namesake() {
         );
         assert!(hook.exists(), "{at:?} {args:?}: the hook went: {printed}");
     }
+}
+
+/// `kendex refresh --prune` meets the retired skill with its SKILL.md
+/// edited: the copy stays, and the item's one keyed line, the migration
+/// last, names the removal that takes it. That removal, run as printed,
+/// takes the held skill and spares the live hook of the same name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_prune_holds_an_edited_retired_copy_and_names_its_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (cwd, skill, hook, scope) = retired_beside_a_namesake(&home, At::Project);
+    let edited = skill.join("SKILL.md");
+    let mut bytes = fs::read_to_string(&edited).unwrap();
+    bytes.push_str("The person's line.\n");
+    write(&edited, &bytes);
+
+    let pruned = kendex(
+        &home,
+        &cwd,
+        &["refresh", "--scope", scope, "--prune", "--yes", "--leave"],
+    );
+    let printed = said(&pruned);
+    assert!(pruned.status.success(), "{printed}");
+    assert!(edited.exists(), "the edited copy went: {printed}");
+    let lines: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.starts_with("deploy: retired by cat; "))
+        .collect();
+    assert_eq!(lines.len(), 1, "{printed}");
+    let line = lines[0];
+    assert!(line.ends_with("; declare deploy-next"), "{line}");
+    let removal = line
+        .split_once("kendex ")
+        .and_then(|(_, rest)| rest.split_once(';'))
+        .map(|(command, _)| command)
+        .unwrap_or_else(|| panic!("the held line names no removal: {line}"));
+    let mut args: Vec<&str> = removal.split_whitespace().collect();
+    args.extend(["--no-sweep", "--leave"]);
+
+    let removed = kendex(&home, &cwd, &args);
+    let printed = said(&removed);
+    assert!(removed.status.success(), "{args:?}: {printed}");
+    assert!(!skill.exists(), "{args:?}: the held skill stays: {printed}");
+    assert!(hook.exists(), "{args:?}: the hook went: {printed}");
+}
+
+/// A personal-setup skill whose declaration was deleted by hand is left
+/// over beside a live hook of the same name. `kendex verify --scope
+/// global`, run in a project, names the removal that takes it: run as
+/// printed in that project, it takes the personal skill and spares the
+/// hook, where a bare spelling would act on the project.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_names_a_global_left_over_removal_that_runs_from_a_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (cwd, skill, hook, _) = retired_beside_a_namesake(&home, At::Global);
+    let manifest = cwd.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    let undeclared = declared.replace("[skills.deploy]\nsource = \"cat\"\n", "");
+    assert_ne!(undeclared, declared, "the skill's declaration stays");
+    write(&manifest, &undeclared);
+    let project = home.join("consumer");
+    write(&project.join("kendex.toml"), "schema = 6\n");
+    repository(&project);
+
+    let verified = kendex(&home, &project, &["verify", "--scope", "global"]);
+    let printed = said(&verified);
+    assert!(!verified.status.success(), "{printed}");
+    let removal = printed
+        .lines()
+        .filter(|line| line.contains("skill deploy"))
+        .find_map(|line| line.rsplit_once("kendex ").map(|(_, command)| command))
+        .unwrap_or_else(|| panic!("verify names no removal: {printed}"));
+    let mut args: Vec<&str> = removal.split_whitespace().collect();
+    args.extend(["--no-sweep", "--leave"]);
+
+    let removed = kendex(&home, &project, &args);
+    let printed = said(&removed);
+    assert!(removed.status.success(), "{args:?}: {printed}");
+    assert!(!skill.exists(), "{args:?}: the skill stays: {printed}");
+    assert!(hook.exists(), "{args:?}: the hook went: {printed}");
 }

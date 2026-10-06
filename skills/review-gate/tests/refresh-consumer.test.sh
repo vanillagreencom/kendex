@@ -262,15 +262,15 @@ cp "$TMP/state/body" "$TMP/clean-body"
 # Each line refresh prints for a retired item reaches the body as printed,
 # the migration with it; a removal preview naming the retirement does not.
 reset_default
-REFRESH_SAID="deploy: retired by cat; pruned; declare deploy-next
+REFRESH_SAID="deploy: retired by cat; this prune removes it; declare deploy-next
   - remove skill deploy for Claude Code — retired by cat; declare deploy-next
-check: retired by cat; pruned"
+check: retired by cat; this prune holds its edited files; remove them with kendex remove --kind hook check"
 run_refresh retired pass render
 unset REFRESH_SAID
 expected_retired='Retired items:
 ```text
-deploy: retired by cat; pruned; declare deploy-next
-check: retired by cat; pruned
+deploy: retired by cat; this prune removes it; declare deploy-next
+check: retired by cat; this prune holds its edited files; remove them with kendex remove --kind hook check
 ```'
 if [ "$RC" -eq 0 ] && [[ "$(cat "$TMP/state/body")" == *"$expected_retired"* ]] &&
     ! grep -qF 'remove skill deploy' "$TMP/state/body"; then

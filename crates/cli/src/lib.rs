@@ -73,8 +73,11 @@ enum Command {
     /// Remove installed packages
     Remove {
         names: Vec<String>,
-        /// Narrow to agent | skill | hook | command | mcp-server | plugin | pi-extension
-        #[arg(long, conflicts_with = "keep_declaration")]
+        #[arg(
+            long,
+            conflicts_with = "keep_declaration",
+            help = format!("Narrow to {}", commands::pin::kind_or_plugin_choices())
+        )]
         kind: Option<String>,
         #[arg(short = 'g', long)]
         global: bool,

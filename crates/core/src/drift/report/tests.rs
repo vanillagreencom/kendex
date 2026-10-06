@@ -270,6 +270,7 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
         global: false,
     };
     let remove = Remedy::Remove {
+        kind: ItemKind::Skill,
         name: "gone-one".to_owned(),
         global: false,
     };

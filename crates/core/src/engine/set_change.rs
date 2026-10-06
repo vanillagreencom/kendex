@@ -41,12 +41,16 @@ pub struct SetChange {
     pub direction: SetDirection,
     /// Why, in the words a preview shows.
     pub reason: String,
+    /// The retirement a drop goes for, which `reason` says; `None` for
+    /// any other change.
+    pub retired: Option<super::RetiredBy>,
 }
 
 impl SetChange {
     pub(super) fn added(entry: &LockEntry) -> SetChange {
         SetChange {
             reason: why_wanted(&entry.reasons),
+            retired: None,
             direction: SetDirection::Add,
             kind: entry.kind,
             name: entry.name.clone(),
@@ -65,11 +69,16 @@ impl SetChange {
         said: Option<&'static str>,
         retired: &Retired,
     ) -> SetChange {
-        let retirement = retired.get(&(entry.kind, entry.name.clone()));
+        let retired = match said {
+            Some(_) => None,
+            None => retired
+                .get(&(entry.kind, entry.name.clone()))
+                .map(|retirement| retirement.by.clone()),
+        };
         let requested = entry.reasons.contains(&Reason::Requested);
-        let reason = match (said, retirement, requested) {
+        let reason = match (said, &retired, requested) {
             (Some(said), _, _) => format!("{said} — see the warning on {}", entry.name),
-            (None, Some(retirement), _) => retirement.reason(),
+            (None, Some(by), _) => by.to_string(),
             (None, None, true) => "no longer declared here".to_owned(),
             (None, None, false) => format!(
                 "nothing needs it anymore — it was {}",
@@ -78,6 +87,7 @@ impl SetChange {
         };
         SetChange {
             reason,
+            retired,
             direction: SetDirection::Remove,
             kind: entry.kind,
             name: entry.name.clone(),

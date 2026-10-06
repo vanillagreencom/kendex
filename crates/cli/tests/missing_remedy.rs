@@ -170,9 +170,12 @@ fn repair_absent_manifest_cleanup() {
         .lines()
         .find(|line| line.contains("does not list recorded skill 'old-name'"))
         .unwrap();
-    assert!(row.contains("fix: kendex remove old-name"), "{row}");
+    assert!(
+        row.contains("fix: kendex remove --kind skill old-name"),
+        "{row}"
+    );
 
-    let removed = kendex(&home, &project, &["remove", "old-name"]);
+    let removed = kendex(&home, &project, &["remove", "--kind", "skill", "old-name"]);
     assert!(removed.status.success(), "{removed:?}");
     assert!(!installed_path.exists(), "{removed:?}");
     let record = lock::load(&lock_path).unwrap();

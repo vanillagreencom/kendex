@@ -46,6 +46,33 @@ fn shared_kind_parser_keeps_canonical_names_and_existing_aliases() {
     }
 }
 
+/// The kinds `--kind` on enable, disable and remove names in its help and
+/// its unknown-kind error are every kind, plugin and output style
+/// included, and each one it names parses.
+#[test]
+fn kind_or_plugin_choices_are_every_kind_the_parser_takes() {
+    use crate::commands::pin::{kind_or_plugin_choices, parse_kind_or_plugin};
+    use kendex_core::model::ItemKind;
+
+    let named: Vec<String> = kind_or_plugin_choices()
+        .split(" | ")
+        .map(str::to_owned)
+        .collect();
+    for kind in ItemKind::ALL {
+        assert!(
+            named.contains(&kind.name().to_owned()),
+            "{kind:?}: {named:?}"
+        );
+        assert_eq!(parse_kind_or_plugin(kind.name()), Ok(kind), "{kind:?}");
+    }
+    let refused = parse_kind_or_plugin("plugins").unwrap_err();
+    let (_, listed) = refused
+        .split_once('(')
+        .and_then(|(head, rest)| Some((head, rest.strip_suffix(')')?)))
+        .unwrap_or_else(|| panic!("the error lists no kinds: {refused}"));
+    assert_eq!(listed.split(" | ").collect::<Vec<_>>(), named, "{refused}");
+}
+
 fn pages() -> BTreeMap<String, String> {
     fn visit(mut command: Command, path: &str, pages: &mut BTreeMap<String, String>) {
         command = command

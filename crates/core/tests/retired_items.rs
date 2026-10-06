@@ -6,12 +6,14 @@
 //! deleted or edited by hand is a conflict. A prune takes the
 //! copies, an emptied Copilot registry and a Pi package's registration with
 //! them, the records and the item's own declaration, and says so in the
-//! same keyed line, the retirement its removals' reason. Where nothing of it is
-//! kept, pruned or never installed, it is owed nothing. An armed hook
-//! requiring it is withheld, kept or not, and a kept retired hook whose
-//! record requires a withheld hook goes with it. A rebound declaration keeps the
-//! source conflict. Every other name the catalog does not carry keeps the
-//! refusal that fails a refresh, so a retirement cannot hide a typo.
+//! same keyed line, the retirement its removals' reason; a copy the person
+//! edited stays, its record with it, and the line says it is held. Where
+//! nothing of it is kept, pruned or never installed, it is owed nothing. An
+//! armed hook requiring it is withheld, kept or not, and a kept retired
+//! hook whose record requires a withheld hook goes with it. A rebound
+//! declaration keeps the source conflict. Every other name the catalog does
+//! not carry keeps the refusal that fails a refresh, so a retirement cannot
+//! hide a typo.
 //! Refresh also takes what a declaration deleted by hand left, except a
 //! copy the person edited.
 #![cfg(unix)]
@@ -27,7 +29,8 @@ use kendex_core::engine::desired::Withholding;
 use kendex_core::engine::ops;
 use kendex_core::engine::{
     AgentModelRequest, DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions,
-    RowRemedy, SetDirection, agent_model_request, audit, plan_apply, planned_closure,
+    RetiredBy, RetiredStanding, RowRemedy, SetDirection, agent_model_request, audit, plan_apply,
+    planned_closure,
 };
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
@@ -399,6 +402,11 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         );
         assert_eq!(not_found_keys(&report), Vec::<String>::new(), "{row}");
         assert_eq!(warned(&report), [(kind, name.to_owned())], "{row}");
+        assert_eq!(
+            report.retired.get(&(kind, name.to_owned())),
+            Some(&RetiredStanding::Kept),
+            "{row}"
+        );
         let notice = &report.warnings[0];
         assert_eq!(notice.harness, None, "{row}");
         // The key the CLI prints the notice bare under
@@ -462,6 +470,11 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         // refresh (`refresh-consumer.sh`) forwards that line into its pull
         // request body.
         assert_eq!(warned(&pruned), [(kind, name.to_owned())], "{row}");
+        assert_eq!(
+            pruned.retired.get(&(kind, name.to_owned())),
+            Some(&RetiredStanding::Pruned),
+            "{row}"
+        );
         let notice = &pruned.warnings[0].message;
         assert!(
             notice.starts_with(&format!("{name}: retired by cat; ")),
@@ -473,19 +486,20 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
                 "{row}: {notice}"
             );
         }
-        // The removal preview gives the retirement as the reason.
-        let reasons: Vec<&str> = pruned
+        // Each removal the preview shows goes for the retirement.
+        let retirements: Vec<Option<&RetiredBy>> = pruned
             .set_changes
             .iter()
             .filter(|change| change.name == name && change.direction == SetDirection::Remove)
-            .map(|change| change.reason.as_str())
+            .map(|change| change.retired.as_ref())
             .collect();
-        assert!(!reasons.is_empty(), "{row}: the preview drops nothing");
-        for reason in &reasons {
-            assert!(
-                reason.contains("cat") && reason.contains(migration),
-                "{row}: {reasons:?}"
-            );
+        assert!(!retirements.is_empty(), "{row}: the preview drops nothing");
+        let by = RetiredBy {
+            source: "cat".to_owned(),
+            migration: migration.to_owned(),
+        };
+        for retirement in &retirements {
+            assert_eq!(*retirement, Some(&by), "{row}");
         }
         for written in [name, COMPANION] {
             let files = written_files(&pruned, written);
@@ -525,6 +539,68 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
             let files = written_files(&after, written);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {written}");
         }
+    }
+}
+
+/// A prune meets a retired item whose installed copy the person edited:
+/// the copy stays, its record with it, while its declaration goes, and the
+/// plan says it holds the item rather than that it pruned it. The notice
+/// keeps the keyed shape the review-gate consumer refresh
+/// (`refresh-consumer.sh`) forwards, the migration last.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_prune_holds_an_edited_retired_copy() {
+    for (kind, name, edited, migration) in [
+        (ItemKind::Skill, "deploy", "SKILL.md", "declare deploy-next"),
+        (ItemKind::Hook, "doc-drift-check", "", ""),
+        (
+            ItemKind::PiExtension,
+            "old-ext",
+            "index.js",
+            "declare new-ext",
+        ),
+    ] {
+        let f = installed(kind, name);
+        let copy = f.installed_copies(kind, name).remove(0);
+        let edited = match edited.is_empty() {
+            true => copy.clone(),
+            false => copy.join(edited),
+        };
+        let mut bytes = fs::read_to_string(&edited).unwrap();
+        bytes.push_str("// the person's line\n");
+        fs::write(&edited, bytes).unwrap();
+        f.retire(kind, name, migration);
+
+        let pruned = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
+
+        assert_eq!(
+            pruned.retired.get(&(kind, name.to_owned())),
+            Some(&RetiredStanding::Held),
+            "{kind:?}"
+        );
+        assert_eq!(warned(&pruned), [(kind, name.to_owned())], "{kind:?}");
+        let notice = &pruned.warnings[0].message;
+        assert!(
+            notice.starts_with(&format!("{name}: retired by cat; ")),
+            "{kind:?}: {notice}"
+        );
+        if !migration.is_empty() {
+            assert!(
+                notice.ends_with(&format!("; {migration}")),
+                "{kind:?}: {notice}"
+            );
+        }
+        apply::execute(&f.env, &pruned.plan).unwrap();
+        assert!(edited.exists(), "{kind:?}: the edited copy went");
+        assert!(
+            !recorded_of(&f, name).is_empty(),
+            "{kind:?}: the record dropped the held copy"
+        );
+        let manifest = kendex_core::engine::ops::manifest_for_reading(&f.env, &f.scope).unwrap();
+        assert!(
+            !manifest.declared(kind).contains_key(name),
+            "{kind:?}: the declaration stays"
+        );
     }
 }
 
