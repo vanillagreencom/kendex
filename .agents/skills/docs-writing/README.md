@@ -7,6 +7,7 @@ Writing rules and finished examples for repository markdown and documentation HT
 - Supply a plain writing standard with examples.
 - State the repository layout every repository converges on.
 - Define the purpose and contents of each document type, and ship one finished example per type with a contrast drawn from a real failure.
+- Sort a fact into one home: a decision record, an architecture doc, or the code, its tests and the tracker.
 - Guide a focused edit to existing text, and a rewrite that extracts first and then writes from a blank page.
 - Link decision-record work to the decider skill.
 

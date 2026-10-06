@@ -11,7 +11,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.6"
+  version: "3.0.7"
 tags: [docs]
 ---
 
@@ -53,7 +53,7 @@ Two exclusions hold in every file: a list a declaration file or a checker alread
 
 ## Layout
 
-Every repository converges on this layout. A rewrite moves what it finds onto it.
+Every repository converges on this layout. A rewrite moves what it finds onto it. A repository departs from it only under a decision record that names the need and the owner who approved the departure; a rewrite keeps what that record covers and cites it.
 
 | Path | Reader | Holds | Required |
 |---|---|---|---|
@@ -80,6 +80,7 @@ Nothing else lives under `docs/`. A plan, a research report, a measurement or a 
 - Decision records are not listed in `AGENTS.md`. Review and dev workflows find them by keyword with `decisions search`, and a code comment cites a decision ID only where that code carries out the choice.
 - A code comment holds a local reason or an external cause at its site, per the code-quality skill's SKILL.md § Comments and Prose, and nothing points to it.
 - A README links to a doc only when a person needs it, such as "Writing a plugin".
+- A doc is referenced when a "Read when" line names the task that triggers reading it. A filename in a list, a link from another doc or a mention in prose is not a route: a link proves only that the file can be found. Three files need no route and get none: a topic index, which lists other docs and is deleted because the "Read when" lines are the index; an example a tool generates, which its generator inventories; and a human page a site loads at run time, which `AGENTS.md` names as product content.
 
 ## Per file type
 
@@ -117,7 +118,7 @@ The harness shim. kendex writes it, and its whole content is one import line.
 
 ### `docs/architecture/<name>.md`
 
-Optional. Read by an agent about to do the work the doc governs. One cross-folder idea, a principle or contract that governs named work; a subsystem boundary qualifies. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
+Optional. Read by an agent about to do the work the doc governs. A doc exists for one reader's task and the harmful mistake it prevents: name the work an agent does with the doc open, and what that agent breaks without it. A subsystem name alone is no reason for a file, and the rules one reader uses for one task are one doc, whatever folders they cross. No file count, size or line limit holds. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
 
 The contrast, a journal paragraph against the principle it should be:
 
@@ -125,7 +126,23 @@ The contrast, a journal paragraph against the principle it should be:
 |---|---|
 | `trash.rs::move_to_trash` is the one writer: the apply engine's `Trash` op, the project restore and a Pi package's replacement land through it, under a name that opens with the moment it was moved. Enforced by the tests `a_name_is_dated_by_the_stamp_it_opens_with` and `a_listing_reports_name_age_and_bytes_newest_first` in `trash/tests.rs`. | Removal never deletes. Every removed file goes to the trash through one writer, `trash::move_to_trash`, so a person can get it back; a second writer would be a removal nobody can undo. |
 
+Three lines that read as rules and are not:
+
+| Rule | Not a rule |
+|---|---|
+| A pointer to the enforcing check: "Never name a plugin id in the core; `scripts/check-plugin-boundary.py` refuses it." | Test-case narration: "Enforced by `test_attribution.py::two_speakers_one_microphone`, whose control removes the second speaker, and by `::no_transcript` for an empty recording." The reader learns which tests exist, not what the code must never do, and every test name goes stale at the next rename. |
+| A contract: "One judge, `manifest.py::validate`, decides every manifest; a key it does not list refuses the manifest." | A field inventory: a table of every manifest key with its type, whether it is required and what it means. The judge's source and the reference doc hold it, and the table is wrong the day a key changes. |
+| A high-level rule: "A release is built once; every stage deploys that one artifact and never rebuilds." | A call sequence: "`make release` runs `scripts/bundle.sh`, which writes `dist/app.tar`; `deploy staging` uploads it, restarts the service and runs `smoke.sh`; `deploy prod` repeats the steps." The reader is walked through the scripts and still does not know what a change to them must preserve. |
+
 Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), [examples/architecture-design-system.md](examples/architecture-design-system.md).
+
+### One home per fact
+
+A fact has exactly one home. Ask the questions in order and stop at the first yes:
+
+1. Would a later agent, reading the code alone, reverse this choice? A decision record: the choice, why, the rejected option and the revisit trigger, under the decider bar. Example: [examples/decision.md](examples/decision.md), one dismiss owner kept over per-component handling.
+2. Is it a rule an agent follows while doing one kind of work under those choices? An architecture doc, citing decision IDs and never restating them. Example: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another.
+3. Neither. A feature's behaviour, what a page, key or button does, lives in the code, its tests and the tracker item that asked for it. Counter-example: [examples/behaviour-spec.md](examples/behaviour-spec.md), a window written up control by control, with where each line goes.
 
 ### Decision records
 
@@ -146,6 +163,10 @@ Read by an agent or maintainer looking up one value: `references/`, `schemas/`, 
 ### Documentation HTML
 
 Read in a browser. An offline page a skill or repository ships beside its markdown, opening with no build step, under the rules of the equivalent markdown type, with local styles only and no framework or external asset. Inline SVG is available where a diagram shows a relationship more clearly than prose. Never: a page served from a web root or built by an application bundler; that is a product file.
+
+### Human architecture page
+
+Read by a person asking how the system works, on a help site or in another product content directory the repository ships. Its title is the reader's question, its first paragraph answers it in plain words, and one diagram shows the answer. It is product content: `AGENTS.md` names its directory as such, no "Read when" line routes an agent through it, and the rules an agent follows stay in `docs/architecture/`. Never: do and never lines, decision IDs, code paths, or a sentence written for an agent. Example: [examples/human-page.md](examples/human-page.md).
 
 ### `CHANGELOG.md` and `changelog.d/`
 
@@ -170,4 +191,4 @@ A plan, a research report, a measurement or a handoff is not repository content.
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
+A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [behaviour-spec.md](examples/behaviour-spec.md), [human-page.md](examples/human-page.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
