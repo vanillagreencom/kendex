@@ -13,12 +13,10 @@ CONTEXT_JSON is the object the expressions read, `github`, `needs`, `steps` or
 any other context, with `needs.<job>.result` set for every job a condition's
 status function reads. The evaluator covers string, number and boolean
 literals, context paths, `!`, `==`, `!=`, `&&`, `||`, parentheses, and the
-functions contains, fromJSON, always, cancelled and success. Anything else is
-a refusal, not a guess: every refusal starts `gh-eval: cause=` and exits 2.
-`==` compares strings without regard to case, `&&` and `||` return an
-operand, a path that names no value is null, and contains searches a string
-for a substring without regard to case, reading null as empty, as GitHub
-evaluates them; contains over an array or object is a refusal.
+functions fromJSON, always, cancelled and success. Anything else is a refusal,
+not a guess: every refusal starts `gh-eval: cause=` and exits 2. `==` compares
+strings without regard to case, `&&` and `||` return an operand, and a path
+that names no value is null, as GitHub evaluates them.
 """
 import json
 import re
@@ -55,17 +53,6 @@ def tokens(src):
 
 def truthy(v):
     return not (v is None or v is False or v == "" or (type(v) in (int, float) and v == 0))
-
-
-def text(v):
-    # GitHub's string coercion: null is empty, booleans spell themselves.
-    if v is None:
-        return ""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (dict, list)):
-        refuse("cause=uncoercible-value kind=%s" % type(v).__name__)
-    return str(v)
 
 
 def equal(a, b):
@@ -155,11 +142,6 @@ class Parser:
         return self.lookup(v)
 
     def call(self, name, args):
-        if name == "contains":
-            if len(args) != 2:
-                refuse("cause=arity name=contains given=%d" % len(args))
-            search, item = args
-            return text(item).lower() in text(search).lower()
         if name == "fromJSON":
             return json.loads(args[0])
         if name == "always":

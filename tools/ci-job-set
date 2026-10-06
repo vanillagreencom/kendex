@@ -5,9 +5,10 @@
 # The class comes from the change-class composite action and is never decided
 # here; this script maps it, and the changed paths behind it, onto one
 # `<lane>=true|false` line per gated lane, plus one `shards=` line naming the
-# shell shards the diff selects as a JSON list. Every lane condition in that
-# workflow reads one of those lines, and the shard matrix reads the list, so
-# the selection is made once instead of re-derived in each `if:`.
+# shell shards the diff selects as a JSON list and one `queue_macos_shards=`
+# line naming those the merge queue runs on macOS. Every lane condition in
+# that workflow reads one of those lines, and each shard matrix reads a list,
+# so the selection is made once instead of re-derived in each `if:`.
 #
 # Usage: tools/ci-job-set [--event-parity]
 #
@@ -85,6 +86,8 @@
 #     event; each covered lane stands down here. A shell runner stands down
 #     where that record selected it over every shard this diff selects.
 #     A lane or shard outside that record keeps its current selection.
+#     queue_macos_shards reads the macOS shell bit before any proof: no
+#     pull request runs the queue's macOS legs, so no proof covers them.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -124,6 +127,10 @@
 #   cargo_windows       the Windows test run.
 #   cargo_windows_check the Windows compile check of the core and CLI targets.
 #   ui                  the vitest, tsc and biome lane.
+#   queue_macos_shards  the selected members of QUEUE_MACOS_SHARDS, as a JSON
+#                       list in roster order, and empty where the macOS
+#                       shell bit is false. A merge group runs these on
+#                       macOS; no pull request does.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -157,6 +164,10 @@ SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state o
 # `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
 # this list. The selector uses them for its macOS runner arithmetic.
 LINUX_ONLY_SHARDS="node pi-claude-bridge linear-controls"
+# The shards a merge group runs on macOS, the owner's selection on KEN-2957:
+# skill-tests.yml's skill-suites-macos-queue job, whose fallback for an
+# unclassified group is this list, in this order.
+QUEUE_MACOS_SHARDS="orch-terminal orch-oversee-succeed guards-tools"
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -194,9 +205,9 @@ sel_get() { # SELECTION NAME
 
 # A row names every lane and the shard list or ends the step, before any lane
 # has read a selection with one of them missing from it.
-emit() { # LANE=VALUE ... shards=JSON
+emit() { # LANE=VALUE ... shards=JSON queue_macos_shards=JSON
   local lane given=" $* "
-  for lane in $LANES shards; do
+  for lane in $LANES shards queue_macos_shards; do
     case "$given" in
       *" $lane="*) ;;
       *) die "lane-unselected lane=$lane" "the row declares no value for this lane" ;;
@@ -637,5 +648,13 @@ done
 shell=false
 [ -z "$legs" ] || shell=true
 
+# The queue's macOS legs, off the selection before the proof above.
+queue=""
+if [ "$(sel_get "$now" macos)" = true ]; then
+  for shard in $QUEUE_MACOS_SHARDS; do
+    case "$now_shards" in *"\"$shard\""*) queue="${queue:+$queue,}\"$shard\"" ;; esac
+  done
+fi
+
 # shellcheck disable=SC2086 # one `lane=value` word per job
-emit "shell_shards=$shell" "shell_os=[$legs]" $jobs "shards=$now_shards"
+emit "shell_shards=$shell" "shell_os=[$legs]" $jobs "shards=$now_shards" "queue_macos_shards=[$queue]"

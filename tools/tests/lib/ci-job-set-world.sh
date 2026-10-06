@@ -17,6 +17,7 @@
 #                            commas
 #   lanes / measured         a measured row's lanes, and with its shards
 #   ROSTER, ORCH             the whole shard roster, and orch's shards
+#   QUEUE_ALL                the queue's three macOS shards, in order
 #   LINUX, MACOS, BOTH       the runner lists, as ci-job-set spells them
 #   ALL_ON, ALL_OFF, VERIFY_ROW, PROSE_ROW, CODE_ROW, UI_ROW,
 #   ORCH_CODE_ROW, ORCH_PROOF_ROW, SOURCE_PROOF_ROW
@@ -92,14 +93,16 @@ record() { # EVENT CLASS DOCS PATH... — a proving run's record, its lines join
 # The whole shard roster, in the matrix's order.
 ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","linear-controls","worktree","rest","slack","node","pi-claude-bridge"]'
 ORCH='"orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest"'
+# The shards a merge group runs on macOS, the whole queue_macos_shards list.
+QUEUE_ALL='["orch-terminal","orch-oversee-succeed","guards-tools"]'
 # The runner lists the shell shards expand on, as ci-job-set spells them.
 LINUX='["ubuntu-latest"]'
 MACOS='["macos-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
-ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[]"
-ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true shards=$ROSTER"
+ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[] queue_macos_shards=[]"
+ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[]"
+VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[] queue_macos_shards=[]"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux, both, or
 # macos alone where a proof stood the Linux legs down; the platform lanes
@@ -117,16 +120,16 @@ lanes() { # LEGS UI PLATFORM BUILD — a measured row's lanes
   printf 'shell_shards=%s shell_os=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s' \
     "$shell" "$os" "$2" "$3" "$4" "$3" "$4"
 }
-measured() { # LEGS UI PLATFORM BUILD SHARDS — one measured row
-  printf '%s shards=%s' "$(lanes "$1" "$2" "$3" "$4")" "$5"
+measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE — one measured row
+  printf '%s shards=%s queue_macos_shards=%s' "$(lanes "$1" "$2" "$3" "$4")" "$5" "$6"
 }
 # The selections tools/tests/ci-aggregate.test.sh evaluates the workflow
 # against, on either event.
-PROSE_ROW="$(measured none false false false '[]')"
-CODE_ROW="$(measured none false true false '[]')"
-UI_ROW="$(measured none true true false '[]')"
+PROSE_ROW="$(measured none false false false '[]' '[]')"
+CODE_ROW="$(measured none false true false '[]' '[]')"
+UI_ROW="$(measured none true true false '[]' '[]')"
 ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
-ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS")"
+ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" '["orch-terminal","orch-oversee-succeed"]')"
 # Two proof selections over this tree: a merge group of an orch code diff
 # whose proof is a pull request run over orch's prose alone, which ran the
 # Linux legs of the same shards and no platform lane, and one of a lane-source

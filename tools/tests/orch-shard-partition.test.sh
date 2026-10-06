@@ -44,8 +44,11 @@
 #      original runner, including linear's shell-version-dependent roster.
 #      The omission and duplication controls run on each runner's claims.
 #   4c. the macOS exclusions — tools/ci-job-set's Linux-only shard list
-#      matches the main-push macOS matrix's exclusions. The must-fail arm
-#      drops one exclude row.
+#      matches the main-push macOS matrix's exclusions, and the merge
+#      queue's macOS shards, the queue job's fallback and ci-job-set's
+#      QUEUE_MACOS_SHARDS alike, name none of them. The must-fail arms drop
+#      one exclude row, plant a Linux-only queue shard and drop one from
+#      QUEUE_MACOS_SHARDS.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
 #      `--test` target, the legs are the combinations the matrix expands
 #      rather than its raw list, every test target `cargo metadata` reports
@@ -700,6 +703,39 @@ else
   bad "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
 fi
 
+# The merge queue's macOS legs: the queue job's fallback list, which runs
+# where nothing classified, names ci-job-set's QUEUE_MACOS_SHARDS, the list
+# its selection draws from, and none of them is a shard the macOS roster
+# excludes as Linux-only.
+queue_fallback_shards() { # queue_fallback_shards <workflow>
+  awk '/^  [A-Za-z0-9_-]+:/ { job = $1 }
+       job == "skill-suites-macos-queue:" && /^        shard: / { print }' "$1" |
+    sed -n "s/.*'\(\[[^]]*\]\)'.*/\1/p" | tr -d '[]" ' | tr ',' '\n' | grep . | sort -u
+}
+queue_job_set_shards() { # queue_job_set_shards <ci-job-set>
+  sed -n 's/^QUEUE_MACOS_SHARDS="\(.*\)"$/\1/p' "$1" | tr ' ' '\n' | grep . | sort -u
+}
+queue_shards="$(queue_fallback_shards "$WORKFLOW")"
+grep -qx orch-terminal <<< "$queue_shards" ||
+  bad "no queue shard read from $WORKFLOW, so the queue reader is broken"
+check "the queue job's fallback names ci-job-set's QUEUE_MACOS_SHARDS" \
+  "$(queue_job_set_shards "$JOB_SET")" "$queue_shards"
+check "no queue macOS shard is Linux-only" "" \
+  "$(comm -12 <(printf '%s\n' "$queue_shards") <(linux_only_shards "$JOB_SET"))"
+sed "s/'\[\"orch-terminal\", /'[\"linear-controls\", \"orch-terminal\", /" "$WORKFLOW" > "$TMP/queue-linux.yml"
+cmp -s "$WORKFLOW" "$TMP/queue-linux.yml" &&
+  bad "must-fail: the queue fallback list is no longer one line in $WORKFLOW"
+check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-controls" \
+  "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
+sed 's/^QUEUE_MACOS_SHARDS="orch-terminal /QUEUE_MACOS_SHARDS="/' "$JOB_SET" > "$TMP/queue-short-job-set"
+cmp -s "$JOB_SET" "$TMP/queue-short-job-set" &&
+  bad "must-fail: QUEUE_MACOS_SHARDS no longer starts with orch-terminal in $JOB_SET"
+if [[ "$(queue_job_set_shards "$TMP/queue-short-job-set")" != "$queue_shards" ]]; then
+  ok "must-fail: a QUEUE_MACOS_SHARDS without orch-terminal disagrees with the queue job"
+else
+  bad "must-fail: a QUEUE_MACOS_SHARDS without orch-terminal disagrees with the queue job"
+fi
+
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
 # Linux runs every shell suite. macOS runs the same files except linear's
 # Bash-4-only suites, whose existing runtime-contract suite runs under Bash 3.
@@ -725,14 +761,16 @@ check "must-fail: a main-push roster moved off macOS loses its OS" \
 shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
   awk '
     /^  [A-Za-z0-9_-]+:/ { job = $1 }
-    /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:") { print job " " $2 }
+    /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:" || job == "skill-suites-macos-queue:") { print job " " $2 }
   ' "$1"
 }
-check "both shell runners use the same suite steps" \
-  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: *skill-suite-steps' "$(shared_steps "$WORKFLOW")"
+check "both shell runners use the same suite steps, the queue's macOS legs included" \
+  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: *skill-suite-steps\nskill-suites-macos-queue: *skill-suite-steps' \
+  "$(shared_steps "$WORKFLOW")"
 sed 's/steps: \*skill-suite-steps/steps: []/' "$WORKFLOW" > "$TMP/mac-empty.yml"
 check "must-fail: a macOS job with no shared steps loses its suite alias" \
-  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: []' "$(shared_steps "$TMP/mac-empty.yml")"
+  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: []\nskill-suites-macos-queue: []' \
+  "$(shared_steps "$TMP/mac-empty.yml")"
 check "the linear roster has one injectable shell-version branch" "1" \
   "$(grep -cF 'if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then' "$WORKFLOW")"
 
