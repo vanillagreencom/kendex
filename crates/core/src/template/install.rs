@@ -768,12 +768,7 @@ pub fn install(
                 .map(|item| item.name.as_str()),
         )
         .collect();
-    if let Some(finding) = manifest::output_style_count(styles.len()) {
-        return Err(CoreError::ManifestInvalid {
-            path: manifest::manifest_path(env, destination),
-            findings: vec![finding],
-        });
-    }
+    manifest::refuse_output_styles(env, destination, styles.len())?;
     let mut landed = Landing::default();
     for group in &resolution.groups {
         let group_landed = install_group(env, destination, group, &harnesses, method, &mut landed);

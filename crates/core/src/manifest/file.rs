@@ -56,6 +56,18 @@ pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
     }
 }
 
+/// Refuse a scope that would carry `count` output styles when Claude Code
+/// selects one, naming the scope's manifest as the file to fix.
+pub fn refuse_output_styles(env: &Env, scope: &Scope, count: usize) -> Result<()> {
+    match validate::output_style_count(count) {
+        Some(finding) => Err(CoreError::ManifestInvalid {
+            path: manifest_path(env, scope),
+            findings: vec![finding],
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Where one project's manifest lives, off a root that is already
 /// canonical. A source catalog's own kendex.toml is the definition it
 /// publishes, so its install state goes to the sibling file.
