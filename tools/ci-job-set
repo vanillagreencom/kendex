@@ -7,8 +7,9 @@
 # `<lane>=true|false` line per gated lane, plus one `shards=` line naming the
 # shell shards the diff selects as a JSON list and one `queue_macos_shards=`
 # line naming those the merge queue runs on macOS. Every lane condition in
-# that workflow reads one of those lines, and each shard matrix reads a list,
-# so the selection is made once instead of re-derived in each `if:`.
+# that workflow reads one of those lines, the Linux shard matrix `shards` and
+# the queue's macOS matrix `queue_macos_shards` on a classified group, so the
+# selection is made once instead of re-derived in each `if:`.
 #
 # Usage: tools/ci-job-set [--event-parity]
 #
@@ -150,7 +151,7 @@ TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 # A selection is one `name=value` word per lane: the two shell runner bits,
 # LEGS, then one per gated job, JOBS, then `shards=`. The
 # emitted lines are shell_shards and shell_os in place of the legs, then the
-# jobs and the shards.
+# jobs, the shards and queue_macos_shards.
 LEGS="linux macos"
 JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
 LANES="shell_shards shell_os $JOBS"
@@ -164,9 +165,9 @@ SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state o
 # `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
 # this list. The selector uses them for its macOS runner arithmetic.
 LINUX_ONLY_SHARDS="node pi-claude-bridge linear-controls"
-# The shards a merge group runs on macOS, the owner's selection on KEN-2957:
-# skill-tests.yml's skill-suites-macos-queue job, whose fallback for an
-# unclassified group is this list, in this order.
+# The shards a merge group may run on macOS; every other macOS-capable shard
+# runs on main pushes only. skill-tests.yml's skill-suites-macos-queue job
+# falls back to this list, in this order, on an unclassified group.
 QUEUE_MACOS_SHARDS="orch-terminal orch-oversee-succeed guards-tools"
 
 die() { # CAUSE MESSAGE
@@ -203,7 +204,7 @@ sel_get() { # SELECTION NAME
   printf '%s' "${rest%% *}"
 }
 
-# A row names every lane and the shard list or ends the step, before any lane
+# A row names every lane and each shard list or ends the step, before any lane
 # has read a selection with one of them missing from it.
 emit() { # LANE=VALUE ... shards=JSON queue_macos_shards=JSON
   local lane given=" $* "

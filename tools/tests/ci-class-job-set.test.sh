@@ -19,9 +19,7 @@
 #   another class stands down that class's lanes alone, a record whose
 #   shards do not cover this diff's keeps every leg, and a record
 #   this script cannot read stands nothing down, with a control per rule;
-#   then the queue's macOS legs: the selected members of the queue's three
-#   shards where the macOS shell bit holds before any proof, the same on
-#   either event, with a control per rule.
+#   then queue_macos_shards per class, event and paths, with a control per rule.
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -515,8 +513,7 @@ PRICE_SHARDS='["guards-scans","guards-hooks","guards-tools","guards-tools-tail",
 # selection less what a pull request run of the same diff ran, which is
 # every lane; and less what a pull request run of the skill's prose ran:
 # the same shards' Linux legs, and every lane but the platform lanes.
-# The queue's macOS legs read the selection before any proof, so every row
-# but the Pi package's keeps guards-tools there.
+# Every row but the Pi package's keeps guards-tools in queue_macos_shards.
 PRICE_QUEUE='["guards-tools"]'
 PRICE_GROUP="$(measured both false true false "$PRICE_SHARDS" "$PRICE_QUEUE")"
 PRICE_NONE="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
@@ -587,12 +584,8 @@ check "a merge group of a lane-source diff with its pull request's proof runs no
   "$SOURCE_PROOF_ROW"
 
 # --- 1c. The queue's macOS legs ---------------------------------------------
-# queue_macos_shards lists the selected members of the queue's three shards
-# where the macOS shell bit holds before any proof, and nothing elsewhere: a
-# skill's prose alone, a render, a Linux-only shard and a neighbour holding a
-# queue shard's name (guards-tools-tail) select none of them. A proof never
-# stands one down, since no pull request runs them; the lane-source row
-# above holds that over a proof that stood every runner down.
+# queue_macos_shards per row; the lane-source row above holds it over a
+# proof that stood every runner down.
 # EVENT|WORLD (tree or fixture)|CLASS|PATHS (blank-separated)|QUEUE
 queue_table() {
   cat <<ROWS
@@ -622,31 +615,34 @@ while IFS='|' read -r event world class paths expected; do
   check "queue legs: $class on $event over '$paths'" "$expected" "$(queue_of "$event" "$world" "$class" "$paths")"
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
-# EDIT@PATHS: a copy with that rule removed answers the row over PATHS other
-# than its QUEUE. The last reads the macOS bit after the proof, which the
-# lane-source proof row answers.
-while IFS='@' read -r edit paths; do
+# EDIT@PATHS@WRONG: a copy with that rule removed answers the row over PATHS,
+# or the lane-source proof row for source-proof, with WRONG; a refusal is a
+# broken copy, never a reddened row.
+while IFS='@' read -r edit paths wrong; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
-  if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
-    bad "control: the edit changed nothing in a ci-job-set copy: $edit"
+  changed="$(diff "$JOB_SET" "$TMP/rule/tools/ci-job-set" | grep -c '^>' || :)"
+  if [ "$changed" != 1 ]; then
+    bad "control: the edit changed $changed lines of a ci-job-set copy, not one: $edit"
     continue
   fi
   if [ "$paths" = source-proof ]; then
-    got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request micro false .github/AGENTS.md skills/orch/scripts/lanes | tr ',' '\n')" selection micro false "$(printf '%s\n' .github/AGENTS.md skills/orch/scripts/lanes)" | field queue_macos_shards)"
-    expected="$QUEUE_ALL"
+    got="$(SELECT_PROOF="$(record pull_request micro false .github/AGENTS.md skills/orch/scripts/lanes | tr ',' '\n')" \
+      queue_of merge_group tree micro ".github/AGENTS.md skills/orch/scripts/lanes" "$TMP/rule/tools/ci-job-set")"
   else
     line="$(queue_table | grep -m1 -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
-    IFS='|' read -r event world class _ expected <<<"$line"
+    IFS='|' read -r event world class _ _ <<<"$line"
     got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
   fi
-  [ "$got" != "$expected" ] && ok "control: $edit reddens the queue row over $paths" ||
-    bad "control: $edit reddens the queue row over $paths (still '$got')"
+  case "$got" in
+    exit=*) bad "control: $edit broke the ci-job-set copy over $paths ($got)" ;;
+    *) check "control: $edit answers the queue row over $paths" "$wrong" "$got" ;;
+  esac
 done <<'CONTROLS'
-s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
-s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x
-s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "$now_shards" in *"\\"$shard"*)/@.claude/hooks/lane-mail-check
-s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if case "$legs" in *macos*) true ;; *) false ;; esac; then/@source-proof
+s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md@["orch-terminal","orch-oversee-succeed","guards-tools"]
+/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x@["orch-terminal","orch-oversee-succeed","guards-tools"]
+/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "$now_shards" in *"\\"$shard"*)/@.claude/hooks/lane-mail-check@["guards-tools"]
+s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if case "$legs" in *macos*) true ;; *) false ;; esac; then/@source-proof@[]
 CONTROLS
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

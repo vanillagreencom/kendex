@@ -322,8 +322,7 @@ standard_code="$(selection standard false 'crates/core/src/lib.rs')"
 # request ran, the two pull-request diff checks aside: a `render` group runs
 # the one verify job and a standard group every lane its class selects. A
 # group whose queue_macos_shards list names a shard also runs that job, a
-# proof standing the rest down included; a group of a skill's prose alone
-# names none.
+# proof standing the rest down included.
 job_rows=0
 while IFS='|' read -r event sel expected; do
   job_rows=$((job_rows + 1))
@@ -441,9 +440,7 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 # A merge group touching the script the orch-terminal shard races.
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
-# EVENT|RESULT|SELECTION|LEGS. VERIFY_ROW and PROSE_ROW are what a
-# documentation-only group selects, trivial and measured, and one_skill a
-# group of a skill's prose alone.
+# EVENT|RESULT|SELECTION|LEGS. VERIFY_ROW, PROSE_ROW and one_skill name no leg.
 queue_rows=0
 while IFS='|' read -r event result sel expected; do
   queue_rows=$((queue_rows + 1))

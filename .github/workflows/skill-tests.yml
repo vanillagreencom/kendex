@@ -105,9 +105,8 @@ name: Skill Tests
 # charged twice where the group runs them again: a base that moved or an
 # entry queued ahead gives the group a tree no pull request run tested, and
 # a passing run the lookup cannot find, a record it cannot read or match, or
-# a record tools/ci-job-set refuses stands nothing down. The queue's macOS
-# legs run in every group whose selection names them, a proof stands none of
-# them down, and each costs its macOS step time once per merge entry.
+# a record tools/ci-job-set refuses stands nothing down. Each queue macOS leg
+# its `queue_macos_shards` list names costs its macOS step time per entry.
 
 "on":
   pull_request:
@@ -1415,17 +1414,13 @@ jobs:
     env: *skill-suite-env
     steps: *skill-suite-steps
 
-  # THE QUEUE'S macOS LEGS: a merge group runs orch-terminal,
-  # orch-oversee-succeed and guards-tools on macOS, the owner's selection on
-  # KEN-2957; orch-oversee, orch-state and orch-rest run on macOS on main
-  # pushes only. The legs are the changes job's `queue_macos_shards` list,
-  # which tools/ci-job-set computes from the shards it selects and its macOS
-  # shell bit before any proof: a proof stands that bit down over a pull
-  # request run that never ran these legs, and a diff whose every path is
-  # prose selects none. Where the classifier published nothing all three
-  # run, the list below being ci-job-set's QUEUE_MACOS_SHARDS; no pull
-  # request runs one. CI holds this job to the same list, so a failed or
-  # cancelled leg ejects the entry and an unselected one does not.
+  # THE QUEUE'S macOS LEGS: a merge group runs on macOS the shards the
+  # changes job's `queue_macos_shards` list names; tools/ci-job-set's header
+  # states when it is empty. Every other macOS-capable shard runs on main
+  # pushes only. Where the classifier published nothing the list below,
+  # ci-job-set's QUEUE_MACOS_SHARDS, runs; no pull request runs a leg. CI
+  # holds this job to the same list, so a failed or cancelled leg ejects the
+  # entry and an unselected one does not.
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
