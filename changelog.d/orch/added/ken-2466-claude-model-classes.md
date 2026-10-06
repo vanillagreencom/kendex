@@ -1,0 +1,1 @@
+- `scripts/claude-model-classes`: a Claude Code plugin, loaded with `--plugin-dir`, that resolves a declared subagent's model class through `kendex tier-model` before it starts.

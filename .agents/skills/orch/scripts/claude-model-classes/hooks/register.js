@@ -1,5 +1,5 @@
-// REVISIT(D019): Claude Code 2.1.287 supplies model rewrites and fail-closed catches.
-// The CLI owns request parsing, selector equivalence, access and fallback.
+// Claude Code 2.1.287 is the first version with the model rewrites and fail-closed catches used here.
+// `kendex tier-model` owns request parsing, selector equivalence, access and fallback; no class table lives here.
 const protocol = 'model-resolution-v1';
 
 function record(value, name) {
@@ -93,20 +93,30 @@ async function resolve($, args, cwd, context, next) {
   return readResponse(result, context.selectorObservation !== undefined);
 }
 
+// The original request spelling, as core's own warning line writes it.
+function requested(request) {
+  switch (request.tag) {
+    case 'class': return request.class;
+    case 'native-family': return `${request.provider}/${request.family}`;
+    case 'exact': return request.selector;
+    default: return request.tag;
+  }
+}
+
 async function warn($, response) {
   const diagnostics = response.resolution.diagnostics;
   if (diagnostics === undefined || diagnostics.length === 0) return;
   if (!Array.isArray(diagnostics)) throw new Error('model-resolution: invalid=diagnostics');
   if (await $.env.get('KENDEX_MODEL_WARNING_EMITTED') === '1') return;
-  const request = response.request;
-  const requested = request.class ?? request.selector ?? request.family ?? request.tag;
   const decision = response.resolution;
   const selected = decision.selection?.nativeSelector ?? decision.path?.selector ?? 'native-default';
   const causes = diagnostics.map(d => selector(record(d, 'diagnostic').code)).join(',');
   const sources = diagnostics.map(d => d.source).filter(s => typeof s === 'string').join(',');
-  const detail = diagnostics.map(d => d.cause).filter(s => typeof s === 'string').join(';');
+  const failures = diagnostics.map(d => d.cause).filter(s => typeof s === 'string')
+    .map(s => s.split(/\s+/).filter(Boolean).join(' '));
+  const detail = failures.length === 0 ? '' : ` detail=${failures.join(',')}`;
   await $.env.set('KENDEX_MODEL_WARNING_EMITTED', '1');
-  await $.ui.log(`model-resolution: requested=${requested} selected=${selected} causes=${causes} source=${sources} cause=${detail}`);
+  await $.ui.log(`model-resolution: requested=${requested(response.request)} selected=${selected} causes=${causes} source=${sources}${detail}`);
 }
 
 function chosenModel(response, nativeDefault) {
