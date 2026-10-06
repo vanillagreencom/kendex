@@ -353,9 +353,7 @@ fn at_record_leaves_a_declared_revision_to_itself() {
 
 /// A record whose source entry was edited by hand to another repository
 /// or revision speaks for a declaration the manifest does not make, and
-/// the record row fails under `--at-record` as under the plain verify,
-/// though every follower of that source still holds at its recorded
-/// commit.
+/// the record row fails under `--at-record`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_holds_the_records_source_entry_to_the_manifest() {
@@ -390,8 +388,8 @@ fn at_record_holds_the_records_source_entry_to_the_manifest() {
 /// A `[sources]` revision edit no write has applied yet leaves every
 /// follower held at its recorded commit, and `--at-record` reads the
 /// source at the revision declared now: the record row fails, each held
-/// commit trails the declared revision, and a revision the mirror cannot
-/// serve fails rather than passes.
+/// commit is listed as stale against the declared revision it differs
+/// from, and a revision the mirror cannot serve fails rather than passes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_weighs_an_unapplied_revision_edit_at_the_declared_revision() {
