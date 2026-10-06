@@ -25,7 +25,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 
 - Before changing planning, apply, the manifest, the lock, ownership, take-over, forks, the generated-file inventory, verification, workflow adoption, tracked outputs, or the commit, push or pull-request offer: `docs/architecture/engine.md`.
 - Before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier: `docs/architecture/harnesses.md`; the per-harness on-disk facts are `docs/adapters/README.md`.
-- Before changing the source store, discovery, browsing, subscriptions, bundles, the drift snapshot, the community directory, sign-in or the skills.sh lead: `docs/architecture/sources.md`.
+- Before changing the source store, discovery, browsing, subscriptions, bundles, the drift snapshot, the community directory, sign-in, submissions or the skills.sh lead: `docs/architecture/sources.md`.
 - Before changing project resolution, the worktree guard or in-place packages: `docs/architecture/in-place.md`.
 - Before removing or replacing files kendex wrote, or changing the trash: `docs/architecture/trash.md`.
 - Before changing a safety or quality rule: `docs/architecture/scoring.md`.
