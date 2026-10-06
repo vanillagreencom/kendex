@@ -1,0 +1,6 @@
+{
+  "name": "kendex-model-classes",
+  "version": "1.0.0",
+  "author": { "name": "vanillagreen" },
+  "description": "Resolve declared child and managed root models through kendex"
+}
