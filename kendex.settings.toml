@@ -231,6 +231,12 @@ REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
 # takes the admin route.
 HARNESS_CI_QUEUE_PATHS = ""
 
+# The job selection whose merge-group macOS shards also make a change
+# queue-only: a change for which tools/ci-job-set's queue_macos_shards names
+# a shard merges through the queue, which runs those shards, never the admin
+# route, which skips them (docs/decisions/D013-admin-merge-green-prs.md).
+HARNESS_CI_QUEUE_SELECTOR = "tools/ci-job-set queue_macos_shards"
+
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 

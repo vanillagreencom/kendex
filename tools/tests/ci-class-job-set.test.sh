@@ -19,7 +19,10 @@
 #   another class stands down that class's lanes alone, a record whose
 #   shards do not cover this diff's keeps every leg, and a record
 #   this script cannot read stands nothing down, with a control per rule;
-#   then queue_macos_shards per class, event and paths, with a control per rule.
+#   then queue_macos_shards per class, event and paths, with a control per rule;
+#   then the queue route: harness-ci's change-class, over a copy of this
+#   checkout, answers queue-only where that list names a shard, because this
+#   checkout's settings name the selection as its queue selector.
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -644,6 +647,49 @@ s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch
 /queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "$now_shards" in *"\\"$shard"*)/@.claude/hooks/lane-mail-check@["guards-tools"]
 s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if case "$legs" in *macos*) true ;; *) false ;; esac; then/@source-proof@[]
 CONTROLS
+
+# --- 1d. The queue route ---------------------------------------------------
+# kendex.settings.toml names this script and its queue_macos_shards line as
+# harness-ci's HARNESS_CI_QUEUE_SELECTOR, so a change whose selection names a
+# queue macOS shard reads queue-only and merges through the queue, and one
+# whose selection names none answers as before. The base is a copy of this
+# checkout's tracked files, the settings as they stand; the control's base
+# drops the selector line, and the queue path then reads free to take the
+# admin route. Each row commits one appended line on a base and reads the
+# queue-only line of this checkout's change-class.
+route_world="$TMP/route-world"
+git init -q -b main "$route_world"
+git -C "$route_world" config gc.auto 0
+git -C "$route_world" config maintenance.auto false
+git -C "$ROOT" ls-files -z >"$TMP/route-files"
+(cd "$ROOT" && tar --null -T "$TMP/route-files" -cf -) | tar -C "$route_world" -xf -
+route_commit() { # MESSAGE
+  git -C "$route_world" add -A
+  git -C "$route_world" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set \
+    commit -q -m "$1"
+  git -C "$route_world" rev-parse HEAD
+}
+route_base="$(route_commit base)"
+grep -v '^HARNESS_CI_QUEUE_SELECTOR = ' "$ROOT/kendex.settings.toml" >"$route_world/kendex.settings.toml"
+route_unwired="$(route_commit unwired)"
+route_queue() { # BASE PATH -- the queue-only line for one appended line under PATH on BASE
+  git -C "$route_world" checkout -q --detach "$1"
+  printf 'route row\n' >>"$route_world/$2"
+  route_commit "row $2" >/dev/null
+  "$ROOT/skills/harness-ci/scripts/change-class" --repo "$route_world" --event pull_request \
+    --base "$1" --head HEAD 2>&1 >/dev/null | sed -n 's/^queue-only: //p'
+}
+check "a change selecting the queue's macOS shards takes the queue" \
+  "queue_only=true cause=queue-selection selector=tools/ci-job-set output=queue_macos_shards value=$QUEUE_ALL" \
+  "$(route_queue "$route_base" skills/orch/scripts/open-terminal)"
+# The UI path is assembled here: a suite naming a path whole is a reader of
+# it, and the selection would run this suite's shard for it.
+check "a change selecting no queue macOS shard answers as before" \
+  "queue_only=false cause=no-queue-path" \
+  "$(route_queue "$route_base" "ui/src/App.$(printf tsx)")"
+check "control: settings naming no selector let the queue path take the admin route" \
+  "queue_only=false cause=no-queue-path" \
+  "$(route_queue "$route_unwired" skills/orch/scripts/open-terminal)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

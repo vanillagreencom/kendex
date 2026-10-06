@@ -47,13 +47,36 @@
 #                         change-class action defers off a pull request to
 #                         the merge group
 #   queue-list-undeclared the base's HARNESS_CI_QUEUE_PATHS is unset
-#   no-queue-path         no changed path matches a glob of that setting
 #   repository-queue-path path=<p> glob=<g>
-#                         a changed path matches one
+#                         a changed path matches a glob of that setting
+#   queue-selector-failed [selector=<c>] detail=<d>
+#                         the selector the base's HARNESS_CI_QUEUE_SELECTOR
+#                         names could not answer: detail= is
+#                         setting-malformed, inputs-unreadable (the
+#                         docs verdict or the changed paths),
+#                         checkout-failed, command-absent, exit-<n> or
+#                         output-unreadable
+#   queue-selection selector=<c> output=<o> value=<v>
+#                         that selector names jobs a merge group runs for
+#                         this change
+#   no-queue-path         none of the above: no changed path matches a glob
+#                         of HARNESS_CI_QUEUE_PATHS, and the selector, where
+#                         the base declares one, names no job
 #
 # The first two answer where no changed path reaches the judgement; the rest
-# are judged on every changed path harness-only read, before any refusal or
-# rule below, and no class changes the answer. A wiring error prints no such
+# up to repository-queue-path are judged on every changed path harness-only
+# read, before any refusal or rule below. The selector's two are judged last,
+# on the class this script answers, since the jobs a merge group runs depend
+# on it. HARNESS_CI_QUEUE_SELECTOR is `COMMAND OUTPUT`: a repository command,
+# a path relative to the repository root, and the output it writes in the
+# GitHub Actions `name=value` form. It runs out of a private checkout of the
+# commit --base names, the one its settings come from, with that checkout as
+# its working directory and an environment of PATH, HOME and these alone:
+# CHANGE_CLASS, the class; DOCS_ONLY, the `harness-only --mode docs` verdict
+# for the range, true|false; CHANGED_PATHS, the changed paths harness-only
+# read, one per line; EVENT, --event's value; and GITHUB_OUTPUT, the file it
+# writes. The output's value is a JSON list: `[]` names no job, and a
+# non-empty list keeps the change in the queue. A wiring error prints no such
 # line, and a reader takes its absence as queue_only=true. An absent or
 # malformed lane declaration marks no lane, as the action then defers none.
 # cause=queue-list-undeclared also prints one
@@ -62,7 +85,7 @@
 # `change_class=`. This paragraph is the one statement of when the line reads
 # true; other docs point here.
 # The render proof runs `kendex verify --scope
-# project --json` in that private checkout, with `--base` set to the base-rev:
+# project --json` in the head revision's private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
 # document. The classes, first match winning:
 #
@@ -164,8 +187,9 @@
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
 # base endpoint's commit holds them. HARNESS_CI_QUEUE_PATHS (the repository's
 # own queue globs, blank-separated, set empty where the shipped list is the
-# whole list) comes from those tables alone, never from the environment. The
-# private env file is never read.
+# whole list) and HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) come
+# from those tables alone, never from the environment. The private env file
+# is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
@@ -299,6 +323,7 @@ answer() { # CLASS FIELDS [measured]
   measured=true
   [ "$1" != standard ] || measured=false
   [ "${3:-}" != measured ] || measured=true
+  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
@@ -410,12 +435,12 @@ path_class_matches() { # PHASE CLASS
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
-# ladder, save the queue list: a caller's environment is its own checkout's
-# settings, which github.sh's router exports from the working tree, so the
-# list is dropped from it and the base's alone decides. The load runs in a
+# ladder, save the queue list and selector: a caller's environment is its own
+# checkout's settings, which github.sh's router exports from the working
+# tree, so both are dropped from it and the base's alone decide. The load runs in a
 # subshell and hands back these keys alone.
-unset HARNESS_CI_QUEUE_PATHS
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS'
+unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # The bytes of PATH as the commit --base names holds it, written to OUT:
@@ -568,6 +593,97 @@ queue_only_of_paths() {
   QUEUE_CAUSE="cause=repository-queue-path $PATH_MATCH_HIT"
 }
 
+# A checkout of REV at DIR, errors to ERR. It has a git directory of its own,
+# which `git init` writes, and borrows the judged repository's objects
+# through an alternates file. It never shares a git directory with the
+# judged checkout, and that is what keeps kendex's arming records out of it.
+# kendex records arming a package's repository effect under a git directory,
+# the common one included, so a `git worktree add` would inherit it. With a
+# record present, `kendex verify` runs the package's declared checker out of
+# the tree it checks, and that checker is a file this diff can change.
+#
+# `git checkout` exits 0 when it cannot read a blob and leaves that file out,
+# so the checkout is held to REV afterwards: a status naming anything is a
+# tree that is not the commit, and is refused like a checkout that failed.
+private_checkout() { # DIR REV ERR
+  local private_tree="$1" objects left
+  objects="$(git -C "$repo" rev-parse --path-format=absolute --git-path objects 2>"$3")" &&
+    git init -q "$private_tree" 2>>"$3" &&
+    mkdir -p "$private_tree/.git/objects/info" &&
+    printf '%s\n' "$objects" >"$private_tree/.git/objects/info/alternates" &&
+    git -C "$private_tree" checkout -q --detach "$2" 2>>"$3" &&
+    left="$(git -C "$private_tree" status --porcelain 2>>"$3")" || return 1
+  [ -z "$left" ] || { printf '%s\n' "$left" >>"$3"; return 1; }
+}
+
+# The repository's queue selector, asked about this verdict's CLASS where
+# every rule above read false; the header states its contract. It is the
+# base commit's command, run over the base commit's tree: the code and the
+# settings that name it are the default branch's, which the branch under
+# judgement cannot change, and nothing of the judged tree runs. Every failure
+# reads queue-only, the route that runs the change in a merge group.
+queue_selection() { # CLASS
+  local command="" name="" rest="" docs paths value status=0
+  local tree="$work/selector" log="$work/selector-log" out="$work/selector-output"
+  [ -n "${HARNESS_CI_QUEUE_SELECTOR:-}" ] || return 0
+  QUEUE_ONLY=true
+  read -r command name rest <<<"$HARNESS_CI_QUEUE_SELECTOR"
+  case "$command" in
+    '' | /* | .. | ../* | */.. | */../*) name="" ;;
+  esac
+  case "$name" in
+    *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) name="" ;;
+  esac
+  if [ -z "$name" ] || [ -n "$rest" ]; then
+    QUEUE_CAUSE="cause=queue-selector-failed detail=setting-malformed"
+    return 0
+  fi
+  QUEUE_CAUSE="cause=queue-selector-failed selector=$command"
+  docs="${docs_verdict:-}"
+  if [ -z "$docs" ]; then
+    docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" --output /dev/null 2>/dev/null)" ||
+      docs=unreadable
+  fi
+  case "$docs" in
+    docs_only=true | docs_only=false) ;;
+    *) QUEUE_CAUSE="$QUEUE_CAUSE detail=inputs-unreadable"; return 0 ;;
+  esac
+  if [ -z "$BASE_REV" ] || ! private_checkout "$tree" "$BASE_REV" "$log"; then
+    cat -- "$log" >&2 2>/dev/null || true
+    QUEUE_CAUSE="$QUEUE_CAUSE detail=checkout-failed"
+    return 0
+  fi
+  if [ ! -f "$tree/$command" ] || [ ! -x "$tree/$command" ]; then
+    QUEUE_CAUSE="$QUEUE_CAUSE detail=command-absent"
+    return 0
+  fi
+  if ! paths="$(cat -- "$paths_file")" || ! : >"$out"; then
+    QUEUE_CAUSE="$QUEUE_CAUSE detail=inputs-unreadable"
+    return 0
+  fi
+  (cd -- "$tree" && env -i PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS="$1" \
+    DOCS_ONLY="${docs#docs_only=}" CHANGED_PATHS="$paths" \
+    EVENT="$event" GITHUB_OUTPUT="$out" "./$command") >"$log" 2>&1 </dev/null ||
+    status=$?
+  if [ "$status" -ne 0 ]; then
+    cat -- "$log" >&2
+    QUEUE_CAUSE="$QUEUE_CAUSE detail=exit-$status"
+    return 0
+  fi
+  if ! value="$(sed -n "s/^$name=//p" "$out" | tail -1)"; then
+    value=""
+  fi
+  case "$value" in
+    '[]')
+      QUEUE_ONLY=false
+      QUEUE_CAUSE="cause=no-queue-path" ;;
+    '['*']') QUEUE_CAUSE="cause=queue-selection selector=$command output=$name value=$value" ;;
+    *)
+      cat -- "$log" >&2
+      QUEUE_CAUSE="$QUEUE_CAUSE detail=output-unreadable" ;;
+  esac
+}
+
 # The changed paths harness-only read, and the queue-only class judged on
 # them, ahead of every refusal below: a refusal raised after the paths were
 # read carries the class those paths earn. An empty diff is its own cause and
@@ -631,31 +747,10 @@ fi
 # render standing in for one the branch deleted, would be weighed in place of
 # what the pull request would merge. And the commit it sits at is not always
 # --head: Shape 4 in ../references/wiring.md checks the subject out at the pull
-# request's merge ref, and a local caller's checkout can sit anywhere.
-#
-# The private checkout has a git directory of its own, which `git init`
-# writes, and it borrows the judged repository's objects through an
-# alternates file. It never shares a git directory with the judged checkout,
-# and that is what keeps kendex's arming records out of it. kendex records
-# arming a package's repository effect under a git directory, the common one
-# included, so a `git worktree add` would inherit it. With a record present,
-# `kendex verify` runs the package's declared checker out of the tree it
-# checks, and that checker is a file this diff can change.
-#
-# `git checkout` exits 0 when it cannot read a blob and leaves that file out,
-# so the checkout is held to its head afterwards: a status naming anything is
-# a tree that is not the commit, and is refused like a checkout that failed.
+# request's merge ref, and a local caller's checkout can sit anywhere. The
+# checkout is private_checkout's, above.
 proof_tree="$work/proof"
-checkout_head() {
-  local objects left
-  objects="$(git -C "$repo" rev-parse --path-format=absolute --git-path objects 2>"$work/proof-stderr")" &&
-    git init -q "$proof_tree" 2>>"$work/proof-stderr" &&
-    mkdir -p "$proof_tree/.git/objects/info" &&
-    printf '%s\n' "$objects" >"$proof_tree/.git/objects/info/alternates" &&
-    git -C "$proof_tree" checkout -q --detach "$head_rev" 2>>"$work/proof-stderr" &&
-    left="$(git -C "$proof_tree" status --porcelain 2>>"$work/proof-stderr")" || return 1
-  [ -z "$left" ] || { printf '%s\n' "$left" >>"$work/proof-stderr"; return 1; }
-}
+checkout_head() { private_checkout "$proof_tree" "$head_rev" "$work/proof-stderr"; }
 
 # `kendex verify` weighs the manifest and render bytes of every installed
 # package, holds the two files kendex keeps about itself to what it would

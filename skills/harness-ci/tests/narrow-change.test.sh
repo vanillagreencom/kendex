@@ -537,7 +537,7 @@ assert_eq "a classifier that never reads the base's settings loses the declared 
   "queue_only=true cause=queue-list-undeclared" \
   "$(settings_queue "$base_mutant" "$declared_base")"
 environment_mutant="$(mutant queue-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS' ':')"
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR' 'unset HARNESS_CI_QUEUE_SELECTOR')"
 assert_eq "a classifier that keeps the process environment's list lets the base's newly listed path through" \
   "queue_only=false cause=no-queue-path" \
   "$(settings_queue "$environment_mutant" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"

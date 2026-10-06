@@ -761,15 +761,17 @@ require_rows change-class-git-reads "$git_read_count"
 
 # `git -C "$repo"` is the one spelling the script runs against the tree it
 # judges, which the first row establishes, so counting those call sites
-# counts the reads. The only other git the script runs writes the private
-# checkout the proof weighs, and every such line names that checkout. The
+# counts the reads. The only other git the script runs writes a private
+# checkout, the one the proof weighs or the one the queue selector runs in,
+# and every such line names it, as proof_tree or as private_checkout's
+# private_tree. The
 # count and the word the header prints are asserted against one expected
 # pair: a read added while the sentence stands reds here, and so does a
 # sentence reworded while the code stands. A maintainer changing either on
 # purpose moves the pair with it.
 assert_eq "every git the script runs on the judged tree carries --repo" "0" \
   "$(awk '/^[[:space:]]*#/ { next }
-     /git / && !/git -C "\$repo"/ && !/"\$proof_tree"/ { n++ }
+     /git / && !/git -C "\$repo"/ && !/"\$(proof_tree|private_tree)"/ { n++ }
      END { print n + 0 }' "$CHANGE_CLASS")"
 git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
 git_read_word="$(grep -oE '[a-z]+ reads? and no write' <<<"$help_text" |

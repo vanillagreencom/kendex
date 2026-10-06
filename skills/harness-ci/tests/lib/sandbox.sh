@@ -6,7 +6,7 @@
 # sourcing suite to have set it, which is also what every suite here sets.
 set -euo pipefail
 
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT HARNESS_CI_LOCK_KENDEX HARNESS_CI_QUEUE_PATHS
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT HARNESS_CI_LOCK_KENDEX HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
 HARNESS_ONLY="${HARNESS_ONLY_UNDER_TEST:-$(cd "$TEST_DIR/../scripts" && pwd)/harness-only}"
