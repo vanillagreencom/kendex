@@ -165,14 +165,19 @@ if [[ "$1" == stop-sandbox ]]; then
   printf '%s\n' "${LANE_CLOSE_STOP_SANDBOX_OUT-sandbox-stopped item=$3}"
   exit 0
 fi
-# LANE_CLOSE_HOST_MARKER is the clone's item marker, which the shipped ssh
-# provider's close removes: a close that finds it gone is refused as unowned.
+# LANE_CLOSE_HOST_MARKER is an item marker the close takes: a close that finds
+# it gone refuses as unowned, so a second host close fails the run.
 if [[ -n "${LANE_CLOSE_HOST_MARKER:-}" ]]; then
   [[ -e "$LANE_CLOSE_HOST_MARKER" ]] || { printf 'lane-host-ssh: close-unowned item=%s\n' "$3" >&2; exit 75; }
   rm -f -- "$LANE_CLOSE_HOST_MARKER"
 fi
+# LANE_CLOSE_HOST_ABSENT is a host that no longer holds the item, answering
+# as the protocol states; a status of 1 is a provider failing the close with
+# its own words for that state on stderr.
+if [[ -n "${LANE_CLOSE_HOST_ABSENT:-}" ]]; then printf 'closed=absent item=%s\n' "$3"; exit 0; fi
 if [[ "${LANE_CLOSE_HOST_STATUS:-0}" -ne 0 ]]; then
   [[ "$LANE_CLOSE_HOST_STATUS" -ne 3 ]] || printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
+  [[ "$LANE_CLOSE_HOST_STATUS" -ne 1 ]] || printf 'lane-host-fixture: item-unknown item=%s\n' "$3" >&2
   exit "$LANE_CLOSE_HOST_STATUS"
 fi
 printf 'kept=/fleet/archive/item.tgz\n'
@@ -671,6 +676,29 @@ printf '\n' >"$SCREEN"
 LANE_CLOSE_HOST_STATUS=3 run_close "$SCRIPT"
 assert_eq "rc=$RC refusal=$(grep -c '^lane-host-ssh: close-refused path=/srv/clone$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=3 refusal=1 kill=0 status=running' 'lane-host exit 3 reaches the caller unchanged and kills nothing'
+
+echo '=== a host that no longer holds the item closes the record ==='
+# An exited hosted lane closed by SCRIPT, the provider's close answering as
+# HOST_ENV sets it. ABSENT_CLOSE reads the relayed closed=absent line, a
+# kept=none line, the window kill and the record.
+absent_row() { # SCRIPT HOST_ENV
+  write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
+  export "$2"
+  run_close "$1"
+  unset "${2%%=*}"
+  ABSENT_CLOSE="rc=$RC absent=$(grep -cx 'closed=absent item=KEN-1' <<<"$OUT" || true) none=$(grep -cx 'kept=none' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+# label|script|host env|expected
+ABSENT_ROWS=(
+  "a provider answering closed=absent closes the record done, with no kept=none|$SCRIPT|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=0 kill=1 status=done"
+  "control: a provider exiting 1 with item-unknown on stderr still refuses, window and record kept|$SCRIPT|LANE_CLOSE_HOST_STATUS=1|rc=1 absent=0 none=0 kill=0 status=running"
+  "control: a close that does not read closed=absent claims kept=none|$(mutant lane-close-absent ' && ! grep -qxF "closed=absent item=$ITEM" "$out"' '')|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=1 kill=1 status=done"
+)
+for row in "${ABSENT_ROWS[@]}"; do
+  IFS='|' read -r label script host_env want <<<"$row"
+  absent_row "$script" "$host_env"
+  assert_eq "$ABSENT_CLOSE" "$want" "$label"
+done
 
 echo '=== an idle harness ends by signal, nothing typed into its pane ==='
 # HARNESS|DRAFT: a draft in the composer no longer stands in the way, since

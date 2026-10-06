@@ -542,7 +542,9 @@ close_host() {
   ORCH_LANE_HOST="$host" "$LANE_HOST" "${args[@]}" >"$out" 2>"$err" || rc=$?
   cat -- "$out"
   cat -- "$err" >&2
-  if [[ "$rc" -eq 0 ]] && ! grep -q '^kept=' "$out"; then printf 'kept=none\n'; fi
+  # A host that no longer holds the item answers closed=absent and ran no
+  # archive pass, so no kept=none follows it (lane-host.md `close`).
+  if [[ "$rc" -eq 0 ]] && ! grep -q '^kept=' "$out" && ! grep -qxF "closed=absent item=$ITEM" "$out"; then printf 'kept=none\n'; fi
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || message lane-host-busy "item=$ITEM" step=close >&2
   rm -f -- "$out" "$err"
   return "$rc"
@@ -741,9 +743,8 @@ stop_validations() {
 # closed before its work ended, or under a --keep-sandbox close, is relaunched
 # into those files, so they stay and the line saying so names why. It runs
 # before the host close, so a close that fails before the host close retries
-# whole, the removal included, which an idempotent remove allows. One that
-# fails after the host close does not: the ssh provider's close takes the item
-# marker, and a second close is refused as unowned.
+# whole, the removal included, which an idempotent remove allows. A host close
+# repeated after one that succeeded meets a host answering closed=absent.
 # ITEM_END is the terminal state the tracker answered, empty until a read
 # answers terminal: completed for shipped work, canceled for any other end.
 # Both remove the files; only completed lets the host close pass --merged.

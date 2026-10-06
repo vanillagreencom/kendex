@@ -228,17 +228,27 @@ cat -- "$marker"''', row["clone"], item).stdout.decode().strip()
     return path
 
 
-def create_flags(row, item, reuse_requested):
-    """Ask the installed worktree owner whether reuse has a target."""
-    if not reuse_requested:
-        return []
+def worktree_exists(row, item):
+    """Ask the installed worktree owner whether the item's tree stands."""
     present = worktree(row, "exists", item).stdout
-    if present == b"true\n":
-        return ["--reuse"]
-    if present == b"false\n":
-        return []
+    if present in (b"true\n", b"false\n"):
+        return present == b"true\n"
     notice("worktree-exists-invalid", item=item)
     raise SystemExit(1)
+
+
+def create_flags(row, item, reuse_requested):
+    """Ask the installed worktree owner whether reuse has a target."""
+    return ["--reuse"] if reuse_requested and worktree_exists(row, item) else []
+
+
+def closed_already(row, item):
+    """Whether a finished close already emptied the clone of the item: the
+    clone stands with no item marker and no worktree for it. A worktree with no
+    marker is a create that failed after making it, which close still refuses
+    as unowned."""
+    unmarked = remote(row, 'test -d "$1/.git" && ! test -f "$1/.git/lane-host-item" && printf unmarked || true', row["clone"])
+    return unmarked.stdout == b"unmarked" and not worktree_exists(row, item)
 
 
 def require_render(row):
@@ -565,8 +575,10 @@ back and refuses unless the patch carries every path it is about to restore or
 remove; that refusal, and an untracked render the temporary index cannot read,
 exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
-An absent or different item marker refuses close with exit 75
-before worktree lookup. Before worktree removal, close archives remaining clone/tmp
+A clone holding neither the item marker nor the item's
+worktree, as a finished close leaves it, answers closed=absent item=ID with
+exit 0. Another item's marker, or no marker beside a standing worktree, refuses
+close with exit 75 before worktree path lookup. Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
 close. An already removed worktree's tmp cannot be recovered. No remaining tmp
@@ -656,6 +668,9 @@ capabilities prints the static ssh host kind's one capability line
     elif args.verb == "status":
         status(row, args.item, args.harness)
     elif args.verb == "close":
+        if closed_already(row, args.item):
+            print(f"closed=absent item={args.item}")
+            return
         path = owned_worktree(row, args.item, "close")
         result = remote(row, '''drop_render_scratch() { rm -f -- "$owned" "$status" "$index" "$carried"; }
 clean_render_drift() {

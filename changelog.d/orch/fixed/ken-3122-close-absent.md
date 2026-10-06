@@ -1,0 +1,1 @@
+- `lane-close` closes a hosted lane whose sandbox is already gone, once its provider answers `close` with `closed=absent`; `lane-host-ssh` does after a finished close.

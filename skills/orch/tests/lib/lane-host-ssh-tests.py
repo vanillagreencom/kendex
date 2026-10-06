@@ -1382,6 +1382,18 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
+    def test_close_after_finished_close_answers_absent(self):
+        """The control is the marker test below: no marker beside a standing
+        worktree still refuses as unowned."""
+        self.assertEqual(self.create().returncode, 0)
+        first = self.call("close", "--item", "TEST-1")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        before = (self.root / "calls").read_text()
+        again = self.call("close", "--item", "TEST-1", "--merged")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(again.stdout, b"closed=absent item=TEST-1\n")
+        self.assertNotIn("worktree path TEST-1", (self.root / "calls").read_text()[len(before):])
+
     def test_close_requires_provider_marker_before_worktree_lookup(self):
         self.assertEqual(self.create().returncode, 0)
         marker = Path(self.row["clone"]) / ".git/lane-host-item"
