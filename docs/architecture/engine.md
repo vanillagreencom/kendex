@@ -21,7 +21,7 @@ Each numbered rule has one test of the same number in `crates/core/tests/invaria
 3. A content hash covers every input that shapes the artifact: the source bytes and every manifest section that reaches the render.
 4. The lock records durable provenance for every installed kind: a same-source reinstall is a no-op, a cross-source name collision is a refusal naming the original, and a fork is the one rebind.
 5. Enable and disable are lossless: a file-backed kind toggles by rename, a kind inside a shared config file by a structured edit that keeps every unrelated key.
-6. Never touch the unowned: an unmanaged file is reported, never deleted; a foreign symlink is a conflict; ownership is read from the positions lock entries wrote, never from a lock key alone.
+6. Never touch the unowned: an unmanaged file is reported, never deleted, except an adopted workflow still at the bytes of the template its leaving package shipped, which leaves with that package and is never written or restored; a foreign symlink is a conflict; ownership is read from the positions lock entries wrote, never from a lock key alone.
 7. Applies are transactional: preconditions revalidate against observed hashes right before mutation, pre-images are journaled first, a failure rolls back, an interrupted apply recovers on the next launch, and a removal goes to the trash ([trash.md](trash.md)).
 8. One writer per scope: every apply holds an OS-level scope lock keyed off the canonical root, and a busy scope is a refusal.
 9. kendex never stages, commits or resets in a repository it did not create, beyond the explicit offer in [commit-offer.md](commit-offer.md). Review holds this rule; no test does.

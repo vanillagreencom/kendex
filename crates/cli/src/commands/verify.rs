@@ -7,7 +7,7 @@ use kendex_core::attest::{
 };
 use kendex_core::engine::{
     DeclarationStatus, DriftState, EngineReport, Installation, Owns, Pin, PlanOptions, Position,
-    ShimStanding, planned_closure_held,
+    RowRemedy, ShimStanding, planned_closure_held,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
@@ -1121,7 +1121,12 @@ fn say_row(
                 })
                 .unwrap_or_else(|| row.detail.clone()),
         ),
-        Some(row) => Some(row.detail.clone()),
+        Some(row) => Some(match row.remedy {
+            Some(RowRemedy::Remove) => {
+                format!("{} — refresh takes it, or remove {name}", row.detail)
+            }
+            None => row.detail.clone(),
+        }),
         None if unreachable_source => {
             let detail = "where this package comes from is unavailable".to_owned();
             Some(detail)

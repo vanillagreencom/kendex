@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 
 use super::desired::{Artifact, DesiredState, Owns};
 use super::instruction_shims::{ShimStanding, keyed_position, recorded_shims};
@@ -391,11 +391,14 @@ fn git_failed(
 /// Collect what this pass renders and plan the inventory write for it.
 /// The collection is handed back so the report can carry it to the commit
 /// offer: one collection, so the inventory and the offer cannot disagree.
+/// `leaving` is [`leaving_trees`]: an adopted workflow still at the bytes
+/// of a template in one of them leaves with its package.
 pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
     drift: &[super::DriftRow],
+    leaving: &[PathBuf],
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
     let mut generated = collect(state, shims, drift);
@@ -405,7 +408,7 @@ pub(super) fn plan(
     if !root.join(".git").exists() {
         return Ok(generated);
     }
-    let Some(adopted) = adopted::collect(root, state, ops)? else {
+    let Some(adopted) = adopted::collect(root, state, leaving, ops)? else {
         // Verify reports the malformed document. An apply must retain it:
         // rewriting it could erase adoption declarations it cannot read.
         return Ok(generated);
@@ -443,6 +446,29 @@ pub(super) fn plan(
         },
     });
     Ok(generated)
+}
+
+/// The trees of every package this pass takes out of the scope: its kind
+/// and name are in `before` and not in `after`, and the trees are the
+/// positions its old records wrote. A tree one tool drops while another
+/// keeps the package is not among them.
+pub(super) fn leaving_trees(
+    env: &Env,
+    scope: &Scope,
+    before: &crate::lock::Lock,
+    after: &crate::lock::Lock,
+) -> Vec<PathBuf> {
+    let staying: BTreeSet<(ItemKind, &str)> = after
+        .entries
+        .values()
+        .map(|entry| (entry.kind, entry.name.as_str()))
+        .collect();
+    before
+        .entries
+        .values()
+        .filter(|entry| !staying.contains(&(entry.kind, entry.name.as_str())))
+        .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+        .collect()
 }
 
 /// This repository's own committed inventory, held to what this pass

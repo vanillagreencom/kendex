@@ -1,1 +1,1 @@
-- A catalog retires items in `[retired]`: refresh warns where one is still declared and removes its files and adopted workflows, and every undeclared leftover; verify then passes.
+- A catalog retires items in `[retired]`: refresh warns where one is still wanted, removes its files and unedited adopted workflows, and removes every unedited undeclared leftover.

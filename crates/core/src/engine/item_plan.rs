@@ -288,6 +288,7 @@ fn row_for<'a>(
         cause: None,
         compared: None,
         also_in_the_way: Vec::new(),
+        remedy: None,
     }
 }
 

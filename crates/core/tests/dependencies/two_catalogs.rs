@@ -118,6 +118,39 @@ fn a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not() {
     assert_eq!(landed(&f, "judge", HarnessId::Codex), (false, false));
 }
 
+/// The wrapper's catalog offers the judge and the manifest declares it from
+/// the other catalog, which retired it. The plan writes no judge, so the
+/// wrapper is withheld on every tool rather than armed alone: retirement is
+/// read in the catalog the judge resolves to, not the wrapper's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper() {
+    let (f, other) =
+        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+    fs::write(
+        other.join("kendex.toml"),
+        "is_source_catalog = true\n[retired.hooks]\njudge = \"\"\n",
+    )
+    .unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        !findings_on(&report, "deliver").is_empty(),
+        "{:?}",
+        messages(&report)
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    for harness in [HarnessId::Claude, HarnessId::Codex] {
+        for name in ["deliver", "judge"] {
+            assert_eq!(
+                landed(&f, name, harness),
+                (false, false),
+                "{name} {harness:?}"
+            );
+        }
+    }
+}
+
 /// A declared wrapper installed from one catalog and then set to come from
 /// the other, whose judge Codex cannot run: on Codex the rebound wrapper is
 /// withheld, and the recorded installation is still the other catalog's.

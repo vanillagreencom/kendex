@@ -142,7 +142,7 @@ mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ForkEdit,
     Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions, Reach, Registrations,
-    StoodIn, StoodInRecord, Targets,
+    RowRemedy, StoodIn, StoodInRecord, Targets,
 };
 
 pub(super) struct PlanOwnership {
@@ -238,28 +238,25 @@ pub fn plan_scope(
         &mut kept,
         &mut scope_notes,
     )?;
-
-    // Orphan retention copies old entries; carrier comparison must finalize
-    // the retained Pi records after that pass, including native enablement.
-    drift.extend(plan_pi_switches(
-        env,
-        scope,
-        &manifest,
-        &mut new_lock,
-        &mut ops,
-        &mut config_edits,
-    )?);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
+    let leaving_trees = generated_paths::leaving_trees(env, scope, lock, &new_lock);
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
     plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
-    let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
+    let generated = generated_paths::plan(
+        scope,
+        &state,
+        &instruction_shims,
+        &drift,
+        &leaving_trees,
+        &mut ops,
+    )?;
 
     state.warnings.extend(state.agent_names.warnings());
     let report = EngineReport {
@@ -336,7 +333,8 @@ fn plan_pi_switches(
 
 /// Everything a plan takes away, after every write is planned: stale
 /// emitted files, what a refusal or a withholding takes or keeps, then
-/// the orphans. Returns what a sweep could still take.
+/// the orphans, and the Pi records they keep finalized. Returns what a
+/// sweep could still take.
 #[allow(clippy::too_many_arguments)]
 fn plan_removals(
     env: &Env,
@@ -370,7 +368,7 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
-    removal::orphans(
+    let sweepable = removal::orphans(
         env,
         scope,
         manifest,
@@ -385,7 +383,18 @@ fn plan_removals(
         config_edits,
         new_lock,
         scope_notes,
-    )
+    )?;
+    // Orphan retention copies old entries; carrier comparison must finalize
+    // the retained Pi records after that pass, including native enablement.
+    drift.extend(plan_pi_switches(
+        env,
+        scope,
+        manifest,
+        new_lock,
+        ops,
+        config_edits,
+    )?);
+    Ok(sweepable)
 }
 
 /// The files a scope owes beside its items: the project files, and the
@@ -502,11 +511,14 @@ fn installations(
         return Ok(installations);
     }
     let root = crate::pi_ext::scope_root(env, scope)?;
+    let kind = crate::model::ItemKind::PiExtension;
     for name in manifest.pi_extensions.keys() {
+        if state.retired.contains(&(kind, name.clone())) {
+            continue;
+        }
         let Ok(path) = crate::pi_ext::package_path(&root, name) else {
             continue;
         };
-        let kind = crate::model::ItemKind::PiExtension;
         let harness = crate::model::HarnessId::Pi;
         installations.insert(
             crate::lock::entry_key(kind, name, harness),
@@ -593,6 +605,7 @@ fn fresh_lock(
             .filter(|(_, entry)| {
                 entry.kind == crate::model::ItemKind::PiExtension
                     && manifest.pi_extensions.contains_key(&entry.name)
+                    && !state.retired.contains(&(entry.kind, entry.name.clone()))
             })
             .map(|(key, entry)| (key.clone(), entry.clone()))
             .collect(),

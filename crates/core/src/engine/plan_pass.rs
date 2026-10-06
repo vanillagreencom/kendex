@@ -169,6 +169,7 @@ fn plan_refusals(
                     cause: Some(DriftCause::LocalEdit),
                     compared: None,
                     also_in_the_way: Vec::new(),
+                    remedy: None,
                 });
                 // The files stay, so the record of them stays. Dropping it
                 // would leave kendex's own rendering on disk with nothing
@@ -199,6 +200,7 @@ fn plan_refusals(
             cause: None,
             compared: None,
             also_in_the_way: Vec::new(),
+            remedy: None,
         });
         ops.append(&mut removals);
     }
@@ -292,6 +294,7 @@ fn plan_rebound(
             cause: None,
             compared: None,
             also_in_the_way: Vec::new(),
+            remedy: None,
         });
         kept.keep(new_lock, key, entry);
         decided.insert(key.clone());

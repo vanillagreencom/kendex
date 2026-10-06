@@ -134,3 +134,40 @@ fn a_machine_on_copilots_older_settings_file_is_told_rather_than_written_to() {
     );
     assert!(!copilot_settings(&f).exists());
 }
+
+/// A recorded Copilot plugin this pass will not switch, the machine still
+/// keeping Copilot's settings in the older config.json: the manifest still
+/// declares it, so refresh's sweep keeps its record rather than reading it
+/// as a declaration deleted.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plugin_refused_this_pass_keeps_its_record_under_refreshs_sweep() {
+    let f = fixture("[plugins.\"fmt@copilot-plugins\"]\nenabled = true\nharness = \"copilot\"\n");
+    apply_now(&f);
+    let key = kendex_core::lock::entry_key(
+        kendex_core::model::ItemKind::Plugin,
+        "fmt@copilot-plugins",
+        kendex_core::model::HarnessId::Copilot,
+    );
+    fs::rename(
+        copilot_settings(&f),
+        f.env.home.join(".copilot/config.json"),
+    )
+    .unwrap();
+
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &Scope::Global,
+        &kendex_core::engine::PlanOptions {
+            sweep_unneeded: true,
+            ..kendex_core::engine::PlanOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert!(
+        report.record.entries.contains_key(&key),
+        "{:?}",
+        report.notes
+    );
+}

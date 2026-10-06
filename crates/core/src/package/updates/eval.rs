@@ -100,13 +100,17 @@ impl Eval<'_> {
         };
         let compared = (|| {
             let root = crate::pi_ext::scope_root(self.env, self.scope)?;
-            let package = crate::pi_ext::resolve_declared(
+            let package = match crate::pi_ext::resolve_declared(
                 self.env,
                 self.scope,
                 self.manifest,
                 name,
                 &declaration,
-            )?;
+            )? {
+                crate::pi_ext::Resolved::Ships(package) => package,
+                // Nothing newer is on offer for what the catalog retired.
+                crate::pi_ext::Resolved::Retired { .. } => return Ok(None),
+            };
             let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
             crate::pi_ext::check_origin(name, &package, self.lock.entries.get(&key))?;
             crate::pi_ext::declared_state(
@@ -116,9 +120,11 @@ impl Eval<'_> {
                 self.lock.entries.get(&key),
                 crate::pi_ext::RecordBasis::Recorded,
             )
+            .map(Some)
         })();
         match compared {
-            Ok(state) => {
+            Ok(None) => {}
+            Ok(Some(state)) => {
                 let at = report
                     .rows
                     .iter()

@@ -353,7 +353,8 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 /// `[retired]`: one table per kind, keyed as a manifest declares that kind,
 /// naming each retired item with its migration line. A table that will not
 /// read retires nothing and is a finding: a consumer still declaring the
-/// item then gets the not-found refusal, which removes nothing.
+/// item has it installed where the catalog carries it, and refused, which
+/// removes nothing, where it does not.
 fn read_retired(config: &mut SourceConfig, table: &toml::Table) {
     let Some(retired) = table.get("retired") else {
         return;

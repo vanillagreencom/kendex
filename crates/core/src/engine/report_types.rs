@@ -143,6 +143,18 @@ pub struct DriftRow {
     /// directories it never named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also_in_the_way: Vec<String>,
+    /// The verb that settles this row, where one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<RowRemedy>,
+}
+
+/// A verb that settles a drift row, acting on the row's own kind and name:
+/// data a surface renders, never a command line (engine rule 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum RowRemedy {
+    /// Removing the item by name takes it, as refresh's sweep does.
+    Remove,
 }
 
 impl DriftRow {
@@ -519,8 +531,9 @@ pub struct PlanOptions {
     pub removal_filter: Option<Vec<RemovalName>>,
     /// Also remove installations nothing asked for that nothing needs
     /// anymore — a dependency whose last dependent went away, or one an
-    /// upstream item stopped requiring. An unfiltered sweep also retires
-    /// recorded agents no longer declared, as refresh does after a rename.
+    /// upstream item stopped requiring. An unfiltered sweep, refresh's,
+    /// also takes every record of any kind nothing declares or derives
+    /// anymore, an edited copy held as the edit conflict.
     pub sweep_unneeded: bool,
     /// Bundles this plan uninstalls. Their members that survive are named in
     /// the preview with what keeps them, so an uninstall says both halves:

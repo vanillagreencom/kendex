@@ -1,8 +1,8 @@
 //! Adoption records bind workflow copies to bytes from declared packages.
 //! The package's adoption command writes the declaration; refresh only
 //! updates its hash. Recorded paths never become apply or restore targets;
-//! a copy still at its recorded template bytes leaves with the package
-//! whose removal this pass plans.
+//! a copy still at the bytes of the template its leaving package shipped
+//! leaves with that package.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::apply::{Description, Op, PlannedOp};
+use crate::apply::{Description, PlannedOp};
 use crate::error::{CoreError, Result};
 
 use super::super::desired::{Artifact, Desired, DesiredState};
@@ -159,12 +159,14 @@ fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
     )
 }
 
-/// `ops` is the plan so far: a record whose template sits in a tree it
-/// trashes, with the copy still at the recorded template bytes, plans the
-/// copy's trash beside it and leaves the inventory.
+/// `leaving` holds the trees of the packages this pass takes out of the
+/// scope (`super::leaving_trees`). A record whose template sits in one,
+/// with the copy still at that template's bytes, plans the copy's trash
+/// into `ops` and leaves the inventory.
 pub(super) fn collect(
     root: &Path,
     state: &DesiredState,
+    leaving: &[PathBuf],
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Option<BTreeMap<PathBuf, AdoptedWorkflow>>> {
     let Some(text) = crate::fs::read_if_exists(&root.join(INVENTORY))? else {
@@ -227,8 +229,10 @@ pub(super) fn collect(
                     Err(error) => return Err(CoreError::io(&path, error)),
                 }
             }
-            None => match leaving(ops, &template)
-                .then(|| found(&path, &record))
+            None => match leaving
+                .iter()
+                .any(|tree| template.starts_with(tree))
+                .then(|| found(&path, &template))
                 .transpose()?
             {
                 Some(Found::Absent) => continue,
@@ -257,28 +261,26 @@ pub(super) fn collect(
     Ok(Some(adopted))
 }
 
-/// Whether `ops` trashes the tree `template` sits in.
-fn leaving(ops: &[PlannedOp], template: &Path) -> bool {
-    ops.iter().any(|planned| match &planned.op {
-        Op::Trash { path, .. } => template.starts_with(path),
-        _ => false,
-    })
-}
-
 /// What sits where a record's copy belongs.
 enum Found {
     Absent,
-    /// A regular file holding the template bytes the record pins, the one
-    /// proof that nobody edited it since adoption.
+    /// A regular file holding the bytes of the template in the leaving
+    /// tree, which a lock entry wrote: the one proof that nobody edited
+    /// the copy since adoption.
     Adopted,
     Other,
 }
 
-fn found(path: &Path, record: &Record) -> Result<Found> {
+fn found(path: &Path, template: &Path) -> Result<Found> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_file() => {
             let actual = std::fs::read(path).map_err(|error| CoreError::io(path, error))?;
-            Ok(match hash(&actual) == record.template_hash {
+            let shipped = match std::fs::read(template) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(CoreError::io(template, error)),
+            };
+            Ok(match shipped.is_some_and(|shipped| shipped == actual) {
                 true => Found::Adopted,
                 false => Found::Other,
             })

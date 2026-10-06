@@ -1,1 +1,1 @@
-- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes: the entry is skipped and its copies removed. `kendex remove doc-drift-check --scope project --sweep` drops the entry.
+- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes and applies: the hook stays installed with one notice line opening `doc-drift-check: `, and `kendex refresh --prune` removes it.

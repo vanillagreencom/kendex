@@ -139,7 +139,15 @@ pub(super) fn check_scope(
                 Ok(crate::lock::LockFile::Absent) => true,
                 Err(_) => false,
             };
-            if unrecorded {
+            // A package its catalog retired is owed no install: refresh
+            // warns of the declaration and takes the package.
+            let retired = || {
+                matches!(
+                    crate::pi_ext::resolve_declared(env, scope, manifest, name, decl),
+                    Ok(crate::pi_ext::Resolved::Retired { .. })
+                )
+            };
+            if unrecorded && !retired() {
                 ctx.pi_installation_line(name, None, decl.enabled, true, sections);
             }
         }

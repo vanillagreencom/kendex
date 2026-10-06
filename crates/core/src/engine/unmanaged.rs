@@ -181,6 +181,7 @@ pub(super) fn unmanaged_rows(
             cause: None,
             compared: None,
             also_in_the_way: Vec::new(),
+            remedy: None,
         });
     }
     Ok(())

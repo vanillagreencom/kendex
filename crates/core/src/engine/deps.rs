@@ -929,6 +929,20 @@ fn derive(
                 wanted.deps.push(landed);
                 continue;
             }
+            // Retired, the companion is never written, which withholds an
+            // armed hook that requires it rather than arming it alone.
+            Offer::Retired(migration) => {
+                found.push(warn(
+                    kind,
+                    parent,
+                    format!("{parent} requires {dep}, which the catalog '{source}' retired"),
+                    match migration.is_empty() {
+                        true => format!("drop {dep} from {parent}'s dependencies"),
+                        false => migration.to_owned(),
+                    },
+                ));
+                Withholding::Requires
+            }
             Offer::NotOffered => {
                 found.push(warn(
                     kind,
@@ -1241,20 +1255,6 @@ fn resolve(
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<String> {
-    // Retired, the companion is never written, which withholds an armed
-    // hook that requires it rather than arming it alone.
-    if let Some(migration) = config.retired(dep_kind, name) {
-        found.push(warn(
-            kind,
-            parent,
-            format!("{parent} requires {name}, which the catalog '{source}' retired"),
-            match migration.is_empty() {
-                true => format!("drop {name} from {parent}'s dependencies"),
-                false => migration.to_owned(),
-            },
-        ));
-        return None;
-    }
     let resolved = match dep_kind {
         ItemKind::Skill => offered.resolve(sealed, config, name),
         ItemKind::Hook

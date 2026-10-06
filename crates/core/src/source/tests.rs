@@ -344,9 +344,9 @@ engineer = ["dev"]
 }
 
 /// `[retired]` reads per kind, under the table a manifest declares that kind
-/// in; a shape it cannot read retires nothing, as a finding, so a consumer
-/// still declaring the item keeps the not-found refusal, which removes
-/// nothing.
+/// in; a shape it cannot read retires nothing, as a finding, and neither
+/// does an unusable catalog, so a catalog-side typo never sweeps an item a
+/// consumer still declares.
 #[test]
 fn a_retired_table_reads_whole_or_retires_nothing() {
     for (row, table, retired) in [
@@ -367,6 +367,16 @@ fn a_retired_table_reads_whole_or_retires_nothing() {
         (
             "a migration that is no string",
             "[retired.hooks]\nold-check = true\n",
+            vec![],
+        ),
+        (
+            "a readable entry then an unreadable one",
+            "[retired.hooks]\na-check = \"\"\nb-check = true\n",
+            vec![],
+        ),
+        (
+            "an unusable catalog",
+            "catalog = 3\n[retired.hooks]\nold-check = \"\"\n",
             vec![],
         ),
     ] {

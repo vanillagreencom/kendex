@@ -37,6 +37,7 @@ pub(super) fn hold_rev_conflict(
         cause: None,
         compared: None,
         also_in_the_way: Vec::new(),
+        remedy: None,
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.kept.keep(sink.new_lock, &item.key, entry);
@@ -147,6 +148,7 @@ fn hold_shared_edit(
         cause: Some(DriftCause::LocalEdit),
         compared: None,
         also_in_the_way: Vec::new(),
+        remedy: None,
     });
     true
 }
@@ -271,6 +273,7 @@ pub(super) fn hold_local_edit(
         cause: Some(cause),
         compared: None,
         also_in_the_way: Vec::new(),
+        remedy: None,
     });
     sink.kept.keep(sink.new_lock, &item.key, entry);
     true

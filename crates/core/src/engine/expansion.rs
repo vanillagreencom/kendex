@@ -368,9 +368,12 @@ pub(super) type CatalogKey = (String, Option<String>);
 /// writes nothing for; or nothing at all — the catalog never opened, would
 /// not resolve or read, or read with its content hidden and the item not
 /// found. Silence leaves the planner writing nothing from it too, but says
-/// nothing about whether the item would run.
+/// nothing about whether the item would run. A catalog that retired the
+/// item offers it no more than one that dropped it, carried or not, and
+/// names the migration.
 pub(super) enum Offer<'a> {
     Item(&'a OpenCatalog, std::path::PathBuf),
+    Retired(&'a str),
     NotOffered,
     Silent,
 }
@@ -414,6 +417,9 @@ impl Catalogs<'_> {
         let Some(catalog) = self.open.get(key).and_then(Option::as_ref) else {
             return Offer::Silent;
         };
+        if let Some(migration) = catalog.config.retired(kind, name) {
+            return Offer::Retired(migration);
+        }
         match find_item(&catalog.sealed, &catalog.config, kind, name) {
             Some(path) => Offer::Item(catalog, path),
             // A catalog answering with less than it offers cannot say the

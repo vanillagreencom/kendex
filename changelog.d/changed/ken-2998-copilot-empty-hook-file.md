@@ -1,0 +1,1 @@
+- At project scope, a Copilot hook file left with no hooks after a disable or removal goes to the trash instead of keeping only its version line.

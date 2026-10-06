@@ -1199,7 +1199,7 @@ type KeptChainRow = (
 fn kept_chain_rows() -> [KeptChainRow; 4] {
     use kendex_core::engine::DriftState::{Conflict, Orphaned};
     const REMOVED: &str = "no longer wanted — will be removed";
-    const LEFT: &str = "left over from an earlier setup; nothing needs it anymore — refresh, or remove extra, takes it";
+    const LEFT: &str = "left over from an earlier setup; nothing needs it anymore";
     const BY_BOSS: &str = "needed by boss, which stays installed — kept with it";
     const BY_EXTRA: &str = "needed by extra, which stays installed — kept with it";
     const BY_MID: &str = "needed by mid, which stays installed — kept with it";

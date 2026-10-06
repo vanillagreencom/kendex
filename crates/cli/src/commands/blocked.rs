@@ -328,6 +328,7 @@ mod tests {
             cause: Some(DriftCause::UnmanagedContent),
             compared: None,
             also_in_the_way: Vec::new(),
+            remedy: None,
         }
     }
 

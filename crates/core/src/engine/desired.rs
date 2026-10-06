@@ -552,12 +552,13 @@ fn compute(
             // carries installs nothing. Its installed copies are stranded, so
             // the sweep takes them the way it takes a harness dropped from a
             // declaration.
-            if let Some(warning) = retired(&config, kind, name) {
+            if let Some(migration) = config.retired(kind, name) {
+                let via = expansion.derived_from(kind, name);
+                state.warnings.push(retired(kind, name, migration, via));
                 state
                     .processed
                     .insert((kind, name.clone()), provenance.clone());
                 state.retired.insert((kind, name.clone()));
-                state.warnings.push(warning);
                 continue;
             }
             let Some(item_path) = find_item(&sealed, &config, kind, name) else {
@@ -604,6 +605,7 @@ fn compute(
             )?;
         }
     }
+    retired_pi_extensions(env, scope, manifest, &mut state);
     desired_kinds::desired_plugins(env, scope, manifest, &mut state);
     super::desired_custom_hooks::desired_custom_hooks(env, scope, manifest, &mut state);
 
@@ -670,34 +672,72 @@ impl ItemCtx<'_> {
     }
 }
 
-/// The warning a declaration naming an item its catalog retired
-/// (`[retired]`) gets in place of the not-found refusal, so a refresh at a
-/// consumer still declaring it runs. The message is the whole line: it opens
-/// with the item's name as its key and carries the manifest edit and the
-/// catalog's migration, so the line a program reads is complete with nothing
-/// before the key and nothing beneath it. The consumer refresh report
-/// (KEN-2797) forwards every `kendex refresh` line opening `<name>: `, and
-/// the CLI prints a message keyed by its own name as that line.
+/// The warning an item its catalog retired (`[retired]`) gets in place of
+/// the not-found refusal, so a refresh at a consumer still wanting it runs.
+/// `via` is what brought it into the plan, `None` for the person's own
+/// declaration, which is the one a manifest edit drops; a bundle member or
+/// an item another requires is the catalog's to drop. The message is the
+/// whole line: it opens with the item's name as its key and carries the
+/// remedy and the catalog's migration, so the line a program reads is
+/// complete with nothing before the key and nothing beneath it. The
+/// consumer refresh report (KEN-2797) forwards a `kendex refresh` line
+/// opening `doc-drift-check: `, the one retirement it reads today.
 pub(super) fn retired(
-    config: &SourceConfig,
     kind: ItemKind,
     name: &str,
-) -> Option<super::ItemWarning> {
-    let migration = config.retired(kind, name)?;
+    migration: &str,
+    via: Option<&crate::lock::Reason>,
+) -> super::ItemWarning {
+    use crate::lock::Reason;
     let kind_name = kind.name();
-    let mut message = format!(
-        "{name}: retired {kind_name}, entry skipped; delete [{kind_name}s.{name}] from kendex.toml"
-    );
-    if !migration.is_empty() {
-        message = format!("{message}; {migration}");
-    }
-    Some(super::ItemWarning {
+    let remedy = match via {
+        None | Some(Reason::Requested) => {
+            format!("entry skipped; delete [{kind_name}s.{name}] from kendex.toml")
+        }
+        Some(Reason::MemberOf { bundle }) => format!(
+            "skipped; bundle {} in catalog '{}' still lists it",
+            bundle.name, bundle.source
+        ),
+        Some(Reason::RequiredBy { by }) => format!(
+            "skipped; {} {} in catalog '{}' still requires it",
+            by.kind.name(),
+            by.name,
+            by.source
+        ),
+    };
+    let message = match migration.is_empty() {
+        true => format!("{name}: retired {kind_name}, {remedy}"),
+        false => format!("{name}: retired {kind_name}, {remedy}; {migration}"),
+    };
+    super::ItemWarning {
         kind,
         name: name.to_owned(),
         harness: None,
         message,
         remediation: None,
-    })
+    }
+}
+
+/// The Pi declarations their catalog retired, read where every Pi pass
+/// reads a declaration (`pi_ext::resolve_declared`): each is skipped with
+/// [`retired`]'s warning, so the sweep takes its package and its record. A
+/// declaration that will not resolve is the carrier comparison's to report.
+fn retired_pi_extensions(env: &Env, scope: &Scope, manifest: &Manifest, state: &mut DesiredState) {
+    for (name, decl) in &manifest.pi_extensions {
+        let Ok(crate::pi_ext::Resolved::Retired {
+            source_repo,
+            migration,
+        }) = crate::pi_ext::resolve_declared(env, scope, manifest, name, decl)
+        else {
+            continue;
+        };
+        let key = (ItemKind::PiExtension, name.clone());
+        state.processed.insert(key.clone(), source_repo);
+        state.retired.insert(key);
+        state
+            .warnings
+            .push(retired(ItemKind::PiExtension, name, &migration, None));
+    }
 }
 
 /// The note for a declaration the catalog does not carry. It names what the

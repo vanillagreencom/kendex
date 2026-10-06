@@ -2116,6 +2116,8 @@ export type DriftRow_Deserialize = {
 	 *  directories it never named.
 	 */
 	alsoInTheWay?: string[],
+	/**  The verb that settles this row, where one does. */
+	remedy?: RowRemedy | null,
 };
 
 export type DriftRow_Serialize = {
@@ -2141,6 +2143,8 @@ export type DriftRow_Serialize = {
 	 *  directories it never named.
 	 */
 	alsoInTheWay?: string[],
+	/**  The verb that settles this row, where one does. */
+	remedy?: RowRemedy | null,
 };
 
 export type DriftState = 
@@ -4610,6 +4614,14 @@ export type RowExits = {
 	 */
 	tools: HarnessId[],
 };
+
+/**
+ *  A verb that settles a drift row, acting on the row's own kind and name:
+ *  data a surface renders, never a command line (engine rule 18).
+ */
+export type RowRemedy = 
+/**  Removing the item by name takes it, as refresh's sweep does. */
+"remove";
 
 export type SafetyScore = {
 	score: number,
