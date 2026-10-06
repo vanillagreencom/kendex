@@ -161,14 +161,14 @@ fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
 }
 
 /// `trees` holds the installed trees no declared item renders this pass
-/// ([`super::TemplateTrees`]). A record whose template sits in a leaving
+/// ([`super::Unrendered`]). A record whose template sits in a leaving
 /// one, with the copy still at that template's bytes, plans the copy's
 /// trash into `ops` and leaves the inventory. One whose template sits in a
 /// kept retired package is held to that template's bytes.
 pub(super) fn collect(
     root: &Path,
     state: &DesiredState,
-    trees: &super::TemplateTrees,
+    trees: &super::Unrendered,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Option<BTreeMap<PathBuf, AdoptedWorkflow>>> {
     let Some(text) = crate::fs::read_if_exists(&root.join(INVENTORY))? else {

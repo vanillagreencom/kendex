@@ -6,10 +6,12 @@
 //! the inventory, and verify then passes. A workflow the person edited
 //! stays, and verify keeps failing it. A tree one tool drops while the
 //! skill stays is no leaving, and the workflow stays. A retired set keeps
-//! the workflow its member adopted the same way, until a prune. A kept copy
-//! deleted or edited by hand, a Pi package's included, fails verify on its
-//! own row while a plain refresh passes. The kept notice's removal takes
-//! only the retired item, at its own scope, and refuses to run keeping the
+//! the workflow its member adopted the same way, until a prune. Whatever
+//! stays keeps its rows in the inventory, through a refresh that fails on
+//! a renamed set too, and a prune takes them. A kept copy deleted or
+//! edited by hand, a Pi package's included, fails verify on its own row
+//! while a plain refresh passes. The kept notice's removal takes only the
+//! retired item, at its own scope, and refuses to run keeping the
 //! declaration. A prune holds a retired copy the person edited and names
 //! the removal that takes it. Verify's row for a left-over names its kind
 //! and, at the global scope, the global flag.
@@ -18,6 +20,7 @@
 use crate::test_util;
 use test_util::{rooted, source_path};
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -75,6 +78,43 @@ fn adopted(home: &Path, declared: &str, offered: &str) -> (PathBuf, PathBuf) {
     (catalog, project)
 }
 
+/// The inventory rows the skill's two copies write.
+const DEPLOY_ROWS: [&str; 4] = [
+    ".agents/skills/deploy/SKILL.md",
+    TEMPLATE,
+    ".claude/skills/deploy/SKILL.md",
+    ".claude/skills/deploy/templates/adopted.yml",
+];
+
+/// The inventory rows the hook writes.
+const HOOK_ROWS: [&str; 2] = [".claude/hooks/check.sh", ".claude/settings.json"];
+
+/// The paths `project`'s inventory lists.
+#[allow(clippy::unwrap_used)]
+fn listed(project: &Path) -> BTreeSet<String> {
+    let text = fs::read_to_string(project.join(".kendex-generated.json")).unwrap();
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    entries
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .or_else(|| entry["path"].as_str())
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The rows of `rows` `project`'s inventory does not list.
+fn unlisted<'a>(project: &Path, rows: &[&'a str]) -> Vec<&'a str> {
+    let listed = listed(project);
+    rows.iter()
+        .copied()
+        .filter(|row| !listed.contains(*row))
+        .collect()
+}
+
 /// The lines of `printed` keyed by `name`, the notice's own line.
 fn keyed(printed: &str, name: &str) -> usize {
     printed
@@ -97,6 +137,12 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
         for copy in [&hook, &skill, &workflow] {
             assert!(copy.exists(), "the fixture installs {}", copy.display());
         }
+        let rows = [&DEPLOY_ROWS[..], &HOOK_ROWS[..]].concat();
+        assert_eq!(
+            unlisted(&project, &rows),
+            Vec::<&str>::new(),
+            "the fixture lists them"
+        );
         if edited {
             write(&workflow, EDITED);
         }
@@ -124,6 +170,12 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
                     copy.display()
                 );
             }
+            assert_eq!(
+                unlisted(&project, &rows),
+                Vec::<&str>::new(),
+                "{args:?}: {:?}",
+                listed(&project)
+            );
         }
         // The kept items pass; an edited workflow fails as it always has.
         let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
@@ -164,6 +216,7 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
         );
         let recorded = fs::read_to_string(&inventory).unwrap();
         assert_eq!(recorded.contains(WORKFLOW), edited, "{recorded}");
+        assert_eq!(unlisted(&project, &rows), rows, "{recorded}");
         let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
             .unwrap()
             .parse()
@@ -187,11 +240,12 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
     }
 }
 
-/// The catalog retires the set carrying the skill whose template was
-/// adopted, and deletes the set. A plain refresh keeps the skill and the
-/// workflow with one notice keyed by the set, and verify passes, showing
-/// that notice once. A prune drops the declaration and takes the skill
-/// and the unedited workflow, and verify passes.
+/// The catalog renames the set carrying the skill whose template was
+/// adopted: refresh fails and the skill keeps its inventory rows. The
+/// catalog then retires the set. A plain refresh keeps the skill, its rows
+/// and the workflow with one notice keyed by the set, and verify passes,
+/// showing that notice once. A prune drops the declaration and takes the
+/// skill, its rows and the unedited workflow, and verify passes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_retired_set_keeps_the_workflow_its_member_adopted_until_a_prune() {
@@ -204,9 +258,36 @@ fn a_retired_set_keeps_the_workflow_its_member_adopted_until_a_prune() {
     for copy in [&skill, &workflow] {
         assert!(copy.exists(), "the fixture installs {}", copy.display());
     }
+    assert_eq!(
+        unlisted(&project, &DEPLOY_ROWS),
+        Vec::<&str>::new(),
+        "the fixture lists them"
+    );
+    let refresh = |extra: &[&str]| {
+        let args = [
+            &["refresh", "--scope", "project", "--yes", "--leave"][..],
+            extra,
+        ]
+        .concat();
+        kendex(&home, &project, &args)
+    };
+
+    let next = "[bundles.ship-next]\nskills = [\"deploy\"]\n";
+    write(&catalog.join("kendex.toml"), &format!("{CATALOG}{next}"));
+    let renamed = refresh(&[]);
+    let printed = said(&renamed);
+    assert!(!renamed.status.success(), "{printed}");
+    assert!(skill.exists(), "{printed}");
+    assert_eq!(
+        unlisted(&project, &DEPLOY_ROWS),
+        Vec::<&str>::new(),
+        "{:?}",
+        listed(&project)
+    );
+
     write(
         &catalog.join("kendex.toml"),
-        &format!("{CATALOG}[retired.bundles]\nship = \"declare ship-next\"\n"),
+        &format!("{CATALOG}{next}[retired.bundles]\nship = \"declare ship-next\"\n"),
     );
     let set_keyed = |printed: &str| {
         printed
@@ -215,29 +296,25 @@ fn a_retired_set_keeps_the_workflow_its_member_adopted_until_a_prune() {
             .count()
     };
 
-    let refreshed = kendex(
-        &home,
-        &project,
-        &["refresh", "--scope", "project", "--yes", "--leave"],
-    );
+    let refreshed = refresh(&[]);
     let printed = said(&refreshed);
     assert!(refreshed.status.success(), "{printed}");
     assert_eq!(set_keyed(&printed), 1, "{printed}");
     for copy in [&skill, &workflow] {
         assert!(copy.exists(), "{} is gone: {printed}", copy.display());
     }
+    assert_eq!(
+        unlisted(&project, &DEPLOY_ROWS),
+        Vec::<&str>::new(),
+        "{:?}",
+        listed(&project)
+    );
     let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
     let printed = said(&verified);
     assert!(verified.status.success(), "{printed}");
     assert_eq!(set_keyed(&printed), 1, "{printed}");
 
-    let pruned = kendex(
-        &home,
-        &project,
-        &[
-            "refresh", "--scope", "project", "--prune", "--yes", "--leave",
-        ],
-    );
+    let pruned = refresh(&["--prune"]);
     let printed = said(&pruned);
     assert!(pruned.status.success(), "{printed}");
     for copy in [&skill, &workflow] {
@@ -245,6 +322,7 @@ fn a_retired_set_keeps_the_workflow_its_member_adopted_until_a_prune() {
     }
     let recorded = fs::read_to_string(project.join(".kendex-generated.json")).unwrap();
     assert!(!recorded.contains(WORKFLOW), "{recorded}");
+    assert_eq!(unlisted(&project, &DEPLOY_ROWS), DEPLOY_ROWS, "{recorded}");
     let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
         .unwrap()
         .parse()
@@ -730,5 +808,54 @@ fn verify_names_the_kind_and_scope_of_a_global_left_over_removal() {
     assert!(
         flags.contains(&"--global"),
         "the row names no --global: {row}"
+    );
+}
+
+/// The skill is in a second declared set the catalog still offers, and
+/// a file leaves its tree as the catalog retires the first. The render
+/// through the second set is what the inventory lists for it, so the
+/// file's row leaves while the rest stay.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_another_set_renders_lists_what_that_render_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let sets = "[bundles.ship]\nskills = [\"deploy\"]\n[bundles.tools]\nskills = [\"deploy\"]\n";
+    let declared = format!("{BY_SET}[bundles.tools]\nsource = \"cat\"\n");
+    let (catalog, project) = adopted(&home, &declared, &format!("{CATALOG}{sets}"));
+    let notes = catalog.join("skills/deploy/notes.md");
+    write(&notes, "Notes.\n");
+    let refresh = || {
+        kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        )
+    };
+    let refreshed = refresh();
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    commit(&project, "notes");
+    let row = ".agents/skills/deploy/notes.md";
+    assert_eq!(
+        unlisted(&project, &[row]),
+        Vec::<&str>::new(),
+        "the fixture lists it"
+    );
+
+    fs::remove_file(&notes).unwrap();
+    let tools = "[bundles.tools]\nskills = [\"deploy\"]\n";
+    write(
+        &catalog.join("kendex.toml"),
+        &format!("{CATALOG}{tools}[retired.bundles]\nship = \"\"\n"),
+    );
+    let refreshed = refresh();
+    let printed = said(&refreshed);
+    assert!(refreshed.status.success(), "{printed}");
+    let listed = listed(&project);
+    assert!(!listed.contains(row), "{listed:?}");
+    assert_eq!(
+        unlisted(&project, &DEPLOY_ROWS),
+        Vec::<&str>::new(),
+        "{listed:?}"
     );
 }

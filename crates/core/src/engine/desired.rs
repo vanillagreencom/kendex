@@ -319,8 +319,9 @@ pub struct DesiredState {
     /// The records a set in `kept_bundles` keeps, by entry key, each with
     /// the edges to such sets it was recorded under
     /// (`bundles::kept_members`). The item pass adds those edges to what
-    /// it writes for one of them, and `plan_pass::plan_kept_members` keeps
-    /// every other one before anything is taken.
+    /// it writes for one of them, `plan_pass::plan_kept_members` keeps
+    /// every other one before anything is taken, and the inventory keeps
+    /// that one's rows (`generated_paths::Unrendered`).
     pub(super) kept_members: BTreeMap<String, BTreeSet<crate::lock::Reason>>,
     /// Declared sets their catalog retired, under a prune:
     /// `settle_retired` drops each declaration.

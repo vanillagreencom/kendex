@@ -245,7 +245,7 @@ pub fn plan_scope(
     state.warnings.extend(notices);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
-    let trees = generated_paths::TemplateTrees::of(env, scope, &state, lock, &new_lock);
+    let trees = generated_paths::Unrendered::of(env, scope, &state, lock, &new_lock)?;
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);

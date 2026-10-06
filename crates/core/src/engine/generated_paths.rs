@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::desired::{Artifact, DesiredState, Owns};
 use super::instruction_shims::{ShimStanding, keyed_position, recorded_shims};
@@ -391,14 +391,15 @@ fn git_failed(
 /// Collect what this pass renders and plan the inventory write for it.
 /// The collection is handed back so the report can carry it to the commit
 /// offer: one collection, so the inventory and the offer cannot disagree.
-/// `trees` is [`TemplateTrees::of`]: an adopted workflow still at the bytes
-/// of a template in a leaving tree leaves with its package.
+/// `unrendered` is [`Unrendered::of`]: an adopted workflow still at the
+/// bytes of a template in a leaving tree leaves with its package, and a
+/// package kept as recorded keeps its rows.
 pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
     drift: &[super::DriftRow],
-    trees: &TemplateTrees,
+    unrendered: &Unrendered,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
     let mut generated = collect(state, shims, drift);
@@ -408,13 +409,14 @@ pub(super) fn plan(
     if !root.join(".git").exists() {
         return Ok(generated);
     }
-    let Some(adopted) = adopted::collect(root, state, trees, ops)? else {
+    let Some(adopted) = adopted::collect(root, state, unrendered, ops)? else {
         // Verify reports the malformed document. An apply must retain it:
         // rewriting it could erase adoption declarations it cannot read.
         return Ok(generated);
     };
     generated.adopted = adopted;
-    if !generated.held.is_empty() {
+    let kept = &unrendered.recorded;
+    if !generated.held.is_empty() || !kept.is_empty() {
         let committed = crate::commit_offer::committed_inventory(root).map_err(git_failed(
             "read committed generated inventory",
             "inventory",
@@ -424,6 +426,7 @@ pub(super) fn plan(
                 .ok()
                 .is_some_and(|relative| committed.contains(&crate::paths::slashed(relative)))
         });
+        kept.list(root, &committed, &mut generated);
     }
     let path = root.join(INVENTORY);
     // A project that renders nothing gets no inventory, and one that
@@ -448,10 +451,78 @@ pub(super) fn plan(
     Ok(generated)
 }
 
-/// The installed trees an adopted workflow's template can sit in while no
-/// declared item renders it this pass.
+/// What the record says each package this pass keeps as recorded, and no
+/// declared item renders, wrote: an item its catalog retired, on each tool
+/// it stays on ([`super::desired::Retirement::kept`]), and a member a
+/// declared set this pass cannot expand keeps
+/// ([`DesiredState::kept_members`]). Read off the record this pass writes,
+/// so a removal or a prune that takes the package takes its rows.
+///
+/// The record names a tree, not the files in it, and the pass reads no
+/// source for the package, so the rows are the committed inventory's under
+/// these positions: what the last render listed.
 #[derive(Debug, Default)]
-pub(super) struct TemplateTrees {
+struct KeptPositions {
+    /// The whole files and trees each wrote.
+    whole: Vec<PathBuf>,
+    /// The shared configuration files each writes keys in.
+    shared: BTreeSet<PathBuf>,
+}
+
+impl KeptPositions {
+    fn of(
+        env: &Env,
+        scope: &Scope,
+        state: &DesiredState,
+        after: &crate::lock::Lock,
+    ) -> Result<KeptPositions> {
+        let rendered: BTreeSet<(ItemKind, &str, HarnessId)> = state
+            .items
+            .iter()
+            .map(|item| (item.kind, item.name.as_str(), item.harness))
+            .collect();
+        let mut kept = KeptPositions::default();
+        for (key, entry) in &after.entries {
+            let retired = state
+                .retired
+                .get(&(entry.kind, entry.name.clone()))
+                .is_some_and(|retirement| retirement.kept.contains(&entry.harness));
+            if !(retired || state.kept_members.contains_key(key))
+                || rendered.contains(&(entry.kind, entry.name.as_str(), entry.harness))
+            {
+                continue;
+            }
+            let owned = super::owned::installed(env, scope, entry);
+            kept.whole.extend(owned.files);
+            kept.shared
+                .extend(owned.edits?.into_iter().map(|(path, _)| path));
+        }
+        Ok(kept)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.whole.is_empty() && self.shared.is_empty()
+    }
+
+    /// Adds the rows of `committed`, the inventory at `HEAD`, that these
+    /// positions hold to `generated`, in the group a render's rows go to.
+    fn list(&self, root: &Path, committed: &BTreeSet<String>, generated: &mut GeneratedPaths) {
+        for row in committed {
+            let path = root.join(row);
+            if self.shared.contains(&path) {
+                generated.shared.insert(path);
+            } else if self.whole.iter().any(|position| path.starts_with(position)) {
+                generated.whole.insert(path);
+            }
+        }
+    }
+}
+
+/// What the records say about the positions no declared item renders this
+/// pass: the installed trees an adopted workflow's template can sit in, and
+/// the rows a package kept as recorded keeps.
+#[derive(Debug, Default)]
+pub(super) struct Unrendered {
     /// Every package this pass takes out of the scope: its kind and name
     /// are in the old record and not in the new one. A tree one tool drops
     /// while another keeps the package is not among them.
@@ -459,9 +530,11 @@ pub(super) struct TemplateTrees {
     /// Every retired package this pass keeps as recorded, and every
     /// member a retired set keeps.
     kept: Vec<PathBuf>,
+    /// Every package this pass keeps as recorded.
+    recorded: KeptPositions,
 }
 
-impl TemplateTrees {
+impl Unrendered {
     /// Read off the positions the records wrote: `before` the record this
     /// pass read, `after` the one it writes.
     pub(super) fn of(
@@ -470,7 +543,7 @@ impl TemplateTrees {
         state: &DesiredState,
         before: &crate::lock::Lock,
         after: &crate::lock::Lock,
-    ) -> TemplateTrees {
+    ) -> Result<Unrendered> {
         let staying: BTreeSet<(ItemKind, &str)> = after
             .entries
             .values()
@@ -484,7 +557,7 @@ impl TemplateTrees {
                 .flat_map(|(_, entry)| super::owned::installed(env, scope, entry).files)
                 .collect()
         };
-        TemplateTrees {
+        Ok(Unrendered {
             leaving: trees(before, &|_, entry| {
                 !staying.contains(&(entry.kind, entry.name.as_str()))
             }),
@@ -492,7 +565,8 @@ impl TemplateTrees {
                 let retired = (entry.kind, entry.name.clone());
                 state.retired.contains_key(&retired) || state.kept_by_retired_bundle(key)
             }),
-        }
+            recorded: KeptPositions::of(env, scope, state, after)?,
+        })
     }
 
     /// Whether `template` sits in a tree this pass takes away.
