@@ -1,0 +1,1 @@
+- orch states that a plan or research report lives on its tracker issue, not as tracked content under `docs/`.

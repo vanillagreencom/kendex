@@ -1,1 +1,1 @@
-- A poll after a Socket Mode reconnect no longer stalls on rate-limited catch-up reads: a rate limit ends that poll's catch-up with `slack-rate-limited=<method>`, live delivery and outbound mail go on, and a later poll resumes the catch-up.
+- After a Socket Mode reconnect, a rate-limited catch-up read no longer stalls the poll: live delivery and outbound mail go on, and a later poll finishes the catch-up.
