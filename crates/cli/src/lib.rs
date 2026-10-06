@@ -73,6 +73,9 @@ enum Command {
     /// Remove installed packages
     Remove {
         names: Vec<String>,
+        /// Narrow to agent | skill | hook | command | mcp-server | plugin | pi-extension
+        #[arg(long, conflicts_with = "keep_declaration")]
+        kind: Option<String>,
         #[arg(short = 'g', long)]
         global: bool,
         /// project | global | all (default project)
@@ -517,6 +520,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Disable(args) => commands::toggle::run(&env, args, false)?,
         Command::Remove {
             names,
+            kind,
             global,
             scope,
             sweep,
@@ -526,6 +530,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         } => remove(
             &env,
             names,
+            kind,
             global,
             scope,
             sweep,

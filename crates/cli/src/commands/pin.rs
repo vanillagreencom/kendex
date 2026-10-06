@@ -62,6 +62,15 @@ pub fn parse_kind(value: &str) -> Result<ItemKind, String> {
     }
 }
 
+/// [`parse_kind`], plus `plugin`: the kinds a verb acting on an installed
+/// package by name (enable, disable, remove) narrows to.
+pub fn parse_kind_or_plugin(value: &str) -> Result<ItemKind, String> {
+    match value {
+        "plugin" => Ok(ItemKind::Plugin),
+        other => parse_kind(other),
+    }
+}
+
 pub fn run(env: &Env, args: PinArgs) -> CliResult {
     let kind = parse_kind(&args.kind)?;
     if args.version.is_none() && !args.follow {

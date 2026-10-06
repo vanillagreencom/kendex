@@ -867,30 +867,54 @@ pub struct Retirement {
     pub(super) kept: Vec<HarnessId>,
 }
 
+impl Retirement {
+    /// Why a plan drops a retired item's installation, in the words a
+    /// removal preview shows (`SetChange::dropped`).
+    pub(super) fn reason(&self) -> String {
+        match self.migration.is_empty() {
+            true => format!("retired by {}", self.source),
+            false => format!("retired by {}; {}", self.source, self.migration),
+        }
+    }
+}
+
 /// The notice a retired item gets in place of the not-found refusal, so a
 /// refresh at a consumer still wanting it runs: one line keyed by the
-/// item's name, saying where it stands and how to remove it, ending with
-/// the catalog's migration. A derived one kept nowhere gets none: nothing
-/// of it is installed; a requirer's warning names it, and a bundle member
-/// is silent. The commands in the line are the owner's ruled exception to
-/// engine rule 18. `kept` is whether the record the plan writes still holds
-/// it, which the removal pass settled.
+/// item's name, saying where it stands and how to remove it, or that a
+/// prune takes it, ending with the catalog's migration. A derived one
+/// installed nowhere gets none: a requirer's warning names it, and a
+/// bundle member is silent. The commands in the line are the owner's ruled
+/// exception to engine rule 18; `kendex remove` names the kind, since a
+/// bare name also removes a live item of another kind sharing it.
+/// `installed` is, on a prune, whether the record this pass read holds it,
+/// and otherwise whether the record the plan writes still does, which the
+/// removal pass settled.
 fn retired(
+    scope: &Scope,
     kind: ItemKind,
     name: &str,
     retirement: &Retirement,
-    kept: bool,
+    pruned: bool,
+    installed: bool,
 ) -> Option<super::ItemWarning> {
     let source = &retirement.source;
-    let line = match (retirement.declared, !kept) {
-        (true, false) => format!(
-            "{name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
-        ),
-        (true, true) => format!(
+    let line = match (pruned, retirement.declared, installed) {
+        (_, false, false) => return None,
+        (true, _, _) => format!("{name}: retired by {source}; pruned"),
+        (false, true, true) => {
+            let global = match scope {
+                Scope::Global => " -g",
+                Scope::Project { .. } => "",
+            };
+            format!(
+                "{name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove{global} --kind {} {name})",
+                kind.name()
+            )
+        }
+        (false, true, false) => format!(
             "{name}: retired by {source}; not installed; drop its declaration with kendex refresh --prune"
         ),
-        (false, true) => return None,
-        (false, false) => {
+        (false, false, true) => {
             format!("{name}: retired by {source}; kept; remove it with kendex refresh --prune")
         }
     };
@@ -907,19 +931,32 @@ fn retired(
     })
 }
 
-/// Each retired item's notice ([`retired`]), on a pass that does not prune,
-/// read off `record`, the record the plan writes once its removals are
-/// settled: kept where that record still holds it.
-pub(super) fn retired_notices(state: &DesiredState, record: &Lock) -> Vec<super::ItemWarning> {
+/// Each retired item's notice ([`retired`]), said once both desired passes
+/// and the removal pass are in, so a prune that rewrites the manifest keeps
+/// it. On a pass that does not prune it is read off `record`, the record
+/// the plan writes once its removals are settled: kept where that record
+/// still holds it.
+pub(super) fn retired_notices(
+    scope: &Scope,
+    state: &DesiredState,
+    record: &Lock,
+) -> Vec<super::ItemWarning> {
+    let pruned = state.prune_retired;
     state
         .retired
         .iter()
         .filter_map(|((kind, name), retirement)| {
-            let kept = record
-                .entries
-                .values()
-                .any(|entry| entry.kind == *kind && entry.name == *name);
-            retired(*kind, name, retirement, kept)
+            let installed = match pruned {
+                true => HarnessId::ALL.into_iter().any(|harness| {
+                    let key = crate::lock::entry_key(*kind, name, harness);
+                    state.recorded.contains(&key)
+                }),
+                false => record
+                    .entries
+                    .values()
+                    .any(|entry| entry.kind == *kind && entry.name == *name),
+            };
+            retired(scope, *kind, name, retirement, pruned, installed)
         })
         .collect()
 }
@@ -927,7 +964,7 @@ pub(super) fn retired_notices(state: &DesiredState, record: &Lock) -> Vec<super:
 /// What this pass does with the retired items it met, the Pi declarations
 /// among them read here, through the one lookup every Pi pass makes
 /// (`pi_ext::resolve_declared`); a retired item, carried or not, never
-/// renders. Kept, each gets its notice once removal is settled
+/// renders. Each gets its notice once removal is settled
 /// ([`retired_notices`]). Pruned, the person's own declaration of one
 /// leaves `updated`; returns whether it did.
 fn settle_retired(

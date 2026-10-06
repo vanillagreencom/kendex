@@ -135,7 +135,11 @@ fi
 # ledger.rs counts distinct kind/name items, not rows or harnesses.
 # setting_notes collects the change-class lines that name a consumer
 # setting; a run with no render change runs no classifier and reports none.
+# retired_items collects the line refresh prints for each item its catalog
+# retired, keyed by the item's name and the catalog, its migration last.
 setting_notes=()
+retired_items=""
+retired_pattern='^[^ :]+: retired by '
 held_items=""
 held_keys=$'\n'
 held_count=0
@@ -169,6 +173,9 @@ while IFS= read -r line; do
       fi ;;
     *) conflict_section=no ;;
   esac
+  if [[ "$line" =~ $retired_pattern ]]; then
+    retired_items="$retired_items$line"$'\n'
+  fi
   case "$line" in
     *' · skipped '*' on conflict'*)
       if [ -n "$conflict_count" ] || ! [[ "$line" =~ $ledger_pattern ]]; then
@@ -398,6 +405,9 @@ merge_note='The refresh workflow arms auto-merge. The merge queue merges this pu
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
+fi
+if [ -n "$retired_items" ]; then
+  printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"
 fi
 if [ "$state" = pushed ]; then
   push_status=0

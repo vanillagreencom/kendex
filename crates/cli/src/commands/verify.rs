@@ -1170,9 +1170,16 @@ fn say_row(
                 .unwrap_or_else(|| row.detail.clone()),
         ),
         Some(row) => Some(match row.remedy {
-            Some(RowRemedy::Remove) => {
-                format!("{} — refresh takes it, or remove {name}", row.detail)
-            }
+            // The kind rides along: a bare name also removes a live item of
+            // another kind that shares it.
+            Some(RowRemedy::Remove) => format!(
+                "{} — refresh takes it, or remove {name} with --kind {kind}",
+                row.detail
+            ),
+            Some(RowRemedy::RemoveEdited) => format!(
+                "{}; its files were edited, which refresh holds — remove {name} with --kind {kind}",
+                row.detail
+            ),
             None => row.detail.clone(),
         }),
         None if unreachable_source => {

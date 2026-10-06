@@ -1,0 +1,1 @@
+- `kendex refresh --prune` prints one line for each retired item it removes, naming the catalog that retired it and the replacement the catalog gives, and its removal preview gives the retirement as the reason.

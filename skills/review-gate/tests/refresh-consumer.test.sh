@@ -108,6 +108,7 @@ case "$1" in
   --version) printf 'kendex 7.8.9 (release-build)\n'; exit "${TEST_VERSION_EXIT:-0}" ;;
   refresh)
     : >"$TEST_STATE/refreshed"
+    [ -z "${TEST_REFRESH_SAID:-}" ] || printf '%s\n' "$TEST_REFRESH_SAID"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
     if [ -n "${TEST_REFRESH_ADDS:-}" ]; then
       mkdir -p "$(dirname "$TEST_REFRESH_ADDS")"
@@ -258,6 +259,24 @@ run_refresh stale pass render
 second="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'repeat keeps one pull request and its commit'; else bad 'repeat keeps one pull request and its commit' "$OUT"; fi
 cp "$TMP/state/body" "$TMP/clean-body"
+# Each line refresh prints for a retired item reaches the body as printed,
+# the migration with it; a removal preview naming the retirement does not.
+reset_default
+REFRESH_SAID="deploy: retired by cat; pruned; declare deploy-next
+  - remove skill deploy for Claude Code — retired by cat; declare deploy-next
+check: retired by cat; pruned"
+run_refresh retired pass render
+unset REFRESH_SAID
+expected_retired='Retired items:
+```text
+deploy: retired by cat; pruned; declare deploy-next
+check: retired by cat; pruned
+```'
+if [ "$RC" -eq 0 ] && [[ "$(cat "$TMP/state/body")" == *"$expected_retired"* ]] &&
+    ! grep -qF 'remove skill deploy' "$TMP/state/body"; then
+  ok 'the body carries each retired item line refresh printed'
+else bad 'retired item lines in the body' "$OUT"; fi
+if ! grep -qF 'Retired items:' "$TMP/clean-body"; then ok 'a refresh that retires nothing adds no retired section'; else bad 'retired section on a clean refresh' "$(cat "$TMP/clean-body")"; fi
 # GitHub reads a published version line. A failed CLI version read must stop
 # publication, not leave that line blank or report the selected release tag.
 reset_default

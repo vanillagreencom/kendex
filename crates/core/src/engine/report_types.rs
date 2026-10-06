@@ -160,6 +160,9 @@ pub struct DriftRow {
 pub enum RowRemedy {
     /// Removing the item by name takes it, as refresh's sweep does.
     Remove,
+    /// Only removing the item by name takes it: its files were edited on
+    /// disk, which refresh's sweep holds.
+    RemoveEdited,
 }
 
 impl DriftRow {

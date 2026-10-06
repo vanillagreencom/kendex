@@ -211,9 +211,13 @@ enum Verdict {
     ///
     /// [`Retained`]: Verdict::Retained
     Retired,
-    /// Not removable under the options: the left-over row, and offered to
-    /// a sweep where nothing needs it.
-    Left { unneeded: bool },
+    /// Not removable under the options: the left-over row, carrying the
+    /// removal that takes it, and offered to a sweep where nothing needs
+    /// it.
+    Left {
+        unneeded: bool,
+        remedy: super::RowRemedy,
+    },
     /// Removable, but the person's edits are in it: the removed row, the
     /// edit conflict, and the record kept.
     Held,
@@ -315,9 +319,9 @@ pub(super) fn orphans(
                 drift.extend(retired_copy(env, scope, entry));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
-            Verdict::Left { unneeded } => {
+            Verdict::Left { unneeded, remedy } => {
                 drift.push(DriftRow {
-                    remedy: Some(super::RowRemedy::Remove),
+                    remedy: Some(remedy),
                     ..row(
                         scope,
                         entry,
@@ -329,7 +333,7 @@ pub(super) fn orphans(
                     )
                 });
                 if unneeded {
-                    sweepable.push(super::SetChange::dropped(entry, withheld));
+                    sweepable.push(super::SetChange::dropped(entry, withheld, &state.retired));
                 }
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
@@ -527,10 +531,6 @@ fn verdicts<'a>(
         let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness || unfiltered));
-        if !removable {
-            verdicts.push((key, Verdict::Left { unneeded }));
-            continue;
-        }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
         // never takes bytes a record could vouch for and does not —
         // `edit_holds`' doc draws that line. Naming the item or discarding
@@ -539,11 +539,21 @@ fn verdicts<'a>(
         if let Some(emitted) = &mut removable_entry.emitted {
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
-        let takes_edits = named || options.overwrite_edited;
         let edited = match entry.kind {
             ItemKind::PiExtension => pi_edit_holds(env, scope, entry),
             _ => edit_holds(env, scope, &removable_entry),
         };
+        if !removable {
+            // An automatic removal would hold an edited copy, so only
+            // removing it by name takes it.
+            let remedy = match edited {
+                true => super::RowRemedy::RemoveEdited,
+                false => super::RowRemedy::Remove,
+            };
+            verdicts.push((key, Verdict::Left { unneeded, remedy }));
+            continue;
+        }
+        let takes_edits = named || options.overwrite_edited;
         let verdict = match !takes_edits && edited {
             true => Verdict::Held,
             false => Verdict::Removed {

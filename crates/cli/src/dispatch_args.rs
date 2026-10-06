@@ -60,9 +60,11 @@ pub(crate) fn check(env: &Env, args: CheckArgs) -> Result<ExitCode, Box<dyn std:
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn remove(
     env: &Env,
     names: Vec<String>,
+    kind: Option<String>,
     global: bool,
     scope: Option<String>,
     sweep: bool,
@@ -70,11 +72,21 @@ pub(crate) fn remove(
     keep_declaration: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
+    let kind = kind
+        .as_deref()
+        .map(commands::pin::parse_kind_or_plugin)
+        .transpose()?;
     let mode = match (keep_declaration, sweep, no_sweep) {
         (true, _, _) => Removal::KeepDeclaration,
-        (_, true, _) => Removal::Disown { sweep: Some(true) },
-        (_, _, true) => Removal::Disown { sweep: Some(false) },
-        _ => Removal::Disown { sweep: None },
+        (_, true, _) => Removal::Disown {
+            sweep: Some(true),
+            kind,
+        },
+        (_, _, true) => Removal::Disown {
+            sweep: Some(false),
+            kind,
+        },
+        _ => Removal::Disown { sweep: None, kind },
     };
     commands::remove::run(env, names, filter, mode)
 }

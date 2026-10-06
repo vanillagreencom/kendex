@@ -11,9 +11,14 @@ use specta::Type;
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::model::{HarnessId, ItemKind};
 
+use super::desired::Retirement;
+
 /// What the orphan pass says, by entry key, of each record a withholding
 /// or a missing companion takes (`removal::orphans`).
 pub(super) type Said = BTreeMap<String, &'static str>;
+
+/// The items a pass met retired (`DesiredState::retired`).
+pub(super) type Retired = BTreeMap<(ItemKind, String), Retirement>;
 
 /// Whether a plan brings an installation into being or takes one away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -52,12 +57,21 @@ impl SetChange {
     /// `said` is what the orphan pass says of a withholding or a missing
     /// companion that takes the copy ([`Said`]): the reason says so and
     /// points at the hook's warning, since a hook still declared is not
-    /// dropped for want of a declaration.
-    pub(super) fn dropped(entry: &LockEntry, said: Option<&'static str>) -> SetChange {
-        let reason = match (said, entry.reasons.contains(&Reason::Requested)) {
-            (Some(said), _) => format!("{said} — see the warning on {}", entry.name),
-            (None, true) => "no longer declared here".to_owned(),
-            (None, false) => format!(
+    /// dropped for want of a declaration. `retired` is every item this pass
+    /// met retired: one nothing withholds goes for its retirement, whatever
+    /// brought it in.
+    pub(super) fn dropped(
+        entry: &LockEntry,
+        said: Option<&'static str>,
+        retired: &Retired,
+    ) -> SetChange {
+        let retirement = retired.get(&(entry.kind, entry.name.clone()));
+        let requested = entry.reasons.contains(&Reason::Requested);
+        let reason = match (said, retirement, requested) {
+            (Some(said), _, _) => format!("{said} — see the warning on {}", entry.name),
+            (None, Some(retirement), _) => retirement.reason(),
+            (None, None, true) => "no longer declared here".to_owned(),
+            (None, None, false) => format!(
                 "nothing needs it anymore — it was {}",
                 why_wanted(&entry.reasons)
             ),
@@ -105,7 +119,12 @@ fn why_wanted(reasons: &BTreeSet<Reason>) -> String {
 /// The installed set before against the installed set after — every
 /// installation this plan brings into being or takes away, whatever the
 /// reason. Regeneration of an installation that stays is not in here.
-pub(super) fn set_changes(before: &Lock, after: &Lock, said: &Said) -> Vec<SetChange> {
+pub(super) fn set_changes(
+    before: &Lock,
+    after: &Lock,
+    said: &Said,
+    retired: &Retired,
+) -> Vec<SetChange> {
     let mut changes: Vec<SetChange> = after
         .entries
         .iter()
@@ -117,7 +136,7 @@ pub(super) fn set_changes(before: &Lock, after: &Lock, said: &Said) -> Vec<SetCh
             .entries
             .iter()
             .filter(|(key, _)| !after.entries.contains_key(*key))
-            .map(|(key, entry)| SetChange::dropped(entry, said.get(key).copied())),
+            .map(|(key, entry)| SetChange::dropped(entry, said.get(key).copied(), retired)),
     );
     changes
 }

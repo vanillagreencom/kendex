@@ -7,6 +7,10 @@ Arguments:
           
 
 Options:
+      --kind <KIND>
+          Narrow to agent | skill | hook | command | mcp-server | plugin |
+          pi-extension
+
   -g, --global
           Use your personal setup instead of this project
 

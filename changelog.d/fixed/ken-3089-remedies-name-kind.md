@@ -1,0 +1,1 @@
+- The retired-item notice and verify's left-over remedy name the item's kind in their removal, so it no longer takes a same-named item of another kind; the notice adds `-g` for a personal-setup item, and verify names only the removal for an edited left-over that refresh holds.

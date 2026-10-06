@@ -4628,7 +4628,12 @@ export type RowExits = {
  */
 export type RowRemedy = 
 /**  Removing the item by name takes it, as refresh's sweep does. */
-"remove";
+"remove" | 
+/**
+ *  Only removing the item by name takes it: its files were edited on
+ *  disk, which refresh's sweep holds.
+ */
+"remove-edited";
 
 export type SafetyScore = {
 	score: number,

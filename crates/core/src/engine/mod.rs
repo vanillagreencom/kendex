@@ -240,11 +240,9 @@ pub fn plan_scope(
     )?;
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
-    let set_changes = set_changes(lock, &new_lock, &said);
-    if !state.prune_retired {
-        let notices = desired::retired_notices(&state, &new_lock);
-        state.warnings.extend(notices);
-    }
+    let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
+    let notices = desired::retired_notices(scope, &state, &new_lock);
+    state.warnings.extend(notices);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     let trees = generated_paths::TemplateTrees::of(env, scope, &state, lock, &new_lock);

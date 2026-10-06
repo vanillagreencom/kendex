@@ -7,14 +7,18 @@ use crate::ui;
 use kendex_core::apply::Op;
 use kendex_core::engine::{EngineReport, ops};
 use kendex_core::env::Env;
-use kendex_core::model::Scope;
+use kendex_core::model::{ItemKind, Scope};
 
 /// What a removal does with the declaration.
 #[derive(Clone, Copy)]
 pub enum Removal {
     /// Drop it. `sweep` is the answer to "and the things only these items
-    /// needed?" — `None` means nobody has answered yet.
-    Disown { sweep: Option<bool> },
+    /// needed?" — `None` means nobody has answered yet. `kind` narrows each
+    /// name to that kind; `None` takes every kind the name declares.
+    Disown {
+        sweep: Option<bool>,
+        kind: Option<ItemKind>,
+    },
     /// Keep it: the files go, kendex.toml stays as it is, and the next
     /// refresh installs what it declares again. Nothing to ask about a
     /// sweep — what these items pull in is wanted back with them.
@@ -23,7 +27,9 @@ pub enum Removal {
 
 pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) -> CliResult {
     if names.is_empty() {
-        say("usage: kendex remove <name>… [--keep-declaration] [--scope project|global|all]");
+        say(
+            "usage: kendex remove <name>… [--kind KIND] [--keep-declaration] [--scope project|global|all]",
+        );
         return Ok(());
     }
     ui::intro("kendex remove");
@@ -82,15 +88,15 @@ fn remove_scope(
     let planned = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         match mode {
-            Removal::Disown { sweep } => {
-                ops::remove(env, scope, names, None, sweep.unwrap_or(false))
+            Removal::Disown { sweep, kind } => {
+                ops::remove(env, scope, names, kind, sweep.unwrap_or(false))
             }
             Removal::KeepDeclaration => ops::uninstall(env, scope, names),
         }
     };
     let report = planned?;
     let report = match mode {
-        Removal::Disown { sweep } => answer(env, scope, names, report, sweep)?,
+        Removal::Disown { sweep, kind } => answer(env, scope, names, kind, report, sweep)?,
         Removal::KeepDeclaration => report,
     };
     // What still wants a removed item says so now, not on the next
@@ -180,6 +186,7 @@ fn answer(
     env: &Env,
     scope: &Scope,
     names: &[String],
+    kind: Option<ItemKind>,
     report: EngineReport,
     sweep: Option<bool>,
 ) -> Result<EngineReport, Box<dyn std::error::Error>> {
@@ -203,7 +210,7 @@ fn answer(
         leftovers.join(", ")
     ))?;
     match asked {
-        true => Ok(ops::remove(env, scope, names, None, true)?),
+        true => Ok(ops::remove(env, scope, names, kind, true)?),
         false => Ok(report),
     }
 }

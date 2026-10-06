@@ -1,6 +1,5 @@
 use clap::Args;
 use kendex_core::env::Env;
-use kendex_core::model::ItemKind;
 
 use super::advisory::Listing;
 use super::engine_common::{confirm_and_execute, print_report};
@@ -30,13 +29,7 @@ pub fn run(env: &Env, args: ToggleArgs, enabled: bool) -> CliResult {
     let kind = args
         .kind
         .as_deref()
-        .map(|kind| {
-            if kind == "plugin" {
-                Ok(ItemKind::Plugin)
-            } else {
-                super::pin::parse_kind(kind)
-            }
-        })
+        .map(super::pin::parse_kind_or_plugin)
         .transpose()?;
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     for scope in resolve_scopes(env, filter)? {

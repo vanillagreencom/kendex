@@ -1,0 +1,1 @@
+- `kendex remove --kind KIND` removes only the item of that kind, leaving a same-named item of another kind installed.
