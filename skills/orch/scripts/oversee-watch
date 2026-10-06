@@ -425,8 +425,8 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 # lane-stalled goes out. Provisional: the first cloud acceptance run sets it.
 LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
-# How long after an item's first launch in this fleet, its record's
-# launched_at, which relaunches and handoffs keep, a running or parked lane is
+# How long after a record's launched_at, which --relaunch and handoffs keep
+# and a fresh launch renews, a running or parked lane is
 # reported once as lane-long.
 LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-14400}"
 [[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"

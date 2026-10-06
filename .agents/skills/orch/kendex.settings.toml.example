@@ -332,8 +332,9 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # start-stalled, on every harness.
 # ORCH_WATCH_START_STALL_SECS = "600"
 
-# Seconds after an item's first launch, kept across relaunches and handoffs,
-# a running or parked lane is reported once as lane-long.
+# Seconds after a lane record's launched_at, which --relaunch and handoffs keep
+# and a fresh launch after lane-close renews, a running or parked lane is
+# reported once as lane-long.
 # ORCH_WATCH_LANE_AGE_SECS = "14400"
 
 # Seconds from the start of one oversee-watch mail pass to the next; a mail

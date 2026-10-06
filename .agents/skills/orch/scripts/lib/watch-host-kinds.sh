@@ -2,9 +2,9 @@
 # How oversee-watch reads each lane by what its host kind declares
 # (../../schemas/lane-host.md § Host kinds): the host a state record names and
 # its capability line, which fleet_merge routes the record by, where each
-# lane's files are read and the host a lane-host read of it runs under, and the
+# lane's files are read and the host a lane-host read of it runs under, the
 # judgement of a lane whose kind declares status=none, which no process read
-# reaches. Sourced by oversee-watch, and like the rest of its lib/ it reads
+# reaches, and the lane-long age of every running or parked lane. Sourced by oversee-watch, and like the rest of its lib/ it reads
 # that script's globals (SCRIPT_DIR, HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN,
 # PASS_NOW, MARK_REPEAT, LANE_STALL_SECS, LANE_AGE_SECS, LANE_AGES,
 # RECORDED_ITEMS) and calls its `die`, `ow_message`,
@@ -267,8 +267,9 @@ check_lane_stall() {
   lane_row_commit "$rows"
 }
 
-# A running or parked lane LANE_AGE_SECS past its first launch, its record's
-# launched_at, is reported lane-long once per launched_at, its stage the Step
+# A running or parked lane LANE_AGE_SECS past its record's launched_at, which
+# --relaunch and handoffs keep and a fresh launch after lane-close renews, is
+# reported lane-long once per launched_at, its stage the Step
 # line of its status file.
 check_lane_long() {
   local entry item launched age prior rows="${PW_SEEN[0]}"

@@ -5,9 +5,10 @@
 # every harness, a hosted one read through `lane-host cat`. A lane whose host
 # kind declares files=none, a Claude cloud session, writes no file: its own
 # open pull request on the item branch is its start. Reported once, then every
-# ORCH_OVERSEER_MARK_REPEAT passes while it stands. The same check reports
-# lane-long once for a running or parked lane ORCH_WATCH_LANE_AGE_SECS past its
-# launched_at, which relaunches and handoffs keep.
+# ORCH_OVERSEER_MARK_REPEAT passes while it stands. The file also covers
+# lane-long, check_lane_long: one report for a running or parked lane
+# ORCH_WATCH_LANE_AGE_SECS past its launched_at, which relaunches and handoffs
+# keep.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh

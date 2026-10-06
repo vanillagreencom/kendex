@@ -308,9 +308,9 @@ The long pass's events, checked and reported in this order:
                              while it stands; a change starts a fresh window
   EVENT lane-long <item> age=<secs> stage=<step>
                              a running or parked --state record is
-                             ORCH_WATCH_LANE_AGE_SECS past its launched_at, the
-                             item's first launch, which relaunches and
-                             handoffs keep. stage= is the Step line of its
+                             ORCH_WATCH_LANE_AGE_SECS past its launched_at,
+                             which --relaunch and handoffs keep and a fresh
+                             launch after lane-close renews. stage= is the Step line of its
                              status file, `parked`, `unread` where its read
                              failed, or `none`. Reported once per
                              launched_at
@@ -728,7 +728,8 @@ Options:
                       count of records whose status is not running, so a
                       state that parses to no running lane is named rather
                       than watched in silence, and with the parked records
-                      it carries for the merged check: a standalone run names the
+                      it carries for the merged check and the lane-long age:
+                      a standalone run names the
                       fleet its own first read found, repeat mode names the
                       fleet it launches each pass with, and a pass names a
                       change one of its own loops found
