@@ -19,7 +19,7 @@ An attacker who can serve the feed could offer a genuine older download, or anot
 - Do keep release-only bundle settings in the overlays under `crates/app/release/`, never in `tauri.conf.json`, which tauri-build reads at compile time.
 - Do let `inside_the_app` in `crates/core/src/install_channel.rs` be the one judge of a command an installer put inside the desktop app: it is the app's to update, and no verb records it as the installed command.
 - Never let a release build honour `KENDEX_UPDATE_FEED`; a debug build alone does.
-- Never move the channel pointer backwards: `tools/release-channel-point` authenticates the current and candidate documents and changes the pointer only to a newer build.
+- Never move the channel pointer backwards: `tools/release-channel-point` changes the pointer only to a newer build. On the main channel it authenticates the current and candidate documents and orders their build numbers; on the candidate channel it only orders their versions.
 
 ## The canonical example
 
