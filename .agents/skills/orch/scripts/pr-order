@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# pr-order — when a standard or small lane opens its pull request: after the
+# agent review (review-first), or at once after the implement round's
+# validated commit, the one review then running on the open pull request
+# beside Copilot's (open-first).
+#
+# open-first runs where GitHub reports the repository private and nowhere
+# else: an early pull request draws a Copilot review per fix push, a cost the
+# owner accepted as a trial on private repositories alone. GitHub's own fact
+# decides, never a list kept by hand, and every other visibility, public and
+# internal alike, keeps review-first.
+#
+# Usage:
+#   pr-order [WORKTREE]
+#
+# WORKTREE (default .) is the checkout whose repository is read, resolved by
+# scripts/lib/gh-repo.sh: GH_REPO first, then `gh repo view` in that checkout,
+# then its origin remote.
+#
+# stdout, exit 0, one line:
+#   pr-order=open-first|review-first visibility=VALUE repo=OWNER/NAME
+# VALUE is GitHub's visibility lowercased: private, public or internal.
+#
+# Exit 2 prints no order and one `pr-order-error: cause=CAUSE` line on stderr:
+#   worktree-missing       WORKTREE is no directory
+#   repo-unresolved        no repository resolved, or one that is not owner/name
+#   visibility-unreadable  gh could not read the repository's visibility
+#   visibility-unknown     gh answered something other than the three values
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+die() { # CAUSE DETAIL
+  printf 'pr-order-error: cause=%s %s\n' "$1" "$2" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+worktree="${1:-.}"
+[[ -d "$worktree" ]] || die worktree-missing "path=$worktree"
+
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
+
+# `gh repo view` answers for the working directory, so the resolver runs in
+# the worktree.
+cd -- "$worktree"
+repo="$(orch_resolve_gh_repo "$PWD")" || die repo-unresolved "repo=${repo:-none}"
+
+visibility="$(gh repo view "$repo" --json visibility --jq .visibility 2>/dev/null)" \
+  || die visibility-unreadable "repo=$repo"
+visibility="$(printf '%s' "$visibility" | tr '[:upper:]' '[:lower:]')"
+
+case "$visibility" in
+  private) order=open-first ;;
+  public|internal) order=review-first ;;
+  *) die visibility-unknown "repo=$repo visibility=${visibility:-none}" ;;
+esac
+
+printf 'pr-order=%s visibility=%s repo=%s\n' "$order" "$visibility" "$repo"

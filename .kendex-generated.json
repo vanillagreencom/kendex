@@ -670,6 +670,7 @@
   ".agents/skills/orch/scripts/overseer-run",
   ".agents/skills/orch/scripts/pane-write",
   ".agents/skills/orch/scripts/post-merge",
+  ".agents/skills/orch/scripts/pr-order",
   ".agents/skills/orch/scripts/pr-view-json",
   ".agents/skills/orch/scripts/queue-wait",
   ".agents/skills/orch/scripts/reconcile-work-items",
