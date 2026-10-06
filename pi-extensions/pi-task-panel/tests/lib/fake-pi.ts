@@ -1,4 +1,5 @@
 import { mock } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Replaces Pi's runtime packages with the few members the extension calls at load. */
@@ -57,4 +58,11 @@ export function fakeCtx(base: string, sessionId: string, notifications: Array<{ 
 			setWidget: () => {},
 		},
 	};
+}
+
+/** The task lines `/tasks:export` writes for the panel's current state. */
+export async function exportedTasks(base: string, pi: ReturnType<typeof fakePi>, ctx: ReturnType<typeof fakeCtx>): Promise<string[]> {
+	const exported = join(base, "exported.md");
+	await pi.commands.get("tasks:export").handler(exported, ctx);
+	return readFileSync(exported, "utf8").split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
 }

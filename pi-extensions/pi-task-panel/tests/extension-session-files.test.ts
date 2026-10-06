@@ -2,11 +2,12 @@
 // bound, its temporary-file cleanup, and lane retention of the session's
 // directory (scripts/lane-retention.ts).
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
-import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
+import { exportedTasks, fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
+import { LANE_CWD_FILE, LANE_FILE_MAX_AGE_MS } from "../scripts/lane-retention.js";
 
 mockPiModules();
 
@@ -91,5 +92,60 @@ for (const row of RETENTION) {
 		if (!start) throw new Error("handler-missing=session_start");
 		await start({ type: "session_start" }, fakeCtx(base, `${SESSION_ID}-next`));
 		expect(existsSync(lane(SESSION_ID))).toBe(row.kept);
+	}));
+}
+
+/** Dates every file and directory under `dir`, `dir` included, `at`. */
+function backDate(dir: string, at: number): void {
+	for (const name of readdirSync(dir)) {
+		const path = join(dir, name);
+		if (statSync(path).isDirectory()) backDate(path, at);
+		else utimesSync(path, at / 1000, at / 1000);
+	}
+	utimesSync(dir, at / 1000, at / 1000);
+}
+
+const RESUMED: Array<{ name: string; movedFrom: boolean }> = [
+	{ name: "in the working directory it saved in", movedFrom: false },
+	{ name: "in a new working directory after the one it saved in is gone", movedFrom: true },
+];
+
+for (const row of RESUMED) {
+	test(`lane retention: a session resumed ${row.name} after its files aged out keeps its large list across a tree move, and a save after another session pruned its lane records the lane again`, () => inSession(async ({ base, pi, lane, tasksWrite }) => {
+		const notifications: Array<{ message: string; level: string }> = [];
+		const ctx = fakeCtx(base, SESSION_ID, notifications);
+		const savedIn = join(base, "saved-in");
+		mkdirSync(savedIn);
+		if (row.movedFrom) ctx.cwd = savedIn;
+		const large = largeList("resumed");
+		await tasksWrite(ctx, large);
+		const manifest = pi.appended.at(-1);
+		expect(manifest?.data.fullSnapshot).toBe(false);
+		ctx.sessionManager.getBranch = () => [{ type: "custom", customType: manifest?.customType, data: manifest?.data }] as never;
+		const aged = Date.now() - LANE_FILE_MAX_AGE_MS - 60_000;
+		backDate(lane(SESSION_ID), aged);
+		if (row.movedFrom) {
+			rmSync(savedIn, { recursive: true });
+			ctx.cwd = base;
+		}
+		const start = pi.handlers.get("session_start");
+		const navigate = pi.handlers.get("session_tree");
+		if (!start || !navigate) throw new Error("handler-missing=session_start,session_tree");
+		const expected = large.tasks.map((task) => task.content).sort();
+		const restored = async () => (await exportedTasks(base, pi, ctx)).map((line) => line.replace(/ \((active|done|dropped)\)$/, "")).sort();
+
+		await start({ type: "session_start" }, ctx);
+		expect(await restored()).toEqual(expected);
+		expect(existsSync(join(lane(SESSION_ID), "state.json"))).toBe(true);
+		expect(existsSync(join(lane(SESSION_ID), "states", `${manifest?.data.fingerprint}.json`))).toBe(true);
+		await navigate({}, ctx);
+		expect(await restored()).toEqual(expected);
+		expect(notifications.filter((note) => note.level === "warning")).toEqual([]);
+
+		backDate(lane(SESSION_ID), aged);
+		await start({ type: "session_start" }, fakeCtx(base, `${SESSION_ID}-next`));
+		expect(existsSync(lane(SESSION_ID))).toBe(false);
+		await tasksWrite(ctx, { action: "add_task", task: "after the prune" });
+		expect(existsSync(join(lane(SESSION_ID), LANE_CWD_FILE))).toBe(true);
 	}));
 }

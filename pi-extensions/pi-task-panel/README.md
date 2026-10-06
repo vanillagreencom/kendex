@@ -27,7 +27,7 @@ The agent sends tasks to the tasks_write tool. The extension saves the list with
 
 ## Disk use
 
-The saved lists sit in `kendex/sessions/<session>/pi-task-panel/` under the Pi user directory. When a Pi session starts, the extension deletes the files of every session whose working directory is gone, and deletes any of these files older than 5 days.
+The saved lists sit in `kendex/sessions/<session>/pi-task-panel/` under the Pi user directory. When a Pi session starts, the extension deletes the files of every session whose working directory is gone, and deletes any of these files older than 5 days. Resuming a session marks its own files as new, so a session resumed after 5 days keeps them.
 
 ## Memory use
 

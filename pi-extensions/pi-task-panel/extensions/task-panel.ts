@@ -1,7 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -946,7 +946,8 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		return sidecarSaves;
 	};
 
-	const restore = (ctx: ExtensionContext) => {
+	/** Restores the branch's list and yields the fingerprints its bounded records name. */
+	const restore = (ctx: ExtensionContext): Set<string> => {
 		activeCtx = ctx;
 		// The fingerprint names the last state saved, which a tree point before
 		// it does not hold, so the first change after a restore always saves.
@@ -975,15 +976,44 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			return undefined;
 		};
 		let missingFingerprint: string | undefined;
+		const named = new Set<string>();
 		for (const entry of ctx.sessionManager.getBranch()) {
 			const record = branchStateRecord(entry, ctx.cwd);
-			if (record) missingFingerprint = apply(record);
+			if (!record) continue;
+			if (record.kind === "bounded") named.add(record.fingerprint);
+			missingFingerprint = apply(record);
 		}
 		if (missingFingerprint !== undefined) {
 			reportTaskPanelPersistenceFailure("branch-state-missing", new Error(`fingerprint=${missingFingerprint} sidecar=${sidecar?.fingerprint ?? "absent"}`), ctx);
 		}
 		updatePanelAfterTaskChange(state, ctx.cwd);
 		syncWidget(ctx);
+		return named;
+	};
+
+	/** Marks a resumed session's lane live: records the working directory the
+	 *  session runs in now and dates the sidecar and the saved states its
+	 *  branch names now, so the prune that follows keeps what a later tree
+	 *  move or reload reads again. A session that never saved has no lane and
+	 *  gets none. */
+	const keepLaneLive = (ctx: ExtensionContext, fingerprints: Set<string>) => {
+		const dir = laneDir(ctx);
+		if (!existsSync(dir)) return;
+		try {
+			openLaneDir(dir, ctx.cwd);
+		} catch (error) {
+			logTaskPanelDiagnostic("session lane refresh failed", { path: dir, error: error instanceof Error ? error.message : String(error) });
+			return;
+		}
+		const now = new Date();
+		for (const file of [sidecarStatePath(ctx), ...[...fingerprints].map((fingerprint) => savedStatePath(ctx, fingerprint))]) {
+			try {
+				utimesSync(file, now, now);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				logTaskPanelDiagnostic("session lane refresh failed", { path: file, error: error instanceof Error ? error.message : String(error) });
+			}
+		}
 	};
 
 	const syncWidget = (ctx: ExtensionContext) => {
@@ -1302,8 +1332,9 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		recordProjectTrust(ctx);
 		// Restore first, so a session resumed after its files aged out still
-		// shows its list.
-		restore(ctx);
+		// shows its list, and keep its lane live, so the prune leaves those
+		// files for the next tree move or reload.
+		keepLaneLive(ctx, restore(ctx));
 		for (const failure of pruneLanes(sessionsRoot(), [PACKAGE_FOLDER]).failed) {
 			logTaskPanelDiagnostic("session file prune failed", { path: failure.path, error: failure.error });
 		}

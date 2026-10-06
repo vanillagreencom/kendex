@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
-import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
+import { exportedTasks, fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
 mockPiModules();
 
@@ -85,13 +85,6 @@ async function inSession(run: (session: { base: string; pi: ReturnType<typeof fa
 		clearPackageConfigCache();
 		rmSync(base, { recursive: true, force: true });
 	}
-}
-
-/** The task lines `/tasks:export` writes for the panel's current state. */
-async function exportedTasks(base: string, pi: ReturnType<typeof fakePi>, ctx: ReturnType<typeof fakeCtx>): Promise<string[]> {
-	const exported = join(base, "exported.md");
-	await pi.commands.get("tasks:export").handler(exported, ctx);
-	return readFileSync(exported, "utf8").split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
 }
 
 for (const row of ROWS) {
