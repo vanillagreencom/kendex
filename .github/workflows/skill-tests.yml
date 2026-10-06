@@ -26,18 +26,22 @@ name: Skill Tests
 # for the same paths, and the `changes` job's call
 # of `tools/ci-job-set --event-parity` refuses a selection that differs by
 # event; so the pull request's required
-# checks hold the whole merge-group job set, and an admin merge lands only
-# on a green run of that set. The aggregators
+# checks hold the whole merge-group job set but the queue's macOS legs, and
+# an admin merge lands only on a green run of that set, without those legs.
+# The aggregators
 # still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
-# reports into, the three aggregators and macOS skill suites excepted. The push to main
+# reports into, the three aggregators and the main-push macOS skill suites
+# excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so its cargo lanes run only the compile steps: each cargo lane builds its targets with
 # `--no-run` and saves the compile cache under the merged lockfile, and every
 # cargo test step is conditioned off. Whatever else does NOT run on every event
 # carries its own `if:` saying why. macOS skill suites run the full roster on
-# main pushes. They test Bash 3.2 and BSD tools without delaying required CI.
+# main pushes, and a merge group runs three of them where its selection names
+# them; no pull request runs one. They test Bash 3.2 and BSD tools without
+# delaying a pull request's required checks.
 # GitHub enforces approval and thread
 # resolution independently of CI job selection.
 #
@@ -393,7 +397,8 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the full shell roster on main pushes, on the runner whose /bin/bash is 3.2.57,
+  # THE macOS LEG runs the full shell roster on main pushes, and three of its
+  # shards in the merge queue, on the runner whose /bin/bash is 3.2.57,
   # the shell every skill claims to support (skills/AGENTS.md).
   # tools/bash32-lint scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
@@ -1407,6 +1412,39 @@ jobs:
     env: *skill-suite-env
     steps: *skill-suite-steps
 
+  # THE QUEUE'S macOS LEGS: a merge group runs these three shards on macOS
+  # where the changes job's `shards` list names them, all three where it
+  # published nothing, and none on a pull request. They are the shards
+  # macOS-only regressions reached main through while every macOS leg ran on
+  # main pushes alone; the slower orch-oversee and orch-state stay there, to
+  # bound an entry's wall time. CI holds this job to the same selection, so a
+  # failed or cancelled leg ejects the entry and an unselected one does not.
+  #
+  # It reads `shards`, never `shell_os`: a proof stands the macOS runner down
+  # over a pull request run that never ran these legs, while `shards` is the
+  # selection before any proof. The job condition admits a group naming at
+  # least one of the three, so the excludes never empty the matrix; each
+  # exclude names its shard where the selection lacks it, and an empty
+  # value excludes nothing. The quotes in each search keep `guards-tools`
+  # from matching `guards-tools-tail`.
+  skill-suites-macos-queue:
+    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || contains(needs.changes.outputs.shards, '"orch-terminal"') || contains(needs.changes.outputs.shards, '"orch-oversee-succeed"') || contains(needs.changes.outputs.shards, '"guards-tools"')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [orch-terminal, orch-oversee-succeed, guards-tools]
+        os: [macos-latest]
+        exclude:
+          - shard: ${{ needs.changes.result == 'success' && !contains(needs.changes.outputs.shards, '"orch-terminal"') && 'orch-terminal' || '' }}
+          - shard: ${{ needs.changes.result == 'success' && !contains(needs.changes.outputs.shards, '"orch-oversee-succeed"') && 'orch-oversee-succeed' || '' }}
+          - shard: ${{ needs.changes.result == 'success' && !contains(needs.changes.outputs.shards, '"guards-tools"') && 'guards-tools' || '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: *skill-suite-timeout
+    env: *skill-suite-env
+    steps: *skill-suite-steps
+
   # Full UI validation reaches the required aggregator on every PR and
   # queue event.
   ui-tests:
@@ -1972,12 +2010,13 @@ jobs:
   #
   # tools/ci-aggregate accepts a skipped lane only where the changes job
   # selected it `false`, on pull_request and merge_group alike, so a merge
-  # group runs the class job set its pull request ran. The two diff checks
+  # group runs the class job set its pull request ran, plus the queue's
+  # macOS legs its shard list names. The two diff checks
   # read a pull request's base and run on no other event: each is held to
   # the event condition it runs under, spelled as its own `if:` spells it.
   ci:
     name: CI
-    needs: [changes, bot-instructions, skill-suites-shard, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
+    needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1989,6 +2028,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
+          MACOS_QUEUE: ${{ github.event_name == 'merge_group' && (contains(needs.changes.outputs.shards, '"orch-terminal"') || contains(needs.changes.outputs.shards, '"orch-oversee-succeed"') || contains(needs.changes.outputs.shards, '"guards-tools"')) }}
           UI: ${{ needs.changes.outputs.ui }}
           BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
           CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
@@ -2001,6 +2041,7 @@ jobs:
           echo "$RESULTS"
           tools/ci-aggregate --results "$RESULTS" --classifier changes \
             --lane "$SHELL_SHARDS:skill-suites-shard" \
+            --lane "$MACOS_QUEUE:skill-suites-macos-queue" \
             --lane "$UI:ui-tests" \
             --lane "$BOT_INSTRUCTIONS:bot-instructions" \
             --lane "$CARGO_LINUX:cargo-linux" \

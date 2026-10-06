@@ -704,9 +704,24 @@ fi
 # Linux runs every shell suite. macOS runs the same files except linear's
 # Bash-4-only suites, whose existing runtime-contract suite runs under Bash 3.
 # The matrix's exclusions must not remove a shell roster on either runner.
-shell_os="$(sed -n 's/^        os: \[\(.*\)\]$/\1/p' "$WORKFLOW" | tr -d ' \"' | tr ',' '\n')"
+# The roster jobs are the Linux job and the main-push macOS job; the merge
+# queue's macOS legs run a subset of shards and are no roster.
+roster_os() { # WORKFLOW — the os of each roster job's matrix, one per line
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { job = $1 }
+    (job == "skill-suites-shard:" || job == "skill-suites-macos:") && /^        os: \[/ {
+      sub(/^        os: \[/, ""); sub(/\]$/, ""); print
+    }
+  ' "$1" | tr -d ' "' | tr ',' '\n'
+}
 check "the shell matrix retains each original OS exactly once" \
-  $'ubuntu-latest\nmacos-latest' "$shell_os"
+  $'ubuntu-latest\nmacos-latest' "$(roster_os "$WORKFLOW")"
+awk '/^  skill-suites-macos:/ { job = 1 } /^  skill-suites-macos-queue:/ { job = 0 }
+     job && $0 == "        os: [macos-latest]" { $0 = "        os: [ubuntu-latest]"; n++ }
+     { print } END { exit n != 1 }' "$WORKFLOW" > "$TMP/mac-roster-linux.yml" ||
+  bad "must-fail: the main-push macOS os line is no longer one line in $WORKFLOW"
+check "must-fail: a main-push roster moved off macOS loses its OS" \
+  $'ubuntu-latest\nubuntu-latest' "$(roster_os "$TMP/mac-roster-linux.yml")"
 shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
   awk '
     /^  [A-Za-z0-9_-]+:/ { job = $1 }

@@ -23,8 +23,14 @@
 #      against a selection and an event, with GitHub's implicit success() where a
 #      condition carries no status function. A merge group runs the class
 #      job set its pull request ran, less the two jobs held to the
-#      pull-request event. macOS skill suites run on main pushes alone.
-#      A dead classifier runs every gated job and the whole Linux shard roster. A pull
+#      pull-request event, plus the queue's macOS legs its shard list names,
+#      which no pull request runs; the full macOS roster runs on main pushes.
+#      The queue's legs expand to the selected members of their three shards,
+#      and CI's lane for them is true exactly where they run. Must-fail arms
+#      plant an exclude that excludes nothing, a search without its quotes,
+#      a queue job ignoring the event and a CI lane ignoring the selection.
+#      A dead classifier runs every gated job its event runs and the whole
+#      Linux shard roster. A pull
 #      request's run is cancelled by its next push; no other run is. The `CI` job needs every job that can run on a gated event but the aggregators and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
@@ -295,10 +301,14 @@ legs() { # WORKFLOW SELECTION [RESULT] [EVENT] [KEY] — what a matrix key expan
   gh_eval value "$(context_json "$event" "$result" "$sel" "$map")" "$expr"
 }
 
-EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard ui-tests"
+# The job a merge group runs and a pull request never does.
+MACOS_QUEUE_JOB=skill-suites-macos-queue
+EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight $MACOS_QUEUE_JOB skill-suites-shard ui-tests"
+# What a pull request runs of it: every lane but the queue's macOS legs.
+EVERY_PR_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard ui-tests"
 # What a merge group runs of it: every lane, without the two pull-request diff
 # checks.
-EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard ui-tests"
+EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard ui-tests"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
   "$(gated_jobs "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 
@@ -309,7 +319,9 @@ one_skill="$(selection micro false 'skills/orch/SKILL.md
 standard_code="$(selection standard false 'crates/core/src/lib.rs')"
 # EVENT|SELECTION|EXPECTED JOBS. A merge group runs the class job set its pull
 # request ran, the two pull-request diff checks aside: a `render` group runs
-# the one verify job and a standard group every lane its class selects.
+# the one verify job and a standard group every lane its class selects. A
+# group whose shard list names a queue macOS shard also runs that job, a
+# proof standing the rest down included.
 job_rows=0
 while IFS='|' read -r event sel expected; do
   job_rows=$((job_rows + 1))
@@ -317,23 +329,24 @@ while IFS='|' read -r event sel expected; do
 done <<ROWS
 pull_request|$VERIFY_ROW|bot-instructions markdown preflight
 merge_group|$VERIFY_ROW|bot-instructions
-pull_request|$ALL_ON|$EVERY_GATED
+pull_request|$ALL_ON|$EVERY_PR_LANE
 merge_group|$ALL_ON|$EVERY_GROUP_LANE
 pull_request|$one_skill|bot-instructions cargo-linux markdown preflight skill-suites-shard
-merge_group|$one_skill|bot-instructions cargo-linux skill-suites-shard
+merge_group|$one_skill|bot-instructions cargo-linux $MACOS_QUEUE_JOB skill-suites-shard
 pull_request|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight
 merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows
 pull_request|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
-merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard
 pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
-merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows
-merge_group|$SOURCE_PROOF_ROW|
+merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard
+merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB
+merge_group|$SOURCE_PROOF_ROW|$MACOS_QUEUE_JOB
 ROWS
 [ "$job_rows" -ge 14 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # The same property over every selection the table names: what a merge group
-# runs is what its pull request ran less the event-held jobs.
+# runs, the queue's macOS legs aside, is what its pull request ran less the
+# event-held jobs.
 without_event_held() { # JOBS — the jobs, spaced, with every event-held one dropped
   local job out=""
   for job in $1; do
@@ -341,16 +354,25 @@ without_event_held() { # JOBS — the jobs, spaced, with every event-held one dr
   done
   printf '%s' "${out# }"
 }
+without_job() { # JOBS JOB — the jobs, spaced, without JOB
+  local job out=""
+  for job in $1; do
+    [ "$job" = "$2" ] || out="$out $job"
+  done
+  printf '%s' "${out# }"
+}
 for sel in "$VERIFY_ROW" "$ALL_ON" "$one_skill" "$CODE_ROW" "$ORCH_CODE_ROW" "$UI_ROW" "$PROSE_ROW" "$standard_code"; do
   check "a merge group runs its pull request's class job set under '$sel'" \
     "$(without_event_held "$(running "$WORKFLOW" "$sel" success pull_request)")" \
-    "$(running "$WORKFLOW" "$sel" success merge_group)"
+    "$(without_job "$(running "$WORKFLOW" "$sel" success merge_group)" "$MACOS_QUEUE_JOB")"
 done
 
 # A classifier that died published nothing. Every gated job runs, which is
 # what each condition's status function and result term are for.
-check "a dead classifier runs every gated job" "$EVERY_GATED" \
-  "$(running "$WORKFLOW" "$ALL_OFF" failure)"
+check "a dead classifier runs every pull-request lane" "$EVERY_PR_LANE" \
+  "$(running "$WORKFLOW" "$ALL_OFF" failure pull_request)"
+check "a dead classifier runs every merge-group lane" "$EVERY_GROUP_LANE" \
+  "$(running "$WORKFLOW" "$ALL_OFF" failure merge_group)"
 
 # EVENT|RESULT|SELECTION|LEGS. Required skill suites use Linux alone.
 leg_rows=0
@@ -393,6 +415,96 @@ check "main pushes run the full shard roster through the alias" "$ROSTER" \
 plant "$WORKFLOW" "github.event_name == 'push'" "github.event_name != 'push'" "$TMP/wf-macos-pr.yml" skill-suites-macos
 check "must-fail: macOS skill suites moved onto a PR run there" true \
   "$(gh_eval value "$(context_json pull_request success "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-pr.yml")")"
+
+# The queue's macOS legs: the job's condition, then its shard list less each
+# exclude its expression names, as GitHub expands the matrix. `none` where
+# the condition stands the job down. CI's lane for the job is read beside it,
+# and is true exactly where the job runs on a classified group.
+queue_legs() { # WORKFLOW EVENT RESULT SELECTION — the expanded shards, or none
+  local wf="$1" ctx cond base excluded="" expr value
+  ctx="$(context_json "$2" "$3" "$4" "$TMP/published-map")"
+  cond="$(job_ifs "$wf" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$1 == j { print $2 }')"
+  [ -n "$cond" ] || { printf 'no-condition'; return 0; }
+  value="$(gh_eval value "$ctx" "$cond")"
+  case "$value" in
+    true) ;;
+    false) printf 'none'; return 0 ;;
+    *) printf '%s' "$value"; return 0 ;;
+  esac
+  base="$(gh_eval value '{}' "$(matrix_expr "$wf" shard "$MACOS_QUEUE_JOB")")"
+  while IFS= read -r expr; do
+    value="$(gh_eval value "$ctx" "$expr")"
+    case "$value" in
+      '"'*) excluded="$excluded$value," ;;
+      *) printf 'exclude-refused:%s' "$value"; return 0 ;;
+    esac
+  done < <(awk -v job="$MACOS_QUEUE_JOB:" '
+    /^  [A-Za-z0-9_-]+:/ { active = ($1 == job); inx = 0; next }
+    active && /^        exclude:/ { inx = 1; next }
+    active && inx && /^          - shard: \$\{\{ .* \}\}$/ {
+      sub(/^          - shard: \$\{\{ /, ""); sub(/ \}\}$/, ""); print; next
+    }
+    active && inx && !/^          / { inx = 0 }
+  ' "$wf")
+  [ -n "$excluded" ] || { printf 'no-exclude-read'; return 0; }
+  jq -cn --argjson base "$base" --argjson out "[${excluded%,}]" '$base - $out'
+}
+queue_lane() { # WORKFLOW EVENT SELECTION — CI's selection for the queue job
+  local expr
+  expr="$(aggregate_lanes "$1" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
+  [ -n "$expr" ] || { printf 'no-lane'; return 0; }
+  gh_eval value "$(context_json "$2" success "$3" "$TMP/published-map")" "$expr"
+}
+QUEUE_ALL='["orch-terminal","orch-oversee-succeed","guards-tools"]'
+# A merge group touching the script the orch-terminal shard races.
+open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
+# Neighbours whose names hold a queue shard's name.
+neighbours="$(measured linux false true false '["orch-oversee","guards-tools-tail"]')"
+tail_and_terminal="$(measured linux false true false '["orch-terminal","guards-tools-tail"]')"
+only_succeed="$(measured linux false true false '["orch-oversee-succeed"]')"
+only_tools="$(measured linux false true false '["guards-tools"]')"
+# EVENT|RESULT|SELECTION|LEGS. VERIFY_ROW and PROSE_ROW are what a
+# documentation-only group selects, trivial and measured.
+queue_rows=0
+while IFS='|' read -r event result sel expected; do
+  queue_rows=$((queue_rows + 1))
+  check "the queue's macOS legs expand $expected on $event at $result under '$sel'" "$expected" \
+    "$(queue_legs "$WORKFLOW" "$event" "$result" "$sel")"
+  [ "$result" = success ] || continue
+  lane=false
+  [ "$expected" = none ] || lane=true
+  check "CI's queue lane is $lane on $event under '$sel'" "$lane" "$(queue_lane "$WORKFLOW" "$event" "$sel")"
+done <<ROWS
+merge_group|success|$open_terminal|$QUEUE_ALL
+merge_group|success|$ORCH_PROOF_ROW|$QUEUE_ALL
+merge_group|success|$only_succeed|["orch-oversee-succeed"]
+merge_group|success|$only_tools|["guards-tools"]
+merge_group|success|$tail_and_terminal|["orch-terminal"]
+merge_group|success|$neighbours|none
+merge_group|success|$VERIFY_ROW|none
+merge_group|success|$PROSE_ROW|none
+merge_group|failure|$ALL_OFF|$QUEUE_ALL
+pull_request|success|$ALL_ON|none
+pull_request|success|$open_terminal|none
+pull_request|failure|$ALL_OFF|none
+push|skipped|$ALL_OFF|none
+ROWS
+[ "$queue_rows" -ge 13 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
+
+# An exclude that excludes nothing runs a shard the selection lacks.
+plant "$WORKFLOW" "&& 'orch-terminal' || ''" "&& '' || ''" "$TMP/wf-queue-no-exclude.yml" "$MACOS_QUEUE_JOB"
+check "must-fail: an exclude excluding nothing runs an unselected queue shard" \
+  '["orch-terminal","guards-tools"]' "$(queue_legs "$TMP/wf-queue-no-exclude.yml" merge_group success "$only_tools")"
+# A search without its quotes takes guards-tools-tail for guards-tools.
+plant "$WORKFLOW" "!contains(needs.changes.outputs.shards, '\"guards-tools\"')" \
+  "!contains(needs.changes.outputs.shards, 'guards-tools')" "$TMP/wf-queue-unquoted.yml" "$MACOS_QUEUE_JOB"
+check "must-fail: an unquoted search runs guards-tools on guards-tools-tail" \
+  '["orch-terminal","guards-tools"]' "$(queue_legs "$TMP/wf-queue-unquoted.yml" merge_group success "$tail_and_terminal")"
+# A queue job ignoring the event runs its legs on a pull request.
+plant "$WORKFLOW" "github.event_name == 'merge_group'" "github.event_name != 'push'" \
+  "$TMP/wf-queue-on-pr.yml" "$MACOS_QUEUE_JOB"
+check "must-fail: a queue job ignoring the event runs on a pull request" "$QUEUE_ALL" \
+  "$(queue_legs "$TMP/wf-queue-on-pr.yml" pull_request success "$open_terminal")"
 
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
@@ -634,7 +746,7 @@ esac
 plant "$WORKFLOW" "needs.changes.outputs.shell_os != '[\"macos-latest\"]'" "true" \
   "$TMP/wf-os-unread.yml" skill-suites-shard
 check "must-fail: a job ignoring runner proof repeats the Linux shell job" \
-  'cargo-macos cargo-tests-windows skill-suites-shard' \
+  "cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard" \
   "$(running "$TMP/wf-os-unread.yml" "$ORCH_PROOF_ROW" success merge_group)"
 
 # The shard key reading no selection expands the whole roster on a diff that
@@ -739,6 +851,35 @@ ROWS
     "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
 done
 RESULTS="$saved_results"
+
+# The queue's macOS legs report into CI: a failed or cancelled leg fails it,
+# and so does a selected job that skipped; a job the selection or the event
+# stood down may skip. The selection is CI's own lane expression evaluated.
+queue_expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
+[ -n "$queue_expr" ] || bad "no queue lane read out of $CI_JOB, so the lane reader is broken"
+queue_aggregate() { # EXPR EVENT SELECTION RESULT — the lane value and the aggregate's status
+  local value
+  value="$(gh_eval value "$(context_json "$2" success "$3" "$TMP/published-map")" "$1")"
+  RESULTS="$(jq -cn --arg job "$MACOS_QUEUE_JOB" --arg r "$4" '{changes: {result: "success"}} + {($job): {result: $r}}')"
+  printf '%s %s' "$value" "$(aggregate "$AGGREGATE" --lane "$value:$MACOS_QUEUE_JOB")"
+}
+# ROW|EVENT|SELECTION|RESULT|LANE AND STATUS
+while IFS='|' read -r row event sel result expected; do
+  check "$CI_JOB queue macOS legs on $row" "$expected" \
+    "$(queue_aggregate "$queue_expr" "$event" "$sel" "$result")"
+done <<ROWS
+selected-failed|merge_group|$open_terminal|failure|true 1
+selected-cancelled|merge_group|$open_terminal|cancelled|true 1
+selected-skipped|merge_group|$open_terminal|skipped|true 1
+selected-passed|merge_group|$open_terminal|success|true 0
+unselected-docs|merge_group|$VERIFY_ROW|skipped|false 0
+pull-request|pull_request|$open_terminal|skipped|false 0
+ROWS
+plant "$WORKFLOW" "MACOS_QUEUE: \${{ $queue_expr }}" "MACOS_QUEUE: \${{ $queue_expr && false }}" \
+  "$TMP/wf-queue-lane-false.yml" "$CI_JOB"
+false_expr="$(aggregate_lanes "$TMP/wf-queue-lane-false.yml" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
+check "must-fail: a CI lane ignoring the selection lets a selected queue job skip" "false 0" \
+  "$(queue_aggregate "$false_expr" merge_group "$open_terminal" skipped)"
 
 check "a lane the class stood down may skip" "0" \
   "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \
