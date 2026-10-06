@@ -230,8 +230,8 @@ if [ -n "$REQUIRED" ]; then
     fi
     # shellcheck disable=SC2086
     gg_path_matches "$f" $GG_CHANGELOG_PATTERNS || continue
-    # A package's entry moves that package's version, never the program's,
-    # so it is no entry for a program change.
+    # A package's entry is that package's, never the program's, so it is no
+    # entry for a program change.
     gg_path_glob_section "$f"
     gg_fragment_package "$f"
     if [ -z "$GG_FRAGMENT_PACKAGE" ]; then

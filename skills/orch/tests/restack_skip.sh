@@ -174,7 +174,7 @@ assert_eq "${fresh_answer%% *} $(git -C "$FRESH" count-objects -v | sed -n 's/^c
 echo "=== a restack skips only where it resolved no conflict, or only version and changelog lines ==="
 # label|row|main edit|resolution|answer (skip:CONDITION:PATHS or the retest line)
 ROWS=(
-  "a metadata.version line both lanes raised in a skill and its render re-tests: commit-guards reads no field there|version|main_skill|take_version|restack=retest cause=unclassified path=.agents/skills/p/SKILL.md rc=1"
+  "a metadata.version line both lanes raised in a skill and its render re-tests: restack-skip reads no field in a package or render file|version|main_skill|take_version|restack=retest cause=unclassified path=.agents/skills/p/SKILL.md rc=1"
   "a package version and changelog entries both lanes wrote skip as version-only|package|main_package|take_package|skip:version-only:pkg/CHANGELOG.md,pkg/package.json"
   "a clean restack over another file skips as no-conflict|clean|main_other|keep_as_left|skip:no-conflict:none"
   "a resolution that also edits code the merge did not conflict on re-tests|code|main_package|take_package_code|restack=retest cause=path-unconflicted path=code.sh rc=1"

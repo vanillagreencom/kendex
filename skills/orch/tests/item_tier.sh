@@ -78,7 +78,7 @@ ROWS=(
   "-|--production 1 --path .pi/settings.json|tier=standard brief=start cause=configuration-source rc=0|a registry Location proves no render"
   "-|--production 1 --path CLAUDE.md|tier=standard brief=start cause=instruction-pointer rc=0|an instruction pointer Location proves no render"
   "-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
-  "-|--production 1 --path skills/orch/scripts/lib/change-class.sh|tier=standard brief=start cause=excluded-path rc=0|the classifier and version reader item-tier sources is never micro"
+  "-|--production 1 --path skills/orch/scripts/lib/change-class.sh|tier=standard brief=start cause=excluded-path rc=0|the classifier reader item-tier sources is never micro"
   "-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
   "-|--production 1 --path hooks/block-bare-cd.sh|tier=standard brief=start cause=excluded-path rc=0|a hook body Location is never micro"
   "-|--production 1 --path hooks/tests/block-bare-cd.test.sh|tier=micro brief=micro cause=estimate-within-micro rc=0|a hook suite Location leaves the estimate's class"
@@ -231,7 +231,23 @@ git -C "$RANGE" add -A
 git -C "$RANGE" commit -qm instructions
 assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE")" \
   "tier=small brief=small cause=instruction-file rc=0" "a changed instruction file still selects small"
-# The range-path control loses that file while retaining the Git read.
+# A range whose only change is a skill's metadata.version line, in the
+# source and its render, is an instruction-file edit like any other.
+skill_version() { # VERSION
+  local file
+  for file in skills/x/SKILL.md .agents/skills/x/SKILL.md; do
+    mkdir -p "$RANGE/${file%/*}"
+    printf -- '---\nname: x\nmetadata:\n  version: "%s"\n---\n\n# X\n' "$1" >"$RANGE/$file"
+  done
+  git -C "$RANGE" add -A
+  git -C "$RANGE" commit -qm "skill $1"
+}
+skill_version 1.0.0
+SKILL_BASE="$(git -C "$RANGE" rev-parse HEAD)"
+skill_version 1.0.1
+assert_eq "$(run_tier - --production 1 --base "$SKILL_BASE" --head HEAD --repo "$RANGE")" \
+  "tier=small brief=small cause=instruction-file rc=0" "a SKILL.md metadata.version line alone still selects small"
+# The range-path control loses those files while retaining the Git read.
 cp -R "$LAYOUT" "$TMP_ROOT/no-range-paths"
 python3 - "$TMP_ROOT/no-range-paths/orch/scripts/item-tier" <<'EDIT'
 import pathlib, sys
@@ -245,6 +261,8 @@ EDIT
 TIER_BIN="$TMP_ROOT/no-range-paths/orch/scripts/item-tier"
 assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE")" \
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the instruction file"
+assert_eq "$(run_tier - --production 1 --base "$SKILL_BASE" --head HEAD --repo "$RANGE")" \
+  "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the SKILL.md version line"
 unset TIER_BIN
 
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"

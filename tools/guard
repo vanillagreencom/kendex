@@ -1329,8 +1329,7 @@ scan_load() { # DIR
 #   - or a skill-root variable or a path ending in /skills among the start
 #     paths of a find, a walk that meets every doc.
 # A comment citing a doc reads nothing, nor does a find from any other start
-# or a walk in another language. With FIELD, an extended regular expression,
-# only the readers whose code also matches it are listed.
+# or a walk in another language.
 doc_readers() { # REL
   local rel="$1" i code dir token
   token="(^|[^[:alnum:]._/-])$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)"

@@ -98,8 +98,8 @@ gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
 # project delivered to several harnesses as copies holds the package under
 # each of its skill roots, so the copy that armed the repository and the copy
 # asking may stand under different roots of the same project; that copy has
-# to declare the same package name and hold the same scripts, byte for byte
-# by their checksum.
+# to declare the same package name and hold the same scripts by
+# gg_scripts_sum's checksum.
 #
 # Two other differences look the same at a glance and are not. A scripts
 # directory outside this repository would run another package's lanes as this
