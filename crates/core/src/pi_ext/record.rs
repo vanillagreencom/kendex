@@ -41,9 +41,12 @@ pub enum Resolved {
     Ships(DeclaredPackage),
     /// The catalog retired it (`[retired.pi-extensions]`), whether or not it
     /// still carries the package: nothing installs, settles or re-records
-    /// it, and the plan keeps or prunes what is recorded.
+    /// it. The plan keeps or prunes what is recorded, as
+    /// `PlanOptions::prune_retired` states, and holds a record another
+    /// catalog wrote to invariant 4 by `source_repo`, as for any item.
     Retired {
         migration: String,
+        source_repo: String,
     },
 }
 
@@ -61,6 +64,7 @@ pub fn resolve_declared(
     if let Some(migration) = config.retired(crate::model::ItemKind::PiExtension, name) {
         return Ok(Resolved::Retired {
             migration: migration.to_owned(),
+            source_repo: ready.provenance,
         });
     }
     let direct = sealed.root().join("pi-extensions").join(name);
@@ -214,8 +218,6 @@ fn record_matching<'a>(
                     lock.entries.get(&key),
                     basis,
                 )?),
-                // The plan's warning names it, and its removal takes the
-                // package and the record.
                 Resolved::Retired { .. } => None,
             })
         });
@@ -334,10 +336,9 @@ pub(crate) fn ensure_toggle_ready(
     let package = match resolve_declared(env, scope, manifest, name, decl)? {
         Resolved::Ships(package) => package,
         Resolved::Retired { .. } => {
-            return Err(CoreError::PiPackage {
-                name: name.to_owned(),
-                message: "its catalog retired it; there is nothing to toggle".to_owned(),
-            });
+            let kind = crate::model::ItemKind::PiExtension;
+            let name = name.to_owned();
+            return Err(CoreError::Retired { kind, name });
         }
     };
     let key = crate::lock::entry_key(

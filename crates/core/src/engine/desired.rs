@@ -9,12 +9,13 @@ use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{self, ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{SourceConfig, SourceState, find_item, list_items};
+use crate::source::{SourceConfig, SourceState, list_items};
 use crate::source_read::SealedSource;
 
 use super::desired_item::{build, no_harness_note};
 use super::desired_kinds;
 use super::desired_source::{read_catalog, resolve_source};
+use super::expansion::{Offer, OpenCatalog};
 
 type RenderedFiles<'a> = (&'a Path, Vec<(PathBuf, Vec<u8>)>);
 
@@ -307,9 +308,11 @@ pub struct DesiredState {
     /// Items their catalog retired that this pass met, declared or derived
     /// ([`DesiredState::retire`]); `EngineReport::retired`.
     pub retired: BTreeMap<(ItemKind, String), Retirement>,
-    /// Whether this pass prunes retired items (`PlanOptions::prune_retired`):
-    /// off, each is kept exactly as recorded with one notice.
+    /// Whether this pass prunes retired items (`PlanOptions::prune_retired`).
     pub prune_retired: bool,
+    /// The entry keys of the record this pass read: where a retired item
+    /// is kept ([`Retirement::kept`]).
+    pub(super) recorded: BTreeSet<String>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -418,23 +421,42 @@ impl DesiredState {
         self.declaration_status = super::DeclarationStatus::Incomplete;
     }
 
-    /// Records an item its catalog retired. The person's own declaration
-    /// outranks a derivation naming the same item.
-    pub(super) fn retire(&mut self, kind: ItemKind, name: &str, retirement: Retirement) {
+    /// Records an item the declared `source`'s catalog retired, kept on
+    /// the tools the record holds it on unless this pass prunes. The
+    /// person's own declaration outranks a derivation naming the same item.
+    pub(super) fn retire(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        source: &str,
+        migration: &str,
+        via: RetiredVia,
+    ) -> &Retirement {
+        let recorded = |harness: &HarnessId| {
+            let key = crate::lock::entry_key(kind, name, *harness);
+            !self.prune_retired && self.recorded.contains(&key)
+        };
+        let kept = HarnessId::ALL.into_iter().filter(recorded).collect();
+        let (source, migration) = (source.to_owned(), migration.to_owned());
         let key = (kind, name.to_owned());
-        match retirement.via {
-            RetiredVia::Declared => {
-                self.retired.insert(key, retirement);
-            }
-            RetiredVia::Bundle(_) | RetiredVia::RequiredBy { .. } => {
-                self.retired.entry(key).or_insert(retirement);
-            }
+        if matches!(via, RetiredVia::Declared) || !self.retired.contains_key(&key) {
+            let retirement = Retirement {
+                source,
+                migration,
+                via,
+                kept,
+            };
+            self.retired.insert(key.clone(), retirement);
         }
+        &self.retired[&key]
     }
 
-    /// Whether this pass takes a retired item's records away.
-    pub(super) fn prunes(&self, kind: ItemKind, name: &str) -> bool {
-        self.prune_retired && self.retired.contains_key(&(kind, name.to_owned()))
+    /// Whether an item its catalog retired is kept nowhere this pass:
+    /// pruned, or never recorded. Such an item is owed no installation.
+    pub(super) fn retired_unkept(&self, kind: ItemKind, name: &str) -> bool {
+        self.retired
+            .get(&(kind, name.to_owned()))
+            .is_some_and(|retirement| retirement.kept.is_empty())
     }
 
     /// A declaration whose source item cannot be parsed. Un-marking it keeps
@@ -540,6 +562,7 @@ fn compute(
         agent_names: crate::source::agent_names::Uses::new(manifest),
         judge_pins,
         prune_retired,
+        recorded: lock.entries.keys().cloned().collect(),
         ..DesiredState::default()
     };
     let mut updated_manifest = manifest.clone();
@@ -577,25 +600,23 @@ fn compute(
             else {
                 continue;
             };
-            let Some((sealed, config)) =
-                read_catalog(&root, &provenance, name, &decl.source, &mut state)?
+            let Some(catalog) = read_catalog(&root, &provenance, name, &decl.source, &mut state)?
             else {
                 continue;
             };
-            super::catalog::notes(&config, &decl.source, &mut state);
-            // Retired, carried or not, it never renders: `settle_retired`.
-            if let Some(migration) = config.retired(kind, name) {
-                let via = RetiredVia::of(expansion.derived_from(kind, name));
-                state.retire(kind, name, Retirement::new(&decl.source, migration, via));
-                continue;
-            }
-            let Some(item_path) = find_item(&sealed, &config, kind, name) else {
-                state.mark_incomplete();
-                state
-                    .notes
-                    .push(not_offered_note(&sealed, &config, kind, name, &decl.source));
+            super::catalog::notes(&catalog.config, &decl.source, &mut state);
+            let Some(item_path) = item_path(
+                &catalog,
+                kind,
+                name,
+                decl,
+                &provenance,
+                &expansion,
+                &mut state,
+            ) else {
                 continue;
             };
+            let OpenCatalog { sealed, config, .. } = catalog;
             state
                 .processed
                 .insert((kind, name.clone()), provenance.clone());
@@ -641,6 +662,38 @@ fn compute(
         state.manifest_update = Some(updated_manifest);
     }
     Ok(state)
+}
+
+/// Where the catalog keeps one planned item, by the one lookup
+/// ([`OpenCatalog::offer`]); `None` where it renders nothing. A retired
+/// one is recorded for `settle_retired`, its provenance read as any
+/// resolved item's is, for invariant 4 (`plan_pass::plan_rebound`).
+fn item_path(
+    catalog: &OpenCatalog,
+    kind: ItemKind,
+    name: &str,
+    decl: &ItemDecl,
+    provenance: &str,
+    expansion: &super::expansion::Expansion,
+    state: &mut DesiredState,
+) -> Option<PathBuf> {
+    match catalog.offer(kind, name) {
+        Offer::Item(_, path) => Some(path),
+        Offer::Retired(migration) => {
+            let key = (kind, name.to_owned());
+            state.processed.insert(key, provenance.to_owned());
+            let via = RetiredVia::of(expansion.derived_from(kind, name));
+            state.retire(kind, name, &decl.source, migration, via);
+            None
+        }
+        Offer::NotOffered | Offer::Silent => {
+            state.mark_incomplete();
+            let (sealed, config) = (&catalog.sealed, &catalog.config);
+            let note = not_offered_note(sealed, config, kind, name, &decl.source);
+            state.notes.push(note);
+            None
+        }
+    }
 }
 
 /// Why each of an item's installations is wanted, as the closure derived it.
@@ -700,7 +753,8 @@ impl ItemCtx<'_> {
     }
 }
 
-/// An item its catalog retired (`[retired]`), as this pass met it.
+/// An item its catalog retired (`[retired]`), as this pass met it; what a
+/// pass does with one is `PlanOptions::prune_retired`'s.
 #[derive(Debug, Clone)]
 pub struct Retirement {
     /// The declared source whose catalog retired it.
@@ -708,16 +762,9 @@ pub struct Retirement {
     /// The catalog's one-line migration, empty where it gave none.
     migration: String,
     via: RetiredVia,
-}
-
-impl Retirement {
-    pub(super) fn new(source: &str, migration: &str, via: RetiredVia) -> Retirement {
-        Retirement {
-            source: source.to_owned(),
-            migration: migration.to_owned(),
-            via,
-        }
-    }
+    /// The tools it stays on as recorded: each the record this pass read
+    /// holds it on, none under a prune.
+    pub(super) kept: Vec<HarnessId>,
 }
 
 /// What brought a retired item into the plan.
@@ -746,28 +793,32 @@ impl RetiredVia {
     }
 }
 
-/// The notice a kept retired item gets, in place of the not-found refusal,
-/// so a refresh at a consumer still wanting it runs. The message is the
-/// whole line: it opens with the item's name as its key, says the item is
-/// kept and how to remove it, and ends with the catalog's migration, so
-/// the line a program reads is complete with nothing before the key and
-/// nothing beneath it. The consumer refresh report (KEN-2797) forwards a
-/// `kendex refresh` line opening `doc-drift-check: `, the one retirement it
-/// reads today. The remove command in the line is the owner's ruled
-/// exception to engine rule 18.
-fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> super::ItemWarning {
+/// The notice a retired item gets in place of the not-found refusal, so a
+/// refresh at a consumer still wanting it runs: one line keyed by the
+/// item's name, saying where it stands and how to remove it, ending with
+/// the catalog's migration. A derived one kept nowhere gets none: nothing
+/// of it is installed, and a requirer's finding says what it costs. The
+/// commands in the line are the owner's ruled exception to engine rule 18.
+fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super::ItemWarning> {
     let source = &retirement.source;
-    let line = match &retirement.via {
-        RetiredVia::Declared => format!(
+    let line = match (&retirement.via, retirement.kept.is_empty()) {
+        (RetiredVia::Declared, false) => format!(
             "{name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
         ),
-        RetiredVia::Bundle(bundle) => format!(
+        (RetiredVia::Declared, true) => format!(
+            "{name}: retired by {source}; not installed; drop its declaration with kendex refresh --prune"
+        ),
+        (RetiredVia::Bundle(_) | RetiredVia::RequiredBy { .. }, true) => return None,
+        (RetiredVia::Bundle(bundle), false) => format!(
             "{name}: retired by {source}, a member of bundle {bundle}; kept; remove it with kendex refresh --prune"
         ),
-        RetiredVia::RequiredBy {
-            kind: by_kind,
-            name: by,
-        } => format!(
+        (
+            RetiredVia::RequiredBy {
+                kind: by_kind,
+                name: by,
+            },
+            false,
+        ) => format!(
             "{name}: retired by {source}, required by {} {by}; kept; remove it with kendex refresh --prune",
             by_kind.name()
         ),
@@ -776,34 +827,20 @@ fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> super::ItemWa
         true => line,
         false => format!("{line}; {}", retirement.migration),
     };
-    super::ItemWarning {
+    Some(super::ItemWarning {
         kind,
         name: name.to_owned(),
         harness: None,
         message,
         remediation: None,
-    }
-}
-
-/// The Pi declarations their catalog retired, read where every Pi pass
-/// reads a declaration (`pi_ext::resolve_declared`). A declaration that
-/// will not resolve is the carrier comparison's to report.
-fn retired_pi_extensions(env: &Env, scope: &Scope, manifest: &Manifest, state: &mut DesiredState) {
-    for (name, decl) in &manifest.pi_extensions {
-        if let Ok(crate::pi_ext::Resolved::Retired { migration }) =
-            crate::pi_ext::resolve_declared(env, scope, manifest, name, decl)
-        {
-            let retirement = Retirement::new(&decl.source, &migration, RetiredVia::Declared);
-            state.retire(ItemKind::PiExtension, name, retirement);
-        }
-    }
+    })
 }
 
 /// What this pass does with the retired items it met, the Pi declarations
-/// among them read here; a retired item, carried or not, never renders.
-/// Kept, the owner's default, each gets one notice and its records stay as
-/// they are (`removal::verdicts`). Pruned, the person's own declaration of
-/// one leaves `updated`, and the records go with it; returns whether it did.
+/// among them read here, through the one lookup every Pi pass makes
+/// (`pi_ext::resolve_declared`); a retired item, carried or not, never
+/// renders. Kept, each gets its notice. Pruned, the person's own
+/// declaration of one leaves `updated`; returns whether it did.
 fn settle_retired(
     env: &Env,
     scope: &Scope,
@@ -811,12 +848,24 @@ fn settle_retired(
     state: &mut DesiredState,
     updated: &mut Manifest,
 ) -> bool {
-    retired_pi_extensions(env, scope, manifest, state);
+    for (name, decl) in &manifest.pi_extensions {
+        let resolved = crate::pi_ext::resolve_declared(env, scope, manifest, name, decl);
+        if let Ok(crate::pi_ext::Resolved::Retired {
+            migration,
+            source_repo,
+        }) = resolved
+        {
+            let key = (ItemKind::PiExtension, name.clone());
+            state.processed.insert(key, source_repo);
+            let via = RetiredVia::Declared;
+            state.retire(ItemKind::PiExtension, name, &decl.source, &migration, via);
+        }
+    }
     if !state.prune_retired {
         let notices: Vec<_> = state
             .retired
             .iter()
-            .map(|((kind, name), retirement)| retired(*kind, name, retirement))
+            .filter_map(|((kind, name), retirement)| retired(*kind, name, retirement))
             .collect();
         state.warnings.extend(notices);
         return false;

@@ -250,8 +250,7 @@ fn settleable(
         {
             continue;
         }
-        // A retired package is the plan's to take, never this settle's to
-        // install again.
+        // Nothing installs a retired package again (`Resolved::Retired`).
         let Ok(pi_ext::Resolved::Ships(package)) =
             pi_ext::resolve_declared(env, scope, &manifest, name, decl)
         else {
@@ -429,8 +428,7 @@ fn declared_sources(
             Ok(pi_ext::Resolved::Ships(package)) => {
                 found.insert(name.clone(), package);
             }
-            // Refresh warns of it with its migration and takes what it
-            // installed; nothing here installs it again.
+            // Nothing installs a retired package again.
             Ok(pi_ext::Resolved::Retired { .. }) => {}
             Err(error) => notes.push(format!("{name}: {error}")),
         }

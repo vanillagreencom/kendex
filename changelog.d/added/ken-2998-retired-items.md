@@ -1,1 +1,1 @@
-- Refresh removes leftovers nothing declares and keeps an item its catalog retires in `[retired]`, with a notice; `refresh --prune` removes it, its declaration and unedited adopted workflows.
+- Refresh removes leftovers nothing declares and keeps an installed item its catalog retires (`[retired]`) with a notice; `refresh --prune` removes it, its declaration and unedited adopted workflows.

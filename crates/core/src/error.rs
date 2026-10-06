@@ -592,6 +592,11 @@ pub enum CoreError {
     #[error("pi package {name}: {message}")]
     PiPackage { name: String, message: String },
 
+    /// A switch asked of an item its catalog retired, which no pass
+    /// switches or renders again; removing `name` is what settles it.
+    #[error("{} {name}: its catalog retired it, so it stays as it is until it is removed", kind.name())]
+    Retired { kind: ItemKind, name: String },
+
     #[error("no {} named '{name}' found for {} in this scope", kind.name(), harness.name())]
     ItemNotFound {
         kind: ItemKind,

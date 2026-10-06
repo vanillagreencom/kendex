@@ -9,10 +9,11 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::Scope;
-use crate::source::{self, SourceConfig, SourceState, source_config_for};
+use crate::source::{self, SourceState, source_config_for};
 use crate::source_read::SealedSource;
 
 use super::desired::DesiredState;
+use super::expansion::OpenCatalog;
 
 /// The source root, provenance, and commit to build an item from, or `None`
 /// with the note that says why this declaration produces nothing this pass.
@@ -98,7 +99,7 @@ pub(super) fn read_catalog(
     name: &str,
     source: &str,
     state: &mut DesiredState,
-) -> Result<Option<(SealedSource, SourceConfig)>> {
+) -> Result<Option<OpenCatalog>> {
     let sealed = match SealedSource::open(root) {
         Ok(sealed) => sealed,
         Err(problem) => {
@@ -110,7 +111,11 @@ pub(super) fn read_catalog(
         }
     };
     match source_config_for(&sealed, provenance) {
-        Ok(config) => Ok(Some((sealed, config))),
+        Ok(config) => Ok(Some(OpenCatalog {
+            sealed,
+            config,
+            offered: Default::default(),
+        })),
         Err(CoreError::SourceEscape { path, reason }) => {
             state.mark_incomplete();
             state.notes.push(crate::names::shown(&format!(

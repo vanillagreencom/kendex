@@ -84,11 +84,8 @@ pub fn print_report(
     blocked
 }
 
-/// Whether a warning's message is a protocol line that opens with its own
-/// target as the key. Such a line is read from its first byte by another
-/// program — the consumer refresh report (KEN-2797) forwards every
-/// `kendex refresh` line opening `doc-drift-check: ` from a `2>&1`
-/// capture — so it prints bare in both looks, as `run_model_warning`
+/// Whether a warning's message is a keyed line that opens with its own
+/// target as the key. It prints bare in both looks, as `run_model_warning`
 /// prints its line: no `warning: ` key, no glyph, no indent and no second
 /// target in front of it.
 pub(super) fn keyed_by_target(target: &str, message: &str) -> bool {

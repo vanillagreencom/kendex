@@ -507,7 +507,7 @@ fn installations(
     let root = crate::pi_ext::scope_root(env, scope)?;
     let kind = crate::model::ItemKind::PiExtension;
     for name in manifest.pi_extensions.keys() {
-        if state.prunes(kind, name) {
+        if state.retired_unkept(kind, name) {
             continue;
         }
         let Ok(path) = crate::pi_ext::package_path(&root, name) else {
@@ -600,7 +600,7 @@ fn fresh_lock(
             .filter(|(_, entry)| {
                 entry.kind == crate::model::ItemKind::PiExtension
                     && manifest.pi_extensions.contains_key(&entry.name)
-                    && !state.prunes(entry.kind, &entry.name)
+                    && !state.retired_unkept(entry.kind, &entry.name)
             })
             .map(|(key, entry)| (key.clone(), entry.clone()))
             .collect(),

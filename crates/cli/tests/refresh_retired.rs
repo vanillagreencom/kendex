@@ -63,8 +63,7 @@ fn adopted(home: &Path) -> (PathBuf, PathBuf) {
     (catalog, project)
 }
 
-/// The lines of `printed` keyed by `name`, the consumer refresh report's
-/// reading of a refresh capture.
+/// The lines of `printed` keyed by `name`, the notice's own line.
 fn keyed(printed: &str, name: &str) -> usize {
     printed
         .lines()

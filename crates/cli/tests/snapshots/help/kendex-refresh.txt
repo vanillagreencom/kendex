@@ -20,7 +20,8 @@ Options:
 
       --prune
           Remove every item its catalog retired, with its files and its entry in
-          kendex.toml; without it a retired item stays installed
+          kendex.toml, except a copy you edited; without it a retired item stays
+          installed
 
       --locked
           Render each package that follows its source at the commit the install

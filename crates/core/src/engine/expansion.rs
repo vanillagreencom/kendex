@@ -359,6 +359,27 @@ pub(super) struct OpenCatalog {
     pub(super) config: SourceConfig,
     pub(super) offered: super::deps::OfferedSkills,
 }
+
+impl OpenCatalog {
+    /// What this catalog says about one item: the one lookup for a
+    /// declared item, a set's member and a requirement alike. `[retired]`
+    /// answers before any file is asked for, so a catalog that retired an
+    /// item and deleted it answers as one still carrying it.
+    pub(super) fn offer(&self, kind: ItemKind, name: &str) -> Offer<'_> {
+        if let Some(migration) = self.config.retired(kind, name) {
+            return Offer::Retired(migration);
+        }
+        match find_item(&self.sealed, &self.config, kind, name) {
+            Some(path) => Offer::Item(self, path),
+            // A catalog answering with less than it offers cannot say the
+            // item is not there: `SourceConfig::hides_content` is what
+            // keeps a removal from reading it as the whole truth.
+            None if self.config.hides_content() => Offer::Silent,
+            None => Offer::NotOffered,
+        }
+    }
+}
+
 /// Which catalog: the source name and the revision it is read at.
 pub(super) type CatalogKey = (String, Option<String>);
 
@@ -417,17 +438,7 @@ impl Catalogs<'_> {
         let Some(catalog) = self.open.get(key).and_then(Option::as_ref) else {
             return Offer::Silent;
         };
-        if let Some(migration) = catalog.config.retired(kind, name) {
-            return Offer::Retired(migration);
-        }
-        match find_item(&catalog.sealed, &catalog.config, kind, name) {
-            Some(path) => Offer::Item(catalog, path),
-            // A catalog answering with less than it offers cannot say the
-            // item is not there: `SourceConfig::hides_content` is what
-            // keeps a removal from reading it as the whole truth.
-            None if catalog.config.hides_content() => Offer::Silent,
-            None => Offer::NotOffered,
-        }
+        catalog.offer(kind, name)
     }
 
     fn read(

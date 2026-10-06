@@ -37,7 +37,7 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
-    /// Remove every item its catalog retired, with its files and its entry in kendex.toml; without it a retired item stays installed
+    /// Remove every item its catalog retired, with its files and its entry in kendex.toml, except a copy you edited; without it a retired item stays installed
     #[arg(long)]
     prune: bool,
     /// Render each package that follows its source at the commit the install record names, so a re-render of a project-side change moves no catalog; a package the record cannot place resolves as usual

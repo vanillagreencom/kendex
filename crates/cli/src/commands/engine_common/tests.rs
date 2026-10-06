@@ -72,10 +72,8 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         ]
     );
 
-    // A message keyed by its own target is the line itself in both looks:
-    // the consumer refresh report (KEN-2797) reads `doc-drift-check: ` from
-    // the first byte of a `2>&1` capture, so nothing may print before the
-    // key, no glyph and no indent included.
+    // A message keyed by its own target is the line itself in both looks,
+    // with nothing printed before the key, no glyph and no indent.
     let keyed = "doc-drift-check: retired by kendex; kept; remove it with kendex refresh --prune (or kendex remove doc-drift-check)";
     let retired = [ItemWarning {
         kind: ItemKind::Hook,

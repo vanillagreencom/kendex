@@ -25,12 +25,11 @@ use std::collections::btree_map::Entry;
 use crate::lock::{BundleRef, Reason};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::find_item;
 
 use super::ItemWarning;
 use super::desired::hold::HeldPins;
 use super::desired::{DesiredState, target_harnesses};
-use super::expansion::{Catalogs, Expansion, OpenCatalog};
+use super::expansion::{Catalogs, Expansion, Offer, OpenCatalog};
 
 /// One member, as every set that carries it asked for it.
 struct Carried {
@@ -185,12 +184,11 @@ fn installable(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
-    let Some(OpenCatalog { sealed, config, .. }) =
-        catalogs.get(&decl.source, decl.rev.as_deref(), state)
-    else {
+    let Some(catalog) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
         state.mark_incomplete();
         return Vec::new();
     };
+    let OpenCatalog { sealed, config, .. } = catalog;
     // What the catalog says is wrong with itself, on this path too: a set is
     // reached through here and never through the item pass, so without this
     // a bundle-only manifest is told nothing its catalog reported.
@@ -235,7 +233,8 @@ fn installable(
             held_back += 1;
             continue;
         }
-        if find_item(sealed, config, member.kind, &member.name).is_none() {
+        // A retired member is planned, for the item pass to keep or prune.
+        if let Offer::NotOffered | Offer::Silent = catalog.offer(member.kind, &member.name) {
             state.mark_incomplete();
             state.warnings.push(ItemWarning {
                 kind: member.kind,

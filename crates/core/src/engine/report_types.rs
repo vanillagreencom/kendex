@@ -349,9 +349,9 @@ pub struct EngineReport {
     /// name. `verify` holds them against the project's ignore rules
     /// (`tracked_output`).
     pub tracked_outputs: BTreeMap<String, Vec<String>>,
-    /// Items their catalog retired: the plan writes nothing for them and
-    /// keeps or prunes what is recorded, so the record owes a declaration
-    /// of one no entry.
+    /// Items their catalog retired (`PlanOptions::prune_retired`): the plan
+    /// writes nothing for them, so the record owes a declaration of one no
+    /// entry.
     pub retired: BTreeSet<(ItemKind, String)>,
 }
 
@@ -539,9 +539,11 @@ pub struct PlanOptions {
     pub sweep_unneeded: bool,
     /// Remove every item its catalog retired (`[retired]`), of every kind:
     /// its files, its records and its own manifest table, an edited copy
-    /// held as the edit conflict. Off, a retired item stays exactly as
-    /// recorded, with one notice saying how to remove it; `refresh --prune`
-    /// sets it.
+    /// held as the edit conflict. Off, a retired item stays exactly where
+    /// the record holds it, with one notice saying how to remove it, and is
+    /// owed nothing where it holds none; either way it is never rendered
+    /// again, and a hook requiring it runs only where it stays.
+    /// `refresh --prune` sets it.
     pub prune_retired: bool,
     /// Bundles this plan uninstalls. Their members that survive are named in
     /// the preview with what keeps them, so an uninstall says both halves:

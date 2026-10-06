@@ -277,11 +277,14 @@ fn withheld_past_pin(
     let mut expansion = walked.clone();
     expansion.redeclare(ItemKind::Hook, hook, &decl, asked);
     // The resolutions already read are handed on, so the second walk
-    // resolves no source the first one did. It judges no pin: only the
-    // hook's withholding is read off it.
+    // resolves no source the first one did, and so is the record a retired
+    // companion is kept by, so the two walks agree on where it runs. It
+    // judges no pin: only the hook's withholding is read off it.
     let mut scratch = DesiredState {
         sources: state.sources.clone(),
         pinned: state.pinned.clone(),
+        prune_retired: state.prune_retired,
+        recorded: state.recorded.clone(),
         ..DesiredState::default()
     };
     let from_hook = VecDeque::from([(ItemKind::Hook, hook.to_owned())]);
@@ -687,15 +690,8 @@ fn wanted_by(
 ) -> Option<Wanted> {
     let own: CatalogKey = (parent_decl.source.clone(), parent_decl.rev.clone());
     let (env, scope) = (catalogs.env, catalogs.scope);
-    let OpenCatalog {
-        sealed,
-        config,
-        offered,
-    } = catalogs.get(&own.0, own.1.as_deref(), state)?;
-    // A retired item installs nothing, so it derives nothing either.
-    if config.retired(kind, parent).is_some() {
-        return None;
-    }
+    let catalog = catalogs.get(&own.0, own.1.as_deref(), state)?;
+    let sealed = &catalog.sealed;
     let mut wanted = Wanted {
         deps: Vec::new(),
         findings: Vec::new(),
@@ -703,8 +699,11 @@ fn wanted_by(
         armed: parent_decl.enabled,
         left_out: Vec::new(),
     };
-    let Some(dir) = find_item(sealed, config, kind, parent) else {
-        return Some(wanted);
+    let dir = match catalog.offer(kind, parent) {
+        Offer::Item(_, dir) => dir,
+        // A retired item installs nothing, so it derives nothing either.
+        Offer::Retired(_) => return None,
+        Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
         return Some(wanted);
@@ -756,9 +755,7 @@ fn wanted_by(
             .iter()
             .chain(optional.iter().filter(|o| chosen.contains(o)))
         {
-            let Some(dep) = resolve(
-                kind, *dep_kind, name, parent, sealed, config, offered, &own.0, found,
-            ) else {
+            let Some(dep) = resolve(kind, *dep_kind, name, parent, catalog, &own.0, found) else {
                 unresolved.extend(on.iter().copied());
                 continue;
             };
@@ -905,7 +902,7 @@ fn derive(
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
     for (dep_kind, dep, key) in companions {
-        let harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
+        let mut harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
         let source = key.0.as_str();
         let found = &mut wanted.findings;
         let because = match catalogs.offer(&key, dep_kind, &dep) {
@@ -929,18 +926,17 @@ fn derive(
                 wanted.deps.push(landed);
                 continue;
             }
-            // Retired, the companion is never written again. Kept as
-            // recorded, the hook stays armed beside it; pruned, it is
-            // gone, which withholds an armed hook rather than arming it
-            // alone.
+            // Retired, the companion is never written again: it runs only
+            // where its record is kept (`Retirement::kept`), and anywhere
+            // else an armed hook is withheld rather than armed alone.
             Offer::Retired(migration) => {
                 let via = super::desired::RetiredVia::RequiredBy {
                     kind,
                     name: parent.to_owned(),
                 };
-                let retirement = super::desired::Retirement::new(source, migration, via);
-                state.retire(dep_kind, &dep, retirement);
-                if !state.prune_retired {
+                let kept = &state.retire(dep_kind, &dep, source, migration, via).kept;
+                harnesses.retain(|harness| !kept.contains(harness));
+                if harnesses.is_empty() {
                     continue;
                 }
                 found.push(warn(
@@ -1254,29 +1250,22 @@ fn hook_header(
 /// and what an install takes cannot drift apart. A hook is one file in one
 /// directory, so its name is its whole path and there is nothing to
 /// disambiguate: the catalog offers it or does not.
-#[allow(clippy::too_many_arguments)]
 fn resolve(
     kind: ItemKind,
     dep_kind: ItemKind,
     name: &str,
     parent: &str,
-    sealed: &SealedSource,
-    config: &SourceConfig,
-    offered: &OfferedSkills,
+    catalog: &OpenCatalog,
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<String> {
-    let resolved = match dep_kind {
-        ItemKind::Skill => offered.resolve(sealed, config, name),
-        ItemKind::Hook
-        | ItemKind::Agent
-        | ItemKind::Command
-        | ItemKind::McpServer
-        | ItemKind::Plugin
-        | ItemKind::PiExtension
-        | ItemKind::OutputStyle => find_item(sealed, config, dep_kind, name)
-            .map(|_| name.to_owned())
-            .ok_or_else(Vec::new),
+    let resolved = match catalog.offer(dep_kind, name) {
+        // A retired name is the catalog's own answer, carried or not.
+        Offer::Item(..) | Offer::Retired(_) => Ok(name.to_owned()),
+        Offer::NotOffered | Offer::Silent if dep_kind == ItemKind::Skill => {
+            (catalog.offered).resolve(&catalog.sealed, &catalog.config, name)
+        }
+        Offer::NotOffered | Offer::Silent => Err(Vec::new()),
     };
     match resolved {
         Ok(resolved) => Some(resolved),

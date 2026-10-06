@@ -3,9 +3,11 @@
 //! and derives no companion its header requires. A plain refresh keeps
 //! what is installed exactly as recorded, with one notice keyed by the
 //! item's name that carries the catalog's migration, and a hook requiring
-//! it stays armed. A prune takes the copies, an emptied Copilot registry
-//! and a Pi package's registration with them, the records and the item's
-//! own declaration, and withholds an armed hook requiring it. Every other
+//! it stays armed where it is kept. A prune takes the copies, an emptied
+//! Copilot registry and a Pi package's registration with them, the records
+//! and the item's own declaration. Where nothing of it is kept, pruned or
+//! never installed, it is owed nothing and an armed hook requiring it is
+//! withheld. A rebound declaration keeps the source conflict. Every other
 //! name the catalog does not carry keeps the refusal that fails a refresh,
 //! so a retirement cannot hide a typo. Refresh also takes what a
 //! declaration deleted by hand left, except a copy the person edited.
@@ -18,11 +20,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply::{self, Op};
+use kendex_core::engine::ops;
 use kendex_core::engine::{
     DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions, RowRemedy, audit,
     plan_apply,
 };
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::{lock, pi_ext};
 
@@ -277,8 +281,9 @@ const COMPANION: &str = "companion-check";
 /// with a header requiring a companion the catalog also carries, as the
 /// pre-retirement header of doc-drift-check required lane-mail-check; a
 /// retired skill whose catalog names a migration, declared and as a bundle
-/// member; and a Pi package carried and removed. Each hook row's Copilot
-/// registry, left holding only its version, goes with the hook.
+/// member carried and removed; and a Pi package carried and removed, which
+/// refuses a switch while kept. Each hook row's Copilot registry, left
+/// holding only its version, goes with the hook.
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
@@ -328,6 +333,15 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
             true,
             false,
             "declare deploy-next",
+        ),
+        (
+            "a skill a declared bundle lists, the catalog removed it",
+            ItemKind::Skill,
+            "deploy",
+            InBundle,
+            false,
+            false,
+            "",
         ),
         (
             "a Pi package the catalog carries",
@@ -383,10 +397,9 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         assert_eq!(warned(&report), [(kind, name.to_owned())], "{row}");
         let notice = &report.warnings[0];
         assert_eq!(notice.harness, None, "{row}");
-        // The key the consumer refresh report (KEN-2797) matches in a
-        // `kendex refresh` capture, the name, a colon and one space; it
-        // forwards the line opening `doc-drift-check: ` today. The
-        // catalog's migration ends the line, whole.
+        // The key the CLI prints the notice bare under
+        // (`engine_common::keyed_by_target`), the name, a colon and one
+        // space. The catalog's migration ends the line, whole.
         assert!(
             notice.message.starts_with(&format!("{name}: ")),
             "{row}: the notice is not keyed by the item name"
@@ -422,6 +435,26 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
             assert!(copy.exists(), "{row}: kept, yet {} is gone", copy.display());
         }
         assert_eq!(recorded_of(&f, name), recorded, "{row}: the record moved");
+        if kind == ItemKind::PiExtension {
+            let switched = ops::toggle(
+                &f.env,
+                &f.scope,
+                &[name.to_owned()],
+                Some(kind),
+                false,
+                None,
+            );
+            assert!(
+                matches!(
+                    switched,
+                    Err(CoreError::Retired {
+                        kind: ItemKind::PiExtension,
+                        ..
+                    })
+                ),
+                "{row}: a kept retired package was switched"
+            );
+        }
 
         let pruned = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
 
@@ -495,50 +528,186 @@ fn an_unknown_hook_name_keeps_the_refusal() {
     }
 }
 
-/// A hook whose header requires a hook the catalog then retires stays armed
-/// beside the kept judge on a plain refresh, which notices the judge. A
-/// prune withholds the hook with a warning of its own rather than leaving
-/// it armed beside a judge that is gone, and both installed copies come
-/// out.
+/// A hook whose header requires a hook the catalog retires: installed
+/// first, retired after, carried or deleted; or retired before its first
+/// install. Where the judge is kept, a plain refresh notices it and keeps
+/// the hook armed beside it. Where nothing of it is kept, before its first
+/// install or after a prune, the hook is withheld with a warning of its
+/// own rather than armed alone, and a plain refresh after a prune does not
+/// arm it again.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hook_requiring_a_retired_hook_stays_armed_until_a_prune() {
-    let f = installed(ItemKind::Hook, "boss");
-    write_item(&f, ItemKind::Hook, "judge");
-    let boss = f.catalog_copy(ItemKind::Hook, "boss");
-    let header = fs::read_to_string(&boss).unwrap();
-    fs::write(
-        &boss,
-        header.replacen("# ---\nexit", "# requires: [judge]\n# ---\nexit", 1),
-    )
-    .unwrap();
-    let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
-    for copy in f.installed_copies(ItemKind::Hook, "judge") {
-        assert!(copy.exists(), "the fixture installs {}", copy.display());
-    }
-    f.retire(ItemKind::Hook, "judge", "");
+fn a_hook_requiring_a_retired_hook_is_armed_only_beside_a_kept_one() {
+    for (row, installed_first, deleted) in [
+        ("installed, then retired", true, false),
+        ("installed, then retired and deleted", true, true),
+        ("retired before its first install", false, false),
+    ] {
+        let f = installed(ItemKind::Hook, "boss");
+        write_item(&f, ItemKind::Hook, "judge");
+        let boss = f.catalog_copy(ItemKind::Hook, "boss");
+        let header = fs::read_to_string(&boss).unwrap();
+        fs::write(
+            &boss,
+            header.replacen("# ---\nexit", "# requires: [judge]\n# ---\nexit", 1),
+        )
+        .unwrap();
+        if installed_first {
+            let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+            apply::execute(&f.env, &report.plan).unwrap();
+            for copy in f.installed_copies(ItemKind::Hook, "judge") {
+                assert!(
+                    copy.exists(),
+                    "{row}: the fixture installs {}",
+                    copy.display()
+                );
+            }
+        }
+        if deleted {
+            fs::remove_file(f.catalog_copy(ItemKind::Hook, "judge")).unwrap();
+        }
+        f.retire(ItemKind::Hook, "judge", "");
 
-    let kept = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
-    assert_eq!(warned(&kept), [(ItemKind::Hook, "judge".to_owned())]);
-    assert_eq!(trash_paths(&kept), Vec::<PathBuf>::new());
-    apply::execute(&f.env, &kept.plan).unwrap();
-    for name in ["boss", "judge"] {
-        for copy in f.installed_copies(ItemKind::Hook, name) {
-            assert!(copy.exists(), "{} is gone", copy.display());
+        let plain = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+        let noticed = match installed_first {
+            true => "judge",
+            false => "boss",
+        };
+        assert_eq!(
+            warned(&plain),
+            [(ItemKind::Hook, noticed.to_owned())],
+            "{row}"
+        );
+        assert_eq!(not_found_keys(&plain), Vec::<String>::new(), "{row}");
+        apply::execute(&f.env, &plain.plan).unwrap();
+        for name in ["boss", "judge"] {
+            for copy in f.installed_copies(ItemKind::Hook, name) {
+                assert_eq!(copy.exists(), installed_first, "{row}: {}", copy.display());
+            }
+        }
+
+        for options in [prune_options(), refresh_options()] {
+            let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+            assert_eq!(not_found_keys(&report), Vec::<String>::new(), "{row}");
+            assert_eq!(
+                warned(&report),
+                [(ItemKind::Hook, "boss".to_owned())],
+                "{row}"
+            );
+            assert_eq!(
+                written_files(&report, "boss"),
+                Vec::<PathBuf>::new(),
+                "{row}"
+            );
+            assert_eq!(
+                written_files(&report, "judge"),
+                Vec::<PathBuf>::new(),
+                "{row}"
+            );
+            apply::execute(&f.env, &report.plan).unwrap();
+            for name in ["boss", "judge"] {
+                for copy in f.installed_copies(ItemKind::Hook, name) {
+                    assert!(!copy.exists(), "{row}: {} stays", copy.display());
+                }
+            }
         }
     }
+}
 
-    let report = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
+/// A declaration, of a hook or a Pi package, naming an item its catalog
+/// retired before anything installed it: nothing is written, no
+/// installation is owed, and the declaration gets its notice.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_retired_item_never_installed_is_owed_nothing() {
+    for kind in [ItemKind::Hook, ItemKind::PiExtension] {
+        let f = installed(ItemKind::Hook, "base");
+        write_item(&f, kind, "fresh");
+        let manifest = f.project.join("kendex.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str(&format!("\n[{}s.fresh]\nsource = \"cat\"\n", kind.name()));
+        fs::write(&manifest, text).unwrap();
+        f.retire(kind, "fresh", "");
 
-    assert_eq!(not_found_keys(&report), Vec::<String>::new());
-    assert_eq!(warned(&report), [(ItemKind::Hook, "boss".to_owned())]);
-    assert_eq!(written_files(&report, "judge"), Vec::<PathBuf>::new());
-    apply::execute(&f.env, &report.plan).unwrap();
-    for name in ["boss", "judge"] {
-        for copy in f.installed_copies(ItemKind::Hook, name) {
-            assert!(!copy.exists(), "{} stays", copy.display());
-        }
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+
+        assert_eq!(warned(&report), [(kind, "fresh".to_owned())], "{kind:?}");
+        assert_eq!(
+            written_files(&report, "fresh"),
+            Vec::<PathBuf>::new(),
+            "{kind:?}"
+        );
+        let owed: Vec<&String> = report
+            .installations
+            .iter()
+            .filter(|(_, installation)| installation.name == "fresh")
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(owed, Vec::<&String>::new(), "{kind:?}");
+    }
+}
+
+/// A hook or Pi package installed from one catalog, its declaration then
+/// set to come from a second catalog that retires the name: the record is
+/// the first catalog's, so a plain refresh keeps it and says so as the
+/// source conflict a rebind always gets, rather than keeping it as the
+/// second catalog's retired item.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declaration_rebound_to_a_catalog_that_retires_it_keeps_the_conflict() {
+    for (kind, name) in [
+        (ItemKind::Hook, "other-check"),
+        (ItemKind::PiExtension, "other-ext"),
+    ] {
+        let f = installed(kind, name);
+        let recorded = recorded_of(&f, name);
+        let other = f.source.parent().unwrap().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            other.join("kendex.toml"),
+            format!("{CATALOG}[retired.{}s]\n{name} = \"\"\n", kind.name()),
+        )
+        .unwrap();
+        let manifest = f.project.join("kendex.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        let rebound = text
+            .replacen(
+                "\n\n[install]",
+                &format!("\n\n[sources.other]\n{}\n\n[install]", source_path(&other)),
+                1,
+            )
+            .replace(
+                &format!("[{}s.{name}]\nsource = \"cat\"", kind.name()),
+                &format!("[{}s.{name}]\nsource = \"other\"", kind.name()),
+            );
+        assert_eq!(
+            rebound.matches("\"other\"").count(),
+            1,
+            "{kind:?}: not rebound"
+        );
+        fs::write(&manifest, rebound).unwrap();
+
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+
+        let conflicts: Vec<_> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == name && row.state == DriftState::Conflict)
+            .map(|row| row.harness)
+            .collect();
+        let held: Vec<_> = recorded.iter().map(|entry| entry.harness).collect();
+        assert_eq!(conflicts, held, "{kind:?}");
+        let kept: Vec<_> = report
+            .record
+            .entries
+            .values()
+            .filter(|entry| entry.name == name)
+            .cloned()
+            .collect();
+        assert_eq!(
+            kept, recorded,
+            "{kind:?}: the record was rebound or dropped"
+        );
     }
 }
 

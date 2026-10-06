@@ -273,8 +273,8 @@ pub(super) fn collect(
 /// What sits where a record's copy belongs.
 enum Found {
     Absent,
-    /// A regular file holding the bytes of the template in the leaving
-    /// tree, which a lock entry wrote: the one proof that nobody edited
+    /// A regular file holding the bytes of the template it is compared
+    /// with, which a lock entry wrote: the one proof that nobody edited
     /// the copy since adoption.
     Adopted,
     Other,
