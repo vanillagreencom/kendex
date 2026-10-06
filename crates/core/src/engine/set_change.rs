@@ -8,13 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::desired::Withholding;
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::model::{HarnessId, ItemKind};
 
-/// The withholdings a pass decided, by the hook and tool each is asked
-/// about (`DesiredState::withheld`).
-pub(super) type Withheld = BTreeMap<(ItemKind, String, HarnessId), Withholding>;
+/// What the orphan pass says, by entry key, of each record a withholding
+/// or a missing companion takes (`removal::orphans`).
+pub(super) type Said = BTreeMap<String, &'static str>;
 
 /// Whether a plan brings an installation into being or takes one away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -50,12 +49,11 @@ impl SetChange {
         }
     }
 
-    /// A withholding that takes the copy says so, and points at the
-    /// hook's warning, which names what it runs with and the fix: a hook
-    /// still declared is not dropped for want of a declaration.
-    pub(super) fn dropped(entry: &LockEntry, withheld: &Withheld) -> SetChange {
-        let key = (entry.kind, entry.name.clone(), entry.harness);
-        let said = withheld.get(&key).and_then(|because| because.said());
+    /// `said` is what the orphan pass says of a withholding or a missing
+    /// companion that takes the copy ([`Said`]): the reason says so and
+    /// points at the hook's warning, since a hook still declared is not
+    /// dropped for want of a declaration.
+    pub(super) fn dropped(entry: &LockEntry, said: Option<&'static str>) -> SetChange {
         let reason = match (said, entry.reasons.contains(&Reason::Requested)) {
             (Some(said), _) => format!("{said} — see the warning on {}", entry.name),
             (None, true) => "no longer declared here".to_owned(),
@@ -107,7 +105,7 @@ fn why_wanted(reasons: &BTreeSet<Reason>) -> String {
 /// The installed set before against the installed set after — every
 /// installation this plan brings into being or takes away, whatever the
 /// reason. Regeneration of an installation that stays is not in here.
-pub(super) fn set_changes(before: &Lock, after: &Lock, withheld: &Withheld) -> Vec<SetChange> {
+pub(super) fn set_changes(before: &Lock, after: &Lock, said: &Said) -> Vec<SetChange> {
     let mut changes: Vec<SetChange> = after
         .entries
         .iter()
@@ -119,7 +117,7 @@ pub(super) fn set_changes(before: &Lock, after: &Lock, withheld: &Withheld) -> V
             .entries
             .iter()
             .filter(|(key, _)| !after.entries.contains_key(*key))
-            .map(|(_, entry)| SetChange::dropped(entry, withheld)),
+            .map(|(key, entry)| SetChange::dropped(entry, said.get(key).copied())),
     );
     changes
 }

@@ -627,7 +627,7 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
         &'a [&'a str],
         &'a [&'a str],
     );
-    let rows: [Row; 12] = [
+    let rows: [Row; 13] = [
         (
             "installed, then retired: kept",
             Over::Boss,
@@ -689,6 +689,15 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             After::RemovedByName,
             "",
             &["boss"],
+            &[],
+        ),
+        (
+            "under a declared hook requiring boss, the judge removed by name",
+            Over::Chain,
+            Before::Installed,
+            After::RemovedByName,
+            "",
+            &[],
             &[],
         ),
         (
@@ -798,11 +807,18 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             }
             apply::execute(&f.env, &done.plan).unwrap();
             // Where the judge goes, nothing the plan leaves runs beside
-            // none, the person's edits included.
+            // none, the person's edits included: no copy, no registration.
+            let settings =
+                fs::read_to_string(f.project.join(".claude/settings.json")).unwrap_or_default();
             for name in over.hooks().iter().filter(|name| !stays.contains(name)) {
                 for copy in f.installed_copies(ItemKind::Hook, name) {
                     assert!(!copy.exists(), "{row}: {after:?} leaves {}", copy.display());
                 }
+                let registered = format!("hooks/{name}.sh");
+                assert!(
+                    !settings.contains(&registered),
+                    "{row}: {after:?} registers {name}"
+                );
             }
         }
 
@@ -847,6 +863,19 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             });
             assert!(held, "{row}: {name}'s edit is not held");
         }
+        // The judge's notice, keyed by its name as the CLI prints it
+        // (`engine_common::keyed_by_target`), stands exactly where the
+        // record the plan writes still holds it.
+        let noticed = plain
+            .warnings
+            .iter()
+            .any(|w| w.name == "judge" && w.message.starts_with("judge: "));
+        let held = |entry: &lock::LockEntry| entry.name == "judge";
+        assert_eq!(
+            noticed,
+            plain.record.entries.values().any(held),
+            "{row}: the judge's notice"
+        );
         apply::execute(&f.env, &plain.plan).unwrap();
         // A judge switched off is kept parked, as recorded, under a name
         // no installed copy here carries.
@@ -1194,5 +1223,51 @@ fn a_withholding_is_said_only_where_the_plan_writes_the_hook_nowhere() {
         let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
         assert_eq!(report.withheld_said(ItemKind::Hook, "boss"), said, "{row}");
+    }
+}
+
+/// The knot, boss and the retired judge requiring each other, both
+/// installed: removing either member by name takes the other in the same
+/// plan, files and registrations, so neither is left armed alone
+/// whichever one the person names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_either_member_of_a_knot_by_name_takes_both() {
+    for named in ["judge", "boss"] {
+        let f = installed(ItemKind::Hook, "boss");
+        write_item(&f, ItemKind::Hook, "judge");
+        require(&f, "boss", "judge");
+        require(&f, "judge", "boss");
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        for name in ["boss", "judge"] {
+            assert_ne!(
+                recorded_of(&f, name),
+                Vec::new(),
+                "{named}: no {name} record"
+            );
+        }
+        f.retire(ItemKind::Hook, "judge", "");
+
+        let removed = ops::remove(&f.env, &f.scope, &[named.to_owned()], None, false).unwrap();
+        apply::execute(&f.env, &removed.plan).unwrap();
+
+        let settings =
+            fs::read_to_string(f.project.join(".claude/settings.json")).unwrap_or_default();
+        for name in ["boss", "judge"] {
+            assert_eq!(
+                recorded_of(&f, name),
+                Vec::new(),
+                "{named}: {name} is recorded"
+            );
+            for copy in f.installed_copies(ItemKind::Hook, name) {
+                assert!(!copy.exists(), "{named}: {} stays", copy.display());
+            }
+            let registered = format!("hooks/{name}.sh");
+            assert!(
+                !settings.contains(&registered),
+                "{named}: {name} is registered"
+            );
+        }
     }
 }

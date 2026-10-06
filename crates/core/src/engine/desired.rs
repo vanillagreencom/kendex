@@ -376,7 +376,7 @@ pub struct DesiredState {
     /// standing it took that reason from: a retired hook, a requirer
     /// withheld for one, or what a kept retired hook's record requires.
     /// The removal pass reads each one's own verdict to say whether the
-    /// hook still has it (`removal::settle_retired_pairs`).
+    /// hook still has it (`removal::settle_lacking`).
     pub(super) retired_companions:
         BTreeMap<(ItemKind, String, HarnessId), BTreeSet<(ItemKind, String)>>,
     /// Hooks whose pin keeps them off a tool where the walk, asked again
@@ -861,8 +861,9 @@ pub struct Retirement {
     /// drops; false for a bundle member or a requirement.
     declared: bool,
     /// The tools it stays on as recorded: each the record this pass read
-    /// holds it on, none under a prune, less each the walk withholds it
-    /// from, settled once the walk is done ([`settle_retired`]).
+    /// holds it on, none under a prune or a removal by name. Where the walk
+    /// withholds it, or a companion it requires goes, the removal pass
+    /// takes it all the same (`removal::settle_lacking`).
     pub(super) kept: Vec<HarnessId>,
 }
 
@@ -872,10 +873,16 @@ pub struct Retirement {
 /// the catalog's migration. A derived one kept nowhere gets none: nothing
 /// of it is installed; a requirer's warning names it, and a bundle member
 /// is silent. The commands in the line are the owner's ruled exception to
-/// engine rule 18.
-fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super::ItemWarning> {
+/// engine rule 18. `kept` is whether the record the plan writes still holds
+/// it, which the removal pass settled.
+fn retired(
+    kind: ItemKind,
+    name: &str,
+    retirement: &Retirement,
+    kept: bool,
+) -> Option<super::ItemWarning> {
     let source = &retirement.source;
-    let line = match (retirement.declared, retirement.kept.is_empty()) {
+    let line = match (retirement.declared, !kept) {
         (true, false) => format!(
             "{name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
         ),
@@ -900,13 +907,29 @@ fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super:
     })
 }
 
+/// Each retired item's notice ([`retired`]), on a pass that does not prune,
+/// read off `record`, the record the plan writes once its removals are
+/// settled: kept where that record still holds it.
+pub(super) fn retired_notices(state: &DesiredState, record: &Lock) -> Vec<super::ItemWarning> {
+    state
+        .retired
+        .iter()
+        .filter_map(|((kind, name), retirement)| {
+            let kept = record
+                .entries
+                .values()
+                .any(|entry| entry.kind == *kind && entry.name == *name);
+            retired(*kind, name, retirement, kept)
+        })
+        .collect()
+}
+
 /// What this pass does with the retired items it met, the Pi declarations
 /// among them read here, through the one lookup every Pi pass makes
 /// (`pi_ext::resolve_declared`); a retired item, carried or not, never
-/// renders. A retired hook the walk withheld from a tool is not kept
-/// there: its copy goes as the withholding says. Kept, each gets its
-/// notice. Pruned, the person's own declaration of one leaves `updated`;
-/// returns whether it did.
+/// renders. Kept, each gets its notice once removal is settled
+/// ([`retired_notices`]). Pruned, the person's own declaration of one
+/// leaves `updated`; returns whether it did.
 fn settle_retired(
     env: &Env,
     scope: &Scope,
@@ -914,12 +937,6 @@ fn settle_retired(
     state: &mut DesiredState,
     updated: &mut Manifest,
 ) -> bool {
-    for ((kind, name), retirement) in &mut state.retired {
-        retirement.kept.retain(|harness| {
-            let withheld = state.withheld.get(&(*kind, name.clone(), *harness));
-            !withheld.is_some_and(|because| because.takes())
-        });
-    }
     for (name, decl) in &manifest.pi_extensions {
         let resolved = crate::pi_ext::resolve_declared(env, scope, manifest, name, decl);
         if let Ok(crate::pi_ext::Resolved::Retired {
@@ -933,12 +950,6 @@ fn settle_retired(
         }
     }
     if !state.prune_retired {
-        let notices: Vec<_> = state
-            .retired
-            .iter()
-            .filter_map(|((kind, name), retirement)| retired(*kind, name, retirement))
-            .collect();
-        state.warnings.extend(notices);
         return false;
     }
     let mut changed = false;

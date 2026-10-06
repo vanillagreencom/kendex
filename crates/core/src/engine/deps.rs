@@ -390,7 +390,7 @@ impl Wanted {
 
     /// [`Wanted::withhold`], for a reason taken from `companion`'s
     /// standing: a retirement records the companion, whose own verdict
-    /// says whether the parent still has it (`removal::settle_retired_pairs`).
+    /// says whether the parent still has it (`removal::settle_lacking`).
     fn withhold_for(
         &mut self,
         tools: impl IntoIterator<Item = HarnessId>,
@@ -1088,7 +1088,7 @@ fn derive(
             // docs/authoring/README.md's `[retired]` paragraph. The fix is
             // the consumer's: the catalog's own is to drop the line. Whether
             // the retired copy is still there for the hook is its own
-            // verdict's to say (`removal::settle_retired_pairs`).
+            // verdict's to say (`removal::settle_lacking`).
             Offer::Retired(migration) => {
                 state.retire(dep_kind, &dep, source, migration, false);
                 let declared = match manifest.declared(kind).contains_key(parent) {

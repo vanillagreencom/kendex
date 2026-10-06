@@ -224,7 +224,7 @@ pub fn plan_scope(
         &mut config_edits,
     )?;
 
-    let sweepable = plan_removals(
+    let (sweepable, said) = plan_removals(
         env,
         scope,
         &manifest,
@@ -240,7 +240,11 @@ pub fn plan_scope(
     )?;
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
-    let set_changes = set_changes(lock, &new_lock, &state.withheld);
+    let set_changes = set_changes(lock, &new_lock, &said);
+    if !state.prune_retired {
+        let notices = desired::retired_notices(&state, &new_lock);
+        state.warnings.extend(notices);
+    }
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     let trees = generated_paths::TemplateTrees::of(env, scope, &state, lock, &new_lock);
@@ -344,7 +348,7 @@ fn plan_removals(
     new_lock: &mut Lock,
     kept: &mut item_plan::KeptAsIs,
     scope_notes: &mut Vec<String>,
-) -> Result<Vec<SetChange>> {
+) -> Result<(Vec<SetChange>, set_change::Said)> {
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
@@ -363,7 +367,7 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
-    let sweepable = removal::orphans(
+    let (sweepable, said) = removal::orphans(
         env,
         scope,
         manifest,
@@ -389,7 +393,7 @@ fn plan_removals(
         ops,
         config_edits,
     )?);
-    Ok(sweepable)
+    Ok((sweepable, said))
 }
 
 /// The files a scope owes beside its items: the project files, and the
