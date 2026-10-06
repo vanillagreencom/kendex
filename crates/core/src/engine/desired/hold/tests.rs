@@ -518,55 +518,80 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
     );
 }
 
+/// One case of [`release`]: what the cache answers before and after the
+/// fetch, and what the release does.
+struct ReleaseRow {
+    case: &'static str,
+    served_before: bool,
+    served_after: bool,
+    fetch_fails: bool,
+    source_off: bool,
+    probes: usize,
+    fetches: usize,
+    released: Option<bool>,
+}
+const RELEASE_ROWS: &[ReleaseRow] = &[
+    ReleaseRow {
+        case: "served: no fetch, held",
+        served_before: true,
+        served_after: true,
+        fetch_fails: false,
+        source_off: false,
+        probes: 1,
+        fetches: 0,
+        released: Some(false),
+    },
+    ReleaseRow {
+        case: "newer than the last fetch: fetched, held",
+        served_before: false,
+        served_after: true,
+        fetch_fails: false,
+        source_off: false,
+        probes: 2,
+        fetches: 1,
+        released: Some(false),
+    },
+    ReleaseRow {
+        case: "gone upstream: fetched, released",
+        served_before: false,
+        served_after: false,
+        fetch_fails: false,
+        source_off: false,
+        probes: 2,
+        fetches: 1,
+        released: Some(true),
+    },
+    ReleaseRow {
+        case: "fetch fails: refused, held",
+        served_before: false,
+        served_after: false,
+        fetch_fails: true,
+        source_off: false,
+        probes: 1,
+        fetches: 1,
+        released: None,
+    },
+    ReleaseRow {
+        case: "source switched off: not asked, held",
+        served_before: false,
+        served_after: false,
+        fetch_fails: true,
+        source_off: true,
+        probes: 0,
+        fetches: 0,
+        released: Some(false),
+    },
+];
+
 /// Where the cache cannot read a pinned commit, the repository is fetched
 /// once and the pin is released only if the commit is still unreadable:
 /// gone from upstream, not merely newer than the last fetch. A fetch that
-/// fails refuses the write and keeps every pin. A revision the user pinned
-/// is never touched.
+/// fails refuses the write and keeps every pin. Two pins at one commit ask
+/// about it once, and once more after the fetch. A pin on a switched-off
+/// source is not asked about, fetched for or released. A revision the user
+/// pinned is never touched.
 #[test]
 fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
-    struct Row {
-        case: &'static str,
-        served_before: bool,
-        served_after: bool,
-        fetch_fails: bool,
-        fetches: usize,
-        released: Option<bool>,
-    }
-    let rows = [
-        Row {
-            case: "served: no fetch, held",
-            served_before: true,
-            served_after: true,
-            fetch_fails: false,
-            fetches: 0,
-            released: Some(false),
-        },
-        Row {
-            case: "newer than the last fetch: fetched, held",
-            served_before: false,
-            served_after: true,
-            fetch_fails: false,
-            fetches: 1,
-            released: Some(false),
-        },
-        Row {
-            case: "gone upstream: fetched, released",
-            served_before: false,
-            served_after: false,
-            fetch_fails: false,
-            fetches: 1,
-            released: Some(true),
-        },
-        Row {
-            case: "fetch fails: refused, held",
-            served_before: false,
-            served_after: false,
-            fetch_fails: true,
-            fetches: 1,
-            released: None,
-        },
-    ];
     let commit = "a".repeat(40);
     let manifest = manifest_with(&[("one", None), ("two", None), ("held", Some("fff"))], &[]);
     let lock = lock_with(&[
@@ -579,20 +604,26 @@ fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
             entry("two", Some(&commit), &[Reason::Requested]),
         ),
     ]);
-    for row in rows {
+    for row in RELEASE_ROWS {
         let case = row.case;
         let targets = Targets {
             declarations: BTreeSet::new(),
             reach: Reach::Carriers,
         };
+        let mut manifest = manifest.clone();
+        manifest.sources.get_mut("cat").unwrap().enabled = !row.source_off;
         let (mut held, mut pins) = held_manifest(&manifest, &lock, &targets);
         let fetched = std::cell::Cell::new(0);
+        let probed = std::cell::Cell::new(0);
         let result = release(
             &mut held,
             &mut pins,
-            |_, _| match fetched.get() {
-                0 => row.served_before,
-                _ => row.served_after,
+            |_, _| {
+                probed.set(probed.get() + 1);
+                match fetched.get() {
+                    0 => row.served_before,
+                    _ => row.served_after,
+                }
             },
             |_| {
                 fetched.set(fetched.get() + 1);
@@ -606,6 +637,7 @@ fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
             },
         );
         assert_eq!(fetched.get(), row.fetches, "{case}");
+        assert_eq!(probed.get(), row.probes, "{case}");
         let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
         assert_eq!(rev("held").as_deref(), Some("fff"), "{case}");
         match row.released {

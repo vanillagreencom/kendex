@@ -60,6 +60,9 @@ enum Catalog {
     /// Moved and recorded there by a teammate, while this machine's mirror
     /// stops at the install: the record names a commit upstream still holds.
     Behind,
+    /// Out of reach, with no cache on this machine: a fresh clone of the
+    /// project, offline or denied the catalog.
+    Unreachable,
 }
 
 struct Row {
@@ -78,6 +81,9 @@ struct Row {
     /// the subject, and nothing else about its record moves.
     requirement: Option<&'static str>,
     changed: &'static [&'static str],
+    /// Unchanged paths that leave the generated-paths inventory: only a
+    /// switched-off source's renders, which stay on disk unmanaged.
+    delisted: &'static [&'static str],
 }
 
 const HOOK_PATHS: &[&str] = &[
@@ -110,6 +116,7 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex enable",
@@ -121,6 +128,7 @@ const ROWS: &[Row] = &[
         enabled: Some(true),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "app toggle",
@@ -132,6 +140,7 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex disable, a requirement nothing declares",
@@ -154,6 +163,7 @@ const ROWS: &[Row] = &[
             ".claude/skills/helper/SKILL.md",
             ".claude/skills/helper/SKILL.md.disabled",
         ],
+        delisted: &[],
     },
     Row {
         case: "kendex source remove",
@@ -165,6 +175,7 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex source disable",
@@ -176,6 +187,7 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex source enable",
@@ -187,6 +199,7 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex disable, record ahead of the mirror",
@@ -198,6 +211,56 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
+    },
+    Row {
+        case: "kendex source disable, catalog unreachable",
+        prepare: Some(switch_off_picat),
+        setup: None,
+        catalog: Catalog::Unreachable,
+        verb: Verb::Cli(&["source", "disable", "cat", "--leave"]),
+        subject: Subject::Source("cat"),
+        enabled: None,
+        requirement: None,
+        changed: &["kendex.toml", ".kendex-lock.json", ".kendex-generated.json"],
+        delisted: &[
+            ".agents/skills/second/SKILL.md",
+            ".agents/skills/second__command/SKILL.md",
+            ".claude/agents/review.md",
+            ".claude/hooks/guard.sh",
+            ".claude/skills/second/SKILL.md",
+            ".mcp.json",
+        ],
+    },
+    Row {
+        case: "kendex disable, a switched-off source unreachable",
+        prepare: Some(switch_off_cat_and_picat),
+        setup: None,
+        catalog: Catalog::Unreachable,
+        verb: Verb::Cli(&[
+            "disable",
+            "data-science/eda",
+            "--scope",
+            "project",
+            "-y",
+            "--leave",
+        ]),
+        subject: Subject::Package {
+            kind: "skill",
+            name: "data-science/eda",
+        },
+        enabled: Some(false),
+        requirement: None,
+        changed: &[
+            "kendex.toml",
+            ".kendex-lock.json",
+            ".kendex-generated.json",
+            ".claude/skills/data-science__eda/SKILL.md",
+            ".claude/skills/data-science__eda/SKILL.md.disabled",
+            ".opencode/skills/data-science-eda/SKILL.md",
+            ".opencode/skills/data-science-eda/SKILL.md.disabled",
+        ],
+        delisted: &[],
     },
     Row {
         case: "kendex disable, recorded commit gone",
@@ -209,6 +272,7 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex enable, recorded commit gone",
@@ -220,6 +284,7 @@ const ROWS: &[Row] = &[
         enabled: Some(true),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "app toggle, recorded commit gone",
@@ -231,6 +296,7 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
+        delisted: &[],
     },
     Row {
         case: "kendex source enable, recorded commit gone",
@@ -242,6 +308,7 @@ const ROWS: &[Row] = &[
         enabled: Some(true),
         requirement: None,
         changed: &["kendex.toml", ".kendex-lock.json", ".kendex-generated.json"],
+        delisted: &[],
     },
 ];
 
@@ -302,6 +369,36 @@ fn fall_behind(world: &World) {
     let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
     assert!(fetched.status.success(), "{}", said(&fetched));
     git(&world.catalog, &["reset", "-q", "--hard", ahead.trim()]);
+}
+
+/// The source only the Pi package reads from, switched off.
+fn switch_off_picat(world: &World) {
+    let output = kendex(
+        &world.home,
+        &world.project,
+        &["source", "disable", "picat", "--leave"],
+    );
+    assert!(output.status.success(), "{}", said(&output));
+}
+
+/// Every source the catalog's repository is read under for a package,
+/// switched off.
+fn switch_off_cat_and_picat(world: &World) {
+    switch_off_picat(world);
+    let output = kendex(
+        &world.home,
+        &world.project,
+        &["source", "disable", "cat", "--leave"],
+    );
+    assert!(output.status.success(), "{}", said(&output));
+}
+
+/// The catalog moved out of reach and this machine's source cache gone.
+fn lose_the_catalog(world: &World) {
+    let away = world.catalog.with_file_name("cat-unreachable");
+    fs::rename(&world.catalog, &away).unwrap_or_else(|error| panic!("{}: {error}", away.display()));
+    let cache = Env::host_rooted(&world.home).source_cache_dir();
+    fs::remove_dir_all(&cache).unwrap_or_else(|error| panic!("{}: {error}", cache.display()));
 }
 
 /// The catalog's history rewritten so the installed commit is gone from
@@ -403,7 +500,7 @@ fn expected_record(
     after: &serde_json::Value,
 ) -> serde_json::Value {
     match row.catalog {
-        Catalog::Moved | Catalog::Behind => before,
+        Catalog::Moved | Catalog::Behind | Catalog::Unreachable => before,
         Catalog::Rewritten => {
             let installed = &before["entries"]["hook:guard:claude"];
             let gone = installed["sourceCommit"].as_str().unwrap();
@@ -443,6 +540,7 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
             Catalog::Moved => move_the_catalog(&world),
             Catalog::Rewritten => rewrite_the_catalog(&world),
             Catalog::Behind => fall_behind(&world),
+            Catalog::Unreachable => lose_the_catalog(&world),
         }
         let before = record(&world);
         let before_listed = listed(&world);
@@ -465,12 +563,17 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
                 assert_eq!(entry["enabled"], enabled, "{case}: {entry}");
             }
         }
-        let unlisted: Vec<_> = before_listed
-            .difference(&listed(&world))
-            .filter(|path| !row.changed.contains(&path.as_str()))
-            .cloned()
+        let after_listed = listed(&world);
+        let unlisted: BTreeSet<&str> = before_listed
+            .difference(&after_listed)
+            .map(String::as_str)
+            .filter(|path| !row.changed.contains(path))
             .collect();
-        assert!(unlisted.is_empty(), "{case}: de-listed {unlisted:?}");
+        assert_eq!(
+            unlisted,
+            row.delisted.iter().copied().collect(),
+            "{case}: de-listed"
+        );
 
         let mut expected = expected_record(&world, row, before, &after);
         // The requirement switches with its parent, which renames what it

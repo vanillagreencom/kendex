@@ -228,32 +228,57 @@ pub(crate) fn release_unserved(
 
 /// [`release_unserved`] against the cache reads it is handed: `serves`
 /// answers whether a commit can be read here, `fetch` brings a repository's
-/// mirror current. Each repository holding a pin `serves` refuses is
-/// fetched once; a pin it still refuses after that is gone. A fetch that
-/// fails proves nothing about what upstream holds, so the write is refused
-/// and every pin stays.
+/// mirror current. Each commit is asked about once, and again once after
+/// its repository is fetched; each repository holding a commit `serves`
+/// refuses is fetched once, and a pin still refused after that is gone. A
+/// fetch that fails proves nothing about what upstream holds, so the write
+/// is refused and every pin stays. A pin on a switched-off source is read
+/// by nothing this pass, as the resolvers skip it, so it is neither asked
+/// about nor fetched for, and stays.
 fn release(
     held: &mut Manifest,
     pins: &mut HeldPins,
     serves: impl Fn(&str, &str) -> bool,
     mut fetch: impl FnMut(&str) -> Result<()>,
 ) -> Result<()> {
-    let mut unserved: BTreeMap<String, String> = BTreeMap::new();
+    let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
+    let mut fetching: BTreeMap<String, String> = BTreeMap::new();
     for pin in &pins.pins {
-        if !unserved.contains_key(&pin.repo) && !serves(&pin.repo, &pin.commit) {
-            unserved.insert(pin.repo.clone(), pin.source.clone());
+        if !held
+            .sources
+            .get(&pin.source)
+            .is_some_and(|decl| decl.enabled)
+        {
+            continue;
+        }
+        let commit = (pin.repo.clone(), pin.commit.clone());
+        if !*served
+            .entry(commit)
+            .or_insert_with(|| serves(&pin.repo, &pin.commit))
+        {
+            fetching
+                .entry(pin.repo.clone())
+                .or_insert_with(|| pin.source.clone());
         }
     }
-    for (repo, source) in &unserved {
+    for (repo, source) in &fetching {
         if fetch(repo).is_err() {
             return Err(CoreError::SourcePending {
                 name: source.clone(),
             });
         }
     }
-    let (kept, gone) = std::mem::take(&mut pins.pins)
-        .into_iter()
-        .partition(|pin| !unserved.contains_key(&pin.repo) || serves(&pin.repo, &pin.commit));
+    for ((repo, commit), readable) in &mut served {
+        if !*readable && fetching.contains_key(repo) {
+            *readable = serves(repo, commit);
+        }
+    }
+    let (kept, gone) = std::mem::take(&mut pins.pins).into_iter().partition(|pin| {
+        served
+            .get(&(pin.repo.clone(), pin.commit.clone()))
+            .copied()
+            .unwrap_or(true)
+    });
     HeldPins { pins: gone }.unpin(held);
     pins.pins = kept;
     Ok(())

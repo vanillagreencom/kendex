@@ -16,6 +16,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 
+use super::toggle_locked::rewrite_the_catalog;
 use super::verify_records::{World, commit, git, kendex, said, world, write};
 
 const RECORD: &str = ".kendex-lock.json";
@@ -247,4 +248,41 @@ fn a_locked_refresh_reads_a_redeclared_source_afresh() {
     assert_eq!(spare["repo"], before["sources"]["spare"]["repo"]);
     assert_eq!(spare["rev"], "main");
     assert_eq!(spare["commit"], catalog_tip(&world).as_str());
+}
+
+/// A Pi package whose recorded commit is gone from the catalog's history,
+/// on a machine whose mirror never held it, is settled at the catalog's
+/// current commit, the commit the plan read it at: the settle reads its
+/// declarations through the same release the plan does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_locked_refresh_settles_a_pi_package_whose_recorded_commit_is_gone() {
+    let world = world();
+    write(
+        &world.catalog.join("pi-extensions/@scope/widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    git(&world.catalog, &["add", "-A"]);
+    rewrite_the_catalog(&world);
+
+    let locked = kendex(
+        &world.home,
+        &world.project,
+        &[
+            "refresh", "--scope", "project", "--locked", "--yes", "--leave",
+        ],
+    );
+    assert!(locked.status.success(), "{}", said(&locked));
+    let index =
+        fs::read_to_string(world.project.join(".pi/packages/@scope/widgets/index.js")).unwrap();
+    assert!(index.contains("version = 2"), "{index}");
+    let head = catalog_tip(&world);
+    let record = record(&world);
+    let widgets = record["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|entry| entry["kind"] == "pi-extension")
+        .unwrap();
+    assert_eq!(widgets["sourceCommit"], head, "{widgets}");
 }

@@ -1,1 +1,1 @@
-- `kendex refresh --locked`, `remove`, `enable`, `disable` and the source switches fetch a recorded commit this machine lacks, and read the newest catalog only where that commit is gone.
+- `kendex refresh --locked`, `remove`, `enable`, `disable` and the source switches fetch a recorded commit a switched-on source lacks here, and read the newest catalog only where it is gone.

@@ -128,15 +128,21 @@ pub fn planned_closure_held(
 
 /// The declarations a plan run with `options` against `lock` reads: under
 /// a hold, each follower the record can place carries the commit `lock`
-/// records as its revision. A step outside the plan that resolves a
-/// declaration itself, the Pi settle, reads it here so it reads the commit
-/// the plan read. Without a hold this is `manifest`.
+/// records as its revision, released where that commit is gone as the
+/// plan releases it. A step outside the plan that resolves a declaration
+/// itself, the Pi settle, reads it here so it reads the commit the plan
+/// read. Without a hold this is `manifest`.
 pub fn held_declarations<'a>(
+    env: &Env,
     manifest: &'a Manifest,
     lock: &crate::lock::Lock,
     options: &super::PlanOptions,
-) -> std::borrow::Cow<'a, Manifest> {
-    desired::hold::planning_manifest(manifest, lock, options).0
+) -> crate::error::Result<std::borrow::Cow<'a, Manifest>> {
+    let (mut planning, pins) = desired::hold::planning_manifest(manifest, lock, options);
+    if let Some(mut pins) = pins {
+        desired::hold::release_unserved(env, options, planning.to_mut(), &mut pins)?;
+    }
+    Ok(planning)
 }
 
 /// The closure `manifest` expands to, `held` naming the declarations a
