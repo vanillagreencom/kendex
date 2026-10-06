@@ -632,6 +632,9 @@ pub struct ResolutionResponse {
     pub request: ModelRequest,
     /// Tagged decision. A refused decision accompanies nonzero CLI status.
     pub resolution: ModelResolution,
+    /// The line the non-JSON path prints, present only when the decision carries diagnostics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// Root selector comparison, present only for callers supplying an observation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector_change: Option<SelectorChange>,

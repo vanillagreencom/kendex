@@ -298,7 +298,7 @@ impl ModelResolution {
             | Self::Refused { diagnostics, .. } => diagnostics,
         }
     }
-    /// One line for the warning owner. JSON callers transport causes instead.
+    /// One line for the warning owner. JSON callers receive this line and own only its print-once latch.
     pub fn warning(&self, request: &ModelRequest) -> Option<String> {
         if self.diagnostics().is_empty() {
             return None;

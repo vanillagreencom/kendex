@@ -1,5 +1,5 @@
-//! The sole CLI bridge for model policy. JSON consumers transport diagnostics
-//! to their session warning owner; selector-only legacy output is not proof of access.
+//! The sole CLI bridge for model policy. JSON consumers print the response's
+//! warning line once per session; selector-only legacy output is not proof of access.
 use super::{CliResult, answer};
 use clap::Args;
 use kendex_core::engine::{AgentModelRequest, agent_model_request};
@@ -35,7 +35,7 @@ pub struct TierModelArgs {
     /// Replace supplied list evidence with local Codex model/list under this account
     #[arg(long)]
     discover_codex_models: bool,
-    /// Tagged model-resolution-v1 response; diagnostics belong to the caller's latch
+    /// Tagged model-resolution-v1 response; the caller prints its warning once
     #[arg(long)]
     json: bool,
 }
@@ -139,16 +139,18 @@ fn emit(
         ModelResolution::Refused { code, .. } => Some(code.clone()),
         _ => None,
     };
+    let warning = resolution.warning(&request);
     if json {
         answer(&serde_json::to_string(&ResolutionResponse {
             protocol: PROTOCOL.into(),
             harness,
             request: request.clone(),
             resolution: resolution.clone(),
+            warning,
             selector_change,
         })?);
     } else {
-        if let Some(warning) = resolution.warning(&request) {
+        if let Some(warning) = warning {
             crate::ui::warn(&warning);
         }
         let selector = match &resolution {

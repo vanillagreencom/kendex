@@ -345,6 +345,40 @@ fn unknown_pin_warns_once_with_original_request_and_failed_source() {
         assert!(warning.contains(key), "{warning}");
     }
 }
+/// The Claude plugin logs `warning` verbatim, so it must be the plain path's line.
+#[test]
+fn json_warning_is_the_line_the_plain_path_prints() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let mut fallback = context();
+    fallback["models"] = json!({"tag":"failed","source":"fixture:reader","cause":"read failed"});
+    for (evidence, warns) in [(fallback, true), (context(), false)] {
+        let args = [
+            "tier-model",
+            "pi",
+            "--model",
+            "fast",
+            "--runtime-context-stdin",
+        ];
+        let plain = invoke(&home, &args, Some(&evidence));
+        assert!(plain.status.success(), "{plain:?}");
+        let stderr = String::from_utf8(plain.stderr).unwrap();
+        let printed = stderr
+            .lines()
+            .find(|l| l.starts_with("model-resolution:"))
+            .map(str::to_owned);
+        let json = invoke(&home, &[&args[..], &["--json"]].concat(), Some(&evidence));
+        assert!(json.status.success(), "{json:?}");
+        let response: Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(printed.is_some(), warns, "{stderr}");
+        assert_eq!(
+            response.get("warning").and_then(Value::as_str),
+            printed.as_deref(),
+            "{response}"
+        );
+        assert!(json.stderr.is_empty(), "{json:?}");
+    }
+}
 #[test]
 fn no_model_and_confirmed_unavailable_pin_refuse_with_tags() {
     let tmp = tempfile::tempdir().unwrap();
