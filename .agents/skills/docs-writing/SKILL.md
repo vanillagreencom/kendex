@@ -11,7 +11,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.3"
+  version: "3.0.4"
 tags: [docs]
 ---
 

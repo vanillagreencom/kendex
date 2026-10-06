@@ -8,7 +8,9 @@ The file `docs/decisions/<ID>-one-dismiss-pattern.md`, with its INDEX row append
 [← Decision Index](INDEX.md)
 
 **Date**: 2026-09-14
+
 **Status**: Active
+
 **Research**: LUM-233
 
 **Decision**: Every sheet, dialog and toast closes through `dismiss()` in `ui/lib/dismiss.ts`, which owns Escape, the close control and the backdrop click.

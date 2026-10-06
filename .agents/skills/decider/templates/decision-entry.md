@@ -8,7 +8,9 @@ Skeleton for `[DECISION_ID]-[DESCRIPTOR].md`. Constraints: `../schemas/decision-
 [← Decision Index](INDEX.md)
 
 **Date**: [YYYY-MM-DD]
+
 **Status**: Active
+
 **Research**: [ISSUE_OR_EVIDENCE_LINK or —]
 
 **Decision**: [what was chosen]
