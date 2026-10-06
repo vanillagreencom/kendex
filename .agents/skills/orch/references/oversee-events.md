@@ -57,7 +57,7 @@ When a lane reports a successful direct push to the base branch, record its cycl
 .agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] record --commit [PUSHED_SHA] [ITEM_KEY]
 ```
 
-Use `--tier [TIER]` only for an old lane record without a launch tier. Add `--repo [OWNER/REPO]` when the lane record names no repository. Unknown fields print `-`; the verdict is `unmeasured` when classified. Report a refusal without blocking lane close.
+Use `--tier [TIER]` only for an old lane record without a launch tier. Add `--repo [OWNER/REPO]` when the lane record names no repository. `merged` is the time the push reached the base branch, as GitHub's repository activity log records it, never the commit's committer date; where that read fails, `actual` prints `-`, `missing` names `merged`, and a `merged-unread` line names the cause. Unknown fields print `-`; the verdict is `unmeasured` when classified. Report a refusal without blocking lane close.
 
 ## Event kinds
 

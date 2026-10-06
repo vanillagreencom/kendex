@@ -25,8 +25,15 @@
 # An old record with no tier warns as launch-tier-missing and requires --tier.
 # --commit records a single-commit direct push. The caller must refuse a
 # multi-commit push: no push-before value is an input. The supplied commit's
-# authored date is first_commit and its committer date is merged, not the
-# network push time. Its first parent to the commit uses the same classifier.
+# authored date is first_commit, and merged is the time the push reached the
+# base branch, read from GitHub's repository activity log: the push whose
+# `after` is the commit, else the earliest push since the launch whose `after`
+# contains it, never the committer date. Where that read fails or finds no
+# such push, merged and actual are null and stderr carries
+# `oversee-cycle: merged-unread commit=SHA cause=C`, C one of
+# repo-unresolved, base-unresolved, launch-unreadable, activity-unread,
+# compare-failed or no-push. Its first parent to the commit uses the same
+# classifier.
 # No CI check is read. pr_opened, gate_green, ci_green and armed are null,
 # as are open, phase, gate waits, pr_rounds and refixed; verdict is unmeasured
 # when classified. The cycle object carries commit instead of pr, and the
@@ -376,14 +383,59 @@ else
   class_cause="$CHANGE_CLASS_CAUSE"
 fi
 
+# push_time — when COMMIT reached the base branch, from GitHub's own record of
+# the push: the push whose `after` is COMMIT, else the earliest push from the
+# lane's launch on whose `after` contains it, as a landing queue's batch push
+# does. The committer date never stands in: a rebase or amend before the push
+# rewrites it, and a queue's wait and the push come after it. The log is read
+# over the shortest period GitHub filters by that holds the launch, an hour of
+# clock skew spared. Sets MERGED_AT, or MERGED_CAUSE with push.err.
+push_time() {
+  local repo="$REPO" base query launched span at after status
+  MERGED_AT="" MERGED_CAUSE=""
+  : >"$WORK/push.err"
+  [[ -n "$repo" ]] || repo="$(unset GH_REPO; kendex_github_resolve_gh_repo "${checkout:-.}" 2>/dev/null)" \
+    || { MERGED_CAUSE="repo-unresolved"; return; }
+  base="$("$SCRIPT_DIR/resolve-base-branch" "${checkout:-.}" 2>"$WORK/push.err")" \
+    || { MERGED_CAUSE="base-unresolved"; return; }
+  query="ref=$(jq -rn --arg r "refs/heads/$base" '$r | @uri')&activity_type=push&per_page=100"
+  launched="$(jq -r '.launched_at // empty | fromdate' <<<"$lane" 2>"$WORK/push.err")" \
+    || { MERGED_CAUSE="launch-unreadable"; return; }
+  for span in day:86400 week:604800 month:2419200 quarter:7689600 year:31536000; do
+    if [[ -n "$launched" ]] && (( $(date +%s) - launched + 3600 < ${span#*:} )); then
+      query+="&time_period=${span%%:*}"
+      break
+    fi
+  done
+  if ! gh api --paginate "repos/$repo/activity?$query" >"$WORK/activity.json" 2>"$WORK/push.err" \
+    || ! jq -rs --arg commit "$COMMIT" --arg since "${launched:-0}" '[.[][] | {at: .timestamp, after}] | sort_by(.at)
+      | ([.[] | select(.after == $commit)] | first | .at // empty | "\(.) exact"),
+        (.[] | select((.at | fromdate) >= ($since | tonumber)) | "\(.at) \(.after)")' \
+      "$WORK/activity.json" >"$WORK/pushes" 2>"$WORK/push.err"; then
+    MERGED_CAUSE="activity-unread"
+    return
+  fi
+  while read -r at after; do
+    if [[ "$after" != exact ]]; then
+      status="$(gh api "repos/$repo/compare/$COMMIT...$after" --jq .status 2>"$WORK/push.err")" \
+        || { MERGED_CAUSE="compare-failed"; return; }
+      [[ "$status" == ahead ]] || continue
+    fi
+    MERGED_AT="$at"
+    return
+  done <"$WORK/pushes"
+  MERGED_CAUSE="no-push"
+}
+
 if [[ -n "$COMMIT" ]]; then
   COMMIT="$(git rev-parse --verify --end-of-options "$merge^{commit}" 2>"$WORK/commit.err")" \
     || refuse commit-unreadable "$merge" "$WORK/commit.err"
-  dates="$(git show -s --format='%at %ct' "$COMMIT" -- 2>"$WORK/commit.err")" \
+  authored="$(git show -s --format='%at' "$COMMIT" -- 2>"$WORK/commit.err")" \
     || refuse commit-unreadable "$COMMIT" "$WORK/commit.err"
-  timeline="$(jq -cn --arg commit "$COMMIT" --arg dates "$dates" '
-    ($dates | split(" ") | map(tonumber | todate)) as $d
-    | {commit: $commit, stamps: {first_commit: $d[0], merged: $d[1]}}')" \
+  push_time
+  timeline="$(jq -cn --arg commit "$COMMIT" --arg authored "$authored" --arg merged "$MERGED_AT" '
+    {commit: $commit, stamps: {first_commit: ($authored | tonumber | todate),
+      merged: (if $merged == "" then null else $merged end)}}')" \
     || refuse commit-unreadable "$COMMIT"
 fi
 
@@ -491,6 +543,10 @@ log_row "$ITEM" "$line"
 printf '%s\n' "$line"
 [[ -z "$class_cause" ]] || printf 'oversee-cycle: class-unread cause=%s\n' "$class_cause" >&2
 [[ ! -s "$WORK/class.err" || -z "$class_cause" ]] || cat -- "$WORK/class.err" >&2
+if [[ -n "${MERGED_CAUSE:-}" ]]; then
+  printf 'oversee-cycle: merged-unread commit=%s cause=%s\n' "$COMMIT" "$MERGED_CAUSE" >&2
+  cat -- "$WORK/push.err" >&2
+fi
 if [[ -n "$rounds_unread" ]]; then
   printf 'oversee-cycle: rounds-unread item=%s\n' "$ITEM" >&2
   cat -- "$rounds_unread" >&2

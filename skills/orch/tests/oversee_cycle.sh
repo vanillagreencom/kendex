@@ -72,10 +72,24 @@ case "$1" in
 esac
 SH
 # gh answers `repo view` with the case's slug file, owner/repo by default,
-# which is the repository this checkout resolves to.
+# which is the repository this checkout resolves to. Its `api` answers a
+# repository activity read with the case's activity.json and a compare of
+# the commit with AFTER with the case's compare-AFTER file, the status
+# GitHub gives, failing as GitHub's 404 where the case holds no such file;
+# each api call is logged to gh.calls.
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
+if [[ "$1" == api ]]; then
+  printf '%s\n' "$*" >> "$CASE/gh.calls"
+  case "$*" in
+    "api --paginate repos/owner/repo/activity?"*) file="$CASE/activity.json" ;;
+    "api repos/owner/repo/compare/"*" --jq .status") file="$CASE/compare-${2##*...}" ;;
+    *) exit 9 ;;
+  esac
+  [[ -f "$file" ]] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+  exec cat -- "$file"
+fi
 [[ "$1 $2" == "repo view" ]] || exit 1
 if [[ -f "$CASE/slug" ]]; then cat "$CASE/slug"; else echo owner/repo; fi
 SH
@@ -136,12 +150,20 @@ timeline() {
 }
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 
+# pushes [SECS:AFTER...]: the base branch's push log GitHub answers, each push
+# SECS past T0 leaving the branch at AFTER, newest first as GitHub orders it.
+pushes() {
+  jq -n --argjson t0 "$T0" --arg entries "$*" '[$entries | split(" ")[] | select(. != "") | split(":")
+    | {activity_type: "push", ref: "refs/heads/main", timestamp: ($t0 + (.[0] | tonumber) | todate), after: .[1]}]
+    | sort_by(.timestamp) | reverse' > "$CASE/activity.json"
+}
+
 RECORD_ARGS=(--pr 7)
 record() { # ITEM TIER [ARGS...]
   local item="$1" tier="$2" rc=0 tier_args=()
   shift 2
   [[ -z "$tier" ]] || tier_args=(--tier "$tier")
-  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record ${RECORD_ARGS[@]+"${RECORD_ARGS[@]}"} ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
+  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO -u WORKTREE_DEFAULT_BRANCH "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record ${RECORD_ARGS[@]+"${RECORD_ARGS[@]}"} ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
@@ -158,7 +180,7 @@ while IFS='|' read -r name form want_out want_err; do
   edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
   case "$form" in
     pr) RECORD_ARGS=(--pr 7); timeline 900 ;;
-    commit) RECORD_ARGS=(--commit "$MERGE") ;;
+    commit) RECORD_ARGS=(--commit "$MERGE"); pushes "900:$MERGE" ;;
     both) RECORD_ARGS=(--pr 7 --commit "$MERGE"); timeline 900 ;;
     neither) RECORD_ARGS=() ;;
   esac
@@ -173,23 +195,60 @@ neither|neither|rc=2 |oversee-cycle: usage=--pr,--commit
 ROWS
 assert_eq "$(state '[.lanes[] | has("cycle")] | any')" false "neither form writes no cycle"
 
+# The commit's committer date is 900; GitHub records its push at 1200, after
+# another lane's push at 300.
 new_case direct-stamps
 printf small > "$CASE/class"
 edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
 RECORD_ARGS=(--commit "$MERGE")
+pushes "300:$BASE" "1200:$MERGE"
 got="$(record KEN-1 '')"
 assert_eq "$got" \
-  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- actual=900 open=- verdict=unmeasured phase=- phase_secs=- cause=- bot_wait=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
-  "direct push prints the commit, elapsed time, escape and absent PR fields"
+  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- actual=1200 open=- verdict=unmeasured phase=- phase_secs=- cause=- bot_wait=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
+  "direct push prints the commit, elapsed time to its push, escape and absent PR fields"
 assert_eq "$(state '.lanes[0].cycle | [.commit, has("pr"), .class, .tier, .actual, .escaped, .stamps]')" \
-  "[\"$MERGE\",false,\"small\",\"micro\",900,true,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 900)\"}]" \
-  "direct push persists authored and committer dates in UTC"
+  "[\"$MERGE\",false,\"small\",\"micro\",1200,true,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\"}]" \
+  "direct push persists its authored date and its push time, not its committer date, in UTC"
+assert_eq "$(grep -c '^api --paginate repos/owner/repo/activity?ref=refs%2Fheads%2Fmain&activity_type=push&per_page=100' "$CASE/gh.calls")|$(grep -c compare/ "$CASE/gh.calls" || true)" \
+  "1|0" "the push is read from the base branch's push log, and a push leaving the branch at the commit needs no compare"
 assert_eq "$(state '.fleet_log[-1].text')" "\"${got#rc=0 }\"" "direct cycle row is the printed row"
 assert_eq "$(grep -o -- '--base [^ ]* --head [^ ]*' "$CASE/class.calls")" "--base $BASE --head $MERGE" \
   "direct push reuses the first-parent classifier"
 assert_eq "$(test -f "$CASE/github.calls" && echo called || echo absent)" absent "direct push reads no PR or CI checks"
 assert_contains "$(cd "$REPO" && "$BIN" --state-dir "$CASE/state" rollup)" \
-  'rollup class=small items=1 median=900 p90=900 misses=0' "rollup includes the direct push in its class"
+  'rollup class=small items=1 median=1200 p90=1200 misses=0' "rollup includes the direct push in its class"
+
+# A push the log cannot place: each row is the base branch's push log, the
+# compare answers, and the merged stamp, actual and merged-unread cause the
+# record gives. A batch push whose `after` contains the commit places it;
+# a push before the launch is never compared, its compare left unanswered.
+echo "=== the push time, from GitHub's push log, and a push it cannot place ==="
+OTHER=1111111111111111111111111111111111111111 BATCH=2222222222222222222222222222222222222222
+OLD=3333333333333333333333333333333333333333
+shas() { local v="${1//other/$OTHER}"; v="${v//batch/$BATCH}"; printf '%s' "${v//old/$OLD}"; } # ROW_FIELD
+while IFS='|' read -r name log answers want_merged want_actual want_cause; do
+  new_case "push-$name"
+  printf small > "$CASE/class"
+  edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
+  [[ "$log" == unread ]] || pushes "$(shas "$log")"
+  for answer in $(shas "$answers"); do printf %s "${answer#*=}" > "$CASE/compare-${answer%%=*}"; done
+  got="$(record KEN-1 '')"
+  assert_eq "$(state '.lanes[0].cycle.stamps.merged') $(field actual "$got") $(cut -d' ' -f1 <<<"$got")|$(sed -n 's/^oversee-cycle: merged-unread commit=[^ ]* //p' "$CASE/err")" \
+    "${want_merged/AT/\"$(at 1500)\"} $want_actual rc=0|$want_cause" "push time: $name"
+done <<'ROWS'
+batch push containing it|-100:old 300:other 1500:batch|other=diverged batch=ahead|AT|actual=1500|
+no push leaves the branch at it or past it|300:other|other=diverged|null|actual=-|cause=no-push
+log unread|unread||null|actual=-|cause=activity-unread
+compare unanswered|1500:batch||null|actual=-|cause=compare-failed
+ROWS
+
+# The log is read over GitHub's shortest period that holds the launch.
+new_case push-period
+printf small > "$CASE/class"
+edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0] += {tier: \"micro\", launched_at: \"$(jq -rn 'now - 7200 | floor | todate')\"}"
+pushes "1200:$MERGE"
+record KEN-1 '' >/dev/null
+assert_eq "$(grep -o 'time_period=[a-z]*' "$CASE/gh.calls")" time_period=day "a launch two hours back reads the past day's pushes"
 RECORD_ARGS=(--pr 7)
 
 # --- the target per class, and the miss verdict ------------------------------
@@ -724,10 +783,31 @@ neither|[[ -z "$PR" && -z "$COMMIT" ]]|{ [[ -z "$PR" && -z "$COMMIT" ]] && false
 both|[[ -n "$PR" && -n "$COMMIT" ]]; then|{ [[ -n "$PR" && -n "$COMMIT" ]] && false; }; then|both
 ROWS
 RECORD_ARGS=(--commit "$MERGE")
-control m-direct-stamp oversee-cycle 'merged: $d[1]' 'merged: $d[0]'
-new_case c-direct-stamp; printf small > "$CASE/class"
+# Each rule of the push read alone: the push leaving the branch at the
+# commit, a later push containing it, the launch bound on the compared pushes,
+# no stand-in for an unplaced push, and the period the log is read over.
+control m-push-exact oversee-cycle '([.[] | select(.after == $commit)] | first' '([.[] | select(false)] | first'
+new_case c-push-exact; printf small > "$CASE/class"; pushes "300:$BASE" "1200:$MERGE"
+assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
+  "control: without the exact match, a push leaving the branch at the commit is compared and goes unplaced"
+control m-push-ahead oversee-cycle '[[ "$status" == ahead ]] || continue' '[[ "$status" == never ]] || continue'
+new_case c-push-ahead; printf small > "$CASE/class"; pushes "1500:$BATCH"; printf ahead > "$CASE/compare-$BATCH"
+assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
+  "control: without the containment answer, a batch push containing the commit goes unplaced"
+control m-push-since oversee-cycle 'select((.at | fromdate) >= ($since | tonumber))' 'select(true)'
+new_case c-push-since; printf small > "$CASE/class"; pushes "-100:$OLD" "1500:$BATCH"; printf ahead > "$CASE/compare-$BATCH"
+assert_eq "$(field actual "$(record KEN-1 micro)")|$(sed -n 's/^oversee-cycle: merged-unread commit=[^ ]* //p' "$CASE/err")" 'actual=-|cause=compare-failed' \
+  "control: without the launch bound, a push before the launch is compared"
+control m-push-fallback oversee-cycle 'merged: (if $merged == "" then null' 'merged: (if $merged == "" then ($authored | tonumber | todate)'
+new_case c-push-fallback; printf small > "$CASE/class"; pushes "300:$OTHER"; printf diverged > "$CASE/compare-$OTHER"
 assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=60' \
-  "control: using the authored date as merged turns the direct elapsed-time assertion red"
+  "control: a stand-in date for an unplaced push turns the null-merged assertion red"
+control m-push-period oversee-cycle 'query+="&time_period=${span%%:*}"' 'query+=""'
+new_case c-push-period; printf small > "$CASE/class"; pushes "1200:$MERGE"
+edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0].launched_at = \"$(jq -rn 'now - 7200 | floor | todate')\""
+record KEN-1 micro >/dev/null
+assert_eq "$(grep -c 'time_period=' "$CASE/gh.calls" || true)" 0 \
+  "control: without the period, the whole push log is read"
 RECORD_ARGS=(--pr 7)
 
 control m-merge-target oversee-cycle '$targets[$class] + ($merge_group // 0)' '$targets[$class] + 0'
