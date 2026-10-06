@@ -749,7 +749,7 @@ assert_eq 'the record, a fragment, a package record, a version file, a package f
 # shellcheck disable=SC2086
 assert_eq 'with no version paths a package.json and its CHANGELOG.md are none' \
   'rc=0 none,none' "$(classify "$CE" 'COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS=skills/*/SKILL.md' pkg/CHANGELOG.md pkg/package.json)"
-assert_eq '--classify beside a scope is refused' "rc=2 ${ERR}scope-conflict=1:0:1" "$(run "" '--staged --classify code.sh')"
+assert_eq '--classify beside a scope is refused' "rc=2 ${ERR}scope-conflict=1:0:1:0" "$(run "" '--staged --classify code.sh')"
 # One control per rule: the mutant answers otherwise for the path that rule
 # names.
 R="$TMP/classify"
@@ -771,6 +771,41 @@ classify_control 'with no package record pkg/CHANGELOG.md is none' \
 classify_control 'a package glob matching across / declares the nested SKILL.md' \
   'elif gg_path_placer "$f" $GG_CHANGELOG_PACKAGES; then' 'elif gg_path_matches "$f" $GG_CHANGELOG_PACKAGES; then'
 classify_control 'with no render inventory the render is none' 'elif generated_path_contains "$f"; then' 'elif false; then'
+
+echo "=== --unversion drops only the version the bump check reads ==="
+# The version file on stdin, less its top-level version; orch's restack-skip
+# compares two sides through it, so the output is read as JSON, compacted.
+unversion() { # SCRIPT INPUT
+  local rc=0 out=""
+  out="$(printf '%s' "$2" | (cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" "$1" --unversion 2>/dev/null))" || rc=$?
+  [ "$rc" -ne 0 ] || out="$(printf '%s' "$out" | jq -c .)" || out=unreadable
+  printf 'rc=%s %s' "$rc" "$out"
+}
+# label|input|answer
+UNVERSION_ROWS=(
+  'the top-level version is dropped and an npm scripts.version kept|{"name":"p","version":"1.0.0","scripts":{"version":"echo v","test":"t"}}|rc=0 {"name":"p","scripts":{"version":"echo v","test":"t"}}'
+  'a file with no top-level version is printed whole|{"name":"p","scripts":{"version":"echo v"}}|rc=0 {"name":"p","scripts":{"version":"echo v"}}'
+  'a blob that is not JSON exits 2|{"name": "p",|rc=2 '
+  'a JSON array exits 2|["version"]|rc=2 '
+  'an empty blob exits 2||rc=2 '
+)
+for row in "${UNVERSION_ROWS[@]}"; do
+  IFS='|' read -r label input want <<<"$row"
+  assert_eq "$label" "$want" "$(unversion "$CE" "$input")"
+done
+assert_eq '--unversion beside a scope is refused' "rc=2 ${ERR}scope-conflict=1:0:0:1" "$(run "" '--staged --unversion')"
+# Control: a filter that drops "version" at every depth turns the first row
+# red, the copy restack-skip once carried.
+gg_mutant judge changelog-entries '  jq -e "del($VERSION_FIELD)" \' "  jq -e 'walk(if type == \"object\" then del(.version) else . end)' \\"
+IFS='|' read -r label input want <<<"${UNVERSION_ROWS[0]}"
+got="$(unversion "$judge" "$input")"
+if [ "$got" != "$want" ]; then
+  PASS=$((PASS + 1))
+  printf '  ok    control: a depth-free version filter changes: %s\n' "$label"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  control: a depth-free version filter leaves green: %s\n' "$label"
+fi
 
 echo "=== the usage is answered ==="
 repo help

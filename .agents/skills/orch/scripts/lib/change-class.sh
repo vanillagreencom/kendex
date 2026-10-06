@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # change-class.sh — dev-validate-run's and item-tier's reader of harness-ci's
-# change classifier. CI's .github/actions/change-class reads the shipped
+# change classifier, and the version-line filter item-tier and restack-skip
+# share. CI's .github/actions/change-class reads the shipped
 # scripts from its own trusted checkout. Sourced; it defines the
 # functions below and sets nothing until one runs.
 #
@@ -30,6 +31,11 @@
 # narrow-change list. Returns 1 with CHANGE_CLASS_CAUSE on a missing library
 # or unreadable list. After loading, change_class_path PATH launch applies
 # the same path rules as branch classification, without proving a render.
+#
+# drop_metadata_version < FILE
+#   Prints a SKILL.md, source or render, less its frontmatter metadata.version
+#   line: the one line a catalog package's version raise changes. item-tier and
+#   restack-skip compare two sides through it.
 #
 # Both range readers append the called script's stderr to STDERR_FILE, and neither writes a
 # workflow's GITHUB_OUTPUT. The class is never read from anything but the
@@ -106,4 +112,16 @@ change_class_docs() { # BASE HEAD REPO PATHS_FILE STDERR_FILE
     docs_only=true | docs_only=false) CHANGE_CLASS_DOCS_ONLY="${answer#docs_only=}" ;;
     *) CHANGE_CLASS_CAUSE=docs-reader-unreadable; return 1 ;;
   esac
+}
+
+# The block ends where the catalog's frontmatter reader ends it, so no body
+# line is read as part of the metadata map.
+drop_metadata_version() {
+  awk '
+    NR == 1 && $0 == "---" { front = 1; print; next }
+    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }
+    front && /^[^[:space:]]/ { metadata = ($0 ~ /^metadata:[[:space:]]*$/) }
+    front && metadata && /^[[:space:]]+version:/ { next }
+    { print }
+  '
 }

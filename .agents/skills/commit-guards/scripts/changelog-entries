@@ -61,6 +61,10 @@ source "$SCRIPT_DIR/lib/commit-parent.sh"
 # shellcheck source=lib/atomic-install.sh
 source "$SCRIPT_DIR/lib/atomic-install.sh"
 
+# The version a COMMIT_GUARDS_CHANGELOG_VERSION_PATHS file states: read_version
+# reads it and --unversion drops it, through this one jq path.
+VERSION_FIELD='.version'
+
 # The sections a fragment's directory may name, and the test for membership
 # in them, are lib/changelog-grammar.sh's GG_SECTIONS and gg_is_section: the
 # collator writes each fragment beneath the heading its directory names, and
@@ -71,6 +75,7 @@ usage() {
   cat <<'EOF'
 usage: changelog-entries [--collate | --staged | --base REF | --against REF]
        changelog-entries --classify PATH...
+       changelog-entries --unversion < FILE
 
 Checks changelog fragments. --collate also validates its destination.
 
@@ -146,8 +151,14 @@ argument order, one line of what these settings make it, a tab, then the path:
   package   a package file COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS declares
   render    a path the staged render inventory, .kendex-generated.json, lists
   none      anything else
-The first that applies wins. orch's restack-skip asks it which lines of a
-conflicted file are version lines and changelog entries.
+The first that applies wins. orch's restack-skip asks it what each
+conflicted file is.
+
+--unversion judges nothing either: it prints the JSON version file on stdin,
+as jq prints it, less the top-level version the version-bump check reads. A
+nested "version", such as an npm scripts.version, is kept. Input that is not
+JSON jq can delete that field from exits 2. orch's restack-skip compares two
+sides of a version file through it.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -156,6 +167,7 @@ EOF
 COLLATE=0
 CLASSIFY=0
 CLASSIFY_PATHS=()
+UNVERSION=0
 MODE=staged
 BASE_REF=""
 SCOPE_FLAGS=0
@@ -173,6 +185,7 @@ while [ $# -gt 0 ]; do
       CLASSIFY_PATHS=("$@")
       break
       ;;
+    --unversion) UNVERSION=1 ;;
     --staged) MODE=staged; SCOPE_FLAGS=$((SCOPE_FLAGS + 1)) ;;
     --base | --against)
       [ $# -ge 2 ] || gg_fail argument-missing "$1" "$1 requires a ref"
@@ -187,7 +200,14 @@ while [ $# -gt 0 ]; do
 done
 [ "$SCOPE_FLAGS" -le 1 ] && { [ "$COLLATE" -eq 0 ] || [ "$SCOPE_FLAGS" -eq 0 ]; } \
   && { [ "$CLASSIFY" -eq 0 ] || [ $((SCOPE_FLAGS + COLLATE)) -eq 0 ]; } \
-  || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE:$CLASSIFY" "Use one scope, --collate or --classify, not two."
+  && { [ "$UNVERSION" -eq 0 ] || [ $((SCOPE_FLAGS + COLLATE + CLASSIFY)) -eq 0 ]; } \
+  || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE:$CLASSIFY:$UNVERSION" "Use one scope, --collate, --classify or --unversion, not two."
+
+if [ "$UNVERSION" -eq 1 ]; then
+  jq -e "del($VERSION_FIELD)" \
+    || gg_fail unversion-read stdin "Expected a JSON version file whose top-level version jq can delete."
+  exit 0
+fi
 
 gg_repo_root_cd
 
@@ -373,7 +393,7 @@ done <"$GG_TMP/files.z"
 
 read_version() { # SHA PATH -> version, refusing unreadable or malformed manifests
   gg_read_blob "$1" "$2" version
-  jq -er --arg re "$GG_VERSION_RE" '.version | select(type == "string") | select(test($re))' \
+  jq -er --arg re "$GG_VERSION_RE" "$VERSION_FIELD"' | select(type == "string") | select(test($re))' \
     "$GG_TMP/blob" 2>"$GG_TMP/dependency.err" \
     || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected a JSON string version in major.minor.patch form."
 }

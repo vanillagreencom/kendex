@@ -1,1 +1,1 @@
-- `changelog-entries --classify PATH...` names what the changelog settings make each path: record, fragment, version, package, render or none.
+- `changelog-entries --classify PATH...` names what the changelog settings make each path, and `--unversion` prints a JSON version file less its top-level version.

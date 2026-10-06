@@ -309,16 +309,17 @@ done
 # red: without the exemption the raise selects small, and a reader that drops
 # every version-shaped line misses the changed body line, and one that ends
 # the frontmatter only at an exact --- reads the body as metadata.
-# control@needle@replacement@rows it reddens: the needle holds '|'
+# control@file under orch/scripts@needle@replacement@rows it reddens: the
+# needle holds '|'
 SKILL_CONTROLS=(
-  'no-version-exemption@        instruction-file\ *) ! version_raise_only "$path" || continue ;;@        instruction-file\ *) ;;@version-raise'
-  'any-version-line@    front && metadata && /^[[:space:]]+version:/ { next }@    /^[[:space:]]+version:/ { next }@version-and-body dots-body spaced-body'
-  'exact-closer@    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }@    front && $0 == "---" { front = 0 }@dots-body spaced-body'
+  'no-version-exemption@item-tier@        instruction-file\ *) ! version_raise_only "$path" || continue ;;@        instruction-file\ *) ;;@version-raise'
+  'any-version-line@lib/change-class.sh@    front && metadata && /^[[:space:]]+version:/ { next }@    /^[[:space:]]+version:/ { next }@version-and-body dots-body spaced-body'
+  'exact-closer@lib/change-class.sh@    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }@    front && $0 == "---" { front = 0 }@dots-body spaced-body'
 )
 for control in "${SKILL_CONTROLS[@]}"; do
-  IFS='@' read -r control_name needle replacement red <<<"$control"
+  IFS='@' read -r control_name control_file needle replacement red <<<"$control"
   cp -R "$LAYOUT" "$TMP_ROOT/$control_name"
-  python3 - "$TMP_ROOT/$control_name/orch/scripts/item-tier" "$needle" "$replacement" <<'EDIT'
+  python3 - "$TMP_ROOT/$control_name/orch/scripts/$control_file" "$needle" "$replacement" <<'EDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()

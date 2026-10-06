@@ -78,7 +78,9 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 ### Classify
 
-`--classify PATH...` judges nothing: it prints one line per path, in argument order, of what the settings make it, a tab, then the path. The kinds are `record` (the configured record, or the `CHANGELOG.md` a [package `package.json`](#version-bumps) reads), `fragment`, `version` (a `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` file), `package` (a declared package file), `render` (a path the staged `.kendex-generated.json` lists) and `none`; the first that applies wins. The orch skill's `restack-skip` reads it to know which conflicted files hold only version lines and changelog entries.
+`--classify PATH...` judges nothing: it prints one line per path, in argument order, of what the settings make it, a tab, then the path. The kinds are `record` (the configured record, or the `CHANGELOG.md` a [package `package.json`](#version-bumps) reads), `fragment`, `version` (a `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` file), `package` (a declared package file), `render` (a path the staged `.kendex-generated.json` lists) and `none`; the first that applies wins. The orch skill's `restack-skip` reads it to know what each conflicted file is.
+
+`--unversion` judges nothing either: it prints the JSON version file on stdin, as jq prints it, less the top-level `version` the [version-bump check](#version-bumps) reads, through the same jq path. A nested `version`, such as an npm `scripts.version`, is kept. Input jq cannot delete that field from exits 2. The orch skill's `restack-skip` compares two sides of a version file through it.
 
 ### Release versions
 

@@ -16,22 +16,28 @@
 #   no-conflict   the merge conflicted nowhere and its tree is HEAD's tree
 #   version-only  every conflict the merge reports is a content conflict in
 #                 a file commit-guards names as a changelog, version, package
-#                 or render file, and in each such file the merge and HEAD
-#                 differ only in that kind's own lines, every other path
+#                 or render file, and each such file in HEAD differs from
+#                 the merge only where its kind allows, every other path
 #                 being the same in both
 # Which file is which is commit-guards' answer, never this script's: it asks
 # the worktree's installed `changelog-entries --classify`, which reads the
 # repository's own COMMIT_GUARDS_CHANGELOG_* settings and render inventory.
-# The lines each kind may differ in:
-#   record, fragment  blank lines, headings, list entries and lines indented
-#                     under them
-#   version           its "version": "..." lines
-#   package, render   its front matter's indented version: x.y.z lines,
-#                     a package's metadata.version and its renders'
-# Inside each conflict region of the merged file, both sides must hold only
-# such lines too, so a conflict over code is never resolved unseen. No kind
-# allows a conflict marker line, so one left in the restacked file is kept
-# and differs from the merge.
+# Where each kind may differ:
+#   record, fragment  in blank lines, headings, list entries and lines
+#                     indented under them, inside a conflict region too, so
+#                     both lanes' entries are kept; a region holding any
+#                     other line is a conflict over prose, never resolved
+#                     unseen
+#   version           in its top-level version alone, the field the
+#                     worktree's `changelog-entries --unversion` drops
+#   package, render   in its front matter's metadata.version alone, the line
+#                     lib/change-class.sh's drop_metadata_version drops
+# A version, package or render file is read twice, each conflict region
+# replaced once by the base's side and once by the branch's: HEAD must equal
+# both but for that field, so a region that differs in any other line, or a
+# resolution that drops both sides, is never taken unseen. No kind allows a
+# conflict marker line, so one left in the restacked file is kept and differs
+# from the merge.
 #
 # Every fact the check cannot read, a run, an object, the classifier or a git
 # answer, is a re-test: a missing fact widens the checks.
@@ -57,7 +63,9 @@
 #                     a gitlink or a mode change
 #   classifier-missing  the worktree has no executable commit-guards
 #                     changelog-entries
-#   classifier-failed   it could not classify the conflicted paths
+#   classifier-failed   it could not classify the conflicted paths, or
+#                     could not read a version file's JSON, as when a
+#                     marker is left in it
 #   unclassified      a conflicted path is no changelog, version, package or
 #                     render file
 #   diff-failed       the two trees could not be compared
@@ -65,15 +73,18 @@
 #                     one mode on both sides, or HEAD lacks a conflicted file
 #                     or holds it in another mode than the merge's sides
 #   path-unconflicted a path differs that the merge did not leave conflicted
-#   hunk              a conflicted file differs in a line its kind does not
-#                     allow, a left conflict marker included, or a conflict
-#                     region holds one
+#   hunk              a conflicted file differs from the merge where its
+#                     kind does not allow, a left conflict marker included,
+#                     or a changelog conflict region holds such a line
 # Exit 2 is a usage error, which runs the re-test too.
 
 set -euo pipefail
 
 PROG="restack-skip"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# drop_metadata_version, the one reader of a SKILL.md's version line.
+# shellcheck source=lib/change-class.sh
+. "$SCRIPT_DIR/lib/change-class.sh"
 
 die() { # KEY FIELD...
   {
@@ -231,26 +242,42 @@ classifier="$worktree/.agents/skills/commit-guards/scripts/changelog-entries"
 "$classifier" --classify "${conflicted[@]}" > "$scratch/kinds" 2>/dev/null \
   || retest classifier-failed "run-dir=$run_dir"
 
-# KIND MARKERS < FILE — the file less the lines KIND allows, and less each
-# conflict region where MARKERS is 1. Exit 3 where a region holds any other
-# line or never closes.
-normalize() {
-  LC_ALL=C awk -v kind="$1" -v markers="$2" '
-    function allowed(line) {
-      if (kind == "changelog") return line ~ /^[ \t]*$/ || line ~ /^#+[ \t]/ || line ~ /^[-*+][ \t]/ || line ~ /^[ \t]+[^ \t]/
-      if (kind == "version") return line ~ /^[ \t]*"version"[ \t]*:[ \t]*"[^"]*"[ \t]*,?[ \t]*$/
-      return fm == 1 && line ~ /^[ \t]+version:[ \t]*["\047]?[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*["\047]?[ \t]*$/
-    }
-    NR == 1 && kind == "markdown" && $0 == "---" { fm = 1; print; next }
+# MARKERS < FILE — a changelog less the lines it may differ in, and less
+# each conflict region where MARKERS is 1. Exit 3 where a region holds any
+# other line or never closes.
+changelog_rest() {
+  LC_ALL=C awk -v markers="$1" '
+    function allowed(line) { return line ~ /^[ \t]*$/ || line ~ /^#+[ \t]/ || line ~ /^[-*+][ \t]/ || line ~ /^[ \t]+[^ \t]/ }
     markers && !region && /^<<<<<<<( |$)/ { region = 1; next }
     region && /^(=======|\|\|\|\|\|\|\|( .*)?)$/ { next }
     region && /^>>>>>>>( |$)/ { region = 0; next }
     region { if (!allowed($0)) { bad = 1; exit 3 } next }
-    fm == 1 && $0 == "---" { fm = 2; print; next }
     allowed($0) { next }
     { print }
     END { if (bad || region) exit 3 }
   '
+}
+
+# SIDE < FILE — the merged file with each conflict region replaced by its
+# SIDE: 1 the base's, 2 the branch's. Exit 3 where a region has no
+# separator or never closes.
+merged_side() {
+  LC_ALL=C awk -v side="$1" '
+    !region && /^<<<<<<<( |$)/ { region = 1; next }
+    region == 1 && /^=======$/ { region = 2; next }
+    region && /^>>>>>>>( |$)/ { if (region != 2) { bad = 1; exit 3 } region = 0; next }
+    region && region != side { next }
+    { print }
+    END { if (bad || region) exit 3 }
+  '
+}
+
+# KIND < FILE — the file less the field commit-guards versions it by.
+unversion() {
+  case "$1" in
+    version) "$classifier" --unversion 2>/dev/null ;;
+    package|render) drop_metadata_version ;;
+  esac
 }
 
 index=0
@@ -259,9 +286,7 @@ while IFS=$'\t' read -r kind path; do
   [[ "$path" == "${conflicted[$index]:-}" ]] || retest classifier-failed "run-dir=$run_dir"
   index=$(( index + 1 ))
   case "$kind" in
-    record|fragment) kind=changelog ;;
-    version) ;;
-    package|render) kind=markdown ;;
+    record|fragment|version|package|render) ;;
     *) retest unclassified "path=$path" "run-dir=$run_dir" ;;
   esac
   git cat-file blob "$merged_tree:$path" > "$scratch/merged-blob" 2>/dev/null \
@@ -270,10 +295,23 @@ while IFS=$'\t' read -r kind path; do
     && [[ "${head_entry%% *}" == "${conflicted_modes[$index - 1]}" ]] \
     && git cat-file blob "$head:$path" > "$scratch/head-blob" 2>/dev/null \
     || retest path-shape "path=$path" "run-dir=$run_dir"
-  normalize "$kind" 1 < "$scratch/merged-blob" > "$scratch/merged-kept" \
-    && normalize "$kind" 0 < "$scratch/head-blob" > "$scratch/head-kept" \
-    && cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
-    || retest hunk "path=$path" "run-dir=$run_dir"
+  if [[ "$kind" == record || "$kind" == fragment ]]; then
+    changelog_rest 1 < "$scratch/merged-blob" > "$scratch/merged-kept" \
+      && changelog_rest 0 < "$scratch/head-blob" > "$scratch/head-kept" \
+      && cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
+      || retest hunk "path=$path" "run-dir=$run_dir"
+  else
+    unversion "$kind" < "$scratch/head-blob" > "$scratch/head-kept" \
+      || retest classifier-failed "path=$path" "run-dir=$run_dir"
+    for side in 1 2; do
+      merged_side "$side" < "$scratch/merged-blob" > "$scratch/merged-side" \
+        || retest hunk "path=$path" "run-dir=$run_dir"
+      unversion "$kind" < "$scratch/merged-side" > "$scratch/merged-kept" \
+        || retest classifier-failed "path=$path" "run-dir=$run_dir"
+      cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
+        || retest hunk "path=$path" "run-dir=$run_dir"
+    done
+  fi
   paths="${paths:+$paths,}$path"
 done < "$scratch/kinds"
 (( index == ${#conflicted[@]} )) || retest classifier-failed "run-dir=$run_dir"

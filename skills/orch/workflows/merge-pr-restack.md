@@ -42,7 +42,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
-   Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over version lines and changelog entries in the files it left conflicted (`version-only`), which `restack-skip --help` states. It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
+   Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over the version field commit-guards reads and changelog entries in the files it left conflicted (`version-only`), which `restack-skip --help` states. It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state update [ISSUE] --arg head [HEAD] --arg condition [CONDITION] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '.restack_skips = ((.restack_skips // []) + [{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}])'
