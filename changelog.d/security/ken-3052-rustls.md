@@ -1,0 +1,1 @@
+- TLS connections use rustls 0.23.45, which rejects TLS 1.3 handshake messages sent across encryption levels (GHSA-2mjx-qc3c-rqvc).
