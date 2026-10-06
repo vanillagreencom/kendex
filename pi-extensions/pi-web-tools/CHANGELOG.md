@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- The `web_research` `contextGlob` description names `tmp/plans/research/ISSUE/context-*.md` as its example, the directory the project-management research workflows write context files to, instead of `docs/research/ISSUE/context-*.md`.
+
 ### 4.1.0
 
 - Every provider request, from Exa, Exa MCP, Perplexity, Gemini, Gemini Web and DuckDuckGo, ends after 120 seconds, counted from sending it to reading the last byte of the answer. A server that never answers, or that sends headers and then stops, now fails the request with `<request> exceeded its 120000 ms deadline` instead of holding the tool call. Exa MCP's limit was 60 seconds.

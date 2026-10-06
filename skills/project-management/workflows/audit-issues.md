@@ -242,7 +242,7 @@ Everything in the § 5 corrections block — priorities, labels, relations, hier
 
 **Hard precondition: § 6 authorization obtained in the primary session.** Creations and cancellations execute only against its resolved `auto` policy or its `ask` approvals, including a validated carried approval (`approved_at_plan_gate`). If § 6 did not run, § 7 MUST NOT execute: stop and return to the primary session.
 
-Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes.
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes. Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published.
 
 ### 7.0 Label Preflight
 

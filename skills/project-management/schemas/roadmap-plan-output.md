@@ -5,7 +5,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
 ```json
 {
   "feature": "Feature name",
-  "research_path": "tmp/research/[ISSUE_ID]/findings.md",
+  "research_path": "tmp/plans/research/[ISSUE_ID]/findings.md",
   "hierarchy_recommendation": {
     "type": "children_of_origin",
     "origin_issue": "[ISSUE_ID]",
@@ -26,7 +26,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
   "declined": [{"title": "...", "reason": "no user-visible effect"}],
   "context": {
     "source": "roadmap-create",
-    "research_path": "tmp/research/[ISSUE_ID]/findings.md",
+    "research_path": "tmp/plans/research/[ISSUE_ID]/findings.md",
     "research_source_issue": "[ISSUE_ID]",
     "origin_issue": "[ISSUE_ID]",
     "plan_path": "tmp/roadmaps/roadmap-feature-name.md"
@@ -38,7 +38,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
 
 `context.plan_path` is filled by the caller when it saves the plan (null in the initial output). `declined[]` lists proposals that failed the creation bar, one line each.
 
-`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller replaces it with the issue receiving the research/spec inputs alongside the plan. All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller keeps a set value, since the input already sits on that issue, and sets a null one to the issue the input is uploaded to with the plan, per roadmap-plan § 6. All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
 
 ## hierarchy_recommendation
 
