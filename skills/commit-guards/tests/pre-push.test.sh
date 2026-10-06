@@ -551,6 +551,29 @@ assert_eq "must-fail: always from the fork point, the follow-up is refused for t
   "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
   "$(push_ref "$FORK_POINT" topic)"
 
+# The same restack pushed through a pushurl the tracking refs were not fetched
+# from: refs/remotes/origin/HEAD describes another spelling, so it sets no
+# baseline and the changelog check keeps the remote head, refusing the base's
+# major as it did before the boundary existed.
+ELSEWHERE_LINE="rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1"
+ELSEWHERE=""
+restacked ELSEWHERE elsewhere 0
+q git -C "$ELSEWHERE" config remote.origin.pushurl "file://$TMP/elsewhere.git"
+assert_eq "a push to a URL the tracking refs do not describe takes no default-branch baseline" \
+  "$ELSEWHERE_LINE" "$(push_ref "$ELSEWHERE" topic --force-with-lease)"
+
+# The must-fail control: a copy whose boundary skips that URL test reads the
+# default branch anyway, and the same push passes on a baseline from refs that
+# describe somewhere else.
+cp -- "$RANGES_KEPT" "$RANGES_LANE"
+perl -0pi -e 's/(history_boundary\(\) \{[^\n]*\n[^\n]*\n)  tracking_describes_push \|\| return 1\n/$1/' "$RANGES_LANE"
+assert_eq "the URL-test edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^<')"
+UNCHECKED=""
+restacked UNCHECKED unchecked 0 "$RANGES"
+q git -C "$UNCHECKED" config remote.origin.pushurl "file://$TMP/unchecked.git"
+assert_eq "must-fail: without the URL test, refs describing another spelling set the baseline" \
+  "$RESTACK_PASS" "$(push_ref "$UNCHECKED" topic --force-with-lease)"
+
 # ------------------------------------------------ the markdown lanes at push
 #
 # The index-drift refusal above guarantees nothing is staged by the time the
