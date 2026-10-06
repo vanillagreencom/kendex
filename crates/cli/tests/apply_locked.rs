@@ -136,6 +136,101 @@ fn an_apply_after_a_source_revision_edit_renders_at_that_revision() {
     }
 }
 
+/// A single-package write after a source revision edit holds the other
+/// followers at their recorded commits, so it has not applied the edit:
+/// the record keeps saying so, and the next apply renders every follower
+/// at the declared revision. Recorded at the new revision by that write,
+/// the apply held them all at the install commit and did nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision() {
+    for (case, write_args) in [
+        ("kendex pin", &["pin", "agent", "review", "", "-y"][..]),
+        (
+            "kendex add",
+            &["add", "cat", "--agent", "lint", "--harness", "claude", "-y"],
+        ),
+    ] {
+        let world = world();
+        move_the_catalog(&world);
+        write(
+            &world.catalog.join("agents/lint.md"),
+            "---\nname: lint\ndescription: lints\n---\n\nLint it.\n",
+        );
+        commit(&world.catalog, "a new agent");
+        let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+        assert!(fetched.status.success(), "{case}: {}", said(&fetched));
+        let moved = catalog_head(&world);
+        let manifest = world.project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        let redeclared = declared.replacen(
+            "[sources.cat]\n",
+            &format!("[sources.cat]\nrev = \"{moved}\"\n"),
+            1,
+        );
+        assert_ne!(redeclared, declared, "{case}");
+        write(&manifest, &redeclared);
+        commit(&world.project, "the catalog pinned");
+
+        let args: Vec<&str> = write_args
+            .iter()
+            .map(|arg| if arg.is_empty() { moved.as_str() } else { arg })
+            .collect();
+        let wrote = kendex(&world.home, &world.project, &args);
+        assert!(wrote.status.success(), "{case}: {}", said(&wrote));
+        commit(&world.project, "one package written");
+
+        let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+        assert!(applied.status.success(), "{case}: {}", said(&applied));
+
+        let skill =
+            fs::read_to_string(world.project.join(".claude/skills/second/SKILL.md")).unwrap();
+        assert!(
+            skill.contains("A paragraph added later."),
+            "{case}: {skill}"
+        );
+        let after = record(&world);
+        assert_eq!(after["sources"]["cat"]["rev"], moved.as_str(), "{case}");
+        assert_eq!(after["sources"]["cat"]["commit"], moved.as_str(), "{case}");
+        assert_eq!(
+            after["bundles"]["starter"]["commit"],
+            moved.as_str(),
+            "{case}"
+        );
+        let read_from_cat: Vec<_> = after["entries"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|entry| entry["source"] == "cat")
+            .collect();
+        for (kind, name) in [
+            ("skill", "second"),
+            ("agent", "review"),
+            ("hook", "guard"),
+            ("command", "second"),
+            ("mcp-server", "gh"),
+        ] {
+            assert!(
+                read_from_cat
+                    .iter()
+                    .any(|entry| entry["kind"] == kind && entry["name"] == name),
+                "{case}: no {kind} {name} in {after}"
+            );
+        }
+        for entry in read_from_cat {
+            assert_eq!(entry["sourceCommit"], moved.as_str(), "{case}: {entry}");
+        }
+
+        commit(&world.project, "applied");
+        let verified = kendex(
+            &world.home,
+            &world.project,
+            &["verify", "--scope", "project", "--at-record"],
+        );
+        assert!(verified.status.success(), "{case}: {}", said(&verified));
+    }
+}
+
 fn catalog_head(world: &World) -> String {
     git(&world.catalog, &["rev-parse", "HEAD"])
         .trim()

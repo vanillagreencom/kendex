@@ -16,7 +16,7 @@ use crate::source::{ResolvedSource, SourceState};
 
 use super::config_edits;
 use super::desired::DesiredState;
-use super::report_types::{StoodIn, StoodInRecord};
+use super::report_types::{HeldPin, StoodIn, StoodInRecord};
 
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
@@ -149,9 +149,11 @@ pub(super) enum Reading<T> {
     /// carried forward unread, and a proof over the record names it.
     StoodIn(StoodIn),
     /// Not read this pass, by the plan's choice rather than for want of a
-    /// resolution: the record's entry, written for the declaration as it
-    /// stands, is carried forward and no proof names it
-    /// ([`super::PlanOptions::keep_source_records`]).
+    /// resolution: the record's entry is carried forward and no proof
+    /// names it. Either it was written for the declaration as it stands
+    /// ([`super::PlanOptions::keep_source_records`]), or the pass held
+    /// followers of a redeclared source at commits read under the selector
+    /// the entry names, so the edit stays pending in the record.
     Kept,
     /// Nothing to record: a path or reserved source, a disabled one, a
     /// name the manifest does not declare, and a set read from any of
@@ -170,33 +172,46 @@ pub(super) struct RecordReadings {
 /// Reads every declared source and set for the record. A source no item
 /// named, one only a Pi extension names among them, has no resolution in
 /// the pass and is read from its mirror alone, so its entry is held to the
-/// declaration like any other; where `kept` is given and its entry for
-/// such a source was written for the repository and revision declared
-/// now, that entry is kept instead. A redeclared source is read afresh,
-/// since the record speaks for another declaration.
+/// declaration like any other; where `keeps_records` is set and the
+/// record's entry for such a source was written for the repository and
+/// revision declared now, that entry is kept instead. A redeclared source
+/// is read afresh, since the record speaks for another declaration, unless
+/// `held` pins a follower of it: that pass read the follower under the
+/// selector the record names and did not apply the edit, so the record
+/// keeps saying so, and the next write that keeps the record
+/// ([`super::PlanOptions::keep_source_records`]) still finds it pending.
 pub(super) fn record_readings(
     env: &Env,
     manifest: &Manifest,
     state: &DesiredState,
-    kept: Option<&Lock>,
+    lock: &Lock,
+    keeps_records: bool,
+    held: &[HeldPin],
 ) -> RecordReadings {
     let sources = manifest
         .sources
         .keys()
         .map(|name| {
             let reading = match repository(manifest, name) {
-                Some((repo, rev)) => {
-                    let keeps = kept
-                        .and_then(|lock| lock.sources.get(name))
-                        .is_some_and(|recorded| recorded.written_for(repo, rev));
-                    commit_reading(env, repo, rev, state.sources.get(name), keeps).map(|commit| {
-                        SourceRev {
-                            repo: repo.to_owned(),
-                            rev: rev.map(str::to_owned),
-                            commit,
-                        }
-                    })
-                }
+                Some((repo, rev)) => match lock.sources.get(name) {
+                    Some(recorded)
+                        if !recorded.written_for(repo, rev)
+                            && held.iter().any(|pin| &pin.source == name) =>
+                    {
+                        Reading::Kept
+                    }
+                    recorded => {
+                        let keeps = keeps_records
+                            && recorded.is_some_and(|recorded| recorded.written_for(repo, rev));
+                        commit_reading(env, repo, rev, state.sources.get(name), keeps).map(
+                            |commit| SourceRev {
+                                repo: repo.to_owned(),
+                                rev: rev.map(str::to_owned),
+                                commit,
+                            },
+                        )
+                    }
+                },
                 None => Reading::Unrecorded,
             };
             (name.clone(), reading)

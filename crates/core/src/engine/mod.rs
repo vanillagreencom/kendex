@@ -191,7 +191,7 @@ pub fn plan_scope(
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
     let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
-    let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state, options);
+    let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state, options, &held);
     let (mut written, mut kept) = (written::Written::default(), item_plan::KeptAsIs::default());
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
@@ -593,9 +593,16 @@ fn fresh_lock(
     lock: &Lock,
     state: &desired::DesiredState,
     options: &PlanOptions,
+    held: &[HeldPin],
 ) -> (Lock, scope_writes::RecordReadings) {
-    let kept = options.keep_source_records.then_some(lock);
-    let readings = record_readings(env, manifest, state, kept);
+    let readings = record_readings(
+        env,
+        manifest,
+        state,
+        lock,
+        options.keep_source_records,
+        held,
+    );
     let fresh = Lock {
         version: crate::lock::LOCK_VERSION,
         entries: lock

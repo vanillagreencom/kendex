@@ -479,12 +479,13 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// the record (`keeps_records`), where the record's account of the source
 /// was written for another repository or revision than it is declared at
 /// now. Every commit under such a source was read at a selector the person
-/// has since replaced, so a write that holds at one undoes the edit while
-/// the record's source entry, read afresh
-/// ([`super::super::PlanOptions::keep_source_records`]), says it was
-/// honoured. Any other hold, `verify --at-record`'s reading included, keeps
-/// the record as it stands. A source with no account is held to its
-/// entries alone.
+/// has since replaced, and a write that held at one would keep the record's
+/// source entry with it, so no such write would ever apply the edit. Any
+/// other hold, `verify --at-record`'s reading included, keeps the record as
+/// it stands; a single-package update or an add writes the source's entry
+/// unchanged too (`record_readings`), so the edit stays pending for the
+/// next write that keeps the record. A source with no account is held to
+/// its entries alone.
 fn held_repo<'a>(
     manifest: &'a Manifest,
     lock: &Lock,

@@ -622,9 +622,11 @@ pub struct PlanOptions {
     /// its renders. Under a hold, a write likewise reads fresh every
     /// follower of a source declared at another repository or revision
     /// than the record's account of it was written for, where any other
-    /// hold keeps it: held at its recorded commit, the write would undo
-    /// the edit while the source's entry, read afresh, says it was
-    /// honoured, and `verify --at-record` renders the record as it stands.
+    /// hold keeps it: held at its recorded commit, the write would keep
+    /// the source's entry and no write would ever apply the edit, while a
+    /// single-package update or an add holds those followers, keeps that
+    /// entry, and leaves the edit pending, and `verify --at-record`
+    /// renders the record as it stands.
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
