@@ -349,8 +349,10 @@ struct Wanted {
     deps: Vec<Dep>,
     findings: Vec<ItemWarning>,
     /// Findings that leave the declarations complete: a companion its
-    /// catalog retired, the catalog's own answer, and a withholding taken
-    /// on from a companion, whose own finding says what is missing.
+    /// catalog retired, the catalog's own answer; a withholding taken on
+    /// from a companion, whose own finding says what is missing; and a
+    /// companion orphaned by its requirers' withholding
+    /// ([`withhold_orphans`]), whose findings say why they are gone.
     answered: Vec<ItemWarning>,
     withheld: BTreeMap<HarnessId, Withholding>,
     /// Whether the parent is switched on: only a hook that would run is
@@ -391,7 +393,9 @@ struct Dep {
 /// requires it is withheld there too, and so is a companion that exists
 /// only for hooks gone from there: the lane-mail knot goes together
 /// whichever member's fault it is, and a one-way edge leaves no companion
-/// armed beside a requirer that is gone. Two phases, each run until
+/// armed beside a requirer that is gone. A retired companion is outside
+/// this: the walk derives none, and a kept copy stays as the record holds
+/// it until a prune, whatever its requirers. Two phases, each run until
 /// nothing changes, and in this order: first the requirers take on their
 /// companions' reasons, up every chain; only then, off the withholdings
 /// that leaves, are companions orphaned. Whether a requirer's withholding
@@ -930,8 +934,9 @@ fn derive(
                 continue;
             }
             // Retired, the companion is never written again, so an armed
-            // hook is withheld from every tool rather than armed beside a
-            // copy kept only until the next prune.
+            // hook is withheld on these `harnesses` rather than armed beside
+            // a copy kept only until the next prune; the rule is
+            // docs/authoring/README.md's `[retired]` paragraph.
             Offer::Retired(migration) => {
                 let via = super::desired::RetiredVia::RequiredBy {
                     kind,

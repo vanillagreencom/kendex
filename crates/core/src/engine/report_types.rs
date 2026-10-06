@@ -542,7 +542,8 @@ pub struct PlanOptions {
     /// held as the edit conflict. Off, a retired item stays exactly where
     /// the record holds it, with one notice saying how to remove it, and is
     /// owed nothing where it holds none; either way it is never rendered
-    /// again, and an armed hook requiring it is withheld from every tool.
+    /// again, and an armed hook requiring it is withheld where it requires
+    /// it, by the rule in docs/authoring/README.md's `[retired]` paragraph.
     /// `refresh --prune` sets it.
     pub prune_retired: bool,
     /// Bundles this plan uninstalls. Their members that survive are named in

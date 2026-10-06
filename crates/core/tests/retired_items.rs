@@ -554,51 +554,122 @@ enum After {
     RemovedByName,
 }
 
+/// Which hooks stand over the retired judge: boss alone; a declared top
+/// requiring boss, so top takes on boss's withholding; or boss requiring a
+/// live helper beside the judge, so the helper is left with no requirer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Over {
+    Boss,
+    Chain,
+    WithHelper,
+}
+
+impl Over {
+    /// Every hook this shape installs over the judge.
+    fn hooks(self) -> &'static [&'static str] {
+        match self {
+            Over::Boss => &["boss"],
+            Over::Chain => &["top", "boss"],
+            Over::WithHelper => &["boss", "helper"],
+        }
+    }
+}
+
+/// The catalog's copy of hook `name` with a header requiring `deps`.
+#[allow(clippy::unwrap_used)]
+fn require(f: &Fixture, name: &str, deps: &str) {
+    let copy = f.catalog_copy(ItemKind::Hook, name);
+    let header = fs::read_to_string(&copy).unwrap();
+    let required = header.replacen(
+        "# ---\nexit",
+        &format!("# requires: [{deps}]\n# ---\nexit"),
+        1,
+    );
+    assert_ne!(required, header, "{name}: no header to require from");
+    fs::write(&copy, required).unwrap();
+}
+
 /// A hook whose header requires a hook the catalog retires is withheld
-/// from every tool with a warning of its own, rather than armed beside a
+/// on the tools it requires it on, with a warning of its own carrying the
+/// catalog's migration where there is one, rather than armed beside a
 /// judge that is never written again, whether the judge is kept, pruned,
-/// never installed, switched off or removed by name. The declarations stay
-/// complete: the retirement is the catalog's answer, so the walks outside
-/// a plan, the closure and the managed agent lookup, read it as one too.
+/// never installed, switched off or removed by name. A hook requiring that
+/// hook is withheld with it, and a companion only it required goes too.
+/// The declarations stay complete: the retirement is the catalog's
+/// answer, so the walks outside a plan, the closure and the managed agent
+/// lookup, read it as one too.
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_hook_requiring_a_retired_hook_is_withheld() {
-    for (row, before, after) in [
+    for (row, over, before, after, migration) in [
         (
             "installed, then retired: kept",
+            Over::Boss,
             Before::Installed,
             After::Nothing,
+            "",
         ),
         (
-            "installed, then retired and pruned",
+            "installed, then retired with a migration and pruned",
+            Over::Boss,
             Before::Installed,
             After::Pruned,
+            "declare judge-next",
         ),
         (
             "retired before its first install",
+            Over::Boss,
             Before::NeverInstalled,
             After::Nothing,
+            "",
         ),
         (
             "switched off, then retired",
+            Over::Boss,
             Before::SwitchedOff,
             After::Nothing,
+            "",
         ),
         (
             "installed, retired, then removed by name",
+            Over::Boss,
             Before::Installed,
             After::RemovedByName,
+            "",
+        ),
+        (
+            "under a declared hook requiring boss, kept",
+            Over::Chain,
+            Before::Installed,
+            After::Nothing,
+            "",
+        ),
+        (
+            "beside a live companion of boss's, kept",
+            Over::WithHelper,
+            Before::Installed,
+            After::Nothing,
+            "",
         ),
     ] {
         let f = installed(ItemKind::Hook, "boss");
         write_item(&f, ItemKind::Hook, "judge");
-        let boss = f.catalog_copy(ItemKind::Hook, "boss");
-        let header = fs::read_to_string(&boss).unwrap();
-        fs::write(
-            &boss,
-            header.replacen("# ---\nexit", "# requires: [judge]\n# ---\nexit", 1),
-        )
-        .unwrap();
+        match over {
+            Over::Boss => require(&f, "boss", "judge"),
+            Over::Chain => {
+                require(&f, "boss", "judge");
+                write_item(&f, ItemKind::Hook, "top");
+                require(&f, "top", "boss");
+                let manifest = f.project.join("kendex.toml");
+                let mut text = fs::read_to_string(&manifest).unwrap();
+                text.push_str("\n[hooks.top]\nsource = \"cat\"\n");
+                fs::write(&manifest, text).unwrap();
+            }
+            Over::WithHelper => {
+                write_item(&f, ItemKind::Hook, "helper");
+                require(&f, "boss", "judge, helper");
+            }
+        }
         if before == Before::SwitchedOff {
             let manifest = f.project.join("kendex.toml");
             let mut text = fs::read_to_string(&manifest).unwrap();
@@ -613,8 +684,13 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
                 Vec::new(),
                 "{row}: no judge record"
             );
+            if before == Before::Installed {
+                for name in over.hooks() {
+                    assert_ne!(recorded_of(&f, name), Vec::new(), "{row}: no {name} record");
+                }
+            }
         }
-        f.retire(ItemKind::Hook, "judge", "");
+        f.retire(ItemKind::Hook, "judge", migration);
         let done = match after {
             After::Nothing => None,
             After::Pruned => Some(plan_apply(&f.env, &f.scope, &prune_options()).unwrap()),
@@ -623,8 +699,10 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             }
         };
         if let Some(done) = done {
-            let files = written_files(&done, "boss");
-            assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {after:?}");
+            for name in over.hooks() {
+                let files = written_files(&done, name);
+                assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {after:?} {name}");
+            }
             apply::execute(&f.env, &done.plan).unwrap();
         }
 
@@ -641,20 +719,31 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             "{row}: {:?}",
             warned(&plain)
         );
-        for name in ["boss", "judge"] {
+        if !migration.is_empty() {
+            let remedies: Vec<Option<&str>> = plain
+                .warnings
+                .iter()
+                .filter(|w| w.kind == ItemKind::Hook && w.name == "boss")
+                .map(|w| w.remediation.as_deref())
+                .collect();
+            assert!(remedies.contains(&Some(migration)), "{row}: {remedies:?}");
+        }
+        for name in over.hooks().iter().chain(&["judge"]) {
             let files = written_files(&plain, name);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {name}");
         }
         apply::execute(&f.env, &plain.plan).unwrap();
-        assert_eq!(
-            recorded_of(&f, "boss"),
-            Vec::new(),
-            "{row}: boss is recorded"
-        );
+        for name in over.hooks() {
+            assert_eq!(
+                recorded_of(&f, name),
+                Vec::new(),
+                "{row}: {name} is recorded"
+            );
+        }
         let kept = (before, after) == (Before::Installed, After::Nothing);
-        for name in ["boss", "judge"] {
+        for name in over.hooks().iter().chain(&["judge"]) {
             for copy in f.installed_copies(ItemKind::Hook, name) {
-                let stays = kept && name == "judge";
+                let stays = kept && *name == "judge";
                 assert_eq!(copy.exists(), stays, "{row}: {}", copy.display());
             }
         }
