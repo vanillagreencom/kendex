@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # change-class.sh — dev-validate-run's and item-tier's reader of harness-ci's
-# change classifier, and the version-line filter item-tier and restack-skip
-# share. CI's .github/actions/change-class reads the shipped
+# change classifier, and the version-line reader item-tier, restack-skip and
+# the kendex repository's tools/guard share. CI's .github/actions/change-class reads the shipped
 # scripts from its own trusted checkout. Sourced; it defines the
 # functions below and sets nothing until one runs.
 #
@@ -33,9 +33,22 @@
 # the same path rules as branch classification, without proving a render.
 #
 # drop_metadata_version < FILE
-#   Prints a SKILL.md, source or render, less its frontmatter metadata.version
-#   line: the one line a catalog package's version raise changes. item-tier and
-#   restack-skip compare two sides through it.
+#   Prints a SKILL.md, source or render, less each indented `version:` line of
+#   its frontmatter's metadata map: the one line a catalog package's version
+#   raise changes. The map is the lines under a top-level `metadata:` line,
+#   empty after the colon but for whitespace, up to the next line whose first
+#   character is neither whitespace nor `#`. The frontmatter opens at a first
+#   line that is exactly `---` and closes at a line of `---` or `...` with
+#   optional trailing whitespace. awk ends every line it prints with a
+#   newline, a last line that had none included.
+#
+# metadata_version_only OLD NEW
+#   Status 0 when the files OLD and NEW are equal line for line once
+#   drop_metadata_version has copied each, extra trailing blank lines
+#   included. A missing final newline is not compared, since the copy adds
+#   it, and neither is a NUL byte, which bash drops from a command
+#   substitution. A side that cannot be read is status 1, as for any other
+#   change.
 #
 # Both range readers append the called script's stderr to STDERR_FILE, and neither writes a
 # workflow's GITHUB_OUTPUT. The class is never read from anything but the
@@ -120,8 +133,17 @@ drop_metadata_version() {
   awk '
     NR == 1 && $0 == "---" { front = 1; print; next }
     front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }
-    front && /^[^[:space:]]/ { metadata = ($0 ~ /^metadata:[[:space:]]*$/) }
+    front && /^[^[:space:]#]/ { metadata = ($0 ~ /^metadata:[[:space:]]*$/) }
     front && metadata && /^[[:space:]]+version:/ { next }
     { print }
   '
+}
+
+# The trailing `.` stops the command substitution stripping trailing newlines,
+# so extra trailing blank lines are compared.
+metadata_version_only() { # OLD NEW
+  local old new
+  old=$(drop_metadata_version <"$1" && echo .) || return 1
+  new=$(drop_metadata_version <"$2" && echo .) || return 1
+  [ "$old" = "$new" ]
 }

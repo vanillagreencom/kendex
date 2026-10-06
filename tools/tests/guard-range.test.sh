@@ -707,13 +707,13 @@ done
 # needle replaced at each place it appears. A failed source is a finding
 # raised only where a SKILL.md is judged, and that SKILL.md takes the full doc
 # rule.
-REAL_LIB="$REPO/.agents/skills/orch/scripts/lib/skill-version.sh"
-LIB_PATH="s|\"\$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh\"|\"$TMP/skill-version.sh\"|"
+REAL_LIB="$REPO/.agents/skills/orch/scripts/lib/change-class.sh"
+LIB_PATH="s|\"\$TOOLS_DIR/../.agents/skills/orch/scripts/lib/change-class.sh\"|\"$TMP/change-class.sh\"|"
 mutant_lib() { # NEEDLE REPLACEMENT COUNT — the lib copy with each NEEDLE replaced, COUNT of them
   awk -v needle="$1" -v text="$2" -v want="$3" '
     { while ((i = index($0, needle)) > 0) { $0 = substr($0, 1, i - 1) text substr($0, i + length(needle)); n++ } print }
     END { exit n != want }
-  ' "$REAL_LIB" >"$TMP/skill-version.sh"
+  ' "$REAL_LIB" >"$TMP/change-class.sh"
 }
 # label~how~paths~text in the lib~its replacement~how many times it is
 # there~suites that start, sorted
@@ -732,14 +732,14 @@ for row in "${LIB_CONTROLS[@]}"; do
     bad "$label" "the line could not be replaced in a lib copy"
   fi
 done
-rm -f -- "$TMP/skill-version.sh"
+rm -f -- "$TMP/change-class.sh"
 if mutant_guard "$LIB_PATH"; then
   map_row version skills/mapped/SKILL.md "$(mapped_note 6/$MAPPED_N skills/mapped)" "$MUTANT_TOOLS/guard"
-  [ "$VERDICT" = "rc=1 started=$SKILL_READERS note=$(mapped_note 6/$MAPPED_N skills/mapped)" ] && grep -qFx 'guard: skill-version-lib=unreadable' <<<"$OUT" \
+  [ "$VERDICT" = "rc=1 started=$SKILL_READERS note=$(mapped_note 6/$MAPPED_N skills/mapped)" ] && grep -qFx 'guard: change-class-lib=unreadable' <<<"$OUT" \
     && ok "an unreadable shared reader is a finding, and the version raise runs every reader of SKILL.md" \
     || bad "an unreadable shared reader is a finding, and the version raise runs every reader of SKILL.md" "$VERDICT out=$OUT"
   map_row append skills/mapped/scripts/tool "$(mapped_note 2/$MAPPED_N skills/mapped)" "$MUTANT_TOOLS/guard"
-  [ "$VERDICT" = "rc=0 started=tool tool_extra note=$(mapped_note 2/$MAPPED_N skills/mapped)" ] && [[ "$OUT" != *"skill-version-lib"* ]] \
+  [ "$VERDICT" = "rc=0 started=tool tool_extra note=$(mapped_note 2/$MAPPED_N skills/mapped)" ] && [[ "$OUT" != *"change-class-lib"* ]] \
     && ok "an unreadable shared reader is no finding in a range that changes no SKILL.md" \
     || bad "an unreadable shared reader is no finding in a range that changes no SKILL.md" "$VERDICT out=$OUT"
 else

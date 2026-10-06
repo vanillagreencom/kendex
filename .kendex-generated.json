@@ -645,7 +645,6 @@
   ".agents/skills/orch/scripts/lib/review-threads.sh",
   ".agents/skills/orch/scripts/lib/security-alerts.sh",
   ".agents/skills/orch/scripts/lib/session-rows.sh",
-  ".agents/skills/orch/scripts/lib/skill-version.sh",
   ".agents/skills/orch/scripts/lib/state-archive.sh",
   ".agents/skills/orch/scripts/lib/tmux-server.sh",
   ".agents/skills/orch/scripts/lib/toml.sh",

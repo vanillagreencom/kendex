@@ -25,7 +25,7 @@ mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
 cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" \
-  "$ORCH_DIR/scripts/lib/skill-version.sh" "$LAYOUT/orch/scripts/lib/"
+  "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 TIER="$LAYOUT/orch/scripts/item-tier"
 
@@ -78,7 +78,7 @@ ROWS=(
   "-|--production 1 --path .pi/settings.json|tier=standard brief=start cause=configuration-source rc=0|a registry Location proves no render"
   "-|--production 1 --path CLAUDE.md|tier=standard brief=start cause=instruction-pointer rc=0|an instruction pointer Location proves no render"
   "-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
-  "-|--production 1 --path skills/orch/scripts/lib/skill-version.sh|tier=standard brief=start cause=excluded-path rc=0|the version reader item-tier shares is never micro"
+  "-|--production 1 --path skills/orch/scripts/lib/change-class.sh|tier=standard brief=start cause=excluded-path rc=0|the classifier and version reader item-tier sources is never micro"
   "-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
   "-|--production 1 --path hooks/block-bare-cd.sh|tier=standard brief=start cause=excluded-path rc=0|a hook body Location is never micro"
   "-|--production 1 --path hooks/tests/block-bare-cd.test.sh|tier=micro brief=micro cause=estimate-within-micro rc=0|a hook suite Location leaves the estimate's class"
@@ -327,9 +327,9 @@ done
 # needle holds '|'
 SKILL_CONTROLS=(
   'no-version-exemption@item-tier@        instruction-file\ *) ! version_raise_only "$path" || continue ;;@        instruction-file\ *) ;;@version-raise commented-raise'
-  'any-version-line@lib/skill-version.sh@    front && metadata && /^[[:space:]]+version:/ { next }@    /^[[:space:]]+version:/ { next }@version-and-body dots-body spaced-body'
-  'exact-closer@lib/skill-version.sh@    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }@    front && $0 == "---" { front = 0 }@dots-body spaced-body'
-  'comment-key@lib/skill-version.sh@    front && /^[^[:space:]#]/ {@    front && /^[^[:space:]]/ {@commented-raise'
+  'any-version-line@lib/change-class.sh@    front && metadata && /^[[:space:]]+version:/ { next }@    /^[[:space:]]+version:/ { next }@version-and-body dots-body spaced-body'
+  'exact-closer@lib/change-class.sh@    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }@    front && $0 == "---" { front = 0 }@dots-body spaced-body'
+  'comment-key@lib/change-class.sh@    front && /^[^[:space:]#]/ {@    front && /^[^[:space:]]/ {@commented-raise'
 )
 for control in "${SKILL_CONTROLS[@]}"; do
   IFS='@' read -r control_name control_file needle replacement red <<<"$control"

@@ -152,8 +152,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "that suite failed; its own output above names the case." ;;
     mapped-suites)
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
-    skill-version-lib)
-      echo "the orch render's scripts/lib/skill-version.sh could not be sourced, so each changed SKILL.md of this run ran every suite that reads the file, whether or not its one change was its metadata.version line." ;;
+    change-class-lib)
+      echo "the orch render's scripts/lib/change-class.sh could not be sourced, so each changed SKILL.md of this run ran every suite that reads the file, whether or not its one change was its metadata.version line." ;;
     suites)
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
@@ -1490,8 +1490,9 @@ mapped_suites() { # DIR REL [FIELD]
   fi
   MAPPED=$out
 }
-# Whether metadata_version_only answers the SKILL.md at PATH as a change of
-# its metadata.version line alone from the suites' base: the decision orch's
+# Whether the orch render's lib/change-class.sh, through its
+# metadata_version_only, answers the SKILL.md at PATH as a change of its
+# metadata.version line alone from the suites' base: the decision orch's
 # item-tier makes from the same lib, whose header says what it compares. A
 # file the base lacks is no such change.
 # The lib is sourced on the first SKILL.md the mapping judges, so a run
@@ -1501,12 +1502,12 @@ mapped_suites() { # DIR REL [FIELD]
 version_lib=""
 version_only() { # PATH
   if [ -z "$version_lib" ]; then
-    # shellcheck source=../.agents/skills/orch/scripts/lib/skill-version.sh
-    if source "$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh"; then
+    # shellcheck source=../.agents/skills/orch/scripts/lib/change-class.sh
+    if source "$TOOLS_DIR/../.agents/skills/orch/scripts/lib/change-class.sh"; then
       version_lib=loaded
     else
       version_lib=unreadable
-      say skill-version-lib unreadable
+      say change-class-lib unreadable
     fi
   fi
   [ "$version_lib" = loaded ] || return 1

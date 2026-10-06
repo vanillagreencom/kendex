@@ -49,8 +49,6 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 . "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/branch-growth.sh
 . "$SCRIPT_DIR/lib/branch-growth.sh"
-# shellcheck source=lib/skill-version.sh
-. "$SCRIPT_DIR/lib/skill-version.sh"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -172,10 +170,10 @@ fi
 
 # Every catalog package change raises metadata.version in its SKILL.md, and
 # its tracked render repeats that line; the raise changes no instruction an
-# agent reads. Both sides of the range's diff go to metadata_version_only,
-# whose header says what it compares; a change it does not answer as
-# version-only, or a side that cannot be read, counts as an instruction-file
-# edit.
+# agent reads. Both sides of the range's diff go to lib/change-class.sh's
+# metadata_version_only, whose header entry says what it compares; a change
+# it does not answer as version-only, or a side that cannot be read, counts
+# as an instruction-file edit.
 version_raise_only() { # PATH
   case "$1" in SKILL.md | */SKILL.md) ;; *) return 1 ;; esac
   local merge_base
