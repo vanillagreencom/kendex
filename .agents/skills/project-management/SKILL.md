@@ -12,7 +12,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "4.0.1"
+  version: "4.0.2"
 tags: [planning]
 ---
 
@@ -64,6 +64,7 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
   - The thread a finding came from, a shape ("a name containing a quote"), or something true in theory is not a reach, and an item with nothing to name is a decline, not an issue. The judgement is the author's: `issues create` under `LINEAR_REQUIRE_REACH` refuses only a body with no `Reached by:` line, an unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) counting as absent.
   - A filing whose source is a review round carries, at priority 2, a `Symptom:` line naming the run, the user, or the red check that already showed the defect (`--review-born`). Priority 2 from any other source is structural, reports no symptom, and is not checked for one. Where a review-born finding files at all is [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Filing bar.
 - **A requirement asks for what code-quality admits.** A requirement, Done-when or test plan is written against the code-quality skill's SKILL.md § Tests, § Over-Engineering and the repository's compatibility policy under § Cleanup. A wording test, a fixed count of growing data, a compatibility or migration clause the policy does not require, or a gate with no named failure is cut from the item before filing; the cited section states each rule.
+- **One item per batch.** A body that lists batches each able to land alone is filed as one item per batch, with a blocking relation only where a batch needs another's change.
 - **Burn down more than you create.** Every audit that reads an issue backlog sweeps its comparison set for issues the codebase has already satisfied, duplicated, or superseded, and proposes those for cancellation in the same pass, along with every active issue that fails the creation bar as it stands today. Report `created N / closed M`. `project-order` reorders projects, reads no backlog, and does not sweep; `single` files one item against the open titles and does not sweep either.
 - **Ask about work, never about mechanics.** Creation and cancellation follow [audit-issues § 6](workflows/audit-issues.md#6-approve-creations-and-cancellations); the user decides activation. Labels, priorities, relations, hierarchy, sort order, and project moves are corrections the workflow applies on its own authority.
 - **Research is part of planning, not a work item.** Gather prior art, vendor docs, and approach comparisons inline during planning. Store the artifacts in the tracker under § Planning artifacts; research that is the evidence behind a constraint still in force stays attached to that constraint's issue, and the rest is not kept. A tracker research issue exists only when the research is delegated as standalone work: run by the researcher agent, or prepared for later pickup (`research-spike`).

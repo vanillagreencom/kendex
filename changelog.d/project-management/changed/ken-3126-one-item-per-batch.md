@@ -1,0 +1,1 @@
+- Planning files a body of batches that each land alone as one item per batch, blocking only where a batch needs another's change.
