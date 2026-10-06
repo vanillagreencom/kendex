@@ -1,0 +1,1 @@
+- Each validation or sandbox run before final validation names its question and expected answer in the round notes first; two inconclusive answers send the agent back to code and logs.

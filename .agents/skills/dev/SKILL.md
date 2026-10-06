@@ -12,7 +12,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.0"
+  version: "3.0.1"
 tags: [automation]
 ---
 
@@ -93,6 +93,8 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 ## Validation
 
 The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). Run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and the per-rule control for production gate and guard changes.
+
+Every validation or sandbox run a dev agent starts before that final validation, such as a nested-session smoke run or one scoped suite row, names its question first. Before the run, append `Run N: question: <what this run decides>; expect: <the result that answers yes or no>` to the round notes, `[WORKTREE_PATH]/tmp/run-notes-[ARTIFACT_KEY]-[DEV_ROUND_ID].md`; after it, append `Run N: answer: <yes|no|inconclusive> <one line>`. A run with no question line is not started. A second `inconclusive` in a row on one question sends the agent back to the code and logs, never to a third run. Final validation is exempt.
 
 ### Long-Running Validation
 
