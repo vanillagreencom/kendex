@@ -1,0 +1,7 @@
+Run the installed bot-instructions render here once, writing no setup record
+
+Usage: kendex bot-instructions-render
+
+Options:
+  -h, --help
+          Print help

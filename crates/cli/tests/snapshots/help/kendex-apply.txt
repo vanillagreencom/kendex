@@ -23,7 +23,8 @@ Options:
           in this place — the old files move to the trash
 
       --allow-repo-effects
-          Say yes to the repository changes a newly installed package asks for
+          Say yes to the repository changes a newly installed package asks for,
+          and to setting up a package that holds the commit
 
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it

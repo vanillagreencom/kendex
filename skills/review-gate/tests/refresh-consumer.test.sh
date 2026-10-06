@@ -86,7 +86,16 @@ cat >"$TMP/bin/kendex" <<'SH'
 set -euo pipefail
 # The runner calls the render verb under env -i, so it reads no test
 # setting. Like kendex, it runs the installed package's render where the
-# package is, and says so where it is not.
+# package is, and says so where it is not. Where the state holds old-engine
+# it answers as a release before the verb: help refuses the name, and the
+# bare name is read as a source to add, which refuses with no terminal.
+if [ -e @STATE@/old-engine ]; then
+  case "${1:-} ${2:-}" in
+    'help bot-instructions-render') printf "error: unrecognized subcommand 'bot-instructions-render'\n" >&2; exit 2 ;;
+    'bot-instructions-render '*) printf 'error: no terminal to ask at\n' >&2; exit 1 ;;
+  esac
+fi
+[ "${1:-} ${2:-}" != 'help bot-instructions-render' ] || exit 0
 if [ "${1:-}" = bot-instructions-render ]; then
   env >@STATE@/render-env
   launcher=.agents/skills/bot-instructions/scripts/bot-instructions
@@ -181,7 +190,7 @@ exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
 file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
-file_edit "$TMP/bin" kendex 1 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 2 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -1492,7 +1501,7 @@ done
 for mutation in none inherited; do
   reset_default
   rm -f -- "${TMP:?}/state/render-env"
-  [ "$mutation" = none ] || bot_runner_edit 'env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex' 'kendex'
+  [ "$mutation" = none ] || bot_runner_edit 'env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-instructions-render' 'kendex bot-instructions-render'
   run_refresh bot-isolated pass render
   isolated=no
   if [ "$RC" -eq 0 ] && [ -s "$TMP/state/render-env" ] &&
@@ -1581,6 +1590,26 @@ for mutation in none unread; do
   esac
   cp "$TMP/bot-runner" "$runner"
 done
+# An engine released before the render verb keeps the refresh it had: the
+# run says why nothing rendered and publishes. A runner that calls the verb
+# without asking the engine is the control, and fails on the old engine's
+# refusal.
+: >"$TMP/state/old-engine"
+for mutation in none unprobed; do
+  reset_default
+  [ "$mutation" = none ] || bot_runner_edit 'kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?' 'true'
+  run_refresh bot-old-engine pass render
+  kept=no
+  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-render=skipped package=bot-instructions cause=engine' <<<"$OUT" &&
+      grep -q '^refresh-state=pushed ' <<<"$OUT"; then kept=yes; fi
+  case "$mutation:$kept" in
+    none:yes) ok 'an engine without the render verb publishes the refresh and says it rendered nothing' ;;
+    unprobed:no) ok 'control: a runner that does not probe the engine fails on the old engine' ;;
+    *) bad "old engine mutation=$mutation" "$OUT" ;;
+  esac
+  cp "$TMP/bot-runner" "$runner"
+done
+rm -f -- "${TMP:?}/state/old-engine"
 # Where no bot-instructions package is installed the run still says it
 # rendered nothing; a runner that does not read kendex's answer is silent.
 reset_default

@@ -57,6 +57,12 @@ pub struct CommitFlags {
     /// The commit message to use instead of the default
     #[arg(long)]
     pub message: Option<String>,
+    /// The verb's own `--allow-repo-effects`: the yes to setting up a
+    /// package that holds the commit, given where nobody is asked. Each
+    /// verb that carries the flag declares it, so it is read off the
+    /// matches and never parsed here.
+    #[arg(skip)]
+    pub allow_repo_effects: bool,
 }
 
 impl CommitFlags {
@@ -81,6 +87,7 @@ impl CommitFlags {
             pull_request: flag("pull_request"),
             leave: flag("leave"),
             message: at.try_get_one::<String>("message").ok().flatten().cloned(),
+            allow_repo_effects: flag("allow_repo_effects"),
         }
     }
 }
@@ -350,6 +357,7 @@ fn make(
                 set_up,
                 answered,
                 person,
+                allowed: session.flags.allow_repo_effects,
             };
             match hold(env, scope, &scan, &stale, held, &mut generated)? {
                 Hold::Ended(outcome) => return Ok(Some(outcome)),
@@ -415,6 +423,8 @@ struct Held {
     answered: Option<Choice>,
     /// A person is at the prompt to be asked.
     person: bool,
+    /// The run said yes to the setup with `--allow-repo-effects`.
+    allowed: bool,
 }
 
 /// How a held offer ends: an outcome, or a setup that ran, after which the
@@ -449,14 +459,21 @@ fn hold(
     }
     // One setup per offer. A package still not ready after its own setup
     // ran is not one a second run of it fixes.
-    if held.set_up || !held.person {
+    if held.set_up || !(held.person || held.allowed) {
         ui::stderr(&block::stale_way_on(&style, held.set_up));
         return Ok(Hold::Ended(match (held.set_up, held.answered) {
             (false, None) => Outcome::Nothing,
             (true, _) | (false, Some(_)) => Outcome::CommitRefused,
         }));
     }
-    match block::pick_stale(stale)? {
+    let picked = match held.allowed {
+        true => {
+            block::disclose_stale(stale);
+            block::Held::SetUp
+        }
+        false => block::pick_stale(stale)?,
+    };
+    match picked {
         block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),
         block::Held::SetUp => match set_up_here(env, scope, stale, generated) {
             Ok(()) => Ok(Hold::SetUp),

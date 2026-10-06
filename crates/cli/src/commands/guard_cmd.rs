@@ -43,7 +43,7 @@ pub(super) fn report(report: &GuardReport) -> ExitCode {
     ExitCode::from(report.code)
 }
 
-pub(super) fn refused(error: &kendex_core::error::CoreError) -> ExitCode {
+pub(super) fn refused(error: &dyn std::fmt::Display) -> ExitCode {
     out(&format!("error: {error}"));
     ExitCode::from(2)
 }

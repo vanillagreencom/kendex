@@ -26,7 +26,7 @@ repo-effects:
   uninstaller: "scripts/bot-instructions retire"
   checker: "scripts/bot-instructions check"
   staged-checker: "scripts/bot-instructions check --staged"
-  removal: "Remove the owned Code Review Rules body but keep its heading, disable the [bot-instructions.bots] flags, render, which removes the marked files, then remove the package."
+  removal: "Retire every capability in the order schemas/repo-toml.md § [bot-instructions.bots] gives, which ends in the render that removes the marked files, then remove the package."
   notes:
     - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
     - "The review doctrine is written to [bot-instructions.repo] code_review_path, which defaults to .github/instructions/code-review.md and is refused outside that directory, so every path this package writes is one of those listed above."

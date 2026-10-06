@@ -12,7 +12,7 @@
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
 # whose render did not run also gets
-# refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
+# refresh-render=skipped package=bot-instructions cause=absent|unconfigured|engine.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 templates=""
@@ -207,12 +207,29 @@ fi
 # later git add -A takes what it writes and removes.
 git add -A
 render_status=0
-render_output="$(env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-instructions-render 2>&1)" || render_status=$?
-printf '%s\n' "$render_output"
+render_output=""
 render_skip=""
-case "$render_status" in
-  0) if grep -qxF 'bot-instructions-render=absent' <<<"$render_output"; then render_skip=absent; fi ;;
-  2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
+# The inline template installs the latest stable kendex, and every release
+# through 1.10.1 lacks the verb: it reads the name as a source to add and
+# refuses. Such an engine keeps the outcome it had before the verb, an
+# unrendered refresh. Remove the probe once the latest stable release
+# carries the verb.
+probe_status=0
+env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?
+case "$probe_status" in
+  0)
+    render_output="$(env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-instructions-render 2>&1)" || render_status=$?
+    printf '%s\n' "$render_output"
+    case "$render_status" in
+      0) if grep -qxF 'bot-instructions-render=absent' <<<"$render_output"; then render_skip=absent; fi ;;
+      2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
+    esac
+    ;;
+  2) render_skip=engine ;;
+  *)
+    printf 'refresh-error=bot-instructions-probe value=%s\n' "$probe_status" >&2
+    exit 1
+    ;;
 esac
 if [ -n "$render_skip" ]; then
   printf 'refresh-render=skipped package=bot-instructions cause=%s\n' "$render_skip"

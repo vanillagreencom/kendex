@@ -64,11 +64,17 @@ def _nested_agents_files(ctx):
     return [p for p in tracked if p.endswith("/AGENTS.md")]
 
 
+def _retired(ctx, path):
+    """A path this package may have written that the current TOML does not
+    produce: one of ROOT_OUTPUTS, or a file under one of SCANNED_TREES."""
+    return path not in ctx.build.files and (
+        path in ROOT_OUTPUTS or any(path.startswith(tree + "/") for tree in SCANNED_TREES))
+
+
 def orphan_files(ctx):
     """Every marked file the current TOML does not produce, sorted."""
-    produced = set(ctx.build.files)
     return [path for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx))
-            if path not in produced and marker.carries_marker(ctx.read(path))]
+            if _retired(ctx, path) and marker.carries_marker(ctx.read(path))]
 
 
 def removed_orphans(ctx, index):
@@ -81,13 +87,9 @@ def removed_orphans(ctx, index):
     has come and gone, still stages the deletion `check --staged` asks for.
     `index` reads the staged blobs, the one place their marker still is.
     """
-    produced = set(ctx.build.files)
-    candidates = [path for path in ctx.tracked_paths()
-                  if path not in produced
-                  and (path in ROOT_OUTPUTS
-                       or any(path.startswith(tree + "/") for tree in SCANNED_TREES))]
-    return [path for path in sorted(candidates)
-            if ctx.read(path) is None and marker.carries_marker(index.read(path))]
+    return [path for path in sorted(ctx.tracked_paths())
+            if _retired(ctx, path) and ctx.read(path) is None
+            and marker.carries_marker(index.read(path))]
 
 
 def orphan_file(ctx, out):

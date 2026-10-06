@@ -986,6 +986,79 @@ fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
     project
 }
 
+/// A checkout that installed bot-instructions from a catalog and committed
+/// it, with no setup record, as a lane's fresh work tree is. The package
+/// then changes in the catalog, so the next apply rewrites its tree. Its
+/// render writes the review file, and its check passes once that file is
+/// there.
+#[allow(clippy::unwrap_used)]
+fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
+    let home = rooted(tmp);
+    let project = home.join("dev/app");
+    let package = project.join("catalog/skills/bot-instructions");
+    let declaration = |description: &str| {
+        format!(
+            "---\nname: bot-instructions\ndescription: {description}\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n"
+        )
+    };
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    fs::write(package.join("SKILL.md"), declaration("first rules")).unwrap();
+    executable(
+        &package.join("scripts/bot-instructions"),
+        "#!/bin/sh\nif [ \"$1\" = check ]; then\n  test -f .github/copilot-instructions.md\n  exit\nfi\nif [ \"$2\" = --dry-run ]; then\n  echo 'would write .github/copilot-instructions.md'\n  exit 0\nfi\nmkdir -p .github\necho rules >.github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n",
+    );
+    git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["config", "user.email", "t@t"]);
+    git(&project, &["config", "user.name", "t"]);
+    git(&project, &["config", "commit.gpgsign", "false"]);
+    let (output, text) = apply(&home, &project, &["--leave"]);
+    assert!(output.status.success(), "{text}");
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "bot package"]);
+    fs::write(package.join("SKILL.md"), declaration("second rules")).unwrap();
+    git(&project, &["commit", "-q", "-am", "catalog"]);
+    project
+}
+
+/// An apply that rewrites a package nobody set up in this checkout is held
+/// at the commit; `--allow-repo-effects` sets the package up there, so the
+/// one command commits the package with its render. Without the flag, the
+/// control, the commit is held and nothing is set up.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn allow_repo_effects_sets_up_a_held_package_and_commits_its_render() {
+    for (flags, code, committed) in [
+        (&["--commit", "--allow-repo-effects"][..], Some(0), true),
+        (&["--commit"][..], Some(1), false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = unarmed_consumer(&tmp);
+
+        let (output, text) = apply(&home, &project, flags);
+
+        assert_eq!(output.status.code(), code, "{flags:?}: {text}");
+        let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+        let carried = |path: &str| files.lines().any(|line| line == path);
+        assert_eq!(
+            carried(".github/copilot-instructions.md"),
+            committed,
+            "{flags:?}: {files}\n{text}"
+        );
+        assert_eq!(
+            carried(".claude/skills/bot-instructions/SKILL.md"),
+            committed,
+            "{flags:?}: {files}\n{text}"
+        );
+        assert_eq!(head_subject(&project) != "catalog", committed, "{flags:?}");
+    }
+}
+
 /// A manifest edit, which kendex never commits, holds the commit only
 /// where the package's check over that commit reads it: its declared
 /// staged checker, `check --staged`, run against the index the commit

@@ -23,6 +23,9 @@ Options:
           Take the files away and leave kendex.toml untouched; refresh installs
           what it lists again
 
+      --allow-repo-effects
+          Say yes to setting up a package that holds the commit
+
       --commit
           Commit the files kendex wrote, without asking
 

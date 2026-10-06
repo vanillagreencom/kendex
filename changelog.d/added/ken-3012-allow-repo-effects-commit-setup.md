@@ -1,0 +1,1 @@
+- `kendex apply --commit --allow-repo-effects` and `kendex remove --commit --allow-repo-effects` now set up a package that holds the commit, such as bot-instructions in a checkout nobody set it up in, and commit its render in the same run.
