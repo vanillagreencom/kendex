@@ -13,7 +13,7 @@ A worktree is where a lane works, and a write that lands in the main checkout fr
 ## Rules
 
 - Do resolve the project a bare verb writes from the working directory through `project_root_from` in `crates/core/src/discover.rs`: a worktree is its own project only where its manifest file exists there.
-- Do ask that one predicate everywhere: `hooks/block-worktree-refresh.sh` spells its markers in Bash and refuses a write whose target is another checkout, and `remedy_target` in `crates/core/src/drift/report/` resolves the same answer for the check report.
+- Do ask that one predicate everywhere: `hooks/block-worktree-refresh.sh` spells its markers in Bash and refuses a write whose target is another checkout, and `remedy_target` in `crates/core/src/drift/report.rs` resolves the same answer for the check report.
 - Do refuse a project-scope `refresh`, `apply` or `updates --apply` from a marked lane worktree unless the caller passes `--lane-refresh`; `crates/core/src/lane.rs` reads the marker the orch skill's `lane-marker` writes.
 - Do decide once whether a tree is the source, where the artifact is built in `crates/core/src/engine/desired_skill.rs`; a copy delivered elsewhere from an in-place declaration is a render like any other.
 - Do take `--project-path PATH` as the explicit form for writing another project from anywhere.

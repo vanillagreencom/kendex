@@ -22,7 +22,7 @@ A package is catalog content, and catalog content runs nothing until a person on
 
 ## The canonical example
 
-`crates/core/src/repo_effects/`: `declaration.rs` names in `FIELDS` every key a package may declare, `setup.rs` writes and reads the arming record, and `crates/core/tests/bot_instructions_refresh.rs` plants an unarmed doctrine change and watches the commit held. A new effect adds a key to the reader before any catalog declaration uses it.
+`crates/core/src/repo_effects/`: `declaration.rs` names in `FIELDS` every key a package may declare, `armed.rs` writes and reads the arming record, and `crates/core/tests/bot_instructions_refresh.rs` plants an unarmed doctrine change and watches the commit held. A new effect adds a key to the reader before any catalog declaration uses it.
 
 ## Revisit when
 
