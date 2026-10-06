@@ -209,13 +209,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # ORCH_LANE_MAX_PCT = "95"
 
 # How much of an account's 5-hour allowance one running lane is expected to
-# use in an hour. Each running lane is charged it twice. On the window that
-# binds, for one hour, where no rate has been measured for the account yet; a
-# weekly allowance is charged its share by length. On the 5-hour window
-# beside a weekly or other binding window, always, for each hour until that
-# window resets (1 to 5), measured rate or not. A lane is not launched on an
-# account whose running lanes would carry either window to ORCH_LANE_MAX_PCT,
-# whether the account is picked or named. 0 turns the charge off.
+# use in an hour, charged for each running lane wherever no rate is measured;
+# `lanes --help` (pick, ORCH_LANE_BURN_PCT_PER_HOUR) states which windows and
+# for how long. 0 turns the charge off.
 # ORCH_LANE_BURN_PCT_PER_HOUR = "5"
 
 # The credits a Codex account past ORCH_LANE_MAX_PCT must hold more than to

@@ -39,9 +39,8 @@ fleet() {
     '{issue_id: "oversee", triaged: [], launch_queue: $queue, lanes: $lanes}' > "$STUB_DIR/state.json"
 }
 # account ALIAS HARNESS VERDICT RESETS — one `lanes list --json` record, its
-# binding bucket the weekly window resetting at RESETS, and an Opus-scoped
-# window at 100% with a reset of its own, so a launch on Opus dates to that
-# reset rather than the binding bucket's.
+# binding bucket the weekly window resetting at RESETS. The listing says which
+# harnesses have accounts; a wall's date is the pick's own walled_resets_at.
 account() {
   jq -nc --arg a "$1" --arg h "$2" --arg v "$3" --arg r "$4" '{
     alias: $a, harness: $h, config_dir: ("/home/u/." + $a), measured_through: "local",
@@ -110,28 +109,16 @@ world() {
     "$(account codex codex walled 2026-10-05T00:00:00Z)" "$(account codex2 codex walled 2026-10-03T00:00:00Z)" \
     | jq -sc . > "$STUB_DIR/lanes.json"
   pick claude claude-sonnet-5 0 '{"config_dir":"/home/u/.claude"}'
-  pick codex - 3 '{"walled":2,"unmeasured":0}'
-  pick claude claude-opus-5 3 '{"walled":2,"unmeasured":0}'
+  pick codex - 3 '{"walled":2,"unmeasured":0,"walled_resets_at":"2026-10-03T00:00:00Z"}'
+  pick claude claude-opus-5 3 '{"walled":2,"unmeasured":0,"walled_resets_at":"2026-10-04T00:00:00Z"}'
   pick provider-x-codex - 0 '{"config_dir":"/home/u/.codex"}'
 }
 
-# hosted NAME — the shared world with KEN-12's host walled for codex, its
-# listing carrying the provider's reading of a codex account beside this
-# machine's, as `lanes list` does, resetting later than every local one.
+# hosted NAME REPLY — the shared world with KEN-12's host walled for codex,
+# its pick there answering REPLY.
 hosted() {
   world "$1"
-  pick provider-x-codex - 3 '{"walled":1,"unmeasured":0}'
-  jq -c --argjson h "$(account codex codex walled 2026-10-06T00:00:00Z)" \
-    '. + [$h | .measured_through = "host"]' "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.hosted.json"
-  mv -- "$STUB_DIR/lanes.hosted.json" "$STUB_DIR/lanes.json"
-}
-# sessioned NAME — the shared world with codex2 walled by its lanes on the
-# session window, which resets long before its weekly one.
-sessioned() {
-  world "$1"
-  jq -c 'map(if .alias == "codex2" then .projected_window = {bucket: "session", pct: 10, resets_at: "2026-09-28T05:00:00Z"} else . end)' \
-    "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.session.json"
-  mv -- "$STUB_DIR/lanes.session.json" "$STUB_DIR/lanes.json"
+  pick provider-x-codex - 3 "$2"
 }
 # noisy NAME — the shared world whose listings each write a keyed notice.
 noisy() {
@@ -196,29 +183,19 @@ assert_eq "rc=$RC $(notices) $(owed KEN-12)" \
   "rc=0 local=1 provider-x=1 owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue" \
   "each owed listing's notices reach stderr" "$ERR"
 
-# Rows: case | whether the listing keeps the provider's codex reading | KEN-12's
-# owed line. A walled hosted lane dates to the provider's readings, never the
-# local copy's earlier reset, and with none it is undated.
-while IFS='|' read -r name keep want; do
-  hosted "owed_hosted_$name"
-  if [[ "$keep" == no ]]; then
-    jq -c 'map(select(.measured_through != "host"))' "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.local.json"
-    mv -- "$STUB_DIR/lanes.local.json" "$STUB_DIR/lanes.json"
-  fi
+# Rows: case | the pick reply on KEN-12's host | KEN-12's owed line. A walled
+# hosted lane dates to the reset its own host's pick names, never the local
+# host's, and to none where that pick names none.
+while IFS='|' read -r name reply want; do
+  hosted "owed_hosted_$name" "$reply"
   watch_pass -- --state "$STUB_DIR/state.json"
   assert_eq "rc=$RC $(owed KEN-12)|$(owed KEN-3)" \
     "rc=0 $want|owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z" \
-    "a walled hosted lane with $name provider reading" "$ERR"
+    "a walled hosted lane whose pick names $name reset" "$ERR"
 done <<'ROWS'
-a|yes|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-06T00:00:00Z
-no|no|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
+a|{"walled":1,"unmeasured":0,"walled_resets_at":"2026-10-06T00:00:00Z"}|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-06T00:00:00Z
+no|{"walled":1,"unmeasured":0,"walled_resets_at":null}|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
 ROWS
-
-sessioned owed_session
-watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "rc=$RC $(owed KEN-3)" \
-  "rc=0 owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-09-28T05:00:00Z" \
-  "a wall the session projection decided dates to the session reset" "$ERR"
 
 # Rows: case | pick's exit and reply for codex. Every account unmeasured and a
 # pick that fails are both unjudged; the failure is named.
@@ -318,9 +295,8 @@ world@without the merged verdict a cycle record is judged for a wall@if [[ "$del
 world@the PR-only cycle filter aborts on a direct record@elif has("commit") and (has("pr") | not)@elif false and (has("pr") | not)@state-invalid@rc=2 heartbeat=0 key=1
 world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
-world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
-hosted@without the reading filter a hosted wall dates to the local copy's reset@select(.harness == $h and .measured_through == $t)@select(.harness == $h)@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
-sessioned@without the deciding window a session wall dates to the weekly reset@if .projected_window.bucket? == "session" then .projected_window.resets_at else lane_binding($m) | .resets_at? end@lane_binding($m) | .resets_at?@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+world@without the pick's own reset the wall goes undated@.walled_resets_at | if . == null then "-"@null | if . == null then "-"@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=-
 noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=0 provider-x=0
 ROWS
 

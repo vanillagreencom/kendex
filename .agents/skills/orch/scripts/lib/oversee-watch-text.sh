@@ -488,9 +488,10 @@ The long pass's events, checked and reported in this order:
                              listing no account of the harness is `queue`;
                              otherwise `lanes pick --harness <h> [--model <m>]`
                              with the record's harness and model decides:
-                             room is `queue`, a wall `dated` until the earliest
-                             reset of that model's binding bucket among the
-                             harness's accounts on that host, and every account
+                             room is `queue`, a wall `dated` until the
+                             walled_resets_at that pick names, the earliest
+                             reset of the window that decided each walled
+                             account on that model and host, and every account
                              unmeasured or a failed pick `unjudged`, the
                              failure named as owed-wall-unjudged
 

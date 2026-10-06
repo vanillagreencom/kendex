@@ -141,15 +141,17 @@
 #         (kendex's main-branch install.sh, run with --cli-only)
 #         and repository access approved once, both claude.ai cards in a
 #         session of that account on that repository. A lane is
-#         judged on its PROJECTED wall: the reading plus, for each live claim
-#         on it, the burn one lane is expected to spend in the next hour, or
-#         the 5-hour session window projected beside it with each claim
-#         charged the session burn for the hours left to that window's reset
-#         (1 to 5), whichever leaves less room. Account-wide rates use claims at sample time (at least one) as the
-#         divisor; model rates use one because claims omit models. With no
-#         rate, the binding bucket uses ORCH_LANE_BURN_PCT_PER_HOUR, scaled to
-#         the window. The session burn is the binding burn where the session
-#         binds, and ORCH_LANE_BURN_PCT_PER_HOUR otherwise. So an
+#         judged on its PROJECTED wall, the smaller of two projected rooms.
+#         The window that binds is charged, per live claim, one hour of its
+#         burn: the measured rate, or ORCH_LANE_BURN_PCT_PER_HOUR where none
+#         is measured, scaled by length for a weekly or model window (5/168)
+#         and a monthly pool (5/720). The 5-hour session window is charged,
+#         whatever binds, per live claim, its session burn for each hour left
+#         to its reset, 1 to 5, or 1 where the reset is unknown: the measured
+#         rate where the session binds and one is measured,
+#         ORCH_LANE_BURN_PCT_PER_HOUR otherwise. Account-wide rates use claims
+#         at sample time (at least one) as the divisor; model rates use one
+#         because claims omit models. So an
 #         account whose room the lanes already on it will spend is dropped the
 #         way a walled one is. It never returns an OVERSEER SEAT, an account
 #         `.overseer.account` of a fleet state names: this checkout's fleet
@@ -163,8 +165,10 @@
 #         projected_headroom_pct, selection_score, and qualifying_count from that same
 #         judgement, with the two rooms projected_headroom_pct is the smaller
 #         of, binding_projected_headroom_pct and session_projected_headroom_pct,
-#         and the session charge, session_burn_pct_per_lane_hour for each of
-#         session_charge_hours. With
+#         the session charge, session_burn_pct_per_lane_hour for each of
+#         session_charge_hours, and projected_window, {bucket, pct,
+#         resets_at}: the window whose projected room is the smaller, its
+#         reading and its reset, null with no projection. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
 #         the named model's scoped weekly window, and for a Copilot account
@@ -186,9 +190,14 @@
 #         line. Copilot and Pi pool picks keep seats and charge their claims
 #         at the monthly burn; they read no fleet state for seats. A window
 #         fleet with only seats needs another account. Under --json that exit
-#         also prints `{"walled":N,"unmeasured":N,"seats":N}` on stdout, the
-#         same counts, so a caller walking several picks can report what each
-#         sweep found instead of parsing the message written for a person.
+#         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
+#         "walled_resets_at":T}` on stdout, the same counts, so a caller
+#         walking several picks can report what each sweep found instead of
+#         parsing the message written for a person. walled_resets_at is the
+#         earliest reset among the walled candidates' projected_window, judged
+#         with --model as the pick is, the binding reset where one has no
+#         projection, and null where none states a reset: when a launch of
+#         that harness and model can first find room.
 #         Where ORCH_LANE_HOST names a provider that answers `accounts`, the
 #         candidates are the rows `list` merges, with each account the provider
 #         reports judged on the provider's reading IN PLACE OF this machine's:
@@ -256,9 +265,11 @@
 #         judged. Under --projected it is exit 6 instead, keyed
 #         `pick-lane-claims-refused`, before anything is measured: that verdict
 #         charges the claims, and none counted is not none in flight. The
-#         record printed on 3 under --json carries `wall`, the
-#         reading, and `projected_headroom_pct`, so a caller names what it
-#         refused on.
+#         record printed on 3 under --json carries `wall` and `binding_bucket`,
+#         the binding reading, beside `projected_headroom_pct` and
+#         `projected_window`: a --projected caller names its refusal from
+#         `projected_window`, as the `pick-lane-walled` line's wall= and
+#         bucket= do under --projected, and any other caller from the reading.
 #   context  Print context use for each live work lane in this fleet, as its
 #         own turn-end hook recorded it: the tokens the last response left in the
 #         context, read by the harness adapter (lib/lane-context.sh) from the
@@ -488,15 +499,11 @@
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
 #   ORCH_LANE_BURN_PCT_PER_HOUR  Percentage points of the 5-hour session window
-#                      one live lane is expected to spend in an hour. The
-#                      binding bucket is charged it per claim for one hour
-#                      where the account's rate is not measured or nothing is
-#                      claimed on it; a weekly window, plan-wide or
-#                      model-scoped, is charged 5/168 of it and a monthly
-#                      Copilot pool 5/720. The session window beside any
-#                      other binding bucket is charged it whole per claim for
-#                      each hour to its reset, measured rate or not (default
-#                      5; 0 charges nothing). Refused, before any lane is measured,
+#                      one live lane is expected to spend in an hour: the
+#                      burn `pick` charges a live claim wherever it charges
+#                      no measured rate. Which window it is charged on, and
+#                      for how long, is the PROJECTED wall under `pick`
+#                      (default 5; 0 charges nothing there). Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
 #   ORCH_LANE_CODEX_CREDIT_FLOOR  Credits, never a percentage, a Codex
 #                      account past the threshold must exceed (default 5000,
@@ -2990,7 +2997,8 @@ cmd_pick_lane() {
 			}
 			message pick-lane-walled "$dir" "$wall" "$bucket" "$max_pct" "$projected" "$credits" "$credit_floor" >&2
 			# Under --json only, as on exit 0: the plain form speaks env prefixes
-			# and keyed lines, and its refusal detail is the wall= field above.
+			# and keyed lines, and its refusal detail is the wall= and bucket=
+			# fields above, the projected window under --projected.
 			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
 			return 3
 			;;
@@ -3071,7 +3079,7 @@ omitted_seats() { # HARNESS HOSTED
 
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8" credit_floor="$9"
-	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat
+	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
 	# when nobody can parse it, before anything is read; its Copilot CLI
@@ -3146,8 +3154,9 @@ cmd_pick() {
 		# The counts on STDOUT under --json, as the named form prints its
 		# record there on the same exit: a caller walking several picks reports
 		# what each sweep found, and the keyed line above is a message for a
-		# person. `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0}`
-		# is the whole object; nothing else is printed on this path, so a
+		# person. `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
+		# "walled_resets_at":T}` is the whole object, T the judgement's own
+		# earliest walled reset or null; nothing else is printed on this path, so a
 		# caller reading `.walled` gets the count or a jq error, never a lane
 		# record it would mistake for a pick. `seats` is grep's count or 0.
 		#
@@ -3157,8 +3166,10 @@ cmd_pick() {
 		# returning it.
 		[[ "${walled:-}" =~ ^[0-9]+$ ]] || walled=0
 		[[ "${unmeasured:-}" =~ ^[0-9]+$ ]] || unmeasured=0
+		resets="$(jq -c '.walled_resets_at' <<<"$judged")" || return 1
 		[[ "$as_json" != "true" ]] || jq -nc --argjson w "$walled" --argjson u "$unmeasured" --argjson s "$seats" \
-			'{walled: $w, unmeasured: $u, seats: $s, qualifying_count: 0}'
+			--argjson r "$resets" \
+			'{walled: $w, unmeasured: $u, seats: $s, qualifying_count: 0, walled_resets_at: $r}'
 		return 3
 	fi
 	if [[ "$as_json" == "true" ]]; then

@@ -191,8 +191,6 @@ source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/account-wall.sh
 source "$SCRIPT_DIR/lib/account-wall.sh"
-# shellcheck source=lib/lane-model.sh
-source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/outside-contribution.sh
@@ -3666,9 +3664,8 @@ check_report() {
 # where that host's `lanes list` failed; `queue` where it lists no account of
 # the harness; otherwise `lanes pick` for the record's harness and model
 # decides, the launcher's own judge: room is `queue`, a wall is `dated` until
-# the earliest reset lib/lane-model.sh's lane_binding gives that model among
-# the harness's readings a launch on that host runs under, and anything else
-# is `unjudged`. One
+# the earliest reset that judgement names for its walled accounts, and
+# anything else is `unjudged`. One
 # listing is read per host and one pick asked per host, harness and model.
 # Without --state there is no queue to compare.
 OWED_PR_LIMIT=1000
@@ -3786,18 +3783,14 @@ owed_accounts() { # HOST
 
 # The wall verdict of one host, harness and model, as OWED_VERDICT. `lanes
 # pick` judges it under that host exactly as a launch there is judged. Exit 0
-# is room; exit 3 with walled accounts is a wall, dated by lane_binding over
-# that host's listing of the harness. The listing carries a hosted account
-# twice, this machine's reading and the provider's, and a launch on a provider
-# runs under the provider's, so only rows `measured_through` `host` date a
-# provider's wall and only `local` rows the local host's; with none, `until=-`.
-# A row whose projected room the session window decided dates to that
-# window's reset, since the lanes on it wall there long before a weekly
-# window resets.
-# Exit 3 with none walled is every account unmeasured, and any other exit a
-# judgement that failed, named on stderr: both are `unjudged`.
+# is room; exit 3 with walled accounts is a wall, dated by the refusal's own
+# walled_resets_at: the same judgement, on the launch's model and on the
+# reading the provider's copy runs under, names each walled account's deciding
+# window and its reset, `until=-` where none states one. Exit 3 with none
+# walled is every account unmeasured, and any other exit a judgement that
+# failed, named on stderr: both are `unjudged`.
 owed_wall() { # HOST HARNESS MODEL
-  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until through
+  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
   local args=(pick --harness "$harness" --json)
   OWED_VERDICT="verdict=unjudged harness=$harness"
   owed_accounts "$host"
@@ -3816,15 +3809,8 @@ owed_wall() { # HOST HARNESS MODEL
         ow_message owed-wall-unjudged "host=$host" "harness=$harness" "model=$model" "exit=3" >&2
         cat -- "$errf" >&2
       elif [[ "$walled" -gt 0 ]]; then
-        [[ "$model" != - ]] || model=""
-        through=host
-        [[ "$host" != local ]] || through=local
-        until="$(jq -r --arg h "$harness" --arg m "$model" --arg t "$through" "$LANE_MODEL_JQ"'
-          [.[] | select(.harness == $h and .measured_through == $t)
-           | if .projected_window.bucket? == "session" then .projected_window.resets_at else lane_binding($m) | .resets_at? end
-           | strings]
-          | min // "-"' \
-          <<<"$OWED_LISTING" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")" "host=$host"
+        until="$(jq -r '.walled_resets_at | if . == null then "-" elif type == "string" then . else error("walled_resets_at") end' \
+          <<<"$BOUNDED_OUT" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")" "host=$host"
         OWED_VERDICT="verdict=dated harness=$harness until=$until"
       fi ;;
     *)

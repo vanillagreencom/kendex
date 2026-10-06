@@ -347,6 +347,36 @@ table \
   "the named projection refuses the stacked account on its session window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 binding_bucket=weekly projected_headroom_pct=-2 projected_window.bucket=session key=pick-lane-walled,lane=$H/.rclaude,wall=2,bucket=session,max-pct=95,projected-headroom=-2" \
   "the same account with no claims keeps its room and is picked|$RQ_DIRS|||$PICK|rc=0 config_dir=$H/.rclaude"
 
+# The deciding window as the real output names it: the listing and the
+# chooser's refusal date r's wall to its session reset, four hours out, not
+# its weekly one. o is walled on its Opus window at 97, resetting in two days,
+# and on its Sonnet window at 96, resetting in one, with no lanes on it and
+# room on its session and weekly windows: a pick on Sonnet dates its wall to
+# the Sonnet reset, where a pick naming no model judges the most-consumed
+# Opus window and dates it a day later.
+R_SESSION_RESET="$(jq -nr --argjson now "$NOW" '$now + 14400 | todate')" || exit 1
+O_OPUS_RESET="$(jq -nr --argjson now "$NOW" '$now + 172800 | todate')" || exit 1
+O_SONNET_RESET="$(jq -nr --argjson now "$NOW" '$now + 86400 | todate')" || exit 1
+make_lane "$H" oclaude 3600
+jq -n --argjson now "$NOW" '{five_hour: {utilization: 10, resets_at: ($now + 10800 | todate)},
+  seven_day: {utilization: 20, resets_at: ($now + 432000 | todate)},
+  limits: [{kind: "weekly_scoped", percent: 97, resets_at: ($now + 172800 | todate), scope: {model: {display_name: "Opus"}}},
+    {kind: "weekly_scoped", percent: 96, resets_at: ($now + 86400 | todate), scope: {model: {display_name: "Sonnet"}}}]}' \
+  > "$FIXTURE_DIR/.oclaude.json"
+table \
+  "the listing names the session window that decided r and its reset|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||list --harness claude --json|rc=0 [0].projected_window.bucket=session [0].projected_window.resets_at=$R_SESSION_RESET" \
+  "the chooser's refusal dates r's wall to its session reset|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||$PICK|rc=3 walled=1 walled_resets_at=$R_SESSION_RESET" \
+  "a pick on Sonnet dates o's wall to the Sonnet window's reset|ORCH_LANE_DIRS=$H/.oclaude|||$PICK --model sonnet|rc=3 walled=1 walled_resets_at=$O_SONNET_RESET" \
+  "a pick naming no model dates o's wall to the most-consumed Opus window's reset|ORCH_LANE_DIRS=$H/.oclaude|||$PICK|rc=3 walled=1 walled_resets_at=$O_OPUS_RESET"
+# Control: with no deciding window in the output, r's wall dates to the
+# weekly reset days away.
+CTRL="$(mutant_scripts mutant-window-unnamed lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '         projected_window:
+           (if $binding_room == null then null' '         projected_window:
+           (if true then null'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: without the deciding window the refusal dates r's wall to its weekly reset|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||$PICK|rc=3 walled=1 walled_resets_at=$(jq -nr --argjson now "$NOW" '$now + 543600 | todate')"
+
 # Control: a refusal read from the binding bucket names the weekly window the
 # lanes did not wall.
 CTRL="$(mutant_scripts mutant-walled-binding lanes)" || exit 1
