@@ -2,7 +2,8 @@
 //! skipped on conflict: an item named, a member of a set named, or a
 //! package one of those requires. Automation reads the exit, so a skip
 //! of any of those ends on its own status and names each item; a skip of
-//! something nobody asked for this run leaves the exit as it was.
+//! something nobody asked for this run, or of a copy a retired set
+//! keeps, leaves the exit as it was.
 #![cfg(unix)]
 
 use crate::pty::{Stderr, conversation};
@@ -384,6 +385,66 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
                 row.case
             );
         }
+    }
+}
+
+/// A retired set keeps `linear` on Claude Code while a live set renders
+/// it on Codex, and the person edits the kept Claude Code copy. Nothing
+/// renders a retired set's copy again, so its conflict skips nothing the
+/// run was asked for: an apply of the manifest and an add naming the live
+/// set both end on their own status.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_a_retired_set_keeps_is_no_skip_of_a_live_set() {
+    for (case, run) in [
+        ("apply", Run::Apply),
+        ("add the live set", Run::Add(&["--bundle", "live"])),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        catalog(&home);
+        let catalog = home.join("catalog");
+        let sets = "[bundles.old]\nskills = [\"linear\"]\n[bundles.live]\nskills = [\"linear\"]\n";
+        write(&catalog.join("kendex.toml"), sets);
+        let project = home.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[bundles.old]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.live]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+                test_util::source_path(&catalog)
+            ),
+        );
+        let applied = kendex(&home, &project, &["apply", "--yes", "--leave"]);
+        assert_eq!(applied.status.code(), Some(0), "{case}: {}", said(&applied));
+        assert!(
+            installed(&project, "linear"),
+            "{case}: the fixture installs linear"
+        );
+
+        write(
+            &catalog.join("kendex.toml"),
+            "[bundles.live]\nskills = [\"linear\"]\n[retired.bundles]\nold = \"\"\n",
+        );
+        let copy = project.join(".claude/skills/linear/SKILL.md");
+        let body = fs::read_to_string(&copy).unwrap();
+        fs::write(&copy, format!("{body}Mine.\n")).unwrap();
+
+        let output = match run {
+            Run::Apply => kendex(&home, &project, &["apply", "--yes", "--leave"]),
+            Run::Add(items) => {
+                let mut args = vec!["add", catalog.to_str().unwrap(), "--harness", "codex"];
+                args.extend(items);
+                args.extend(["--yes", "--leave"]);
+                kendex(&home, &project, &args)
+            }
+        };
+        let printed = said(&output);
+        assert_eq!(output.status.code(), Some(0), "{case}: {printed}");
+        assert_eq!(named(&printed), Vec::<String>::new(), "{case}: {printed}");
+        assert!(
+            fs::read_to_string(&copy).is_ok_and(|body| body.ends_with("Mine.\n")),
+            "{case}: the kept copy was rewritten"
+        );
     }
 }
 

@@ -533,8 +533,10 @@ impl EngineReport {
     /// on disk. A refused rendering counts whatever the row's cause: edits
     /// kept in the earlier installation are why those files stay, not why
     /// the rendering asked for is missing. A package held back by their own
-    /// edits alone keeps them where it installs, and its record. What a
-    /// run's exit is read from.
+    /// edits alone keeps them where it installs, and its record. A
+    /// [`DriftCause::Retired`] row is no skip either: it is a copy nothing
+    /// renders again, held to its record on a tool the request may also
+    /// render the package on. What a run's exit is read from.
     pub fn skipped_asked(&self) -> Vec<(ItemKind, String)> {
         let asked = self.asked_for();
         let refused: BTreeSet<(ItemKind, &str, HarnessId)> = self
@@ -550,6 +552,7 @@ impl EngineReport {
                     && refused.contains(&(row.kind, row.name.as_str(), row.harness));
                 answers_refusal
                     || row.dead_stop()
+                        && row.cause != Some(DriftCause::Retired)
                         && !self
                             .own_edit_rows
                             .contains(&(row.kind, row.name.clone(), row.harness))
