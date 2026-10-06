@@ -1,1 +1,0 @@
-- `open-terminal` refuses a fleet launch from a repository other than the overseer's as `overseer-foreign`, unless the overseer's `ORCH_CONNECTED_REPOS` setting lists it.

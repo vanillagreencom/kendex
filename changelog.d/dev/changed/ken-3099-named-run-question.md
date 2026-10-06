@@ -1,1 +1,0 @@
-- Each test or sandbox run outside the validation gate names its question in the round notes first; two inconclusive answers in a row on one question send the agent back to code and logs.

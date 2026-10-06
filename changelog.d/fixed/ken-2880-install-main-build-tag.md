@@ -1,1 +1,0 @@
-- `install.sh --version main-build-N-A-SHA` installs that main build from its own feed, not a missing `v`-prefixed tag, and records its command on the main channel.

@@ -1,1 +1,0 @@
-- harness-ci's wiring reference no longer lets a lane or job whose check reads the event's base, such as a fragment or version check over `--base`, count as doing the same work on every event, so a merge group's proof never stands such a lane down.

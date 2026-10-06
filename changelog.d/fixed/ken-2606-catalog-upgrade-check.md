@@ -1,1 +1,0 @@
-- Catalog CI also refreshes an install of the caller's base catalog: dropping or renaming a package that catalog shipped now fails until a released kendex retires it; keep a stub.

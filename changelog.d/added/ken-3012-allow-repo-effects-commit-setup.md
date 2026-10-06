@@ -1,1 +1,0 @@
-- `kendex add`, `apply` and `remove` with `--allow-repo-effects` and `--commit`, `--push` or `--pull-request` now set up a package that holds the commit and commit its render in the same run.

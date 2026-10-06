@@ -1,1 +1,0 @@
-- Orch uses the trusted base checkout to classify review changes. A pull request cannot skip review by changing its own classifier.

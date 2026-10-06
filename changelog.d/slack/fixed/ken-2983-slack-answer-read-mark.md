@@ -1,1 +1,0 @@
-- The Slack relay swaps :eyes: for :white_check_mark: on an owner's reply in a question's thread once the overseer reads it, as it already did for a directive.

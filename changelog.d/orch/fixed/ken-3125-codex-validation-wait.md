@@ -1,1 +1,0 @@
-- codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.

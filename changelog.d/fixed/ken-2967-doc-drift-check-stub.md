@@ -1,1 +1,0 @@
-- kendex 1.10.1 refreshes again with `[hooks.doc-drift-check]` declared; the hook runs no check. `kendex remove doc-drift-check --scope project --sweep` removes the entry and its files.

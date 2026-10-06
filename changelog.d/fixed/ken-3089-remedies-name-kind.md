@@ -1,1 +1,0 @@
-- The retired-item notice, verify's left-over remedy and the session drift report's removal for an item gone from its source or left without a kendex.toml name the item's kind, so they no longer take a same-named item of another kind; the notice and verify name `--global` for a personal-setup item, and verify names only the removal for an edited left-over that refresh holds.

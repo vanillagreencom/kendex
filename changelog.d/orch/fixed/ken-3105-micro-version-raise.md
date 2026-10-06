@@ -1,1 +1,0 @@
-- `item-tier` keeps an item micro when the only line a branch changes in a `SKILL.md`, or in its tracked render, is the frontmatter's `metadata.version`, so a catalog package fix no longer escapes the micro tier for its version raise.

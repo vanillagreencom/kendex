@@ -1,1 +1,0 @@
-- **Breaking:** `linear.sh sync` and `linear.sh cache` are removed with the local store; each exits 1, `cache` naming the live command (`issues get ID` for `cache issues get ID`).

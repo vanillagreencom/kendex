@@ -1,1 +1,0 @@
-- The `COMMIT_GUARDS_PROSE_PATHS` row in the configuration table names the default the prose lane scans: the `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` load points.

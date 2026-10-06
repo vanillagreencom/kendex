@@ -1,1 +1,0 @@
-- Before a fleet launch the overseer judges file overlap with running lanes and open pull requests, counting the tracked files that name each path an item deletes or renames, so a lane that would break another lane's files waits or takes them into scope.

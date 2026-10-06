@@ -8,6 +8,194 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-06
+
+### Added
+
+- The Pi Claude bridge offers Claude Sonnet 5.5 (`claude-sonnet-5-5`) in the `pi-claude` model picker, released as `@vanillagreen/pi-claude-bridge` 4.1.0.
+- `linear.sh` refuses, before any write, an issue create, field change, archive or trash outside `LINEAR_TEAM`; reads, comments and relations still reach every team.
+- `kendex show` and the desktop package pages name the tools each package runs on, with a hook's reasons; `kendex index --json` lists its `unsupported`, `advisory` and `fallback` tools.
+- `kendex refresh --locked` re-renders at the catalog commits `.kendex-lock.json` records, so a project-only change moves no catalog.
+- Refresh removes leftovers nothing declares and keeps an installed item its catalog retires (`[retired]`) with a notice; `refresh --prune` removes it, its declaration and unedited adopted workflows.
+- A hook that requires an item its catalog retired is withheld on each tool it requires that item on, with a warning naming the item and carrying its migration.
+- `kendex add`, `apply` and `remove` with `--allow-repo-effects` and `--commit`, `--push` or `--pull-request` now set up a package that holds the commit and commit its render in the same run.
+- `kendex remove --kind KIND` removes only the item of that kind, leaving a same-named item of another kind installed.
+
+### Changed
+
+- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes and applies: the hook stays installed with one notice line opening `doc-drift-check: `, and `kendex refresh --prune` removes it.
+- Text and release notes have no size gate in commit guards. Missing pre-commit companions stay silent. Workflow tiers use estimates and paths; branch line counts do not block work.
+- At project scope, a Copilot hook file left with no hooks after a disable or removal goes to the trash instead of keeping only its version line.
+- Deleting or editing one package's table in `kendex.toml` and running `kendex apply` now changes only that package, even when the catalog mirror has moved past the commits `.kendex-lock.json` records. `kendex refresh` is the command that brings packages current; `kendex source refresh` followed by `kendex apply` no longer does.
+
+### Removed
+
+- The `doc-drift-check` hook is retired. `kendex remove doc-drift-check --scope project --sweep` removes its entry and files in one change; a rolling refresh sweeps a hand-deleted entry.
+
+### Fixed
+
+- Catalog CI also refreshes an install of the caller's base catalog: dropping or renaming a package that catalog shipped now fails until a released kendex retires it; keep a stub.
+- `kendex add` and `kendex apply` run without a terminal now exit 3 when a package you named, a member of a bundle or collection you named, or a package one of those requires, is skipped on conflict, such as files kendex did not write in its place or a package no tool can render, and name each such package on a `skipped-on-conflict=` line. A package held back only by your own edits, one its catalog retired, or a copy a retired bundle keeps, leaves the exit as it was. The rest of the install is still written: `kendex apply --replace-unmanaged` installs a skipped package when every conflict is files it can replace, and each conflict line names the way out for the rest.
+- Orch uses the trusted base checkout to classify review changes. A pull request cannot skip review by changing its own classifier.
+- `kendex verify` and `kendex refresh` no longer count a `__pycache__` or `.pytest_cache` folder in an installed skill as an edit.
+- `install.sh --version main-build-N-A-SHA` installs that main build from its own feed, not a missing `v`-prefixed tag, and records its command on the main channel.
+- kendex 1.10.1 refreshes again with `[hooks.doc-drift-check]` declared; the hook runs no check. `kendex remove doc-drift-check --scope project --sweep` removes the entry and its files.
+- The rolling kendex refresh pull request removes the unedited files of a declaration deleted from kendex.toml by hand, so `kendex verify` passes on it.
+- `kendex remove` holds every package it does not name at the catalog commit `.kendex-lock.json` records, so removing one package no longer re-renders the rest at the newest catalog.
+- `kendex refresh` fails on a declared bundle its catalog no longer offers and keeps its members and what they require; a catalog can retire a bundle under `[retired.bundles]`.
+- `kendex enable`/`disable`, the app's switch and `kendex source enable`/`disable`/`remove` hold packages they do not name at the commit `.kendex-lock.json` records.
+- `kendex refresh --locked`, `remove`, `enable`, `disable` and the source switches fetch a recorded commit a switched-on source lacks here, and read the newest catalog only where it is gone.
+- `kendex refresh --prune` prints one line for each retired item, naming the catalog that retired it, saying what this prune does with the item, and ending with the replacement the catalog gives. Its removal preview gives the retirement as the reason.
+- The retired-item notice, verify's left-over remedy and the session drift report's removal for an item gone from its source or left without a kendex.toml name the item's kind, so they no longer take a same-named item of another kind; the notice and verify name `--global` for a personal-setup item, and verify names only the removal for an edited left-over that refresh holds.
+- `kendex verify` fails a retired item kept installed when its files, or a Pi package's, were deleted or edited by hand, and says to remove it by name or refresh with `--prune`; before, it passed while the tool still registered the missing hook. A plain `kendex refresh` still passes on it, whatever its kind.
+- A retired hook kept installed no longer runs alone beside a requiring hook that refresh withholds: where its installed copy requires that hook, both go together, and removing either one by name takes the other. A withheld requirer you edited stays as an edit conflict, with the retired hook it runs with, until the retired hook is removed by name; and `kendex verify` names the withholding and its fix instead of `kendex apply records it`.
+
+### Security
+
+- TLS connections use rustls 0.23.45, which rejects TLS 1.3 handshake messages sent across encryption levels (GHSA-2mjx-qc3c-rqvc).
+
+### Packages
+
+#### bot-instructions 2.6.0
+
+- `render` now removes each marked file the TOML no longer produces, and a manifest with no `[bot-instructions]` table is refused as `unconfigured`.
+- Review doctrine asks for no doc beside code and no decision record below the decider bar; its shipped review surface covers `docs/architecture`.
+
+#### command-safety
+
+- The `command-safety` hook now refuses a `systemd-run` memory cap in kilobytes or megabytes with no setting; `COMMAND_SAFETY_DENY_PATTERN = "^$"` turns that refusal off.
+
+#### commit-guards 1.1.5
+
+- Catalog packages version on their own: a `changelog.d/<package>/<section>/` entry moves only that package's version, and a skill change must raise its `metadata.version`.
+- A root `package.json` beside the changelog record is judged from `changelog.d` and that record; a root `CHANGELOG.md` with `###` headings needs `COMMIT_GUARDS_CHANGELOG_RECORD` empty.
+- The `COMMIT_GUARDS_PROSE_PATHS` row in the configuration table names the default the prose lane scans: the `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` load points.
+- pre-push no longer refuses a push for version bumps already on the remote's default branch, where it can establish that branch.
+
+#### decider 2.0.2
+
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
+- The decision record format puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
+
+#### dev 3.0.5
+
+- `DEV_VALIDATE_CI_CONTEXT` names the required check whose pull request run covers validation; a PR-comment fix round skips local validation only where the base requires it.
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
+- dev-implement finds a missing planning or research path by the project-management Planning artifacts route for the tracker.
+- Each test or sandbox run outside the validation gate names its question in the round notes first; two inconclusive answers in a row on one question send the agent back to code and logs.
+- A Codex dev agent holds its validation run inside the turn with exec_command and write_stdin polls, so a hosted lane no longer stalls when its turn ends mid-run.
+
+#### doc-limits 1.0.0
+
+- doc-limits measures only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and every document over its limit fails; the other shipped classes, HTML and the warn-only budget are gone.
+
+#### docs-writing 3.0.4
+
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
+- A docs rewrite keeps a decision record active while its choice holds, and retires only a choice withdrawn with nothing replacing it.
+- The decision record example puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
+
+#### github 2.1.0
+
+- `find-comment --self` finds the comments the current token wrote, by account id, for a user token and a GitHub App installation token alike.
+- `find-comment` and `check-review-replies` read every page of a pull request's comments, so a busy pull request's latest summary is found.
+
+#### harness-ci 1.1.4
+
+- A `:queue` lane in `.github/ci-lanes.conf` skips matching pull requests and runs in the merge queue they go to, once they and the default branch carry a kendex refresh reading it.
+- `HARNESS_CI_QUEUE_SELECTOR` names a repository command whose listed merge-group jobs make a change queue-only, so it merges through the queue rather than the admin route.
+- harness-ci's change classifier no longer classes a diff under `docs/plans/` as trivial at any size; a docs-only diff past `HARNESS_CI_TRIVIAL_MAX_LINES` measures like any other.
+- harness-ci's wiring reference no longer lets a lane or job whose check reads the event's base, such as a fragment or version check over `--base`, count as doing the same work on every event, so a merge group's proof never stands such a lane down.
+
+#### linear 2.1.0
+
+- `linear.sh` adds `comments bulk-list`, `attachments list` and `attachments fetch`, `--max` on every bounded list, and `--all-projects`, `--no-project` and `--labels` on `issues list`.
+- `linear.sh issues bulk-get` reads identifiers and UUIDs, archived included, resolves a moved issue's old identifier, and names in `missing` only issues Linear says it does not have.
+- Every bounded `linear.sh` list returns 75 rows by default, refuses a `--limit` that is not a positive whole number, and prints `linear-list: truncated` on stderr when rows were left unread.
+- `linear.sh` reads go to Linear's API and follow every page of each collection; a read whose page chain fails exits nonzero with no partial output, and `session-status` no longer syncs.
+- With a client pair, `linear.sh` keeps its OAuth token in `kendex/linear-oauth/` under `XDG_CACHE_HOME` or `~/.cache`, else under `TMPDIR`; delete stale `.cache/linear/oauth/` files.
+- A rate-limited `linear.sh` call prints the time Linear's request quota refills (`requests_reset`); only rate-limited, 5xx and unanswered requests are retried.
+- **Breaking:** `issues create` requires a `Reached by:` line when `LINEAR_REQUIRE_REACH` is unset. Set it empty to keep the old behavior.
+- Resolve a cited artifact reads the issue's `**Artifacts**` links first, so a linked-only issue resolves and a link beats an older same-path attachment.
+- `issues remove-relation` refuses a blocking relation whose blocker is Done or Canceled; `--peer-rule-violation` removes one only when the pair breaks the peer rule.
+- **Breaking:** `LINEAR_CACHE_ROOT` is retired: set anywhere, even empty, every `linear.sh` command exits 1 with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove the setting.
+- **Breaking:** `linear.sh sync` and `linear.sh cache` are removed with the local store; each exits 1, `cache` naming the live command (`issues get ID` for `cache issues get ID`).
+- `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.
+- `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.
+
+#### orch 4.2.0
+
+- `oversee-watch` reports a lane once past `ORCH_WATCH_LANE_AGE_SECS` (default 4 hours) as `lane-long` with its stage, and the overseer names the cause.
+- `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
+- A validation command can report `selection=battery`, and submit then reuses a fix round's full pass that ran the whole battery instead of running that battery again.
+- orch's `container-close`, `reconcile-work-items`, `oversee-report` and `branch-size-check` read Linear live, and a hosted lane's clone no longer receives `.cache/linear`.
+- `tests/run-all.sh --battery DIR` runs the suites in another directory under the same filters, worker pool and report, and the verdict line names that tree. Each `--alone NAME` after it names a suite of that directory to run alone; orch's own ALONE list applies only to orch's suites.
+- orch states that a plan or research report lives on its tracker issue, not as tracked content under `docs/`.
+- An overseer acts on the owner's plain yes, typed in Slack or spoken on a signed-in call, after saying the action back; only destructive, irreversible or money steps still wait for an explicit confirmation.
+- orch's `oversee-watch` checks the overseer mailbox once a second while it waits for the next mail pass, in a pass and in the `--repeat` sleep, and reads that mailbox alone as soon as it moves, so an owner, Slack or peer note reaches the watch output within about a second instead of up to `ORCH_WATCH_MAIL_INTERVAL`; the lane mailboxes keep their interval, now counted across runs.
+- `open-terminal` refuses a fleet launch from a repository other than the overseer's as `overseer-foreign`, unless the overseer's `ORCH_CONNECTED_REPOS` setting lists it.
+- `round-recover` takes `--state-dir`, so a hosted lane that keeps its workflow state in its own worktree can recover a stalled dev round.
+- `oversee-watch` names the failed refresh line as a refresh-failing cause, never a Pi carrier `kendex-hook-` warning while a higher-ranked line exists.
+- The pull request comment triage finds its own earlier summary under a GitHub App installation token, which answers `gh api user` with 403.
+- Before a fleet launch the overseer judges file overlap with running lanes and open pull requests, counting the tracked files that name each path an item deletes or renames, so a lane that would break another lane's files waits or takes them into scope.
+- orch micro checks each sentence its diff states about code against the code that defines or implements it before the commit, so a false claim is fixed before the pull request opens.
+- `oversee-report`'s Landed row and `oversee-watch`'s `merged` event find a lane's pull request by its parked record's number, its branch, or the item key in the title's conventional-commit scope or right after `Closes` on a body line, so a Claude cloud session's merge on a `claude/` branch is counted and reported, while a pull request that only mentions the item is not.
+- `lane-mail send --item ITEM --re ID` refuses as `ask-unknown`, appending nothing, when ID names no ask that lane sent. An answer to a lane's notice used to land where neither `inbox` nor `watch` reads it, so the lane never saw it; send such text with `--directive`.
+- `lane-close` closes an idle lane whose record carries its pull request's merge cycle and whose worktree its own close-out removed, while its tracker item stays open for a box the overseer checks itself, so a merged hosted lane no longer keeps its sandbox billing until that box is checked. A lane relaunched on the same item, whose worktree stands, still refuses as live.
+- The fleet watch reads a lane's stage from a `- Step:` list item in its status file, so a long-running lane report names the stage instead of `none`.
+- `item-tier` keeps an item micro when the only line a branch changes in a `SKILL.md`, or in its tracked render, is the frontmatter's `metadata.version`, so a catalog package fix no longer escapes the micro tier for its version raise.
+- On a static SSH lane host, `lane-host-ssh create` runs `npm ci` in the clone for each linked `node_modules` whose lockfile changed, so the worktree links it and validation runs.
+- Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.
+- codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
+
+#### preflight 1.0.0
+
+- `PREFLIGHT_SOURCED_LIB_GLOBS` names the sourced shell library directories, such as `tools/lib`, whose new non-executable files need no strict-mode preamble.
+
+#### project-management 4.0.2
+
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
+- Planning artifacts states where a plan lives and how a reader finds it on Linear, GitHub Issues or no tracker, and attaches each artifact once, to its source issue.
+- Planning files a body of batches that each land alone as one item per batch, blocking only where a batch needs another's change.
+- Audits keep a Done or Canceled blocker's relation, read `blocked_by_open` for open blockers, and lift a cross-bundle relation with `--peer-rule-violation`.
+
+#### review-gate 2.3.2
+
+- The kendex refresh pull request lists retired settings and defaults and unset or unreadable queue settings, and flags Fable or Astra pins even without orch.
+- The consumer refresh pull request lists each retired item the refresh removed, with the catalog's migration; a retired copy the refresh holds stops the run as a conflict.
+- The consumer refresh passes --prune when the installed kendex offers it, so items the catalog retired leave the consumer in the refresh pull request.
+- A consumer refresh pull request that changes the bot-instructions package now carries its render, so the consumer's bot-instructions check passes.
+- The consumer refresh workflow reads only open refresh pull requests and those merged in the last 24 hours, so it no longer spends the app's API quota on every merged one.
+
+#### reviewer 3.0.0
+
+- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
+
+#### session-drift-check
+
+- The description names the removal the drift report prints for an item gone from its source, `kendex remove --kind <kind> <name>`, with `--global` in a global section.
+
+#### skill-load-check
+
+- skill-load-check on Codex no longer counts a skill read that `max_output_tokens` cut, in any read form, and its refusal says to read the skill with no `max_output_tokens`.
+- skill-load-check counts a Codex `functions.exec` skill read printed through `text(await ...)` in a thread kept in Legacy history, so the call the skill gates is no longer refused.
+- skill-load-check counts a whole Codex `functions.exec` skill read printed through `text(await ...)` when the skill holds a DEL character, so the call the skill gates is no longer refused.
+
+#### slack 1.0.1
+
+- Slack messages link bare pull requests and resolvable commit hashes. Unresolved references stay visible with a warning.
+- The Slack relay swaps :eyes: for :white_check_mark: on an owner's reply in a question's thread once the overseer reads it, as it already did for a directive.
+- After a Socket Mode reconnect, a rate-limited catch-up read no longer stalls the poll: live delivery and outbound mail go on, and a later poll finishes the catch-up.
+
+#### worktree-session-claim
+
+- `worktree-session-claim` hook: a session that starts in a worktree `worktree create` returned, an adopted one included, claims it so cleanup leaves it; the workflow's issue claim takes it over.
+
+#### worktree 1.0.2
+
+- `worktree --help` names the host provider's create as the owner of the main-checkout install on a hosted lane.
+- `worktree push` lets pre-push hooks read the pushed branch's own `COMMIT_GUARDS_*` settings, not the main checkout's committed values.
+
 ## [1.10.1] - 2026-10-05
 
 ### Changed
@@ -1535,7 +1723,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.11.0
 [1.10.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.1
 [1.10.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.0
 [1.9.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.9.0

@@ -1,1 +1,0 @@
-- `kendex verify` and `kendex refresh` no longer count a `__pycache__` or `.pytest_cache` folder in an installed skill as an edit.

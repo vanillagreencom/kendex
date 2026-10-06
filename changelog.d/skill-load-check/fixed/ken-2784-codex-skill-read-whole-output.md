@@ -1,1 +1,0 @@
-- skill-load-check on Codex no longer counts a skill read that `max_output_tokens` cut, in any read form, and its refusal says to read the skill with no `max_output_tokens`.

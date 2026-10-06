@@ -1,1 +1,0 @@
-- `lane-close` closes an idle lane whose record carries its pull request's merge cycle and whose worktree its own close-out removed, while its tracker item stays open for a box the overseer checks itself, so a merged hosted lane no longer keeps its sandbox billing until that box is checked. A lane relaunched on the same item, whose worktree stands, still refuses as live.

@@ -1,1 +1,0 @@
-- `lane-mail send --item ITEM --re ID` refuses as `ask-unknown`, appending nothing, when ID names no ask that lane sent. An answer to a lane's notice used to land where neither `inbox` nor `watch` reads it, so the lane never saw it; send such text with `--directive`.

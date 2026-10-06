@@ -1,1 +1,0 @@
-- `find-comment --self` finds the comments the current token wrote, by account id, for a user token and a GitHub App installation token alike.

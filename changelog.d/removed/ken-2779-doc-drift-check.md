@@ -1,1 +1,0 @@
-- The `doc-drift-check` hook is retired. `kendex remove doc-drift-check --scope project --sweep` removes its entry and files in one change; a rolling refresh sweeps a hand-deleted entry.

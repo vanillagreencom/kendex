@@ -1,1 +1,0 @@
-- Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.

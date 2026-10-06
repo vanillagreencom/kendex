@@ -1,1 +1,0 @@
-- The rolling kendex refresh pull request removes the unedited files of a declaration deleted from kendex.toml by hand, so `kendex verify` passes on it.

@@ -1,1 +1,0 @@
-- `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.

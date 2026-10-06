@@ -1,1 +1,0 @@
-- A docs rewrite keeps a decision record active while its choice holds, and retires only a choice withdrawn with nothing replacing it.

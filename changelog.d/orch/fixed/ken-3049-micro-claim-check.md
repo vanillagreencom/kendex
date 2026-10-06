@@ -1,1 +1,0 @@
-- orch micro checks each sentence its diff states about code against the code that defines or implements it before the commit, so a false claim is fixed before the pull request opens.

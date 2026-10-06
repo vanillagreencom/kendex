@@ -1,1 +1,0 @@
-- orch's `container-close`, `reconcile-work-items`, `oversee-report` and `branch-size-check` read Linear live, and a hosted lane's clone no longer receives `.cache/linear`.

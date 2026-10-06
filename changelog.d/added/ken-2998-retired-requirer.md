@@ -1,1 +1,0 @@
-- A hook that requires an item its catalog retired is withheld on each tool it requires that item on, with a warning naming the item and carrying its migration.

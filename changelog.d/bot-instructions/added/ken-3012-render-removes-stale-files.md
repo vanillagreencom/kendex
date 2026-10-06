@@ -1,1 +1,0 @@
-- `render` now removes each marked file the TOML no longer produces, and a manifest with no `[bot-instructions]` table is refused as `unconfigured`.

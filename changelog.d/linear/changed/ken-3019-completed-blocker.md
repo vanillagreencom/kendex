@@ -1,1 +1,0 @@
-- `issues remove-relation` refuses a blocking relation whose blocker is Done or Canceled; `--peer-rule-violation` removes one only when the pair breaks the peer rule.

@@ -1,1 +1,0 @@
-- **Breaking:** `LINEAR_CACHE_ROOT` is retired: set anywhere, even empty, every `linear.sh` command exits 1 with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove the setting.

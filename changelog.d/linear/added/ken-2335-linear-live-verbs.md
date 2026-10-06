@@ -1,1 +1,0 @@
-- `linear.sh` adds `comments bulk-list`, `attachments list` and `attachments fetch`, `--max` on every bounded list, and `--all-projects`, `--no-project` and `--labels` on `issues list`.

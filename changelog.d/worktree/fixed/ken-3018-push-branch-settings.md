@@ -1,1 +1,0 @@
-- `worktree push` lets pre-push hooks read the pushed branch's own `COMMIT_GUARDS_*` settings, not the main checkout's committed values.

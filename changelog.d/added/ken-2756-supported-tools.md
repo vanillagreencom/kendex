@@ -1,1 +1,0 @@
-- `kendex show` and the desktop package pages name the tools each package runs on, with a hook's reasons; `kendex index --json` lists its `unsupported`, `advisory` and `fallback` tools.

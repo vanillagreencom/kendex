@@ -1,1 +1,0 @@
-- The decision record example puts a blank line between its metadata lines, so they render as separate lines and pass md-format.

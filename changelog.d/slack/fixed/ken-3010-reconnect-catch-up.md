@@ -1,1 +1,0 @@
-- After a Socket Mode reconnect, a rate-limited catch-up read no longer stalls the poll: live delivery and outbound mail go on, and a later poll finishes the catch-up.

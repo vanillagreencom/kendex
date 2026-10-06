@@ -1,1 +1,0 @@
-- `HARNESS_CI_QUEUE_SELECTOR` names a repository command whose listed merge-group jobs make a change queue-only, so it merges through the queue rather than the admin route.

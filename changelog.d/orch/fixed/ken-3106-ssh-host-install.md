@@ -1,1 +1,0 @@
-- On a static SSH lane host, `lane-host-ssh create` runs `npm ci` in the clone for each linked `node_modules` whose lockfile changed, so the worktree links it and validation runs.

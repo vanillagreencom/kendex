@@ -1,1 +1,0 @@
-- `DEV_VALIDATE_CI_CONTEXT` names the required check whose pull request run covers validation; a PR-comment fix round skips local validation only where the base requires it.

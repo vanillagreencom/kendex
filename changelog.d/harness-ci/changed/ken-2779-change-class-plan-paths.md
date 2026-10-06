@@ -1,1 +1,0 @@
-- harness-ci's change classifier no longer classes a diff under `docs/plans/` as trivial at any size; a docs-only diff past `HARNESS_CI_TRIVIAL_MAX_LINES` measures like any other.

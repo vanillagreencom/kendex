@@ -1,1 +1,0 @@
-- A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes and applies: the hook stays installed with one notice line opening `doc-drift-check: `, and `kendex refresh --prune` removes it.

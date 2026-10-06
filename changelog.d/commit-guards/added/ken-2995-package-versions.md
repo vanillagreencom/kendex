@@ -1,1 +1,0 @@
-- Catalog packages version on their own: a `changelog.d/<package>/<section>/` entry moves only that package's version, and a skill change must raise its `metadata.version`.

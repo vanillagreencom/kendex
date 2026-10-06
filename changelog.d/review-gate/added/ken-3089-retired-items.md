@@ -1,1 +1,0 @@
-- The consumer refresh pull request lists each retired item the refresh removed, with the catalog's migration; a retired copy the refresh holds stops the run as a conflict.
