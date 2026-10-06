@@ -70,7 +70,10 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     let (mut closing, failed) =
         install_steps(steps, |step, wrote| install_step(env, scope, step, wrote));
     let skipped = std::mem::take(&mut closing.skipped);
-    if failed.is_none() {
+    // A member skipped on conflict is not a step failure, and it is not
+    // installed either: the line would claim a member the ledger then
+    // names as skipped, terminal or not.
+    if failed.is_none() && skipped.is_empty() {
         say("collection installed — kendex recorded every member at its version");
     }
     // The same close `add <package>` gives, over every step at once: a
