@@ -77,8 +77,9 @@ its target; prose may follow that heading. Fenced code is not read. A path
 alone in a code span is not a citation; one holding '<path>::<phrase>', the
 path spelled with a '/' from path characters, is one, and fails unless that
 path names a tracked file holding the phrase byte for byte. Decision IDs are
-judged only where DECISIONS_DIR is tracked, and one carrying '§ Heading' is
-judged against that decision's headings too.
+judged only where DECISIONS_DIR is tracked: an ID names a tracked document
+there or a row of its INDEX.md, and one carrying '§ Heading' is judged
+against that document's headings too.
 
 A source file is read for the same '<path>.md § Heading' citation in its
 COMMENT TEXT, and a TOML file in its string literals as well, resolved as the
@@ -239,8 +240,18 @@ git ls-files -z >"$GG_TMP/tracked.z" 2>"$GG_TMP/dependency.err" \
 LC_ALL=C tr '\0' '\n' <"$GG_TMP/tracked.z" >"$GG_TMP/tracked"
 
 DEC_JUDGE=0
+DEC_INDEX=""
 if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
   DEC_JUDGE=1
+  # The INDEX reserves an ID whose document is gone (the decider's removal
+  # rule), so its rows are read beside the tracked paths, from the index as
+  # every target is.
+  if git ls-files --error-unmatch -- "$DEC_DIR/INDEX.md" >/dev/null 2>&1; then
+    gg_read_blob ":0:$DEC_DIR/INDEX.md" "$DEC_DIR/INDEX.md" "decision index"
+    mv -- "$GG_TMP/blob" "$GG_TMP/dec-index" \
+      || gg_fail index-copy "$DEC_DIR/INDEX.md" "The decision index could not be kept for the resolver."
+    DEC_INDEX="$GG_TMP/dec-index"
+  fi
 fi
 
 lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
@@ -409,7 +420,7 @@ fi
 # Pass two: the headings of every file a citation reaches into, read from
 # the index whether or not the file is in scope.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" \
-  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
   || gg_fail targets-exit "$?" "The reference target resolver failed."
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
@@ -427,7 +438,7 @@ done <"$GG_TMP/targets"
 # The pairs are sorted so every phrase for one target is contiguous and the
 # blob behind them is read once.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=contents -v tracked="$GG_TMP/tracked" \
-  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/wanted" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/wanted" \
   || gg_fail contents-exit "$?" "The citation content resolver failed."
 LC_ALL=C sort -- "$GG_TMP/wanted" >"$GG_TMP/wanted.sorted" \
   || gg_fail contents-sort "$?" "The citation phrase list could not be sorted."
@@ -457,7 +468,7 @@ done <"$GG_TMP/wanted.sorted"
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
   -v contents="$GG_TMP/contents.tsv" -v skips="$GG_TMP/skips.tsv" \
   -v lock_paths="$LOCK_PATHS" \
-  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
   || gg_fail references-exit "$?" "The reference resolver failed."
 
 REMEDY="point the reference at a tracked file, a heading or phrase it has, or a recorded decision, or delete it"

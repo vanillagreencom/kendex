@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Decision IDs judged against the base branch: next-id skips a number the base
-# holds, check refuses an ID two records share, and get refuses an ID on more
+# holds, a removed record's row included, check refuses an ID two records
+# share and passes a row whose document is gone, and get refuses an ID on more
 # than one INDEX row. Every row builds its own repositories, so a fetch one run
 # makes never answers for the next.
 set -euo pipefail
@@ -160,6 +161,21 @@ build_edited() { # the lane changes the status of the base's own D035
   build_ahead "$1"
   git -C "$1/work" pull -q --ff-only origin main
   write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Superseded by D036"
+}
+
+build_removing() { # the lane removes the base's own D035 document; its row stays, the Link cell as written
+  build_ahead "$1"
+  git -C "$1/work" pull -q --ff-only origin main
+  write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Removed"
+  rm "$1/work/docs/decisions/D035-main.md"
+}
+
+build_removed() { # the base merged D035's removal: the row stays, the document is gone; the lane pulled it
+  build_ahead "$1"
+  write_index "$1/up" D034:D034-first.md "D035:D035-main.md:Removed"
+  rm "$1/up/docs/decisions/D035-main.md"
+  commit_all "$1/up" "main removes D035's document"
+  git -C "$1/work" pull -q --ff-only origin main
 }
 
 build_origin_head() { # the upstream's default branch is master, not main
@@ -355,6 +371,8 @@ next-id-configured-prefix-base-width~prefix_base_width~DECISION_ID_PREFIX=ADR-~n
 next-id-index-absent~index_absent~~next-id~~0~D002~notice=base-unverified ref=origin/main reason=index-absent
 check-collision~collision~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
 check-edited-record~edited~~check~~0~~
+check-removed-record~removing~~check~~0~~
+next-id-past-removed~removed~~next-id~~0~D036~
 check-duplicate-row~dup_rows~~check~~1~~error=id-duplicate-row id=D035 rows=4,5 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md;error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 check-duplicate-file~dup_files~~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 check-unresolved~no_remote~~check~~1~~error=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
@@ -426,6 +444,8 @@ next-id-configured-prefix-base-width~    for id in ${base_ids[@]+"${base_ids[@]}
 next-id-index-absent~    BASE_REASON=index-absent~    BASE_REASON=""~a base without INDEX.md reported as read
 check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
 check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
+check-removed-record~    if [[ "$file_count" -gt 1 ]]; then~    if [[ "$file_count" -ne 1 ]]; then~a check that demands a document for every row
+next-id-past-removed~      | { id: .[1], research: .[2],~      | { id: (if .[6] == "Removed" then "" else .[1] end), research: .[2],~a next-id that skips a removed row
 check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
 check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
 check-unresolved~    unresolved) refuse=1;~    unresolved) refuse=0;~an unresolved base that check passes

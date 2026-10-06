@@ -2,8 +2,9 @@
 # Pins for scripts/md-refs, the judge of what a document cites: a relative
 # link lands on a tracked path and a heading it has; a code-span citation
 # names a tracked file and a heading it has; a link followed by § starts with
-# a heading of its target; a decision ID names a tracked decision file, judged
-# only where the decisions directory is tracked; the same section citation is
+# a heading of its target; a decision ID names a tracked decision file or an
+# INDEX row, judged only where the decisions directory is tracked; the same
+# section citation is
 # judged in a source file's comment text and a TOML file's string literals;
 # fenced code is never read; the scopes and the path list are md-format's.
 # Two tables: the first holds what one document cites over a seeded world,
@@ -82,6 +83,9 @@ world_refs() {
 }
 world_dec() { world_refs "$1"; put docs/decisions/D001-first.md '# D001\n\n## Context\n'; }
 world_adr() { world_dec "$1"; put docs/decisions/ADR-0007-x.md '# ADR-0007\n'; }
+# The decider's removal rule: D002's row stays after its document is gone,
+# the Link cell as written; D003 has neither a row nor a document.
+world_row() { world_dec "$1"; put docs/decisions/INDEX.md '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |\n|------|----|----------|----------|-----------|--------------|--------|------|\n| 2026-01-01 | D001 | — | First | Reason | Never | Active | [Full](D001-first.md) |\n| 2026-01-02 | D002 | — | Gone | Reason at `src/x.rs` | Never | Removed | [Full](D002-gone.md) |\n'; }
 world_install() { repo "$1"; put guide.md '# Guide\n\n## Install\n'; }
 world_numbered() { repo "$1"; put guide.md '# Guide\n\n## 1. Install\n\n### 1.1.1 Choose a path\n'; }
 world_parens() { repo "$1"; put guide.md '# Guide\n\n## 1\n\n## Install\n'; put 'guide(foo).md' '# Guide\n\n## Install\n'; }
@@ -204,6 +208,9 @@ cite_rows \
   "a cited ID with a tracked file passes, in prose and in a code span, and the verdict names the directory|dec||Decided in D001; see \`D001 § Context\`.\n|rc=0 $(clean 2 3 0 "$DEC_YES")" \
   "an ID citing a heading its decision does not have fails, the heading read to the end of the line|dec||See \`D001 § Rationale\`.\n|rc=1 $(dead AGENTS.md 1 "$(noprefix 'D001 § Rationale`.' docs/decisions/D001-first.md 'Rationale`.')");$(failed 1 1 3 0 "$DEC_YES")" \
   "a cited ID with no tracked file fails|dec||Decided in D042.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D042)");$(failed 1 1 3 0 "$DEC_YES")" \
+  "a removed record's ID passes on its INDEX row alone|row||Decided in D002.\n|rc=0 $(clean 1 3 0 "$DEC_YES")" \
+  "a heading citation of a removed record fails, the row naming no document|row||See \`D002 § Context\`.\n|rc=1 $(dead AGENTS.md 1 "decision-markdown=D002 § Context\`.:docs/decisions/D002-*.md");$(failed 1 1 3 0 "$DEC_YES")" \
+  "an ID with neither a row nor a document still fails|row||Decided in D003.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D003)");$(failed 1 1 3 0 "$DEC_YES")" \
   "a shorter digit run, a glued letter and a colour are not IDs|dec||D42, MD001, D001x, #001 and 3D001 are not decisions.\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
   "an ID in fenced code is not read|dec||\`\`\`\nD042\n\`\`\`\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
   "under another scheme the D-prefixed text is not an ID|dec|DECISION_ID_PREFIX=ADR-,DECISION_ID_WIDTH=4|Decided in D042.\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
@@ -249,6 +256,19 @@ done <<'CASES'
 escaped opener|    if (escapes % 2) { p = start + RLENGTH; continue }|s/if (escapes % 2)/if (0)/|\\[D016](https://example.com/D016)\n
 raw HTML block|  if (grammar != "text" && block_kind != "X") s = mask_links(s, 1)|s/ \&\& block_kind != "X"//|<div>[D016](https://example.com/D016)</div>\n
 CASES
+
+# The row loader is the one site that reserves an ID with no document.
+world_row removed-row
+put AGENTS.md 'Decided in D002.\n'
+assert_eq "a removed record's row reserves its ID in a world of its own" "rc=0 $(clean 1 3 0 "$DEC_YES")" "$(run '' --all)"
+ROW_LINE='    decisions[id] = 1'
+assert_eq "the INDEX-row control has one edit site" 1 "$(grep -Fxc "$ROW_LINE" "$SKILL_DIR/scripts/lib/md-refs.awk")"
+sed '/^    decisions\[id\] = 1$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$TMP/md-refs-mutant/scripts/lib/md-refs.awk"
+cmp -s "$SKILL_DIR/scripts/lib/md-refs.awk" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk" && exit 2
+MDR="$TMP/md-refs-mutant/scripts/md-refs"
+assert_eq "control: without the row loader the same ID fails decision-missing" \
+  "rc=1 $(dead AGENTS.md 1 "$(nodecision D002)");$(failed 1 1 3 0 "$DEC_YES")" "$(run '' --all)"
+MDR="$SKILL_DIR/scripts/md-refs"
 
 echo "=== a link followed by a section name resolves the heading prefix ==="
 cite_rows \

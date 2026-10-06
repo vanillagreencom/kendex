@@ -11,13 +11,15 @@ Canonical constraints for decision documents and their index.
 |------|----|----------|----------|-----------|--------------|--------|------|
 ```
 
-Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell must name the decision document, a retired one included. Rows are append-only, never re-sorted or removed: `next-id` allocates past the highest ID in the index and on the base branch, so a removed row frees its ID for an unrelated choice. Row format: `../templates/index-row.md`.
+Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell names the record's document and stays as written after that document is gone: `decisions check` reads it as the record's identity across branches. Rows are append-only, never re-sorted or removed: `next-id` allocates past the highest ID in the index and on the base branch, so a deleted row would free its ID for an unrelated choice. Row format: `../templates/index-row.md`.
 
 Below the table: a Format Reference section with one link to this schema and one to the bar, the decider `SKILL.md` § What warrants a decision record, and why. It copies nothing from either.
 
 ## Decision document
 
 File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`, `ADR-0001-runtime-choice.md`. A `DECISION_ID` is a prefix plus numeric suffix; a project keeps one scheme (`D001` by default; keep `ADR-0001` where established).
+
+An active or superseded record has a document. A retired or removed record has none, except a one-line document kept where a citation outside the repository needs the path: the title, the back-link, `**Status**:` and one `**Decision**:` line. The commit-guards md-refs lane accepts an ID whose INDEX row exists with no document.
 
 | Element | Format |
 |---------|--------|
@@ -42,7 +44,8 @@ Each `**Key**: value` line, metadata included, is its own paragraph, with one bl
 | `Active` | In effect — the default for a new decision |
 | `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded: the named components only |
 | `Superseded by [DECISION_ID]` | Fully replaced |
-| `Retired` | Withdrawn with no replacement; the row and a one-line document keep the ID reserved |
+| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved |
+| `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved |
 
 A re-assessment that keeps the choice stays `Active` with its text rewritten; one that changes the choice is a new record that supersedes this one (`../workflows/update-decision.md`). `list` returns every decision whose status starts with `Active`, including partial supersessions.
 
@@ -54,4 +57,5 @@ A re-assessment that keeps the choice stays `Active` with its text rewritten; on
 | Decision → issue or evidence | the tracker link, or the attachment on that issue |
 | Decision → code | `` `path/to/file.rs` `` or a relative link |
 | Code → decision | `// REVISIT([DECISION_ID]): [reason]`, only where that code carries out the choice |
+| Code → removed decision | the reason as a comment at the code, or a `<path>.md § Heading` citation of the principle doc |
 | Issue → decision | `**Decision [DECISION_ID]**: [path/to/DECISION_ID-descriptor.md]` |

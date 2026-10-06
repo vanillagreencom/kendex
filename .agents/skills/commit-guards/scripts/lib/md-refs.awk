@@ -29,7 +29,9 @@
 #       heading with prose after it is the § rule's.
 #   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
 #         [-v headings=FILE -v contents=FILE -v skips=FILE -v dec_dir=DIR
-#          -v dec_judge=0|1 -v id_prefix=D -v lock_paths=FILE]
+#          -v dec_judge=0|1 -v dec_index=FILE -v id_prefix=D -v lock_paths=FILE]
+#       `dec_index` holds the tracked `DECISIONS_DIR/INDEX.md` blob; each
+#       of its rows reserves its ID, with or without a document.
 #       `lock_paths` holds newline-separated repo-relative emitted paths from
 #       .kendex-lock.json, supplied by gg_md_lock_paths and read in `verdict`.
 #       A citing source at a listed path or below it emits W instead of V.
@@ -332,6 +334,26 @@ function load_tracked(   line, d, rec, id) {
   close(tracked)
 }
 
+# The INDEX rows. A removed or retired record keeps its row and loses its
+# document, per the decider's schemas/decision-format.md, so a row alone
+# reserves the ID. A row opens `| YYYY-` and its second cell is the ID: the
+# decider's positional contract, read off the raw blob as the decider reads
+# it. Only an ID in the judged scheme is kept; no row names a document, so
+# a § citation of a row-only ID still fails decision-markdown.
+function load_dec_index(   line, n, cells, id) {
+  if (dec_index == "") return
+  while ((getline line < dec_index) > 0) {
+    if (line !~ /^\| [0-9][0-9][0-9][0-9]-/) continue
+    n = split(line, cells, "|")
+    if (n < 3) continue
+    id = cells[3]
+    sub(/^[ \t]+/, "", id); sub(/[ \t]+$/, "", id)
+    if (index(id, id_prefix) != 1 || substr(id, length(id_prefix) + 1) !~ /^[0-9]+$/) continue
+    decisions[id] = 1
+  }
+  close(dec_index)
+}
+
 # The phrases the caller found, keyed target+phrase. A pair absent here is a
 # phrase its cited file does not hold.
 function load_contents(   line, i, rest, t) {
@@ -425,6 +447,7 @@ BEGIN {
       exit 2
     }
     load_tracked()
+    if (dec_judge) load_dec_index()
     if (phase == "verdict") {
       load_headings(); load_contents(); load_skips()
       if (lock_paths != "") {
