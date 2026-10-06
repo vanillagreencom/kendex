@@ -35,6 +35,11 @@
 #      runner's own, and the verdict line names that directory's tree
 #   9. --alone — with --battery, the suites it names run alone, and a suite
 #      sharing a name with one in the runner's own ALONE list runs pooled
+#  10. the bound — a suite still running RUN_ALL_SUITE_SECS after its start
+#      gets TERM, then KILL, through every process under it, a child that left
+#      its process group included; it reports red under its keyed line with
+#      the row it printed last, even where it exits 0 on the stop, and a bound
+#      that is not a number refuses
 #
 # Bash 3.2 compatible.
 
@@ -377,6 +382,109 @@ assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '  ALONE=()' '  :')" "rc=0
   "control: the runner's own list kept holds back the other tree's same-named suite"
 assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$2")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
   "control: --alone left unread runs every suite pooled"
+
+echo "=== 10. a suite past its bound is stopped and reported under its own name ==="
+# The hang the bound exists for: a suite blocked on a child that set up its own
+# process group and ignores TERM, as GNU timeout does once it has sent its
+# signal and while it waits on a command that never ends. The child writes
+# its pid; the suite's EXIT trap marks that TERM came before KILL.
+hang_battery() { # DIR [FROM TO]...
+  battery "$1"
+  suite "$1" green 0 'pass: 1   fail: 0'
+  cat >"$1/hang.sh" <<'EOF'
+#!/usr/bin/env bash
+trap 'echo cleaned >"$MARK"' EXIT
+echo 'ok    the row before the hang'
+perl -e 'setpgrp(0, 0); $SIG{TERM} = "IGNORE"; open my $f, ">", $ENV{PIDFILE} or die; print $f "$$\n"; close $f; exec "sleep", "1000" or die'
+EOF
+  local dir="$1"
+  shift
+  while [ "$#" -ge 2 ]; do mutate_file "$dir/run-all.sh" "$1" "$2"; shift 2; done
+}
+
+# Runs DIR's battery with a two-second bound under a deadline of this file's
+# own, since a runner without the bound never ends: $OUT and $RC as
+# run_battery leaves them, RC=hung where the deadline ended the run, and
+# CHILD the hung child's state once the run is over, alive or gone.
+run_bounded() { # DIR
+  local dir="$1" runner until=$((SECONDS + 40)) child
+  mkdir -p "$dir.bin"
+  printf '#!/usr/bin/env bash\necho 2\n' >"$dir.bin/nproc"
+  chmod +x "$dir.bin/nproc"
+  set -m
+  env -i PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" RUN_ALL_SUITE_SECS=2 \
+    PIDFILE="$dir.pid" MARK="$dir.mark" bash "$dir/run-all.sh" >"$dir.out" 2>&1 &
+  runner=$!
+  set +m
+  while kill -0 "$runner" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  RC=0
+  if kill -0 "$runner" 2>/dev/null; then
+    kill -KILL -- "-$runner" 2>/dev/null
+    wait "$runner" 2>/dev/null
+    RC=hung
+  else
+    wait "$runner" || RC=$?
+  fi
+  OUT="$(cat "$dir.out")"
+  child="$(cat "$dir.pid" 2>/dev/null)"
+  CHILD=never-started
+  if [ -n "$child" ]; then
+    STAGED+=("$child")
+    CHILD=gone
+    ! kill -0 "$child" 2>/dev/null || CHILD=alive
+  fi
+}
+
+# The keyed line and the last row the line after it carries, from $OUT.
+stopped_of() { # NAME
+  printf '%s\n' "$OUT" | awk -v k="run-all.sh: suite-timeout suite=$1 " \
+    'index($0, k) == 1 { print; getline; n = index($0, "ok    "); print (n ? substr($0, n) : "no-row") }' | tr '\n' ';'
+}
+
+B="$TMP_ROOT/bound"
+hang_battery "$B"
+run_bounded "$B"
+assert_eq "rc=$RC failed=$(failed_of) child=$CHILD mark=$(cat "$B.mark" 2>/dev/null)" \
+  "rc=1 failed=hang  child=gone mark=cleaned" \
+  "a hung suite is stopped: TERM reaches its cleanup, KILL its child outside its process group, and the run exits 1 naming it"
+assert_eq "$(stopped_of hang)|$(line_of hang)|$(line_of green)" \
+  "run-all.sh: suite-timeout suite=hang seconds=2;ok    the row before the hang;|suite=hang seconds=N pass=0 fail=1|suite=green seconds=N pass=1 fail=0" \
+  "the stopped suite's keyed line names it and the row it printed last, and the suite beside it still reports"
+
+B="$TMP_ROOT/bound-off"
+hang_battery "$B" '      stop_overdue "$k"' '      :'
+run_bounded "$B"
+assert_eq "rc=$RC" "rc=hung" "control: with the bound never acted on, the hung suite holds the run"
+
+B="$TMP_ROOT/bound-nokill"
+hang_battery "$B" '  signal_tree KILL "$tree"' '  :'
+run_bounded "$B"
+assert_eq "rc=$RC child=$CHILD" "rc=1 child=alive" \
+  "control: with no KILL after the grace, the child that ignores TERM outlives the run"
+
+# A suite that traps the stop and exits 0 never finished either.
+trapped_battery() { # DIR [FROM TO]
+  battery "$1"
+  printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\necho "ok    the row before the hang"\nwhile :; do sleep 1; done\n' \
+    >"$1/trapped.sh"
+  [ "$#" -lt 3 ] || mutate_file "$1/run-all.sh" "$2" "$3"
+}
+B="$TMP_ROOT/bound-trapped"
+trapped_battery "$B"
+run_bounded "$B"
+assert_eq "rc=$RC failed=$(failed_of)|$(line_of trapped)" "rc=1 failed=trapped |suite=trapped seconds=N pass=0 fail=1" \
+  "a suite that exits 0 on the stop is still red"
+B="$TMP_ROOT/bound-trapped-ctl"
+trapped_battery "$B" '[[ "$2" != 0 || "${4:-}" == 1 ]]' '[[ "$2" != 0 ]]'
+run_bounded "$B"
+assert_eq "rc=$RC failed=$(failed_of)" "rc=0 failed=" \
+  "control: judged by its exit status alone, the stopped suite reads green"
+
+B="$TMP_ROOT/bound-junk"
+green_battery "$B"
+run_battery "$B" 2 RUN_ALL_SUITE_SECS=x
+assert_eq "rc=$RC $(printf '%s\n' "$OUT" | sed -n '1s/ is.*//p') started=$(started_of | tr '\n' ' ')" \
+  "rc=1 run-all.sh: RUN_ALL_SUITE_SECS started=" "a bound that is not a number refuses before any suite runs"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

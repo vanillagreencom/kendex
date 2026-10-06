@@ -1,0 +1,1 @@
+- `tests/run-all.sh` stops a suite still running `RUN_ALL_SUITE_SECS` (default 900) after its start, TERM and then KILL through every process under it, and reports it red under a `run-all.sh: suite-timeout suite=<name>` line with the last row it printed, so a hung suite fails the run by name instead of running to a CI job's ceiling.

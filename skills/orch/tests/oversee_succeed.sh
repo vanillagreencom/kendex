@@ -2802,14 +2802,17 @@ assert_eq "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" \
 assert_eq "$(( bound_elapsed >= BOUND_WAIT )) $(( bound_real < BOUND_WAIT ))" "1 1" \
   "control: the whole --wait-secs bound is spent on the virtual clock in less than that in wall time"
 # The inverse: the same run with the clock waived spends its bound in real
-# seconds, and a two-second ceiling ends it inside them.
+# seconds, the wall time the row above holds the virtual run under. The run
+# ends on its own deadline, never on a signal: a ceiling's TERM lands wherever
+# the host's pace has the script by then, and a run that TERM does not end
+# holds the suite with no bound of its own.
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 new_caller "$MARK"
-bound_waived_rc=0
-TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.4claude" \
-  "$(command -v timeout || command -v gtimeout)" 2 "$TMP_ROOT/succeed-env" boundwaived 'claude:fable:high' --wait-secs "$BOUND_WAIT" \
-  >/dev/null 2>&1 || bound_waived_rc=$?
-assert_eq "$bound_waived_rc" "124" "control: with the clock waived the bound is real and outlasts a two-second ceiling"
+bound_real="$(date +%s)"
+succeed_shim boundwaived 'claude:fable:high' --wait-secs "$BOUND_WAIT"
+bound_real=$(( $(date +%s) - bound_real ))
+assert_eq "$RC|$(( bound_real >= BOUND_WAIT ))" "1|1" \
+  "control: with the clock waived the run spends its whole --wait-secs bound in wall time"
 
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
