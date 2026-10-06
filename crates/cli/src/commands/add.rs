@@ -280,6 +280,9 @@ fn plan(
 /// Arming a repository's commit hooks is the separate yes above, and says
 /// nothing about this one: a tracked folder is a folder the app can show,
 /// not consent to change what happens on every commit.
+///
+/// A skip of something the request asked for is said last, once every
+/// step above has run, and only where nothing above refused.
 fn write_and_close(
     env: &Env,
     scope: &Scope,
@@ -288,6 +291,7 @@ fn write_and_close(
     allow_effects: bool,
 ) -> CliResult {
     let blocked = print_report(env, report, Listing::Attention);
+    let skipped = super::ledger::skipped_asked(report, &blocked);
     let applied = confirm_and_apply(env, report, yes)?;
     let walked = super::repo_effects::disclose_and_finish(
         env,
@@ -321,7 +325,7 @@ fn write_and_close(
     // reaches. Registration is not the effects step's to skip either way.
     let registered = super::project::register_destination(env, scope);
     match walked {
-        Ok(()) => registered,
+        Ok(()) => registered.and_then(|()| super::ledger::refuse_skipped(skipped)),
         Err(error) => {
             if let Err(refused) = registered {
                 fail_refusal("warning: ", refused.as_ref());

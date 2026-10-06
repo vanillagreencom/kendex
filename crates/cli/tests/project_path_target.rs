@@ -153,7 +153,13 @@ fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
             assert_eq!(fs::read(&global_append).unwrap(), before_global);
             continue;
         }
-        assert!(output.status.success(), "{change}: {}", said(&output));
+        // The project's edited style block holds its install back, and a
+        // run with no terminal ends on that skip.
+        let status = match change {
+            "project-conflict" => Some(3),
+            _ => Some(0),
+        };
+        assert_eq!(output.status.code(), status, "{change}: {}", said(&output));
         let text = fs::read_to_string(&project_append).unwrap();
         let inherited = kendex_core::configedit::marker_block(&text, "inherited-global").unwrap();
         assert_eq!(

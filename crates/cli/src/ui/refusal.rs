@@ -125,7 +125,7 @@ fn parts(headline: &str, error: &(dyn std::error::Error + 'static)) -> (String, 
 /// Whether this error wrote the breaks it holds: core's manifest refusal,
 /// which names one finding per line; its TOML refusal, which carries the
 /// parser's caret under the source line it points at; and the CLI's own
-/// [`Lines`].
+/// [`Lines`] and its skipped-on-conflict close, one keyed line per item.
 ///
 /// Both core errors escape the path they name where they compose it, and
 /// neither escapes the rest — a `Finding` escapes its own three parts, and
@@ -135,6 +135,7 @@ fn parts(headline: &str, error: &(dyn std::error::Error + 'static)) -> (String, 
 fn owns_its_breaks(error: &(dyn std::error::Error + 'static)) -> bool {
     use kendex_core::error::CoreError;
     error.is::<Lines>()
+        || error.is::<crate::commands::ledger::SkippedOnConflict>()
         || matches!(
             error.downcast_ref::<CoreError>(),
             Some(CoreError::ManifestInvalid { .. } | CoreError::TomlParse { .. })

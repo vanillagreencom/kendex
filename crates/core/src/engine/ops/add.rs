@@ -209,6 +209,7 @@ pub fn add_seeded(
     report
         .notes
         .extend(moved(&lock, &report.record, &declaring));
+    report.asked = crate::engine::Asked::Named(declaring);
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)
 }

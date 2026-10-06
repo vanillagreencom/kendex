@@ -69,6 +69,7 @@ mod release_workflow;
 mod remote_e2e;
 mod remove_locked;
 mod safety_print;
+mod skipped_on_conflict;
 mod template_cli;
 mod terms_first_run;
 mod tier_model;

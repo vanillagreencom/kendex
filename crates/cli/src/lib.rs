@@ -310,6 +310,16 @@ pub fn main() -> ExitCode {
             ui::finish();
             code
         }
+        // The writes stand and the ledger said what was skipped; the
+        // status tells a script the install is partial. A refused commit
+        // already exits 1, and keeps it.
+        Err(e)
+            if e.is::<commands::ledger::SkippedOnConflict>()
+                && !commands::commit_offer::refused() =>
+        {
+            ui::outro_refusal(e.as_ref());
+            ExitCode::from(commands::ledger::SkippedOnConflict::STATUS)
+        }
         Err(e) => {
             // The last line of the run, and the one that closes the frame
             // a terminal opened: whatever was still being said is drawn

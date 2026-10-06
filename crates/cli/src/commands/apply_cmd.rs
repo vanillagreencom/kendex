@@ -1,4 +1,4 @@
-use kendex_core::engine::{PlanOptions, plan_apply};
+use kendex_core::engine::{EngineReport, PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
@@ -70,9 +70,6 @@ impl ApplyArgs {
 
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     let filter = args.effective_scope()?;
-    // Every scope is planned before any of them is written: failing before
-    // the first write beats a half-applied run.
-    let mut planned = Vec::new();
     let scopes = resolve_scopes_at(env, filter, args.target.path())?;
     super::header("apply", &scopes);
     // The refusal that registration carries, asked before the first
@@ -99,31 +96,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         replace_unmanaged: args.replace_unmanaged,
         ..PlanOptions::locked()
     };
-    for scope in scopes {
-        // Read the manifest as it sits on disk, through the same loader
-        // the audit uses, so this verb refuses exactly what the audit
-        // refused rather than planning against a normalized copy.
-        let path = manifest::manifest_path(env, &scope);
-        match manifest::load(&path) {
-            Ok(ManifestFile::Current(_)) => {}
-            Ok(ManifestFile::Absent) => {
-                ui::report::notice(&format!(
-                    "{}: nothing listed to install",
-                    scope_label(&scope)
-                ));
-                continue;
-            }
-            Err(error) => return Err(error.into()),
-        }
-        let report = {
-            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
-            match args.record_existing {
-                true => kendex_core::engine::plan_record_existing(env, &scope)?,
-                false => plan_apply(env, &scope, &options)?,
-            }
-        };
-        planned.push((scope.clone(), report));
-    }
+    let mut planned = plan_each(env, scopes, &args, &options)?;
     // A project inherits global Pi instructions. All initial refusal checks
     // run before writes; refresh its plan after the global transaction lands.
     let combined = !args.plan
@@ -133,6 +106,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         planned.sort_by_key(|(scope, _)| matches!(scope, Scope::Project { .. }));
     }
     let scopes = planned.len();
+    let mut skipped = Vec::new();
     for (index, (scope, mut report)) in planned.into_iter().enumerate() {
         if combined && matches!(scope, Scope::Project { .. }) {
             report = plan_apply(env, &scope, &options)?;
@@ -158,6 +132,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             );
             continue;
         }
+        skipped.extend(super::ledger::skipped_asked(&report, &blocked));
         // The same close as refresh, for the same reason: what this run
         // wrote is one of its outcomes, and the installs it refused and
         // the scores it read are the others.
@@ -224,5 +199,42 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             }
         }
     }
-    Ok(())
+    super::ledger::refuse_skipped(skipped)
+}
+
+/// Every scope planned before any of them is written: failing before the
+/// first write beats a half-applied run.
+fn plan_each(
+    env: &Env,
+    scopes: Vec<Scope>,
+    args: &ApplyArgs,
+    options: &PlanOptions,
+) -> Result<Vec<(Scope, EngineReport)>, Box<dyn std::error::Error>> {
+    let mut planned = Vec::new();
+    for scope in scopes {
+        // Read the manifest as it sits on disk, through the same loader
+        // the audit uses, so this verb refuses exactly what the audit
+        // refused rather than planning against a normalized copy.
+        let path = manifest::manifest_path(env, &scope);
+        match manifest::load(&path) {
+            Ok(ManifestFile::Current(_)) => {}
+            Ok(ManifestFile::Absent) => {
+                ui::report::notice(&format!(
+                    "{}: nothing listed to install",
+                    scope_label(&scope)
+                ));
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let report = {
+            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
+            match args.record_existing {
+                true => kendex_core::engine::plan_record_existing(env, &scope)?,
+                false => plan_apply(env, &scope, options)?,
+            }
+        };
+        planned.push((scope.clone(), report));
+    }
+    Ok(planned)
 }

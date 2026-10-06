@@ -26,6 +26,10 @@ pub struct Blocked {
     pub offer: Option<Offer>,
     /// The scope-wide take-over settles this item whole.
     pub replace: bool,
+    /// A row of this item is a dead stop, so what it asked for is not on
+    /// disk. An item blocked by the person's own edits alone keeps their
+    /// bytes in place, and its record.
+    pub stopped: bool,
 }
 
 impl Blocked {
@@ -62,6 +66,7 @@ pub fn blocked_items(env: &Env, rows: &[&DriftRow]) -> Vec<Blocked> {
             name: row.name.clone(),
             offer: offer_for(env, &item),
             replace: item_replaceable(&item),
+            stopped: !item.is_empty(),
         });
     }
     items

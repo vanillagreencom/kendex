@@ -254,6 +254,21 @@ pub struct Installation {
     pub name: String,
     pub harness: HarnessId,
     pub positions: Vec<super::desired::Position>,
+    /// Every reason this pass derived it for: asked for by name, carried
+    /// by a set, or required by another installation.
+    pub reasons: BTreeSet<crate::lock::Reason>,
+}
+
+/// What the request behind a pass asked for, against which a skipped
+/// package is judged: one the caller asked for, or one nobody named.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Asked {
+    /// Every declaration the scope holds, as an apply reads them.
+    #[default]
+    Declared,
+    /// The items and sets one add declared, an agent's expanded skills
+    /// among them.
+    Named(BTreeSet<Held>),
 }
 
 /// A catalog hook the plan wrote nothing for on a tool its own harnesses
@@ -390,6 +405,8 @@ pub struct EngineReport {
     /// each with the one notice keyed by the set that `notes` also holds;
     /// verify shows it, where it shows no note.
     pub retired_bundles: BTreeMap<String, String>,
+    /// What the request behind this pass asked for.
+    pub asked: Asked,
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -495,6 +512,73 @@ impl EngineReport {
             retired: BTreeMap::new(),
             withheld: BTreeMap::new(),
             retired_bundles: BTreeMap::new(),
+            asked: Asked::Declared,
+        }
+    }
+
+    /// Each package this pass derives for what its request asked: under
+    /// [`Asked::Declared`] every installation, and under [`Asked::Named`]
+    /// each item named, each member of a set named, and everything those
+    /// require, however deep. A package the request reaches only through
+    /// a declaration it did not name is not in it.
+    pub fn asked_for(&self) -> BTreeSet<(ItemKind, String)> {
+        use crate::lock::Reason;
+        let mut reasons: BTreeMap<(ItemKind, &str), BTreeSet<&Reason>> = BTreeMap::new();
+        for installation in self.installations.values() {
+            reasons
+                .entry((installation.kind, installation.name.as_str()))
+                .or_default()
+                .extend(&installation.reasons);
+        }
+        let named = match &self.asked {
+            Asked::Declared => {
+                return reasons
+                    .into_keys()
+                    .map(|(kind, name)| (kind, name.to_owned()))
+                    .collect();
+            }
+            Asked::Named(named) => named,
+        };
+        let mut reached: BTreeSet<(ItemKind, &str)> = named
+            .iter()
+            .filter_map(|held| match held {
+                Held::Item { kind, name } => Some((*kind, name.as_str())),
+                Held::Set { .. } => None,
+            })
+            .collect();
+        reached.extend(reasons.iter().filter_map(|(item, why)| {
+            why.iter()
+                .any(|reason| match reason {
+                    Reason::MemberOf { bundle } => named.contains(&Held::Set {
+                        name: bundle.name.clone(),
+                    }),
+                    Reason::Requested | Reason::RequiredBy { .. } => false,
+                })
+                .then_some(*item)
+        }));
+        // A requirement can point at a requirer found later in the walk, so
+        // the set grows until a pass adds nothing.
+        loop {
+            let grew: Vec<(ItemKind, &str)> = reasons
+                .iter()
+                .filter(|(item, why)| {
+                    !reached.contains(*item)
+                        && why.iter().any(|reason| match reason {
+                            Reason::RequiredBy { by } => {
+                                reached.contains(&(by.kind, by.name.as_str()))
+                            }
+                            Reason::Requested | Reason::MemberOf { .. } => false,
+                        })
+                })
+                .map(|(item, _)| *item)
+                .collect();
+            if grew.is_empty() {
+                return reached
+                    .into_iter()
+                    .map(|(kind, name)| (kind, name.to_owned()))
+                    .collect();
+            }
+            reached.extend(grew);
         }
     }
 

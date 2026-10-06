@@ -480,7 +480,10 @@ fn the_offer_is_printed_exactly_where_the_run_it_names_settles_the_scope() {
         folder_at(&project.join(".claude/skills/deploy"), "By hand.");
         folder_at(&project.join(".agents/skills/deploy"), "By hand.");
         if build == 1 {
-            assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+            // Both places hold hand-made files, so the declared skill is
+            // skipped and a run with no terminal ends on that.
+            let applied = kendex(home, &project, &["apply", "-y"]);
+            assert_eq!(applied.status.code(), Some(3), "{}", said(&applied));
             folder_at(&project.join(".claude/skills/deploy"), "Edited by hand.");
         }
         if build == 2 {
