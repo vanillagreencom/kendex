@@ -1,7 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -26,7 +26,7 @@ import {
 } from "./visibility.js";
 import { logTaskPanelDiagnostic, reportTaskPanelPersistenceFailure } from "./diagnostics.js";
 import { isAtomicWriteTemporary, writeFileAtomic } from "./atomic-write.js";
-import { openLaneDir, pruneLanes } from "../scripts/lane-retention.js";
+import { LANE_CWD_FILE, openLaneDir, pruneLanes, type LanePruneFailure } from "../scripts/lane-retention.js";
 import {
 	isTaskPanelToolResultBoundedState,
 	taskPanelStateFingerprint,
@@ -36,6 +36,7 @@ import {
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
 const PACKAGE_FOLDER = "pi-task-panel";
+const SIDECAR_FILE = "state.json";
 const STATE_TYPE = "kendex-task-panel:state";
 const TASK_PANEL_SNAPSHOT_MAX_BYTES = 64 * 1024;
 /** How many bytes of states over the session entry cap stay on disk by fingerprint per session; the README names this bound. */
@@ -137,7 +138,61 @@ function laneDir(ctx: ExtensionContext): string {
 }
 
 function sidecarStatePath(ctx: ExtensionContext): string {
-	return join(laneDir(ctx), "state.json");
+	return join(laneDir(ctx), SIDECAR_FILE);
+}
+
+/**
+ * Records each lane directory pi-task-panel 3.0.5 and earlier wrote: it holds
+ * no `LANE_CWD_FILE`, so `pruneLanes` never prunes it. Its working directory is
+ * unknown, so the record names the lane directory itself and only the age rule
+ * applies. The record takes the sidecar's date, which every save wrote last,
+ * so a lane whose files all aged out goes whole in the prune that follows.
+ * The starting session's own lane has its record from `keepLaneLive` by then.
+ * Kept until 4.0.0, per the kendex compatibility rule.
+ */
+function recordLegacyLanes(): LanePruneFailure[] {
+	const failed: LanePruneFailure[] = [];
+	const report = (path: string, error: unknown) => failed.push({ path, error: error instanceof Error ? error.message : String(error) });
+	// A missing path answers undefined; any other failure is reported.
+	const lstatOf = (path: string) => {
+		try {
+			return lstatSync(path);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "ENOTDIR") report(path, error);
+			return undefined;
+		}
+	};
+	const root = sessionsRoot();
+	let sessions: string[];
+	try {
+		sessions = readdirSync(root);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") report(root, error);
+		return failed;
+	}
+	for (const session of sessions) {
+		const dir = join(root, session, PACKAGE_FOLDER);
+		if (!lstatOf(join(root, session))?.isDirectory() || !lstatOf(dir)?.isDirectory()) continue;
+		const record = join(dir, LANE_CWD_FILE);
+		try {
+			lstatSync(record);
+			continue;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+				report(record, error);
+				continue;
+			}
+		}
+		try {
+			openLaneDir(dir, dir);
+			const sidecar = lstatOf(join(dir, SIDECAR_FILE));
+			if (sidecar) utimesSync(record, sidecar.atime, sidecar.mtime);
+		} catch (error) {
+			report(dir, error);
+		}
+	}
+	return failed;
 }
 
 /** The file holding a state over the session entry cap, named by the fingerprint its manifest and bounded details carry. */
@@ -1359,10 +1414,12 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		recordProjectTrust(ctx);
 		// Restore first, so a session resumed after its files aged out still
 		// shows its list, and keep its lane live, so the prune leaves those
-		// files for the next tree move or reload.
+		// files for the next tree move or reload. Legacy lanes get their record
+		// before the prune reads records.
 		restore(ctx);
 		keepLaneLive(ctx);
-		for (const failure of pruneLanes(sessionsRoot(), [PACKAGE_FOLDER]).failed) {
+		const legacyFailures = recordLegacyLanes();
+		for (const failure of [...legacyFailures, ...pruneLanes(sessionsRoot(), [PACKAGE_FOLDER]).failed]) {
 			logTaskPanelDiagnostic("session file prune failed", { path: failure.path, error: failure.error });
 		}
 	});

@@ -108,6 +108,27 @@ function backDate(dir: string, at: number): void {
 	utimesSync(dir, at / 1000, at / 1000);
 }
 
+// pi-task-panel 3.0.5 and earlier wrote the same lane directory without its
+// record; deleting the record after a save gives that layout.
+const LEGACY: Array<{ name: string; aged: boolean; kept: boolean }> = [
+	{ name: "a session directory without a lane record whose files aged out is removed at another session's start", aged: true, kept: false },
+	{ name: "a session directory without a lane record whose files are fresh keeps them at another session's start", aged: false, kept: true },
+];
+
+for (const row of LEGACY) {
+	test(`lane retention: ${row.name}`, () => inSession(async ({ base, pi, lane, tasksWrite }) => {
+		const ctx = fakeCtx(base, SESSION_ID);
+		await tasksWrite(ctx, largeList("legacy"));
+		const saved = join(lane(SESSION_ID), "states", `${pi.appended.at(-1)?.data.fingerprint}.json`);
+		rmSync(join(lane(SESSION_ID), LANE_CWD_FILE));
+		if (row.aged) backDate(lane(SESSION_ID), Date.now() - LANE_FILE_MAX_AGE_MS - 60_000);
+		const start = pi.handlers.get("session_start");
+		if (!start) throw new Error("handler-missing=session_start");
+		await start({ type: "session_start" }, fakeCtx(base, `${SESSION_ID}-next`));
+		expect([existsSync(lane(SESSION_ID)), existsSync(join(lane(SESSION_ID), "state.json")), existsSync(saved)]).toEqual([row.kept, row.kept, row.kept]);
+	}));
+}
+
 const RESUMED: Array<{ name: string; movedFrom: boolean }> = [
 	{ name: "in the working directory it saved in", movedFrom: false },
 	{ name: "in a new working directory after the one it saved in is gone", movedFrom: true },
@@ -188,6 +209,9 @@ test("lane retention: a save past the byte bound after a resume removes the olde
 	if (!start) throw new Error("handler-missing=session_start");
 
 	await start({ type: "session_start" }, ctx);
+	const resumedAt = [filler, ...[newest, middle, oldest].map((name) => join(states, name))].map((path) => statSync(path).mtimeMs);
+	expect(resumedAt).toEqual(resumedAt.toSorted((left, right) => right - left));
+	expect(new Set(resumedAt).size).toBe(resumedAt.length);
 	await tasksWrite(ctx, largeList("after resume"));
 	const kept = readdirSync(states).filter((name) => name.endsWith(".json"));
 	expect(kept).toEqual(expect.arrayContaining([newest, middle, "filler.json", `${pi.appended.at(-1)?.data.fingerprint}.json`]));

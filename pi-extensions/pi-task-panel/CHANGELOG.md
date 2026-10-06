@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- Lists over 64 KiB saved beside the session are kept up to 32 MiB per session instead of the newest 20, so a list that changes often no longer pushes older `/tree` points out after 20 changes. A save also removes a temporary file a failed write left there. The session's task files now follow lane retention: when a Pi session starts, the files of every session whose working directory is gone are deleted, and any file older than 5 days is deleted. A resumed session's own files count as new from the resume, so `/tree` and reload still find them. Files from sessions that never save again after this update are not pruned.
+- Lists over 64 KiB saved beside the session are kept up to 32 MiB per session instead of the newest 20, so a list that changes often no longer pushes older `/tree` points out after 20 changes. A save also removes a temporary file a failed write left there. The session's task files now follow lane retention: when a Pi session starts, the files of every session whose working directory is gone are deleted, and any file older than 5 days is deleted. A resumed session's own files count as new from the resume, so `/tree` and reload still find them. Files saved by 3.0.5 or earlier follow the 5-day rule from the first session start after the update.
 - Task reminders leave the system prompt unchanged. Task context stays in request history, and a new hidden snapshot is added only when the task context changes. This preserves earlier request text for prompt caching across task changes and task completion.
 
 ### 3.0.5
