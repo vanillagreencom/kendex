@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 
 message() { # REASON FIELD=VALUE...
@@ -64,6 +65,7 @@ message() { # REASON FIELD=VALUE...
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex|pi|copilot.' ;;
     ask-unanswered) printf '%s\n' 'The lane asked the overseer a question and is waiting for the answer. Closing it would end the session that answer would reach. Answer the ask, then close the lane.' ;;
     mail-read-failed) printf '%s\n' 'The lane mailbox could not be read, so nothing here says whether the lane asked anything. Close-out changed nothing.' ;;
+    worktree-read-failed) printf '%s\n' "lane-host could not say whether the hosted lane's worktree, root=, still stands, so nothing here says the merge its record names was the lane's last work. Close-out changed nothing. cause=read-failed is a cat or touch of its .git that failed, lane-host's own words on the lines above this one; cause=scratch-unmade a mktemp that could not make the directory the read lands in." ;;
     lane-host-busy) printf '%s\n' 'lane-host refused the provider call step names at its per-home cap on provider calls; its own line is above and the provider ran nothing. The window and the fleet record are unchanged: run lane-close again. The exit status is lane-host'"'"'s own 69.' ;;
     tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
     stop-failed)
@@ -126,14 +128,21 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, an idle lane whose tracker item is
-terminal or whose record carries the cycle oversee-cycle writes at its pull
-request's merge, in a full close a record whose window no pane carries on a
-terminal item, or a record whose host kind declares stop=none, in any state,
-which the close ends on this machine alone (the stop=none paragraph below).
+terminal, or whose record carries the cycle oversee-cycle writes at its pull
+request's merge and whose worktree, the record's mail_root, is gone, in a full
+close a record whose window no pane carries on a terminal item, or a record
+whose host kind declares stop=none, in any state, which the close ends on this
+machine alone (the stop=none paragraph below).
 An item can stay open past its merge for a Done-when box the overseer checks
-itself. Its idle lane closes as finished work: the item stays open, its files
-stay, and the host close passes no --merged, as for any item the tracker holds
-open.
+itself. The lane's own close-out removes its worktree, so its idle lane closes
+as finished work: the item stays open, its files stay, and the host close
+passes no --merged, as for any item the tracker holds open. A record keeps its
+cycle across a relaunch, and a lane relaunched for more work on the item, or
+one still inside its merge close-out, has its worktree standing, so that lane
+refuses as lane-live state=idle. A local lane's worktree is read on this disk;
+a hosted lane's .git through lane-host cat, as oversee-watch reads it before
+its own close of a merged hosted lane, and a read that fails refuses as
+worktree-read-failed.
 A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
 through the provider's copy, reads the account the record names as room, for
@@ -472,6 +481,32 @@ refuse_unanswered_ask() {
 # Whether the record carries the cycle oversee-cycle writes at the merge of the
 # item's pull request.
 record_merged() { jq -e '.cycle.pr? | numbers' <<<"$record" >/dev/null 2>&1; }
+
+# Whether the lane's worktree, the record's mail_root, is gone, which is what
+# says a recorded merge was the lane's last work: the record keeps its cycle
+# across a relaunch, and only the lane's own merge close-out
+# (../workflows/merge-pr.md § 5) removes the worktree a relaunch recreates. A
+# hosted one is read through the probe oversee-watch reads it by before its
+# own close of a merged hosted lane (lib/lane-gitfile.sh lane_hosted_clone),
+# whose 3, a .git naming no linked worktree, is still a worktree standing.
+worktree_gone() {
+  local scratch rc=0
+  if [[ -z "$host" ]]; then
+    [[ ! -e "$mail_root" && ! -L "$mail_root" ]]
+    return
+  fi
+  [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
+  scratch="$(mktemp -d)" || { message worktree-read-failed "item=$ITEM" "root=$mail_root" "cause=scratch-unmade" >&2; exit 1; }
+  ORCH_LANE_HOST="$host" lane_hosted_clone "$LANE_HOST" "$ITEM" "$mail_root" "$scratch/gitfile" "$scratch/err" || rc=$?
+  [[ "$rc" -ne 2 && "$rc" -ne 4 ]] || cat -- "$scratch/err" >&2
+  rm -rf -- "${scratch:?}"
+  case "$rc" in
+    0 | 3) return 1 ;;
+    1) return 0 ;;
+    4) message lane-host-busy "item=$ITEM" step=worktree-read >&2; exit "$LANE_HOST_BUSY_EXIT" ;;
+    *) message worktree-read-failed "item=$ITEM" "root=$mail_root" "cause=read-failed" >&2; exit 1 ;;
+  esac
+}
 
 # Whether the item's pull request merged, which a full close of a completed
 # item tells the provider through close --merged. Two readings, in order: the
@@ -1026,11 +1061,11 @@ case "$state" in
     tracker_terminal || tracker_rc=$?
     case "$tracker_rc" in
       0) ;;
-      # The overseer's record of the merge says the lane's work is done: an
-      # item held open for a box the overseer checks itself leaves the lane
-      # idle on nothing, a hosted one's sandbox billing until the box is
-      # checked.
-      1) record_merged || { message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1; } ;;
+      # The overseer's record of the merge, with the worktree the lane's
+      # close-out removes gone, says the lane's work is done: an item held
+      # open for a box the overseer checks itself leaves the lane idle on
+      # nothing, a hosted one's sandbox billing until the box is checked.
+      1) { record_merged && worktree_gone; } || { message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1; } ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;
   walled)
@@ -1086,9 +1121,9 @@ stop_harness() {
     # A merged lane's own close-out removes its worktree before the lane goes
     # idle, so a provider that finds the harness by that directory has nothing
     # to find it by; lane-host-ssh stops by launch identity instead. Only an
-    # idle lane on a terminal item or with a merged cycle, or the windowless
-    # close of a hosted record on a terminal item, reaches this stop, and what
-    # follows ends the
+    # idle lane on a terminal item, or with a merged cycle and its worktree
+    # gone, or the windowless close of a hosted record on a terminal item,
+    # reaches this stop, and what follows ends the
     # harness, so the stop is skipped rather than refused: the host close where
     # the provider's close ends the sandbox, otherwise the window kill, which
     # hangs up the lane's ssh session, as a static host's close ends no

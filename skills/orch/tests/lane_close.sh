@@ -63,7 +63,8 @@ mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
   "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
-  "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" \
+  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -106,6 +107,20 @@ if [[ "${1:-}" == capabilities ]]; then
   exit 0
 fi
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
+# cat is the read of the item's worktree .git, which a merged lane's own
+# close-out removes: missing, the protocol's 2 that touch confirms, unless
+# LANE_CLOSE_HOST_GITFILE is standing, a linked worktree's line, failed, a
+# read the provider could not make, or busy, the dispatcher's refusal at its
+# per-home cap.
+if [[ "$1" == cat ]]; then
+  case "${LANE_CLOSE_HOST_GITFILE:-gone}" in
+    standing) printf 'gitdir: /srv/clone/.git/worktrees/ken-1\n'; exit 0 ;;
+    failed) printf 'lane-host-ssh: ssh-failed item=%s\n' "$3" >&2; exit 255 ;;
+    busy) printf 'lane-host: lane-host-busy item=%s\n' "$3" >&2; exit 69 ;;
+    *) exit 2 ;;
+  esac
+fi
+[[ "$1" != touch ]] || exit 0
 # stop is the provider signalling the lane's harness on its host: the harness
 # ends, and the pane falls back to the bare shell its window keeps, which the
 # lane judge reads as exited. LANE_CLOSE_NO_EXIT is a harness that outlives the
@@ -476,6 +491,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
   ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
   ln -s "$SCRIPTS/lib/tmux-server.sh" "$dir/skills/orch/scripts/lib/tmux-server.sh"
+  ln -s "$SCRIPTS/lib/lane-gitfile.sh" "$dir/skills/orch/scripts/lib/lane-gitfile.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -1054,50 +1070,105 @@ assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=
 echo '=== a finished hosted lane whose worktree is gone closes without a stop ==='
 # The provider's removed-worktree answer signals nothing, so the harness still
 # runs and the pane never reads exited: the host close and the window kill are
-# what end it. On a nonterminal item the stop is never reached, and under
-# --keep-sandbox nothing would end the harness, so both refuse.
+# what end it. Under --keep-sandbox nothing would end the harness, so that
+# refuses. A nonterminal item reaches the stop only with a merge cycle on its
+# record, the next section's rows, which also refuse it with none.
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT"
 assert_eq "rc=$RC skipped=$(grep -c '^lane-close: stop-skipped item=KEN-1 harness=claude cause=worktree-removed$' <<<"$OUT" || true) stop=$(stop_count KEN-1 claude) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 skipped=1 stop=1 close=1 kill=1 status=done' 'a terminal idle lane whose worktree is gone skips the stop, closes the host and window and records done'
-write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_TRACKER_STATE=Todo LANE_CLOSE_TRACKER_STATE_TYPE=unstarted run_close "$SCRIPT"
-assert_eq "rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=idle pane=%7$' <<<"$ERR" || true) stop=$(stop_count KEN-1 claude) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 live=1 stop=0 close=0 kill=0 status=running' 'the same provider answer on a nonterminal item is never asked for: the lane refuses as live'
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped ' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
 
 echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
-# A merged lane whose item stays open for a box the overseer checks itself:
-# its close-out removed its worktree, so the provider answers the stop with
-# the removed-worktree line. SCRIPT closes it with the record carrying pull
-# request CYCLE's merge, or no cycle for -. MERGED_OPEN reads the refusal, the
-# skipped stop, the host close with and without --merged, the window kill, the
-# record, the files kept and their removal.
-merged_open_row() { # SCRIPT CYCLE
-  write_state running claude /host; write_panes python; claude_screen
+# A merged lane whose item stays open for a box the overseer checks itself.
+# SCRIPT closes it with the record carrying pull request CYCLE's merge, or no
+# cycle for -, its worktree as WHERE says:
+#   hosted-gone      the close-out removed it: cat finds no .git, and the stop
+#                    answers with the removed-worktree line;
+#   hosted-standing  a relaunch for more work, or a lane inside its merge
+#                    close-out: the .git stands and the stop would succeed;
+#   hosted-unread    the .git read fails;
+#   hosted-busy      lane-host refuses the read at its per-home cap;
+#   local-gone       a local lane whose recorded worktree no longer exists,
+#                    its harness a real process;
+#   local-standing   a local lane whose recorded worktree stands.
+# MERGED_OPEN reads the refusals, the skipped stop, the provider stop, the host
+# close with and without --merged, the window kill, the record, the files kept
+# and their removal, and a local harness's state after the close.
+merged_open_row() { # SCRIPT CYCLE WHERE
+  local stop=0 gitfile=gone path="$PATH" pid="" lane=-
+  case "$3" in
+    hosted-gone) write_state running claude /host; stop=4 ;;
+    hosted-standing) write_state running claude /host; gitfile=standing ;;
+    hosted-unread) write_state running claude /host; gitfile=failed ;;
+    hosted-busy) write_state running claude /host; gitfile=busy ;;
+    local-gone) MAIL_ROOT="$TMP_ROOT/merged-open-removed" write_state running claude "" ;;
+    local-standing) MAIL_ROOT="$LANE_ROOT" write_state running claude "" ;;
+    *) printf 'lane-close-test: merged-open-where-unknown where=%s\n' "$3" >&2; exit 1 ;;
+  esac
+  write_panes python; claude_screen
   if [[ "$2" != - ]]; then
     jq --argjson pr "$2" '.lanes[0].cycle = {pr: $pr}' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
   fi
-  LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$1" --state-dir "$FLEET_DIR"
-  MERGED_OPEN="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=idle pane=%7$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped item=KEN-1 harness=claude cause=worktree-removed$' <<<"$OUT" || true) plain=$(grep -c -x 'close --item KEN-1 host=/host' "$HOST_CALLS" || true) merged=$(grep -c -x 'close --item KEN-1 --merged host=/host' "$HOST_CALLS" || true) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(sed -n 's/^lane-close: item-files-kept item=KEN-1 cause=//p' <<<"$OUT") remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true)"
+  if [[ "$3" == local-gone ]]; then
+    start_local_harness claude
+    path="$LOCAL_PATH" pid="$LANE_PID"
+  fi
+  LANE_CLOSE_STOP_STATUS="$stop" LANE_CLOSE_HOST_GITFILE="$gitfile" PATH="$path" LANE_CLOSE_LANE_PID="$pid" \
+    LANE_CLOSE_TRACKER_STATE='In Progress' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$1" --state-dir "$FLEET_DIR"
+  if [[ -n "$pid" ]]; then
+    lane="$(proc_state_after "$pid")"
+    kill "$pid" 2>/dev/null || true
+  fi
+  MERGED_OPEN="rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 step=worktree-read$' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live item=KEN-1 state=idle pane=%7$' <<<"$ERR" || true) unread=$(grep -c '^lane-close: worktree-read-failed item=KEN-1 root=/srv/worktree cause=read-failed$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped item=KEN-1 harness=claude cause=worktree-removed$' <<<"$OUT" || true) stop=$(stop_count KEN-1 claude) plain=$(grep -c -x 'close --item KEN-1 host=/host' "$HOST_CALLS" || true) merged=$(grep -c -x 'close --item KEN-1 --merged host=/host' "$HOST_CALLS" || true) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(sed -n 's/^lane-close: item-files-kept item=KEN-1 cause=//p' <<<"$OUT") remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) lane=$lane"
 }
-# label|cycle|expected
+# label|cycle|where|expected
 MERGED_OPEN_ROWS=(
-  "a merged-cycle idle lane with an open item and no worktree closes, its item and files kept|7|rc=0 live=0 skipped=1 plain=1 merged=0 kill=1 status=done kept=open remove=0"
-  "the same lane with no cycle recorded refuses as live and changes nothing|-|rc=1 live=1 skipped=0 plain=0 merged=0 kill=0 status=running kept= remove=0"
+  "a merged-cycle idle lane with an open item and no worktree closes, its item and files kept|7|hosted-gone|rc=0 busy=0 live=0 unread=0 skipped=1 stop=1 plain=1 merged=0 kill=1 status=done kept=open remove=0 lane=-"
+  "the same lane with no cycle recorded refuses as live and is never stopped|-|hosted-gone|rc=1 busy=0 live=1 unread=0 skipped=0 stop=0 plain=0 merged=0 kill=0 status=running kept= remove=0 lane=-"
+  "a merged-cycle idle lane whose worktree stands, relaunched or inside its close-out, refuses as live and is never stopped|7|hosted-standing|rc=1 busy=0 live=1 unread=0 skipped=0 stop=0 plain=0 merged=0 kill=0 status=running kept= remove=0 lane=-"
+  "a merged-cycle idle lane whose worktree read fails refuses and is never stopped|7|hosted-unread|rc=1 busy=0 live=0 unread=1 skipped=0 stop=0 plain=0 merged=0 kill=0 status=running kept= remove=0 lane=-"
+  "a merged-cycle idle lane whose worktree read lane-host refuses at its cap is lane-host-busy and is never stopped|7|hosted-busy|rc=69 busy=1 live=0 unread=0 skipped=0 stop=0 plain=0 merged=0 kill=0 status=running kept= remove=0 lane=-"
+  "a merged-cycle idle local lane whose worktree stands refuses as live|7|local-standing|rc=1 busy=0 live=1 unread=0 skipped=0 stop=0 plain=0 merged=0 kill=0 status=running kept= remove=0 lane=-"
 )
+# A local lane whose worktree is gone is stopped as a real process, which the
+# tmux stub reads from /proc.
+if proc_table_readable; then
+  MERGED_OPEN_ROWS+=("a merged-cycle idle local lane whose worktree is gone stops its harness and closes, its item kept|7|local-gone|rc=0 busy=0 live=0 unread=0 skipped=0 stop=0 plain=0 merged=0 kill=1 status=done kept=open remove=0 lane=gone")
+fi
 for row in "${MERGED_OPEN_ROWS[@]}"; do
-  IFS='|' read -r label cycle want <<<"$row"
-  merged_open_row "$SCRIPT" "$cycle"
+  IFS='|' read -r label cycle where want <<<"$row"
+  merged_open_row "$SCRIPT" "$cycle" "$where"
   assert_eq "$MERGED_OPEN" "$want" "$label"
 done
-MUTANT="$(mutant lane-close-merged-open '      1) record_merged || { message lane-live' '      1) { message lane-live')"
-merged_open_row "$MUTANT" 7
-assert_eq "$(grep -o '^rc=[0-9]* live=[0-9]*' <<<"$MERGED_OPEN")" 'rc=1 live=1' \
+MERGED_OPEN_CALL='      1) { record_merged && worktree_gone; } || {'
+MUTANT="$(mutant lane-close-merged-open "$MERGED_OPEN_CALL" '      1) {')"
+merged_open_row "$MUTANT" 7 hosted-gone
+assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]*' <<<"$MERGED_OPEN")" 'rc=1 busy=0 live=1' \
   'control: without the merged-cycle acceptance a merged idle lane on an open item refuses as live'
+MUTANT="$(mutant lane-close-merged-open-worktree "$MERGED_OPEN_CALL" '      1) record_merged || {')"
+merged_open_row "$MUTANT" 7 hosted-standing
+assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]* unread=[0-9]* skipped=[0-9]* stop=[0-9]*' <<<"$MERGED_OPEN")" 'rc=0 busy=0 live=0 unread=0 skipped=0 stop=1' \
+  'control: without the worktree check a relaunched lane whose cycle stayed is stopped'
+MUTANT="$(mutant lane-close-merged-open-hosted '    0 | 3) return 1 ;;' '    0 | 3) return 0 ;;')"
+merged_open_row "$MUTANT" 7 hosted-standing
+assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]*' <<<"$MERGED_OPEN")" 'rc=0 busy=0 live=0' \
+  'control: a hosted read taking a standing .git for gone stops the lane'
+MUTANT="$(mutant lane-close-merged-open-local '    [[ ! -e "$mail_root" && ! -L "$mail_root" ]]' '    :')"
+merged_open_row "$MUTANT" 7 local-standing
+assert_eq "$(grep -o ' live=[0-9]*' <<<"$MERGED_OPEN")" ' live=0' \
+  'control: a local check that reads every worktree as gone passes the live guard'
+MUTANT="$(mutant lane-close-merged-open-unread '    *) message worktree-read-failed "item=$ITEM" "root=$mail_root" "cause=read-failed" >&2; exit 1 ;;' '    *) return 0 ;;')"
+merged_open_row "$MUTANT" 7 hosted-unread
+assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]* unread=[0-9]* skipped=[0-9]* stop=[0-9]*' <<<"$MERGED_OPEN")" 'rc=0 busy=0 live=0 unread=0 skipped=0 stop=1' \
+  'control: a failed worktree read taken as gone stops the lane'
+MUTANT="$(mutant lane-close-merged-open-busy '    4) message lane-host-busy "item=$ITEM" step=worktree-read >&2; exit "$LANE_HOST_BUSY_EXIT" ;;' '')"
+merged_open_row "$MUTANT" 7 hosted-busy
+assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]* unread=[0-9]*' <<<"$MERGED_OPEN")" 'rc=1 busy=0 live=0 unread=1' \
+  'control: without the busy arm a capped read refuses as a failed read, not lane-host-busy'
 
 echo '=== a stopped sandbox answering 4 without the removed-worktree line refuses ==='
 write_state running claude /host; write_panes python; claude_screen
