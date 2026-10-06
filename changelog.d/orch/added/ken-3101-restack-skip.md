@@ -1,0 +1,1 @@
+- A restack skips its range re-test when the restacked head differs from the last passing run only in version lines and changelog entries it resolved; the lane records the skip.

@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# restack-skip — say whether a restacked head needs its range re-test, or
+# whether the last passing validation run already covers it.
+#
+# The cost this removes: two lanes that change one package each raise its
+# metadata.version, so the second to merge restacks over that one line and
+# then re-validates code no line of which moved.
+#
+# The comparison is the tree the last passing run validated, merged with the
+# base's new commits, against the restacked HEAD's tree. The run is the one
+# `dev-validate-run --last-pass` names in the worktree; the merge is
+# `git merge-tree --write-tree` of the new base and a commit of that tree on
+# the HEAD the run started at, so the merge base is the fork point the
+# validated tree sat on. The restack may skip its re-test only when every
+# path where the two trees differ is one the merge left conflicted, a regular
+# file on both sides, and differs in nothing but version lines and changelog
+# entries:
+#   a changelog file      CHANGELOG.md, or a file COMMIT_GUARDS_CHANGELOG_PATHS
+#                         selects: every line is an entry or a heading
+#   a version file        a file COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects:
+#                         its "version": "..." lines
+#   a Markdown file       its front matter's indented version: x.y.z lines,
+#                         a package's metadata.version and its renders
+# Inside each conflict region of the merged file, both sides must hold only
+# such lines too, so a conflict over code is never resolved unseen. Two
+# trees that do not differ at all, a clean restack, skip with no path.
+# A glob selects a file at its own depth only, as commit-guards reads it.
+#
+# Every fact the check cannot read, a run, an object, a setting or a git
+# answer, is a re-test: a missing fact widens the checks.
+#
+# Usage:
+#   restack-skip --worktree PATH --base REF
+#
+# Output, one line on stdout:
+#   restack=skip run-dir=DIR validated-head=SHA head=SHA paths=P[,P...]|none   exit 0
+#   restack=retest cause=CAUSE [path=P] [run-dir=DIR]                          exit 1
+# paths= names the files that differ only in version and changelog lines.
+# Causes:
+#   no-passing-run    the worktree holds no passing run with a recorded tree
+#   base-unreadable   REF names no commit
+#   head-unreadable   the worktree has no HEAD commit
+#   object-missing    the validated tree or the HEAD it started at is gone
+#   settings-unreadable  a COMMIT_GUARDS_CHANGELOG_* setting could not be read
+#   merge-failed      git merge-tree answered neither clean nor conflicted
+#   diff-failed       the two trees could not be compared
+#   path-shape        a path was added, removed, or is not a regular file of
+#                     one mode on both sides
+#   path-unconflicted a path differs that the merge did not leave conflicted
+#   hunk              a path differs in a line that is no version or
+#                     changelog line, or a conflict region holds one
+# Exit 2 is a usage error, which runs the re-test too.
+
+set -euo pipefail
+
+PROG="restack-skip"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+die() { # KEY FIELD...
+  {
+    printf '%s: %s' "$PROG" "$1"
+    shift
+    printf ' %s' "$@"
+    printf '\n'
+  } >&2
+  exit 2
+}
+
+retest() { # CAUSE FIELD...
+  printf 'restack=retest cause=%s' "$1"
+  shift
+  (( $# == 0 )) || printf ' %s' "$@"
+  printf '\n'
+  exit 1
+}
+
+usage() {
+  sed -n '2,/^set -/p' < "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+}
+
+worktree=""
+base=""
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree) (( $# >= 2 )) || die missing-value option=--worktree; worktree="$2"; shift 2 ;;
+    --base) (( $# >= 2 )) || die missing-value option=--base; base="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die unknown-argument "argument=$1" ;;
+  esac
+done
+[[ -n "$worktree" ]] || die required option=--worktree
+[[ -n "$base" ]] || die required option=--base
+[[ -d "$worktree" ]] || die not-directory "path=$worktree"
+worktree="$(cd -- "$worktree" && pwd)"
+# orch-env resolves the project from the working directory.
+cd -- "$worktree"
+
+last="$("$SCRIPT_DIR/dev-validate-run" --last-pass --worktree "$worktree" 2>/dev/null)" || retest no-passing-run
+run_dir="" validated_head="" validated_tree=""
+read -r -a fields <<<"$last"
+for field in ${fields[@]+"${fields[@]}"}; do
+  case "$field" in
+    run-dir=*) run_dir="${field#*=}" ;;
+    head=*) validated_head="${field#*=}" ;;
+    tree=*) validated_tree="${field#*=}" ;;
+  esac
+done
+[[ -n "$run_dir" && -n "$validated_head" && -n "$validated_tree" ]] || retest no-passing-run
+new_base="$(git rev-parse --verify -q "$base^{commit}")" || retest base-unreadable "run-dir=$run_dir"
+head="$(git rev-parse --verify -q 'HEAD^{commit}')" || retest head-unreadable "run-dir=$run_dir"
+
+changelog_globs="$("$SCRIPT_DIR/orch-env" COMMIT_GUARDS_CHANGELOG_PATHS "")" \
+  || retest settings-unreadable "run-dir=$run_dir"
+version_globs="$("$SCRIPT_DIR/orch-env" COMMIT_GUARDS_CHANGELOG_VERSION_PATHS "")" \
+  || retest settings-unreadable "run-dir=$run_dir"
+
+scratch="$(mktemp -d)" || die scratch-unavailable
+trap 'rm -rf -- "$scratch"' EXIT
+# The validated commit and the merge are written to a private store, the
+# repository's own serving as an alternate, so the check leaves no object in
+# the shared store.
+objects="$(git rev-parse --path-format=absolute --git-path objects)" || retest object-missing "run-dir=$run_dir"
+mkdir -- "$scratch/objects"
+export GIT_OBJECT_DIRECTORY="$scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"
+
+validated="$(GIT_AUTHOR_NAME="$PROG" GIT_AUTHOR_EMAIL="$PROG@localhost" \
+  GIT_COMMITTER_NAME="$PROG" GIT_COMMITTER_EMAIL="$PROG@localhost" \
+  git commit-tree "$validated_tree" -p "$validated_head" -m "$PROG: validated" 2>/dev/null)" \
+  || retest object-missing "run-dir=$run_dir"
+
+merge_rc=0
+git -c merge.conflictStyle=merge merge-tree --write-tree -z --name-only "$new_base" "$validated" \
+  > "$scratch/merge" 2>/dev/null || merge_rc=$?
+(( merge_rc <= 1 )) || retest merge-failed "run-dir=$run_dir"
+# -z output: the tree, then each conflicted path, then an empty field.
+merged_tree=""
+: > "$scratch/conflicted"
+while IFS= read -r -d '' token; do
+  if [[ -z "$merged_tree" ]]; then
+    merged_tree="$token"
+    continue
+  fi
+  [[ -n "$token" ]] || break
+  printf '%s\n' "$token" >> "$scratch/conflicted"
+done < "$scratch/merge"
+[[ -n "$merged_tree" ]] || retest merge-failed "run-dir=$run_dir"
+
+git diff-tree -r -z --no-renames "$merged_tree" "$head^{tree}" > "$scratch/diff" 2>/dev/null \
+  || retest diff-failed "run-dir=$run_dir"
+
+# GLOBS PATH — whether a space-separated glob list selects PATH at its depth.
+glob_selects() {
+  local glob
+  local -a globs
+  read -r -a globs <<<"$1"
+  for glob in ${globs[@]+"${globs[@]}"}; do
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$2" == $glob ]] || continue
+    [[ "${2//[!\/]/}" == "${glob//[!\/]/}" ]] && return 0
+  done
+  return 1
+}
+
+# KIND MARKERS < FILE — the file less its version and changelog lines, and
+# less each conflict region where MARKERS is 1. Exit 3 where a region holds
+# any other line or never closes.
+normalize() {
+  LC_ALL=C awk -v kind="$1" -v markers="$2" '
+    function allowed(line) {
+      if (kind == "changelog") return 1
+      if (kind == "version") return line ~ /^[ \t]*"version"[ \t]*:[ \t]*"[^"]*"[ \t]*,?[ \t]*$/
+      return fm == 1 && line ~ /^[ \t]+version:[ \t]*["\047]?[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*["\047]?[ \t]*$/
+    }
+    NR == 1 && kind == "markdown" && $0 == "---" { fm = 1; print; next }
+    markers && !region && /^<<<<<<<( |$)/ { region = 1; next }
+    region && /^(=======|\|\|\|\|\|\|\|( .*)?)$/ { next }
+    region && /^>>>>>>>( |$)/ { region = 0; next }
+    region { if (!allowed($0)) { bad = 1; exit 3 } next }
+    fm == 1 && $0 == "---" { fm = 2; print; next }
+    allowed($0) { next }
+    { print }
+    END { if (bad || region) exit 3 }
+  '
+}
+
+paths=""
+while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+  read -r old_mode new_mode old_blob new_blob status <<<"${meta#:}"
+  [[ "$status" == M && "$old_mode" == "$new_mode" ]] || retest path-shape "path=$path" "run-dir=$run_dir"
+  case "$old_mode" in
+    100644|100755) ;;
+    *) retest path-shape "path=$path" "run-dir=$run_dir" ;;
+  esac
+  grep -Fxq -- "$path" "$scratch/conflicted" || retest path-unconflicted "path=$path" "run-dir=$run_dir"
+  if [[ "${path##*/}" == CHANGELOG.md ]] || glob_selects "$changelog_globs" "$path"; then
+    kind=changelog
+  elif glob_selects "$version_globs" "$path"; then
+    kind=version
+  elif [[ "$path" == *.md ]]; then
+    kind=markdown
+  else
+    retest hunk "path=$path" "run-dir=$run_dir"
+  fi
+  git cat-file blob "$old_blob" > "$scratch/merged-blob" 2>/dev/null \
+    && git cat-file blob "$new_blob" > "$scratch/head-blob" 2>/dev/null \
+    || retest object-missing "path=$path" "run-dir=$run_dir"
+  normalize "$kind" 1 < "$scratch/merged-blob" > "$scratch/merged-kept" \
+    && normalize "$kind" 0 < "$scratch/head-blob" > "$scratch/head-kept" \
+    && cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \
+    || retest hunk "path=$path" "run-dir=$run_dir"
+  paths="${paths:+$paths,}$path"
+done < "$scratch/diff"
+
+printf 'restack=skip run-dir=%s validated-head=%s head=%s paths=%s\n' \
+  "$run_dir" "$validated_head" "$head" "${paths:-none}"

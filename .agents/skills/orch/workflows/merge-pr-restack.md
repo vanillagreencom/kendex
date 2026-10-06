@@ -24,7 +24,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
 
-   Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
+   Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, or one the skip check below matched to a passing run, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [WT_PATH]
@@ -36,7 +36,19 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    A non-zero exit from `resolve-base-branch`, `--resolve-mode`, or the `--record` read below hands back with that command's stderr and pushes nothing.
 
-   `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
+   `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` first asks whether the last passing run in the worktree already validated the restacked head:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
+   ```
+
+   Exit 0 prints `restack=skip ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, apart from version lines and changelog entries in the files the restack resolved, which `restack-skip --help` lists. It starts no run. Record the skip in workflow state, with `[VALIDATED_HEAD]` the line's `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [ISSUE] --arg head [HEAD] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '.restack_skips = ((.restack_skips // []) + [{head: $head, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}])'
+   ```
+
+   A lane also adds the skip and its paths to its status file's validation line. Any other exit, whatever it prints, runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
@@ -62,13 +74,13 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    This step is not skippable and no other push replaces it: the restack in step 2 rewrote every branch commit, and this command is the only thing that reconciles the SHAs workflow state recorded before it. A non-zero exit hands back, because republishing `Fixed in <sha>` replies or a closing comment over unreconciled SHAs publishes commits the branch no longer has. What it reconciles from and what its summary lines mean are in `worktree-push --help`.
 
-   After a range run, compare the pushed head with the `head=` value of that run's record:
+   After a range run, compare the pushed head with the `head=` value of that run's record; after a skip, with the `head=` value of the skip line:
 
    ```bash
    git -C [WT_PATH] rev-parse HEAD
    ```
 
-   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's range run again on it, then record and route its verdict as step 2 does. A pass goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
+   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's skip check again on it, and where it does not skip, its range run, then record and route the result as step 2 does. A pass or a skip goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
 4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, wait for its CI and take the merge route again.
 

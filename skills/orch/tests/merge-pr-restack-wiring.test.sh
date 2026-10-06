@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The restack cycle's validation wiring in merge-pr-restack.md: step 2's live
-# commands read the base branch, resolve the mode and start the range run
-# after the restack and before step 3's worktree-push, and executed as the
-# document writes them against a real worktree they run the range command.
+# commands read the base branch, resolve the mode, ask restack-skip and start
+# the range run after the restack and before step 3's worktree-push, and
+# executed as the document writes them against a real worktree they run the
+# range command, after which the skip check skips that same head.
+# restack_skip.sh holds the skip check's own rows.
 # Step 3's head read comes after the push and before step 4, and prints the
 # head= of the range run's record. The full-mode route is workflow prose no
 # suite can make red; dev_validate_run.sh RESOLVE_ROWS holds --resolve-mode's
@@ -26,6 +28,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 RESTACK='worktree create [ISSUE] --restack'
 BASE_READ='resolve-base-branch [WT_PATH]'
 RESOLVE='dev-validate-run --resolve-mode --worktree [WT_PATH]'
+SKIP='restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]'
 RANGE='dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
 RECORD='dev-validate-run --record --run-dir [RUN_DIR]'
 PUSH='worktree-push --worktree [WT_PATH] --issue [ISSUE]'
@@ -43,14 +46,15 @@ command_at() {
 }
 
 # wiring_of DOC — `ordered` when every step-2 command is live, each after the
-# one before it in the order restack, base read, mode, range run, record, and
+# one before it in the order restack, base read, mode, skip check, range run,
+# record, and
 # all of them before step 3's push; otherwise the first command missing or out
 # of place.
 wiring_of() {
   local needle at push prev=0
   push="$(command_at "$1" "$PUSH")"
   [[ -n "$push" ]] || { printf 'missing: %s\n' "$PUSH"; return 0; }
-  for needle in "$RESTACK" "$BASE_READ" "$RESOLVE" "$RANGE" "$RECORD"; do
+  for needle in "$RESTACK" "$BASE_READ" "$RESOLVE" "$SKIP" "$RANGE" "$RECORD"; do
     at="$(command_at "$1" "$needle")"
     [[ -n "$at" ]] || { printf 'missing: %s\n' "$needle"; return 0; }
     (( ${at%%$'\t'*} > prev && ${at%%$'\t'*} < ${push%%$'\t'*} )) || { printf 'out-of-order: %s\n' "$needle"; return 0; }
@@ -61,7 +65,7 @@ wiring_of() {
 
 echo "=== step 2's validation commands run after the restack and before step 3's push ==="
 assert_eq "$(wiring_of "$RESTACK_DOC")" "ordered" \
-  "merge-pr-restack.md reads the base, resolves the mode, runs and records the range run between the restack and the push"
+  "merge-pr-restack.md reads the base, resolves the mode, asks the skip check, runs and records the range run between the restack and the push"
 
 echo "=== controls: a moved or commented range command fails the pin ==="
 MOVED="$TMP_ROOT/moved.md"
@@ -165,6 +169,9 @@ assert_eq "$(cat "$TMP_ROOT/range-range-ran" 2>/dev/null || echo absent)" \
   "the range command ran against the commit origin/[BASE_BRANCH] names"
 assert_eq "$([[ -e "$TMP_ROOT/range-full-ran" ]] && echo ran || echo absent)" "absent" \
   "and the full battery did not run in its place"
+SKIP_LINE="$(live "$RESTACK_DOC" "$SKIP" "$WT" "$BASE" -)" || true
+assert_eq "${SKIP_LINE%% *}" "restack=skip" \
+  "the document's skip check, asked again of the head the range run passed, skips it"
 
 # head_check DOC — `same` when DOC's step-3 head read, run in the fixture,
 # prints the head= of the range run's record; `differs` otherwise.

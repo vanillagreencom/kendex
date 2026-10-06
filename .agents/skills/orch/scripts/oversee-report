@@ -184,6 +184,9 @@ Rows:
                   the validate_rounds its own workflow state holds
                   (schemas/workflow-state.md), each rounded to the nearest
                   minute; `no validation run recorded` where it holds none.
+                  Restacks that skipped their re-test, its restack_skips,
+                  follow as `; restack re-test skipped N time(s)`, never
+                  counted as runs.
   Use 1           the fleet log's use1 rows stamped since the last report,
                   counted by outcome: `Use 1: approved-on-rerequest=N
                   fallback=N declined-unchanged=N`, then `unrecognized=N`
@@ -783,9 +786,11 @@ running_lanes() {
       minutes="- $item: validation unread, its host unreachable"
     elif ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
       (if . == null then [] else .validate_rounds // [] end) as $rounds
-      | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
+      | (if . == null then 0 else .restack_skips // [] | length end) as $skips
+      | (if ($rounds | length) == 0 then "- \($item): no validation run recorded"
         else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) run\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min) selection=\(.selection // "unreported")\(if .lanes == null then "" else " lanes=\(.lanes)" end)"] | join(", "))"
-        end' <<<"${LANE_ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
+        end)
+        + (if $skips == 0 then "" else "; restack re-test skipped \($skips) time\(if $skips == 1 then "" else "s" end)" end)' <<<"${LANE_ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
       refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     fi
     VALIDATION+="$minutes"$'\n'

@@ -611,6 +611,21 @@ mutate_file "$LANE_MUTANT" '.selection // "unreported"' '"unreported"'
 REPORT_UNDER_TEST="$LANE_MUTANT" run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC" "0" "control: the report still runs when it drops selection"
 assert_not_contains "$OUT" "implement full 1 selection=subset lanes=test,lint" "control: dropping selection reds the reported-round assertion"
+# A restack whose re-test restack-skip skipped is recorded in restack_skips,
+# which the row names after the runs and never counts as one.
+echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89}],
+  "restack_skips": [{"head": "h1", "validated_head": "v1", "paths": ["skills/p/SKILL.md"]}, {"head": "h2", "validated_head": "v1", "paths": []}]}' \
+  > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+SKIPS_WANT="0|- KEN-7: 1 min over 1 run: implement full 1 selection=unreported; restack re-test skipped 2 times"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "$SKIPS_WANT" \
+  "a lane's skipped restack re-tests follow its runs and are not counted as runs"
+SKIPS_MUTANT="$(mutant_scripts skips-report/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/skips-report/github"
+mutate_file "$SKIPS_MUTANT" '.restack_skips // []' '[]'
+REPORT_UNDER_TEST="$SKIPS_MUTANT" run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$([[ "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" == "$SKIPS_WANT" ]] && echo named || echo unnamed)" \
+  "unnamed" "control: a report that reads no restack_skips drops the skips from the row"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": "89"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-7" "a round whose seconds are no number refuses rather than render a total"

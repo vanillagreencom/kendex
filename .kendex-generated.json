@@ -671,6 +671,7 @@
   ".agents/skills/orch/scripts/queue-wait",
   ".agents/skills/orch/scripts/reconcile-work-items",
   ".agents/skills/orch/scripts/resolve-base-branch",
+  ".agents/skills/orch/scripts/restack-skip",
   ".agents/skills/orch/scripts/review-artifact-check",
   ".agents/skills/orch/scripts/round-prune",
   ".agents/skills/orch/scripts/round-recover",
