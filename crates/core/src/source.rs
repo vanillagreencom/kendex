@@ -367,7 +367,7 @@ fn last_resolved(
     let recorded = lock.sources.get(name)?;
     // Exact strings: the record counts only for the repository it was
     // written against, spelled the way the declaration spells it.
-    if recorded.repo != repo || recorded.rev != decl.rev {
+    if !recorded.written_for(repo, decl.rev.as_deref()) {
         return None;
     }
     let key = crate::remote::cache_key(env, &recorded.repo);

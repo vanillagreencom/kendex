@@ -300,10 +300,11 @@ fn release(
 /// declarations are pinned and nothing about how one is read.
 ///
 /// A declaration the lock cannot place — nothing installed, installations
-/// disagreeing on their commit, or any one of them recorded against a
-/// source this declaration does not read from — is left to resolve
-/// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
-/// is what a whole-scope apply gives it anyway.
+/// disagreeing on their commit, any one of them recorded against a
+/// source this declaration does not read from, or a source declared at
+/// another revision than the record's account of it was written for — is
+/// left to resolve fresh: a wrong pin would move it somewhere nobody asked
+/// for, and fresh is what a whole-scope apply gives it anyway.
 fn held_manifest(manifest: &Manifest, lock: &Lock, targets: &Targets) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
     for target in &targets.declarations {
@@ -324,7 +325,7 @@ fn held_manifest(manifest: &Manifest, lock: &Lock, targets: &Targets) -> (Manife
                     })
             })
             .filter_map(|(name, decl)| {
-                let repo = source_repo(manifest, &decl.source)?;
+                let repo = held_repo(manifest, lock, &decl.source)?;
                 let commit = held_at(lock, kind, name, &decl.source, repo)?;
                 Some((name.clone(), decl.source.clone(), repo.to_owned(), commit))
             })
@@ -349,7 +350,7 @@ fn held_manifest(manifest: &Manifest, lock: &Lock, targets: &Targets) -> (Manife
         if decl.rev.is_some() || exempted {
             continue;
         }
-        let Some(repo) = source_repo(manifest, &decl.source) else {
+        let Some(repo) = held_repo(manifest, lock, &decl.source) else {
             continue;
         };
         let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
@@ -464,6 +465,22 @@ pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> Manifest {
 /// holding anything.
 fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
     manifest.sources.get(source)?.repo.as_deref()
+}
+
+/// [`source_repo`] for a held plan: `None` also where the record's
+/// account of the source was written for another repository or revision
+/// than it is declared at now. Every commit under such a source was read
+/// at a selector the person has since replaced, so holding at one undoes
+/// the edit while the record's source entry, read afresh
+/// ([`super::super::PlanOptions::keep_source_records`]), says it was
+/// honoured. A source with no account is held to its entries alone.
+fn held_repo<'a>(manifest: &'a Manifest, lock: &Lock, source: &str) -> Option<&'a str> {
+    let repo = source_repo(manifest, source)?;
+    let rev = manifest.sources.get(source)?.rev.as_deref();
+    lock.sources
+        .get(source)
+        .is_none_or(|recorded| recorded.written_for(repo, rev))
+        .then_some(repo)
 }
 
 /// Whether this installation came from where the declaration reads now.

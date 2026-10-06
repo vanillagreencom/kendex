@@ -186,11 +186,9 @@ pub(super) fn record_readings(
         .map(|name| {
             let reading = match repository(manifest, name) {
                 Some((repo, rev)) => {
-                    let keeps =
-                        kept.and_then(|lock| lock.sources.get(name))
-                            .is_some_and(|recorded| {
-                                recorded.repo == repo && recorded.rev.as_deref() == rev
-                            });
+                    let keeps = kept
+                        .and_then(|lock| lock.sources.get(name))
+                        .is_some_and(|recorded| recorded.written_for(repo, rev));
                     commit_reading(env, repo, rev, state.sources.get(name), keeps).map(|commit| {
                         SourceRev {
                             repo: repo.to_owned(),

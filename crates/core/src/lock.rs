@@ -143,6 +143,16 @@ pub struct SourceRev {
     pub commit: String,
 }
 
+impl SourceRev {
+    /// Whether this entry was written for the source as it is declared
+    /// now, at `repo` and `rev`. An entry written for another declaration
+    /// says where a different selector came out, and nothing read under
+    /// it speaks for this one.
+    pub fn written_for(&self, repo: &str, rev: Option<&str>) -> bool {
+        self.repo == repo && self.rev.as_deref() == rev
+    }
+}
+
 /// One installed set's resolution at the last write.
 ///
 /// Where it was read from is part of the record, because a rebind leaves
