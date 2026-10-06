@@ -213,12 +213,12 @@ def with_lane_binding($model; $binding_floor):
             then (((100 - $binding.pct) * ._rate_elapsed_s / ($delta * 60)) | ceil)
             else null end)};
 
-# with_lane_projection($burn_default) over one record with_lane_binding has
-# judged: the room the account has left an hour from now if every live lane
-# on it keeps burning, which is what a launch onto it inherits. A wall reading
-# lags the launches in flight by minutes, so an account read as having the
-# most room fills until it walls; the projection charges each live claim its
-# expected burn before any verdict is taken.
+# with_lane_projection($burn_default; $now) over one record with_lane_binding
+# has judged: the room the account has left if every live lane on it keeps
+# burning, which is what a launch onto it inherits. A wall reading lags the
+# launches in flight by minutes, so an account read as having the most room
+# fills until it walls; the projection charges each live claim its expected
+# burn before any verdict is taken.
 #
 # Each claim inherits its share of account-wide burn, divided by the
 # claims live at the latest sample, floored at one. Missing counts and host
@@ -233,20 +233,39 @@ def with_lane_binding($model; $binding_floor):
 # charged whole, an account weekly-bound at 86 percent with two lanes would
 # project past 95 and be dropped with days of room left. A monthly Copilot pool
 # holds it as 5 of the 720 hours of a month, charged the default times 5/720.
-# projected_headroom_pct is the judged headroom less the claims times that
-# burn, null where the wall is null, since nothing measured the account, or the
-# claims are null, since the claim store could not be read: an unknown count is
-# never charged as zero lanes.
-def with_lane_projection($burn_default):
+# The binding bucket is charged one hour of that burn per claim. The 5-hour
+# session window is projected beside it whatever binds, since it walls every
+# model: each claim is charged the session burn for the hours left until that
+# window resets, bounded to 1 to 5, or 1 where the reset is unknown. Its burn
+# is the binding one where the session binds and the default otherwise, since
+# only the binding bucket carries a measured rate. Once a session reset makes
+# the weekly window binding, its 5/168 charge alone lets an account carrying
+# many lanes read as roomy while those lanes spend the new session window
+# within hours; charging that window one hour, or charging the weekly window
+# to its reset, still leaves such an account ahead of one with less room.
+#
+# projected_headroom_pct is the smaller of the two projected rooms, null where
+# the wall is null, since nothing measured the account, or the claims are
+# null, since the claim store could not be read: an unknown count is never
+# charged as zero lanes. A record with no session reading is projected on the
+# binding bucket alone.
+def with_lane_projection($burn_default; $now):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
    then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)
    elif .binding_bucket == "session" then $burn_default
    elif .binding_bucket == "monthly" then $burn_default * 5 / 720
    else $burn_default * 5 / 168 end) as $burn
+  | ((.resets.session // null) | reset_epoch) as $session_reset
+  | (if $session_reset == null then 1
+     else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours
+  | (if .binding_bucket == "session" then $burn else $burn_default end) as $session_burn
   | . + {burn_pct_per_lane_hour: (if .wall == null then null else $burn end),
          projected_headroom_pct:
            (if .wall == null or .claims == null then null
-            else 100 - .wall - .claims * $burn end)};
+            else ([100 - .wall - .claims * $burn]
+                  + (if .session_5h_pct == null then []
+                     else [100 - .session_5h_pct - .claims * $session_burn * $session_hours] end)
+                  | min) end)};
 
 # judged_wall over one record with_lane_projection has read: the projected
 # use wall_verdict judges, for the chooser and `pick --lane --projected`, so a
@@ -374,7 +393,7 @@ def with_lane_cloud_repo($cloud_repo):
 # cloud-repo-unset; null for any other launch.
 def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo):
   def neg: if . == null then null else 0 - . end;
-  [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
+  [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn; $now)
     | with_lane_selection_score($now)
     | with_lane_verdict(judged_wall; $max; $credit_floor)
     | with_lane_tier($pool; $cloud_floor; $retire; $now)
@@ -414,7 +433,7 @@ lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR
     --argjson max "$5" --argjson projected "$6" --argjson credit_floor "$7" \
     --arg pool "$TIER_POOL" --argjson cloud_floor "$CLOUD_CREDIT_FLOOR" \
     --argjson retire "$TIER_RETIRE" --argjson cloud_repo "$TIER_CLOUD_REPO" --argjson now "$now" "$LANE_MODEL_JQ"'
-    with_lane_binding($model; $floor) | with_lane_projection($burn)
+    with_lane_binding($model; $floor) | with_lane_projection($burn; $now)
     | with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
       | with_lane_tier($pool; $cloud_floor; $retire; $now)
       | with_lane_cloud_repo($cloud_repo)

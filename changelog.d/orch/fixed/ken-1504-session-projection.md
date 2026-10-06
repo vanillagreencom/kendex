@@ -1,0 +1,1 @@
+- `lanes pick` charges each lane already on an account the 5-hour session window it will spend before that window resets, whatever bucket binds, so a weekly-bound account no longer takes every new lane until its session walls them all.

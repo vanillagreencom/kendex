@@ -142,8 +142,10 @@
 #         and repository access approved once, both claude.ai cards in a
 #         session of that account on that repository. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
-#         on it, the burn one lane is expected to spend in the next hour.
-#         Account-wide rates use claims at sample time (at least one) as the
+#         on it, the burn one lane is expected to spend in the next hour, or
+#         the 5-hour session window projected beside it with each claim
+#         charged the session burn for the hours left to that window's reset
+#         (1 to 5), whichever leaves less room. Account-wide rates use claims at sample time (at least one) as the
 #         divisor; model rates use one because claims omit models. With no
 #         rate, use ORCH_LANE_BURN_PCT_PER_HOUR, scaled to the window. So an
 #         account whose room the lanes already on it will spend is dropped the
@@ -485,7 +487,9 @@
 #                      per claim where the account's rate is not measured or
 #                      nothing is claimed on it; a weekly window, plan-wide or
 #                      model-scoped, is charged 5/168 of it and a monthly
-#                      Copilot pool 5/720 (default 5; 0 charges nothing). Refused, before any lane is measured,
+#                      Copilot pool 5/720, while the session window beside a
+#                      bucket that binds is charged it whole for each hour to
+#                      its reset (default 5; 0 charges nothing). Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
 #   ORCH_LANE_CODEX_CREDIT_FLOOR  Credits, never a percentage, a Codex
 #                      account past the threshold must exceed (default 5000,
@@ -3494,8 +3498,9 @@ case "$SUB" in
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
-		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'
-			map(with_lane_projection($burn) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
+		now="$(date +%s)" || exit 1
+		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" --argjson now "$now" "$LANE_MODEL_JQ"'
+			map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	host-accounts)
