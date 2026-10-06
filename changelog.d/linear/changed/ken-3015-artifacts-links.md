@@ -1,0 +1,1 @@
+- Resolve a cited artifact reads the issue's `**Artifacts**` links first, so a linked-only issue resolves and a link beats an older same-path attachment.

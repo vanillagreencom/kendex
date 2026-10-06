@@ -1,0 +1,1 @@
+- Planning artifacts states where a plan lives and how a reader finds it on Linear, GitHub Issues or no tracker, and attaches each artifact once, to its source issue.
