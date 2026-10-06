@@ -65,12 +65,13 @@ change came from an outside contributor.
 
 - The `command-safety` hook now refuses a `systemd-run` memory cap in kilobytes or megabytes with no setting; `COMMAND_SAFETY_DENY_PATTERN = "^$"` turns that refusal off.
 
-#### commit-guards 1.1.5
+#### commit-guards 1.2.2
 
 - Catalog packages version on their own: a `changelog.d/<package>/<section>/` entry moves only that package's version, and a skill change must raise its `metadata.version`.
 - A root `package.json` beside the changelog record is judged from `changelog.d` and that record; a root `CHANGELOG.md` with `###` headings needs `COMMIT_GUARDS_CHANGELOG_RECORD` empty.
 - The `COMMIT_GUARDS_PROSE_PATHS` row in the configuration table names the default the prose lane scans: the `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` load points.
 - pre-push no longer refuses a push for version bumps already on the remote's default branch, where it can establish that branch.
+- `changelog-entries --classify PATH...` names what the changelog settings make each path, and `--unversion` prints a JSON version file less its top-level version.
 
 #### decider 2.0.2
 
@@ -123,7 +124,7 @@ change came from an outside contributor.
 - `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.
 - `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.
 
-#### orch 4.2.0
+#### orch 4.3.0
 
 - `oversee-watch` reports a lane once past `ORCH_WATCH_LANE_AGE_SECS` (default 4 hours) as `lane-long` with its stage, and the overseer names the cause.
 - `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
@@ -147,6 +148,7 @@ change came from an outside contributor.
 - On a static SSH lane host, `lane-host-ssh create` runs `npm ci` in the clone for each linked `node_modules` whose lockfile changed, so the worktree links it and validation runs.
 - Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.
 - codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
+- A restack skips its range re-test when it met no conflict, or only conflicts over changelog entries and the version field commit-guards reads; the lane records which.
 
 #### preflight 1.1.0
 
