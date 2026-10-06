@@ -385,6 +385,10 @@ pub struct EngineReport {
     /// Each hook the plan writes nowhere on a tool because a hook it runs
     /// with will not run there, and why (`DesiredState::withheld`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), super::desired::Withholding>,
+    /// Declared sets their catalog retired, kept short of a prune, by name,
+    /// each with the one notice keyed by the set that `notes` also holds;
+    /// verify shows it, where it shows no note.
+    pub retired_bundles: BTreeMap<String, String>,
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -489,6 +493,7 @@ impl EngineReport {
             tracked_outputs: BTreeMap::new(),
             retired: BTreeMap::new(),
             withheld: BTreeMap::new(),
+            retired_bundles: BTreeMap::new(),
         }
     }
 

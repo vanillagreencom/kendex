@@ -255,6 +255,7 @@ pub fn plan_scope(
         generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
 
     state.warnings.extend(state.agent_names.warnings());
+    let retired_bundles = state.retired_bundles();
     let report = EngineReport {
         declaration_status: DeclarationStatus::of(&state),
         // Ahead of the moves out of `state` below, and read before `drift`
@@ -271,6 +272,7 @@ pub fn plan_scope(
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
+        retired_bundles,
         retired,
         withheld: state.withheld,
         set_changes,
@@ -328,10 +330,11 @@ fn plan_pi_switches(
     Ok(drift)
 }
 
-/// Everything a plan takes away, after every write is planned: stale
-/// emitted files, what a refusal or a withholding takes or keeps, then
-/// the orphans, and the Pi records they keep finalized. Returns what a
-/// sweep could still take, and where the plan leaves each retired item.
+/// Everything a plan takes away, after every write is planned: what a
+/// declared set this pass could not expand keeps, stale emitted files,
+/// what a refusal or a withholding takes or keeps, then the orphans, and
+/// the Pi records they keep finalized. Returns what a sweep could still
+/// take, and where the plan leaves each retired item.
 #[allow(clippy::too_many_arguments)]
 fn plan_removals(
     env: &Env,
@@ -347,12 +350,14 @@ fn plan_removals(
     kept: &mut item_plan::KeptAsIs,
     scope_notes: &mut Vec<String>,
 ) -> Result<(Vec<SetChange>, set_change::Said, removal::Retired)> {
+    // Ahead of the guard, which keeps every path the new record holds.
+    let kept_by_sets = plan_pass::plan_kept_members(lock, state, new_lock, kept);
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, new_lock));
     stale::stale_emitted(lock, new_lock, &mut guard, ops)?;
-    let decided_keys = plan_pass::plan_not_written(
+    let mut decided_keys = plan_pass::plan_not_written(
         env,
         scope,
         manifest,
@@ -365,6 +370,7 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
+    decided_keys.extend(kept_by_sets);
     let removed = removal::orphans(
         env,
         scope,

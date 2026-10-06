@@ -1,1 +1,1 @@
-- `kendex refresh` fails on a declared bundle its catalog no longer offers, naming the bundles the catalog does offer, and keeps that bundle's installed members; before, it exited 0 and removed them. A catalog can retire a bundle under `[retired.bundles]`: a refresh then keeps its members with one notice, and `kendex refresh --prune` drops the declaration and removes the members nothing else needs.
+- `kendex refresh` fails on a declared bundle its catalog no longer offers and keeps its members; a catalog retires a bundle under `[retired.bundles]`.

@@ -364,6 +364,7 @@ fn check_scope(
             .cloned(),
     );
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
+    retired_bundle_notices(style, &scope, &report, &named);
     failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
     pinned_hook_rows(&report, &placer, &named, tally, style);
     for (key, entry) in &lock.entries {
@@ -412,6 +413,28 @@ fn check_scope(
     };
     bookkeeping_rows(&scope, record, &report, &placer, tally, style)?;
     Ok(())
+}
+
+/// One notice for each declared set its catalog retired, which a plain
+/// refresh keeps: its members pass as they are recorded, so without it a
+/// verify-only run never learns the set is retired or how to move off it.
+/// It fails nothing, `--strict` included.
+fn retired_bundle_notices(
+    style: &Style,
+    scope: &Scope,
+    report: &EngineReport,
+    named: &dyn Fn(&str) -> bool,
+) {
+    for (name, notice) in &report.retired_bundles {
+        if !named(name) {
+            continue;
+        }
+        ui::stderr(&style.report_row(
+            Status::Notice,
+            &[Span::Prose(&format!("{}: {notice}", scope_label(scope)))],
+            "",
+        ));
+    }
 }
 
 /// Unsupported hook deliveries without a record entry fail verification.

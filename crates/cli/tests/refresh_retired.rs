@@ -5,10 +5,11 @@
 //! and the workflow the skill's template was adopted into, which leaves
 //! the inventory, and verify then passes. A workflow the person edited
 //! stays, and verify keeps failing it. A tree one tool drops while the
-//! skill stays is no leaving, and the workflow stays. A kept copy deleted
-//! or edited by hand, a Pi package's included, fails verify on its own row
-//! while a plain refresh passes. The kept notice's removal takes only the
-//! retired item, at its own scope, and refuses to run keeping the
+//! skill stays is no leaving, and the workflow stays. A retired set keeps
+//! the workflow its member adopted the same way, until a prune. A kept copy
+//! deleted or edited by hand, a Pi package's included, fails verify on its
+//! own row while a plain refresh passes. The kept notice's removal takes
+//! only the retired item, at its own scope, and refuses to run keeping the
 //! declaration. A prune holds a retired copy the person edited and names
 //! the removal that takes it. Verify's row for a left-over names its kind
 //! and, at the global scope, the global flag.
@@ -30,22 +31,27 @@ const EDITED: &str = "name: edited\n";
 const HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: check\n# event: PreToolUse\n# matcher: Bash\n# description: hold the call\n# ---\nexit 0\n";
 const CATALOG: &str = "is_source_catalog = true\n";
 
-/// The consumer's manifest on `harnesses`, declaring the skill and hook.
-fn manifest(catalog: &Path, harnesses: &str) -> String {
+/// The skill and the hook, declared by name.
+const BY_NAME: &str = "[skills.deploy]\nsource = \"cat\"\n[hooks.check]\nsource = \"cat\"\n";
+/// The set carrying the skill, declared in its place.
+const BY_SET: &str = "[bundles.ship]\nsource = \"cat\"\n";
+
+/// The consumer's manifest on `harnesses`, declaring `declared`.
+fn manifest(catalog: &Path, harnesses: &str, declared: &str) -> String {
     format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.check]\nsource = \"cat\"\n",
+        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n{declared}",
         source_path(catalog)
     )
 }
 
-/// A committed Claude Code and Codex consumer with the skill and hook
-/// installed by copy and the skill's template adopted as a workflow:
-/// `(catalog, project)`.
+/// A committed Claude Code and Codex consumer with `declared` installed
+/// by copy from a catalog whose `kendex.toml` is `offered`, and the
+/// skill's template adopted as a workflow: `(catalog, project)`.
 #[allow(clippy::unwrap_used)]
-fn adopted(home: &Path) -> (PathBuf, PathBuf) {
+fn adopted(home: &Path, declared: &str, offered: &str) -> (PathBuf, PathBuf) {
     let catalog = home.join("catalog");
     let project = home.join("consumer");
-    write(&catalog.join("kendex.toml"), CATALOG);
+    write(&catalog.join("kendex.toml"), offered);
     write(
         &catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: Deploy\n---\nDeploy.\n",
@@ -54,7 +60,7 @@ fn adopted(home: &Path) -> (PathBuf, PathBuf) {
     write(&catalog.join("hooks/check.sh"), HOOK);
     write(
         &project.join("kendex.toml"),
-        &manifest(&catalog, "\"claude\", \"codex\""),
+        &manifest(&catalog, "\"claude\", \"codex\"", declared),
     );
     repository(&project);
     let installed = kendex(home, &project, &["apply", "-y", "--leave"]);
@@ -83,7 +89,7 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
     for edited in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
-        let (catalog, project) = adopted(&home);
+        let (catalog, project) = adopted(&home, BY_NAME, CATALOG);
         let workflow = project.join(WORKFLOW);
         let inventory = project.join(".kendex-generated.json");
         let hook = project.join(".claude/hooks/check.sh");
@@ -181,6 +187,78 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
     }
 }
 
+/// The catalog retires the set carrying the skill whose template was
+/// adopted, and deletes the set. A plain refresh keeps the skill and the
+/// workflow with one notice keyed by the set, and verify passes, showing
+/// that notice once. A prune drops the declaration and takes the skill
+/// and the unedited workflow, and verify passes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_retired_set_keeps_the_workflow_its_member_adopted_until_a_prune() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let ship = "[bundles.ship]\nskills = [\"deploy\"]\n";
+    let (catalog, project) = adopted(&home, BY_SET, &format!("{CATALOG}{ship}"));
+    let workflow = project.join(WORKFLOW);
+    let skill = project.join(".agents/skills/deploy");
+    for copy in [&skill, &workflow] {
+        assert!(copy.exists(), "the fixture installs {}", copy.display());
+    }
+    write(
+        &catalog.join("kendex.toml"),
+        &format!("{CATALOG}[retired.bundles]\nship = \"declare ship-next\"\n"),
+    );
+    let set_keyed = |printed: &str| {
+        printed
+            .lines()
+            .filter(|line| line.contains("bundle ship: "))
+            .count()
+    };
+
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    let printed = said(&refreshed);
+    assert!(refreshed.status.success(), "{printed}");
+    assert_eq!(set_keyed(&printed), 1, "{printed}");
+    for copy in [&skill, &workflow] {
+        assert!(copy.exists(), "{} is gone: {printed}", copy.display());
+    }
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    let printed = said(&verified);
+    assert!(verified.status.success(), "{printed}");
+    assert_eq!(set_keyed(&printed), 1, "{printed}");
+
+    let pruned = kendex(
+        &home,
+        &project,
+        &[
+            "refresh", "--scope", "project", "--prune", "--yes", "--leave",
+        ],
+    );
+    let printed = said(&pruned);
+    assert!(pruned.status.success(), "{printed}");
+    for copy in [&skill, &workflow] {
+        assert!(!copy.exists(), "{} stays: {printed}", copy.display());
+    }
+    let recorded = fs::read_to_string(project.join(".kendex-generated.json")).unwrap();
+    assert!(!recorded.contains(WORKFLOW), "{recorded}");
+    let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        manifest
+            .get("bundles")
+            .is_none_or(|sets| sets.get("ship").is_none()),
+        "{manifest}"
+    );
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    assert!(verified.status.success(), "{}", said(&verified));
+}
+
 /// Dropping Codex, whose copy is the tree the template sits in, trashes
 /// that tree while the skill stays declared for Claude Code: the package
 /// is not leaving, so the adopted workflow and its record stay.
@@ -189,12 +267,12 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
 fn dropping_the_tool_that_holds_the_template_keeps_the_adopted_workflow() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let (catalog, project) = adopted(&home);
+    let (catalog, project) = adopted(&home, BY_NAME, CATALOG);
     let tree = project.join(".agents/skills/deploy");
     assert!(tree.exists(), "the fixture installs {}", tree.display());
     write(
         &project.join("kendex.toml"),
-        &manifest(&catalog, "\"claude\""),
+        &manifest(&catalog, "\"claude\"", BY_NAME),
     );
 
     let refreshed = kendex(
@@ -240,7 +318,7 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
             let case = format!("{kind} {name} edited={edited}");
             let tmp = tempfile::tempdir().unwrap();
             let home = rooted(&tmp);
-            let (catalog, project) = adopted(&home);
+            let (catalog, project) = adopted(&home, BY_NAME, CATALOG);
             write(
                 &catalog.join("kendex.toml"),
                 &format!(

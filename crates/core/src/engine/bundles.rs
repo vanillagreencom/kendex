@@ -19,8 +19,8 @@
 //! disagreement, so it is reported rather than settled by whichever set the
 //! manifest happens to name first.
 
-use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::lock::{BundleRef, Reason};
 use crate::manifest::{ItemDecl, Manifest};
@@ -28,7 +28,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::ItemWarning;
 use super::desired::hold::HeldPins;
-use super::desired::{DesiredState, target_harnesses};
+use super::desired::{DesiredState, KeptBundle, target_harnesses};
 use super::expansion::{Catalogs, Expansion, Offer, OpenCatalog};
 
 /// One member, as every set that carries it asked for it.
@@ -223,7 +223,8 @@ fn installable(
     // from every consumer that declared it, and say so only in passing.
     let Some(bundle) = offered else {
         state.mark_incomplete();
-        state.kept_bundles.insert(bundle_ref(name, &decl.source));
+        let kept = bundle_ref(name, &decl.source);
+        state.kept_bundles.insert(kept, KeptBundle::NotOffered);
         let offered = crate::source::bundles::names(config);
         let key = format!("bundle {name}");
         let note = super::desired::not_offered(&key, &decl.source, "bundle", offered);
@@ -303,14 +304,44 @@ fn retire(name: &str, source: &str, migration: &str, state: &mut DesiredState) {
         state.pruned_bundles.insert(name.to_owned());
         return;
     }
-    state.kept_bundles.insert(bundle_ref(name, source));
     let line = format!(
         "bundle {name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
     );
-    state.notes.push(match migration.is_empty() {
+    let notice = match migration.is_empty() {
         true => line,
         false => format!("{line}; {migration}"),
-    });
+    };
+    state.notes.push(notice.clone());
+    let kept = KeptBundle::Retired { notice };
+    state.kept_bundles.insert(bundle_ref(name, source), kept);
+}
+
+/// The records the sets in `kept` keep, by entry key, each with the edges
+/// to those sets it was recorded under: what the record says such a set
+/// brought in, since this pass cannot read what it holds. A member the
+/// person took away (`Manifest::is_held_back`) is not kept, as a set this
+/// pass expands does not install it.
+pub(super) fn kept_members(
+    lock: &crate::lock::Lock,
+    manifest: &Manifest,
+    kept: &BTreeMap<BundleRef, KeptBundle>,
+) -> BTreeMap<String, BTreeSet<Reason>> {
+    lock.entries
+        .iter()
+        .filter(|(_, entry)| !manifest.is_held_back(entry.kind, &entry.name))
+        .filter_map(|(key, entry)| {
+            let edges: BTreeSet<Reason> = entry
+                .reasons
+                .iter()
+                .filter(|reason| match reason {
+                    Reason::MemberOf { bundle } => kept.contains_key(bundle),
+                    Reason::Requested | Reason::RequiredBy { .. } => false,
+                })
+                .cloned()
+                .collect();
+            (!edges.is_empty()).then(|| (key.clone(), edges))
+        })
+        .collect()
 }
 
 fn bundle_ref(name: &str, source: &str) -> BundleRef {

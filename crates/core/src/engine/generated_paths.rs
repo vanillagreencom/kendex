@@ -456,7 +456,8 @@ pub(super) struct TemplateTrees {
     /// are in the old record and not in the new one. A tree one tool drops
     /// while another keeps the package is not among them.
     leaving: Vec<PathBuf>,
-    /// Every retired package this pass keeps as recorded.
+    /// Every retired package this pass keeps as recorded, and every
+    /// member a retired set keeps.
     kept: Vec<PathBuf>,
 }
 
@@ -475,21 +476,21 @@ impl TemplateTrees {
             .values()
             .map(|entry| (entry.kind, entry.name.as_str()))
             .collect();
-        let trees = |lock: &crate::lock::Lock, keep: &dyn Fn(&crate::lock::LockEntry) -> bool| {
+        let trees = |lock: &crate::lock::Lock,
+                     keep: &dyn Fn(&str, &crate::lock::LockEntry) -> bool| {
             lock.entries
-                .values()
-                .filter(|entry| keep(entry))
-                .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+                .iter()
+                .filter(|(key, entry)| keep(key, entry))
+                .flat_map(|(_, entry)| super::owned::installed(env, scope, entry).files)
                 .collect()
         };
         TemplateTrees {
-            leaving: trees(before, &|entry| {
+            leaving: trees(before, &|_, entry| {
                 !staying.contains(&(entry.kind, entry.name.as_str()))
             }),
-            kept: trees(after, &|entry| {
-                state
-                    .retired
-                    .contains_key(&(entry.kind, entry.name.clone()))
+            kept: trees(after, &|key, entry| {
+                let retired = (entry.kind, entry.name.clone());
+                state.retired.contains_key(&retired) || state.kept_by_retired_bundle(key)
             }),
         }
     }

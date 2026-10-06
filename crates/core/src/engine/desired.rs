@@ -314,10 +314,14 @@ pub struct DesiredState {
     /// retired item named there is not kept ([`DesiredState::kept_as_recorded`]).
     pub(super) removal_filter: Option<Vec<super::report_types::RemovalName>>,
     /// Declared sets this pass could not expand whose installed members it
-    /// keeps as recorded (`removal::verdicts`): one its catalog no longer
-    /// offers, which fails the refresh, and one it retired, short of a
-    /// prune.
-    pub(super) kept_bundles: BTreeSet<crate::lock::BundleRef>,
+    /// keeps as recorded, each with why.
+    pub(super) kept_bundles: BTreeMap<crate::lock::BundleRef, KeptBundle>,
+    /// The records a set in `kept_bundles` keeps, by entry key, each with
+    /// the edges to such sets it was recorded under
+    /// (`bundles::kept_members`). The item pass adds those edges to what
+    /// it writes for one of them, and `plan_pass::plan_kept_members` keeps
+    /// every other one before anything is taken.
+    pub(super) kept_members: BTreeMap<String, BTreeSet<crate::lock::Reason>>,
     /// Declared sets their catalog retired, under a prune:
     /// `settle_retired` drops each declaration.
     pub(super) pruned_bundles: BTreeSet<String>,
@@ -398,6 +402,16 @@ pub struct DesiredState {
     /// harness declares as tracked output, by agent name;
     /// `EngineReport::tracked_outputs`.
     pub tracked_outputs: BTreeMap<String, Vec<String>>,
+}
+
+/// Why a declared set's installed members stay as recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum KeptBundle {
+    /// Its catalog no longer offers it, which fails the refresh.
+    NotOffered,
+    /// Its catalog retired it, short of a prune: the one notice keyed by
+    /// the set, which `EngineReport::retired_bundles` carries to verify.
+    Retired { notice: String },
 }
 
 /// Why a hook is withheld from a tool, and so what becomes of a copy
@@ -528,6 +542,31 @@ impl DesiredState {
             .is_some_and(|retirement| retirement.kept.is_empty())
     }
 
+    /// Whether a set its catalog retired keeps the record under `key`
+    /// (`kept_members`).
+    pub(super) fn kept_by_retired_bundle(&self, key: &str) -> bool {
+        let mut edges = self.kept_members.get(key).into_iter().flatten();
+        edges.any(|edge| match edge {
+            crate::lock::Reason::MemberOf { bundle } => matches!(
+                self.kept_bundles.get(bundle),
+                Some(KeptBundle::Retired { .. })
+            ),
+            crate::lock::Reason::Requested | crate::lock::Reason::RequiredBy { .. } => false,
+        })
+    }
+
+    /// The notice each declared set its catalog retired gets, by name,
+    /// short of a prune.
+    pub(super) fn retired_bundles(&self) -> BTreeMap<String, String> {
+        self.kept_bundles
+            .iter()
+            .filter_map(|(bundle, kept)| match kept {
+                KeptBundle::Retired { notice } => Some((bundle.name.clone(), notice.clone())),
+                KeptBundle::NotOffered => None,
+            })
+            .collect()
+    }
+
     /// A declaration whose source item cannot be parsed. Un-marking it keeps
     /// what it already installed out of the orphan sweep: a source file
     /// someone broke this morning must never uninstall a working artifact.
@@ -646,6 +685,7 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
+    state.kept_members = super::bundles::kept_members(lock, manifest, &state.kept_bundles);
     let model_classes = if expansion.of(ItemKind::Agent).is_empty() {
         BTreeMap::new()
     } else {
@@ -700,7 +740,7 @@ fn compute(
                 no_harness_note(kind, name, decl, manifest, &mut state);
             }
             harnesses.retain(|harness| collisions.allows(kind, name, *harness));
-            let reasons = reasons_for(kind, name, &harnesses, &expansion);
+            let reasons = reasons_for(kind, name, &harnesses, &expansion, &state.kept_members);
             let ctx = ItemCtx {
                 model_classes: &model_classes,
                 env,
@@ -798,16 +838,25 @@ fn item_path(
     }
 }
 
-/// Why each of an item's installations is wanted, as the closure derived it.
+/// Why each of an item's installations is wanted, as the closure derived
+/// it, with each edge to a set kept as recorded that the record holds: a
+/// member another set also carries keeps the kept set's edge, so it stays
+/// once the other set lets it go.
 fn reasons_for(
     kind: ItemKind,
     name: &str,
     harnesses: &[HarnessId],
     expansion: &super::expansion::Expansion,
+    kept_members: &BTreeMap<String, BTreeSet<crate::lock::Reason>>,
 ) -> BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>> {
     harnesses
         .iter()
-        .map(|harness| (*harness, expansion.reasons(kind, name, *harness)))
+        .map(|harness| {
+            let mut reasons = expansion.reasons(kind, name, *harness);
+            let key = crate::lock::entry_key(kind, name, *harness);
+            reasons.extend(kept_members.get(&key).into_iter().flatten().cloned());
+            (*harness, reasons)
+        })
         .collect()
 }
 

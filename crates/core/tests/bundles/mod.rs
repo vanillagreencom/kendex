@@ -354,4 +354,5 @@ fn a_member_removed_from_a_bundle_stays_removed() {
 }
 
 mod contested;
+mod kept;
 mod more;
