@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Answer automatic review threads on every open same-repository kendex/refresh
-# PR and each one merged in the last 24 hours. Run from the consumer checkout after refresh-consumer.sh
-# in the same job, under the refresh workflow's concurrency group, with GH_REPO,
-# its scoped GH_TOKEN and the upstream KENDEX_ISSUES_TOKEN. The default-branch
-# change-class beside this package proves the render class, reading the kendex
-# sources that job's `kendex refresh` fetched. No script from the pull request
-# is executed.
+# PR and each one merged in the last 24 hours. Run from the consumer checkout
+# after refresh-consumer.sh in the same job, under the refresh workflow's
+# concurrency group, with GH_REPO, its scoped GH_TOKEN and the upstream
+# KENDEX_ISSUES_TOKEN. The default-branch change-class beside this package
+# proves the render class, reading the kendex sources that job's
+# `kendex refresh` fetched. No script from the pull request is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue and the
@@ -16,7 +16,10 @@
 # reply and resolution. Live unfiled findings, including paths no single
 # package claims and ones without Issues access, get no reply and hold the run
 # while open. The consumer must answer an unclaimed finding through its
-# trusted removal PR or a reply, then resolve the thread by hand.
+# trusted removal PR or a reply, then resolve the thread by hand. A merged
+# pull request is read only for 24 hours after its merge; after that its
+# unanswered threads get no filing, no retry and no run failure, and a person
+# answers them by hand.
 # A filing or not-filed reply is the retry record: a thread carrying one is
 # only resolved.
 #
@@ -64,7 +67,8 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
     'Outdated threads get a not-filed reply and resolution.' \
     'Live findings on unclaimed paths, findings routed elsewhere and ones without Issues access stay unfiled.' \
     'The consumer must answer unclaimed findings through its trusted removal PR or a reply.' \
-    'While its thread is open the run exits 1; resolving the thread by hand ends that.'
+    'While its thread is open the run exits 1; resolving the thread by hand ends that.' \
+    'A merged pull request is read only for 24 hours after its merge; after that a person answers its open threads by hand.'
   exit 0
 fi
 [ "$#" -eq 0 ] || fail arguments "$#" 'No arguments are accepted.'
@@ -104,7 +108,8 @@ selected="$(jq -c --arg repo "$GH_REPO" '
       and (.head.ref | type) == "string" and (.head.repo.full_name | type) == "string")
   then [.[] | select(.head.ref == "kendex/refresh" and .head.repo.full_name == $repo)
     # The window answers a thread that arrives just after a merge. Every older
-    # merged pull request would cost one more GraphQL read on each run.
+    # merged pull request would cost a REST comment read and a GraphQL thread
+    # read on each run.
     | select(.state == "open" or (.merged_at != null and (.merged_at | fromdateiso8601) > now - 86400))
     | if (.head.sha | type) == "string" and (.head.sha | test("^[0-9a-f]{40}$"))
         and (.user.login | type) == "string" and (.user.login | length) > 0
@@ -212,7 +217,7 @@ while IFS= read -r pr; do
       fi
     else
       printf 'refresh-reviews=unclassified pr=%s cause=%q\n' "$PR_NUMBER" "$cause"
-      printf '::warning::refresh-reviews=unclassified pr=%s cause=%s The classifier could not measure this pull request; its findings wait for a later run.\n' "$PR_NUMBER" "$cause"
+      printf '::warning::refresh-reviews=unclassified pr=%s cause=%s The classifier could not measure this pull request; its findings wait for a later run, which reads a merged pull request only for 24 hours after its merge.\n' "$PR_NUMBER" "$cause"
     fi
     continue
   fi

@@ -1,1 +1,1 @@
-- The consumer refresh workflow reads only the open refresh pull request and those merged in the last 24 hours, so its review-thread step no longer spends the GitHub app's hourly API quota on every refresh pull request ever merged.
+- The consumer refresh workflow reads only open refresh pull requests and those merged in the last 24 hours, so it no longer spends the app's API quota on every merged one.
