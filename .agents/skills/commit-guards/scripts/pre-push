@@ -65,11 +65,9 @@ against the oid git read from the destination's own advertisement. Three dots
 would answer what the branch adds over the ancestor the two share, which on a
 diverged or force-pushed branch excuses a file that in fact grows at the
 destination. changelog-entries asks instead which version increases the
-branch made. Where git records the remote's default branch
-(refs/remotes/REMOTE/HEAD, which a clone sets and `git remote set-head REMOTE
--a` restores), its baseline is the newer of HEAD's merge bases with that oid
-and with that branch, so a push is not judged for commits already on the
-default branch, after a restack or not. Otherwise its baseline is the oid.
+branch made: where this lane can establish the remote's default branch, its
+baseline excludes commits already there, else it is the oid (DEVELOPMENT.md §
+The pre-push lane).
 
 Otherwise the scope is a best-effort LOCAL one — `--base`, what this branch
 adds over what this repository's refs for the remote last recorded — and not
