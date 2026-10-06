@@ -4071,6 +4071,10 @@ if [[ "$MAIL_DUE" =~ ^[0-9]+$ ]]; then MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL)); e
 # Empty until the first read, so a run's first turn reads the overseer mailbox
 # whether or not the full mail pass is due.
 BOX_SEEN=""
+# Set once this process has read every mailbox. A long pass forked before then
+# would take its removed worktrees and failed reads from no read at all, so the
+# turn that starts one reads every mailbox first, due or not.
+MAIL_FULL=0
 # The run's end, asked at the foot of every turn and again once the wait after
 # it has taken a long pass in, so a run whose news is out never reads the mail
 # or the fleet once more first. Nothing ends while a long pass is in flight.
@@ -4107,15 +4111,18 @@ while :; do
   PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
   # Mail first, so a long pass forked below starts from the clone roots and
   # removed worktrees this turn has just learned.
-  if [[ "$PASS_NOW" -ge "$MAIL_DUE" ]]; then
+  long_now=0
+  ! long_due || long_now=1
+  if [[ "$PASS_NOW" -ge "$MAIL_DUE" || ( "$long_now" -eq 1 && "$MAIL_FULL" -eq 0 ) ]]; then
     MAIL_DUE=$((PASS_NOW + MAIL_INTERVAL))
     MAIL_OWED=0
+    MAIL_FULL=1
     [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$PASS_NOW")"
     mail_turn
   elif [[ "$(overseer_box_size)" != "$BOX_SEEN" ]]; then
     mail_turn overseer
   fi
-  ! long_due || long_start
+  [[ "$long_now" -eq 0 ]] || long_start
   long_collect
   run_end
   tick_wait

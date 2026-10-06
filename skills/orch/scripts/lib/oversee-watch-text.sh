@@ -35,7 +35,8 @@ two mail passes, and through a --repeat sleep, the overseer mailbox's size is
 checked once a second, and once it moves that mailbox alone is read, so a
 note to the overseer is printed within about a second while the lane
 mailboxes keep the interval; a run's first turn reads it alone too when no
-mail pass is due. ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
+mail pass is due. A run's first long pass follows a read of every mailbox in
+that run, due or not. ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
 on a lock or a slow host delays
 the mailboxes after it past that interval, as do the overseer pane below and,
 run in this loop, a run's one GitHub auth check before its first long pass
