@@ -245,5 +245,75 @@ assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the instruction file"
 unset TIER_BIN
 
+# A catalog package change raises metadata.version in its SKILL.md and the
+# tracked render repeats it. That line alone keeps the item micro; any other
+# changed line, here a version-shaped one outside the frontmatter, is still
+# an instruction-file edit.
+SKILLS="$TMP_ROOT/skills-range"
+mkdir -p "$SKILLS"
+git -C "$SKILLS" init -q
+git -C "$SKILLS" config user.email test@example.com
+git -C "$SKILLS" config user.name test
+git -C "$SKILLS" config gc.auto 0
+git -C "$SKILLS" config maintenance.auto false
+skill_commit() { # BRANCH VERSION BODY
+  local file
+  # The seed commit is the repository's first, on its initial branch.
+  [ -z "${SKILLS_BASE:-}" ] || git -C "$SKILLS" checkout -q -b "$1" "$SKILLS_BASE"
+  for file in skills/x/SKILL.md .agents/skills/x/SKILL.md; do
+    mkdir -p "$SKILLS/${file%/*}"
+    printf -- '---\nname: x\nmetadata:\n  author: a\n  version: "%s"\n---\n\n%s\n' "$2" "$3" >"$SKILLS/$file"
+  done
+  git -C "$SKILLS" add -A
+  git -C "$SKILLS" commit -qm "$1"
+}
+skill_commit seed 1.0.0 '  version: "1.0.0"'
+SKILLS_BASE="$(git -C "$SKILLS" rev-parse HEAD)"
+skill_commit version-raise 1.0.1 '  version: "1.0.0"'
+skill_commit version-and-body 1.0.1 '  version: "1.0.1"'
+# branch|expected|row
+SKILL_ROWS=(
+  "version-raise|tier=micro brief=micro cause=estimate-within-micro rc=0|a metadata.version raise in a SKILL.md and its render stays micro"
+  "version-and-body|tier=small brief=small cause=instruction-file rc=0|another changed SKILL.md line still selects small"
+)
+for row in "${SKILL_ROWS[@]}"; do
+  IFS='|' read -r branch want name <<<"$row"
+  assert_eq "$(run_tier - --production 1 --base "$SKILLS_BASE" --head "$branch" --repo "$SKILLS")" "$want" "$name"
+done
+# Each control edits one line of a private copy and must turn exactly its row
+# red: without the exemption the raise selects small, and a reader that drops
+# every version-shaped line misses the changed body line.
+# control@needle@replacement@row it reddens: the needle holds '|'
+SKILL_CONTROLS=(
+  'no-version-exemption@        instruction-file\ *) ! version_raise_only "$path" || continue ;;@        instruction-file\ *) ;;@version-raise'
+  'any-version-line@    front && metadata && /^[[:space:]]+version:/ { next }@    /^[[:space:]]+version:/ { next }@version-and-body'
+)
+for control in "${SKILL_CONTROLS[@]}"; do
+  IFS='@' read -r control_name needle replacement red <<<"$control"
+  cp -R "$LAYOUT" "$TMP_ROOT/$control_name"
+  python3 - "$TMP_ROOT/$control_name/orch/scripts/item-tier" "$needle" "$replacement" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+assert s.count(sys.argv[2]) == 1, sys.argv[2]
+p.write_text(s.replace(sys.argv[2], sys.argv[3]))
+EDIT
+  TIER_BIN="$TMP_ROOT/$control_name/orch/scripts/item-tier"
+  for row in "${SKILL_ROWS[@]}"; do
+    IFS='|' read -r branch want name <<<"$row"
+    got="$(run_tier - --production 1 --base "$SKILLS_BASE" --head "$branch" --repo "$SKILLS")"
+    if [[ "$branch" == "$red" ]]; then
+      if [[ "$got" != "$want" ]]; then
+        pass "control $control_name reddens: $name"
+      else
+        fail "control $control_name leaves green: $name"
+      fi
+    else
+      assert_eq "$got" "$want" "control $control_name keeps: $name"
+    fi
+  done
+  unset TIER_BIN
+done
+
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
