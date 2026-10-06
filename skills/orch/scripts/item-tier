@@ -172,18 +172,16 @@ fi
 
 # Every catalog package change raises metadata.version in its SKILL.md, and
 # its tracked render repeats that line; the raise changes no instruction an
-# agent reads. Both sides of the range's diff are compared with that one
-# line dropped, and any other difference, or a side that cannot be read,
-# counts as an instruction-file edit.
+# agent reads. Both sides of the range's diff go to metadata_version_only,
+# and any other difference, or a side that cannot be read, counts as an
+# instruction-file edit.
 version_raise_only() { # PATH
   case "$1" in SKILL.md | */SKILL.md) ;; *) return 1 ;; esac
   local merge_base
   merge_base="$(git -C "$repo" merge-base "$base" "$head")" &&
     git -C "$repo" show "$merge_base:$1" >"$scratch/old" 2>/dev/null &&
     git -C "$repo" show "$head:$1" >"$scratch/new" 2>/dev/null || return 1
-  drop_metadata_version <"$scratch/old" >"$scratch/old.rest" &&
-    drop_metadata_version <"$scratch/new" >"$scratch/new.rest" &&
-    cmp -s "$scratch/old.rest" "$scratch/new.rest"
+  metadata_version_only "$scratch/old" "$scratch/new"
 }
 
 if [ -n "$base" ]; then

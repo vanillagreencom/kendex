@@ -385,16 +385,19 @@ echo "=== a range runs the suites a skill's changed files map to ==="
 # suite wrap names driven and shares lib/wrap.sh's name; nothing
 # names tests/lib/lonely.sh, and longer names only a script whose name
 # begins with orphan's. references/table.conf is read by tool through
-# its path, cited in toolbox's prose, read whole by docscan's glob and by
+# its path, read whole by docscan's glob and by
 # lib/refs.sh, which refsuse sources, and met by walker's find over the skill
 # root and catalogscan's over the skills directory; driven reads another
-# reference. SKILL.md carries a metadata.version and, in its body, an
-# indented version line: versioned reads the field, skillmd reads the file
-# and spells only --version, versiontalk spells the key but reads no
+# reference, and toolbox names a table.conf of another directory. SKILL.md
+# carries a metadata.version and, in its body, an indented version line:
+# versioned reads the nested key and dotted the dotted one, skillmd reads the
+# file and spells only --version, versiontalk spells the key but reads no
 # SKILL.md, and rootglob globs the skill root. flowread names
-# workflows/flow.md and flowdir globs its directory; nothing but the two
-# walkers reads schemas/rec.md, and settings.example has no role. In plain,
-# alpha.sh's comment and beta's prose cite note.md and nothing reads it,
+# workflows/flow.md and flowdir globs its directory; beside the two walkers,
+# tablecheck alone reads schemas/rec.md, through a table row it joins onto
+# the skill root, and settings.example has no role. In plain, alpha.sh's
+# comment cites note.md, beta's prose names it without its directory, and
+# nothing reads it,
 # lonely.sh, which no suite reaches, alone reads lone.md, nothing reads
 # README.md, and scripts/empty.sh is an empty file the reader pass reads as no
 # read.
@@ -430,16 +433,19 @@ for s in tool tool_extra other runner caller front; do suite_naming "$s"; done
 suite_running() { # NAME LINE — a passing suite that runs LINE first
   printf '#!/usr/bin/env bash\n%s\necho "pass: 1   fail: 0"\n' "$2" >"$M/tests/$1.sh"
 }
-suite_running toolbox 'echo "see references/table.conf"'
+suite_running toolbox 'echo "see ../fixtures/table.conf"'
 suite_running docscan ': "$(dirname "$0")/../references"/*.md'
 suite_running walker 'SKILL_DIR="$(dirname "$0")/.."; find "$SKILL_DIR" -name "*.md" >/dev/null'
 suite_running catalogscan 'REPO_ROOT="$(dirname "$0")/../../.."; find "$REPO_ROOT/skills" -name "*.md" >/dev/null'
 suite_running versioned 'sed -n "s/^  version: //p" "$(dirname "$0")/../SKILL.md" >/dev/null'
+suite_running dotted 'grep -c metadata.version "$(dirname "$0")/../SKILL.md" >/dev/null || :'
 suite_running skillmd 'git --version >/dev/null; grep -c name "$(dirname "$0")/../SKILL.md" >/dev/null'
 suite_running versiontalk 'echo "version: 2" >/dev/null'
 suite_running rootglob 'SKILL_DIR="$(dirname "$0")/.."; for f in "$SKILL_DIR"/*.md; do :; done'
 suite_running flowread ': "$(dirname "$0")/../workflows/flow.md"'
 suite_running flowdir 'SKILL_DIR="$(dirname "$0")/.."; : "$SKILL_DIR/workflows"/*.md'
+printf '%s\n' '#!/usr/bin/env bash' 'HERE="$(dirname "$0")/.."' 'while IFS= read -r rel; do grep -q Record "$HERE/$rel"; done <<'"'"'TABLE'"'"'' \
+  'schemas/rec.md' 'TABLE' 'echo "pass: 1   fail: 0"' >"$M/tests/tablecheck.sh"
 suite_naming refsuse 'sources ../scripts/lib/refs.sh'
 suite_naming pid_direct 'names ../scripts/lib/pid.sh'
 suite_naming wrapped 'names ../scripts/lib/wrap.sh'
@@ -463,7 +469,7 @@ printf '#!/usr/bin/env bash\n# see ../references/note.md\necho a\n' >"$P/scripts
 printf '#!/usr/bin/env bash\necho b\n' >"$P/scripts/beta.sh"
 : >"$P/scripts/empty.sh"
 for s in alpha beta; do printf '#!/usr/bin/env bash\necho ok\n' >"$P/tests/$s.test.sh"; done
-printf 'echo "see references/note.md"\n' >>"$P/tests/beta.test.sh"
+printf 'echo "see note.md"\n' >>"$P/tests/beta.test.sh"
 printf '%s\n' "import test from 'node:test';" "test('gamma', () => {});" >"$P/tests/gamma.test.mjs"
 # hooks/ beside the world's demo hook and its suite, which run by file: alpha
 # has two suites named for it and a third that reaches it through the
@@ -483,10 +489,10 @@ hook_suite beta ': ../beta.sh'
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: two skills and hooks with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
-MAPPED_ALL="caller catalogscan cited deep docscan drives flowdir flowread front helped longer other pid_direct probed pyuse refsuse rootglob runner skillmd tool tool_extra toolbox versioned versiontalk walker wrap wrapped"
+MAPPED_ALL="caller catalogscan cited deep docscan dotted drives flowdir flowread front helped longer other pid_direct probed pyuse refsuse rootglob runner skillmd tablecheck tool tool_extra toolbox versioned versiontalk walker wrap wrapped"
 # Every reader of the mapped skill's SKILL.md, the suites a change to more of
 # it than its metadata.version line runs.
-SKILL_READERS="catalogscan rootglob skillmd versioned walker"
+SKILL_READERS="catalogscan dotted rootglob skillmd versioned walker"
 # A range across two trees: the hooks suites alpha's change maps to beside
 # the mapped skill's for runner, one sorted list as started() prints it.
 TWO_TREES="$(printf '%s\n' alpha-copilot.test.sh alpha.test.sh via-world.test.sh drives runner | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -515,8 +521,8 @@ set_line() { # FILE ERE TEXT — each line matching ERE becomes TEXT, which must
   mv -- "$1.new" "$1"
 }
 change() { # HOW PATH... — append to each, delete each, or rewrite the
-  # frontmatter's or the body's version line; a path written WAY:PATH is
-  # changed that way instead
+  # frontmatter's or the body's version line, or add a trailing newline; a
+  # path written WAY:PATH is changed that way instead
   local how="$1" p way
   shift
   for p in "$@"; do
@@ -527,6 +533,7 @@ change() { # HOW PATH... — append to each, delete each, or rewrite the
       delete) rm -- "${R:?}/$p" ;;
       version) set_line "$R/$p" '^  version:' '  version: "9.9.9"' ;;
       body-version) set_line "$R/$p" '^    version:' '    version: changed' ;;
+      newline) printf '\n' >>"$R/$p" ;;
       *) echo "change: no way named $way" >&2; exit 2 ;;
     esac
   done
@@ -534,15 +541,15 @@ change() { # HOW PATH... — append to each, delete each, or rewrite the
 # One row per arm of mapped_suites and path_role and per entry of skill_files.
 # label|how|paths, space-separated|suites that start, sorted|the note, or none
 MAP_ROWS=(
-  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/27 skills/mapped)"
-  "a changed script runs each suite named for it, not one its name only begins nor one named for a script running it|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/27 skills/mapped)"
-  "a changed script runs the suite that reads it beside the one named for it|append|skills/mapped/scripts/runner|drives runner|$(mapped_note 2/27 skills/mapped)"
-  "a changed script another script sources runs the suite named for its sourcer|append|skills/mapped/scripts/base|front|$(mapped_note 1/27 skills/mapped)"
-  "a range across two trees runs each tree's narrowed set and notes both|append|hooks/alpha.sh skills/mapped/scripts/runner|$TWO_TREES|$(mapped_note 3/5 hooks);;$(mapped_note 2/27 skills/mapped)"
-  "a changed lib runs every suite reaching it through libs, scripts and names, and none citing it in a comment|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/27 skills/mapped)"
-  "a changed script reaches a suite through a tests/lib helper or test module naming it, and a suite sharing a lib's name carries none of the lib's readers|append|skills/mapped/scripts/driven|helped probed wrap|$(mapped_note 3/27 skills/mapped)"
-  "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/27 skills/mapped)"
-  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/26 skills/mapped)"
+  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/29 skills/mapped)"
+  "a changed script runs each suite named for it, not one its name only begins nor one named for a script running it|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/29 skills/mapped)"
+  "a changed script runs the suite that reads it beside the one named for it|append|skills/mapped/scripts/runner|drives runner|$(mapped_note 2/29 skills/mapped)"
+  "a changed script another script sources runs the suite named for its sourcer|append|skills/mapped/scripts/base|front|$(mapped_note 1/29 skills/mapped)"
+  "a range across two trees runs each tree's narrowed set and notes both|append|hooks/alpha.sh skills/mapped/scripts/runner|$TWO_TREES|$(mapped_note 3/5 hooks);;$(mapped_note 2/29 skills/mapped)"
+  "a changed lib runs every suite reaching it through libs, scripts and names, and none citing it in a comment|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/29 skills/mapped)"
+  "a changed script reaches a suite through a tests/lib helper or test module naming it, and a suite sharing a lib's name carries none of the lib's readers|append|skills/mapped/scripts/driven|helped probed wrap|$(mapped_note 3/29 skills/mapped)"
+  "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/29 skills/mapped)"
+  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/28 skills/mapped)"
   "a deleted tests/lib helper nothing names runs the whole set and says so|delete|skills/mapped/tests/lib/lonely.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/lib/lonely.sh)"
   "a changed script no suite names whole, though one names a longer name it begins, runs the whole set and says so|append|skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
   "a Python module under lib runs the whole set and says so|append|skills/mapped/scripts/lib/mod.py|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/lib/mod.py)"
@@ -550,18 +557,18 @@ MAP_ROWS=(
   "a deleted fixture under tests runs the whole set and says so|delete|skills/mapped/tests/fixtures/x.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/fixtures/x.sh)"
   "a changed runner runs the whole set and says so|append|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
   "a deleted runner runs the whole set by file and says so|delete|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
-  "a changed SKILL.md runs the suites naming it, globbing the skill root or walking it|append|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 5/27 skills/mapped)"
-  "a SKILL.md whose one change is its metadata.version line runs the suites reading that field|version|skills/mapped/SKILL.md|versioned|$(mapped_note 1/27 skills/mapped)"
-  "a SKILL.md changing its version line and its body runs every reader of it|append|version:skills/mapped/SKILL.md skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 5/27 skills/mapped)"
-  "a SKILL.md changing an indented version line outside its frontmatter runs every reader of it|body-version|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 5/27 skills/mapped)"
-  "a changed suite and script beside a version raise, the KEN-3101 shape, run their suites and the field's readers, not the whole set|append|skills/mapped/tests/tool.sh skills/mapped/scripts/runner version:skills/mapped/SKILL.md|drives runner tool versioned|$(mapped_note 4/27 skills/mapped)"
-  "a changed workflow doc runs the suites naming it or globbing its directory and the walkers|append|skills/mapped/workflows/flow.md|catalogscan flowdir flowread walker|$(mapped_note 4/27 skills/mapped)"
-  "a changed schema doc only the walkers meet runs the walkers|append|skills/mapped/schemas/rec.md|catalogscan walker|$(mapped_note 2/27 skills/mapped)"
+  "a changed SKILL.md runs the suites naming it, globbing the skill root or walking it|append|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 6/29 skills/mapped)"
+  "a SKILL.md whose one change is its metadata.version line runs the suites reading that field|version|skills/mapped/SKILL.md|dotted versioned|$(mapped_note 2/29 skills/mapped)"
+  "a SKILL.md changing its version line and its body runs every reader of it|append|version:skills/mapped/SKILL.md skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 6/29 skills/mapped)"
+  "a SKILL.md changing an indented version line outside its frontmatter runs every reader of it|body-version|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 6/29 skills/mapped)"
+  "a SKILL.md whose version raise sits beside a changed trailing newline runs every reader of it|version|newline:skills/mapped/SKILL.md skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 6/29 skills/mapped)"
+  "a changed workflow doc runs the suites naming it or globbing its directory and the walkers|append|skills/mapped/workflows/flow.md|catalogscan flowdir flowread walker|$(mapped_note 4/29 skills/mapped)"
+  "a changed schema doc runs the walkers and the suite naming it in a table it joins onto the skill root|append|skills/mapped/schemas/rec.md|catalogscan tablecheck walker|$(mapped_note 3/29 skills/mapped)"
   "a root doc no file reads runs nothing|append|skills/plain/README.md||$(mapped_note 0/3 skills/plain)"
-  "a changed reference runs the suites of its path readers, the directory's readers and the walkers of the skill root and the skills directory|append|skills/mapped/references/table.conf|catalogscan docscan refsuse tool tool_extra walker|$(mapped_note 6/27 skills/mapped)"
+  "a changed reference runs the suites of its path readers, the directory's readers and the walkers of the skill root and the skills directory|append|skills/mapped/references/table.conf|catalogscan docscan refsuse tool tool_extra walker|$(mapped_note 6/29 skills/mapped)"
   "a reference read only by a script no suite reaches runs the whole set and says so|append|skills/plain/references/lone.md|$PLAIN_ALL|$(note_for unmapped skills/plain/references/lone.md)"
   "a reference only a comment and prose cite runs nothing|append|skills/plain/references/note.md||$(mapped_note 0/3 skills/plain)"
-  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/27 skills/mapped)"
+  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/29 skills/mapped)"
   "a mapped and an unmapped path run the whole set|append|skills/mapped/scripts/tool skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
   "with no runner a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test.sh|$(mapped_note 1/3 skills/plain)"
   "with no runner a changed suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test.sh|$(mapped_note 1/3 skills/plain)"
@@ -600,13 +607,29 @@ for row in "${MAP_ROWS[@]}"; do
     || bad "$label" "$VERDICT out=$OUT"
 done
 [ "$((PASS + FAIL))" -eq "$((before + ${#MAP_ROWS[@]}))" ] || { echo "a suite-map row asserted nothing" >&2; exit 2; }
+# The KEN-3101 shape as a catalog change lands it: each changed source beside
+# its render, the render's SKILL.md raised the same way. A tracked render owes
+# one for every changed source of the skill, so it is seeded here alone and
+# not under the rows above.
+mkdir -p "$R/.agents/skills/mapped"
+for e in SKILL.md settings.example references scripts workflows schemas; do cp -R "$M/$e" "$R/.agents/skills/mapped/"; done
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: the mapped skill's render"
+render_base="$(git -C "$R" rev-parse HEAD)"
+change append skills/mapped/tests/tool.sh skills/mapped/scripts/runner .agents/skills/mapped/scripts/runner
+change version skills/mapped/SKILL.md .agents/skills/mapped/SKILL.md
+run_range "$render_base"
+[ "$RC" -eq 0 ] && [ "$(started)" = "dotted drives runner tool versioned" ] && [[ "$OUT" == *"$(mapped_note 5/29 skills/mapped)"* ]] \
+  && ok "a changed suite and script beside a version raise in source and render, the KEN-3101 shape, run their suites and the field's readers, not the whole set" \
+  || bad "a changed suite and script beside a version raise in source and render, the KEN-3101 shape, run their suites and the field's readers, not the whole set" "rc=$RC started=$(started) out=$OUT"
+back_to_mapped
 # Each rule is what its row stands on: with it broken, the row's diff runs
 # another set.
 # label~how~paths~sed expression breaking the rule~suites that start, sorted
 MAP_CONTROLS=(
   "control: without the reach's suites the changed suite runs the whole set~append~skills/mapped/tests/tool.sh~s/^    if \[ -n \"\${reached\[i\]-}\" \] \&\& \[ \"\${SCAN_ROLE\[i\]}\" = suite \]; then$/    if false; then/~$MAPPED_ALL"
   "control: without the reach's suites the suite reading the changed script stands down~append~skills/mapped/scripts/runner~s/^    if \[ -n \"\${reached\[i\]-}\" \] \&\& \[ \"\${SCAN_ROLE\[i\]}\" = suite \]; then$/    if false; then/~runner"
-  "control: without the deleted-suite arm a deleted suite runs the whole set~delete~skills/mapped/tests/other.sh~s/\] || return 0 ;;$/] || return 1 ;;/~caller catalogscan cited deep docscan drives flowdir flowread front helped longer pid_direct probed pyuse refsuse rootglob runner skillmd tool tool_extra toolbox versioned versiontalk walker wrap wrapped"
+  "control: without the deleted-suite arm a deleted suite runs the whole set~delete~skills/mapped/tests/other.sh~s/\] || return 0 ;;$/] || return 1 ;;/~caller catalogscan cited deep docscan dotted drives flowdir flowread front helped longer pid_direct probed pyuse refsuse rootglob runner skillmd tablecheck tool tool_extra toolbox versioned versiontalk walker wrap wrapped"
   "control: with the deleted-suite arm taking any path under tests a deleted helper runs nothing~delete~skills/mapped/tests/lib/lonely.sh~s/^      tests\/\*\/\*) ;;$/      tests\/never) ;;/~"
   "control: with names handed to the runner as substrings the changed suite runs its namesakes~append~skills/mapped/tests/tool.sh~s/filters+=(\"=\${t%.sh}\")/filters+=(\"\${t%.sh}\")/~tool tool_extra toolbox"
   "control: without the name-and-dash arm the script's second suite stands down~append~skills/mapped/scripts/tool~s/case \"\$base\" in \"\$name\" | \"\$name\"-\*)/case \"\$base\" in \"\$name\")/~tool"
@@ -628,16 +651,16 @@ MAP_CONTROLS=(
   "control: without the runner arm a deleted runner runs nothing~delete~skills/mapped/tests/run-all.sh~/^    \*:tests\/run-all.sh) return 1 ;;$/d~"
   "control: without the references arm a changed reference runs the whole set~append~skills/mapped/references/table.conf~s/^    \*:references\/\* | \*.md) echo doc ;;$/    *.md) echo doc ;;/~$MAPPED_ALL"
   "control: without the .md arm a changed SKILL.md runs the whole set~append~skills/mapped/SKILL.md~s/^    \*:references\/\* | \*.md) echo doc ;;$/    *:references\/*) echo doc ;;/~$MAPPED_ALL"
-  "control: with no skill-root pattern for a root doc the root's globber stands down~append~skills/mapped/SKILL.md~s/^    \*) dir='.*' ;;$/    *) dir=NEVER ;;/~catalogscan skillmd versioned walker"
+  "control: with no skill-root pattern for a root doc the root's globber stands down~append~skills/mapped/SKILL.md~s/^    \*) dir='.*' ;;$/    *) dir=NEVER ;;/~catalogscan dotted skillmd versioned walker"
   "control: with every doc's directory read as references the workflow directory's globber stands down~append~skills/mapped/workflows/flow.md~s|dir=\"/\\\${rel%%/\\*}(|dir=\"/references(|~catalogscan docscan flowread refsuse walker"
   "control: without the field filter a version raise runs every reader of SKILL.md~version~skills/mapped/SKILL.md~s/^    if \\[ -n \"\\\$field\" \\] \\&\\& ! grep -qE -e \"\\\$field\" <<<\"\\\$code\"; then$/    if false; then/~$SKILL_READERS"
-  "control: with the field matched alone a suite spelling the key that reads no SKILL.md runs~version~skills/mapped/SKILL.md~s/^    if grep -qF -e \"\\/\\\$rel\" <<<\"\\\$code\" ||$/    if [ -n \"\\\$field\" ] || grep -qF -e \"\\/\\\$rel\" <<<\"\\\$code\" ||/~versioned versiontalk"
-  "control: with version_reader taking any version word the reader spelling only --version runs~version~skills/mapped/SKILL.md~s/^version_reader=.*/version_reader=version/~skillmd versioned"
+  "control: with the field matched alone a suite spelling the key that reads no SKILL.md runs~version~skills/mapped/SKILL.md~s/^    if grep -qF -e \"\\/\\\$rel\" <<<\"\\\$code\" ||$/    if [ -n \"\\\$field\" ] || grep -qF -e \"\\/\\\$rel\" <<<\"\\\$code\" ||/~dotted versioned versiontalk"
+  "control: with version_reader taking any version word the reader spelling only --version runs~version~skills/mapped/SKILL.md~s/^version_reader=.*/version_reader=version/~dotted skillmd versioned"
   "control: without the caller's version check a version raise runs every reader of SKILL.md~version~skills/mapped/SKILL.md~s/ \\&\\& version_only \"\\\$f\"; then/ \\&\\& false; then/~$SKILL_READERS"
-  "control: with the rest of the file uncompared a version raise beside a body change runs only the field's reader~append~version:skills/mapped/SKILL.md skills/mapped/SKILL.md~s/^  \\[ \"\\\$old\" = \"\\\$new\" \\]$/  :/~versioned"
-  "control: with the shared reader unsourced a version raise runs every reader of SKILL.md~version~skills/mapped/SKILL.md~s|/lib/skill-version.sh\"|/lib/absent.sh\"|~$SKILL_READERS"
-  "control: with the reference matched by its bare name the suite citing it in prose runs~append~skills/mapped/references/table.conf~s|grep -qF -e \"/\$rel\"|grep -qF -e \"/\${rel:11}\"|~catalogscan docscan refsuse tool tool_extra toolbox walker"
+  'control: without the dotted key in version_reader the suite spelling only it stands down~version~skills/mapped/SKILL.md~s/(metadata\\\.version|/(/~versioned'
+  "control: with the reference matched by its bare name the suite naming another directory's table.conf runs~append~skills/mapped/references/table.conf~s|grep -qF -e \"/\$rel\"|grep -qF -e \"/\${rel:11}\"|~catalogscan docscan refsuse tool tool_extra toolbox walker"
   "control: with comment lines read as code the script citing a reference in a comment runs its suite~append~skills/plain/references/note.md~s/'^\[\[:space:\]\]\*/'^NEVER/~alpha.test.sh"
+  "control: without the whole-token match the suite reading the schema doc through a table stands down~append~skills/mapped/schemas/rec.md~s/grep -qE -e \"\\\$token\"/false/~catalogscan walker"
   "control: without the directory-reader match the glob readers stand down~append~skills/mapped/references/table.conf~s/grep -qE -e \"\\\$dir\"/false/~catalogscan tool tool_extra walker"
   'control: with the directory pattern taking any reference path a reader of another reference runs~append~skills/mapped/references/table.conf~s,}(/?\\\$|,}(/|/?\\\$|,~catalogscan docscan helped probed refsuse tool tool_extra walker wrap'
   "control: without the readers seeding the scan only the suites reading the reference run~append~skills/mapped/references/table.conf~/^  if \[ \"\$role\" = doc \]; then$/,/^  else$/s/reach_join .*/:/~catalogscan docscan walker"
@@ -665,9 +688,51 @@ for row in "${MAP_CONTROLS[@]}"; do
     bad "$label" "the rule could not be broken in a guard copy"
   fi
 done
+# The comparison is the shared reader's, which the guard sources from the
+# orch render: each control points a guard copy at a copy of that lib with one
+# line replaced. A failed source is a finding raised only where a SKILL.md is
+# judged, and that SKILL.md takes the full doc rule.
+REAL_LIB="$REPO/.agents/skills/orch/scripts/lib/skill-version.sh"
+LIB_PATH="s|\"\$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh\"|\"$TMP/skill-version.sh\"|"
+mutant_lib() { # NEEDLE REPLACEMENT COUNT — the lib copy with each NEEDLE replaced, COUNT of them
+  awk -v needle="$1" -v text="$2" -v want="$3" '
+    { while ((i = index($0, needle)) > 0) { $0 = substr($0, 1, i - 1) text substr($0, i + length(needle)); n++ } print }
+    END { exit n != want }
+  ' "$REAL_LIB" >"$TMP/skill-version.sh"
+}
+# label~how~paths~text in the lib~its replacement~how many times it is
+# there~suites that start, sorted
+LIB_CONTROLS=(
+  'control: with the rest of the file uncompared a version raise beside a body change runs only the field readers~append~version:skills/mapped/SKILL.md skills/mapped/SKILL.md~[ "$old" = "$new" ]~:~1~dotted versioned'
+  'control: with trailing newlines dropped a version raise beside a changed trailing newline runs only the field readers~version~newline:skills/mapped/SKILL.md skills/mapped/SKILL.md~ && echo .)~)~2~dotted versioned'
+)
+for row in "${LIB_CONTROLS[@]}"; do
+  IFS='~' read -r label how paths needle replacement times want <<<"$row"
+  if mutant_lib "$needle" "$replacement" "$times" && mutant_guard "$LIB_PATH"; then
+    map_row "$how" "$paths" none "$MUTANT_TOOLS/guard"
+    [[ "$VERDICT" == "rc=0 started=$want note="* ]] \
+      && ok "$label" \
+      || bad "$label" "$VERDICT out=$OUT"
+  else
+    bad "$label" "the line could not be replaced in a lib copy"
+  fi
+done
+rm -f -- "$TMP/skill-version.sh"
+if mutant_guard "$LIB_PATH"; then
+  map_row version skills/mapped/SKILL.md "$(mapped_note 6/29 skills/mapped)" "$MUTANT_TOOLS/guard"
+  [ "$VERDICT" = "rc=1 started=$SKILL_READERS note=$(mapped_note 6/29 skills/mapped)" ] && grep -qFx 'guard: skill-version-lib=unreadable' <<<"$OUT" \
+    && ok "an unreadable shared reader is a finding, and the version raise runs every reader of SKILL.md" \
+    || bad "an unreadable shared reader is a finding, and the version raise runs every reader of SKILL.md" "$VERDICT out=$OUT"
+  map_row append skills/mapped/scripts/tool "$(mapped_note 2/29 skills/mapped)" "$MUTANT_TOOLS/guard"
+  [ "$VERDICT" = "rc=0 started=tool tool_extra note=$(mapped_note 2/29 skills/mapped)" ] && [[ "$OUT" != *"skill-version-lib"* ]] \
+    && ok "an unreadable shared reader is no finding in a range that changes no SKILL.md" \
+    || bad "an unreadable shared reader is no finding in a range that changes no SKILL.md" "$VERDICT out=$OUT"
+else
+  bad "the shared reader's path could not be replaced in a guard copy"
+fi
 # The narrowed run's note is the reader's one sign that the set was cut.
 if mutant_guard '/note suites "\$(count_lines/d'; then
-  map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/27 skills/mapped)" "$MUTANT_TOOLS/guard"
+  map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/29 skills/mapped)" "$MUTANT_TOOLS/guard"
   [[ "$VERDICT" == *" started=tool note=missing" ]] \
     && ok "control: without the narrowed-run note the one-suite run says nothing of the cut" \
     || bad "control: without the narrowed-run note the one-suite run says nothing of the cut" "$VERDICT out=$OUT"

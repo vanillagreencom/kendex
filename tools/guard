@@ -153,7 +153,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     mapped-suites)
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
     skill-version-lib)
-      echo "the orch render's scripts/lib/skill-version.sh could not be sourced, so a SKILL.md whose one change is its metadata.version line ran every suite that reads the file, not only those reading that line." ;;
+      echo "the orch render's scripts/lib/skill-version.sh could not be sourced, so each changed SKILL.md of this run ran every suite that reads the file, whether or not its one change was its metadata.version line." ;;
     suites)
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
@@ -1318,8 +1318,11 @@ scan_load() { # DIR
 }
 # The indexes of the scanned files that read the doc REL, one per line:
 # each whose code, its comment lines dropped, names
-#   - its path after a slash, `/references/<file>` or `/SKILL.md`, which
-#     prose citing `references/<file>` does not;
+#   - its path after a slash, `/references/<file>` or `/SKILL.md`;
+#   - its path inside the tree as a whole token, after neither a name
+#     character, a dot nor a slash and before neither a name character nor a
+#     slash, as a table row `schemas/<file>.md` a loop joins onto a skill
+#     root does; prose spelling it so counts too, the safe side;
 #   - its directory, as a glob, a find or a path built on it does: for a doc
 #     below a directory of the tree, that directory's `/<dir>` with nothing
 #     of a longer name after it; for a doc at the tree's root, a skill-root
@@ -1331,7 +1334,8 @@ scan_load() { # DIR
 # or a walk in another language. With FIELD, an extended regular expression,
 # only the readers whose code also matches it are listed.
 doc_readers() { # REL [FIELD]
-  local rel="$1" field="${2-}" i code dir
+  local rel="$1" field="${2-}" i code dir token
+  token="(^|[^[:alnum:]._/-])$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
       dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[^/[:alnum:]._-])"
@@ -1344,6 +1348,7 @@ doc_readers() { # REL [FIELD]
       continue
     fi
     if grep -qF -e "/$rel" <<<"$code" ||
+      grep -qE -e "$token" <<<"$code" ||
       grep -qE -e "$dir" <<<"$code" ||
       grep -qE -e '(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?(\$\{?[A-Z_]*SKILL[A-Z_]*\}?|[^[:space:]"]*/skills)"?([[:space:]]|\)|$)' <<<"$code"; then
       printf '%s\n' "$i"
@@ -1485,23 +1490,27 @@ mapped_suites() { # DIR REL [FIELD]
   fi
   MAPPED=$out
 }
-# drop_metadata_version is the catalog's one reader of that line, which orch's
-# item-tier shares. A failed source leaves it undefined, and version_only then
-# answers no, which keeps the full doc rule.
-# shellcheck source=../.agents/skills/orch/scripts/lib/skill-version.sh
-source "$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh" ||
-  say skill-version-lib unreadable
 # Whether the SKILL.md at PATH differs from the suites' base in its
-# metadata.version line alone: the two match once drop_metadata_version drops
-# that line from each. A side that cannot be read, a file the base lacks among
-# them, is no such change. Trailing newlines are not compared.
+# metadata.version line alone, by metadata_version_only, the decision orch's
+# item-tier makes from the same lib. A file the base lacks is no such change.
+# The lib is sourced on the first SKILL.md the mapping judges, so a run
+# mapping none never needs it. A failed source is a finding, and every
+# SKILL.md of the run then takes the full doc rule: each suite reading the
+# file runs.
+version_lib=""
 version_only() { # PATH
-  local old new
-  old=$(git show "$suites_base:$1" 2>/dev/null) || return 1
-  new=$(cat -- "$1" 2>/dev/null) || return 1
-  old=$(drop_metadata_version <<<"$old") || return 1
-  new=$(drop_metadata_version <<<"$new") || return 1
-  [ "$old" = "$new" ]
+  if [ -z "$version_lib" ]; then
+    # shellcheck source=../.agents/skills/orch/scripts/lib/skill-version.sh
+    if source "$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh"; then
+      version_lib=loaded
+    else
+      version_lib=unreadable
+      say skill-version-lib unreadable
+    fi
+  fi
+  [ "$version_lib" = loaded ] || return 1
+  git cat-file -e "$suites_base:$1" 2>/dev/null || return 1
+  metadata_version_only <(git show "$suites_base:$1" 2>/dev/null) "$1" 2>/dev/null
 }
 # What code reading that line spells: the dotted key, or the nested key with
 # the space its frontmatter line puts after the colon, which `schema_version`,
