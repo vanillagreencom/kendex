@@ -22,7 +22,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::lock::{BundleRef, Reason};
+use crate::lock::{BundleRef, Reason, entry_key};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -317,31 +317,49 @@ fn retire(name: &str, source: &str, migration: &str, state: &mut DesiredState) {
 }
 
 /// The records the sets in `kept` keep, by entry key, each with the edges
-/// to those sets it was recorded under: what the record says such a set
-/// brought in, since this pass cannot read what it holds. A member the
-/// person took away (`Manifest::is_held_back`) is not kept, as a set this
-/// pass expands does not install it.
+/// it was recorded under that tie it to them: what the record says such a
+/// set brought in, since this pass cannot read what it holds, and what
+/// those records require, until nothing changes. A member keeps its edges
+/// to those sets, and a record kept for what it requires its
+/// `RequiredBy` edges to records kept here. A record the expansion derives
+/// on its tool requires afresh, so a stale reason naming it keeps nothing.
+/// A record the person took away (`Manifest::is_held_back`) is not kept,
+/// as a set this pass expands does not install it.
 pub(super) fn kept_members(
     lock: &crate::lock::Lock,
     manifest: &Manifest,
     kept: &BTreeMap<BundleRef, KeptBundle>,
+    expansion: &Expansion,
 ) -> BTreeMap<String, BTreeSet<Reason>> {
-    lock.entries
-        .iter()
-        .filter(|(_, entry)| !manifest.is_held_back(entry.kind, &entry.name))
-        .filter_map(|(key, entry)| {
+    let mut members: BTreeMap<String, BTreeSet<Reason>> = BTreeMap::new();
+    loop {
+        let mut changed = false;
+        for (key, entry) in &lock.entries {
+            if manifest.is_held_back(entry.kind, &entry.name) {
+                continue;
+            }
             let edges: BTreeSet<Reason> = entry
                 .reasons
                 .iter()
                 .filter(|reason| match reason {
                     Reason::MemberOf { bundle } => kept.contains_key(bundle),
-                    Reason::Requested | Reason::RequiredBy { .. } => false,
+                    Reason::RequiredBy { by } => {
+                        members.contains_key(&entry_key(by.kind, &by.name, by.harness))
+                            && expansion.reasons(by.kind, &by.name, by.harness).is_empty()
+                    }
+                    Reason::Requested => false,
                 })
                 .cloned()
                 .collect();
-            (!edges.is_empty()).then(|| (key.clone(), edges))
-        })
-        .collect()
+            if !edges.is_empty() && members.get(key) != Some(&edges) {
+                members.insert(key.clone(), edges);
+                changed = true;
+            }
+        }
+        if !changed {
+            return members;
+        }
+    }
 }
 
 fn bundle_ref(name: &str, source: &str) -> BundleRef {

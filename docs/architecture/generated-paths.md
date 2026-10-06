@@ -12,7 +12,7 @@ CI, the commit offer, the classifier and `kendex verify` all need to know which 
 
 ## Rules
 
-- Do take the set from one place, `GeneratedPaths` in `crates/core/src/engine/generated_paths.rs`: written positions, adoption declarations, held positions already listed at `HEAD`, and the rows listed at `HEAD` under each package the pass keeps as recorded, a kept retired item or a kept set's member, until a removal or a prune takes it.
+- Do take the set from one place, `GeneratedPaths` in `crates/core/src/engine/generated_paths.rs`: written positions, adoption declarations, held positions already listed at `HEAD`, and the rows listed at `HEAD` under each package the pass keeps as recorded, a kept retired item, or a kept set's member or what one requires, until a removal or a prune takes it.
 - Do leave a skill's top-level `tests/`, `evals/` and `DEVELOPMENT.md` out of every render; `SealedSource::rendered_item` is the one reading of which files an install holds, and an edit to one of those entries moves no hash.
 - Do verify an adopted workflow against its template's bytes at the recorded revision; an edited installed template cannot attest an edited workflow, and refresh never rewrites or restores a workflow.
 - Do take an adopted workflow out with its package: where the package leaves the install record and the copy still holds the bytes of the template in the package's tree, the copy goes to the trash and its record leaves the inventory; an edited copy stays, and verify keeps failing it. A tree one tool drops while the package stays is no leaving. While a retired package stays installed, its adopted workflow is held to the template in that package's tree.

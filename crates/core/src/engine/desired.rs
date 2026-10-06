@@ -316,10 +316,10 @@ pub struct DesiredState {
     /// Declared sets this pass could not expand whose installed members it
     /// keeps as recorded, each with why.
     pub(super) kept_bundles: BTreeMap<crate::lock::BundleRef, KeptBundle>,
-    /// The records a set in `kept_bundles` keeps, by entry key, each with
-    /// the edges to such sets it was recorded under
-    /// (`bundles::kept_members`). The item pass adds those edges to what
-    /// it writes for one of them, `plan_pass::plan_kept_members` keeps
+    /// The records a set in `kept_bundles` keeps, its members and what
+    /// they require, by entry key, each with the edges tying it to them it
+    /// was recorded under (`bundles::kept_members`). The item pass adds
+    /// those edges to what it writes for one of them, `plan_pass::plan_kept_members` keeps
     /// every other one before anything is taken, and the inventory keeps
     /// that one's rows (`generated_paths::Unrendered`).
     pub(super) kept_members: BTreeMap<String, BTreeSet<crate::lock::Reason>>,
@@ -544,16 +544,30 @@ impl DesiredState {
     }
 
     /// Whether a set its catalog retired keeps the record under `key`
-    /// (`kept_members`).
+    /// (`kept_members`): as its member, or as what a record it keeps
+    /// requires.
     pub(super) fn kept_by_retired_bundle(&self, key: &str) -> bool {
-        let mut edges = self.kept_members.get(key).into_iter().flatten();
-        edges.any(|edge| match edge {
-            crate::lock::Reason::MemberOf { bundle } => matches!(
-                self.kept_bundles.get(bundle),
-                Some(KeptBundle::Retired { .. })
-            ),
-            crate::lock::Reason::Requested | crate::lock::Reason::RequiredBy { .. } => false,
-        })
+        let mut seen = BTreeSet::new();
+        let mut next = vec![key.to_owned()];
+        while let Some(key) = next.pop() {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            for edge in self.kept_members.get(&key).into_iter().flatten() {
+                match edge {
+                    crate::lock::Reason::MemberOf { bundle } => {
+                        if let Some(KeptBundle::Retired { .. }) = self.kept_bundles.get(bundle) {
+                            return true;
+                        }
+                    }
+                    crate::lock::Reason::RequiredBy { by } => {
+                        next.push(crate::lock::entry_key(by.kind, &by.name, by.harness));
+                    }
+                    crate::lock::Reason::Requested => {}
+                }
+            }
+        }
+        false
     }
 
     /// The notice each declared set its catalog retired gets, by name,
@@ -686,7 +700,8 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
-    state.kept_members = super::bundles::kept_members(lock, manifest, &state.kept_bundles);
+    state.kept_members =
+        super::bundles::kept_members(lock, manifest, &state.kept_bundles, &expansion);
     let model_classes = if expansion.of(ItemKind::Agent).is_empty() {
         BTreeMap::new()
     } else {

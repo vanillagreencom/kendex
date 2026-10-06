@@ -212,12 +212,18 @@ fn plan_refusals(
 /// recorded, whatever the options and whoever is named for removal, since
 /// the set is still declared and this pass cannot say what it holds. Of its
 /// edges to sets, the record keeps only those to the sets that keep it. A
-/// record the item pass writes or refuses is that pass's, and a copy
-/// withheld for a companion that will not run goes as `removal::orphans`
-/// takes it. Returns the keys of the records this pass kept.
+/// record a retired set keeps is held to its record as a kept retired
+/// item's copy is (`removal::retired_copy`), since nothing renders it
+/// again. A record the item pass writes or refuses is that pass's, and a
+/// copy withheld for a companion that will not run goes as
+/// `removal::orphans` takes it. Returns the keys of the records this pass
+/// kept.
 pub(super) fn plan_kept_members(
+    env: &Env,
+    scope: &Scope,
     lock: &Lock,
     state: &desired::DesiredState,
+    drift: &mut Vec<DriftRow>,
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
 ) -> BTreeSet<String> {
@@ -243,6 +249,9 @@ pub(super) fn plan_kept_members(
         let Some(entry) = lock.entries.get(key).filter(|_| !planned.contains(key)) else {
             continue;
         };
+        if state.kept_by_retired_bundle(key) {
+            drift.extend(removal::retired_copy(env, scope, entry));
+        }
         let mut entry = entry.clone();
         entry.reasons.retain(|reason| match reason {
             Reason::MemberOf { .. } => edges.contains(reason),

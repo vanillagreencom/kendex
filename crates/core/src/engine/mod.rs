@@ -351,7 +351,7 @@ fn plan_removals(
     scope_notes: &mut Vec<String>,
 ) -> Result<(Vec<SetChange>, set_change::Said, removal::Retired)> {
     // Ahead of the guard, which keeps every path the new record holds.
-    let kept_by_sets = plan_pass::plan_kept_members(lock, state, new_lock, kept);
+    let kept_by_sets = plan_pass::plan_kept_members(env, scope, lock, state, drift, new_lock, kept);
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.

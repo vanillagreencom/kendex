@@ -853,10 +853,10 @@ fn pi_state(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<PackageState>
     })
 }
 
-/// The conflict a kept retired item's installed copy raises against its
-/// record, or `None` where every recorded file is there with the bytes the
+/// The conflict a kept retired item's installed copy, or one a retired set
+/// keeps, raises against its record, or `None` where every recorded file is there with the bytes the
 /// record names. A file counts as there under its switched-off name too.
-fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<DriftRow> {
+pub(super) fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<DriftRow> {
     let detail = retired_copy_detail(env, scope, entry)?;
     Some(row(
         scope,
