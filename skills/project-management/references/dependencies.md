@@ -16,7 +16,7 @@ A `blocks`/`blocked-by` relation records a real dependency between two issues. R
 
 A parent with children is a **container**: cross-bundle dependencies go on the parents, and dependent children are sequenced by sibling child-blocks-child relations within one parent. A relation between an ancestor and its own descendant is never valid.
 
-When an audit finds a relation at the wrong level, **lift it, never delete it**: add the parent-level relation, remove the child-level one, and add `related` between the original children.
+When an audit finds a relation at the wrong level, **lift it, never delete it**: add the parent-level relation, remove the child-level one with `issues remove-relation --peer-rule-violation` (linear SKILL.md § Blocked Label vs Issue Relations), and add `related` between the original children.
 
 The Linear CLI rejects malformed relations at mutation time (peers of one bundle only, no ancestor/descendant edges).
 
@@ -24,7 +24,7 @@ The Linear CLI rejects malformed relations at mutation time (peers of one bundle
 
 A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: the relation stays as provenance.
 
-- Never remove or "fix" a relation whose blocker is Done/Canceled, and never list one under a stale-metadata heading.
+- Never remove or "fix" a relation whose blocker is Done/Canceled, except by the § Level lift, and never list one under a stale-metadata heading.
 - The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` where the audit reports findings per project, or "gates cleared, ready to schedule" in the issue's `reason` where it reports per issue.
 
 ### Reading a Full Subtree

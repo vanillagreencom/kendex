@@ -173,7 +173,7 @@ Do not compare every pair. Build candidates from signals: same target component,
 
 A relation on a Done issue is a valid historical record. Flag it for removal only when the dependency itself is wrong (no creates-consumes), not for the source being Done.
 
-**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations). Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. When `blocked_by` is non-empty and `blocked_by_open` is empty, emit the one legitimate finding: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
+**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations). Do NOT add such relations to `remove_relations[]` except as a § 4.2 `Violation:` removal, and do NOT report them under any stale-metadata heading. When `blocked_by` is non-empty and `blocked_by_open` is empty, emit the one legitimate finding: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
 
 ### 4.2 Scan Relation Violations
 
@@ -384,7 +384,7 @@ Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint an
 Any invariant failing sends you back before the JSON is built.
 
 - [ ] Every input issue has its own `VERIFICATION_CONTEXTS[ISSUE_KEY]` — no PR, branch, or resolved path set reused across issues, docs-only handled explicitly (§ 1.7, § 2.1)
-- [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
+- [ ] No completed-blocker relation appears in `remove_relations[]` outside a § 4.2 `Violation:` entry, or under any stale-metadata framing (§ 4.1)
 - [ ] The § 6 cancellation sweep ran against the full comparison set
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)

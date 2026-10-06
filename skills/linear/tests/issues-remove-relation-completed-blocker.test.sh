@@ -12,6 +12,8 @@
 #   CC-30  In Progress, top-level  rel ...03
 #   CC-40  Done, child of CC-1     rel ...04  (crosses bundles with CC-11)
 #   CC-50  related to CC-11        rel ...05
+#   CC-60  Done, top-level         rel ...06  (its relation read fails)
+#   CC-70  "Done | shipped", top-level  rel ...07
 
 set -euo pipefail
 
@@ -41,16 +43,22 @@ jq -cj '
     "CC-20": node("CC-20"; "Canceled"; "canceled"; null),
     "CC-30": node("CC-30"; "In Progress"; "started"; null),
     "CC-40": node("CC-40"; "Done"; "completed"; "CC-1"),
-    "CC-50": node("CC-50"; "Todo"; "unstarted"; null)};
+    "CC-50": node("CC-50"; "Todo"; "unstarted"; null),
+    "CC-60": node("CC-60"; "Done"; "completed"; null),
+    "CC-70": node("CC-70"; "Done | shipped"; "completed"; null)};
   def rels: [
     {id: "00000000-0000-4000-8000-000000000001", type: "blocks", from: "CC-10", to: "CC-11"},
     {id: "00000000-0000-4000-8000-000000000002", type: "blocks", from: "CC-20", to: "CC-11"},
     {id: "00000000-0000-4000-8000-000000000003", type: "blocks", from: "CC-30", to: "CC-11"},
     {id: "00000000-0000-4000-8000-000000000004", type: "blocks", from: "CC-40", to: "CC-11"},
-    {id: "00000000-0000-4000-8000-000000000005", type: "related", from: "CC-11", to: "CC-50"}];
+    {id: "00000000-0000-4000-8000-000000000005", type: "related", from: "CC-11", to: "CC-50"},
+    {id: "00000000-0000-4000-8000-000000000006", type: "blocks", from: "CC-60", to: "CC-11"},
+    {id: "00000000-0000-4000-8000-000000000007", type: "blocks", from: "CC-70", to: "CC-11"}];
   def relation($r): {id: $r.id, type: $r.type, issue: issues[$r.from], relatedIssue: issues[$r.to]};
   .query as $q | (.variables // {}) as $v
   | if ($q | contains("issueRelationDelete")) then {data: {issueRelationDelete: {success: true}}}
+    elif ($q | contains("RelationBlocker")) and $v.id == "00000000-0000-4000-8000-000000000006" then
+      {errors: [{message: "relation read failed"}]}
     elif ($q | contains("RelationBlocker")) then
       {data: {issueRelation: (rels[] | select(.id == $v.id) | relation(.))}}
     elif ($q | contains("GetRelations")) then
@@ -66,14 +74,18 @@ chmod +x "$TMP_ROOT/bin/curl"
 
 SECTION='section="linear SKILL.md § Blocked Label vs Issue Relations"'
 
-# label|args|rc|deleted relation (- for none)|stderr (- for none)
+# label|args|rc|deleted relation (- for none)|stderr (- for none, * unchecked)
 ROWS='
 a Done blocker named by --blocked-by is refused|CC-11 --blocked-by CC-10|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
 a Canceled blocker named by --blocks is refused|CC-20 --blocks CC-11|1|-|linear: refused=completed-blocker blocker=CC-20 state=Canceled SECTION
 a Done blocker named by relation UUID is refused|00000000-0000-4000-8000-000000000001|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
 an open blocker is removed|CC-11 --blocked-by CC-30|0|00000000-0000-4000-8000-000000000003|-
-the structural repair removes a Done blocker that crosses bundles|CC-11 --blocked-by CC-40 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|linear: removed=completed-blocker blocker=CC-40 state=Done route=peer-rule-violation
-the structural repair by relation UUID removes a Done blocker that crosses bundles|00000000-0000-4000-8000-000000000004 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|linear: removed=completed-blocker blocker=CC-40 state=Done route=peer-rule-violation
+a Done blocker that crosses bundles is refused without the structural-repair flag|CC-11 --blocked-by CC-40|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
+a Done blocker that crosses bundles is refused by relation UUID without the structural-repair flag|00000000-0000-4000-8000-000000000004|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
+the structural repair removes a Done blocker that crosses bundles|CC-11 --blocked-by CC-40 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
+the structural repair by relation UUID removes a Done blocker that crosses bundles|00000000-0000-4000-8000-000000000004 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
+a Done peer blocker whose status name holds PIPE is refused with the structural-repair flag|CC-11 --blocked-by CC-70 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-70 state=Done PIPE shipped SECTION
+a failed relation read deletes nothing|CC-11 --blocked-by CC-60|1|-|*
 the structural repair is refused for a peer pair|CC-11 --blocked-by CC-10 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
 a related relation is removed|CC-11 --related CC-50|0|00000000-0000-4000-8000-000000000005|-
 '
@@ -81,6 +93,8 @@ a related relation is removed|CC-11 --related CC-50|0|00000000-0000-4000-8000-00
 while IFS='|' read -r label args want_rc want_deleted want_err; do
   [ -n "$label" ] || continue
   want_err=${want_err//SECTION/$SECTION}
+  want_err=${want_err//PIPE/|}
+  label=${label//PIPE/|}
   [ "$want_err" != - ] || want_err=""
   : >"$TMP_ROOT/curl.jsonl"
   rc=0
@@ -92,5 +106,5 @@ while IFS='|' read -r label args want_rc want_deleted want_err; do
   deleted=$(jq -r 'select(.query | contains("issueRelationDelete")) | .variables.id' "$TMP_ROOT/curl.jsonl" | paste -sd, -)
   assert_eq "$label: exit status" "$rc" "$want_rc"
   assert_eq "$label: deleted relation" "${deleted:--}" "$want_deleted"
-  assert_eq "$label: stderr" "$(cat "$TMP_ROOT/err")" "$want_err"
+  [ "$want_err" = "*" ] || assert_eq "$label: stderr" "$(cat "$TMP_ROOT/err")" "$want_err"
 done <<<"$ROWS"

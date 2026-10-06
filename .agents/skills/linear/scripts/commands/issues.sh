@@ -2558,17 +2558,15 @@ add_relation() {
 # A Done or Canceled blocker's relation is history, ../../SKILL.md § Blocked Label vs Issue Relations
 # says; $2 = true is tpm-audit's structural repair, for a pair the peer rule refuses.
 refuse_completed_blocker() {
-    local relation blocker id state blocker_parent blocked_parent
+    local relation blocker parents
     relation=$(graphql_query 'query RelationBlocker($id: String!) { issueRelation(id: $id) { type issue { identifier state { name type } parent { identifier } } relatedIssue { parent { identifier } } } }' \
         "$(jq -cn --arg id "$1" '{id: $id}')") || return 1
-    blocker=$(jq -r "$ISSUE_RELATION_JQ"'.issueRelation | select(.type == "blocks" and (.issue | issue_is_open | not)) | [.issue.identifier, .issue.state.name, .issue.parent.identifier // "", .relatedIssue.parent.identifier // ""] | join("|")' <<<"$relation") || return 1
+    # Both parents, which hold no space or slash, lead; the free-text state name trails.
+    blocker=$(jq -r "$ISSUE_RELATION_JQ"'.issueRelation | select(.type == "blocks" and (.issue | issue_is_open | not)) | "\(.issue.parent.identifier // "")/\(.relatedIssue.parent.identifier // "") blocker=\(.issue.identifier) state=\(.issue.state.name)"' <<<"$relation") || return 1
     [ -n "$blocker" ] || return 0
-    IFS='|' read -r id state blocker_parent blocked_parent <<<"$blocker"
-    if [ "$2" = "true" ] && ! blocking_level_ok "$blocker_parent" "$blocked_parent"; then
-        echo "linear: removed=completed-blocker blocker=$id state=$state route=peer-rule-violation" >&2
-        return 0
-    fi
-    echo "linear: refused=completed-blocker blocker=$id state=$state section=\"linear SKILL.md § Blocked Label vs Issue Relations\"" >&2
+    parents="${blocker%% *}"
+    if [ "$2" = "true" ] && ! blocking_level_ok "${parents%/*}" "${parents#*/}"; then return 0; fi
+    echo "linear: refused=completed-blocker ${blocker#* } section=\"linear SKILL.md § Blocked Label vs Issue Relations\"" >&2
     return 1
 }
 
