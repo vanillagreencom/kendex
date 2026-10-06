@@ -114,8 +114,10 @@ cut_copy() { # ROOT SED-EXPRESSION
 # value (- for none) | world edits | caller's export (- for none) | the value
 # the hook resolved. `local` and `local-export` add a private env file
 # override to the main checkout, plain or exported, with the value after the
-# colon; `untracked-nested` adds an untracked .kendex/settings.toml override
-# the same way; `helper` is a package copy whose sibling GitHub library
+# colon; `envfile` names .env.private as the private env file in the main
+# checkout's kendex.settings.toml and sets the override there;
+# `untracked-nested` adds an untracked .kendex/settings.toml override the same
+# way; `helper` is a package copy whose sibling GitHub library
 # exports the key when sourced, the way that library exports the token it
 # resolves. Each `unfixed` word is a must-fail control's world, a package
 # copy with one rule cut. The fixture names no WORKTREE_SYMLINKS, so the
@@ -130,6 +132,7 @@ a private env file override stays exported, since no branch carries it|kendex.se
 an exported private env file override equal to the committed value stays exported|kendex.settings.toml|main-value|local-export:main-value|-|main-value
 must-fail: with the private env file layer cut, that override is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|local-export:main-value unfixed-private|-|branch-value
 a key only the private env file exports stays exported|kendex.settings.toml|-|local-export:local-value|-|local-value
+a private env file the tracked settings name, not .env.local, keeps its override exported|kendex.settings.toml|main-value|envfile:private-value|-|private-value
 an untracked settings file is a local override and stays exported|kendex.settings.toml|main-value|untracked-nested:nested-value|-|nested-value
 an untracked override equal to the committed value stays exported|kendex.settings.toml|main-value|untracked-nested:main-value|-|main-value
 must-fail: with the tracked check cut, the untracked override is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|untracked-nested:nested-value unfixed-tracked|-|branch-value
@@ -148,6 +151,11 @@ while IFS='|' read -r label file main_value edit caller want; do
       -) ;;
       local:*) printf 'COMMIT_GUARDS_CHANGELOG_PATHS="%s"\n' "${word#*:}" >>"$root/main/.env.local" ;;
       local-export:*) printf 'export COMMIT_GUARDS_CHANGELOG_PATHS="%s"\n' "${word#*:}" >>"$root/main/.env.local" ;;
+      envfile:*)
+        printf 'KENDEX_ENV_FILE = ".env.private"\n' >>"$root/main/kendex.settings.toml"
+        cp "$root/main/.env.local" "$root/main/.env.private"
+        printf 'COMMIT_GUARDS_CHANGELOG_PATHS="%s"\n' "${word#*:}" >>"$root/main/.env.private"
+        ;;
       untracked-nested:*)
         mkdir -p "$root/main/.kendex"
         printf '[env]\nCOMMIT_GUARDS_CHANGELOG_PATHS = "%s"\n' "${word#*:}" >"$root/main/.kendex/settings.toml"
