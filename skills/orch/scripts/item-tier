@@ -184,10 +184,12 @@ version_raise_only() { # PATH
     cmp -s "$scratch/old.rest" "$scratch/new.rest"
 }
 
+# The block ends where the catalog's frontmatter reader ends it, so no body
+# line is read as part of the metadata map.
 drop_metadata_version() {
   awk '
     NR == 1 && $0 == "---" { front = 1; print; next }
-    front && $0 == "---" { front = 0 }
+    front && /^(---|\.\.\.)[[:space:]]*$/ { front = 0 }
     front && /^[^[:space:]]/ { metadata = ($0 ~ /^metadata:[[:space:]]*$/) }
     front && metadata && /^[[:space:]]+version:/ { next }
     { print }
