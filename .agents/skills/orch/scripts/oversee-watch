@@ -1256,16 +1256,26 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # from at each heartbeat while the record still reads parked.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/merged.err" item branch repo list named pr hit hits prior keys fresh key line state="${PW_SEEN[0]}"
+  local fields=number,headRefName,headRepositoryOwner,mergedAt,title,body
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+    PARKED_KEY=""
+    item_parked "$item" || true
     hits=""
     for repo in "${REPOS[@]}"; do
-      list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
+      list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json "$fields" 2>"$errf")" \
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
-      if ! hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" \
-        "$LANE_MERGED_JQ"' lane_merged($branch; $owner; $since)[] | "\(.number) \(.headRefName) \($repo)"' \
-        <<<"$list" 2>"$errf")"; then
+      # A cloud session's branch names no item, so its pull request is found
+      # by the key in its title or body; lane_own judges what this returns.
+      named="$(gh pr list --repo "$repo" --search "\"$item\" in:title,body" --state merged --limit 10 --json "$fields" 2>"$errf")" \
+        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
+      pr=null
+      [[ "${PARKED_KEY%#*}" != "$repo" ]] || pr="${PARKED_KEY##*#}"
+      if ! hit="$(jq -rs --arg item "$item" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson pr "$pr" --argjson since "$SINCE_EPOCH" \
+        "$LANE_MERGED_JQ"' add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
+        | lane_merged($item; $owner; $pr; $since)[] | "\(.number) \($item | ascii_downcase) \($repo)"' \
+        <<<"$list$named" 2>"$errf")"; then
         die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
       fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'

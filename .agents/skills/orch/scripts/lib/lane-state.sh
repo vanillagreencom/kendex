@@ -1095,22 +1095,32 @@ lane_key_tracker() {
   esac
 }
 
-# LANE_MERGED_JQ defines `lane_own($branch; $owner)`, the one filter over a
-# `gh pr list` row answering whether a pull request is a lane's own: head
-# branch equal to the item key lower-cased, head owner equal to the repository
-# owner (a head GitHub returns with no owner, a deleted fork, is not the
-# lane's). Over a `--state merged` array, `lane_merged($branch; $owner;
-# $since)` keeps the lane's own merged at or after the epoch $since, each
-# gaining `at`, its merge epoch. A caller prepends it to its own program:
-# jq -r "$LANE_MERGED_JQ"' lane_merged($b; $o; $s)[] | ...'. mergedAt carries
-# fractional seconds on some responses, which fromdateiso8601 refuses, so they
-# are cut first.
-LANE_MERGED_JQ='def lane_own($branch; $owner):
-  select((.headRefName | ascii_downcase) == ($branch | ascii_downcase))
-  | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase));
-def lane_merged($branch; $owner; $since):
+# LANE_MERGED_JQ defines `lane_own($item; $owner; $pr)`, the one filter over a
+# `gh pr list` row answering whether a pull request is a lane's own. Its head
+# owner equals the repository owner (a head GitHub returns with no owner, a
+# deleted fork, is not the lane's), and, in order: its number is $pr, the
+# number the lane record carries for this repository or null; its head branch
+# is the item key lower-cased; or the key stands as a whole word in its title
+# or in a body line starting `Closes`. The last is how a Claude cloud
+# session's pull request is found, its branch being `claude/...`, which names
+# no item. A row carries title and body only where the list asked for them.
+# Over a `--state merged` array, `lane_merged($item; $owner; $pr; $since)`
+# keeps the lane's own merged at or after the epoch $since, each gaining `at`,
+# its merge epoch. A caller prepends it to its own program:
+# jq -r "$LANE_MERGED_JQ"' lane_merged($i; $o; $p; $s)[] | ...'. mergedAt
+# carries fractional seconds on some responses, which fromdateiso8601 refuses,
+# so they are cut first.
+LANE_MERGED_JQ='def lane_own($item; $owner; $pr):
+  ($item | ascii_downcase) as $key
+  | ("(^|[^a-z0-9])" + ($key | gsub("\\."; "\\.")) + "($|[^a-z0-9])") as $named
+  | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+  | select(.number == $pr
+      or (.headRefName | ascii_downcase) == $key
+      or ((.title // "") | ascii_downcase | test($named))
+      or any((.body // "") | ascii_downcase | splits("\n"); test("^\\s*([-*+]\\s+)?closes\\s") and test($named)));
+def lane_merged($item; $owner; $pr; $since):
   [ .[]
-    | lane_own($branch; $owner)
+    | lane_own($item; $owner; $pr)
     | select(.mergedAt != null)
     | . + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
     | select(.at >= $since) ];'

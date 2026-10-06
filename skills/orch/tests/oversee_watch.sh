@@ -744,6 +744,31 @@ err="$TMP_ROOT/e2h3"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$out" "EVENT merged 9 issue-5 owner/repo" "run 3: a further PR on the branch is the event, and the first is not repeated beside it" "$err"
 
+# A Claude cloud session pushes to claude/..., a branch naming no item: its
+# pull request is the item's by the key in its title, and the line names the
+# item's branch. #51 names KEN-500, another item, and is not KEN-50's. Red
+# without the search: the per-branch list never returns a claude/ head.
+new_case merged_cloud_branch
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 51, "headRefName": "claude/fix-b", "title": "fix(KEN-500): b", "mergedAt": "2026-08-15T10:30:00Z"},
+  {"number": 50, "headRefName": "claude/fix-a", "title": "fix(KEN-50): a", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2i"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc|$(head -1 <<<"$out")" "0|EVENT merged 50 ken-50 owner/repo" \
+  "a merged claude/ pull request whose title names the item is its merged event, under the item's branch" "$err"
+assert_not_contains "$out" "EVENT merged 51" "a claude/ pull request naming another item is not the item's" "$err"
+CLOUD_MUTANT_DIR="$TMP_ROOT/cloud-merged"
+CLOUD_MUTANT="$(mutant_scripts cloud-merged/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$CLOUD_MUTANT_DIR/github"
+mutate_file "$CLOUD_MUTANT" '--search "\"$item\" in:title,body"' '--search "\"$item\" in:title,body" --head "$branch"'
+new_case merged_cloud_branch_control
+cp -- "$TMP_ROOT/cases/merged_cloud_branch/merged.json" "$STUB_DIR/merged.json"
+out="$(WATCH_BIN="$CLOUD_MUTANT" run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$out" "EVENT merged" "control: a search narrowed to the item's branch misses the claude/ pull request" "$err"
+
 
 # --- 2b. handoff -----------------------------------------------------------
 # handoff_record ITEM [RESUMED_AT] — the checkout's state carrying
@@ -930,7 +955,8 @@ out="$(run_watch -- --item issue-9 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "heartbeat exits 0" "$err"
 assert_contains "$out" "EVENT heartbeat" "heartbeat after --max-loops with no event" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "open PR list follows the heartbeat, each line prefixed with its repo" "$err"
-assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls")" "2" "merged check ran once per loop (2 loops)" "$err"
+assert_eq "$(grep -c -- '--head issue-9 --state merged' "$STUB_DIR/gh.calls")|$(grep -c -- '--search "issue-9" in:title,body --state merged' "$STUB_DIR/gh.calls")" "2|2" \
+  "merged check ran once per loop (2 loops), each its branch list and its key search" "$err"
 
 # every --repo's open PRs follow the heartbeat
 new_case heartbeat_multi_repo

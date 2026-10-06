@@ -213,7 +213,7 @@ item_open_pr() { # ITEM
       ow_message pr-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=2; break
     fi
     row="$(jq -c --arg branch "$branch" --arg owner "${repo%%/*}" "$LANE_MERGED_JQ"'
-      [.[] | lane_own($branch; $owner)] | first // empty' <<<"$list")" || { rc=2; break; }
+      [.[] | lane_own($branch; $owner; null)] | first // empty' <<<"$list")" || { rc=2; break; }
     [[ -n "$row" ]] || continue
     OPEN_PR_HEAD="$(jq -r '.headRefOid // ""' <<<"$row")" && OPEN_PR_DIGEST="$(jq -r '.body // ""' <<<"$row" | cksum)" \
       || die lane-stall-unread "" "item=$1"

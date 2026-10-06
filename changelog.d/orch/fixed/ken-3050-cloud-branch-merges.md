@@ -1,0 +1,1 @@
+- `oversee-report`'s Landed row and `oversee-watch`'s `merged` event find a lane's pull request by its parked record's number, its branch, or the item key in its title or a `Closes` line, so a Claude cloud session's merge on a `claude/` branch is counted and reported.

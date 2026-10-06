@@ -169,7 +169,13 @@ The long pass's events, checked and reported in this order:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
-                             --repo. A parked record's item is an --item for
+                             --repo, <branch> being the item's own, its key
+                             lower-cased. The PR is the item's by
+                             lib/lane-state.sh's lane_own: the number a
+                             parked record names, a head on that branch, or
+                             the key in its title or a Closes line, as a
+                             Claude cloud session's claude/ branch names no
+                             item. A parked record's item is an --item for
                              this check alone, and the merge of the pull
                              request its record names, in that repository,
                              is followed by parked-merged below. Another pull

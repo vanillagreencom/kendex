@@ -263,7 +263,7 @@ assert_eq "events=$EVENTS" "events=" \
 FORK_DIR="$TMP_ROOT/start-stall-fork"
 FORK_WATCH="$(mutant_scripts start-stall-fork/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$FORK_DIR/github"
-mutate_file "${FORK_WATCH%/*}/lib/watch-host-kinds.sh" '[.[] | lane_own($branch; $owner)] | first' '[.[]] | first'
+mutate_file "${FORK_WATCH%/*}/lib/watch-host-kinds.sh" '[.[] | lane_own($branch; $owner; null)] | first' '[.[]] | first'
 cloud_start start_stall_fork_mutant "$FORK_PR" "$FORK_WATCH"
 assert_eq "events=$EVENTS" "events=" "control: without the owner rule a fork's pull request starts the lane" "$STUB_DIR/err"
 # The lane-stalled window never validated: 060 runs the watch.

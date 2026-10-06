@@ -60,7 +60,10 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 # gh stub, driven by files in $STUB_DIR:
 #   merged.json   body for `pr list --state merged` (default: []);
 #                 merged.<SLUG>.json answers that --repo alone, <SLUG> being
-#                 the repo with everything outside [A-Za-z0-9._-] as `_`
+#                 the repo with everything outside [A-Za-z0-9._-] as `_`; a
+#                 `--search '"KEY" in:title,body'` keeps the rows whose title
+#                 or body holds KEY, in any case, as GitHub's text search does,
+#                 and any other --search is not applied
 #   open.txt      the open pull requests `pr list --state open` answers
 #                 (default: none), with open.<SLUG>.txt per repo the same way:
 #                 one `<number>\t<head>\t<title>[\t<author login>[\t<head
@@ -226,10 +229,11 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
     [[ -f "$STUB_DIR/noisy" ]] && echo "Notice: something advisory" >&2
-    head=""; limit=""; state=""; repo=""; fields=""; filter=""
+    head=""; limit=""; state=""; repo=""; fields=""; filter=""; search=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --head) head="$2"; shift ;;
+        --search) search="$2"; shift ;;
         --limit) limit="$2"; shift ;;
         --state) state="$2"; shift ;;
         --repo) repo="$2"; shift ;;
@@ -246,8 +250,11 @@ case "${1:-} ${2:-}" in
       # newest-created first, like gh: the fixture is in that order already;
       # --head narrows to one branch, --limit caps the page. gh always returns
       # headRepositoryOwner; a fixture that omits it is a same-repo head.
-      jq -c --arg head "$head" --arg owner "${repo%%/*}" --argjson limit "${limit:-1000}" \
+      key=""
+      [[ "$search" != \"*\"" in:title,body" ]] || { key="${search#\"}"; key="${key%%\"*}"; }
+      jq -c --arg head "$head" --arg owner "${repo%%/*}" --argjson limit "${limit:-1000}" --arg key "$key" \
         '[ .[] | select($head == "" or .headRefName == $head)
+                | select($key == "" or ((.title // "") + " " + (.body // "") | ascii_downcase | contains($key | ascii_downcase)))
                 | (.headRepositoryOwner //= {login: $owner}) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
       exit 0
     fi

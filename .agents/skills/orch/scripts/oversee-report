@@ -149,11 +149,15 @@ write    prints the rows and writes the same bytes to the path
          references/communication-modes.md § Owner messages.
 
 Rows:
-  Landed          each fleet item, a lanes[] record of any status, whose own
-                  branch, the key lower-cased, has a pull request merged since
-                  the last report, in any --repo or ORCH_CONNECTED_REPOS
-                  entry: one merged search per repo,
-                  matched against every item. The issue cell carries the
+  Landed          each fleet item, a lanes[] record of any status, with a
+                  pull request of its own merged since the last report, in
+                  any --repo or ORCH_CONNECTED_REPOS entry: one merged
+                  search per repo, matched against every item by
+                  lib/lane-state.sh's lane_own, the rule the watch's merged
+                  check uses: the number its parked record names, its
+                  branch, the key lower-cased, or the key in the title or a
+                  Closes line, as a Claude cloud session's claude/ branch
+                  names no item. The issue cell carries the
                   PR number and the merge commit.
   Escapes         one line under Landed: pull requests merged to the base
                   branch resolve-base-branch names that a revert commit
@@ -540,20 +544,24 @@ LANDED=""
 landed_read() {
   local repo items list rows since found=""
   [[ -n "$LANDED_SINCE" ]] || return 0
-  if ! items="$(jq -c '[.lanes[] | .item // empty] | unique' <<<"$STATE_JSON")"; then
+  # Each item with its parked record, whose pull request number lane_own
+  # takes in the repository that record names.
+  if ! items="$(jq -c '[.lanes[] | select(.item) | {item, parked: (.parked // {})}] | unique_by(.item)' <<<"$STATE_JSON")"; then
     refuse state "$STATE"
   fi
   since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$LANDED_SINCE"
   for repo in "${REPOS[@]}"; do
     if ! list="$(gh pr list --repo "$repo" --state merged --search "merged:>=$since" --limit "$MERGED_PAGE" \
-      --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")"; then
+      --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body 2>"$WORK_DIR/gh.err")"; then
       refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
     fi
-    if ! rows="$(jq -r --argjson items "$items" --arg owner "${repo%%/*}" --argjson since "$LANDED_SINCE" \
+    if ! rows="$(jq -r --argjson items "$items" --arg repo "$repo" --arg owner "${repo%%/*}" --argjson since "$LANDED_SINCE" \
       --argjson until "$NOW" --argjson page "$MERGED_PAGE" "$LANE_MERGED_JQ"'
       if length >= $page then "page-full"
-      else . as $list | $items[] as $item | $list | lane_merged($item; $owner; $since)[] | select(.at < $until)
-        | [(.at | tostring), $item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
+      else . as $list | $items[] as $lane
+        | (if ($lane.parked.repo // "" | ascii_downcase) == ($repo | ascii_downcase) then $lane.parked.pr else null end) as $pr
+        | $list | lane_merged($lane.item; $owner; $pr; $since)[] | select(.at < $until)
+        | [(.at | tostring), $lane.item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
       end' <<<"$list" 2>"$WORK_DIR/jq.err")"; then
       refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
     fi
