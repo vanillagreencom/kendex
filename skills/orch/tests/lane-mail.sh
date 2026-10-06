@@ -1010,8 +1010,10 @@ host_lm send --item KEN-7 --root "$REMOTE_ROOT" --host --directive --file "$(tex
 assert_eq "$RC=$OUT" "2=" "a hosted send the provider refused prints no receipt"
 
 # A hosted mailbox that cannot be read is one no send can be judged against,
-# so the send stops at the read rather than appending an unjudged line.
-HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1)
+# so the send stops at the read rather than appending an unjudged line. Only
+# the watch record's read fails, so the ask the answer names is found and the
+# send reaches the monitor read the receipt takes before its append.
+HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH="$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.watch")
 host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Unjudged.')"
 assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mail-read-failed=KEN-1=" \
   "a hosted send whose mailbox read failed is refused, with no receipt"
