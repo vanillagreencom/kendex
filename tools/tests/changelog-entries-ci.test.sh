@@ -5,7 +5,9 @@
 # workflow and run in a fixture shaped as the job's checkout: the candidate
 # tree at a merge commit of the branch into a base that moved, with this
 # repository's commit-guards scripts and settings, and BASE at the base tip,
-# or at the branch point for the pull request run of a stacked branch.
+# or at the branch point for the pull request run of a stacked branch. The
+# step's BASE expression is read from the workflow too and evaluated for each
+# event that runs the step, so the range starts at the base it names.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -21,16 +23,61 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -lt 2 ] || printf '        %s\n' "$2"; }
 
+# shellcheck source=../../skills/harness-ci/tests/lib/workflow.sh
+. "$REPO/skills/harness-ci/tests/lib/workflow.sh"
+[ -f "$GH_EVAL" ] || { echo "changelog-entries-ci: evaluator=missing path=$GH_EVAL" >&2; exit 1; }
+
 step="$(awk '
   $1 == "-" && $2 == "id:" && $3 == "changelog-entries" { selected = 1; next }
   selected && $1 == "-" { exit 1 }
   selected && $1 == "working-directory:" { wd = $2 }
-  selected && $1 == "run:" { sub(/^[[:space:]]*run:[[:space:]]*/, ""); print wd "\t" $0; found++; selected = 0 }
+  selected && $1 == "BASE:" {
+    base = $0
+    sub(/^[[:space:]]*BASE:[[:space:]]*/, "", base)
+    if (substr(base, 1, 3) == "${{") { base = substr(base, 4); sub(/}}[[:space:]]*$/, "", base) }
+  }
+  selected && $1 == "run:" { sub(/^[[:space:]]*run:[[:space:]]*/, ""); print wd "\t" base "\t" $0; found++; selected = 0 }
   END { if (found != 1) exit 1 }
 ' "$WORKFLOW")" || { echo "changelog-entries-ci: step=unreadable workflow=$WORKFLOW" >&2; exit 1; }
 WD="${step%%$'\t'*}"
-COMMAND="${step#*$'\t'}"
-[ -n "$WD" ] && [ -n "$COMMAND" ] || { echo "changelog-entries-ci: step=incomplete value=[$step]" >&2; exit 1; }
+rest="${step#*$'\t'}"
+BASE_EXPR="${rest%%$'\t'*}"
+COMMAND="${rest#*$'\t'}"
+[ -n "$WD" ] && [ -n "$BASE_EXPR" ] && [ -n "$COMMAND" ] ||
+  { echo "changelog-entries-ci: step=incomplete value=[$step]" >&2; exit 1; }
+
+# EVENT | the event payload GitHub sends | its base | its head
+# Each event that runs the step carries both a base and a head commit; BASE
+# must be the base, the commit the range starts from.
+BASE_ROWS='pull_request|{"github":{"event":{"pull_request":{"base":{"sha":"pr-base"},"head":{"sha":"pr-head"}}}}}|pr-base|pr-head
+merge_group|{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}|group-base|group-head'
+
+while IFS='|' read -r event context base head; do
+  got="$(gh_eval value "$context" "$BASE_EXPR")"
+  if [ "$got" = "\"$base\"" ]; then
+    ok "base: $event"
+  else
+    bad "base: $event" "expr [$BASE_EXPR] gave [$got], want \"$base\""
+  fi
+done <<<"$BASE_ROWS"
+
+# Control: the same expression reading the head fields gives each event's
+# head, which the rows above reject.
+HEAD_EXPR="${BASE_EXPR//.base.sha/.head.sha}"
+swapped_pr="$HEAD_EXPR"
+HEAD_EXPR="${HEAD_EXPR//.base_sha/.head_sha}"
+if [ "$swapped_pr" = "$BASE_EXPR" ] || [ "$HEAD_EXPR" = "$swapped_pr" ]; then
+  bad "control: the head fields yield no base" "substitution changed nothing in [$BASE_EXPR]"
+else
+  while IFS='|' read -r event context base head; do
+    got="$(gh_eval value "$context" "$HEAD_EXPR")"
+    if [ "$got" = "\"$head\"" ] && [ "$got" != "\"$base\"" ]; then
+      ok "control: the head fields yield no base: $event"
+    else
+      bad "control: the head fields yield no base: $event" "expr [$HEAD_EXPR] gave [$got]"
+    fi
+  done <<<"$BASE_ROWS"
+fi
 
 g() { git -C "$R" -c user.email=test@example.com -c user.name=test "$@"; }
 
