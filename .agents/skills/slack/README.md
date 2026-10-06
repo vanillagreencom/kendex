@@ -92,7 +92,7 @@ Each root reads the presence pair from its own settings and private env files, w
 
 The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen`. On resume, the relay clamps the count to the mailbox length, skips notices at or below it and journals their ids. Later notices, open asks and held answers still post. A missing or unreadable count skips nothing; hold times do not set the cutoff.
 
-`lane-mail events` supplies `line` (physical position) and `count` (complete line count) for suppression. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables master-read suppression. Missing or malformed positions still route without that suppression. Each bad field gets an `envelope-field` diagnostic with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
+`lane-mail events` supplies `line` (physical position) and `count` (complete line count) for suppression. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables master-read suppression and the read mark on an answer. Missing or malformed positions still route without that suppression. Each bad field gets an `envelope-field` diagnostic with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
 
 ## Steering contract
 

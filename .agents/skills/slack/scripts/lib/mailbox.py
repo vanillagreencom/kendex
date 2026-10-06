@@ -166,19 +166,29 @@ class LaneMail:
             return first.rsplit("id=", 1)[1].strip()
         raise Refusal("lane-mail-failed", err.strip() or first)
 
-    def read_cursor(self) -> int:
-        """How many to-lane.jsonl lines the overseer has read: to-lane.cursor
-        as `drain --receipts` reports it, on the scale of the `line` every
-        to-lane envelope from `events` carries. A cursor it reports `missed`
-        has read none."""
+    def read_receipts(self) -> Tuple[int, Set[str]]:
+        """How many to-lane.jsonl lines the overseer has read, and the ids
+        of the directives among them: to-lane.cursor as `drain --receipts`
+        reports it, on the scale of the `line` a to-lane envelope from
+        `events` carries, and the directive rows at or below it. Those rows
+        alone judge a directive from a producer whose events carry no
+        `line`. A cursor it reports `missed` has read none."""
         code, out, err = self._run("drain", "--item", "overseer", "--after", "0", "--receipts")
         if code != 0:
             raise Refusal("lane-mail-failed", _first(err))
-        header = next((raw for raw in out.splitlines() if raw.startswith("receipts cursor=")), None)
+        lines = out.splitlines()
+        header = next((i for i, raw in enumerate(lines) if raw.startswith("receipts cursor=")), None)
         if header is None:
             raise Refusal("lane-mail-failed", f"drain without receipts: {_first(out)}")
-        cursor = header.split()[1][len("cursor="):]
-        return 0 if cursor == "missed" else int(cursor)
+        cursor = lines[header].split()[1][len("cursor="):]
+        if cursor == "missed":
+            return 0, set()
+        read = set()
+        for raw in lines[header + 1:]:
+            number, env_id = raw.split()[:2]
+            if int(number) <= int(cursor):
+                read.add(env_id)
+        return int(cursor), read
 
     def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats

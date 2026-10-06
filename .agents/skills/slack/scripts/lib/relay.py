@@ -486,19 +486,19 @@ class RootRelay:
 
     def mark_read(self) -> None:
         """Swap SEEN for READ on every directive and answer the overseer has
-        read: its to-lane line at or below the cursor. A swap Slack refused,
-        or a receipts read lane-mail refused, is made again on the next
-        poll."""
+        read: its to-lane line at or below the cursor, or a directive the
+        receipts rows list as read. A swap Slack refused, or a receipts read
+        lane-mail refused, is made again on the next poll."""
         seen = [ts for ts, name in self.state.marks.items() if name == SEEN]
         if not seen:
             return
         try:
-            cursor = self.mail.read_cursor()
+            cursor, read = self.mail.read_receipts()
             events = self.mail.events()
         except Refusal as err:
             print_refusal(err)
             return
-        read = {e["id"] for e in events if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
+        read |= {e["id"] for e in events if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
         for ts in seen:
             if self.state.delivered.get(ts) not in read:
                 continue

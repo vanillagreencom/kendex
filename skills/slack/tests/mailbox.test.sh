@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# LaneMail answer failures, event field validation and root-error isolation.
+# LaneMail answer failures, event field validation, a read directive from an
+# older producer, and root-error isolation.
 # Controls keep the malformed producer and remove each reader rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -200,6 +201,35 @@ sk_lm "$LEGACY" notice --item overseer --to owner --file "$(sk_text line-control
 sk_poll "$LEGACY"
 assert_eq "$RC=$(asks "$(sk_channel "$LEGACY")" 'Line control.')" "1=0" "control: requiring line again fails the legacy notice poll"
 sk_bin_reset
+
+# An older producer's directive, its event without line, swaps for a check by
+# its receipts row once the overseer's inbox reads it, and the poll that swaps
+# it still posts a notice. Controls: the line guard gone fails that poll, and
+# the receipts rows unread leave the read directive at eyes.
+while IFS='|' read -r mode want; do
+  R="$(sk_new_root "legacy-read-$mode")"
+  sk_bind "$R"
+  sk_poll "$R"
+  sk_event_filter "$R" 'del(.line, .count)'
+  CH="$(sk_channel "$R")"
+  DIRECTIVE="$(sk_inject "$CH" U001 'Legacy directive.')"
+  sk_poll "$R"
+  SEEN="$(sk_reactions "$CH" "$DIRECTIVE")"
+  sk_lm "$R" inbox --item overseer >/dev/null
+  sk_lm "$R" notice --item overseer --to owner --file "$(sk_text "legacy-read-$mode" 'Legacy read notice.')" >/dev/null
+  case "$mode" in
+    line-guard) sk_mutant legacy-line-guard relay.py '\be\["line"\] is not None and ' '' ;;
+    receipts) sk_mutant legacy-receipts relay.py 'read \|= \{e\["id"\]' 'read = {e["id"]' ;;
+  esac
+  sk_poll "$R"
+  assert_eq "$RC=$SEEN=$(sk_reactions "$CH" "$DIRECTIVE")=$(asks "$CH" 'Legacy read notice.')" "$want" \
+    "$mode: a read directive from a producer without line swaps by its receipts row, and its poll posts"
+  sk_bin_reset
+done <<'ROWS'
+production|0=eyes=white_check_mark=1
+line-guard|1=eyes=eyes=0
+receipts|0=eyes=eyes=1
+ROWS
 
 sk_mutant invalid-field mailbox.py 'if invalid:' 'if False:'
 sk_poll "$SK_TMP/field-bad-at"
