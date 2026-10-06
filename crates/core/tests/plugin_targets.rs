@@ -168,6 +168,6 @@ fn a_plugin_refused_this_pass_keeps_its_record_under_refreshs_sweep() {
     assert!(
         report.record.entries.contains_key(&key),
         "{:?}",
-        report.notes
+        report.record.entries.keys().collect::<Vec<_>>()
     );
 }
