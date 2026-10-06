@@ -100,15 +100,17 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 
 2. **Make the edit** the item's Done-when states. Nothing else enters the diff.
 
-3. **Read the changed paths against § Escape condition 3**:
+3. **Check each claim the diff states about code**, once. **Skip if** no changed sentence states what a file, script, setting or test does, holds, counts or refuses. Otherwise read each such sentence against the file it names, judged as [reviewer/SKILL.md](../../reviewer/SKILL.md) § Ethos judges a claim and a number in prose, and fix a false one in this edit. This tier runs no review cycle, so the pull request's review is the first reader of the claim, and a fix for a finding there moves the head and escapes (§ Escape condition 8).
+
+4. **Read the changed paths against § Escape condition 3**:
 
    ```bash
    git -C [WT_PATH] status --porcelain
    ```
 
-   Every path that listing names is in scope, tracked change and untracked addition alike. Commit a path the edit did not make elsewhere, or remove it, before step 4. If a path is in condition 3's class, record escape condition 3 but continue through step 4. A successful commit then escapes. This ordering leaves a local commit that the standard workflow can continue.
+   Every path that listing names is in scope, tracked change and untracked addition alike. Commit a path the edit did not make elsewhere, or remove it, before step 5. If a path is in condition 3's class, record escape condition 3 but continue through step 5. A successful commit then escapes. This ordering leaves a local commit that the standard workflow can continue.
 
-4. **Commit the paths by name**, never `-A`, so the committed set is the one step 3 read. `[PREFIX]` is the Conventional Commits type the change is; the commit-msg hook judges it and the header's length. The repository's changelog rule applies as to any commit, and a refusal from the chain is its answer.
+5. **Commit the paths by name**, never `-A`, so the committed set is the one step 4 read. `[PREFIX]` is the Conventional Commits type the change is; the commit-msg hook judges it and the header's length. The repository's changelog rule applies as to any commit, and a refusal from the chain is its answer.
 
    ```bash
    git -C [WT_PATH] add [PATH]...
@@ -208,7 +210,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 
 1. § 1 read a container, a blocked child, or a bundle. This tier implements one item's own Done-when and nothing else.
 2. The repository's commit chain is not armed, or the answer could not be read.
-3. The edit reached a file that gates a merge, runs in a commit or turn hook, enforces a guard rule, launches a lane, or sets this tier's own boundary: this workflow, [small.md](small.md), [oversee.md](oversee.md) § Item Tier and the `item-tier` script it runs, `install-git-hooks`, and the shared path rules, whose files are the `# [boundary]` group of [references/narrow-change.conf](../references/narrow-change.conf) under the rule that group states. § 2 step 3 reads the changed paths against this class. [references/narrow-change.conf](../references/narrow-change.conf) holds that class as globs a script can read, together with the lock-format, manifest-parser and render-inventory paths the wider `small` class also refuses; every `path` line there escapes this tier except one a `superseded` line names, which is kept for older readers and skipped as the list's header states, so a reader checks a path against every other `path` line. Its `instruction` lines name the agent instruction files, `AGENTS.md` and `SKILL.md` at any depth: an edit reaching one answers `small` where it would earn micro, so it escapes this tier too. It also carries this tier's production ceiling, which `item-tier` selects on.
+3. The edit reached a file that gates a merge, runs in a commit or turn hook, enforces a guard rule, launches a lane, or sets this tier's own boundary: this workflow, [small.md](small.md), [oversee.md](oversee.md) § Item Tier and the `item-tier` script it runs, `install-git-hooks`, and the shared path rules, whose files are the `# [boundary]` group of [references/narrow-change.conf](../references/narrow-change.conf) under the rule that group states. § 2 step 4 reads the changed paths against this class. [references/narrow-change.conf](../references/narrow-change.conf) holds that class as globs a script can read, together with the lock-format, manifest-parser and render-inventory paths the wider `small` class also refuses; every `path` line there escapes this tier except one a `superseded` line names, which is kept for older readers and skipped as the list's header states, so a reader checks a path against every other `path` line. Its `instruction` lines name the agent instruction files, `AGENTS.md` and `SKILL.md` at any depth: an edit reaching one answers `small` where it would earn micro, so it escapes this tier too. It also carries this tier's production ceiling, which `item-tier` selects on.
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. A review finding on the pull request needs a change condition 3 excludes.
 6. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
