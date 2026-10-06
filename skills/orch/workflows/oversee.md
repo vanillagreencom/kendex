@@ -34,6 +34,8 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
 ```
 
+Before an item launches beside running lanes or open pull requests, judge file overlap. The item's touched set is its Location paths plus, for each path its body says it deletes or renames, every tracked file that names that path on the base: `git grep -l -F -e [PATH] origin/[BASE_BRANCH] --`, each line prefixed `origin/[BASE_BRANCH]:`. Compare that set with each open pull request's files (`gh pr diff [N] --name-only`) and each running lane's touched set. A shared file serializes the launch behind that lane, or the brief names the shared files as in scope.
+
 ## 3. Launch
 
 Foreign work follows [§ 1](#1-resolve-the-launch-surface).
