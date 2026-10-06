@@ -1,0 +1,1 @@
+- `tests/run-all.sh --battery DIR` runs the suites in another directory under the same filters, worker pool and report, and the verdict line names that tree.
