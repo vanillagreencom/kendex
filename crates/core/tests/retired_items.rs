@@ -1002,7 +1002,8 @@ fn a_declaration_rebound_to_a_catalog_that_retires_it_keeps_the_conflict() {
 /// A declaration deleted from kendex.toml by hand leaves a record nothing
 /// declares or derives. Refresh takes its copies, a hook's script or a Pi
 /// package; one the person edited stays, as the edit conflict. Without the
-/// sweep the leftover's row carries the removal that takes it.
+/// sweep the leftover's row carries the removal that takes it. A derived
+/// companion going with a deleted hook changes nothing said of the hook.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn refresh_takes_what_a_deleted_declaration_left_except_an_edited_copy() {
@@ -1063,6 +1064,54 @@ fn refresh_takes_what_a_deleted_declaration_left_except_an_edited_copy() {
         apply::execute(&f.env, &report.plan).unwrap();
         assert_eq!(copy.exists(), edited, "{case}");
     }
+    // What the plan says of a deleted hook is the same whether or not a
+    // derived companion goes with it: the companion going does not change
+    // why the hook goes.
+    let mut said = Vec::new();
+    for with_helper in [false, true] {
+        let f = installed(ItemKind::Hook, "other-check");
+        if with_helper {
+            write_item(&f, ItemKind::Hook, "helper");
+            require(&f, "other-check", "helper");
+            let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+            apply::execute(&f.env, &report.plan).unwrap();
+            assert_ne!(recorded_of(&f, "helper"), Vec::new(), "no helper record");
+        }
+        let manifest = f.project.join("kendex.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        let undeclared = text.replace("[hooks.other-check]\nsource = \"cat\"\n", "");
+        assert_ne!(undeclared, text, "with_helper={with_helper}: not deleted");
+        fs::write(&manifest, undeclared).unwrap();
+
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+
+        let rows: Vec<(HarnessId, String)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "other-check")
+            .map(|row| (row.harness, row.detail.clone()))
+            .collect();
+        let changes: Vec<(HarnessId, String)> = report
+            .set_changes
+            .iter()
+            .filter(|change| change.name == "other-check")
+            .map(|change| (change.harness, change.reason.clone()))
+            .collect();
+        if with_helper {
+            let helper = report
+                .set_changes
+                .iter()
+                .any(|change| change.name == "helper");
+            assert!(helper, "the helper does not go with it");
+        }
+        said.push((rows, changes));
+    }
+    let (rows, changes) = &said[0];
+    assert!(
+        !rows.is_empty() && !changes.is_empty(),
+        "nothing is said of the hook"
+    );
+    assert_eq!(said[0], said[1], "a companion going changes what is said");
 }
 
 /// What the person did to a kept retired item's copy on one tool.

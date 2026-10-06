@@ -22,9 +22,10 @@ use super::set_change::Said;
 /// only take content they can prove is ours: every content path must hash
 /// to what apply last wrote. A record that cannot prove that holds
 /// whatever content is present, hooks included. Explicitly asked-for
-/// removals and a hook withheld for a companion that will not run
-/// (`Withholding::Requires`) are not gated here: the trash keeps what they
-/// take.
+/// removals, a hook withheld for a companion that will not run
+/// (`Withholding::Requires`), and a hook whose recorded or retired
+/// companion goes on its tool (`settle_lacking`) are not gated here: the
+/// trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     if entry
         .output_style
@@ -579,9 +580,10 @@ fn verdicts<'a>(
 /// pair the person names. A copy that lacks a companion is never kept by
 /// what requires it ([`keep_what_kept_records_require`]), and keeps
 /// nothing it required, so every verdict is read again from the first ones
-/// until no more copies lack one. A copy retained for want of an answer
-/// is not asked: nothing is decided on it. Returns the copies that lack a
-/// companion.
+/// until no more copies lack one. Only a copy that would otherwise stay
+/// is asked: one retained for want of an answer has nothing decided on
+/// it, and one already taken goes for its own reason. Returns the copies
+/// that lack a companion.
 fn settle_lacking<'a>(
     lock: &Lock,
     carried: &KeptAsIs,
@@ -628,9 +630,11 @@ fn settle_lacking<'a>(
         let before = lacking.len();
         for (key, verdict) in verdicts.iter() {
             let entry = &lock.entries[*key];
+            // A copy already going for its own reason is not changed by
+            // what it lacks, and keeps the words for that reason.
             let asked = entry.kind == ItemKind::Hook
                 && entry.enabled
-                && !matches!(verdict, Verdict::Retained);
+                && !matches!(verdict, Verdict::Retained | Verdict::Removed { .. });
             let lacks = requires.get(key.as_str()).is_some_and(|companions| {
                 companions.iter().any(|companion| {
                     !lock.entries.contains_key(companion) || going.contains(companion.as_str())

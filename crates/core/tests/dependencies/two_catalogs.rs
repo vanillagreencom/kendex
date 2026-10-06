@@ -437,6 +437,7 @@ fn a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row() {
 enum Expected {
     Conflict,
     Withheld,
+    Removed,
     KeptBy(&'static str),
 }
 
@@ -458,6 +459,10 @@ impl Expected {
                 DriftState::Orphaned,
                 "withheld: a hook it requires will not run here — will be removed".to_owned(),
             ),
+            Expected::Removed => (
+                DriftState::Orphaned,
+                "no longer wanted — will be removed".to_owned(),
+            ),
             Expected::KeptBy(by) => (
                 DriftState::Orphaned,
                 format!("needed by {by}, which stays installed — kept with it"),
@@ -473,8 +478,7 @@ impl Expected {
 /// it requires: the wrapper it runs with, though withheld for a judge
 /// that will not run, and the judge below it, stay with it, on disk,
 /// registered and recorded. Not rebound, the hook above is withheld like
-/// the wrapper, and all three leave Codex, the judge lacking the wrapper
-/// it requires back.
+/// the wrapper, and all three leave Codex.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
@@ -496,7 +500,7 @@ fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
             [
                 &[Expected::Withheld],
                 &[Expected::Withheld],
-                &[Expected::Withheld],
+                &[Expected::Removed],
             ],
             (false, false),
         ),
