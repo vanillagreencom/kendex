@@ -84,6 +84,18 @@ Codex starts no turn for output that arrives after a turn ended, from a detached
 
 Each call is one simple command, as orch's one-simple-command rule asks ([../SKILL.md](../SKILL.md) § Harness-Safe Shell).
 
+## Validation wait
+
+A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses a hosted Codex lane (§ Lane mailbox).
+
+| Step | Call | Return |
+|------|------|--------|
+| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]`, `yield_time_ms` 30000 | The start launches the run detached and blocks until the verdict, so the call returns the `state=started` line and a `session_id`. Keep that line's `run-dir=` value. |
+| Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | Each return holds the output since the previous one. A return with an `exit_code` ended the command. |
+| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000, then the Wait step | Taken when a session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out, or ends with no `state=` verdict line. |
+
+Never end the turn while the run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
+
 ## Lane mailbox
 
 A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. The overseer follows each `lane-mail send` to a Codex lane with `open-terminal --wake` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)), which resumes the lane's newest session in print mode with one line that runs `lane-mail inbox`. Codex publishes no idle signal, so the wake refuses a lane whose Codex process still runs, as `working` or `unjudged` ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). The wake refuses a hosted Codex lane as `wake-invalid`. Mail to a Codex lane the wake refuses takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).

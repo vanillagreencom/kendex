@@ -75,8 +75,11 @@
 #       group-leader-missing, and a host without perl, which that prefix
 #       runs, as missing-command commands=perl, both before the run starts.
 #   dev-validate-run --wait --run-dir PATH [--budget SECS]
-#       Poll a run the start path already launched. Claude Code's foreground
-#       poll, repeated while it exits 3.
+#       Poll a run the start path already launched, repeated while it exits
+#       3: a foreground call on Claude Code, an exec_command session held
+#       with write_stdin polls on Codex
+#       (../references/codex-runtime.md § Validation wait). Every harness's
+#       route: ../../dev/SKILL.md § Long-Running Validation.
 #   dev-validate-run --stop --worktree PATH
 #       End every run that worktree's run directories record with no verdict:
 #       a unit by the exact name its runner record names, a setsid run by its

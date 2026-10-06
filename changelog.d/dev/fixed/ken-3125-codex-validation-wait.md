@@ -1,0 +1,1 @@
+- A Codex dev agent holds its validation run inside the turn with exec_command and write_stdin polls, so a hosted lane no longer stalls when its turn ends mid-run.
