@@ -1,0 +1,1 @@
+- An overseer acts on the owner's plain yes, typed in Slack or spoken on a signed-in call, after saying the action back; only destructive, irreversible or money steps still wait for an explicit confirmation.

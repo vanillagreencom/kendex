@@ -63,7 +63,7 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 
 ## Coordination
 
-**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the operation-bound approval rule, corrections and the spoken reply.
+**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval, the explicit confirmation of destructive and money steps, and the spoken reply.
 
 **Containers.** An issue with children or an `agent:multi` label and no `(one PR)` title marker is a CONTAINER. A container is never orchestrated and never gets a PR. Each child is the PR unit, selection operates on unblocked children, and the container closes LAST when its final child merges.
 
