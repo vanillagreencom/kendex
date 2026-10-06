@@ -3,13 +3,18 @@
 //! unasked — generated content is replaceable by construction — while
 //! adding or dropping one is a decision, so it is previewed and confirmed.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::desired::Withholding;
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::model::{HarnessId, ItemKind};
+
+/// The withholdings a pass decided, by the hook and tool each is asked
+/// about (`DesiredState::withheld`).
+pub(super) type Withheld = BTreeMap<(ItemKind, String, HarnessId), Withholding>;
 
 /// Whether a plan brings an installation into being or takes one away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -45,10 +50,16 @@ impl SetChange {
         }
     }
 
-    pub(super) fn dropped(entry: &LockEntry) -> SetChange {
-        let reason = match entry.reasons.contains(&Reason::Requested) {
-            true => "no longer declared here".to_owned(),
-            false => format!(
+    /// A withholding that takes the copy says so, and points at the
+    /// hook's warning, which names what it runs with and the fix: a hook
+    /// still declared is not dropped for want of a declaration.
+    pub(super) fn dropped(entry: &LockEntry, withheld: &Withheld) -> SetChange {
+        let key = (entry.kind, entry.name.clone(), entry.harness);
+        let said = withheld.get(&key).and_then(|because| because.said());
+        let reason = match (said, entry.reasons.contains(&Reason::Requested)) {
+            (Some(said), _) => format!("{said} — see the warning on {}", entry.name),
+            (None, true) => "no longer declared here".to_owned(),
+            (None, false) => format!(
                 "nothing needs it anymore — it was {}",
                 why_wanted(&entry.reasons)
             ),
@@ -96,7 +107,7 @@ fn why_wanted(reasons: &BTreeSet<Reason>) -> String {
 /// The installed set before against the installed set after — every
 /// installation this plan brings into being or takes away, whatever the
 /// reason. Regeneration of an installation that stays is not in here.
-pub(super) fn set_changes(before: &Lock, after: &Lock) -> Vec<SetChange> {
+pub(super) fn set_changes(before: &Lock, after: &Lock, withheld: &Withheld) -> Vec<SetChange> {
     let mut changes: Vec<SetChange> = after
         .entries
         .iter()
@@ -108,7 +119,7 @@ pub(super) fn set_changes(before: &Lock, after: &Lock) -> Vec<SetChange> {
             .entries
             .iter()
             .filter(|(key, _)| !after.entries.contains_key(*key))
-            .map(|(_, entry)| SetChange::dropped(entry)),
+            .map(|(_, entry)| SetChange::dropped(entry, withheld)),
     );
     changes
 }

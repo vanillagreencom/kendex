@@ -240,7 +240,7 @@ pub fn plan_scope(
     )?;
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
-    let set_changes = set_changes(lock, &new_lock);
+    let set_changes = set_changes(lock, &new_lock, &state.withheld);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     let trees = generated_paths::TemplateTrees::of(env, scope, &state, lock, &new_lock);
@@ -270,6 +270,7 @@ pub fn plan_scope(
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
         retired: state.retired.into_keys().collect(),
+        withheld: state.withheld,
         set_changes,
         sweepable,
         kept,

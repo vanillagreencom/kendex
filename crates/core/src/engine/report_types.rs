@@ -358,6 +358,9 @@ pub struct EngineReport {
     /// writes nothing for them, so the record owes a declaration of one no
     /// entry.
     pub retired: BTreeSet<(ItemKind, String)>,
+    /// Each hook the plan writes nowhere on a tool because a hook it runs
+    /// with will not run there, and why (`DesiredState::withheld`).
+    pub withheld: BTreeMap<(ItemKind, String, HarnessId), super::desired::Withholding>,
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -461,7 +464,21 @@ impl EngineReport {
             held: Vec::new(),
             tracked_outputs: BTreeMap::new(),
             retired: BTreeSet::new(),
+            withheld: BTreeMap::new(),
         }
+    }
+
+    /// What the plan says of an item it withholds from a tool for a
+    /// reason that takes its copy ([`super::desired::Withholding::said`]),
+    /// the reason that outranks the rest where tools differ; `None` where
+    /// no such withholding holds it anywhere.
+    pub fn withheld_said(&self, kind: ItemKind, name: &str) -> Option<&'static str> {
+        self.withheld
+            .iter()
+            .filter(|((held, named, _), _)| *held == kind && named == name)
+            .map(|(_, because)| *because)
+            .max()
+            .and_then(super::desired::Withholding::said)
     }
 
     /// Whether the plan writes this package on none of the tools it is
@@ -545,7 +562,8 @@ pub struct PlanOptions {
     /// Remove every item its catalog retired (`[retired]`), of every kind:
     /// its files, its records and its own manifest table, an edited copy
     /// held as the edit conflict. Off, a retired item stays exactly where
-    /// the record holds it, with one notice saying how to remove it, and is
+    /// the record holds it, except a hook withheld beside a hook its record
+    /// requires, with one notice saying how to remove it, and is
     /// owed nothing where it holds none; either way it is never rendered
     /// again, and an armed hook requiring it is withheld where it requires
     /// it, by the rule in docs/authoring/README.md's `[retired]` paragraph.

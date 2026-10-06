@@ -313,6 +313,12 @@ pub struct DesiredState {
     /// The entry keys of the record this pass read: where a retired item
     /// is kept ([`Retirement::kept`]).
     pub(super) recorded: BTreeSet<String>,
+    /// What each switched-on installation in that record required on its
+    /// tool when it was written, read off its companions' `RequiredBy`
+    /// reasons: what a retired hook kept as recorded still runs with,
+    /// which the walk derives none of (`deps::withhold_kept_retired`).
+    pub(super) recorded_requires:
+        BTreeMap<(ItemKind, String, HarnessId), BTreeSet<(ItemKind, String)>>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -377,8 +383,9 @@ pub struct DesiredState {
 
 /// Why a hook is withheld from a tool, and so what becomes of a copy
 /// already installed there. Where two reasons reach one hook on one tool,
-/// the later variant outranks the earlier (`Ord`): a wrapper that lacks a
-/// judge comes out whatever else is true of it.
+/// the later variant outranks the earlier (`Ord`): a retirement is the
+/// catalog's answer, which outranks a catalog that gives none, and a
+/// wrapper that lacks a judge comes out whatever else is true of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Withholding {
     /// Every hook that requires it is withheld there, and nothing asks for
@@ -393,6 +400,14 @@ pub enum Withholding {
     /// record, as an orphan whose declaration's source is unreachable does,
     /// and a companion this hook alone derives is not orphaned by it.
     Unanswered,
+    /// A hook it requires was retired by its catalog, or, for a retired
+    /// hook kept as recorded, a hook its record requires is withheld there
+    /// and its copy goes: the knot of hooks that require each other goes
+    /// together, for the retirement. Nothing is missing that the catalog
+    /// still writes, and only the person's choice settles it, so an
+    /// installed copy is an orphan disposed of under the plan's options,
+    /// the person's edits held, by `removal::orphans`.
+    Retired,
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
     /// whatever the plan's options, the person's edits with it
@@ -410,8 +425,21 @@ impl Withholding {
     /// copy go (`deps::orphaned`).
     pub fn takes(self) -> bool {
         match self {
-            Withholding::Orphaned | Withholding::Requires => true,
+            Withholding::Orphaned | Withholding::Retired | Withholding::Requires => true,
             Withholding::Unanswered => false,
+        }
+    }
+
+    /// What a row or a set change says of a copy this withholding takes,
+    /// in place of the words for an orphan; `None` where those words are
+    /// true of it. The detail of each is the hook's own warning.
+    pub fn said(self) -> Option<&'static str> {
+        match self {
+            Withholding::Requires => Some("withheld: a hook it requires will not run here"),
+            Withholding::Retired => {
+                Some("withheld: a retirement leaves it without a hook it requires")
+            }
+            Withholding::Orphaned | Withholding::Unanswered => None,
         }
     }
 }
@@ -432,11 +460,10 @@ impl DesiredState {
         migration: &str,
         declared: bool,
     ) {
-        let recorded = |harness: &HarnessId| {
-            let key = crate::lock::entry_key(kind, name, *harness);
-            !self.prune_retired && self.recorded.contains(&key)
-        };
-        let kept = HarnessId::ALL.into_iter().filter(recorded).collect();
+        let kept = HarnessId::ALL
+            .into_iter()
+            .filter(|harness| self.kept_as_recorded(kind, name, *harness))
+            .collect();
         let (source, migration) = (source.to_owned(), migration.to_owned());
         let key = (kind, name.to_owned());
         if declared || !self.retired.contains_key(&key) {
@@ -448,6 +475,29 @@ impl DesiredState {
             };
             self.retired.insert(key, retirement);
         }
+    }
+
+    /// [`DesiredState::retire`] for an item this pass plans, declared where
+    /// the expansion holds the person's own declaration of it.
+    pub(super) fn retire_planned(
+        &mut self,
+        expansion: &super::expansion::Expansion,
+        kind: ItemKind,
+        name: &str,
+        source: &str,
+        migration: &str,
+    ) {
+        let derived_from = expansion.derived_from(kind, name);
+        let declared = matches!(derived_from, None | Some(crate::lock::Reason::Requested));
+        self.retire(kind, name, source, migration, declared);
+    }
+
+    /// Whether a retired item stays on `harness` as recorded, before the
+    /// walk withholds anything: the record holds it there and this pass
+    /// does not prune.
+    pub(super) fn kept_as_recorded(&self, kind: ItemKind, name: &str, harness: HarnessId) -> bool {
+        let key = crate::lock::entry_key(kind, name, harness);
+        !self.prune_retired && self.recorded.contains(&key)
     }
 
     /// Whether an item its catalog retired is kept nowhere this pass:
@@ -562,6 +612,7 @@ fn compute(
         judge_pins,
         prune_retired,
         recorded: lock.entries.keys().cloned().collect(),
+        recorded_requires: recorded_requires(lock),
         ..DesiredState::default()
     };
     let mut updated_manifest = manifest.clone();
@@ -663,6 +714,34 @@ fn compute(
     Ok(state)
 }
 
+/// [`DesiredState::recorded_requires`] from `lock`: each companion's
+/// `RequiredBy` reason, under its requirer where the record holds that
+/// requirer switched on.
+fn recorded_requires(
+    lock: &Lock,
+) -> BTreeMap<(ItemKind, String, HarnessId), BTreeSet<(ItemKind, String)>> {
+    let mut requires: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+    for entry in lock.entries.values() {
+        for reason in &entry.reasons {
+            let crate::lock::Reason::RequiredBy { by } = reason else {
+                continue;
+            };
+            let key = crate::lock::entry_key(by.kind, &by.name, by.harness);
+            if lock
+                .entries
+                .get(&key)
+                .is_some_and(|requirer| requirer.enabled)
+            {
+                requires
+                    .entry((by.kind, by.name.clone(), by.harness))
+                    .or_default()
+                    .insert((entry.kind, entry.name.clone()));
+            }
+        }
+    }
+    requires
+}
+
 /// Where the catalog keeps one planned item, by the one lookup
 /// ([`OpenCatalog::offer`]); `None` where it renders nothing. A retired
 /// one is recorded for `settle_retired`, its provenance read as any
@@ -681,9 +760,7 @@ fn item_path(
         Offer::Retired(migration) => {
             let key = (kind, name.to_owned());
             state.processed.insert(key, provenance.to_owned());
-            let derived_from = expansion.derived_from(kind, name);
-            let declared = matches!(derived_from, None | Some(crate::lock::Reason::Requested));
-            state.retire(kind, name, &decl.source, migration, declared);
+            state.retire_planned(expansion, kind, name, &decl.source, migration);
             None
         }
         Offer::NotOffered | Offer::Silent => {
@@ -758,14 +835,15 @@ impl ItemCtx<'_> {
 #[derive(Debug, Clone)]
 pub struct Retirement {
     /// The declared source whose catalog retired it.
-    source: String,
+    pub(super) source: String,
     /// The catalog's one-line migration, empty where it gave none.
     migration: String,
     /// The person's own declaration brought it in, the one a manifest edit
     /// drops; false for a bundle member or a requirement.
     declared: bool,
     /// The tools it stays on as recorded: each the record this pass read
-    /// holds it on, none under a prune.
+    /// holds it on, none under a prune, less each the walk withholds it
+    /// from, settled once the walk is done ([`settle_retired`]).
     pub(super) kept: Vec<HarnessId>,
 }
 
@@ -806,8 +884,10 @@ fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super:
 /// What this pass does with the retired items it met, the Pi declarations
 /// among them read here, through the one lookup every Pi pass makes
 /// (`pi_ext::resolve_declared`); a retired item, carried or not, never
-/// renders. Kept, each gets its notice. Pruned, the person's own
-/// declaration of one leaves `updated`; returns whether it did.
+/// renders. A retired hook the walk withheld from a tool is not kept
+/// there: its copy goes as the withholding says. Kept, each gets its
+/// notice. Pruned, the person's own declaration of one leaves `updated`;
+/// returns whether it did.
 fn settle_retired(
     env: &Env,
     scope: &Scope,
@@ -815,6 +895,12 @@ fn settle_retired(
     state: &mut DesiredState,
     updated: &mut Manifest,
 ) -> bool {
+    for ((kind, name), retirement) in &mut state.retired {
+        retirement.kept.retain(|harness| {
+            let withheld = state.withheld.get(&(*kind, name.clone(), *harness));
+            !withheld.is_some_and(|because| because.takes())
+        });
+    }
     for (name, decl) in &manifest.pi_extensions {
         let resolved = crate::pi_ext::resolve_declared(env, scope, manifest, name, decl);
         if let Ok(crate::pi_ext::Resolved::Retired {

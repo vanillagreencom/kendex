@@ -363,3 +363,85 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         );
     }
 }
+
+/// A consumer's hook requiring a hook the catalog retires is withheld,
+/// and its copy goes. `kendex verify` fails on the declaration the record
+/// no longer holds, and its row carries why the plan writes it nowhere in
+/// the field a `--json` reader reads, where the record's remedy, which
+/// writes nothing, would otherwise stand alone. Dropping the requiring
+/// hook's declaration, the consumer's fix, and refreshing clears it.
+///
+/// The must-fail control is the verify before this row carried the
+/// withholding: the row's detail was absent.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_names_the_withholding_of_a_hook_requiring_a_retired_hook() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let catalog = home.join("catalog");
+    let project = home.join("consumer");
+    write(&catalog.join("kendex.toml"), CATALOG);
+    write(
+        &catalog.join("hooks/boss.sh"),
+        &HOOK
+            .replace("name: check", "name: boss")
+            .replace("# ---\nexit", "# requires: [judge]\n# ---\nexit"),
+    );
+    write(
+        &catalog.join("hooks/judge.sh"),
+        &HOOK.replace("name: check", "name: judge"),
+    );
+    write(
+        &project.join("kendex.toml"),
+        &format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.boss]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    );
+    repository(&project);
+    let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    let boss = project.join(".claude/hooks/boss.sh");
+    assert!(boss.exists(), "the fixture installs {}", boss.display());
+    commit(&project, "installed");
+    write(
+        &catalog.join("kendex.toml"),
+        &format!("{CATALOG}[retired.hooks]\njudge = \"\"\n"),
+    );
+
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    assert!(!boss.exists(), "{}", said(&refreshed));
+
+    let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+    let document: kendex_core::attest::Document = serde_json::from_slice(&verified.stdout)
+        .unwrap_or_else(|error| {
+            panic!("the document does not parse: {error}\n{}", said(&verified))
+        });
+    assert!(!verified.status.success(), "{}", said(&verified));
+    let gap = document
+        .rows
+        .iter()
+        .find(|row| row.kind == "hook" && row.name == "boss" && row.harness.is_none())
+        .unwrap_or_else(|| panic!("no gap row for boss: {}", said(&verified)));
+    assert_eq!(gap.state, kendex_core::attest::State::Unrecorded);
+    assert!(gap.detail.is_some(), "{}", said(&verified));
+
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let dropped = text.replace("[hooks.boss]\nsource = \"cat\"\n", "");
+    assert_ne!(dropped, text, "the declaration was not dropped");
+    write(&manifest, &dropped);
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    assert!(verified.status.success(), "{}", said(&verified));
+}

@@ -224,9 +224,6 @@ enum Verdict {
     Removed { named: bool, withheld: bool },
 }
 
-/// The row a withheld hook's installed copy leaves as it goes.
-const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
-
 /// The conflict a held orphan leaves, naming the remedy that takes it.
 const EDITED: &str =
     "no longer wanted, but its files were edited on disk — remove it by name to confirm";
@@ -296,6 +293,11 @@ pub(super) fn orphans(
         &mut origins,
     );
     keep_what_kept_records_require(lock, kept, &mut verdicts);
+    let withheld = |entry: &LockEntry| withheld_said(state, entry);
+    let going = |entry: &LockEntry| match withheld(entry) {
+        Some(said) => format!("{said} — will be removed"),
+        None => "no longer wanted — will be removed".to_owned(),
+    };
     for (key, verdict) in verdicts {
         let entry = &lock.entries[key];
         match verdict {
@@ -313,23 +315,19 @@ pub(super) fn orphans(
                         scope,
                         entry,
                         DriftState::Orphaned,
-                        "left over from an earlier setup; nothing needs it anymore".into(),
+                        withheld(entry)
+                            .unwrap_or("left over from an earlier setup; nothing needs it anymore")
+                            .into(),
                         None,
                     )
                 });
                 if unneeded {
-                    sweepable.push(super::SetChange::dropped(entry));
+                    sweepable.push(super::SetChange::dropped(entry, &state.withheld));
                 }
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Held => {
-                drift.push(row(
-                    scope,
-                    entry,
-                    DriftState::Orphaned,
-                    "no longer wanted — will be removed".into(),
-                    None,
-                ));
+                drift.push(row(scope, entry, DriftState::Orphaned, going(entry), None));
                 drift.push(row(
                     scope,
                     entry,
@@ -349,12 +347,8 @@ pub(super) fn orphans(
                 ));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
-            Verdict::Removed { withheld, .. } => {
-                let detail = match withheld {
-                    true => WITHHELD,
-                    false => "no longer wanted — will be removed",
-                };
-                drift.push(row(scope, entry, DriftState::Orphaned, detail.into(), None));
+            Verdict::Removed { .. } => {
+                drift.push(row(scope, entry, DriftState::Orphaned, going(entry), None));
                 if entry.kind == ItemKind::PiExtension {
                     match pi_removal(env, scope, entry, config_edits) {
                         Ok(planned) => guard.extend(ops, planned),
@@ -404,6 +398,13 @@ fn row(
         also_in_the_way: Vec::new(),
         remedy: None,
     }
+}
+
+/// What a withholding that takes this copy says of it, in place of the
+/// words for an orphan nothing withholds.
+fn withheld_said(state: &desired::DesiredState, entry: &LockEntry) -> Option<&'static str> {
+    let key = (entry.kind, entry.name.clone(), entry.harness);
+    state.withheld.get(&key).and_then(|because| because.said())
 }
 
 /// The verdict on every record no pass has planned for, in key order,

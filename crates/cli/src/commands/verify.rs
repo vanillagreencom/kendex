@@ -128,7 +128,7 @@ struct Tally {
     /// What each scope declares that its record does not hold. None of it
     /// reaches the count, and a count printed without them covers less
     /// than the scope does.
-    gaps: Vec<(Scope, Vec<(ItemKind, String)>)>,
+    gaps: Vec<(Scope, Vec<Gap>)>,
     /// What each scope declares that installs on none of its tools, by the
     /// package's own harnesses line: said once at the end, never a gap.
     left_out: Vec<(Scope, Vec<(ItemKind, String)>)>,
@@ -667,6 +667,17 @@ fn declaration_rows(
     }
 }
 
+/// One package a scope declares that its record does not hold.
+struct Gap {
+    kind: ItemKind,
+    name: String,
+    /// Why the plan writes it nowhere, where a withholding that takes its
+    /// copy says so ([`EngineReport::withheld_said`]), with the package's
+    /// own warnings, which name what it runs with and the fix: apply
+    /// records nothing for it, so the record's remedy would do nothing.
+    withheld: Option<(&'static str, Vec<kendex_core::engine::ItemWarning>)>,
+}
+
 /// Both directions the record can fall short of the scope, as rows and as
 /// the names the gap line prints: an installation the pass derived that
 /// the record holds no entry for, and a declaration the record holds no
@@ -681,7 +692,7 @@ fn gap_rows(
     placer: &Placer,
     named: &dyn Fn(&str) -> bool,
     rows: &mut Vec<Row>,
-) -> Vec<(ItemKind, String)> {
+) -> Vec<Gap> {
     let unrecorded: Vec<&Installation> = report
         .installations
         .iter()
@@ -698,27 +709,46 @@ fn gap_rows(
             &installation.positions,
         ));
     }
-    let mut gap: Vec<(ItemKind, String)> = Vec::new();
+    let mut gap: Vec<Gap> = Vec::new();
+    let listed = |gap: &[Gap], kind: ItemKind, name: &str| {
+        gap.iter().any(|g| g.kind == kind && g.name == name)
+    };
     for (kind, name) in declared {
         let placed =
             |entry: &kendex_core::lock::LockEntry| entry.kind == *kind && entry.name == *name;
-        if !named(name) || lock.entries.values().any(placed) || gap.contains(&(*kind, name.clone()))
-        {
+        if !named(name) || lock.entries.values().any(placed) || listed(&gap, *kind, name) {
             continue;
         }
+        let withheld = report.withheld_said(*kind, name).map(|said| {
+            let warnings = report
+                .warnings
+                .iter()
+                .filter(|warning| warning.kind == *kind && warning.name == *name)
+                .cloned()
+                .collect();
+            (said, warnings)
+        });
         if !report
             .installations
             .values()
             .any(|installation| installation.kind == *kind && installation.name == *name)
         {
-            rows.push(placer.row(kind.name(), name, None, State::Unrecorded, None, &[]));
+            let problem = withheld.as_ref().map(|(said, _)| (*said).to_owned());
+            rows.push(placer.row(kind.name(), name, None, State::Unrecorded, problem, &[]));
         }
-        gap.push((*kind, name.clone()));
+        gap.push(Gap {
+            kind: *kind,
+            name: name.clone(),
+            withheld,
+        });
     }
     for installation in &unrecorded {
-        let named_gap = (installation.kind, installation.name.clone());
-        if !gap.contains(&named_gap) {
-            gap.push(named_gap);
+        if !listed(&gap, installation.kind, &installation.name) {
+            gap.push(Gap {
+                kind: installation.kind,
+                name: installation.name.clone(),
+                withheld: None,
+            });
         }
     }
     gap
@@ -1015,7 +1045,10 @@ fn print_left_out(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
 /// `[bundles.x]` prints every member and everything those members require,
 /// and a large set makes a long list; the names are what a reader looking
 /// at an empty record came for.
-fn print_gaps(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
+///
+/// A package withheld for a reason that takes its copy says so in place
+/// of the record's remedy, with its warnings and their fixes under it.
+fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)]) {
     for (scope, items) in scopes {
         ui::stderr(&style.report_row(
             Status::Notice,
@@ -1027,22 +1060,36 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
             ))],
             "",
         ));
-        for (kind, name) in items {
-            let text = format!(
-                "{} {name} — {}",
-                kind.name(),
-                match kind {
-                    ItemKind::PiExtension => "kendex update-pi records it",
+        for Gap {
+            kind,
+            name,
+            withheld,
+        } in items
+        {
+            let why = match (withheld, kind) {
+                (Some((said, _)), _) => said,
+                (None, ItemKind::PiExtension) => "kendex update-pi records it",
+                (
+                    None,
                     ItemKind::Agent
                     | ItemKind::Skill
                     | ItemKind::Hook
                     | ItemKind::OutputStyle
                     | ItemKind::Command
                     | ItemKind::McpServer
-                    | ItemKind::Plugin => "kendex apply records it",
-                }
-            );
+                    | ItemKind::Plugin,
+                ) => "kendex apply records it",
+            };
+            let text = format!("{} {name} — {why}", kind.name());
             ui::stderr(&style.report_row(Status::Decision, &[Span::Prose(&text)], "  - "));
+            for warning in withheld.iter().flat_map(|(_, warnings)| warnings) {
+                ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "    ! "));
+                if let Some(fix) = &warning.remediation {
+                    ui::stderr(
+                        &style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "      "),
+                    );
+                }
+            }
         }
     }
 }

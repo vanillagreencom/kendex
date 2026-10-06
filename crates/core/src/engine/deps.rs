@@ -213,7 +213,7 @@ fn walk(
     // withholding spreads.
     expansion.report_rev_disagreements(state);
     settle_after_walk(catalogs.env, catalogs.scope, manifest, state, &mut wanted);
-    withhold_requirers(&mut wanted, expansion);
+    withhold_requirers(&mut wanted, expansion, state);
     // A reference filtered to no tool installs nothing, so it is no edge:
     // the finding beside it already says the dependency is missing, and an
     // edge here would have the cycle note claim a co-install the graph
@@ -350,7 +350,8 @@ struct Wanted {
     findings: Vec<ItemWarning>,
     /// Findings that leave the declarations complete: a companion its
     /// catalog retired, the catalog's own answer; a withholding taken on
-    /// from a companion, whose own finding says what is missing; and a
+    /// from a companion, whose own finding says what is missing, a kept
+    /// retired hook's included ([`withhold_kept_retired`]); and a
     /// companion orphaned by its requirers' withholding
     /// ([`withhold_orphans`]), whose findings say why they are gone.
     answered: Vec<ItemWarning>,
@@ -393,19 +394,100 @@ struct Dep {
 /// requires it is withheld there too, and so is a companion that exists
 /// only for hooks gone from there: the lane-mail knot goes together
 /// whichever member's fault it is, and a one-way edge leaves no companion
-/// armed beside a requirer that is gone. A retired companion is outside
-/// this: the walk derives none, and a kept copy stays as the record holds
-/// it until a prune, whatever its requirers. Two phases, each run until
-/// nothing changes, and in this order: first the requirers take on their
-/// companions' reasons, up every chain; only then, off the withholdings
+/// armed beside a requirer that is gone. A retired hook the walk derives
+/// nothing for, and a copy kept as recorded stays until a prune, except
+/// where what its record requires is gone ([`withhold_kept_retired`]).
+/// Three phases, each run until nothing changes, and in this order: first
+/// the requirers take on their companions' reasons, up every chain; then
+/// the kept retired hooks take on theirs; only then, off the withholdings
 /// that leaves, are companions orphaned. Whether a requirer's withholding
 /// lets its copy go can change as the upward spread climbs a chain, so an
 /// orphaning read off an earlier answer would be read off the wrong one.
 /// Skills are not in this: a skill runs without what it lacks, and its
 /// finding is the whole consequence.
-fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion) {
+fn withhold_requirers(
+    wanted: &mut BTreeMap<Node, Wanted>,
+    expansion: &Expansion,
+    state: &DesiredState,
+) {
     spread_upward(wanted);
+    withhold_kept_retired(wanted, state);
     withhold_orphans(wanted, expansion);
+}
+
+/// A retired hook kept as recorded runs with what its record required
+/// when it was written ([`DesiredState::recorded_requires`]), not with
+/// what the walk derives, which is nothing. Where one of those is withheld
+/// from a tool for a reason that takes its copy, the kept copy would run
+/// there beside none, so it is withheld there too, for the retirement
+/// ([`Withholding::Retired`]): the knot of a retired hook and its
+/// requirer goes together. A requirement orphaned or unanswered keeps its
+/// copy, the orphan kept by the record that requires it
+/// (`removal::keep_what_kept_records_require`), and withholds nothing.
+/// Retired hooks that require each other are read until nothing changes.
+fn withhold_kept_retired(wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredState) {
+    loop {
+        let mut spread: Vec<(Node, HarnessId, Node, String)> = Vec::new();
+        for ((kind, name), retirement) in &state.retired {
+            if *kind != ItemKind::Hook {
+                continue;
+            }
+            for harness in HarnessId::ALL {
+                let held = wanted
+                    .get(&(*kind, name.clone()))
+                    .is_some_and(|found| found.withheld.contains_key(&harness));
+                if held || !state.kept_as_recorded(*kind, name, harness) {
+                    continue;
+                }
+                let requires = state.recorded_requires.get(&(*kind, name.clone(), harness));
+                let gone = requires.into_iter().flatten().find(|companion| {
+                    wanted
+                        .get(*companion)
+                        .and_then(|theirs| theirs.withheld.get(&harness))
+                        .is_some_and(|because| match because {
+                            Withholding::Retired | Withholding::Requires => true,
+                            Withholding::Orphaned | Withholding::Unanswered => false,
+                        })
+                });
+                if let Some(companion) = gone {
+                    let node = (*kind, name.clone());
+                    spread.push((node, harness, companion.clone(), retirement.source.clone()));
+                }
+            }
+        }
+        if spread.is_empty() {
+            return;
+        }
+        let mut tools: BTreeMap<(Node, Node, String), Vec<HarnessId>> = BTreeMap::new();
+        for (node, harness, companion, source) in spread {
+            tools
+                .entry((node, companion, source))
+                .or_default()
+                .push(harness);
+        }
+        for (((kind, name), (dep_kind, dep), source), tools) in tools {
+            let found = wanted
+                .entry((kind, name.clone()))
+                .or_insert_with(|| Wanted {
+                    deps: Vec::new(),
+                    findings: Vec::new(),
+                    answered: Vec::new(),
+                    withheld: BTreeMap::new(),
+                    armed: true,
+                    left_out: Vec::new(),
+                });
+            found.withhold(tools.iter().copied(), Withholding::Retired);
+            found.answered.push(finding(
+                &NotWritten::Withheld,
+                kind,
+                dep_kind,
+                &name,
+                &dep,
+                &tools,
+                &source,
+            ));
+        }
+    }
 }
 
 /// A companion the hook requires, read from the catalog `source`, is
@@ -445,6 +527,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                 for harness in on {
                     let because = match theirs.withheld.get(harness) {
                         Some(Withholding::Requires) => Withholding::Requires,
+                        Some(Withholding::Retired) => Withholding::Retired,
                         Some(Withholding::Unanswered) => Withholding::Unanswered,
                         Some(Withholding::Orphaned) | None => continue,
                     };
@@ -708,8 +791,13 @@ fn wanted_by(
     };
     let dir = match catalog.offer(kind, parent) {
         Offer::Item(_, dir) => dir,
-        // A retired item installs nothing, so it derives nothing either.
-        Offer::Retired(_) => return None,
+        // A retired item installs nothing, so it derives nothing either;
+        // what a copy kept as recorded runs with is its record's
+        // ([`withhold_kept_retired`]).
+        Offer::Retired(migration) => {
+            state.retire_planned(expansion, kind, parent, &parent_decl.source, migration);
+            return None;
+        }
         Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
@@ -936,19 +1024,26 @@ fn derive(
             // Retired, the companion is never written again, so an armed
             // hook is withheld on these `harnesses` rather than armed beside
             // a copy kept only until the next prune; the rule is
-            // docs/authoring/README.md's `[retired]` paragraph.
+            // docs/authoring/README.md's `[retired]` paragraph. The fix is
+            // the consumer's: the catalog's own is to drop the line.
             Offer::Retired(migration) => {
                 state.retire(dep_kind, &dep, source, migration, false);
+                let declared = match manifest.declared(kind).contains_key(parent) {
+                    true => parent.to_owned(),
+                    false => format!("what brings {parent} in"),
+                };
                 wanted.answered.push(warn(
                     kind,
                     parent,
                     format!("{parent} requires {dep}, which the catalog '{source}' retired"),
                     match migration.is_empty() {
-                        true => format!("drop {dep} from {parent}'s dependencies"),
+                        true => format!(
+                            "drop {declared} from kendex.toml, or wait for the catalog '{source}' to drop {dep} from what {parent} requires"
+                        ),
                         false => migration.to_owned(),
                     },
                 ));
-                Withholding::Requires
+                Withholding::Retired
             }
             Offer::NotOffered => {
                 found.push(warn(
