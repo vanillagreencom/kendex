@@ -269,8 +269,11 @@ cm="ORCH_HANDOFF_CONTEXT_PCT=\${CONTEXT_PCT:-50}"
 # The pause between the two reads an account settles on. A harness stub here
 # has execed its last process within milliseconds of its launch, so a tenth of
 # a second still keeps the two reads apart, and no launch spends the production
-# second on each read; lane-account-settle.sh holds the pause itself.
+# second on each read; lane-account-settle.sh holds the pause itself. A
+# VIRTUAL_CLOCK row keeps the production second: the virtual sleep advances on
+# whole seconds alone and sleeps a fraction in real time.
 settle="ORCH_LANE_SETTLE_MS=100"
+[ -z "\${VIRTUAL_CLOCK:-}" ] || settle=""
 # A lanes setting the row can spoil, for the one row that needs the account
 # judge itself to fail rather than answer.
 ttl=""
