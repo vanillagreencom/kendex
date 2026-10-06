@@ -33,7 +33,7 @@ pub enum GuardCommand {
 /// The package prints one summary line on stdout and its warnings on stderr,
 /// and a caller piping `kendex guard check` is reading for that one line.
 /// Relaying both to stdout would hand them a `::warning::` stream to filter.
-fn report(report: &GuardReport) -> ExitCode {
+pub(super) fn report(report: &GuardReport) -> ExitCode {
     for line in &report.stderr {
         say(line);
     }
@@ -43,7 +43,7 @@ fn report(report: &GuardReport) -> ExitCode {
     ExitCode::from(report.code)
 }
 
-fn refused(error: &kendex_core::error::CoreError) -> ExitCode {
+pub(super) fn refused(error: &kendex_core::error::CoreError) -> ExitCode {
     out(&format!("error: {error}"));
     ExitCode::from(2)
 }

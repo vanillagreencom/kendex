@@ -22,6 +22,7 @@ mod add_kinds;
 mod add_picker_terminal;
 mod add_setting;
 mod bookmark_cli;
+mod bot_instructions_render;
 mod bundles_cli;
 mod catalog_check;
 mod cli;

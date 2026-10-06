@@ -71,25 +71,47 @@ def orphan_files(ctx):
             if path not in produced and marker.carries_marker(ctx.read(path))]
 
 
-def orphan(ctx, out):
+def removed_orphans(ctx, index):
+    """Marked files the TOML does not produce that the index still tracks and
+    the working tree no longer holds, sorted.
+
+    An earlier render removed them and the deletion is not staged yet. A
+    render names them beside its own removals, so a caller that builds its
+    commit from what the render reports, after the render that removed them
+    has come and gone, still stages the deletion `check --staged` asks for.
+    `index` reads the staged blobs, the one place their marker still is.
+    """
+    produced = set(ctx.build.files)
+    candidates = [path for path in ctx.tracked_paths()
+                  if path not in produced
+                  and (path in ROOT_OUTPUTS
+                       or any(path.startswith(tree + "/") for tree in SCANNED_TREES))]
+    return [path for path in sorted(candidates)
+            if ctx.read(path) is None and marker.carries_marker(index.read(path))]
+
+
+def orphan_file(ctx, out):
     """A retired surface's file is still there and the bot still loads it."""
-    v = "orphan"
-    # `render` removes these files before it writes, so only `check` reports
-    # them; the marked region below has no removal and reds on both verbs.
-    if ctx.verb != "render":
-        for path in orphan_files(ctx):
-            out.append(Finding(v, "carries this package's marker and the current TOML does "
-                                  "not produce it. A render removes it", path))
+    for path in orphan_files(ctx):
+        out.append(Finding("orphan", "carries this package's marker and the current TOML does "
+                                     "not produce it. A render removes it", path))
+
+
+def orphan_region(ctx, out):
+    """The owned `AGENTS.md` region outlived the `codex` flag that writes it.
+
+    No render removes a region, so this half refuses on both verbs.
+    """
     if ctx.config.bots["codex"] or ctx.build.region_body is not None:
         return
     text = ctx.read("AGENTS.md")
     if text is not None:
         region = render.region_of(text)
         if marker.owns("AGENTS.md", region):
-            out.append(Finding(v, "the `## Code Review Rules` region carries the marker and "
-                                  "[bot-instructions.bots] codex is false. De-orphaning it is not a deletion "
-                                  "of the file: the heading is the repo's and has to "
-                                  "survive; what goes is the marker and the body below it",
+            out.append(Finding("orphan", "the `## Code Review Rules` region carries the marker and "
+                                         "[bot-instructions.bots] codex is false. De-orphaning it is not a deletion "
+                                         "of the file: the heading is the repo's and has to "
+                                         "survive; what goes is the marker and the body below it",
                                "AGENTS.md"))
 
 

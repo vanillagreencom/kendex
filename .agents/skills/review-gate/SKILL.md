@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [harness-ci]
-  optional: [orch, bot-instructions]
+  optional: [orch]
 metadata:
   author: vanillagreen
   source: kendex

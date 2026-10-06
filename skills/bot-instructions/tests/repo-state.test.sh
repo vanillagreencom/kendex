@@ -530,4 +530,128 @@ else
   bad 'render keeps an unmarked file at a scanned path' "$bi_out"
 fi
 
+# Removal comes after the writes. Renaming a surface onto a hand-written file
+# makes the marker gate refuse the write, and the retired surface's file is
+# still there for the next render to remove. A copy that removes first is the
+# control: the failed render has already deleted it.
+remove_after='        for path in sorted(ctx.build.files):
+            writer.replace(root, path, ctx.build.files[path])
+            written.append(path)
+        if ctx.build.region_body is not None:
+            _splice(ctx, root)
+        for path in orphans:
+            writer.remove(root, path)
+            removed.append(path)
+'
+remove_first='        for path in orphans:
+            writer.remove(root, path)
+            removed.append(path)
+        for path in sorted(ctx.build.files):
+            writer.replace(root, path, ctx.build.files[path])
+            written.append(path)
+        if ctx.build.region_body is not None:
+            _splice(ctx, root)
+'
+for launcher in "$BI" "$(bi_mutant remove-first scripts/lib/verbs.py "$remove_after" "$remove_first")"; do
+  case "$launcher" in "$BI") name=write-fails ;; *) name=write-fails-control ;; esac
+  repo="$(bi_rendered_repo "$name")" || exit 1
+  python3 - "$repo/kendex.toml" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+assert s.count('name = "tests"') == 1
+p.write_text(s.replace('name = "tests"', 'name = "testsuite"'))
+PY
+  printf 'the repo wrote this\n' > "$repo/.github/instructions/testsuite.instructions.md"
+  out="$("$launcher" render --repo "$repo" 2>&1)"
+  status=$?
+  kept=no
+  [ ! -f "$repo/.github/instructions/tests.instructions.md" ] || kept=yes
+  case "$launcher:$status:$kept" in
+    "$BI:2:yes") ok 'a render whose write fails removes no orphan' ;;
+    "$BI:"*) bad 'a render whose write fails removes no orphan' "$status: $out" ;;
+    *:2:no) ok 'control: a render that removes first loses the orphan when its write fails' ;;
+    *) bad 'control: a render that removes first loses the orphan when its write fails' "$status: $out" ;;
+  esac
+done
+
+# Every flag off on a rendered repo still removes what earlier renders wrote,
+# once the owned region's body is gone under its kept heading. The early
+# return a render once took when it had nothing to write is the control: it
+# leaves every marked file standing.
+all_off='[bot-instructions]
+schema = 1
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+'
+early_return='    removed = []
+    written = []
+'
+for launcher in "$BI" "$(bi_mutant early-return scripts/lib/verbs.py "$early_return" "    if nothing:
+        return nothing + ctx.skipped
+$early_return")"; do
+  case "$launcher" in "$BI") name=all-off ;; *) name=all-off-control ;; esac
+  repo="$(bi_rendered_repo "$name")" || exit 1
+  printf '%s' "$all_off" > "$repo/kendex.toml"
+  python3 - "$repo/AGENTS.md" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+head, sep, rest = s.partition("## Code Review Rules\n")
+body, nxt, tail = rest.partition("\n## Something else")
+assert sep and nxt, "the fixture's AGENTS.md changed shape"
+p.write_text(head + sep + nxt + tail)
+PY
+  preview="$("$launcher" render --dry-run --repo "$repo" 2>&1)"
+  out="$("$launcher" render --repo "$repo" 2>&1)"
+  status=$?
+  removed=no
+  if [ "$status" -eq 0 ] &&
+      printf '%s\n' "$preview" | grep -qxF 'would remove .github/instructions/docs.instructions.md' &&
+      printf '%s\n' "$out" | grep -qxF 'removed .github/instructions/docs.instructions.md' &&
+      [ ! -e "$repo/.github/instructions/docs.instructions.md" ]; then removed=yes; fi
+  case "$launcher:$removed" in
+    "$BI:yes") ok 'every flag off removes the files earlier renders wrote' ;;
+    "$BI:"*) bad 'every flag off removes the files earlier renders wrote' "$status: $preview $out" ;;
+    *:no) ok 'control: an early return on nothing to render leaves them' ;;
+    *) bad 'control: an early return on nothing to render leaves them' "$status: $out" ;;
+  esac
+done
+
+# A removal the index has not staged yet is still the render's. A caller that
+# asks after the render, as kendex's commit offer does, reads it from a dry
+# run or a second render while the index still tracks the marked file. A copy
+# that reports only what is on disk is the control.
+for launcher in "$BI" "$(bi_mutant disk-only scripts/lib/verbs.py \
+    '    gone = validators_repo.removed_orphans(ctx, tree.Index(root))' '    gone = []')"; do
+  case "$launcher" in "$BI") name=unstaged-removal ;; *) name=unstaged-removal-control ;; esac
+  repo="$(bi_rendered_repo "$name")" || exit 1
+  python3 - "$repo/kendex.toml" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+p.write_text(s[:s.index('[[bot-instructions.surface]]\nname = "docs"')])
+PY
+  "$launcher" render --repo "$repo" >/dev/null 2>&1
+  preview="$("$launcher" render --dry-run --repo "$repo" 2>&1)"
+  again="$("$launcher" render --repo "$repo" 2>&1)"
+  named=no
+  if printf '%s\n' "$preview" | grep -qxF 'would remove .github/instructions/docs.instructions.md' &&
+      printf '%s\n' "$again" | grep -qxF 'removed .github/instructions/docs.instructions.md'; then named=yes; fi
+  case "$launcher:$named" in
+    "$BI:yes") ok 'a removal the index still tracks is named by a later dry run and render' ;;
+    "$BI:"*) bad 'a removal the index still tracks is named by a later dry run and render' "$preview $again" ;;
+    *:no) ok 'control: a render that reads only the disk forgets the removal' ;;
+    *) bad 'control: a render that reads only the disk forgets the removal' "$preview $again" ;;
+  esac
+  if [ "$launcher" = "$BI" ]; then
+    git -C "$repo" add -A >/dev/null 2>&1
+    expect_green 'the staged removal passes the staged check' check --staged --repo "$repo"
+  fi
+done
+
 bi_summary

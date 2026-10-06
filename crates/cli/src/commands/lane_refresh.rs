@@ -51,6 +51,7 @@ fn project_lane(cli: &Cli) -> Result<Option<String>, Box<dyn std::error::Error>>
         | Command::DriftHook { .. }
         | Command::Guard(_)
         | Command::GeneratedPaths
+        | Command::BotInstructionsRender
         | Command::Report(_)
         | Command::Source(_)
         | Command::Marketplace(_)

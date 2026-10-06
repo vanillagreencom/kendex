@@ -13,6 +13,10 @@ repository or spec root for a failure reading them, the argument for a usage
 refusal, the interpreter for a launcher refusal, the count for findings, and
 the `--input` path for `region-bounds`. It is not always a path.
 
+`unconfigured` names the manifest read when it declares no `[bot-instructions]`
+table. review-gate's consumer refresh reads that record to leave a repo that
+installed this package and never configured it unrendered.
+
 `region-input` is the one subject a person cannot open: the host writes the
 snapshot to a temporary file and unlinks it as soon as the child returns. The
 English below that record therefore carries the file the region lives in and

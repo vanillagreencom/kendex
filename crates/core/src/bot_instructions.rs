@@ -30,6 +30,39 @@ pub fn add_to_generated(env: &Env, scope: &Scope, generated: &mut GeneratedPaths
     Ok(())
 }
 
+/// Run the installed package's render once here, on the caller's own say-so.
+///
+/// No arming record licenses it and none is written: the invocation that
+/// calls this is the licence, spent on this one run, the way `kendex guard
+/// install` is for commit-guards. A consumer refresh calls it through a
+/// kendex verb with no credential in its environment, in a checkout it
+/// discards. The package's report comes back whatever its exit, because
+/// its verdict, including that the project never configured it, is the
+/// caller's to read. `None` where the project does not install the package.
+pub fn render_once(env: &Env, scope: &Scope) -> Result<Option<crate::guard::GuardReport>> {
+    let Scope::Project { root } = scope.canonical() else {
+        return Ok(None);
+    };
+    let Some(declared) = crate::engine::installed_declaration(env, scope, PACKAGE)? else {
+        return Ok(None);
+    };
+    let Some(installer) = declared.effects.installer.as_deref() else {
+        return Err(CoreError::BotInstructionsRender {
+            command: declared.root.display().to_string(),
+            root,
+            detail: "the installed package declares no installer to render with".to_owned(),
+        });
+    };
+    let command = declared.command(&root, installer);
+    crate::repo_effects::run_script(scope, &declared.root, installer)
+        .map(Some)
+        .map_err(|error| CoreError::BotInstructionsRender {
+            root,
+            command,
+            detail: error.to_string(),
+        })
+}
+
 /// Paths written by one successful render.
 #[derive(Debug, Default, PartialEq)]
 pub struct RenderedPaths {

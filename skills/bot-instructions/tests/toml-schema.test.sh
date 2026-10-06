@@ -413,9 +413,23 @@ printf 'schema = 6\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
 expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
   'a bot configuration scalar is refused as a table error naming the selected file' \
   check --repo "$repo"
+# A missing table is no schema finding: the package was never configured
+# here, and the record says so. refresh-consumer.sh in review-gate reads this
+# line to leave such a consumer unrendered. Without the refusal the run falls
+# through to the schema, which is the control.
 printf 'schema = 6\n' > "$repo/kendex-local.toml"
-expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
-  'a missing bot table is refused' \
-  check --repo "$repo"
+unconfigured_raise='        if "bot-instructions" not in resolved.data:
+            raise Unconfigured(config_path)
+'
+for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_raise" '')"; do
+  out="$("$launcher" render --repo "$repo" 2>&1)"
+  status=$?
+  case "$launcher:$status:$(printf '%s\n' "$out" | grep -cxF 'bot-instructions: unconfigured=kendex-local.toml')" in
+    "$BI:2:1") ok 'a missing bot table is refused as unconfigured, naming the manifest read' ;;
+    "$BI:"*) bad 'a missing bot table is refused as unconfigured, naming the manifest read' "$status: $out" ;;
+    *:1:0) ok 'control: without the refusal a missing table is a schema finding' ;;
+    *) bad 'control: without the refusal a missing table is a schema finding' "$status: $out" ;;
+  esac
+done
 
 bi_summary

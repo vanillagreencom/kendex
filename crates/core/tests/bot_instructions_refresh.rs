@@ -433,15 +433,62 @@ fn a_surface_the_render_no_longer_produces_is_removed_and_offered() {
     assert!(generated.whole.contains(&retired));
     assert!(!retired.exists());
 
-    let scan = offer_scan(&fixture, &generated);
-    let owned = &scan.owned;
+    // The desktop and the setup routes build their offer from a discovery
+    // made after the render already removed the file.
+    let mut after = GeneratedPaths::default();
+    bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut after)
+        .expect("the commit offer discovers the render after it ran");
+    assert!(after.whole.contains(&retired));
+
+    for generated in [generated, after] {
+        let scan = offer_scan(&fixture, &generated);
+        let owned = &scan.owned;
+        assert!(
+            owned
+                .iter()
+                .any(|owned| owned.path == ".github/instructions/retired.instructions.md"),
+            "the offer carries the removal: {owned:?}"
+        );
+        assert!(staged_check_passes(&fixture.root, owned));
+    }
+}
+
+/// The verb a consumer refresh calls renders an install no record armed,
+/// found where a copy delivery put it, and leaves no record behind.
+#[test]
+fn a_render_once_runs_an_unarmed_copy_and_records_nothing() {
+    let fixture = enabled_fixture_at(false, HarnessId::Claude, CLAUDE_PACKAGE);
+    let copilot = fixture.root.join(".github/copilot-instructions.md");
+    fs::remove_file(&copilot).expect("the rendered surface is removed");
+
+    let ran = bot_instructions::render_once(&fixture.env, &fixture.scope)
+        .expect("the installed package runs")
+        .expect("the copy is found");
+    assert_eq!(ran.code, 0, "the render failed: {ran:?}");
+    assert!(copilot.exists(), "the render wrote nothing");
+    let declared = kendex_core::engine::installed_declaration(
+        &fixture.env,
+        &fixture.scope,
+        "bot-instructions",
+    )
+    .expect("the declaration reads")
+    .expect("the package declares its effect");
     assert!(
-        owned
-            .iter()
-            .any(|owned| owned.path == ".github/instructions/retired.instructions.md"),
-        "the offer carries the removal: {owned:?}"
+        !kendex_core::repo_effects::armed_here(&fixture.scope, &declared)
+            .expect("the setup record reads"),
+        "the run wrote a setup record"
     );
-    assert!(staged_check_passes(&fixture.root, owned));
+}
+
+#[test]
+fn a_render_once_where_the_package_is_not_installed_runs_nothing() {
+    let fixture = enabled_fixture();
+    fs::remove_dir_all(fixture.root.join(CODEX_PACKAGE)).expect("the package is removed");
+    assert!(
+        bot_instructions::render_once(&fixture.env, &fixture.scope)
+            .expect("an absent package is no error")
+            .is_none()
+    );
 }
 
 #[test]

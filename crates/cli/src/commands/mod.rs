@@ -6,6 +6,7 @@ pub mod apply_cmd;
 pub mod attention;
 pub mod blocked;
 pub mod bookmark_cmd;
+pub mod bot_instructions_render;
 pub mod check;
 pub mod check_catalog;
 pub mod commit_offer;

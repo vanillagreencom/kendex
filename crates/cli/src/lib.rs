@@ -175,6 +175,9 @@ enum Command {
     /// Report a package problem to kendex or your current repository
     #[command(hide = true)]
     Report(ReportFlags),
+    /// Run the installed bot-instructions render here once, writing no setup record
+    #[command(name = "bot-instructions-render", hide = true)]
+    BotInstructionsRender,
     /// Add, switch on or off, and check marketplaces for updates
     Source(commands::source_cmd::SourceArgs),
     /// Subscribe to marketplaces and list subscriptions
@@ -485,6 +488,10 @@ fn generated_paths(env: &Env) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the dispatch table, one arm per verb; a split would hide part of the command surface from the reader who comes here to see it whole"
+)]
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
     let Some(command) = cli.command else {
@@ -572,6 +579,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
         Command::GeneratedPaths => generated_paths(&env)?,
+        Command::BotInstructionsRender => return commands::bot_instructions_render::run(&env),
         Command::Report(flags) => commands::report::run(&env, flags.into_args())?,
         Command::Source(args) => commands::source_cmd::run(&env, args)?,
         Command::Marketplace(command) => commands::marketplace_cmd::run(&env, command)?,

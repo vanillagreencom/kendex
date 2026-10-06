@@ -60,6 +60,26 @@ class ManifestError(InputError):
     key = "manifest"
 
 
+class Unconfigured(InputError):
+    """The resolved manifest declares no `[bot-instructions]` table.
+
+    A refusal of its own rather than a `toml-schema` finding: a repo that
+    installed this package and never configured it has nothing to render or
+    judge, and a caller that runs every installed package's render, such as
+    a consumer refresh, reads this key to leave that repo alone. The subject
+    is the manifest that was read.
+    """
+
+    key = "unconfigured"
+
+    def __init__(self, manifest):
+        super().__init__(
+            f"{manifest} declares no [bot-instructions] table, so there is nothing to "
+            "render or check. Add the table to configure this package, or remove it"
+        )
+        self.subject = manifest
+
+
 class RenderError(BotInstructionsError):
     """A render could not produce bytes, or a write phase failed."""
 

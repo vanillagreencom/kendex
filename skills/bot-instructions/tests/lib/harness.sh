@@ -174,6 +174,28 @@ bi_commit() {
   git -C "$1" commit -qm fixture >/dev/null 2>&1 || true
 }
 
+# A disposable copy of the package with one edit, for a must-fail control
+# that removes behavior. Prints the copy's launcher. The edit must match
+# exactly once, or the control would run the unedited package.
+bi_mutant() { # NAME FILE OLD NEW
+  local copy
+  copy="$BI_TMP/mutant-$1"
+  rm -rf -- "${copy:?}"
+  mkdir -p "$copy"
+  cp -R "$BI_ROOT/skills/bot-instructions/SKILL.md" "$BI_ROOT/skills/bot-instructions/schemas" \
+    "$BI_ROOT/skills/bot-instructions/scripts" "$copy/" || return 1
+  python3 - "$copy/$2" "$3" "$4" <<'PY' || return 1
+import sys
+from pathlib import Path
+path, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = path.read_text()
+if text.count(old) != 1:
+    sys.exit(f"bi_mutant: {path}: expected one match, found {text.count(old)}")
+path.write_text(text.replace(old, new))
+PY
+  printf '%s\n' "$copy/scripts/bot-instructions"
+}
+
 bi_out=""
 bi_status=0
 bi_run() {

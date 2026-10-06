@@ -26,7 +26,7 @@ repo-effects:
   uninstaller: "scripts/bot-instructions retire"
   checker: "scripts/bot-instructions check"
   staged-checker: "scripts/bot-instructions check --staged"
-  removal: "Delete each generated surface and the pointed code-review file first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
+  removal: "Remove the owned Code Review Rules body but keep its heading, disable the [bot-instructions.bots] flags, render, which removes the marked files, then remove the package."
   notes:
     - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
     - "The review doctrine is written to [bot-instructions.repo] code_review_path, which defaults to .github/instructions/code-review.md and is refused outside that directory, so every path this package writes is one of those listed above."
@@ -78,7 +78,7 @@ A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plu
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 - `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
 
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces before it writes, and prints `removed PATH` for it. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces after its writes, and prints `removed PATH` for it. A manifest that declares no `[bot-instructions]` table is refused as `unconfigured`, with nothing written. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## The doctrine lives in one file per repo
 

@@ -4,8 +4,9 @@
 render and read the scratch tree on both verbs. Repo-state validators judge
 the repository, so a scratch tree is the one place they cannot fail.
 
-`drift` is the one check with no question to answer at render time — a render
-exists to change the bytes it compares — and the run says it was skipped
+`drift` and the file half of `orphan` are the checks with no question to
+answer at render time — a render exists to change the bytes `drift` compares,
+and it removes the files `orphan` names — and the run says each was skipped
 rather than counting it as passed.
 """
 
@@ -14,7 +15,7 @@ import contextlib
 from .constants import CODERABBIT_SCHEMA_PATH
 from . import manifest
 from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
-                     ValidationFailed)
+                     Unconfigured, ValidationFailed)
 from . import config as config_mod
 from . import model as model_mod
 from . import render as render_mod
@@ -29,7 +30,14 @@ BYTE_VALIDATORS = (
     vb.qodo_parity,
     vb.qodo_best_practices,
 )
-REPO_VALIDATORS = (vr.agents_section, vr.orphan, vr.drift)
+REPO_VALIDATORS = (vr.agents_section, vr.orphan_file, vr.orphan_region, vr.drift)
+# What `render` does instead of each validator it skips, said in its output.
+RENDER_SKIPS = {
+    vr.drift: "drift: skipped on render. A render exists to change the bytes it "
+              "compares, so at render time it would red on its own purpose.",
+    vr.orphan_file: "orphan: marked files skipped on render. A render removes each "
+                    "one after its writes.",
+}
 
 
 @contextlib.contextmanager
@@ -69,6 +77,8 @@ class Context:
         with _as_finding("toml-schema", None):
             resolved = manifest.resolve(tree)
         config_path = resolved.chosen
+        if "bot-instructions" not in resolved.data:
+            raise Unconfigured(config_path)
         with _as_finding("toml-schema", config_path):
             self.config = config_mod.parse(
                 resolved.data.get("bot-instructions"), f"{config_path} [bot-instructions]"
@@ -109,11 +119,8 @@ def validate(ctx):
         check(ctx, findings)
     vr.exclusion_consistency(ctx, findings)
     for check in REPO_VALIDATORS:
-        if check is vr.drift and ctx.verb == "render":
-            ctx.skipped.append(
-                "drift: skipped on render. A render exists to change the bytes it "
-                "compares, so at render time it would red on its own purpose."
-            )
+        if ctx.verb == "render" and check in RENDER_SKIPS:
+            ctx.skipped.append(RENDER_SKIPS[check])
             continue
         check(ctx, findings)
     return findings

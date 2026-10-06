@@ -11,8 +11,8 @@
 # than one. Every step runs its scripts from that checkout. The consumer code
 # a run executes is the settings report in refresh-consumer.sh, which sources
 # the consumer's refreshed orch libraries, and the refreshed bot-instructions
-# render where the default branch configures that package, each under env -i
-# with no credential.
+# render kendex runs once in the run's checkout, each under env -i with no
+# credential.
 #
 # Report lines, one per line: kendex-install: version=TAG commit=SHA on
 # success, kendex-install: cause=KEY value=VALUE on a refusal, and
