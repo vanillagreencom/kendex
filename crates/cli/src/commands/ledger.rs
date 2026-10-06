@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
 
-use kendex_core::engine::{EngineReport, ItemSafety};
+use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
 use super::offers::{Blocked, scope_flag};
@@ -193,22 +193,6 @@ fn conflict_exit(scope: &Scope, blocked: &[Blocked]) -> String {
         "kendex apply --replace-unmanaged{}{adopt}",
         scope_flag(scope)
     )
-}
-
-/// The items this plan skipped on conflict that its request asked for:
-/// named, a member of a set named, or required by one of those. A skip
-/// of anything else — a package declared before this add, a record
-/// nothing declares — leaves the run's exit as it was, and so does an
-/// item held back by the person's own edits alone, whose edited files
-/// stand where it installs.
-pub fn skipped_asked(report: &EngineReport, blocked: &[Blocked]) -> Vec<(ItemKind, String)> {
-    let asked = report.asked_for();
-    blocked
-        .iter()
-        .filter(|item| item.stopped)
-        .map(|item| (item.kind, item.name.clone()))
-        .filter(|item| asked.contains(item))
-        .collect()
 }
 
 /// A run that left out something it was asked for, ended where a script

@@ -7,7 +7,7 @@ use crate::clock::timestamp;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockEntry};
-use crate::model::Scope;
+use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
@@ -53,6 +53,9 @@ pub(super) struct PlanSink<'a> {
     pub(super) new_lock: &'a mut Lock,
     pub(super) kept: &'a mut KeptAsIs,
     pub(super) written: &'a mut Written,
+    /// The conflict rows the person's own edit to a shared file accounts
+    /// for, which their cause does not say (`EngineReport::own_edit_rows`).
+    pub(super) own_edit_rows: &'a mut std::collections::BTreeSet<(ItemKind, String, HarnessId)>,
 }
 
 /// `owned` holds every position this scope's installs recorded writing —
@@ -77,6 +80,7 @@ pub(super) fn plan_item(
         new_lock,
         kept,
         written,
+        own_edit_rows,
         ..
     } = sink;
     let row = row_for(item, scope);
@@ -133,7 +137,10 @@ pub(super) fn plan_item(
             also,
         } => Some((Some(cause), detail, compared, also)),
         Planned::Conflict(detail) => Some((None, detail, None, Vec::new())),
-        Planned::Edited { cause, detail } => Some((Some(cause), detail, None, Vec::new())),
+        Planned::Edited(detail) => {
+            own_edit_rows.insert((item.kind, item.name.clone(), item.harness));
+            Some((None, detail, None, Vec::new()))
+        }
         Planned::Uncompared(detail) => Some((Some(DriftCause::Uncompared), detail, None, vec![])),
         Planned::Drift(state, detail) => {
             drift.push(row(state, detail));
@@ -256,13 +263,10 @@ pub(super) enum Planned {
     Clean,
     Drift(DriftState, String),
     Conflict(String),
-    /// The person's own edit to a part of a shared file kendex recorded
-    /// writing: a decision of their own rather than a dead stop. The
-    /// cause is `LocalEdit`, or `Both` where upstream moved too.
-    Edited {
-        cause: DriftCause,
-        detail: String,
-    },
+    /// The person's own edit to the part of a shared file kendex recorded
+    /// writing. Its row reads as any other conflict does; the pass also
+    /// names it in `own_edit_rows`, which only the run's exit reads.
+    Edited(String),
     /// What sits at the item's position would not read, so nothing was
     /// compared (invariant 12). The detail names the position and the
     /// read's own error; the cause carries that no exit is on offer.
@@ -412,7 +416,7 @@ fn plan_registration(
     if matches!(
         planned,
         Planned::Conflict(_)
-            | Planned::Edited { .. }
+            | Planned::Edited(_)
             | Planned::Uncompared(_)
             | Planned::Unmanaged { .. }
     ) {

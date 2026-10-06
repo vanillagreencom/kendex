@@ -16,12 +16,21 @@ use super::{
     removal, written,
 };
 
+/// What the item pass found beside its drift rows, this pass's alone.
+pub(super) struct ItemPass {
+    /// The fork edits this pass took into their own local sources.
+    pub(super) fork_edits: Vec<super::ForkEdit>,
+    /// The installations whose Missing row is a deletion of what the
+    /// record says stood there.
+    pub(super) recorded_gone: Vec<super::report_types::RecordedGone>,
+    /// The conflict rows the person's own edit to a shared file accounts
+    /// for (`EngineReport::own_edit_rows`).
+    pub(super) own_edit_rows: BTreeSet<(crate::model::ItemKind, String, crate::model::HarnessId)>,
+}
+
 /// One pass over the desired items, with the two holds that outrank
 /// planning: a revision conflict writes nothing, and an edited install
 /// writes nothing unless the caller asked for edits to be discarded.
-/// Returns the fork edits this pass took into their own local sources
-/// and the installations whose Missing row is a deletion of what the
-/// record says stood there; both are this pass's alone and are not drift.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_items(
     env: &Env,
@@ -36,11 +45,12 @@ pub(super) fn plan_items(
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
     written: &mut written::Written,
-) -> Result<(Vec<super::ForkEdit>, Vec<super::report_types::RecordedGone>)> {
+) -> Result<ItemPass> {
     let ownership = super::ownership_for_plan(env, scope, lock, &state.items)?;
     let mut absorbed = std::collections::BTreeMap::new();
     let mut fork_edits = Vec::new();
     let mut recorded_gone = Vec::new();
+    let mut own_edit_rows = BTreeSet::new();
     for item in &state.items {
         let before = drift.len();
         let mut sink = item_plan::PlanSink {
@@ -52,6 +62,7 @@ pub(super) fn plan_items(
             new_lock,
             kept,
             written,
+            own_edit_rows: &mut own_edit_rows,
         };
         if holds::hold_rev_conflict(item, scope, lock, &state.rev_conflicts, &mut sink) {
             continue;
@@ -79,7 +90,11 @@ pub(super) fn plan_items(
             recorded_gone.push((item.kind, item.name.clone()));
         }
     }
-    Ok((fork_edits, recorded_gone))
+    Ok(ItemPass {
+        fork_edits,
+        recorded_gone,
+        own_edit_rows,
+    })
 }
 
 /// Whether a Missing row of this item is a file kendex wrote that is gone:

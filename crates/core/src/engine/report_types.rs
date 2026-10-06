@@ -357,6 +357,12 @@ pub struct EngineReport {
     /// The installations whose Missing row is a deletion of a rendering the
     /// record says stood there; the Updates read says it as `files_missing`.
     pub recorded_gone: Vec<RecordedGone>,
+    /// The conflict rows the person's own edit to the part of a shared
+    /// file kendex recorded writing accounts for (an output style's block
+    /// or Claude selection), by kind, name and tool. Their cause does not
+    /// say so, and every other surface reads them as conflicts of no known
+    /// cause; only [`EngineReport::skipped_asked`] reads this.
+    pub own_edit_rows: BTreeSet<(ItemKind, String, HarnessId)>,
     /// The paths this pass renders into the scope, split into the files
     /// kendex owns whole and the shared configuration files it writes one
     /// key in. The inventory is written from it, and the commit offer
@@ -504,6 +510,7 @@ impl EngineReport {
             fork_edits: Vec::new(),
             resolved_sources: BTreeMap::new(),
             recorded_gone: Vec::new(),
+            own_edit_rows: BTreeSet::new(),
             generated: super::GeneratedPaths::default(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
@@ -517,6 +524,28 @@ impl EngineReport {
             retired_bundles: BTreeMap::new(),
             asked: Asked::Declared,
         }
+    }
+
+    /// Each package its request asked for ([`EngineReport::asked_for`])
+    /// that this pass skipped on conflict: a row of it is a dead stop the
+    /// person's own edits do not account for, so what it asked for is not
+    /// on disk. A package held back by their own edits alone keeps them
+    /// where it installs, and its record. What a run's exit is read from.
+    pub fn skipped_asked(&self) -> Vec<(ItemKind, String)> {
+        let asked = self.asked_for();
+        let skipped: BTreeSet<(ItemKind, String)> = self
+            .drift
+            .iter()
+            .filter(|row| {
+                row.dead_stop()
+                    && !self
+                        .own_edit_rows
+                        .contains(&(row.kind, row.name.clone(), row.harness))
+            })
+            .map(|row| (row.kind, row.name.clone()))
+            .filter(|item| asked.contains(item))
+            .collect();
+        skipped.into_iter().collect()
     }
 
     /// Each package this pass derives for what its request asked: under

@@ -332,9 +332,7 @@ fn install_step(
     wrote.effects.extend(report.repo_effects.iter().cloned());
     wrote.planned = !report.plan.is_empty();
     let blocked = print_report(env, &report, Listing::Attention);
-    wrote
-        .skipped
-        .extend(super::ledger::skipped_asked(&report, &blocked));
+    wrote.skipped.extend(report.skipped_asked());
     wrote.blocked.extend(blocked);
     wrote.scored.extend(report.safety.iter().cloned());
     wrote.applied += apply_report(env, &report)?;

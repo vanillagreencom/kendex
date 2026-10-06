@@ -132,7 +132,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             );
             continue;
         }
-        skipped.extend(super::ledger::skipped_asked(&report, &blocked));
+        skipped.extend(report.skipped_asked());
         // The same close as refresh, for the same reason: what this run
         // wrote is one of its outcomes, and the installs it refused and
         // the scores it read are the others.

@@ -291,7 +291,7 @@ fn write_and_close(
     allow_effects: bool,
 ) -> CliResult {
     let blocked = print_report(env, report, Listing::Attention);
-    let skipped = super::ledger::skipped_asked(report, &blocked);
+    let skipped = report.skipped_asked();
     let applied = confirm_and_apply(env, report, yes)?;
     let walked = super::repo_effects::disclose_and_finish(
         env,

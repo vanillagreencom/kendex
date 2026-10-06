@@ -192,7 +192,7 @@ pub fn plan_scope(
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
 
-    let (fork_edits, recorded_gone) = plan_pass::plan_items(
+    let item_pass = plan_pass::plan_items(
         env,
         &state,
         scope,
@@ -276,9 +276,10 @@ pub fn plan_scope(
         kept,
         safety,
         instruction_shims,
-        fork_edits,
+        fork_edits: item_pass.fork_edits,
         resolved_sources,
-        recorded_gone,
+        recorded_gone: item_pass.recorded_gone,
+        own_edit_rows: item_pass.own_edit_rows,
         generated: generated.editing(edited, generated_paths::recorded(env, scope, lock)?),
         installations,
         wanted,

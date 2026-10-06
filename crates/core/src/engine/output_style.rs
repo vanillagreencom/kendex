@@ -1,6 +1,5 @@
 //! Response styles use the existing whole-file and shared-file writers.
 
-use super::DriftCause;
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
 use super::item_plan::Planned;
 use crate::configedit::{ConfigEdit, marker_block, upsert_marker_block};
@@ -277,8 +276,7 @@ pub(crate) fn file_problem(path: &Path) -> Option<String> {
 }
 
 /// Refuse linked shared files and edits to recorded style content. An
-/// edit is the person's own, so it comes back as one, beside the edits
-/// `holds::hold_local_edit` holds for every other kind.
+/// edit is the person's own and comes back as [`Planned::Edited`].
 pub(super) fn conflict(
     item: &Desired,
     existing: Option<&LockEntry>,
@@ -308,19 +306,13 @@ pub(super) fn conflict(
             }
         }
     }
-    if let Some(entry) = existing
-        && let Some(style) = live
+    if let Some(style) = live
         && !(discard && matches!(style, OutputStyleRecord::Block { .. }))
         && changed(style)?
     {
-        let cause = match entry.source_hash == item.hash {
-            true => DriftCause::LocalEdit,
-            false => DriftCause::Both,
-        };
-        return Ok(Some(Planned::Edited {
-            cause,
-            detail: "the installed output style block or selection was edited".into(),
-        }));
+        return Ok(Some(Planned::Edited(
+            "the installed output style block or selection was edited".into(),
+        )));
     }
     Ok(None)
 }
