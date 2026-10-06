@@ -1,1 +1,1 @@
-- `kendex enable`, `kendex disable`, the app's on/off switch and `kendex source remove`, `enable` and `disable` hold every package they do not name at the catalog commit `.kendex-lock.json` records, so switching one package or source no longer re-renders the rest at the newest catalog.
+- `kendex enable`/`disable`, the app's switch and `kendex source remove`/`enable`/`disable` hold packages they do not name at the commit `.kendex-lock.json` records, not the newest catalog.
