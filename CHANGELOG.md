@@ -125,7 +125,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.
 - `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.
 
-#### orch 4.3.2
+#### orch 4.3.6
 
 - `oversee-watch` reports a lane once past `ORCH_WATCH_LANE_AGE_SECS` (default 4 hours) as `lane-long` with its stage, and the overseer names the cause.
 - `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
@@ -151,6 +151,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
 - A restack skips its range re-test when it met no conflict, or only conflicts over changelog entries and the version field commit-guards reads; the lane records which.
 - `lanes pick` charges each lane already on an account the 5-hour session window it will spend before that window resets, whatever bucket binds, so a weekly-bound account no longer takes every new lane until its session walls them all; a refusal names the session window where it decided, and each launched lane's fleet record keeps the pick reading it was launched on.
+- item-tier and restack-skip read a SKILL.md metadata.version raise as version-only when a column-0 comment sits inside the frontmatter metadata map.
 
 #### preflight 1.1.0
 
