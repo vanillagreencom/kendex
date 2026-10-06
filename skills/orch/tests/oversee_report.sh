@@ -309,12 +309,15 @@ assert_eq "$RC|$(grep -c -- '--state merged' "$CASE/gh.calls")|$(grep -c -- '--h
 
 echo "=== render: Landed finds a lane's pull request on a branch that names no item ==="
 # A Claude cloud session pushes to claude/..., so its pull request is the
-# item's by the key in its title or a Closes line; a parked record's own
-# number holds whatever the branch. #33 names KEN-30, not KEN-3, and #34
-# mentions KEN-3 outside a Closes line.
+# item's by the key in its title's scope or right after Closes; a parked
+# record's own number holds whatever the branch, in the repository that
+# record names. KEN-4's earlier record carries no park, and the parked one
+# after it is the one read. #33 and #37 close KEN-30, not KEN-3; #34, #35
+# and #36 only mention KEN-3: in a body, in another item's title, and in a
+# revert title. owner/other's #44 shares the parked number and names no item.
 new_case landed_cloud_branch
 report -3600
-fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)" "$(lane KEN-3 done)" \
+fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)" "$(lane KEN-3 done)" "$(lane KEN-4 done -172800)" \
   "$(lane KEN-4 parked -86400 ssh-a | jq -c '.parked = {pr: 44, head: "abc123", repo: "Owner/Repo", at: "2026-09-20T00:00:00Z"}')"
 for n in 1 2 3 4; do issue "KEN-$n" "Title $n" "Outcome $n"; done
 printf '%s\n' \
@@ -322,26 +325,35 @@ printf '%s\n' \
   "$(merged_pr 32 claude/fix-b -80 3232323aaa | jq -c '. + {title: "chore: b", body: "## Completed Issues\r\n- Closes KEN-2 - b\r\n"}')" \
   "$(merged_pr 33 claude/fix-c -70 3333333aaa | jq -c '. + {title: "fix(KEN-30): c", body: "- Closes KEN-30"}')" \
   "$(merged_pr 34 claude/fix-d -60 3434343aaa | jq -c '. + {title: "chore: d", body: "Follow-up to KEN-3."}')" \
+  "$(merged_pr 35 ken-1805 -58 3535353aaa | jq -c '. + {title: "refactor(KEN-1805): x before KEN-3 grows it"}')" \
+  "$(merged_pr 36 revert-31 -56 3636363aaa | jq -c '. + {title: "Revert \"fix(KEN-3): c\""}')" \
+  "$(merged_pr 37 claude/fix-g -54 3737373aaa | jq -c '. + {title: "chore: g", body: "- Closes KEN-30 - Follow-up to KEN-3"}')" \
   "$(merged_pr 44 claude/fix-e -50 4444444aaa)" | jq -s . > "$CASE/merged.json"
+merged_pr 44 claude/other -40 4040404aaa | jq -c '. + {title: "chore: unrelated"}' | jq -s . > "$CASE/merged.owner_other.json"
 LANDED_CLOUD_WANT="0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |
 | KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |
 | KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |"
 landed_rows() { printf '%s|%s' "$RC" "$(awk '/^Landed/ { on = 1; next } /^Escapes/ { on = 0 } on && /^\| KEN-/' <<<"$OUT")"; }
-run -- render --state "$CASE/state.json" --repo owner/repo
+run -- render --state "$CASE/state.json" --repo owner/repo --repo owner/other
 assert_eq "$(landed_rows)" "$LANDED_CLOUD_WANT" \
-  "a claude/ pull request lands by its title or Closes line and a parked one by its number, and one naming another item does not"
-# Rows, tab-separated: case, lane-state.sh text, its replacement, want.
-while IFS=$'\t' read -r name old new want; do
-  scripts="$(mutant_scripts "landed-$name/orch" lib/lane-state.sh)" || exit 1
+  "a claude/ pull request lands by its title scope or Closes reference and a parked one by its number in its own repository, and one naming another item or only mentioning it does not"
+# Rows, tab-separated: case, the file under scripts/, its text, the
+# replacement, want.
+while IFS=$'\t' read -r name file old new want; do
+  scripts="$(mutant_scripts "landed-$name/orch" "$file")" || exit 1
   ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/landed-$name/github"
-  mutate_file "$scripts/lib/lane-state.sh" "$old" "$new"
-  REPORT_UNDER_TEST="$scripts/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
+  mutate_file "$scripts/$file" "$old" "$new"
+  REPORT_UNDER_TEST="$scripts/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo --repo owner/other
   assert_eq "$(landed_rows)" "${want//\\n/$'\n'}" "control: $name"
 done <<'ROWS'
-no_title_rule	or ((.title // "") | ascii_downcase | test($named))	or false	0|| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
-no_closes_rule	test("^\\s*([-*+]\\s+)?closes\\s") and test($named)	false	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
-no_number_rule	select(.number == $pr	select(false	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |
-no_word_end	($|[^a-z0-9])	()	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-3 (#33, 3333333) | Title 3 | Outcome 3 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+no_title_rule	lib/lane-state.sh	or ((.title // "") | ascii_downcase | test(	or false and ((.title // "") | ascii_downcase | test(	0|| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+title_anywhere	lib/lane-state.sh	test("^[a-z]+\\(([^)]*[ ,])?" + $word + "([ ,][^)]*)?\\)!?:")	test("(^|[^a-z0-9])" + $word + "($|[^a-z0-9])")	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-3 (#35, 3535353) | Title 3 | Outcome 3 |\n| KEN-3 (#36, 3636363) | Title 3 | Outcome 3 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+no_closes_rule	lib/lane-state.sh	test("^\\s*([-*+]\\s+)?closes\\s+" + $word + "($|[^a-z0-9])")	false	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+closes_anywhere	lib/lane-state.sh	closes\\s+" + $word	closes\\s.*" + $word	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-3 (#37, 3737373) | Title 3 | Outcome 3 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+no_word_end	lib/lane-state.sh	+ $word + "($|[^a-z0-9])")	+ $word)	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-3 (#33, 3333333) | Title 3 | Outcome 3 |\n| KEN-3 (#37, 3737373) | Title 3 | Outcome 3 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |
+no_number_rule	lib/lane-state.sh	select(.number == $pr	select(false	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |
+first_record	oversee-report	map((map(select(.parked)) | first) // first	map(first	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |
+any_repo_number	oversee-report	(if ($lane.parked.repo // "" | ascii_downcase) == ($repo | ascii_downcase) then $lane.parked.pr else null end)	$lane.parked.pr	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |\n| KEN-4 (#44, 4040404) | Title 4 | Outcome 4 |
 ROWS
 
 # ORCH_CONNECTED_REPOS: each listed repository is read after --repo by the

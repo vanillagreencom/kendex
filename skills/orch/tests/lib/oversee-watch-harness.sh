@@ -61,9 +61,10 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   merged.json   body for `pr list --state merged` (default: []);
 #                 merged.<SLUG>.json answers that --repo alone, <SLUG> being
 #                 the repo with everything outside [A-Za-z0-9._-] as `_`; a
-#                 `--search '"KEY" in:title,body'` keeps the rows whose title
-#                 or body holds KEY, in any case, as GitHub's text search does,
-#                 and any other --search is not applied
+#                 `--search '"KEY" in:title,body ...'` keeps the rows whose
+#                 title or body holds KEY, in any case, as GitHub's text search
+#                 does; its other qualifiers and any other --search are not
+#                 applied
 #   open.txt      the open pull requests `pr list --state open` answers
 #                 (default: none), with open.<SLUG>.txt per repo the same way:
 #                 one `<number>\t<head>\t<title>[\t<author login>[\t<head
@@ -251,7 +252,7 @@ case "${1:-} ${2:-}" in
       # --head narrows to one branch, --limit caps the page. gh always returns
       # headRepositoryOwner; a fixture that omits it is a same-repo head.
       key=""
-      [[ "$search" != \"*\"" in:title,body" ]] || { key="${search#\"}"; key="${key%%\"*}"; }
+      [[ "$search" != \"*\"" in:title,body"* ]] || { key="${search#\"}"; key="${key%%\"*}"; }
       jq -c --arg head "$head" --arg owner "${repo%%/*}" --argjson limit "${limit:-1000}" --arg key "$key" \
         '[ .[] | select($head == "" or .headRefName == $head)
                 | select($key == "" or ((.title // "") + " " + (.body // "") | ascii_downcase | contains($key | ascii_downcase)))

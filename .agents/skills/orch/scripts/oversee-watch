@@ -1254,10 +1254,13 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # closed here: the relaunched lane's own completion is what closes it. The
 # merged row that holds the key is what parked_merged_owed repeats the hand
 # from at each heartbeat while the record still reads parked.
+# GitHub's search ceiling for one gh pr list; the key search refuses a page
+# that reaches it, since the item's own pull request may be past it.
+MERGED_SEARCH_PAGE=1000
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo list named pr hit hits prior keys fresh key line state="${PW_SEEN[0]}"
-  local fields=number,headRefName,headRepositoryOwner,mergedAt,title,body
+  local fields=number,headRefName,headRepositoryOwner,mergedAt,title,body search rows
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     PARKED_KEY=""
@@ -1268,8 +1271,13 @@ check_merged() {
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
       # A cloud session's branch names no item, so its pull request is found
       # by the key in its title or body; lane_own judges what this returns.
-      named="$(gh pr list --repo "$repo" --search "\"$item\" in:title,body" --state merged --limit 10 --json "$fields" 2>"$errf")" \
+      # GitHub text search cannot ask for the key's place in a title scope or
+      # after Closes, so mentions come back too, bounded by --since.
+      search="\"$item\" in:title,body${SINCE:+ merged:>=$SINCE}"
+      named="$(gh pr list --repo "$repo" --search "$search" --state merged --limit "$MERGED_SEARCH_PAGE" --json "$fields" 2>"$errf")" \
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
+      rows="$(jq length <<<"$named" 2>"$errf")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
+      [[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
       pr=null
       [[ "${PARKED_KEY%#*}" != "$repo" ]] || pr="${PARKED_KEY##*#}"
       if ! hit="$(jq -rs --arg item "$item" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson pr "$pr" --argjson since "$SINCE_EPOCH" \

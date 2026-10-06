@@ -745,30 +745,58 @@ out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc
 assert_eq "$out" "EVENT merged 9 issue-5 owner/repo" "run 3: a further PR on the branch is the event, and the first is not repeated beside it" "$err"
 
 # A Claude cloud session pushes to claude/..., a branch naming no item: its
-# pull request is the item's by the key in its title, and the line names the
-# item's branch. #51 names KEN-500, another item, and is not KEN-50's. Red
-# without the search: the per-branch list never returns a claude/ head.
+# pull request is the item's by the key in its title's scope, and the line
+# names the item's branch. Eleven later pull requests only mention KEN-50 in
+# a body, ahead of it in the search's page. #51 names KEN-500, another item;
+# #53 is another item's whose title mentions KEN-50; #54 is a revert title;
+# #55 closes KEN-30 and mentions KEN-50 after it. #52 is on the item's branch
+# and names it too, so the branch list and the search both return it.
+merged_cloud_fixture() {
+  jq -n '[range(70; 59; -1) | {number: ., headRefName: "claude/mention-\(.)", title: "chore: \(.)",
+      body: "Follow-up to KEN-50.", mergedAt: "2026-08-15T11:00:00Z"}]
+    + [{number: 55, headRefName: "claude/fix-e", title: "chore: e", body: "- Closes KEN-30 - Follow-up to KEN-50", mergedAt: "2026-08-15T10:50:00Z"},
+       {number: 54, headRefName: "claude/revert", title: "Revert \"fix(KEN-50): a\"", mergedAt: "2026-08-15T10:45:00Z"},
+       {number: 53, headRefName: "ken-1805", title: "refactor(KEN-1805): x before KEN-50 grows it", mergedAt: "2026-08-15T10:40:00Z"},
+       {number: 52, headRefName: "ken-50", title: "fix(KEN-50): c", mergedAt: "2026-08-15T10:35:00Z"},
+       {number: 51, headRefName: "claude/fix-b", title: "fix(KEN-500): b", mergedAt: "2026-08-15T10:30:00Z"},
+       {number: 50, headRefName: "claude/fix-a", title: "fix(KEN-50): a", mergedAt: "2026-08-15T10:00:00Z"}]' > "$STUB_DIR/merged.json"
+}
+MERGED_CLOUD_WANT="0|EVENT merged 52 ken-50 owner/repo
+EVENT merged 50 ken-50 owner/repo"
 new_case merged_cloud_branch
-cat > "$STUB_DIR/merged.json" <<'EOF'
-[
-  {"number": 51, "headRefName": "claude/fix-b", "title": "fix(KEN-500): b", "mergedAt": "2026-08-15T10:30:00Z"},
-  {"number": 50, "headRefName": "claude/fix-a", "title": "fix(KEN-50): a", "mergedAt": "2026-08-15T10:00:00Z"}
-]
-EOF
+merged_cloud_fixture
 err="$TMP_ROOT/e2i"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc|$(head -1 <<<"$out")" "0|EVENT merged 50 ken-50 owner/repo" \
-  "a merged claude/ pull request whose title names the item is its merged event, under the item's branch" "$err"
-assert_not_contains "$out" "EVENT merged 51" "a claude/ pull request naming another item is not the item's" "$err"
-CLOUD_MUTANT_DIR="$TMP_ROOT/cloud-merged"
-CLOUD_MUTANT="$(mutant_scripts cloud-merged/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$CLOUD_MUTANT_DIR/github"
-mutate_file "$CLOUD_MUTANT" '--search "\"$item\" in:title,body"' '--search "\"$item\" in:title,body" --head "$branch"'
-new_case merged_cloud_branch_control
-cp -- "$TMP_ROOT/cases/merged_cloud_branch/merged.json" "$STUB_DIR/merged.json"
-out="$(WATCH_BIN="$CLOUD_MUTANT" run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$out" "EVENT merged" "control: a search narrowed to the item's branch misses the claude/ pull request" "$err"
-
+assert_eq "$rc|$out" "$MERGED_CLOUD_WANT" \
+  "a claude/ pull request whose title scope names the item is its merged event, once each, and mentions, other items and reverts are not" "$err"
+# Rows, tab-separated: case, oversee-watch text, its replacement, want. Each
+# reddens the case above: the search narrowed to the item's branch, a
+# ten-row page the mentions fill, and the two lists not de-duplicated.
+while IFS=$'\t' read -r name old new want; do
+  bin="$(mutant_scripts "cloud-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/cloud-$name/github"
+  mutate_file "$bin" "$old" "$new"
+  new_case "merged_cloud_$name"
+  merged_cloud_fixture
+  out="$(WATCH_BIN="$bin" run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
+  assert_eq "$rc|$out" "${want//\\n/$'\n'}" "control: $name" "$err"
+done <<'ROWS'
+head_narrowed	--search "$search" --state merged	--search "$search" --head "$branch" --state merged	0|EVENT merged 52 ken-50 owner/repo
+page_of_ten	--limit "$MERGED_SEARCH_PAGE" --json	--limit 10 --json	0|EVENT merged 52 ken-50 owner/repo
+no_dedup	add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)	add // []	0|EVENT merged 52 ken-50 owner/repo\nEVENT merged 52 ken-50 owner/repo\nEVENT merged 50 ken-50 owner/repo
+ROWS
+# A search page that reaches its limit may hold the item's pull request past
+# it, so the pass exits 2 rather than judge a partial list.
+new_case merged_search_full
+jq -n '[range(1000) | {number: (2000 + .), headRefName: "claude/m-\(.)", title: "chore", body: "Follow-up to KEN-50.", mergedAt: "2026-08-15T11:00:00Z"}]' > "$STUB_DIR/merged.json"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc|$out|$(grep -c '^oversee-watch: merged-search-truncated repo=owner/repo item=KEN-50 limit=1000$' "$err" || true)" "2||1" \
+  "a key search that fills its page exits 2 naming the repository, the item and the limit" "$err"
+FULL_MUTANT="$(mutant_scripts cloud-full/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/cloud-full/github"
+mutate_file "$FULL_MUTANT" '[[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]] ||' 'true ||'
+out="$(WATCH_BIN="$FULL_MUTANT" run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc|$(grep -c '^EVENT merged' <<<"$out" || true)" "0|0" "control: with the page check removed a full page is judged as whole and the pass exits 0" "$err"
 
 # --- 2b. handoff -----------------------------------------------------------
 # handoff_record ITEM [RESUMED_AT] — the checkout's state carrying
@@ -1325,6 +1353,31 @@ mutate_file "$OWED_MUTANT" '    [[ " $row " == *" ${PARKED_KEYS[$i]} "* ]] || co
 WATCH_BIN="$OWED_MUTANT" parked_run --
 assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
   "control: with the membership test removed another number's merge hands the parked record on at the heartbeat" "$err"
+# A parked pull request the key search returns but whose title and body name
+# the item in neither its scope nor a Closes line is the item's by its
+# recorded number alone, in the repository the record names: owner/other's
+# #2 mentions issue-2 the same way and is not the item's.
+parked_number_case() { # NAME [WATCH_BIN]
+  parked_fleet "$1"
+  printf '[{"number": 2, "headRefName": "claude/fix-p", "title": "chore: p", "body": "Follow-up to issue-2.", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  printf '[{"number": 2, "headRefName": "claude/fix-q", "title": "chore: q", "body": "Follow-up to issue-2.", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.owner_other.json"
+  WATCH_BIN="${2:-${WATCH_BIN:-}}" parked_run -- --repo owner/repo --repo owner/other
+}
+parked_number_case parked_number_only
+assert_eq "rc=$rc events=$EVENTS merged=$(grep '^EVENT merged ' <<<"$out")" \
+  "rc=0 events=merged 2,parked-merged issue-2 merged=EVENT merged 2 issue-2 owner/repo" \
+  "a parked pull request only its recorded number claims is the item's merge and is handed on, in its own repository alone" "$err"
+# Rows, tab-separated: case, oversee-watch text, its replacement, want.
+while IFS=$'\t' read -r name old new want; do
+  bin="$(mutant_scripts "parked-number-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/parked-number-$name/github"
+  mutate_file "$bin" "$old" "$new"
+  parked_number_case "parked_number_$name" "$bin"
+  assert_eq "rc=$rc events=$EVENTS" "$want" "control: $name" "$err"
+done <<'ROWS'
+pr_null	|| pr="${PARKED_KEY##*#}"	|| pr=null	rc=0 events=heartbeat loops=2
+any_repo	[[ "${PARKED_KEY%#*}" != "$repo" ]] ||	[[ -z "$PARKED_KEY" ]] ||	rc=0 events=merged 2,merged 2,parked-merged issue-2
+ROWS
 # The record carries the repository as gh repo view spells it; the watch's
 # --repo set is lowercased on entry, and GitHub reads both the same.
 parked_fleet parked_mixed_case_repo

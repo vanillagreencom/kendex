@@ -155,9 +155,10 @@ Rows:
                   search per repo, matched against every item by
                   lib/lane-state.sh's lane_own, the rule the watch's merged
                   check uses: the number its parked record names, its
-                  branch, the key lower-cased, or the key in the title or a
-                  Closes line, as a Claude cloud session's claude/ branch
-                  names no item. The issue cell carries the
+                  branch, the key lower-cased, or the key in the title's
+                  conventional-commit scope or right after Closes on a body
+                  line, as a Claude cloud session's claude/ branch names no
+                  item. The issue cell carries the
                   PR number and the merge commit.
   Escapes         one line under Landed: pull requests merged to the base
                   branch resolve-base-branch names that a revert commit
@@ -545,8 +546,10 @@ landed_read() {
   local repo items list rows since found=""
   [[ -n "$LANDED_SINCE" ]] || return 0
   # Each item with its parked record, whose pull request number lane_own
-  # takes in the repository that record names.
-  if ! items="$(jq -c '[.lanes[] | select(.item) | {item, parked: (.parked // {})}] | unique_by(.item)' <<<"$STATE_JSON")"; then
+  # takes in the repository that record names; of an item's records, one
+  # carrying a park wins, as the watch reads it.
+  if ! items="$(jq -c '[.lanes[] | select(.item)] | group_by(.item)
+    | map((map(select(.parked)) | first) // first | {item, parked: (.parked // {})})' <<<"$STATE_JSON")"; then
     refuse state "$STATE"
   fi
   since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$LANDED_SINCE"
