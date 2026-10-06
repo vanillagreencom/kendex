@@ -212,8 +212,10 @@ pub fn refuse_skipped(skipped: Vec<(ItemKind, String)>) -> super::CliResult {
 /// was asked for, or a package one of those requires, was skipped on
 /// conflict. Its own exit status, so automation tells a partial install
 /// from a run that refused before writing: the rest of the plan is
-/// written, the manifest included, and `apply --replace-unmanaged` takes
-/// the skipped items in afterwards.
+/// written, the manifest included. `apply --replace-unmanaged` takes in
+/// the items held by files kendex did not write; the conflict line above
+/// each item names the way out for the rest, the rule `conflict_exit`
+/// applies.
 #[derive(Debug)]
 pub struct SkippedOnConflict {
     items: Vec<(ItemKind, String)>,
