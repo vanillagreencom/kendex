@@ -1,0 +1,1 @@
+- item-tier keeps a SKILL.md metadata.version raise at micro when a column-0 comment sits inside the frontmatter metadata map.

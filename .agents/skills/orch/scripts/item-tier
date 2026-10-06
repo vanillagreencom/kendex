@@ -49,6 +49,8 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 . "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/branch-growth.sh
 . "$SCRIPT_DIR/lib/branch-growth.sh"
+# shellcheck source=lib/skill-version.sh
+. "$SCRIPT_DIR/lib/skill-version.sh"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
