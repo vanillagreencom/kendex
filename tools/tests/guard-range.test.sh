@@ -690,8 +690,9 @@ for row in "${MAP_CONTROLS[@]}"; do
 done
 # The comparison is the shared reader's, which the guard sources from the
 # orch render: each control points a guard copy at a copy of that lib with one
-# line replaced. A failed source is a finding raised only where a SKILL.md is
-# judged, and that SKILL.md takes the full doc rule.
+# needle replaced at each place it appears. A failed source is a finding
+# raised only where a SKILL.md is judged, and that SKILL.md takes the full doc
+# rule.
 REAL_LIB="$REPO/.agents/skills/orch/scripts/lib/skill-version.sh"
 LIB_PATH="s|\"\$TOOLS_DIR/../.agents/skills/orch/scripts/lib/skill-version.sh\"|\"$TMP/skill-version.sh\"|"
 mutant_lib() { # NEEDLE REPLACEMENT COUNT — the lib copy with each NEEDLE replaced, COUNT of them

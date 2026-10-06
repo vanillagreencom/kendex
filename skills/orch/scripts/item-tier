@@ -173,8 +173,9 @@ fi
 # Every catalog package change raises metadata.version in its SKILL.md, and
 # its tracked render repeats that line; the raise changes no instruction an
 # agent reads. Both sides of the range's diff go to metadata_version_only,
-# and any other difference, or a side that cannot be read, counts as an
-# instruction-file edit.
+# whose header says what it compares; a change it does not answer as
+# version-only, or a side that cannot be read, counts as an instruction-file
+# edit.
 version_raise_only() { # PATH
   case "$1" in SKILL.md | */SKILL.md) ;; *) return 1 ;; esac
   local merge_base

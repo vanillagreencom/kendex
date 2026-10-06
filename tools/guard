@@ -1490,9 +1490,10 @@ mapped_suites() { # DIR REL [FIELD]
   fi
   MAPPED=$out
 }
-# Whether the SKILL.md at PATH differs from the suites' base in its
-# metadata.version line alone, by metadata_version_only, the decision orch's
-# item-tier makes from the same lib. A file the base lacks is no such change.
+# Whether metadata_version_only answers the SKILL.md at PATH as a change of
+# its metadata.version line alone from the suites' base: the decision orch's
+# item-tier makes from the same lib, whose header says what it compares. A
+# file the base lacks is no such change.
 # The lib is sourced on the first SKILL.md the mapping judges, so a run
 # mapping none never needs it. A failed source is a finding, and every
 # SKILL.md of the run then takes the full doc rule: each suite reading the
