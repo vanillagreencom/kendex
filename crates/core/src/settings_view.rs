@@ -205,7 +205,14 @@ fn template_of(
             })
             .collect(),
         secrets: {
-            // REVISIT(D006): kendex's own keys on every package page.
+            // kendex's own private keys show on every package page, after
+            // the package's own: the Customize tab has no page of kendex's,
+            // and a new one would hold a single field. Each key lives in one
+            // private file, so every page shows the same answer, and a key
+            // the package declares too shows once, as the package's.
+            // Revisit when kendex declares a second private key, a person
+            // reports the repeated keys as noise, or the app gains a
+            // project-wide settings page.
             let own: Vec<_> = crate::settings_secret::own_declared()
                 .into_iter()
                 .map(|one| one.entry)

@@ -30,7 +30,7 @@ import { editIn, skillIn } from "@/lib/settings-rows";
  * template declares, where this project's `kendex.settings.toml` stands on
  * each, and the credentials it declares separately. The credentials
  * section also lists the private keys kendex declares itself, after the
- * skill's own (D006), so a skill with only public settings still gets one.
+ * skill's own, so a skill with only public settings still gets one.
  *
  * A skill that declares neither gets no section rather than an empty one.
  * Every other state gets a section that says what it is: a template out of
