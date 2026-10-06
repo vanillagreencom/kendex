@@ -239,7 +239,7 @@ for (const helper of ["append-system.mjs", "lane-retention.ts"]) {
 		assert.ok(hashes.length > 1, `expected more than one ${helper} copy; found ${JSON.stringify(hashes)}`);
 		if (helper === "lane-retention.ts") {
 			assert.deepEqual(hashes.map(([dir]) => dir).sort(), [
-				"pi-agents-tmux", "pi-background-tasks", "pi-output-policy", "pi-qol", "pi-web-tools",
+				"pi-agents-tmux", "pi-background-tasks", "pi-output-policy", "pi-qol", "pi-task-panel", "pi-web-tools",
 			], "lane-retention.ts must be vendored into each lane file owner");
 		}
 		assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `${helper} helpers differ: ${JSON.stringify(hashes)}`);

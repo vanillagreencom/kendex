@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
@@ -24,22 +24,24 @@ const SAVE_ORDER: Save[] = ["small", "mid", "older", "newer"];
 /** A save's session custom entry, or its tasks_write tool result. */
 type BranchRecord = `${Save}.${"entry" | "result"}`;
 
-/** The saved-state directory's bound, `TASK_PANEL_SAVED_STATES_MAX`. */
-const SAVED_STATES_MAX = 20;
+/** The saved-state directory's bound, `TASK_PANEL_SAVED_STATES_MAX_BYTES`. */
+const SAVED_STATES_MAX_BYTES = 32 * 1024 * 1024;
 
 /** Past the clock, so a file dated here is newer than any file a save writes; the `tie` step uses it. */
 const AHEAD_OF_CLOCK = 4_000_000_000;
 
 /**
  * What happens between the saves and the restore. `evict`: `older`'s file is
- * back-dated and enough further large lists are saved that the saved-state
- * directory drops it and keeps `newer`. `fork`: the restore runs in another
- * session, which has neither the sidecar nor the saved-state directory.
- * `save-at-older`: the panel moves to the `older` point and saves a change
- * there first. `tie`: further large lists fill the directory, every file in it
- * and a leftover temporary file are dated past the clock, so the next file a
- * save writes is not the newest by timestamp, as when consecutive saves share
- * one; then `latest` is saved, and `small` after it replaces the sidecar.
+ * back-dated, a filler file dated between it and `newer` brings the directory
+ * to within half a file of its bound, and one further large list is saved, so
+ * the directory drops `older` and keeps `newer`. `fork`: the restore runs in
+ * another session, which has neither the sidecar nor the saved-state
+ * directory. `save-at-older`: the panel moves to the `older` point and saves a
+ * change there first. `tie`: every file in the directory, and a filler file
+ * the size of the bound, are dated past the clock, so the next file a save
+ * writes is neither the newest by timestamp, as when consecutive saves share
+ * one, nor within the bound beside the others; then `latest` is saved, and
+ * `small` after it replaces the sidecar.
  */
 type Before = "evict" | "fork" | "save-at-older" | "tie";
 
@@ -114,19 +116,28 @@ for (const row of ROWS) {
 		const savedStateFile = (name: Save) => `${(records.get(`${name}.entry`) as { data: { fingerprint: string } }).data.fingerprint}.json`;
 		expect(savedStates()).toEqual([savedStateFile("older"), savedStateFile("newer")].sort());
 		let restoreCtx = ctx;
+		/** A sparse `.json` file of `bytes` bytes dated `at`, counted against the bound like a saved state. */
+		const filler = (bytes: number, at: number) => {
+			const path = join(states, "filler.json");
+			writeFileSync(path, "");
+			truncateSync(path, bytes);
+			utimesSync(path, at, at);
+		};
 		if (row.before === "evict") {
 			// Back-dated, so the directory drops it whatever the file system's timestamp granularity.
 			utimesSync(join(states, savedStateFile("older")), 1, 1);
-			await saveLargeLists(SAVED_STATES_MAX - 1);
-			expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+			// The evicting save's file is within a few hundred bytes of `older`'s size.
+			const fileBytes = statSync(join(states, savedStateFile("older"))).size;
+			filler(SAVED_STATES_MAX_BYTES - statSync(join(states, savedStateFile("newer"))).size - fileBytes - Math.floor(fileBytes / 2), 2);
+			await saveLargeLists(1);
+			expect(savedStates()).toHaveLength(3);
+			expect(savedStates()).toContain(savedStateFile("newer"));
 			expect(savedStates()).not.toContain(savedStateFile("older"));
 		} else if (row.before === "tie") {
-			await saveLargeLists(SAVED_STATES_MAX - 2);
-			writeFileSync(join(states, `${savedStateFile("newer")}.tmp-1`), "{}\n");
 			for (const name of readdirSync(states)) utimesSync(join(states, name), AHEAD_OF_CLOCK, AHEAD_OF_CLOCK);
-			utimesSync(join(states, `${savedStateFile("newer")}.tmp-1`), AHEAD_OF_CLOCK + 1, AHEAD_OF_CLOCK + 1);
+			filler(SAVED_STATES_MAX_BYTES, AHEAD_OF_CLOCK + 1);
 			await save("latest");
-			expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+			expect(savedStates()).toEqual([savedStateFile("latest")]);
 			await save("small");
 		} else if (row.before === "fork") restoreCtx = fakeCtx(base, `${SESSION_ID}-fork`, notifications);
 		else if (row.before === "save-at-older") {
