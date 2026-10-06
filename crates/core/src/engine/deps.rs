@@ -208,6 +208,7 @@ fn walk(
         }
         wanted.insert((kind, parent.clone()), found);
     }
+    carry_kept_retired_edges(expansion, state);
     // The revision each item is wanted at is known only now, once every
     // requirer has added its reason, and the walk must read it before
     // withholding spreads.
@@ -413,6 +414,33 @@ fn withhold_requirers(
     spread_upward(wanted);
     withhold_kept_retired(wanted, state);
     withhold_orphans(wanted, expansion);
+}
+
+/// A retired hook kept as recorded derives nothing, so a companion the
+/// plan writes for another reason would be recorded without the edge the
+/// kept copy still runs with, and the next pass could take the companion
+/// and leave the copy alone ([`withhold_kept_retired`]). Each recorded
+/// edge is carried onto a companion planned on that tool; one planned
+/// nowhere there gains nothing, and stays only as the record that requires
+/// it keeps it (`removal::keep_what_kept_records_require`).
+fn carry_kept_retired_edges(expansion: &mut Expansion, state: &DesiredState) {
+    for ((kind, name), retirement) in &state.retired {
+        for harness in HarnessId::ALL {
+            if !state.kept_as_recorded(*kind, name, harness) {
+                continue;
+            }
+            let requires = state.recorded_requires.get(&(*kind, name.clone(), harness));
+            for (dep_kind, dep) in requires.into_iter().flatten() {
+                let by = InstallRef {
+                    source: retirement.source.clone(),
+                    kind: *kind,
+                    name: name.clone(),
+                    harness,
+                };
+                expansion.add_to_planned(*dep_kind, dep, harness, Reason::RequiredBy { by });
+            }
+        }
+    }
 }
 
 /// A retired hook kept as recorded runs with what its record required
@@ -1025,7 +1053,10 @@ fn derive(
             // hook is withheld on these `harnesses` rather than armed beside
             // a copy kept only until the next prune; the rule is
             // docs/authoring/README.md's `[retired]` paragraph. The fix is
-            // the consumer's: the catalog's own is to drop the line.
+            // the consumer's: the catalog's own is to drop the line. Where
+            // the retired copy stays installed the pair is the person's to
+            // settle under the plan's options; where it goes, the hook
+            // lacks it and goes whatever the options.
             Offer::Retired(migration) => {
                 state.retire(dep_kind, &dep, source, migration, false);
                 let declared = match manifest.declared(kind).contains_key(parent) {
@@ -1043,7 +1074,16 @@ fn derive(
                         false => migration.to_owned(),
                     },
                 ));
-                Withholding::Retired
+                if withholds {
+                    for harness in &harnesses {
+                        let because = match state.kept_as_recorded(dep_kind, &dep, *harness) {
+                            true => Withholding::Retired,
+                            false => Withholding::Requires,
+                        };
+                        wanted.withhold([*harness], because);
+                    }
+                }
+                continue;
             }
             Offer::NotOffered => {
                 found.push(warn(

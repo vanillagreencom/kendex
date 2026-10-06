@@ -220,6 +220,24 @@ impl Expansion {
         }
     }
 
+    /// Record one more reason for an item already planned on `harness`,
+    /// and nothing for one that is not: the reason asks for no
+    /// installation of its own (`deps::carry_kept_retired_edges`).
+    pub(super) fn add_to_planned(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        harness: HarnessId,
+        reason: Reason,
+    ) {
+        if self.harnesses(kind, name).contains(&harness) {
+            self.reasons
+                .entry((kind, name.to_owned(), harness))
+                .or_default()
+                .insert(reason);
+        }
+    }
+
     /// Record one derived reason, returning whether this taught the expansion
     /// something — which is what keeps a cycle from walking forever.
     pub(super) fn add(

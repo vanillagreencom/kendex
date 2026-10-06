@@ -22,6 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply::{self, Op};
+use kendex_core::engine::desired::Withholding;
 use kendex_core::engine::ops;
 use kendex_core::engine::{
     AgentModelRequest, DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions,
@@ -608,7 +609,9 @@ fn require(f: &Fixture, name: &str, deps: &str) {
 /// A kept judge whose record requires boss goes with boss, so neither
 /// member of the knot runs alone. The withholding takes a copy the way an
 /// orphan goes: one the person edited stays as the edit conflict, and a
-/// knot member staying keeps the other. `stays` names each hook whose
+/// knot member staying keeps the other. Where the judge goes, by a prune
+/// or by name, every hook requiring it goes in the same plan, edited or
+/// not. `stays` names each hook whose
 /// copies and record the plain refresh keeps. The declarations stay
 /// complete: the retirement is the catalog's answer, so the walks outside
 /// a plan, the closure and the managed agent lookup, read it as one too.
@@ -624,7 +627,7 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
         &'a [&'a str],
         &'a [&'a str],
     );
-    let rows: [Row; 10] = [
+    let rows: [Row; 11] = [
         (
             "installed, then retired: kept",
             Over::Boss,
@@ -668,6 +671,15 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             After::RemovedByName,
             "",
             &[],
+            &[],
+        ),
+        (
+            "an edited requirer, the judge then removed by name",
+            Over::Boss,
+            Before::Installed,
+            After::RemovedByName,
+            "",
+            &["boss"],
             &[],
         ),
         (
@@ -776,6 +788,13 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
                 assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {after:?} {name}");
             }
             apply::execute(&f.env, &done.plan).unwrap();
+            // The judge goes here, so nothing the plan leaves runs beside
+            // none, the person's edits included.
+            for name in over.hooks() {
+                for copy in f.installed_copies(ItemKind::Hook, name) {
+                    assert!(!copy.exists(), "{row}: {after:?} leaves {}", copy.display());
+                }
+            }
         }
 
         let plain = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
@@ -804,7 +823,7 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             let files = written_files(&plain, name);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {name}");
         }
-        for name in edited {
+        for name in edited.iter().filter(|name| stays.contains(name)) {
             let held = plain.drift.iter().any(|drift| {
                 drift.name == *name
                     && drift.state == DriftState::Conflict
@@ -1069,4 +1088,115 @@ fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
             );
         }
     }
+}
+
+/// A retired judge kept as recorded that requires a live boss, both
+/// declared: refreshes that keep the judge carry its recorded requirement
+/// onto boss's record, so when a later refresh withholds boss for a
+/// companion switched off, the judge goes with it rather than running
+/// alone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_retired_hook_goes_with_a_requirement_withheld_refreshes_later() {
+    let f = installed(ItemKind::Hook, "boss");
+    for name in ["judge", "steward"] {
+        write_item(&f, ItemKind::Hook, name);
+    }
+    require(&f, "judge", "boss");
+    require(&f, "boss", "steward");
+    let manifest = f.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{declared}\n[hooks.judge]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let installed = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+    apply::execute(&f.env, &installed.plan).unwrap();
+    f.retire(ItemKind::Hook, "judge", "");
+
+    // Kept, the judge derives nothing, while boss is written again.
+    for _ in 0..2 {
+        let kept = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+        apply::execute(&f.env, &kept.plan).unwrap();
+        for name in ["judge", "boss"] {
+            assert_ne!(recorded_of(&f, name), Vec::new(), "{name} is not kept");
+        }
+    }
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[hooks.steward]\nsource = \"cat\"\nenabled = false\n"),
+    )
+    .unwrap();
+
+    let withheld = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+    apply::execute(&f.env, &withheld.plan).unwrap();
+
+    for name in ["judge", "boss"] {
+        assert_eq!(recorded_of(&f, name), Vec::new(), "{name} is recorded");
+        for copy in f.installed_copies(ItemKind::Hook, name) {
+            assert!(!copy.exists(), "{} stays", copy.display());
+        }
+    }
+}
+
+/// What the report says of a declaration withheld on its tools, the one
+/// answer verify's gap row reads: said only where every tool the plan
+/// places it on withholds it for a reason that takes its copy, as the
+/// reason that outranks the rest. A tool still planned, or held for a
+/// catalog that does not answer, leaves the record's own remedy standing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_withholding_is_said_only_where_every_tool_withholds_the_copy() {
+    use HarnessId::{Claude, Copilot};
+    use Withholding::{Orphaned, Requires, Retired, Unanswered};
+    for (row, withheld, said) in [
+        (
+            "withheld on one of two tools",
+            &[(Copilot, Retired)][..],
+            None,
+        ),
+        (
+            "retired on both",
+            &[(Claude, Retired), (Copilot, Retired)][..],
+            Retired.said(),
+        ),
+        (
+            "retired and lacking",
+            &[(Claude, Retired), (Copilot, Requires)][..],
+            Requires.said(),
+        ),
+        (
+            "one unanswered",
+            &[(Claude, Unanswered), (Copilot, Retired)][..],
+            None,
+        ),
+        (
+            "one orphaned",
+            &[(Claude, Orphaned), (Copilot, Requires)][..],
+            None,
+        ),
+    ] {
+        let mut report = EngineReport::observed(
+            kendex_core::apply::Plan::landed(Scope::Global, Vec::new()).unwrap(),
+        );
+        for (harness, because) in withheld {
+            report
+                .withheld
+                .insert((ItemKind::Hook, "boss".to_owned(), *harness), *because);
+        }
+
+        let answer = report.withheld_said(ItemKind::Hook, "boss", &[Claude, Copilot]);
+
+        assert_eq!(answer, said, "{row}");
+    }
+    assert_eq!(
+        EngineReport::observed(
+            kendex_core::apply::Plan::landed(Scope::Global, Vec::new()).unwrap()
+        )
+        .withheld_said(ItemKind::Hook, "boss", &[]),
+        None,
+        "no tools"
+    );
 }

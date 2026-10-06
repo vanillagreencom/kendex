@@ -468,17 +468,25 @@ impl EngineReport {
         }
     }
 
-    /// What the plan says of an item it withholds from a tool for a
-    /// reason that takes its copy ([`super::desired::Withholding::said`]),
-    /// the reason that outranks the rest where tools differ; `None` where
-    /// no such withholding holds it anywhere.
-    pub fn withheld_said(&self, kind: ItemKind, name: &str) -> Option<&'static str> {
-        self.withheld
-            .iter()
-            .filter(|((held, named, _), _)| *held == kind && named == name)
-            .map(|(_, because)| *because)
-            .max()
-            .and_then(super::desired::Withholding::said)
+    /// What the plan says of an item it withholds from every one of
+    /// `harnesses` for a reason that takes its copy
+    /// ([`super::desired::Withholding::said`]), the reason that outranks
+    /// the rest where tools differ. `None` where any of them is not so
+    /// withheld, since the plan still writes the item there, and for no
+    /// tools at all.
+    pub fn withheld_said(
+        &self,
+        kind: ItemKind,
+        name: &str,
+        harnesses: &[HarnessId],
+    ) -> Option<&'static str> {
+        let mut strongest = None;
+        for harness in harnesses {
+            let because = *self.withheld.get(&(kind, name.to_owned(), *harness))?;
+            because.said()?;
+            strongest = strongest.max(Some(because));
+        }
+        strongest.and_then(super::desired::Withholding::said)
     }
 
     /// Whether the plan writes this package on none of the tools it is
@@ -774,10 +782,16 @@ impl PlanOptions {
     /// still wants. Every hold that a removal releases asks it here, so no
     /// two of them can disagree about what the person asked for.
     pub(crate) fn named_for_removal(&self, kind: ItemKind, name: &str) -> bool {
-        self.removal_filter.as_ref().is_some_and(|named| {
-            named
-                .iter()
-                .any(|(wanted, n)| n == name && wanted.is_none_or(|wanted| wanted == kind))
-        })
+        named_in(self.removal_filter.as_deref(), kind, name)
     }
+}
+
+/// [`PlanOptions::named_for_removal`] over the filter alone, for the pass
+/// that holds the filter without the options (`DesiredState`).
+pub(crate) fn named_in(filter: Option<&[RemovalName]>, kind: ItemKind, name: &str) -> bool {
+    filter.is_some_and(|named| {
+        named
+            .iter()
+            .any(|(wanted, n)| n == name && wanted.is_none_or(|wanted| wanted == kind))
+    })
 }

@@ -310,6 +310,9 @@ pub struct DesiredState {
     pub retired: BTreeMap<(ItemKind, String), Retirement>,
     /// Whether this pass prunes retired items (`PlanOptions::prune_retired`).
     pub prune_retired: bool,
+    /// What this pass removes by name (`PlanOptions::removal_filter`): a
+    /// retired item named there is not kept ([`DesiredState::kept_as_recorded`]).
+    pub(super) removal_filter: Option<Vec<super::report_types::RemovalName>>,
     /// The entry keys of the record this pass read: where a retired item
     /// is kept ([`Retirement::kept`]).
     pub(super) recorded: BTreeSet<String>,
@@ -400,13 +403,15 @@ pub enum Withholding {
     /// record, as an orphan whose declaration's source is unreachable does,
     /// and a companion this hook alone derives is not orphaned by it.
     Unanswered,
-    /// A hook it requires was retired by its catalog, or, for a retired
-    /// hook kept as recorded, a hook its record requires is withheld there
-    /// and its copy goes: the knot of hooks that require each other goes
-    /// together, for the retirement. Nothing is missing that the catalog
-    /// still writes, and only the person's choice settles it, so an
-    /// installed copy is an orphan disposed of under the plan's options,
-    /// the person's edits held, by `removal::orphans`.
+    /// A hook it requires was retired by its catalog and stays installed
+    /// there as recorded, or, for a retired hook kept as recorded, a hook
+    /// its record requires is withheld there and its copy goes: the knot
+    /// of hooks that require each other goes together, for the retirement.
+    /// Nothing it runs with is gone yet, and only the person's choice
+    /// settles it, so an installed copy is an orphan disposed of under the
+    /// plan's options, the person's edits held, by `removal::orphans`.
+    /// Where the retired hook does not stay (pruned, named for removal,
+    /// never recorded), the requirer lacks it: [`Withholding::Requires`].
     Retired,
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
@@ -493,11 +498,12 @@ impl DesiredState {
     }
 
     /// Whether a retired item stays on `harness` as recorded, before the
-    /// walk withholds anything: the record holds it there and this pass
-    /// does not prune.
+    /// walk withholds anything: the record holds it there, this pass does
+    /// not prune, and the person does not name it for removal.
     pub(super) fn kept_as_recorded(&self, kind: ItemKind, name: &str, harness: HarnessId) -> bool {
         let key = crate::lock::entry_key(kind, name, harness);
-        !self.prune_retired && self.recorded.contains(&key)
+        let named = super::report_types::named_in(self.removal_filter.as_deref(), kind, name);
+        !self.prune_retired && !named && self.recorded.contains(&key)
     }
 
     /// Whether an item its catalog retired is kept nowhere this pass:
@@ -562,6 +568,7 @@ pub(super) fn desired_state(
     held: Option<&hold::HeldPins>,
     judge_pins: bool,
     prune_retired: bool,
+    removal_filter: Option<&[super::report_types::RemovalName]>,
 ) -> Result<DesiredState> {
     let first = compute(
         env,
@@ -572,6 +579,7 @@ pub(super) fn desired_state(
         held,
         judge_pins,
         prune_retired,
+        removal_filter,
     )?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
@@ -585,6 +593,7 @@ pub(super) fn desired_state(
         held,
         judge_pins,
         prune_retired,
+        removal_filter,
     )?;
     second.manifest_update = Some(merged);
     for (key, retirement) in first.retired {
@@ -603,6 +612,7 @@ fn compute(
     held: Option<&hold::HeldPins>,
     judge_pins: bool,
     prune_retired: bool,
+    removal_filter: Option<&[super::report_types::RemovalName]>,
 ) -> Result<DesiredState> {
     if manifest.sources.contains_key(manifest::BUILTIN_SOURCE_NAME) {
         manifest::check_source_alias(manifest::BUILTIN_SOURCE_NAME)?;
@@ -611,6 +621,7 @@ fn compute(
         agent_names: crate::source::agent_names::Uses::new(manifest),
         judge_pins,
         prune_retired,
+        removal_filter: removal_filter.map(<[_]>::to_vec),
         recorded: lock.entries.keys().cloned().collect(),
         recorded_requires: recorded_requires(lock),
         ..DesiredState::default()

@@ -449,10 +449,10 @@ fn verdicts<'a>(
             continue;
         }
         // An item its catalog retired stays where it is kept
-        // (`Retirement::kept`) unless the person names it; anywhere else it
-        // goes as a departed declaration does.
+        // (`Retirement::kept`, which a removal by name leaves out); anywhere
+        // else it goes as a departed declaration does.
         let retirement = state.retired.get(&(entry.kind, entry.name.clone()));
-        if retirement.is_some_and(|retired| retired.kept.contains(&entry.harness)) && !named {
+        if retirement.is_some_and(|retired| retired.kept.contains(&entry.harness)) {
             verdicts.push((key, Verdict::Retired));
             continue;
         }

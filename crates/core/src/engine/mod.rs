@@ -569,6 +569,7 @@ fn desired_pass<'a>(
         held_pins.as_ref(),
         options.judge_pins,
         options.prune_retired,
+        options.removal_filter.as_deref(),
     )?;
     state.agent_names.extend(agent_names);
     if renamed && state.manifest_update.is_none() {
