@@ -1,1 +1,1 @@
-- `tests/run-all.sh --battery DIR` runs the suites in another directory under the same filters, worker pool and report, and the verdict line names that tree.
+- `tests/run-all.sh --battery DIR` runs the suites in another directory under the same filters, worker pool and report, and the verdict line names that tree. Each `--alone NAME` after it names a suite of that directory to run alone; orch's own ALONE list applies only to orch's suites.

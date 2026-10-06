@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every orch test in tests/*.sh.
+# Run every suite in this directory's *.sh, or in the --battery directory's.
 #
 # Each individual *.sh test is self-contained: builds its own sandbox,
 # exercises the target script, prints `pass: N   fail: M`, exits 0 iff
@@ -14,10 +14,13 @@
 #   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
+#   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
 #
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
-# runs that tree's suites this way.
+# runs that tree's suites this way. The ALONE list below names this
+# directory's suites; with --battery, the suites each `--alone NAME` after it
+# names are the ones that run alone.
 #
 # Each argument is a substring of a suite's base name, or, written `=name`,
 # the whole of one. A bare one selects, one written `!name` rejects, and a
@@ -41,8 +44,9 @@
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
-# The `orch tests:` verdict line follows the total, and on a red run one
-# `  - <name>` line per red suite follows the verdict.
+# The `<tree> tests:` verdict line follows the total, <tree> being the name
+# of the battery directory's parent, `orch` with no --battery, and on a red
+# run one `  - <name>` line per red suite follows the verdict.
 #
 # `seconds` is the suite's own wall time, and the total's is the whole run's.
 # `pass` and `fail` are the counts from the last summary line the suite
@@ -61,9 +65,26 @@ unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
   ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Suites that run alone, one at a time, once every other selected suite has
+# finished: each holds a fixed wall-clock window that the code under test
+# must meet, and a loaded host has made it miss. One name per line, first
+# word, with the window it holds; run-all-parallel.sh reads this list.
+ALONE=(
+  open-terminal-lane      # the lane-tree stub holds the picked account for 2s
+  oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
+)
+
 if [ "${1-}" = --battery ]; then
   TEST_DIR="$(cd "$2" && pwd)" || exit 1
   shift 2
+  # Another battery's wrapper names its own, so a suite there sharing a name
+  # with one above is not held back.
+  ALONE=()
+  while [ "${1-}" = --alone ]; do
+    ALONE+=("$2")
+    shift 2
+  done
 fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
@@ -104,17 +125,9 @@ wanted() { # BASE
   [ "$keep" -eq 1 ]
 }
 
-# Suites that run alone, one at a time, once every other selected suite has
-# finished: each holds a fixed wall-clock window that the code under test
-# must meet, and a loaded host has made it miss. One name per line, first
-# word, with the window it holds; run-all-parallel.sh reads this list.
-ALONE=(
-  open-terminal-lane      # the lane-tree stub holds the picked account for 2s
-  oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
-)
-
 alone() { # BASE
   local name
+  [ "${#ALONE[@]}" -gt 0 ] || return 1
   for name in "${ALONE[@]}"; do
     [ "$name" != "$1" ] || return 0
   done

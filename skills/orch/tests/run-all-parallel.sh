@@ -5,13 +5,14 @@
 # output whole under its header followed by one
 # `suite=<name> seconds=<n> pass=<n> fail=<n>` line. One
 # `total suites=<n> seconds=<n> pass=<n> fail=<n>` line follows the last
-# suite, and the `orch tests:` verdict follows the total, with one
-# `  - <name>` line per red suite on a red run. Every run below is a
-# sandbox holding a copy of run-all.sh and suites written here, with `nproc`
-# stubbed on PATH, so the real scheduler runs over suites whose outcome and
-# timing the case controls.
+# suite, and the `<tree> tests:` verdict follows the total, <tree> being
+# the name of the battery directory's parent, with one `  - <name>` line per
+# red suite on a red run. Every run below is a sandbox holding a copy of
+# run-all.sh and suites written here, with `nproc` stubbed on PATH, so the
+# real scheduler runs over suites whose outcome and timing the case
+# controls.
 #
-# Three surfaces:
+# Surfaces:
 #   1. the report — each suite's start line comes once, before its output;
 #      each summary shape a suite prints becomes that suite's pass and fail
 #      counts, the last summary line winning, a suite's seconds cover its
@@ -28,8 +29,12 @@
 #      to the runner alone, ends the run and the suite it was running
 #   6. a name filter — a bare one selects each suite whose name holds it,
 #      one written `=name` that suite alone, and `!` rejects either way
+#   7. caller lane state — an ORCH_STATE_DIR the caller set never reaches a
+#      suite, which still sets its own
 #   8. --battery — the suites of the directory it names run in place of the
 #      runner's own, and the verdict line names that directory's tree
+#   9. --alone — with --battery, the suites it names run alone, and a suite
+#      sharing a name with one in the runner's own ALONE list runs pooled
 #
 # Bash 3.2 compatible.
 
@@ -350,6 +355,32 @@ RC=0
 OUT="$(env -i PATH="$B.bin:$PATH" HOME="$HOME" TMPDIR="$B.tmp" bash "$B/run-all.sh" --battery "$OTHER" 2>&1)" || RC=$?
 assert_eq "$(battery_verdict)" "rc=0 started=home-suite  verdict=runner-parent tests: all 1 file(s) passed" \
   "control: with the directory left unread the runner's own suites run"
+
+echo "=== 9. --battery runs alone the suites its --alone names, and no others ==="
+# Under one worker the start order is the run order: the pooled suites by
+# name, then the alone ones. The other tree holds a suite named for one in the
+# runner's own ALONE list.
+O="${ALONE_NAMES%%$'\n'*}"
+OTHER="$TMP_ROOT/alone-tree/tests"
+mkdir -p "$OTHER"
+for name in aaa-alone "$O" zzz-pool; do suite "$OTHER" "$name" 0 'pass: 1   fail: 0'; done
+alone_order() { # DIR [FROM TO] ; start order of a fresh runner in DIR, FROM edited to TO
+  battery "$1"
+  [ "$#" -lt 3 ] || mutate_file "$1/run-all.sh" "$2" "$3"
+  mkdir -p "$1.bin"
+  printf '#!/usr/bin/env bash\necho 1\n' >"$1.bin/nproc"
+  chmod +x "$1.bin/nproc"
+  RC=0
+  OUT="$(env -i PATH="$1.bin:$PATH" HOME="$HOME" TMPDIR="$1.tmp" \
+    bash "$1/run-all.sh" --battery "$OTHER" --alone aaa-alone 2>&1)" || RC=$?
+  printf 'rc=%s started=%s' "$RC" "$(printf '%s\n' "$OUT" | sed -n 's/^start suite=//p' | tr '\n' ' ')"
+}
+assert_eq "$(alone_order "$TMP_ROOT/alone-runner/tests")" "rc=0 started=$O zzz-pool aaa-alone " \
+  "--alone runs its suite after the rest, and the runner's own ALONE name runs pooled"
+assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '  ALONE=()' '  :')" "rc=0 started=zzz-pool aaa-alone $O " \
+  "control: the runner's own list kept holds back the other tree's same-named suite"
+assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$2")' ':')" "rc=0 started=aaa-alone $O zzz-pool " \
+  "control: --alone left unread runs every suite pooled"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
