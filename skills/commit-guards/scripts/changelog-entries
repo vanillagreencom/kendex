@@ -204,15 +204,6 @@ RECORD="$GG_CHANGELOG_RECORD"
 version_paths="$(gg_setting COMMIT_GUARDS_CHANGELOG_VERSION_PATHS "")" || exit 2
 version_paths="$(gg_config_path_list "$version_paths" changelog-version)" || exit 2
 
-version_selected() { # PATH — 0 when COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects it
-  local pattern
-  for pattern in $version_paths; do
-    # shellcheck disable=SC2254 # the configured glob is the pattern
-    case "$1" in $pattern) return 0 ;; esac
-  done
-  return 1
-}
-
 # A package.json beside the configured record is the app's version file,
 # judged like any other; elsewhere it is a package with its own record.
 package_record_of() { # VERSION_FILE — that package's CHANGELOG.md on stdout; 1 where it reads the configured record
@@ -228,15 +219,15 @@ if [ "$CLASSIFY" -eq 1 ]; then
   for f in "${CLASSIFY_PATHS[@]}"; do
     kind=none
     package_json="${f%CHANGELOG.md}package.json"
-    # shellcheck disable=SC2086 # the configured package globs are the patterns
+    # shellcheck disable=SC2086 # the configured globs are the patterns
     if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
       kind=record
-    elif [ "${f##*/}" = CHANGELOG.md ] && version_selected "$package_json" \
-      && package_record="$(package_record_of "$package_json")" && [ "$package_record" = "$f" ]; then
+    elif [ "${f##*/}" = CHANGELOG.md ] && gg_path_matches "$package_json" $version_paths \
+      && package_record_of "$package_json" >/dev/null; then
       kind=record
     elif gg_matches_path_glob "$f"; then
       kind=fragment
-    elif version_selected "$f"; then
+    elif gg_path_matches "$f" $version_paths; then
       kind=version
     elif gg_path_placer "$f" $GG_CHANGELOG_PACKAGES; then
       kind=package
@@ -519,7 +510,8 @@ fi
 
 if [ -n "$version_paths" ]; then
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
-    version_selected "$f" || continue
+    # shellcheck disable=SC2086 # the configured globs are the patterns
+    gg_path_matches "$f" $version_paths || continue
     # --raw emits srcmode dstmode srcsha dstsha status, followed by the path.
     read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
     [ "$status" != D ] || continue

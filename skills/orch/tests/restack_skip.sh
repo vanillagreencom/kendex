@@ -52,18 +52,20 @@ package() { # VERSION [PRIVATE]
 
 # The seed: main holds the base; the branch raises the skill, its render, the
 # package and an undeclared agent, edits the skill's body, adds a changelog
-# entry and a code line, validated before it is committed.
+# entry and a code line and retargets a rendered symlink, validated before it
+# is committed.
 SEED="$TMP_ROOT/seed"
 git init -q -b ken-1 "$SEED"
 git -C "$SEED" config gc.auto 0
 git -C "$SEED" config maintenance.auto false
-mkdir -p "$SEED/skills/p" "$SEED/.agents/skills" "$SEED/.agents/skills/p" "$SEED/agents" "$SEED/pkg"
+mkdir -p "$SEED/skills/p" "$SEED/.agents/skills" "$SEED/.agents/skills/p" "$SEED/.claude/skills" "$SEED/agents" "$SEED/pkg"
+ln -s ../../.agents/skills/p "$SEED/.claude/skills/p"
 skills "$SEED" 1.0.0 "Body."
 agent 1.0.0 > "$SEED/agents/a.md"
 package 1.0.0 > "$SEED/pkg/package.json"
 printf '# Changelog\n\n### Unreleased\n\n- base entry\n' > "$SEED/pkg/CHANGELOG.md"
 printf 'echo one\n' > "$SEED/code.sh"
-printf '[".agents/skills/p/SKILL.md"]\n' > "$SEED/.kendex-generated.json"
+printf '[".agents/skills/p/SKILL.md", ".claude/skills/p"]\n' > "$SEED/.kendex-generated.json"
 g "$SEED" add -A
 g "$SEED" commit -q -m base
 g "$SEED" branch base-point
@@ -83,6 +85,7 @@ agent 1.0.1 > "$SEED/agents/a.md"
 package 1.0.1 > "$SEED/pkg/package.json"
 printf -- '- branch entry\n' >> "$SEED/pkg/CHANGELOG.md"
 printf 'echo two\n' >> "$SEED/code.sh"
+ln -sfn ../../skills/p "${SEED:?}/.claude/skills/p"
 SEED_RUN="$(clean_env "$SCRIPTS_DIR/dev-validate-run" --worktree "$SEED" --poll 1)" || fixture_failed seed-run
 grep -q 'validate=pass' <<<"$SEED_RUN" || fixture_failed seed-pass
 g "$SEED" commit -q -am branch
@@ -98,6 +101,7 @@ main_agent() { agent 1.1.0 > "$1/agents/a.md"; }
 main_code() { printf 'echo uno\n' > "$1/code.sh"; }
 main_other() { printf 'other\n' > "$1/other.txt"; }
 main_drop_changelog() { rm -- "$1/pkg/CHANGELOG.md"; }
+main_link() { ln -sfn ../../.agents/skills/q "${1:?}/.claude/skills/p"; }
 
 # Resolutions, one per row, each run with the rebase stopped on its conflict.
 take_version() { skills "$1" 1.1.1 "Body, branch."; }
@@ -177,6 +181,7 @@ ROWS=(
   "conflict markers left in a changelog re-test|markers|main_package|leave_markers|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a changelog replaced by prose re-tests|prose|main_package|rewrite_changelog|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a modify/delete conflict over a changelog, resolved by keeping the modified side, re-tests|modify-delete|main_drop_changelog|keep_as_left|restack=retest cause=conflict-kind path=pkg/CHANGELOG.md rc=1"
+  "a rendered symlink both lanes retargeted, kept as git keeps it, re-tests|symlink|main_link|keep_as_left|restack=retest cause=conflict-kind path=.claude/skills/p rc=1"
 )
 for row in "${ROWS[@]}"; do
   IFS='|' read -r label name main resolve want <<<"$row"
@@ -256,6 +261,9 @@ done
 assert_eq "$(control no-conflict-kind restack-skip 'CONFLICT*) retest conflict-kind' 'CONFLICT*) : conflict-kind' modify-delete)" \
   "$(version_only modify-delete pkg/CHANGELOG.md)" \
   "control: with no conflict-kind rule a modify/delete conflict skips"
+assert_eq "$(control no-mode restack-skip '          *) retest conflict-kind "path=$path" "run-dir=$run_dir" ;;' '          *) ;;' symlink)" \
+  "$(version_only symlink .claude/skills/p)" \
+  "control: with no regular-file mode rule a symlink conflict skips"
 assert_eq "$(control no-newer-red dev-validate-run $'      red="$run_dir"\n      continue' '      continue' newer-red)" \
   "$(version_only newer-red .agents/skills/p/SKILL.md,skills/p/SKILL.md)" \
   "control: with no newer-red rule in dev-validate-run a failed head skips"

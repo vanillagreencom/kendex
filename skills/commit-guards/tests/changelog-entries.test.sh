@@ -767,7 +767,7 @@ classify_control() { # LABEL FROM TO
   fi
 }
 classify_control 'with no package record pkg/CHANGELOG.md is none' \
-  '&& package_record="$(package_record_of "$package_json")" && [ "$package_record" = "$f" ]; then' '&& false; then'
+  '&& package_record_of "$package_json" >/dev/null; then' '&& false; then'
 classify_control 'a package glob matching across / declares the nested SKILL.md' \
   'elif gg_path_placer "$f" $GG_CHANGELOG_PACKAGES; then' 'elif gg_path_matches "$f" $GG_CHANGELOG_PACKAGES; then'
 classify_control 'with no render inventory the render is none' 'elif generated_path_contains "$f"; then' 'elif false; then'

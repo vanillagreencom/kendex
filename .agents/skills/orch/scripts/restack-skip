@@ -52,7 +52,9 @@
 #   object-missing    the validated tree or the HEAD it started at is gone
 #   merge-failed      git merge-tree answered neither clean nor conflicted
 #   conflict-kind     a conflict other than a content conflict: modify/delete,
-#                     rename, binary, mode and the like
+#                     rename, binary and the like, or a conflicted path any of
+#                     whose sides is no regular file of one mode: a symlink,
+#                     a gitlink or a mode change
 #   classifier-missing  the worktree has no executable commit-guards
 #                     changelog-entries
 #   classifier-failed   it could not classify the conflicted paths
@@ -60,7 +62,8 @@
 #                     render file
 #   diff-failed       the two trees could not be compared
 #   path-shape        a path was added, removed, or is not a regular file of
-#                     one mode on both sides
+#                     one mode on both sides, or HEAD lacks a conflicted file
+#                     or holds it in another mode than the merge's sides
 #   path-unconflicted a path differs that the merge did not leave conflicted
 #   hunk              a conflicted file differs in a line its kind does not
 #                     allow, a left conflict marker included, or a conflict
@@ -142,15 +145,19 @@ validated="$(GIT_AUTHOR_NAME="$PROG" GIT_AUTHOR_EMAIL="$PROG@localhost" \
   || retest object-missing "run-dir=$run_dir"
 
 merge_rc=0
-git -c merge.conflictStyle=merge merge-tree --write-tree -z --name-only "$new_base" "$validated" \
+git -c merge.conflictStyle=merge merge-tree --write-tree -z "$new_base" "$validated" \
   > "$scratch/merge" 2>/dev/null || merge_rc=$?
 (( merge_rc <= 1 )) || retest merge-failed "run-dir=$run_dir"
-# -z --name-only output: the tree, each conflicted path, an empty field, then
-# one message a record: the count of paths it names, those paths, its type
-# and its text.
+# -z output: the tree, one "MODE OID STAGE<tab>PATH" entry per stage of each
+# conflicted path, an empty field, then one message a record: the count of
+# paths it names, those paths, its type and its text. Every stage of a
+# conflicted path must be a regular file of one mode: git keeps one side of a
+# symlink, gitlink or mode conflict with no marker for the line rules below to
+# find, whatever message it prints for it.
 merged_tree=""
 section=tree
 conflicted=()
+conflicted_modes=()
 while IFS= read -r -d '' token; do
   case "$section" in
     tree) merged_tree="$token"; section=paths ;;
@@ -158,7 +165,18 @@ while IFS= read -r -d '' token; do
       if [[ -z "$token" ]]; then
         section=messages
       else
-        conflicted+=("$token")
+        path="${token#*$'\t'}"
+        mode="${token%% *}"
+        if (( ${#conflicted[@]} == 0 )) || [[ "${conflicted[${#conflicted[@]} - 1]}" != "$path" ]]; then
+          conflicted+=("$path")
+          conflicted_modes+=("$mode")
+        fi
+        case "$mode" in
+          100644|100755) ;;
+          *) retest conflict-kind "path=$path" "run-dir=$run_dir" ;;
+        esac
+        [[ "$mode" == "${conflicted_modes[${#conflicted_modes[@]} - 1]}" ]] \
+          || retest conflict-kind "path=$path" "run-dir=$run_dir"
       fi
       ;;
     messages)
@@ -248,7 +266,9 @@ while IFS=$'\t' read -r kind path; do
   esac
   git cat-file blob "$merged_tree:$path" > "$scratch/merged-blob" 2>/dev/null \
     || retest object-missing "path=$path" "run-dir=$run_dir"
-  git cat-file blob "$head:$path" > "$scratch/head-blob" 2>/dev/null \
+  head_entry="$(git ls-tree --full-tree "$head" -- "$path" 2>/dev/null)" \
+    && [[ "${head_entry%% *}" == "${conflicted_modes[$index - 1]}" ]] \
+    && git cat-file blob "$head:$path" > "$scratch/head-blob" 2>/dev/null \
     || retest path-shape "path=$path" "run-dir=$run_dir"
   normalize "$kind" 1 < "$scratch/merged-blob" > "$scratch/merged-kept" \
     && normalize "$kind" 0 < "$scratch/head-blob" > "$scratch/head-kept" \
