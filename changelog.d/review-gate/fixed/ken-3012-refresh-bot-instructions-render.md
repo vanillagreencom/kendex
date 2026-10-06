@@ -1,0 +1,1 @@
+- A consumer refresh pull request that changes the bot-instructions package now carries its render, so the consumer's bot-instructions check passes.
