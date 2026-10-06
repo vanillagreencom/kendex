@@ -10,9 +10,8 @@ export const OPUS_5_MODEL_ID = "claude-opus-5";
 export const SONNET_5_5_MODEL_ID = "claude-sonnet-5-5";
 export const SONNET_5_MODEL_ID = "claude-sonnet-5";
 
-// Sonnet 5.5's classifiers also decline turns. Claude Code re-runs a cybersecurity
-// decline on Sonnet 5; a biology decline ends as a refusal, since Sonnet 5.5 has no
-// biology fallback model.
+// Sonnet 5.5's safety fallback is Sonnet 5; which declines re-run there is Claude
+// Code's own routing.
 export function fallbackModelForPrimaryModel(modelId: string): string | undefined {
 	if (modelId === SONNET_5_5_MODEL_ID) return SONNET_5_MODEL_ID;
 	return modelId === FABLE_MODEL_ID || modelId === OPUS_5_5_MODEL_ID || modelId === OPUS_5_MODEL_ID
