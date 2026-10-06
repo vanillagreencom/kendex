@@ -85,6 +85,9 @@ if [[ "$1" == repo && "$2" == view ]]; then
   if [[ "$3" == "$SSH_TEST_SOURCE" ]]; then printf '%s\\n' "${SSH_TEST_REPO_NAME:-owner/repo}"; else printf 'other/repo\\n'; fi
 fi
 ''')
+        # Every item's tree sits at the clone's one hosted path, as the real
+        # command places it. Like the real command, exists answers for the
+        # item the tree there was created for, recorded beside it.
         wt = self.source / ".agents/skills/worktree/scripts/worktree"
         self.executable(wt, '''#!/usr/bin/env bash
 set -euo pipefail
@@ -96,15 +99,19 @@ create)
   else
     [[ " $* " != *" --reuse "* ]] || exit 1
     git worktree add --detach "$path" >&2
+    printf '%s\\n' "$2" > "$path.item"
   fi
   printf '%s\\n' "$path" ;;
-exists) if [[ -d "$path" ]]; then printf 'true\\n'; else printf 'false\\n'; fi ;;
+exists)
+  if [[ -d "$path" && ( ! -f "$path.item" || "$(cat -- "$path.item")" == "$2" ) ]]; then printf 'true\\n'
+  else printf 'false\\n'; fi ;;
 path) if [[ -d "$path" ]]; then printf '%s\\n' "$path"; else printf '%s\\n' "$PWD/configured-$2"; fi ;;
 remove)
   if [[ -n "${SSH_TEST_CLOSE_STDOUT:-}" ]]; then
     printf 'before-delete:%s\\n' "$(cat -- "$SSH_TEST_CLOSE_STDOUT")" >> "$SSH_TEST_LOG"
   fi
-  git worktree remove --force "$path" ;;
+  git worktree remove --force "$path"
+  rm -f -- "$path.item" ;;
 esac
 ''')
         scripts = self.source / ".agents/skills/orch/scripts"
@@ -1382,17 +1389,53 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
-    def test_close_after_finished_close_answers_absent(self):
-        """The control is the marker test below: no marker beside a standing
-        worktree still refuses as unowned."""
+    def test_a_clone_holding_nothing_of_the_item_answers_each_verb_empty(self):
+        """A finished close leaves nothing of TEST-1, and so does a create for
+        another item on the same clone after it: stop, status and close each
+        give the empty answer the protocol states, resolve no worktree path and
+        leave the other item's marker and worktree as they were. One control
+        is the marker test below, a missing or other marker beside TEST-1's
+        standing worktree still refusing as unowned; the other is the mutant
+        here, without the absent answer."""
         self.assertEqual(self.create().returncode, 0)
-        first = self.call("close", "--item", "TEST-1")
-        self.assertEqual(first.returncode, 0, first.stderr)
-        before = (self.root / "calls").read_text()
-        again = self.call("close", "--item", "TEST-1", "--merged")
-        self.assertEqual(again.returncode, 0, again.stderr)
-        self.assertEqual(again.stdout, b"closed=absent item=TEST-1\n")
-        self.assertNotIn("worktree path TEST-1", (self.root / "calls").read_text()[len(before):])
+        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+        clone = Path(self.row["clone"])
+        worktree = Path(self.row["clone"] + "-worktree")
+        # verb|arguments|stdout
+        answers = (("stop", ("--harness", "claude"), b"stopped item=TEST-1 processes=0\n"),
+                   ("status", ("--harness", "claude"), b"exited\n"),
+                   ("close", ("--merged",), b"closed=absent item=TEST-1\n"))
+
+        def ask(verb, extra):
+            before = (self.root / "calls").read_text()
+            result = self.call(verb, "--item", "TEST-1", *extra)
+            return result, (self.root / "calls").read_text()[len(before):]
+
+        for holder in (None, "OTHER-1"):
+            if holder:
+                self.inventory.write_text(json.dumps([{**self.row, "item": holder}]))
+                made = self.call("create", "--item", holder, "--repo", "owner/repo", "--harness", "claude",
+                                 "--account", str(self.account))
+                self.assertEqual(made.returncode, 0, made.stderr)
+                self.inventory.write_text(json.dumps([self.row]))
+                (worktree / "tmp").mkdir(exist_ok=True)
+                (worktree / "tmp/other.json").write_text("keep")
+            for verb, extra, expected in answers:
+                with self.subTest(holder=holder, verb=verb):
+                    result, calls = ask(verb, extra)
+                    self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+                    self.assertNotIn("worktree path TEST-1", calls)
+        self.assertEqual((clone / ".git/lane-host-item").read_text(), "OTHER-1\n")
+        self.assertEqual((worktree / "tmp/other.json").read_text(), "keep")
+        original = self.script.read_text()
+        answer = 'if owner == b"other" and not worktree_exists(row, item):'
+        self.assertEqual(original.count(answer), 1)
+        self.script.write_text(original.replace(answer, "if False:"))
+        for verb, extra, _ in answers:
+            with self.subTest(control=verb):
+                result, _ = ask(verb, extra)
+                self.assertEqual((result.returncode, result.stdout), (75, b""), result.stderr)
+        self.script.write_text(original)
 
     def test_close_requires_provider_marker_before_worktree_lookup(self):
         self.assertEqual(self.create().returncode, 0)

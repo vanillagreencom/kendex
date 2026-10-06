@@ -345,10 +345,11 @@ The long pass's events, checked and reported in this order:
                              unjudged; unusable local probes keep the lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone: `lane-close` succeeded; the
-                             provider's output follows, then `kept=none` when
-                             that output has no `kept=` line because the close
-                             kept no archive. A lane exiting while its
+                             its worktree gone: `lane-close` succeeded; its
+                             `kept=` line follows, its `closed=absent item=ID`
+                             line where the host no longer held the item and
+                             ran no archive pass, or else `kept=none` because
+                             the close kept no archive. A lane exiting while its
                              worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree

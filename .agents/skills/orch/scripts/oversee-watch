@@ -1091,7 +1091,9 @@ close_hosted_lane() { # ITEM
   case "$rc" in
     0)
       echo "EVENT lane-closed $1"
-      if line="$(grep '^kept=' <<<"$out")"; then
+      # A host that no longer held the item ran no archive pass, so lane-close
+      # gives no archive verdict and its closed=absent line stands in its place.
+      if line="$(grep '^kept=' <<<"$out")" || line="$(grep -xF "closed=absent item=$1" <<<"$out")"; then
         printf '%s\n' "$line"
       else
         echo "kept=none"

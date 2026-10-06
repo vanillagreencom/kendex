@@ -140,6 +140,9 @@ if [[ "$1" == stop ]]; then
       exit 4 ;;
     *) printf 'lane-host-ssh: stop-timeout item=%s\n' "$3" >&2; exit "$LANE_CLOSE_STOP_STATUS" ;;
   esac
+  # A host holding nothing of the item (LANE_CLOSE_HOST_ABSENT below) has no
+  # harness to stop: the protocol's empty match.
+  if [[ -n "${LANE_CLOSE_HOST_ABSENT:-}" ]]; then printf 'stopped item=%s processes=0\n' "$3"; exit 0; fi
   if [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
     printf 'exited\n' >"$LANE_CLOSE_PHASE"
     awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
@@ -172,8 +175,8 @@ if [[ -n "${LANE_CLOSE_HOST_MARKER:-}" ]]; then
   rm -f -- "$LANE_CLOSE_HOST_MARKER"
 fi
 # LANE_CLOSE_HOST_ABSENT is a host that no longer holds the item, answering
-# as the protocol states; a status of 1 is a provider failing the close with
-# its own words for that state on stderr.
+# close as the protocol states, as its stop above does; a status of 1 is a
+# provider failing the close with its own words for that state on stderr.
 if [[ -n "${LANE_CLOSE_HOST_ABSENT:-}" ]]; then printf 'closed=absent item=%s\n' "$3"; exit 0; fi
 if [[ "${LANE_CLOSE_HOST_STATUS:-0}" -ne 0 ]]; then
   [[ "$LANE_CLOSE_HOST_STATUS" -ne 3 ]] || printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
@@ -678,25 +681,32 @@ assert_eq "rc=$RC refusal=$(grep -c '^lane-host-ssh: close-refused path=/srv/clo
   'rc=3 refusal=1 kill=0 status=running' 'lane-host exit 3 reaches the caller unchanged and kills nothing'
 
 echo '=== a host that no longer holds the item closes the record ==='
-# An exited hosted lane closed by SCRIPT, the provider's close answering as
-# HOST_ENV sets it. ABSENT_CLOSE reads the relayed closed=absent line, a
-# kept=none line, the window kill and the record.
-absent_row() { # SCRIPT HOST_ENV
-  write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
-  export "$2"
+# A hosted lane closed by SCRIPT, exited in its window or, for a PANE of -,
+# with no window left on a terminal item, which stops before it closes; the
+# provider answers as HOST_ENV sets it. ABSENT_CLOSE reads the relayed
+# closed=absent line, a kept=none line, the provider stop, the window kill and
+# the record.
+absent_row() { # SCRIPT PANE HOST_ENV
+  local envs var
+  write_state running claude /host; printf '\n' >"$SCREEN"
+  if [[ "$2" == - ]]; then : >"$ROWS"; else write_panes "$2"; fi
+  read -ra envs <<<"$3"
+  for var in "${envs[@]}"; do export "$var"; done
   run_close "$1"
-  unset "${2%%=*}"
-  ABSENT_CLOSE="rc=$RC absent=$(grep -cx 'closed=absent item=KEN-1' <<<"$OUT" || true) none=$(grep -cx 'kept=none' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+  for var in "${envs[@]}"; do unset "${var%%=*}"; done
+  ABSENT_CLOSE="rc=$RC absent=$(grep -cx 'closed=absent item=KEN-1' <<<"$OUT" || true) none=$(grep -cx 'kept=none' <<<"$OUT" || true) stop=$(stop_count KEN-1 claude) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
 }
-# label|script|host env|expected
+# label|script|pane|host env|expected
 ABSENT_ROWS=(
-  "a provider answering closed=absent closes the record done, with no kept=none|$SCRIPT|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=0 kill=1 status=done"
-  "control: a provider exiting 1 with item-unknown on stderr still refuses, window and record kept|$SCRIPT|LANE_CLOSE_HOST_STATUS=1|rc=1 absent=0 none=0 kill=0 status=running"
-  "control: a close that does not read closed=absent claims kept=none|$(mutant lane-close-absent ' && ! grep -qxF "closed=absent item=$ITEM" "$out"' '')|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=1 kill=1 status=done"
+  "a provider answering closed=absent closes the record done, with no kept=none|$SCRIPT|bash|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=0 stop=0 kill=1 status=done"
+  "a windowless record whose provider holds nothing stops with processes=0 and closes done|$SCRIPT|-|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=0 stop=1 kill=0 status=done"
+  "control: a provider exiting 1 with item-unknown on stderr still refuses, window and record kept|$SCRIPT|bash|LANE_CLOSE_HOST_STATUS=1|rc=1 absent=0 none=0 stop=0 kill=0 status=running"
+  "control: a windowless record whose provider stop fails still refuses before the host close|$SCRIPT|-|LANE_CLOSE_HOST_ABSENT=1 LANE_CLOSE_STOP_STATUS=75|rc=1 absent=0 none=0 stop=1 kill=0 status=running"
+  "control: a close that does not read closed=absent claims kept=none|$(mutant lane-close-absent ' && ! grep -qxF "closed=absent item=$ITEM" "$out"' '')|bash|LANE_CLOSE_HOST_ABSENT=1|rc=0 absent=1 none=1 stop=0 kill=1 status=done"
 )
 for row in "${ABSENT_ROWS[@]}"; do
-  IFS='|' read -r label script host_env want <<<"$row"
-  absent_row "$script" "$host_env"
+  IFS='|' read -r label script pane host_env want <<<"$row"
+  absent_row "$script" "$pane" "$host_env"
   assert_eq "$ABSENT_CLOSE" "$want" "$label"
 done
 

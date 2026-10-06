@@ -852,6 +852,24 @@ for row in \
   [[ -z "$exit" ]] || assert_eq "$(hosted_exit "$run" "$needle" "$event")" "$exit" "$label: exit status and keyed line" "$STUB_DIR/run$run.err"
 done
 
+# A host that no longer held the item: the watch relays lane-close's
+# closed=absent line under lane-closed, never a kept=none it did not give. The
+# control is a watch without that read, which claims kept=none.
+hosted_absent() { # CASE
+  local later
+  hosted_runs "$1" 2 gone 2 LANE_HOST_STUB_CLOSE_ABSENT=1
+  later="$(printf '%s\n%s\n' "${HOSTED_OUT[2]}" "${HOSTED_OUT[3]}")"
+  HOSTED_ABSENT="$(hosted_facts 2) absent=$(grep -A1 -x "EVENT lane-closed issue-2" <<<"$later" | grep -cx 'closed=absent item=issue-2' || :)"
+}
+hosted_absent hosted_absent
+assert_eq "$HOSTED_ABSENT" "$ONE closed=0 refused=0 closes=1 none=0 absent=1" \
+  "a close of a host that no longer held the item relays closed=absent, with no kept=none" "$STUB_DIR/run2.err"
+ABSENT_WATCH="$(mutant_scripts absent/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/absent/github"
+mutate_file "$ABSENT_WATCH" ' || line="$(grep -xF "closed=absent item=$1" <<<"$out")"' ''
+WATCH_BIN="$ABSENT_WATCH" hosted_absent hosted_absent_control
+assert_eq "$HOSTED_ABSENT" "$ONE closed=1 refused=0 closes=1 none=1 absent=0" \
+  "control: a watch that does not read closed=absent claims kept=none" "$STUB_DIR/run2.err"
 HOSTED_RECORD=lane hosted_runs hosted_lane_record 2 keep 1
 assert_eq "$(hosted_facts 2)" "issue-2: handoff=1 closes=0" \
   "a hosted lane's record in its root's own tmp, none in the clone, is reported" "$STUB_DIR/run1.err"

@@ -210,11 +210,15 @@ case "$1" in
       || { printf 'lane-host-fixture: start-failed item=%s\n' "$3" >&2; exit "$LANE_HOST_STUB_START_STATUS"; }
     printf '%s\n' "${LANE_HOST_STUB_START_OUT-sandbox-started item=$3}" ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
+  # LANE_HOST_STUB_CLOSE_ABSENT is a host that no longer held the item,
+  # answering as the protocol states.
   # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once
   # the close has run, so the watch's next row commit fails.
   close)
-    [[ -n "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]] \
-      || printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
+    if [[ -n "${LANE_HOST_STUB_CLOSE_ABSENT:-}" ]]; then printf 'closed=absent item=%s\n' "$3"
+    elif [[ -z "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]]; then
+      printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
+    fi
     [[ -z "${LANE_HOST_STUB_CLOSE_JAM:-}" ]] || chmod 555 "$OVERSEE_WATCH_STATE_DIR"
     printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
     ;;
