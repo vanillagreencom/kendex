@@ -39,11 +39,12 @@
 #      its arms swapped, one ignoring the event, a shard key reading no
 #      selection, a cancel held to no event, a job dropped from CI's needs, CI without always(),
 #      a lane dropped from one aggregate alone and an event-held job held to
-#      another condition. The doc-limits and todo-ban steps run on a pull
-#      request alone and the bot-instructions check beside them on both
-#      events; the job checks out the whole history the secrets scan
-#      judges each commit against. Arms take each scan's event condition off
-#      and plant a shallow checkout.
+#      another condition. Every run step of the bot-instructions job is held
+#      to the events it runs on: the doc-limits, todo-ban and secrets scans on
+#      a pull request alone, the bot-instructions and changelog checks on
+#      both; the job checks out the whole history the secrets scan judges
+#      each commit against. Arms change a step's event condition, add a run
+#      step the table does not hold and plant a shallow checkout.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -512,32 +513,43 @@ for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/to
   check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
 done
 
-# The scans run on a pull request alone: a byte ceiling is a context budget
-# and a work marker is hygiene, which the pull request that spends them
-# answers for, and neither ejects a merge group. The bot-instructions check
-# beside them stays on both events. Each step's own `if:` is read and
-# evaluated per event; a step with none runs wherever its job runs.
+# The scans run on a pull request alone: a byte ceiling is a context budget,
+# a work marker is hygiene and the secrets scan reads the pull request's own
+# commits, which the pull request answers for, and none ejects a merge group.
+# The bot-instructions check and the changelog check stay on both events.
+# Every run step of the job is held here: a step is known by its `id:`, or
+# its `name:` where it has none, and its own `if:` is read and evaluated per
+# event; a step with none runs wherever its job runs.
 DOC_LIMITS=skills/doc-limits/scripts/doc-limits
-TODO_BAN=skills/commit-guards/scripts/todo-ban
-BOT_CHECK=candidate/skills/bot-instructions/scripts/bot-instructions
-step_if() { # WORKFLOW COMMAND — the if (`${{ }}` stripped, or none) of the step whose run line names COMMAND
-  COMMAND="$2" awk '
+STEP_JOB=bot-instructions
+DOC_STEP='doc-limits (document byte ceilings)'
+TODO_STEP='todo-ban (index-wide work-marker scan)'
+SECRETS_STEP='secrets (credential scan of the pull request diff)'
+# `KEY<tab>IF<tab>RUN` per step of JOB: KEY its id, else its name, else `?`;
+# IF its condition (`${{ }}` stripped, or none); RUN yes where it has `run:`.
+job_steps() { # WORKFLOW JOB
+  JOB="$2" awk '
     function flush() {
-      if (hit) printf "%s", (cond == "" ? "none" : cond)
-      hit = 0; cond = ""
+      if (open) printf "%s\t%s\t%s\n", (id != "" ? id : (name != "" ? name : "?")), (cond == "" ? "none" : cond), (run ? "yes" : "no")
+      open = 0; id = ""; name = ""; cond = ""; run = 0
     }
-    /^  [A-Za-z0-9_-]+:/ || /^      - / { flush() }
+    /^  [A-Za-z0-9_-]+:/ { flush(); job = $1; sub(/:$/, "", job); next }
+    job != ENVIRON["JOB"] { next }
+    /^      - / { flush(); open = 1; line = $0; sub(/^      - /, "        ", line); $0 = line }
+    !open { next }
+    /^        id: / { id = $0; sub(/^        id: */, "", id) }
+    /^        name: / { name = $0; sub(/^        name: */, "", name) }
     /^        if: / {
       cond = $0; sub(/^        if: */, "", cond)
       if (substr(cond, 1, 3) == "${{") { cond = substr(cond, 4); sub(/}}[ ]*$/, "", cond) }
     }
-    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 { hit = 1 }
+    /^        run:/ { run = 1 }
     END { flush() }
   ' "$1"
 }
-step_runs() { # WORKFLOW COMMAND EVENT — yes, no, or the evaluator's refusal
+step_runs() { # WORKFLOW KEY EVENT — yes, no, no-step, or the evaluator's refusal
   local expr out
-  expr="$(step_if "$1" "$2")"
+  expr="$(job_steps "$1" "$STEP_JOB" | KEY="$2" awk -F '\t' '$1 == ENVIRON["KEY"] { print $2; exit }')"
   [ -n "$expr" ] || { printf 'no-step'; return 0; }
   [ "$expr" != none ] || { printf 'yes'; return 0; }
   out="$(gh_eval value "$(jq -cn --arg e "$3" '{github: {event_name: $e}}')" "$expr")"
@@ -547,37 +559,80 @@ step_runs() { # WORKFLOW COMMAND EVENT — yes, no, or the evaluator's refusal
     *) printf '%s' "$out" ;;
   esac
 }
-# EVENT|COMMAND|RUNS
-step_rows=0
-while IFS='|' read -r event command runs; do
-  step_rows=$((step_rows + 1))
-  check "$command runs on $event: $runs" "$runs" "$(step_runs "$WORKFLOW" "$command" "$event")"
-done <<ROWS
-pull_request|$DOC_LIMITS|yes
-merge_group|$DOC_LIMITS|no
-pull_request|$TODO_BAN|yes
-merge_group|$TODO_BAN|no
-pull_request|$BOT_CHECK|yes
-merge_group|$BOT_CHECK|yes
-ROWS
-[ "$step_rows" -ge 6 ] || { echo "the step table read $step_rows rows" >&2; exit 1; }
+step_row_ok() { # WORKFLOW EVENT KEY RUNS — sets GOT
+  GOT="$(step_runs "$1" "$3" "$2")"
+  [ "$GOT" = "$4" ]
+}
+# `missing=` the job's run steps the table holds to no event, `extra=` the
+# table's steps the job does not run.
+step_coverage_gap() { # WORKFLOW
+  set_gap "$(job_steps "$1" "$STEP_JOB" | awk -F '\t' '$3 == "yes" { print $1 }' | LC_ALL=C sort -u)" \
+    "$(printf '%s\n' "$STEP_ROWS" | awk -F '|' 'NF { print $2 }' | LC_ALL=C sort -u)"
+}
+# EVENT|STEP|RUNS
+STEP_ROWS="pull_request|$DOC_STEP|yes
+merge_group|$DOC_STEP|no
+pull_request|$TODO_STEP|yes
+merge_group|$TODO_STEP|no
+pull_request|$SECRETS_STEP|yes
+merge_group|$SECRETS_STEP|no
+pull_request|bot-instructions-check|yes
+merge_group|bot-instructions-check|yes
+pull_request|changelog-entries|yes
+merge_group|changelog-entries|yes"
+while IFS='|' read -r event step runs; do
+  if step_row_ok "$WORKFLOW" "$event" "$step" "$runs"; then
+    ok "$step runs on $event: $runs"
+  else
+    bad "$step runs on $event: $runs (got '$GOT')"
+  fi
+done <<<"$STEP_ROWS"
+check "the step table holds every run step of $STEP_JOB" "missing= extra=" "$(step_coverage_gap "$WORKFLOW")"
 
-# Each scan's step with the event condition taken off, the shape that ejected
-# merge groups over a budget, runs on a merge group again.
-while IFS='|' read -r step command; do
-  STEP="$step" awk '
-    /^      - / { in_step = ($0 == "      - name: " ENVIRON["STEP"]) }
-    in_step && $0 == "        if: always() && github.event_name == '\''pull_request'\''" { $0 = "        if: always()"; n++ }
+# A step with its event condition changed fails its merge group row: a scan
+# with the condition taken off, the shape that ejected merge groups over a
+# budget, runs there again, and the changelog check held to pull requests
+# would let a merge group past the package version rule.
+PR_ONLY="        if: always() && github.event_name == 'pull_request'"
+ALWAYS="        if: always()"
+while IFS='|' read -r step from to; do
+  STEP="$step" FROM="$from" TO="$to" awk '
+    /^      - / { in_step = 0 }
+    /^      - / || /^        / {
+      key = $0; sub(/^      - /, "        ", key)
+      if (key == "        id: " ENVIRON["STEP"] || key == "        name: " ENVIRON["STEP"]) in_step = 1
+    }
+    in_step && $0 == ENVIRON["FROM"] { $0 = ENVIRON["TO"]; n++ }
     { print }
     END { if (n != 1) exit 2 }
-  ' "$WORKFLOW" >"$TMP/wf-group-scan.yml" ||
-    { echo "the event condition of '$step' could not be taken off in a copy" >&2; exit 1; }
-  check "must-fail: $command without its event condition runs on a merge group" "yes" \
-    "$(step_runs "$TMP/wf-group-scan.yml" "$command" merge_group)"
+  ' "$WORKFLOW" >"$TMP/wf-step-event.yml" ||
+    { echo "the event condition of '$step' could not be changed in a copy" >&2; exit 1; }
+  want="$(printf '%s\n' "$STEP_ROWS" | STEP="$step" awk -F '|' '$1 == "merge_group" && $2 == ENVIRON["STEP"] { print $3 }')"
+  [ -n "$want" ] || { echo "the step table has no merge group row for '$step'" >&2; exit 1; }
+  if step_row_ok "$TMP/wf-step-event.yml" merge_group "$step" "$want"; then
+    bad "must-fail: $step with its event condition changed fails its merge group row (got '$GOT')"
+  else
+    ok "must-fail: $step with its event condition changed fails its merge group row"
+  fi
 done <<ROWS
-doc-limits (document byte ceilings)|$DOC_LIMITS
-todo-ban (index-wide work-marker scan)|$TODO_BAN
+$DOC_STEP|$PR_ONLY|$ALWAYS
+$TODO_STEP|$PR_ONLY|$ALWAYS
+changelog-entries|$ALWAYS|$PR_ONLY
 ROWS
+
+# A run step added to the job with no rows is named.
+awk '
+  { print }
+  $0 == "        run: skills/commit-guards/scripts/changelog-entries --base \"$BASE\"" {
+    print "      - name: planted"
+    print "        run: true"
+    n++
+  }
+  END { if (n != 1) exit 2 }
+' "$WORKFLOW" >"$TMP/wf-step-unlisted.yml" ||
+  { echo "a step could not be added to $STEP_JOB in a copy" >&2; exit 1; }
+check "must-fail: a run step the table does not hold is named" "missing=planted extra=" \
+  "$(step_coverage_gap "$TMP/wf-step-unlisted.yml")"
 
 # The secrets scan in the content-scan job judges each pull request commit
 # against its own parents, which only the whole history (depth 0) holds.

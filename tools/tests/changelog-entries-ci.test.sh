@@ -6,8 +6,9 @@
 # tree at a merge commit of the branch into a base that moved, with this
 # repository's commit-guards scripts and settings, and BASE at the base tip,
 # or at the branch point for the pull request run of a stacked branch. The
-# step's BASE expression is read from the workflow too and evaluated for each
-# event that runs the step, so the range starts at the base it names.
+# step's BASE expression is read from the workflow too and evaluated on a
+# pull request's and a merge group's payload, the two events
+# tools/tests/ci-aggregate.test.sh holds the step to running on.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,8 +48,8 @@ COMMAND="${rest#*$'\t'}"
   { echo "changelog-entries-ci: step=incomplete value=[$step]" >&2; exit 1; }
 
 # EVENT | the event payload GitHub sends | its base
-# Each event that runs the step carries both a base and a head commit; BASE
-# must be the base, the commit the range starts from.
+# Each payload carries both a base and a head commit; BASE must be the base,
+# the commit the range starts from.
 BASE_ROWS='pull_request|{"github":{"event":{"pull_request":{"base":{"sha":"pr-base"},"head":{"sha":"pr-head"}}}}}|pr-base
 merge_group|{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}|group-base'
 
