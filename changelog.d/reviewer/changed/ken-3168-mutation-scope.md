@@ -1,1 +1,1 @@
-- reviewer-test mutation-validates only the tests the diff or fix diff adds or changes, and mutation-stability's summary line reports the call's seconds for the artifact summary.
+- The Mutation-Stability Pairing runs only on tests the diff, or a re-review's fix diff, adds or changes, and mutation-stability's summary line reports the call's elapsed seconds.

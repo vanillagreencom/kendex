@@ -87,11 +87,18 @@ mutation_for() {
 }
 
 run_ms() {
-  sha="$1"
-  shift
+  run_ms_env "" "$@"
+}
+
+# run_ms_env ENV SHA ARGS... — ENV, when not empty, is one NAME=VALUE the
+# script starts with. SECONDS=N starts its SECONDS counter at N, so a summary's
+# seconds field reads as N plus the call's own elapsed time.
+run_ms_env() {
+  ms_env="$1" sha="$2"
+  shift 2
   rc=0
   out=""
-  out=$("$MS" --worktree "$REPO" --sha "$sha" "$@" 2>&1) || rc=$?
+  out=$(env ${ms_env:+"$ms_env"} "$MS" --worktree "$REPO" --sha "$sha" "$@" 2>&1) || rc=$?
 }
 
 resolve_sha() {
@@ -156,21 +163,39 @@ git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm cached
 SHA_CACHED=$(git -C "$REPO" rev-parse HEAD)
 
+# The exact-summary row starts the script's clock at CLOCK_BASE and bounds the
+# reported seconds by this shell's own count across the call: a hard-coded
+# figure or an absolute clock lands outside base..base+elapsed.
+CLOCK_BASE=5000
+
 echo "=== command outcome table ==="
 command_rows=0
 while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stability threads probe expected; do
   resolve_sha "$revision"
   mutation_for "$mutation_token"
+  clock=""
+  [ "$probe" != exact-summary ] || clock="SECONDS=$CLOCK_BASE"
+  started=$SECONDS
   if [ "$threads" = "default" ]; then
-    run_ms "$sha" --test "$test_cmd" --build "$build_cmd" --mutate "$mutation" --stability "$stability"
+    run_ms_env "$clock" "$sha" --test "$test_cmd" --build "$build_cmd" --mutate "$mutation" --stability "$stability"
   else
-    run_ms "$sha" --test "$test_cmd" --build "$build_cmd" --mutate "$mutation" --stability "$stability" --threads "$threads"
+    run_ms_env "$clock" "$sha" --test "$test_cmd" --build "$build_cmd" --mutate "$mutation" --stability "$stability" --threads "$threads"
   fi
+  elapsed=$((SECONDS - started))
   case "$probe" in
     exact-summary)
       last=${out##*$'\n'}
       seconds=${last##*; seconds: }
-      case "$seconds" in '' | *[!0-9]*) seconds=missing ;; *) seconds=whole ;; esac
+      case "$seconds" in
+        '' | *[!0-9]*) seconds=missing ;;
+        *)
+          if [ "$seconds" -ge "$CLOCK_BASE" ] && [ "$seconds" -le $((CLOCK_BASE + elapsed)) ]; then
+            seconds=call-elapsed
+          else
+            seconds="outside-$CLOCK_BASE..$((CLOCK_BASE + elapsed)):$seconds"
+          fi
+          ;;
+      esac
       actual="rc=$rc;last=${last%; seconds: *};seconds=$seconds"
       ;;
     killed-zero)
@@ -195,7 +220,7 @@ while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stabilit
   assert_row "command outcome" "$name" "$actual" "$expected"
   command_rows=$((command_rows + 1))
 done <<'ROWS'
-killed mutant	base	bash check.sh	true	kill	2	2	exact-summary	rc=0;last=mutation: killed 1/1; stability: 2/2 at 2 threads;seconds=whole
+killed mutant	base	bash check.sh	true	kill	2	2	exact-summary	rc=0;last=mutation: killed 1/1; stability: 2/2 at 2 threads;seconds=call-elapsed
 surviving decoy	base	bash check.sh	true	decoy	1	default	killed-zero	rc=1;killed-zero=yes
 red before mutation	base	false	true	none	1	default	control-failure	rc=2;diagnostic=error=control-test-failed exit=1
 empty Cargo selection	base	printf "test result: ok. 0 passed; 0 failed; 0 ignored\n"	true	none	1	default	empty-selection	rc=2;diagnostic=error=control-selection-empty count=0;survived=no
