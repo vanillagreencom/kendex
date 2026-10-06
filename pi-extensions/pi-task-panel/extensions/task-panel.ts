@@ -1,7 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -142,7 +142,11 @@ function sidecarStatePath(ctx: ExtensionContext): string {
 
 /** The file holding a state over the session entry cap, named by the fingerprint its manifest and bounded details carry. */
 function savedStatePath(ctx: ExtensionContext, fingerprint: string): string {
-	return join(laneDir(ctx), "states", `${safeFileName(fingerprint)}.json`);
+	return join(savedStatesDir(ctx), `${safeFileName(fingerprint)}.json`);
+}
+
+function savedStatesDir(ctx: ExtensionContext): string {
+	return join(laneDir(ctx), "states");
 }
 
 /** A saved state's size and age; undefined once another session's lane prune removed it. */
@@ -946,8 +950,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		return sidecarSaves;
 	};
 
-	/** Restores the branch's list and yields the fingerprints its bounded records name. */
-	const restore = (ctx: ExtensionContext): Set<string> => {
+	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
 		// The fingerprint names the last state saved, which a tree point before
 		// it does not hold, so the first change after a restore always saves.
@@ -976,11 +979,9 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			return undefined;
 		};
 		let missingFingerprint: string | undefined;
-		const named = new Set<string>();
 		for (const entry of ctx.sessionManager.getBranch()) {
 			const record = branchStateRecord(entry, ctx.cwd);
 			if (!record) continue;
-			if (record.kind === "bounded") named.add(record.fingerprint);
 			missingFingerprint = apply(record);
 		}
 		if (missingFingerprint !== undefined) {
@@ -988,32 +989,57 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		}
 		updatePanelAfterTaskChange(state, ctx.cwd);
 		syncWidget(ctx);
-		return named;
 	};
 
-	/** Marks a resumed session's lane live: records the working directory the
-	 *  session runs in now and dates the sidecar and the saved states its
-	 *  branch names now, so the prune that follows keeps what a later tree
-	 *  move or reload reads again. A session that never saved has no lane and
-	 *  gets none. */
-	const keepLaneLive = (ctx: ExtensionContext, fingerprints: Set<string>) => {
+	/** Marks a resumed session's lane live as one unit: records the working
+	 *  directory the session runs in now and dates the sidecar and every saved
+	 *  state now, so the prune that follows keeps whatever branch a later tree
+	 *  move or reload reads. A session that never saved has no lane and gets
+	 *  none. `pruneSavedStates` evicts by the same timestamps, so each saved
+	 *  state is dated one second before the next newer one and keeps its place
+	 *  in save order, also on a file system that keeps whole seconds. A
+	 *  leftover temporary file is not a saved state and ages out. */
+	const keepLaneLive = (ctx: ExtensionContext) => {
 		const dir = laneDir(ctx);
 		if (!existsSync(dir)) return;
+		const failed = (path: string, error: unknown) => {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			logTaskPanelDiagnostic("session lane refresh failed", { path, error: error instanceof Error ? error.message : String(error) });
+		};
 		try {
 			openLaneDir(dir, ctx.cwd);
 		} catch (error) {
-			logTaskPanelDiagnostic("session lane refresh failed", { path: dir, error: error instanceof Error ? error.message : String(error) });
+			failed(dir, error);
 			return;
 		}
-		const now = new Date();
-		for (const file of [sidecarStatePath(ctx), ...[...fingerprints].map((fingerprint) => savedStatePath(ctx, fingerprint))]) {
+		const now = Date.now();
+		const date = (path: string, at: number) => {
 			try {
-				utimesSync(file, now, now);
+				utimesSync(path, at / 1000, at / 1000);
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-				logTaskPanelDiagnostic("session lane refresh failed", { path: file, error: error instanceof Error ? error.message : String(error) });
+				failed(path, error);
+			}
+		};
+		date(sidecarStatePath(ctx), now);
+		const states = savedStatesDir(ctx);
+		let names: string[];
+		try {
+			names = readdirSync(states).filter((name) => name.endsWith(".json"));
+		} catch (error) {
+			failed(states, error);
+			return;
+		}
+		const saved: Array<{ path: string; modified: number }> = [];
+		for (const name of names) {
+			const path = join(states, name);
+			try {
+				saved.push({ path, modified: statSync(path).mtimeMs });
+			} catch (error) {
+				failed(path, error);
 			}
 		}
+		saved.sort((left, right) => right.modified - left.modified);
+		saved.forEach((file, rank) => date(file.path, now - rank * 1000));
 	};
 
 	const syncWidget = (ctx: ExtensionContext) => {
@@ -1334,7 +1360,8 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		// Restore first, so a session resumed after its files aged out still
 		// shows its list, and keep its lane live, so the prune leaves those
 		// files for the next tree move or reload.
-		keepLaneLive(ctx, restore(ctx));
+		restore(ctx);
+		keepLaneLive(ctx);
 		for (const failure of pruneLanes(sessionsRoot(), [PACKAGE_FOLDER]).failed) {
 			logTaskPanelDiagnostic("session file prune failed", { path: failure.path, error: failure.error });
 		}

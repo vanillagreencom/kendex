@@ -2,7 +2,7 @@
 // bound, its temporary-file cleanup, and lane retention of the session's
 // directory (scripts/lane-retention.ts).
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
@@ -15,6 +15,9 @@ const SESSION_ID = "session-files-test";
 
 /** The count bound the saved-state directory had before its byte bound. */
 const FORMER_SAVED_STATES_MAX = 20;
+
+/** The saved-state directory's bound, `TASK_PANEL_SAVED_STATES_MAX_BYTES`. */
+const SAVED_STATES_MAX_BYTES = 32 * 1024 * 1024;
 
 interface Session {
 	base: string;
@@ -111,17 +114,22 @@ const RESUMED: Array<{ name: string; movedFrom: boolean }> = [
 ];
 
 for (const row of RESUMED) {
-	test(`lane retention: a session resumed ${row.name} after its files aged out keeps its large list across a tree move, and a save after another session pruned its lane records the lane again`, () => inSession(async ({ base, pi, lane, tasksWrite }) => {
+	test(`lane retention: a session resumed ${row.name} after its files aged out keeps its large lists across tree moves on its own and another branch, and a save after another session pruned its lane records the lane again`, () => inSession(async ({ base, pi, lane, tasksWrite }) => {
 		const notifications: Array<{ message: string; level: string }> = [];
 		const ctx = fakeCtx(base, SESSION_ID, notifications);
 		const savedIn = join(base, "saved-in");
 		mkdirSync(savedIn);
 		if (row.movedFrom) ctx.cwd = savedIn;
+		// Saved first, so only its saved-state file holds it, not the sidecar.
+		const sibling = largeList("sibling");
+		await tasksWrite(ctx, sibling);
+		const siblingManifest = pi.appended.at(-1);
 		const large = largeList("resumed");
 		await tasksWrite(ctx, large);
 		const manifest = pi.appended.at(-1);
-		expect(manifest?.data.fullSnapshot).toBe(false);
-		ctx.sessionManager.getBranch = () => [{ type: "custom", customType: manifest?.customType, data: manifest?.data }] as never;
+		expect([siblingManifest?.data.fullSnapshot, manifest?.data.fullSnapshot]).toEqual([false, false]);
+		const branchOf = (record: typeof manifest) => () => [{ type: "custom", customType: record?.customType, data: record?.data }] as never;
+		ctx.sessionManager.getBranch = branchOf(manifest);
 		const aged = Date.now() - LANE_FILE_MAX_AGE_MS - 60_000;
 		backDate(lane(SESSION_ID), aged);
 		if (row.movedFrom) {
@@ -132,6 +140,7 @@ for (const row of RESUMED) {
 		const navigate = pi.handlers.get("session_tree");
 		if (!start || !navigate) throw new Error("handler-missing=session_start,session_tree");
 		const expected = large.tasks.map((task) => task.content).sort();
+		const expectedSibling = sibling.tasks.map((task) => task.content).sort();
 		const restored = async () => (await exportedTasks(base, pi, ctx)).map((line) => line.replace(/ \((active|done|dropped)\)$/, "")).sort();
 
 		await start({ type: "session_start" }, ctx);
@@ -140,7 +149,11 @@ for (const row of RESUMED) {
 		expect(existsSync(join(lane(SESSION_ID), "states", `${manifest?.data.fingerprint}.json`))).toBe(true);
 		await navigate({}, ctx);
 		expect(await restored()).toEqual(expected);
+		ctx.sessionManager.getBranch = branchOf(siblingManifest);
+		await navigate({}, ctx);
+		expect(await restored()).toEqual(expectedSibling);
 		expect(notifications.filter((note) => note.level === "warning")).toEqual([]);
+		ctx.sessionManager.getBranch = branchOf(manifest);
 
 		backDate(lane(SESSION_ID), aged);
 		await start({ type: "session_start" }, fakeCtx(base, `${SESSION_ID}-next`));
@@ -149,3 +162,34 @@ for (const row of RESUMED) {
 		expect(existsSync(join(lane(SESSION_ID), LANE_CWD_FILE))).toBe(true);
 	}));
 }
+
+test("lane retention: a save past the byte bound after a resume removes the oldest saved state, not a newer one the resume dated alike", () => inSession(async ({ base, pi, lane, tasksWrite }) => {
+	const ctx = fakeCtx(base, SESSION_ID);
+	const fingerprints: string[] = [];
+	for (const label of ["newest", "middle", "oldest"]) {
+		await tasksWrite(ctx, largeList(label));
+		fingerprints.push(pi.appended.at(-1)?.data.fingerprint);
+	}
+	const [newest, middle, oldest] = fingerprints.map((fingerprint) => `${fingerprint}.json`);
+	const states = join(lane(SESSION_ID), "states");
+	// Save order runs against write order, so a resume that loses it leaves
+	// the directory's listing order, which tracks write order on some file
+	// systems, to pick what goes.
+	const aged = Date.now() - LANE_FILE_MAX_AGE_MS - 10 * 60_000;
+	[newest, middle, oldest].forEach((name, rank) => utimesSync(join(states, name), (aged - rank * 60_000) / 1000, (aged - rank * 60_000) / 1000));
+	// A sparse file newer than every saved state, sized so the next save
+	// fits with it and the two newest saved states, and the oldest is past the bound.
+	const fileBytes = statSync(join(states, oldest)).size;
+	const filler = join(states, "filler.json");
+	writeFileSync(filler, "");
+	truncateSync(filler, SAVED_STATES_MAX_BYTES - 3 * fileBytes - Math.floor(fileBytes / 2));
+	utimesSync(filler, (aged + 60_000) / 1000, (aged + 60_000) / 1000);
+	const start = pi.handlers.get("session_start");
+	if (!start) throw new Error("handler-missing=session_start");
+
+	await start({ type: "session_start" }, ctx);
+	await tasksWrite(ctx, largeList("after resume"));
+	const kept = readdirSync(states).filter((name) => name.endsWith(".json"));
+	expect(kept).toEqual(expect.arrayContaining([newest, middle, "filler.json", `${pi.appended.at(-1)?.data.fingerprint}.json`]));
+	expect(kept).not.toContain(oldest);
+}));
