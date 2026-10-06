@@ -30,7 +30,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
 - **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests. Inject time for logic and require progress evidence for concurrency. Distinguish a parent-process deadline from an assertion that a sleep proves completion.
-- Any test you mutation-validate follows the reviewer skill's § Mutation-Stability Pairing.
+- Mutation-validate only the tests the diff adds or changes, or in a re-review the tests the fix diff adds or changes, each by the reviewer skill's § Mutation-Stability Pairing.
 
 ## Output
 

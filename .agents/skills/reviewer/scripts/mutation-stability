@@ -7,7 +7,9 @@
 # mutant killed), then runs TEST N more times on a clean copy at elevated
 # parallelism and prints the one summary line reviewers report:
 #
-#   mutation: killed 1/1; stability: N/N at T threads
+#   mutation: killed 1/1; stability: N/N at T threads; seconds: S
+#
+# S is the call's wall time, from start to this line.
 #
 # Diagnostic protocol: each refusal starts with error=KEY FIELD=VALUE, and each
 # notice starts with notice=KEY FIELD=VALUE. English detail follows. The final
@@ -333,6 +335,6 @@ while [ "$i" -lt "$N" ]; do
   i=$((i + 1))
 done
 
-echo "mutation: killed $KILLED/1; stability: $PASSES/$N at $THREADS threads"
+echo "mutation: killed $KILLED/1; stability: $PASSES/$N at $THREADS threads; seconds: $SECONDS"
 if [ "$KEEP" = 1 ]; then notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"; fi
 [ "$KILLED" = 1 ] && [ "$PASSES" = "$N" ]

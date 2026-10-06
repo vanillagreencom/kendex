@@ -12,7 +12,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.0"
+  version: "3.0.1"
 tags: [review]
 ---
 
@@ -70,7 +70,7 @@ The delegation's `Diff-range` is the fix diff: scope the pass to that range and 
 
 ## Mutation-Stability Pairing
 
-Mutation proves a test can fail; stability proves it fails only for the right reason. Run both with one command, on the copy [§ Ethos](#ethos) requires:
+Mutation proves a test can fail; stability proves it fails only for the right reason. Run both with one command, on the copy [§ Ethos](#ethos) requires, for each test the diff adds or changes; in a [re-review](#re-review-rounds), each test the fix diff adds or changes. A test the diff leaves unchanged takes no call:
 
 ```bash
 .agents/skills/reviewer/scripts/mutation-stability --worktree [WORKTREE_PATH] --sha [SHA] --test '[TEST_CMD]' --build '[BUILD_CMD]' --mutate '[MUTATE_CMD]'
@@ -80,5 +80,5 @@ Mutation proves a test can fail; stability proves it fails only for the right re
 - Kill the mutant under every selection/invocation mode the changed code exposes, not only the default (one call per mode).
 - A kill counts only when the mutated copy compiles. Use the suite's compile-without-running command for `--build`.
 - Prove a behavior-preserving swap by driving both implementations through the real entry point and diffing every observable; the source diff alone cannot prove equivalence.
-- Copy the printed `mutation: … stability: …` line into your artifact's `summary`; that field and `qa_metadata` are the only carriers read as your own measurement.
+- Copy each call's printed `mutation: … stability: …; seconds: …` line into your artifact's `summary`; that field and `qa_metadata` are the only carriers read as your own measurement.
 - Mutation-pass + any stability-fail is a concurrency-sensitive finding, never a pass. A survived mutant means the test is not evidence.

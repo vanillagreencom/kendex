@@ -168,7 +168,10 @@ while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stabilit
   fi
   case "$probe" in
     exact-summary)
-      actual="rc=$rc;last=${out##*$'\n'}"
+      last=${out##*$'\n'}
+      seconds=${last##*; seconds: }
+      case "$seconds" in '' | *[!0-9]*) seconds=missing ;; *) seconds=whole ;; esac
+      actual="rc=$rc;last=${last%; seconds: *};seconds=$seconds"
       ;;
     killed-zero)
       actual="rc=$rc;killed-zero=$(output_has 'mutation: killed 0/1;')"
@@ -192,7 +195,7 @@ while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stabilit
   assert_row "command outcome" "$name" "$actual" "$expected"
   command_rows=$((command_rows + 1))
 done <<'ROWS'
-killed mutant	base	bash check.sh	true	kill	2	2	exact-summary	rc=0;last=mutation: killed 1/1; stability: 2/2 at 2 threads
+killed mutant	base	bash check.sh	true	kill	2	2	exact-summary	rc=0;last=mutation: killed 1/1; stability: 2/2 at 2 threads;seconds=whole
 surviving decoy	base	bash check.sh	true	decoy	1	default	killed-zero	rc=1;killed-zero=yes
 red before mutation	base	false	true	none	1	default	control-failure	rc=2;diagnostic=error=control-test-failed exit=1
 empty Cargo selection	base	printf "test result: ok. 0 passed; 0 failed; 0 ignored\n"	true	none	1	default	empty-selection	rc=2;diagnostic=error=control-selection-empty count=0;survived=no
