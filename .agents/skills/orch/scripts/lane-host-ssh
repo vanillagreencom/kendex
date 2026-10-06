@@ -203,8 +203,9 @@ def create_worktree(row, item, flags):
 
 
 # What stop, status and close answer for an item the clone holds nothing of:
-# the empty match each verb already gives (schemas/lane-host.md § Provider
-# protocol), so a caller needs no branch of its own for it.
+# the answer the protocol states for each verb on an item the provider holds
+# no sandbox for, so a caller needs no branch of its own for it
+# (../schemas/lane-host.md § Provider protocol).
 ABSENT_ANSWERS = {"stop": "stopped item={} processes=0", "status": "exited", "close": "closed=absent item={}"}
 
 
