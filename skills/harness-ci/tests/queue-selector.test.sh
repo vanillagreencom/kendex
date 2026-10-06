@@ -11,7 +11,8 @@ set -euo pipefail
 
 # The fixture's selector: one job per changed path under slow/ or named
 # docs/slow*, each spelling the inputs it was asked with and the base tree's
-# marker, beside another output the named one must be read apart from. A
+# marker, and after it another output, an empty list, which a reader blind
+# to the output's name would take in its place. A
 # path under fail/ exits 3, one under garbled/ writes no list, and a caller's
 # environment reaching it exits 4.
 SELECTOR='#!/usr/bin/env bash
@@ -26,7 +27,7 @@ while IFS= read -r path; do
     slow/* | docs/slow*) list="${list:+$list,}\"$CHANGE_CLASS:$DOCS_ONLY:$EVENT:$marker:$path\"" ;;
   esac
 done <<<"$CHANGED_PATHS"
-printf "other=[\"x\"]\njobs=[%s]\n" "$list" >>"$GITHUB_OUTPUT"'
+printf "jobs=[%s]\nother=[]\n" "$list" >>"$GITHUB_OUTPUT"'
 
 repo="$(new_repo queue-selector)"
 mkdir -p "$repo/ci"
@@ -36,11 +37,11 @@ printf 'base\n' >"$repo/tree-marker"
 commit_paths "$repo" baseline seed.txt
 seed="$(git -C "$repo" rev-parse HEAD)"
 
-# A base commit whose settings declare an empty queue list beside SELECTOR,
-# or no selector where SELECTOR is `-`.
-selector_base() { # SELECTOR -> prints the base commit
+# A base commit whose settings declare the queue list GLOBS, empty unless
+# given, beside SELECTOR, or no selector where SELECTOR is `-`.
+selector_base() { # SELECTOR [GLOBS] -> prints the base commit
   git -C "$repo" checkout -q -B base-case "$seed"
-  printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
+  printf '[env]\nHARNESS_CI_QUEUE_PATHS = "%s"\n' "${2:-}" >"$repo/kendex.settings.toml"
   [ "$1" = - ] || printf 'HARNESS_CI_QUEUE_SELECTOR = "%s"\n' "$1" >>"$repo/kendex.settings.toml"
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "settings base"
@@ -51,6 +52,7 @@ plain_base="$(selector_base -)"
 absent_base="$(selector_base "ci/missing jobs")"
 bare_base="$(selector_base "ci/select")"
 climbing_base="$(selector_base "../select jobs")"
+listed_base="$(selector_base "ci/select jobs" "infra/*")"
 
 # LINES lines of content appended under PATH.
 write_lines() { # PATH COUNT
@@ -63,9 +65,10 @@ write_lines() { # PATH COUNT
 }
 
 # The queue-only line of one row: EDITS, each PATH=COUNT, committed on BASE
-# and judged against it, with ROW_ENV, when set, as one NAME=VALUE the
-# classifier runs with.
+# and judged against it at ROW_EVENT, with ROW_ENV, when set, as one
+# NAME=VALUE the classifier runs with.
 ROW_ENV=""
+ROW_EVENT=pull_request
 run_row() { # CLASSIFIER BASE EDITS...
   local classifier="$1" row_base="$2" edit
   shift 2
@@ -74,11 +77,11 @@ run_row() { # CLASSIFIER BASE EDITS...
   for edit in "$@"; do write_lines "${edit%=*}" "${edit##*=}"; done
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "row"
-  env ${ROW_ENV:+"$ROW_ENV"} "$classifier" --repo "$repo" --event pull_request \
+  env ${ROW_ENV:+"$ROW_ENV"} "$classifier" --repo "$repo" --event "$ROW_EVENT" \
     --base "$row_base" --head HEAD 2>&1 >/dev/null | sed -n 's/^queue-only: //p'
 }
 
-# label | expected queue-only line | edits | base | environment
+# label | expected queue-only line | edits | base | environment | event
 TABLE='a path the selector names is queue-only|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|slow/run.sh=2|declared_base|
 a path the selector names no job for answers as without a selector|queue_only=false cause=no-queue-path|runtime/product.ts=2|declared_base|
 a repository that declares no selector answers as before|queue_only=false cause=no-queue-path|slow/run.sh=2|plain_base|
@@ -91,25 +94,29 @@ a failing selector is queue-only|queue_only=true cause=queue-selector-failed sel
 a selector output that is no list is queue-only|queue_only=true cause=queue-selector-failed selector=ci/select detail=output-unreadable|garbled/x=2|declared_base|
 a selector the base does not hold is queue-only|queue_only=true cause=queue-selector-failed selector=ci/missing detail=command-absent|runtime/product.ts=2|absent_base|
 a selector setting naming no output is queue-only|queue_only=true cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|bare_base|
-a selector outside the repository is queue-only|queue_only=true cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|climbing_base|'
+a selector outside the repository is queue-only|queue_only=true cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|climbing_base|
+a path the repository list names answers before the selector runs|queue_only=true cause=repository-queue-path path=infra/deploy.sh glob=infra/*|infra/deploy.sh=2|listed_base|
+a push runs no selector|queue_only=false cause=no-queue-path|slow/run.sh=2|declared_base||push'
 
-# The row of TABLE whose label is LABEL, as `expected|edits|base|env`.
+# The row of TABLE whose label is LABEL, as `expected|edits|base|env|event`.
 row_of() { # LABEL
-  local label expected edits row_base env
-  while IFS='|' read -r label expected edits row_base env; do
-    [ "$label" != "$1" ] || { printf '%s|%s|%s|%s\n' "$expected" "$edits" "$row_base" "$env"; return 0; }
+  local label expected edits row_base env row_event
+  while IFS='|' read -r label expected edits row_base env row_event; do
+    [ "$label" != "$1" ] || { printf '%s|%s|%s|%s|%s\n' "$expected" "$edits" "$row_base" "$env" "$row_event"; return 0; }
   done <<<"$TABLE"
   echo "FAIL: no row labelled '$1'" >&2
   exit 1
 }
 
 rows=0
-while IFS='|' read -r label expected edits row_base ROW_ENV; do
+while IFS='|' read -r label expected edits row_base ROW_ENV ROW_EVENT; do
   rows=$((rows + 1))
+  ROW_EVENT="${ROW_EVENT:-pull_request}"
   # shellcheck disable=SC2086
   assert_eq "$label" "$expected" "$(run_row "$CHANGE_CLASS" "${!row_base}" $edits)"
 done <<<"$TABLE"
 ROW_ENV=""
+ROW_EVENT=pull_request
 require_rows queue-selector "$rows"
 
 # One must-fail control per rule: a planted copy without that rule answers
@@ -118,10 +125,12 @@ control() { # ROW_LABEL EXPECTED NAME LINE REPLACEMENT [LINE REPLACEMENT]...
   local label="$1" expected="$2" name="$3" planted edits row_base
   shift 2
   planted="$(mutant "$@")"
-  IFS='|' read -r _ edits row_base ROW_ENV <<<"$(row_of "$label")"
+  IFS='|' read -r _ edits row_base ROW_ENV ROW_EVENT <<<"$(row_of "$label")"
+  ROW_EVENT="${ROW_EVENT:-pull_request}"
   # shellcheck disable=SC2086
   assert_eq "control $name for: $label" "$expected" "$(run_row "$planted" "${!row_base}" $edits)"
   ROW_ENV=""
+  ROW_EVENT=pull_request
 }
 RUN_LINE='  (cd -- "$tree" && env -i PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS="$1" \'
 control "a path the selector names is queue-only" \
@@ -162,5 +171,15 @@ control "a selector named in the process environment alone never runs" \
 control "a selector outside the repository is queue-only" \
   "queue_only=true cause=queue-selector-failed selector=../select detail=command-absent" \
   climbing change-class "    '' | /* | .. | ../* | */.. | */../*) name=\"\" ;;" "    '') name=\"\" ;;"
+control "a path the repository list names answers before the selector runs" \
+  "queue_only=false cause=no-queue-path" \
+  unconditional-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' '  queue_selection "$1"'
+control "a path the selector names is queue-only" \
+  "queue_only=false cause=no-queue-path" \
+  name-blind change-class '  if ! value="$(sed -n "s/^$name=//p" "$out" | tail -1)"; then' \
+  '  if ! value="$(sed -n "s/^[a-z_]*=//p" "$out" | tail -1)"; then'
+control "a push runs no selector" \
+  'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["standard:false:push:base:slow/run.sh"]' \
+  every-event change-class '    *) return 0 ;;' '    *) ;;'
 
 report queue-selector

@@ -22,8 +22,9 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. Every verdict also prints
-# one `queue-only: queue_only=true|false cause=<name> [lane=<n>] [path=<p>
-# glob=<g>]` line on stderr, ahead of the `class:` line. It reads false only
+# one `queue-only: queue_only=true|false cause=<name> [<field>=<value>]...`
+# line on stderr, ahead of the `class:` line, each cause's fields as the
+# table below names them. It reads false only
 # with cause=no-queue-path. The causes are read in this order, first match
 # winning, and every one but no-queue-path reads true:
 #
@@ -53,7 +54,8 @@
 #                         the selector the base's HARNESS_CI_QUEUE_SELECTOR
 #                         names could not answer: detail= is
 #                         setting-malformed, inputs-unreadable (the
-#                         docs verdict or the changed paths),
+#                         docs verdict, the changed paths or the
+#                         selector's output file),
 #                         checkout-failed, command-absent, exit-<n> or
 #                         output-unreadable
 #   queue-selection selector=<c> output=<o> value=<v>
@@ -67,7 +69,9 @@
 # up to repository-queue-path are judged on every changed path harness-only
 # read, before any refusal or rule below. The selector's two are judged last,
 # on the class this script answers, since the jobs a merge group runs depend
-# on it. HARNESS_CI_QUEUE_SELECTOR is `COMMAND OUTPUT`: a repository command,
+# on it, and only on --event pull_request and merge_group, the events whose
+# merge route it decides; on any other event the earlier answer stands and
+# no selector runs. HARNESS_CI_QUEUE_SELECTOR is `COMMAND OUTPUT`: a repository command,
 # a path relative to the repository root, and the output it writes in the
 # GitHub Actions `name=value` form. It runs out of a private checkout of the
 # commit --base names, the one its settings come from, with that checkout as
@@ -626,6 +630,10 @@ queue_selection() { # CLASS
   local command="" name="" rest="" docs paths value status=0
   local tree="$work/selector" log="$work/selector-log" out="$work/selector-output"
   [ -n "${HARNESS_CI_QUEUE_SELECTOR:-}" ] || return 0
+  case "$event" in
+    pull_request | merge_group) ;;
+    *) return 0 ;;
+  esac
   QUEUE_ONLY=true
   read -r command name rest <<<"$HARNESS_CI_QUEUE_SELECTOR"
   case "$command" in
