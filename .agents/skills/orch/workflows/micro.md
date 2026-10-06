@@ -100,7 +100,7 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 
 2. **Make the edit** the item's Done-when states. Nothing else enters the diff.
 
-3. **Check each claim the diff states about code**, once. **Skip if** no changed sentence states what a file, script, setting or test does, holds, counts or refuses. Otherwise read each such sentence against the file it names, judged as [reviewer/SKILL.md](../../reviewer/SKILL.md) § Ethos judges a claim and a number in prose, and fix a false one in this edit. This tier runs no review cycle, so the pull request's review is the first reader of the claim, and a fix for a finding there moves the head and escapes (§ Escape condition 8).
+3. **Check each claim the diff states about code**, once. **Skip if** no changed sentence states what a file, script, setting or test does, holds, counts or refuses. Otherwise read each such sentence against the code that defines or implements what it states: the file it names, or the file a search for the setting, script or symbol it names finds. Judge it as [reviewer/SKILL.md](../../reviewer/SKILL.md) § Ethos judges a claim and a number in prose, where a claim no code makes true is false, and fix a false one in this edit. This tier runs no review cycle, so without this step the pull request's review would be the claim's first reader, and a fix there moves the head and escapes (§ Escape condition 8).
 
 4. **Read the changed paths against § Escape condition 3**:
 
