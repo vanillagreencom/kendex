@@ -116,6 +116,15 @@ fn unlisted<'a>(project: &Path, rows: &[&'a str]) -> Vec<&'a str> {
         .collect()
 }
 
+/// Whether the manifest text `manifest` declares nothing under `table`.
+#[allow(clippy::unwrap_used)]
+fn declares_none(manifest: &str, table: &str) -> bool {
+    let manifest: toml::Table = manifest.parse().unwrap();
+    manifest
+        .get(table)
+        .is_none_or(|declared| declared.as_table().is_some_and(toml::Table::is_empty))
+}
+
 /// The lines of `printed` keyed by `name`, the notice's own line.
 fn keyed(printed: &str, name: &str) -> usize {
     printed
@@ -218,15 +227,10 @@ fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
         let recorded = fs::read_to_string(&inventory).unwrap();
         assert_eq!(recorded.contains(WORKFLOW), edited, "{recorded}");
         assert_eq!(unlisted(&project, &rows), rows, "{recorded}");
-        let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
-            .unwrap()
-            .parse()
-            .unwrap();
+        let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
         for table in ["skills", "hooks"] {
             assert!(
-                manifest
-                    .get(table)
-                    .is_none_or(|declared| declared.as_table().is_some_and(toml::Table::is_empty)),
+                declares_none(&manifest, table),
                 "edited={edited}: [{table}] keeps a declaration: {manifest}"
             );
         }
