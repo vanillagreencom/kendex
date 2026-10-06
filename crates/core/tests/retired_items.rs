@@ -445,13 +445,7 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
                 None,
             );
             assert!(
-                matches!(
-                    switched,
-                    Err(CoreError::Retired {
-                        kind: ItemKind::PiExtension,
-                        ..
-                    })
-                ),
+                matches!(&switched, Err(CoreError::PiPackage { name: refused, .. }) if refused == name),
                 "{row}: a kept retired package was switched"
             );
         }

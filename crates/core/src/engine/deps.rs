@@ -938,11 +938,7 @@ fn derive(
             // a copy kept only until the next prune; the rule is
             // docs/authoring/README.md's `[retired]` paragraph.
             Offer::Retired(migration) => {
-                let via = super::desired::RetiredVia::RequiredBy {
-                    kind,
-                    name: parent.to_owned(),
-                };
-                state.retire(dep_kind, &dep, source, migration, via);
+                state.retire(dep_kind, &dep, source, migration, false);
                 wanted.answered.push(warn(
                     kind,
                     parent,

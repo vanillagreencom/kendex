@@ -336,9 +336,11 @@ pub(crate) fn ensure_toggle_ready(
     let package = match resolve_declared(env, scope, manifest, name, decl)? {
         Resolved::Ships(package) => package,
         Resolved::Retired { .. } => {
-            let kind = crate::model::ItemKind::PiExtension;
-            let name = name.to_owned();
-            return Err(CoreError::Retired { kind, name });
+            return Err(CoreError::PiPackage {
+                name: name.to_owned(),
+                message: "its catalog retired it, so it stays as it is until it is removed"
+                    .to_owned(),
+            });
         }
     };
     let key = crate::lock::entry_key(

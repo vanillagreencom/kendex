@@ -430,7 +430,7 @@ impl DesiredState {
         name: &str,
         source: &str,
         migration: &str,
-        via: RetiredVia,
+        declared: bool,
     ) {
         let recorded = |harness: &HarnessId| {
             let key = crate::lock::entry_key(kind, name, *harness);
@@ -439,11 +439,11 @@ impl DesiredState {
         let kept = HarnessId::ALL.into_iter().filter(recorded).collect();
         let (source, migration) = (source.to_owned(), migration.to_owned());
         let key = (kind, name.to_owned());
-        if matches!(via, RetiredVia::Declared) || !self.retired.contains_key(&key) {
+        if declared || !self.retired.contains_key(&key) {
             let retirement = Retirement {
                 source,
                 migration,
-                via,
+                declared,
                 kept,
             };
             self.retired.insert(key, retirement);
@@ -681,8 +681,9 @@ fn item_path(
         Offer::Retired(migration) => {
             let key = (kind, name.to_owned());
             state.processed.insert(key, provenance.to_owned());
-            let via = RetiredVia::of(expansion.derived_from(kind, name));
-            state.retire(kind, name, &decl.source, migration, via);
+            let derived_from = expansion.derived_from(kind, name);
+            let declared = matches!(derived_from, None | Some(crate::lock::Reason::Requested));
+            state.retire(kind, name, &decl.source, migration, declared);
             None
         }
         Offer::NotOffered | Offer::Silent => {
@@ -760,36 +761,12 @@ pub struct Retirement {
     source: String,
     /// The catalog's one-line migration, empty where it gave none.
     migration: String,
-    via: RetiredVia,
+    /// The person's own declaration brought it in, the one a manifest edit
+    /// drops; false for a bundle member or a requirement.
+    declared: bool,
     /// The tools it stays on as recorded: each the record this pass read
     /// holds it on, none under a prune.
     pub(super) kept: Vec<HarnessId>,
-}
-
-/// What brought a retired item into the plan.
-#[derive(Debug, Clone)]
-pub(super) enum RetiredVia {
-    /// The person's own declaration, the one a manifest edit drops.
-    Declared,
-    /// A declared bundle that lists it.
-    Bundle(String),
-    /// An item that requires it.
-    RequiredBy { kind: ItemKind, name: String },
-}
-
-impl RetiredVia {
-    /// The derivation the expansion recorded, `None` for a declaration.
-    pub(super) fn of(derived_from: Option<&crate::lock::Reason>) -> RetiredVia {
-        use crate::lock::Reason;
-        match derived_from {
-            None | Some(Reason::Requested) => RetiredVia::Declared,
-            Some(Reason::MemberOf { bundle }) => RetiredVia::Bundle(bundle.name.clone()),
-            Some(Reason::RequiredBy { by }) => RetiredVia::RequiredBy {
-                kind: by.kind,
-                name: by.name.clone(),
-            },
-        }
-    }
 }
 
 /// The notice a retired item gets in place of the not-found refusal, so a
@@ -801,27 +778,17 @@ impl RetiredVia {
 /// engine rule 18.
 fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super::ItemWarning> {
     let source = &retirement.source;
-    let line = match (&retirement.via, retirement.kept.is_empty()) {
-        (RetiredVia::Declared, false) => format!(
+    let line = match (retirement.declared, retirement.kept.is_empty()) {
+        (true, false) => format!(
             "{name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
         ),
-        (RetiredVia::Declared, true) => format!(
+        (true, true) => format!(
             "{name}: retired by {source}; not installed; drop its declaration with kendex refresh --prune"
         ),
-        (RetiredVia::Bundle(_) | RetiredVia::RequiredBy { .. }, true) => return None,
-        (RetiredVia::Bundle(bundle), false) => format!(
-            "{name}: retired by {source}, a member of bundle {bundle}; kept; remove it with kendex refresh --prune"
-        ),
-        (
-            RetiredVia::RequiredBy {
-                kind: by_kind,
-                name: by,
-            },
-            false,
-        ) => format!(
-            "{name}: retired by {source}, required by {} {by}; kept; remove it with kendex refresh --prune",
-            by_kind.name()
-        ),
+        (false, true) => return None,
+        (false, false) => {
+            format!("{name}: retired by {source}; kept; remove it with kendex refresh --prune")
+        }
     };
     let message = match retirement.migration.is_empty() {
         true => line,
@@ -857,8 +824,7 @@ fn settle_retired(
         {
             let key = (ItemKind::PiExtension, name.clone());
             state.processed.insert(key, source_repo);
-            let via = RetiredVia::Declared;
-            state.retire(ItemKind::PiExtension, name, &decl.source, &migration, via);
+            state.retire(ItemKind::PiExtension, name, &decl.source, &migration, true);
         }
     }
     if !state.prune_retired {
@@ -872,8 +838,7 @@ fn settle_retired(
     }
     let mut changed = false;
     for ((kind, name), retirement) in &state.retired {
-        let declared = matches!(retirement.via, RetiredVia::Declared)
-            && manifest.declared(*kind).contains_key(name);
+        let declared = retirement.declared && manifest.declared(*kind).contains_key(name);
         if declared {
             updated.declared_mut(*kind).remove(name);
             changed = true;
