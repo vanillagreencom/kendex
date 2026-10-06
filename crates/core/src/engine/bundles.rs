@@ -295,18 +295,17 @@ fn installable(
 
 /// A declared set its catalog retired. Short of a prune, what it installed
 /// stays as recorded, with one notice keyed by the set that ends with the
-/// catalog's migration; its commands are engine rule 18's exception for a
-/// retired item's notice. A prune drops the
-/// declaration (`desired::settle_retired`), and what only the set carried
-/// then goes as any leftover does.
+/// catalog's migration; its command is engine rule 18's exception for a
+/// retired bundle's notice. A prune drops the declaration
+/// (`desired::settle_retired`), and what only the set carried then goes as
+/// any leftover does.
 fn retire(name: &str, source: &str, migration: &str, state: &mut DesiredState) {
     if state.prune_retired {
         state.pruned_bundles.insert(name.to_owned());
         return;
     }
-    let line = format!(
-        "bundle {name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
-    );
+    let line =
+        format!("bundle {name}: retired by {source}; kept; remove it with kendex refresh --prune");
     let notice = match migration.is_empty() {
         true => line,
         false => format!("{line}; {migration}"),
