@@ -37,7 +37,8 @@ for a in "$@"; do
 done
 printf '%s:%s\n' "$h" "$m" >> "$PICK_LOG"
 case "$WALL:$h" in all:*|pi:pi) exit 3 ;; error:*) exit 6 ;; esac
-case "$h" in claude) printf 'CLAUDE_CONFIG_DIR=%s\n' "$HOME/.claude" ;; pi) printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" ;; codex) printf 'CODEX_HOME=%s\n' "$CODEX_TEST_HOME" ;; esac
+case "$h" in claude) d="$HOME/.claude" ;; pi) d="$PI_CODING_AGENT_DIR" ;; codex) d="$CODEX_TEST_HOME" ;; *) exit 0 ;; esac
+jq -cn --arg d "$d" '{config_dir: $d}'
 STUB
 chmod +x "$BIN/lanes"
 source "$SCRIPTS_DIR/lib/lane-launch.sh"
@@ -173,7 +174,7 @@ for control in routing model settings grammar command permission; do
       observe "$PREF" none flags ''
       assert_eq "$OBS" '1|launch-model-missing|none|none|none|no|none' 'control: the first-entry row turns red without routing' ;;
     model)
-      mutate_file "$OT" 'PREFERENCE_LANE_ENV="$(pick_auto_lane ' 'PREFERENCE_LANE_ENV="$(LAUNCH_MODEL="" pick_auto_lane '
+      mutate_file "$OT" 'preference_record="$(pick_auto_lane ' 'preference_record="$(LAUNCH_MODEL="" pick_auto_lane '
       observe "$PREF" none flags ''
       assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:' 'control: the first-entry row turns red when its pick loses the model' ;;
     settings)
@@ -224,7 +225,7 @@ for surface in batch wait; do
       git -C "$TMP_ROOT/mutant-rejudge-$surface" init -q
       git -C "$TMP_ROOT/mutant-rejudge-$surface" config gc.auto 0
       git -C "$TMP_ROOT/mutant-rejudge-$surface" config maintenance.auto false
-      mutate_file "$OT" 'preference_select || return 1' 'PREFERENCE_LANE_ENV="$(pick_auto_lane)" || return 1'
+      mutate_file "$OT" 'preference_select || return 1' 'LANE_PICK_RECORD="$(pick_auto_lane)" || return 1; PREFERENCE_LANE_ENV="$(pick_record_env "$LANE_PICK_RECORD")" || return 1'
     fi
     RUN="$TMP_ROOT/real-$surface-$control"
     mkdir -p "$RUN"

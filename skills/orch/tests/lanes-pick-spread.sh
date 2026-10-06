@@ -32,6 +32,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/virtual-clock.sh"
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
 source "$TEST_DIR/lib/question-off.sh"
+source "$TEST_DIR/lib/shared-skill-libs.sh"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
@@ -151,7 +152,10 @@ stage_rate() {
 # line is the pick-overseer-seats refusal naming the seat step and this run's
 # own fleet state, else that line), keyed.KEY (the first keyed stderr line
 # carrying KEY, in the form key takes, or none), key (the first keyed stderr line as
-# `key,field=value,...`), out (stdout whole), or a field of the JSON record.
+# `key,field=value,...`), out (stdout whole), record.PATH (that path of the
+# fleet state's first lane record), score_hundredths (its pick's
+# selection_score), or a field of the JSON record. args `launch-fleet LANE` is
+# a fleet launch of one claude lane on LANE, `auto` or a config dir.
 RUN_SEQ=0
 table() {
   local row label env stage_spec rate args expect env_args command got token name value rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age rate_bucket
@@ -170,6 +174,10 @@ table() {
     command=("${LANES_UNDER_TEST:-$LANES}" $args)
     if [[ "$args" == launch ]]; then
       command=("${command[0]%/*}/open-terminal" --ghostty --harness codex --lane "$H/.1codex" --cmd "true -m gpt-6.1-sol -c model_reasoning_effort=high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" SPREAD-1)
+    elif [[ "$args" == "launch-fleet "* ]]; then
+      ot_fleet_state "${command[0]%/*}/workflow-state" "$FLEET" "$NOSETTINGS" || exit 1
+      command=("${command[0]%/*}/open-terminal" --ghostty --harness claude --lane "${args#launch-fleet }" --state-dir "$FLEET" \
+        --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" SPREAD-6)
     fi
     # The launcher reads settings from its source checkout. An empty team
     # keeps this projection test independent of tracker authentication.
@@ -191,6 +199,8 @@ table() {
         sample_claims) value="$(jq -r --arg dir "$H/.1codex" 'select(.config_dir == $dir) | .sample_claims' "$STORE"/usage/*.json)" || exit 1 ;;
         fetched) value="$(cat "$RUN/fetch.log")" || exit 1 ;;
         headroom_hundredths) value="$(jq -r '.projected_headroom_pct * 100 | round' <<<"$OUT")" ;;
+        record.*) value="$(jq -r ".lanes[0].${name#record.}" "$FLEET/workflow-state-oversee.json" 2>/dev/null || echo UNREADABLE)" ;;
+        score_hundredths) value="$(jq -r '.lanes[0].pick.selection_score * 100 | round' "$FLEET/workflow-state-oversee.json" 2>/dev/null || echo UNREADABLE)" ;;
         seatrefusal)
           value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
           [[ "$value" != "pick-overseer-seats,step=seat,state=$FLEET/workflow-state-oversee.json" ]] || value=named
@@ -337,7 +347,7 @@ table \
 # Control: projected on the binding bucket alone, the stacked account keeps
 # its weekly room and takes the sixth lane.
 CTRL="$(mutant_scripts mutant-session-unprojected lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" '(if .session_5h_pct == null then []' '(if true then []'
+mutate_file "$CTRL/lib/lane-model.sh" 'else 100 - .session_5h_pct - .claims * $session_burn * $session_hours end) as $session_room' 'else null end) as $session_room'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: with no session projection the sixth lane stacks on the weekly-bound account|$RQ_DIRS|claim:r:5||$PICK|rc=0 config_dir=$H/.rclaude"
 # Control: the session charged one hour per claim projects 73, above the
@@ -346,6 +356,22 @@ CTRL="$(mutant_scripts mutant-session-one-hour lib/lane-model.sh)" || exit 1
 mutate_file "$CTRL/lib/lane-model.sh" 'else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours' 'else 1 end) as $session_hours'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: a session charged one hour per claim still stacks the sixth lane|$RQ_DIRS|claim:r:5||$PICK|rc=0 config_dir=$H/.rclaude"
+
+# The launch keeps the reading it was judged on in the lane record. q has no
+# claims, so its rooms are its readings, 17 weekly and 95 session, and its
+# session charge runs the 4.5 hours to its reset; the score is 17 weighted by
+# the 80 hours to the weekly reset. A named lane keeps its judge's reading,
+# which no score ranks: two claims on r charge its session 2 x 5 x 4.
+SIXTH_RECORD="rc=0 record.account=$H/.qclaude record.pick.account=$H/.qclaude record.pick.binding_bucket=weekly record.pick.claims=0 record.pick.binding_projected_headroom_pct=17 record.pick.session_projected_headroom_pct=95 record.pick.session_burn_pct_per_lane_hour=5 record.pick.session_charge_hours=4.5 record.pick.projected_headroom_pct=17 score_hundredths=1721"
+table \
+  "the sixth lane's launch records the pick reading it was launched on|$RQ_DIRS|claim:r:5||launch-fleet auto|$SIXTH_RECORD" \
+  "a named lane's launch records the reading its judge took|ORCH_LANE_DIRS=$H/.rclaude|claim:r:2||launch-fleet $H/.rclaude|rc=0 record.account=$H/.rclaude record.pick.account=$H/.rclaude record.pick.claims=2 record.pick.session_projected_headroom_pct=58 record.pick.selection_score=null"
+# Control: a lane record that drops the pick turns the sixth-lane row red.
+CTRL="$(mutant_scripts mutant-pick-unrecorded open-terminal)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/mutant-pick-unrecorded"
+mutate_file "$CTRL/open-terminal" '+ (if $pick == null then {} else {pick:' '+ (if true then {} else {pick:'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: a record without the pick reading names no pick|$RQ_DIRS|claim:r:5||launch-fleet auto|rc=0 record.account=$H/.qclaude record.pick.account=null"
 
 echo "=== an unread claim store is a notice for the reading and a refusal for the projection ==="
 table \

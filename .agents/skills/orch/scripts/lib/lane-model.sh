@@ -248,7 +248,8 @@ def with_lane_binding($model; $binding_floor):
 # the wall is null, since nothing measured the account, or the claims are
 # null, since the claim store could not be read: an unknown count is never
 # charged as zero lanes. A record with no session reading is projected on the
-# binding bucket alone.
+# binding bucket alone. The record keeps both rooms and the session charge
+# beside it, so a launch that stores the record names which window decided.
 def with_lane_projection($burn_default; $now):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
    then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)
@@ -259,13 +260,18 @@ def with_lane_projection($burn_default; $now):
   | (if $session_reset == null then 1
      else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours
   | (if .binding_bucket == "session" then $burn else $burn_default end) as $session_burn
+  | (if .wall == null or .claims == null then null
+     else 100 - .wall - .claims * $burn end) as $binding_room
+  | (if $binding_room == null or .session_5h_pct == null then null
+     else 100 - .session_5h_pct - .claims * $session_burn * $session_hours end) as $session_room
   | . + {burn_pct_per_lane_hour: (if .wall == null then null else $burn end),
+         binding_projected_headroom_pct: $binding_room,
+         session_projected_headroom_pct: $session_room,
+         session_burn_pct_per_lane_hour: (if $session_room == null then null else $session_burn end),
+         session_charge_hours: (if $session_room == null then null else $session_hours end),
          projected_headroom_pct:
-           (if .wall == null or .claims == null then null
-            else ([100 - .wall - .claims * $burn]
-                  + (if .session_5h_pct == null then []
-                     else [100 - .session_5h_pct - .claims * $session_burn * $session_hours] end)
-                  | min) end)};
+           (if $binding_room == null then null
+            else [$binding_room, $session_room] | map(select(. != null)) | min end)};
 
 # judged_wall over one record with_lane_projection has read: the projected
 # use wall_verdict judges, for the chooser and `pick --lane --projected`, so a

@@ -286,13 +286,25 @@ LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\
      tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
 ')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+# Prints the record `lanes pick --json` judged the lane on; pick_record_env
+# reads the launch prefix from it.
 pick_auto_lane() {
   local model_args=() state_env=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
   env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" \
-    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@"
+    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@" --json
 }
+# The prefix `lanes pick` prints without --json, through the same
+# lib/lane-launch.sh mapping on the same harness, account and model.
+pick_record_env() { # RECORD
+  local dir
+  dir="$(jq -er '.config_dir | strings' <<<"$1")" || { ot_message lane-resolution-failed "step=pick-record" >&2; return 1; }
+  lane_env_prefix "$LANE_HARNESS" "$dir" "$LAUNCH_MODEL"
+}
+# The pick record the launch lane was judged on, which the lane record keeps:
+# set by every pick a launch takes, and empty where nothing judged the account.
+LANE_PICK_RECORD=""
 
 # $LAUNCH_FLAGS is interpolated verbatim into a shell-executed launch command
 # (bash -lc on GUI lanes, keystrokes into the pane shell on tmux lanes), so a
@@ -421,7 +433,7 @@ fi
 # One owner chooses and rebuilds a preference launch from the original input.
 # Permission eligibility and flag translation belong to the overseer walk.
 preference_select() {
-  local preference_entry preference_rc preference_word
+  local preference_entry preference_rc preference_word preference_record
   PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
     ol_entry_model "$preference_entry"
@@ -433,9 +445,12 @@ preference_select() {
     fi
     LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
     preference_rc=0
-    PREFERENCE_LANE_ENV="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
+    preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
     case "$preference_rc" in
-      0) PREFERENCE_ENTRY="$preference_entry"; break ;;
+      0)
+        PREFERENCE_LANE_ENV="$(pick_record_env "$preference_record")" || return 1
+        LANE_PICK_RECORD="$preference_record" PREFERENCE_ENTRY="$preference_entry"
+        break ;;
       3) continue ;;
       *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; return 1 ;;
     esac
@@ -1020,12 +1035,13 @@ named_lane_judge() {
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
+  LANE_PICK_RECORD=""
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
   lane_rc=0
   lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
     --model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
   case "$lane_rc" in
-    0) ;;
+    0) LANE_PICK_RECORD="$lane_record" ;;
     # 4 is `lanes` holding no record for this directory — a config dir outside
     # the discovery glob, or outside ORCH_LANE_DIRS where that is set, that the
     # provider reports no reading for either. There is nothing to judge and
@@ -1144,8 +1160,11 @@ if [[ -n "$LANE" ]]; then
       LANE_HARNESS="$lane_harness"
       lane_rc=0
       if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
-      else LANE_ENV="$(pick_auto_lane)" || lane_rc=$?; fi
-      [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
+      else
+        LANE_PICK_RECORD="$(pick_auto_lane)" || lane_rc=$?
+        [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
+        LANE_ENV="$(pick_record_env "$LANE_PICK_RECORD")" || exit 1
+      fi
       ;;
     *)
       if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
@@ -1342,7 +1361,9 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # is confirmed, null off tmux; a wake keeps it. A wake writes `wake`, the
 # identity of the detached turn it started, which lane-close stops before the
 # record reads done or stopped, null where none was read; every launch and
-# relaunch keeps it.
+# relaunch keeps it. `pick` is the LANE_PICK_RECORD reading the lane's account
+# was judged on, written where a pick judged it and kept with `account` by a
+# relaunch that has not taken.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
@@ -1373,9 +1394,13 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
+    --argjson pick "${LANE_PICK_RECORD:-null}" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
+       + (if $pick == null then {} else {pick: ($pick | {account: .config_dir, binding_bucket, claims,
+           burn_pct_per_lane_hour, session_burn_pct_per_lane_hour, session_charge_hours,
+           binding_projected_headroom_pct, session_projected_headroom_pct, projected_headroom_pct, selection_score})} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)
        + {launch: (if $pane == "" then null else {pane: $pane, server: $server, pid: $harness_pid, start: $harness_start}
          | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}
@@ -1385,10 +1410,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
-       | if .status == "running" then . else del(.harness, .model, .effort, .preference_entry, .account, .session_id) end else . end) as $patch
+       | if .status == "running" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
-         | if $rec.status == "running" then del(.preference_entry) else . end end) + $patch else . end))), report: "rewritten"}
+         | if $rec.status == "running" then del(.preference_entry, .pick) else . end end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
@@ -3169,7 +3194,7 @@ fi
 # named_lane_judge. Returns 1 with the
 # refusal printed.
 lane_rejudge() { # ITEM
-  local next rc=0
+  local next record rc=0
   if [[ "$PREFERENCE_ACTIVE" == true ]]; then
     preference_select || return 1
     LANE_ENV="$PREFERENCE_LANE_ENV"
@@ -3179,8 +3204,10 @@ lane_rejudge() { # ITEM
     COPILOT_HOOKS_GATED=false
     [[ "$FLEET" != true || "$LAUNCH_HARNESS" != copilot ]] || COPILOT_HOOKS_GATED=true
   elif [[ "$LANE_AUTO" == true ]]; then
-    next="$(pick_auto_lane)" || rc=$?
+    record="$(pick_auto_lane)" || rc=$?
     [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "item=$1" "launched=$launched"; return 1; }
+    next="$(pick_record_env "$record")" || return 1
+    LANE_PICK_RECORD="$record"
     ! lane_value_error "$next" || return 1
     [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply && copilot_fleet_gate || return 1; }
   elif [[ "$LANE_GATE" == true ]]; then

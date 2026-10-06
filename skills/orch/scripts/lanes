@@ -159,7 +159,10 @@
 #         binding_bucket (session, weekly, model, monthly or credits), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
 #         projected_headroom_pct, selection_score, and qualifying_count from that same
-#         judgement. With
+#         judgement, with the two rooms projected_headroom_pct is the smaller
+#         of, binding_projected_headroom_pct and session_projected_headroom_pct,
+#         and the session charge, session_burn_pct_per_lane_hour for each of
+#         session_charge_hours. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
 #         the named model's scoped weekly window, and for a Copilot account
