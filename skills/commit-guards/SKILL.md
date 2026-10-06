@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.1.3"
+  version: "1.1.4"
 tags: [automation]
 repo-effects:
   summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push runs it over the branch, for everyone who commits or pushes here, not only for kendex."

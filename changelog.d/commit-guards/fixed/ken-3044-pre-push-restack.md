@@ -1,1 +1,1 @@
-- commit-guards: pre-push no longer refuses a push for version bumps already on the remote's default branch, after a restack or on any other push carrying them.
+- pre-push no longer refuses a push for version bumps already on the remote's default branch, where it can establish that branch.

@@ -66,8 +66,8 @@ would answer what the branch adds over the ancestor the two share, which on a
 diverged or force-pushed branch excuses a file that in fact grows at the
 destination. changelog-entries asks instead which version increases the
 branch made: where this lane can establish the remote's default branch, its
-baseline excludes commits already there, else it is the oid (DEVELOPMENT.md §
-The pre-push lane).
+baseline excludes commits already there, else it is the oid:
+https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane
 
 Otherwise the scope is a best-effort LOCAL one — `--base`, what this branch
 adds over what this repository's refs for the remote last recorded — and not
