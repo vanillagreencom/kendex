@@ -1576,9 +1576,11 @@ check_refresh() {
     else
       # gh prefixes each failed-step log line with job, step and timestamp.
       # The cause is the last line of the highest rank: a kendex failed: row,
-      # its Error: line, refresh-consumer's refresh-error=, a hook's kendex-hook-.
+      # a review-gate validator's FAIL check= row, kendex's Error: line,
+      # refresh-consumer's refresh-error=, a hook's kendex-hook-.
       cause="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); rank = 0; text = $0 }
-        /^failed: / { rank = 4 }
+        /^failed: / { rank = 5 }
+        !rank && /^FAIL check=/ { rank = 4 }
         !rank && /^Error: / { rank = 3 }
         !rank && match($0, /refresh-error=/) { rank = 2; text = substr($0, RSTART) }
         !rank && match($0, /kendex-hook-/) { rank = 1; text = substr($0, RSTART) }
