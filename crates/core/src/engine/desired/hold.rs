@@ -23,7 +23,9 @@
 //! declaration it reads, and a held pass compares it at the recorded
 //! commit like every other follower.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::env::Env;
 
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::manifest::Manifest;
@@ -183,17 +185,35 @@ impl HeldPin {
 /// `update_only` — a pinned copy of it, paired with the synthetic pins to
 /// strip from any manifest the plan writes.
 pub(crate) fn planning_manifest<'a>(
+    env: &Env,
     manifest: &'a Manifest,
     lock: &Lock,
     options: &super::super::PlanOptions,
 ) -> (std::borrow::Cow<'a, Manifest>, Option<HeldPins>) {
     match &options.update_only {
         Some(targets) => {
-            let (held, pins) = held_manifest(manifest, lock, targets);
+            let (mut held, mut pins) = held_manifest(manifest, lock, targets);
+            if !options.hold_unserved {
+                release_unserved(env, &mut held, &mut pins);
+            }
             (std::borrow::Cow::Owned(held), Some(pins))
         }
         None => (std::borrow::Cow::Borrowed(manifest), None),
     }
+}
+
+/// Take back each pin at a commit this machine's cache cannot serve, so
+/// its declaration resolves fresh. Held there it would read nothing and be
+/// skipped, and the write that skipped it would de-list what it renders.
+fn release_unserved(env: &Env, held: &mut Manifest, pins: &mut HeldPins) {
+    let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
+    let (kept, unserved) = std::mem::take(&mut pins.pins).into_iter().partition(|pin| {
+        *served
+            .entry((pin.repo.clone(), pin.commit.clone()))
+            .or_insert_with(|| crate::remote::serves(env, &pin.repo, &pin.commit))
+    });
+    HeldPins { pins: unserved }.unpin(held);
+    pins.pins = kept;
 }
 
 /// The manifest a single-package update plans from: the targets read

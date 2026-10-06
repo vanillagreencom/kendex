@@ -517,3 +517,34 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
         "and the package asked for still resolves fresh"
     );
 }
+
+/// A pin at a commit this machine's cache cannot serve is taken back for a
+/// write, which would otherwise skip what it holds, and kept for the
+/// record's own reading. A revision the user pinned is neither.
+#[test]
+fn a_commit_nothing_serves_is_released_for_a_write_and_held_for_the_reading() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+    let gone = "a".repeat(40);
+    let manifest = manifest_with(&[("one", None), ("held", Some("fff"))], &["starter"]);
+    let mut lock = lock_with(&[(
+        "skill:one:claude",
+        entry("one", Some(&gone), &[Reason::Requested]),
+    )]);
+    recorded_set(&mut lock, "starter", &gone);
+
+    for (options, holds) in [
+        (super::super::super::PlanOptions::at_record(), true),
+        (super::super::super::PlanOptions::locked(), false),
+    ] {
+        let (planning, pins) = planning_manifest(&env, &manifest, &lock, &options);
+        let pinned = holds.then(|| gone.clone());
+        assert_eq!(planning.declared(ItemKind::Skill)["one"].rev, pinned);
+        assert_eq!(planning.bundles["starter"].rev, pinned);
+        assert_eq!(
+            planning.declared(ItemKind::Skill)["held"].rev.as_deref(),
+            Some("fff")
+        );
+        assert_eq!(pins.unwrap().pins().len(), if holds { 2 } else { 0 });
+    }
+}

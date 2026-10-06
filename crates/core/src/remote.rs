@@ -194,6 +194,14 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
     }
 }
 
+/// Whether [`cached`] can read a pinned commit here: a published checkout,
+/// or the mirror's objects to publish one from. Nothing is published.
+pub(crate) fn serves(env: &Env, repo: &str, commit: &str) -> bool {
+    let key = cache_key(env, repo);
+    store::published(env, &key, commit).is_some()
+        || store::has_commit(&store::mirror_dir(env, &key), commit)
+}
+
 /// Resolve from cache when possible, and fetch only on a real cache miss.
 pub(crate) fn cached_or_sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     match cached_strict(env, repo, rev)? {

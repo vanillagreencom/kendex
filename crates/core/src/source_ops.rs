@@ -6,12 +6,12 @@ pub use repos::{
     RepoSubscription, Subscription, declared_identity, repo_subscriptions, subscriptions,
 };
 
-use crate::engine::{EngineReport, Held, PlanOptions, plan_scope};
+use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::lock::{load as load_lock, lock_path};
 use crate::manifest::{self, Manifest};
-use crate::model::{ItemKind, Scope};
+use crate::model::Scope;
 
 /// Everything the Sources page shows for one declared source in one scope.
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -27,40 +27,24 @@ pub struct SourceRow {
     pub declared_items: Vec<String>,
 }
 
-/// Every declaration that reads from `source`, by its manifest table.
-fn declared_from(manifest: &Manifest, source: &str) -> Vec<(&'static str, Held)> {
-    let mut declared = Vec::new();
-    for (table, kind) in [
-        ("agents", ItemKind::Agent),
-        ("skills", ItemKind::Skill),
-        ("hooks", ItemKind::Hook),
-        ("commands", ItemKind::Command),
-        ("mcp-servers", ItemKind::McpServer),
-        ("pi-extensions", ItemKind::PiExtension),
+fn referents(manifest: &Manifest, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (table, items) in [
+        ("agents", &manifest.agents),
+        ("skills", &manifest.skills),
+        ("hooks", &manifest.hooks),
+        ("commands", &manifest.commands),
+        ("mcp-servers", &manifest.mcp_servers),
+        ("pi-extensions", &manifest.pi_extensions),
+        ("bundles", &manifest.bundles),
     ] {
-        for (name, decl) in manifest.declared(kind) {
+        for (name, decl) in items {
             if decl.source == source {
-                let name = name.clone();
-                declared.push((table, Held::Item { kind, name }));
+                names.push(format!("{table}.{name}"));
             }
         }
     }
-    for (name, decl) in &manifest.bundles {
-        if decl.source == source {
-            let name = name.clone();
-            declared.push(("bundles", Held::Set { name }));
-        }
-    }
-    declared
-}
-
-fn referents(manifest: &Manifest, source: &str) -> Vec<String> {
-    declared_from(manifest, source)
-        .into_iter()
-        .map(|(table, held)| match held {
-            Held::Item { name, .. } | Held::Set { name } => format!("{table}.{name}"),
-        })
-        .collect()
+    names
 }
 
 pub fn list_sources(env: &Env, scope: &Scope) -> Result<Vec<SourceRow>> {
@@ -227,9 +211,8 @@ pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineRepor
 }
 
 /// Disabling deactivates the source's installations in place; re-enabling
-/// restores them (they stay declared throughout — not drift). Every package
-/// another source declares holds at its recorded commit, as
-/// [`remove_source`] holds it.
+/// restores them (they stay declared throughout — not drift). Every other
+/// package holds at its recorded commit, as [`remove_source`] holds it.
 pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Result<EngineReport> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     let Some(decl) = manifest.sources.get_mut(name) else {
@@ -238,11 +221,7 @@ pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Res
         });
     };
     decl.enabled = enabled;
-    let switched = declared_from(&manifest, name)
-        .into_iter()
-        .map(|(_, held)| held);
-    let options = PlanOptions::switching(switched);
-    persist_and_plan_with(env, scope, manifest, &options)
+    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
 }
 
 #[cfg(test)]

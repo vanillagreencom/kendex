@@ -1,0 +1,1 @@
+- A command that holds packages at the commit `.kendex-lock.json` records reads one at the newest catalog where that commit is gone, instead of skipping it and dropping its generated paths.
