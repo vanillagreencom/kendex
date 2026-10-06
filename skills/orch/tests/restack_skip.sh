@@ -281,9 +281,9 @@ assert_eq "$(control one-side restack-skip 'for side in 1 2; do' 'for side in 1;
 assert_eq "$(control no-unclassified restack-skip '*) retest unclassified' '*) kind=package ;; #' undeclared)" \
   "$(version_only undeclared agents/a.md)" \
   "control: with no unclassified rule an undeclared markdown version line skips"
-# The depth-free version line strip restack-skip carried before it asked
-# commit-guards for the field: every row that changes a version field
-# commit-guards does not read skips under it.
+# A strip that drops a version key at any depth reads an npm scripts.version
+# as the version field, so each row that changes one, conflicted or not,
+# skips under it.
 for name in script script-unconflicted; do
   assert_eq "$(control "depth-free-json-$name" restack-skip '    version) "$classifier" --unversion 2>/dev/null ;;' \
     "    version) grep -Ev '^[[:space:]]*\"version\"[[:space:]]*:' ;;" "$name")" \

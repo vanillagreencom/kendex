@@ -24,10 +24,10 @@
 # repository's own COMMIT_GUARDS_CHANGELOG_* settings and render inventory.
 # Where each kind may differ:
 #   record, fragment  in blank lines, headings, list entries and lines
-#                     indented under them, inside a conflict region too, so
-#                     both lanes' entries are kept; a region holding any
-#                     other line is a conflict over prose, never resolved
-#                     unseen
+#                     indented under them, inside a conflict region too,
+#                     whichever entries the resolution keeps; a region
+#                     holding any other line is a conflict over prose,
+#                     never resolved unseen
 #   version           in its top-level version alone, the field the
 #                     worktree's `changelog-entries --unversion` drops
 #   package, render   in its front matter's metadata.version alone, the line
@@ -35,9 +35,10 @@
 # A version, package or render file is read twice, each conflict region
 # replaced once by the base's side and once by the branch's: HEAD must equal
 # both but for that field, so a region that differs in any other line, or a
-# resolution that drops both sides, is never taken unseen. No kind allows a
-# conflict marker line, so one left in the restacked file is kept and differs
-# from the merge.
+# resolution that drops both sides, is never taken unseen. A conflict marker
+# line left in a restacked changelog, package or render file is no line its
+# kind allows, so it is kept and differs from the merge; one left in a version
+# file is JSON `--unversion` cannot read, the classifier-failed cause.
 #
 # Every fact the check cannot read, a run, an object, the classifier or a git
 # answer, is a re-test: a missing fact widens the checks.
@@ -74,15 +75,16 @@
 #                     or holds it in another mode than the merge's sides
 #   path-unconflicted a path differs that the merge did not leave conflicted
 #   hunk              a conflicted file differs from the merge where its
-#                     kind does not allow, a left conflict marker included,
-#                     or a changelog conflict region holds such a line
+#                     kind does not allow, a conflict marker left in a
+#                     changelog, package or render file included, or a
+#                     changelog conflict region holds such a line
 # Exit 2 is a usage error, which runs the re-test too.
 
 set -euo pipefail
 
 PROG="restack-skip"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# drop_metadata_version, the one reader of a SKILL.md's version line.
+# drop_metadata_version, orch's one filter for a SKILL.md's metadata.version line.
 # shellcheck source=lib/change-class.sh
 . "$SCRIPT_DIR/lib/change-class.sh"
 
