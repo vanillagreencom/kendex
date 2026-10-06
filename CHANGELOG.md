@@ -1,10 +1,8 @@
 # Changelog
 
 Notable changes, per [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Entries are written when a change lands, not batched at release. Write each
-one at 200 characters or fewer: the outcome for a consumer, a migration note
-inline on a **Breaking:** change, and credit (`— thanks @name`) when the
-change came from an outside contributor.
+
+Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md](changelog.d/README.md), and the fragments are collated here at release. An entry states the outcome for a consumer, a migration note inline on a **Breaking:** change, and credit (`— thanks @name`) when the change came from an outside contributor.
 
 ## [Unreleased]
 
@@ -77,6 +75,7 @@ change came from an outside contributor.
 
 - Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
 - The decision record format puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
+- **Breaking:** the `Revisited` status and a record's optional sections are gone: a record holds Decision, Why, Rejected and Revisit when. Mark a re-assessed record `Active` when its choice holds, or supersede it with a new record when the choice changed.
 
 #### dev 3.0.5
 
@@ -89,12 +88,14 @@ change came from an outside contributor.
 #### doc-limits 2.0.0
 
 - doc-limits measures only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and every document over its limit fails; the other shipped classes, HTML and the warn-only budget are gone.
+- **Breaking:** `CLAUDE.md`, `GEMINI.md` and a root `SKILL.md` over their limit fail instead of warning, and the `GEMINI.md` and root `SKILL.md` limit drops from 64k to 24k. Trim or split the file.
 
 #### docs-writing 3.0.4
 
 - Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
 - A docs rewrite keeps a decision record active while its choice holds, and retires only a choice withdrawn with nothing replacing it.
 - The decision record example puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
+- **Breaking:** the `templates/` files are removed, `document.html` included; start a markdown document from its finished example under `examples/`. The architecture overview file and the topic file's `Covers:` line are gone: each `docs/architecture/<name>.md` holds one principle, listed with its trigger in the root `AGENTS.md`.
 
 #### github 2.1.0
 
@@ -124,7 +125,7 @@ change came from an outside contributor.
 - `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.
 - `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.
 
-#### orch 4.3.0
+#### orch 4.3.2
 
 - `oversee-watch` reports a lane once past `ORCH_WATCH_LANE_AGE_SECS` (default 4 hours) as `lane-long` with its stage, and the overseer names the cause.
 - `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
@@ -149,6 +150,7 @@ change came from an outside contributor.
 - Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.
 - codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
 - A restack skips its range re-test when it met no conflict, or only conflicts over changelog entries and the version field commit-guards reads; the lane records which.
+- `lanes pick` charges each lane already on an account the 5-hour session window it will spend before that window resets, whatever bucket binds, so a weekly-bound account no longer takes every new lane until its session walls them all; a refusal names the session window where it decided, and each launched lane's fleet record keeps the pick reading it was launched on.
 
 #### preflight 1.1.0
 
@@ -160,6 +162,7 @@ change came from an outside contributor.
 - Planning artifacts states where a plan lives and how a reader finds it on Linear, GitHub Issues or no tracker, and attaches each artifact once, to its source issue.
 - Planning files a body of batches that each land alone as one item per batch, blocking only where a batch needs another's change.
 - Audits keep a Done or Canceled blocker's relation, read `blocked_by_open` for open blockers, and lift a cross-bundle relation with `--peer-rule-violation`.
+- **Breaking:** an audit `create` needs `create_fields.reach` and `review_born`, and a review-born priority-2 create a `symptom`; an output missing one is invalid. This has held since kendex 1.0.0, and 4.0.0 marks it. Give each audit input item its `impact`, and a priority-2 review item its `symptom`.
 
 #### review-gate 2.3.2
 
