@@ -76,8 +76,8 @@
 #       runs, as missing-command commands=perl, both before the run starts.
 #   dev-validate-run --wait --run-dir PATH [--budget SECS]
 #       Poll a run the start path already launched, repeated while it exits
-#       3: a foreground call on Claude Code, an exec_command session held
-#       with write_stdin polls on Codex
+#       3: a foreground call on Claude Code, an exec_command call on Codex,
+#       polled with write_stdin while it returns a session_id
 #       (../references/codex-runtime.md § Validation wait). Every harness's
 #       route: ../../dev/SKILL.md § Long-Running Validation.
 #   dev-validate-run --stop --worktree PATH
