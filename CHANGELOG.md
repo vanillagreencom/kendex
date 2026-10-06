@@ -148,7 +148,7 @@ change came from an outside contributor.
 - Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.
 - codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
 
-#### preflight 1.0.0
+#### preflight 1.1.0
 
 - `PREFLIGHT_SOURCED_LIB_GLOBS` names the sourced shell library directories, such as `tools/lib`, whose new non-executable files need no strict-mode preamble.
 
