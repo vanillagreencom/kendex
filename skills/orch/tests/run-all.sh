@@ -13,6 +13,11 @@
 #   bash skills/orch/tests/run-all.sh open-terminal oversee   # either name
 #   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
+#   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
+#
+# `--battery DIR`, given first, runs the suites in DIR in place of this
+# directory's, under the same filters, pool and report; tools/tests/run-all.sh
+# runs that tree's suites this way.
 #
 # Each argument is a substring of a suite's base name, or, written `=name`,
 # the whole of one. A bare one selects, one written `!name` rejects, and a
@@ -56,6 +61,12 @@ unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
   ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${1-}" = --battery ]; then
+  TEST_DIR="$(cd "$2" && pwd)" || exit 1
+  shift 2
+fi
+# The verdict line names the tree whose tests/ the battery is.
+BATTERY="$(basename "$(dirname "$TEST_DIR")")"
 
 SELECT=()
 REJECT=()
@@ -258,10 +269,10 @@ echo "============================================"
 printf 'total suites=%d seconds=%d pass=%d fail=%d\n' \
   "$RUN" "$((SECONDS - started))" "$TOTAL_PASS" "$TOTAL_FAIL"
 if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then
-  printf 'orch tests: all %d file(s) passed\n' "$RUN"
+  printf '%s tests: all %d file(s) passed\n' "$BATTERY" "$RUN"
   exit 0
 else
-  printf 'orch tests: %d/%d file(s) FAILED:\n' "${#FAIL_FILES[@]}" "$RUN"
+  printf '%s tests: %d/%d file(s) FAILED:\n' "$BATTERY" "${#FAIL_FILES[@]}" "$RUN"
   for f in "${FAIL_FILES[@]}"; do
     printf '  - %s\n' "$f"
   done

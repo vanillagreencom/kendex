@@ -153,14 +153,27 @@ check "a filter matching no suite exits non-zero" \
 shard_filters() { # shard_filters <workflow> ; `|<argument string>` per shard
   sed -n 's%^ *run: bash skills/orch/tests/run-all\.sh *%|%p' "$1"
 }
+# What an argument string selects depends on that string alone, since the
+# sandbox battery never changes, so each string's run is made once and kept
+# in UNION_RUNS: a file per string, named for its checksum, holding the
+# string on its first line, so two strings sharing a checksum are told apart.
+UNION_RUNS="$TMP/union-runs"
+mkdir -p "$UNION_RUNS"
 union_of() { # union_of <argument string>... ; names selected, duplicates kept
-  local args
+  local args kept
   for args in "$@"; do
-    set -f
-    # shellcheck disable=SC2086 # an argument string is a word list by design
-    set -- $(printf '%s' "$args" | tr -d "'")
-    set +f
-    selected "$@"
+    kept="$UNION_RUNS/$(printf '%s' "$args" | cksum | tr ' ' '-')"
+    if [[ ! -f "$kept" || "$(head -n 1 "$kept")" != "|$args" ]]; then
+      (
+        set -f
+        # shellcheck disable=SC2086 # an argument string is a word list by design
+        set -- $(printf '%s' "$args" | tr -d "'")
+        printf '|%s\n' "$args"
+        selected "$@"
+      ) >"$kept.tmp"
+      mv -- "$kept.tmp" "$kept"
+    fi
+    sed 1d "$kept"
   done
 }
 missing_from() { # missing_from <argument string>... ; suites no shard runs
@@ -648,7 +661,9 @@ check "ci-job-set selects the shard running each suite for a diff to that suite"
   "" "$(unselected_owners "$JOB_SET" "$OWNERS")"
 
 # Must-fail: removing Slack's package row leaves its shard standing down on
-# a Slack diff, and the suite its selection misses is named.
+# a Slack diff, and the suite its selection misses is named. The edit reaches
+# the Slack rows alone, and every other row's selection is the check's above,
+# so the control hands the mutant those rows and wants each of them back.
 mkdir -p "$TMP/owner-tools"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
 cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
@@ -656,10 +671,14 @@ awk '$0 ~ /^    skills\/slack\) want_shard slack ;;$/ { n++; next } { print } EN
   "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
   { bad "must-fail: the Slack row is no longer one line in $JOB_SET"; }
 chmod +x "$TMP/owner-tools/ci-job-set"
-case "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$OWNERS")" in
-  slack$'\t'skills/slack/tests/*) ok "must-fail: a table sending Slack elsewhere names the Slack suites" ;;
-  *) bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing" ;;
-esac
+grep "^slack	skills/slack/tests/" "$OWNERS" >"$TMP/owners-slack" ||
+  bad "must-fail: no Slack suite is read from the workflow, so the Slack control has no row"
+if [[ -s "$TMP/owners-slack" &&
+  "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-slack")" == "$(cat "$TMP/owners-slack")" ]]; then
+  ok "must-fail: a table sending Slack elsewhere names the Slack suites"
+else
+  bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing"
+fi
 
 # --- 4c. The main-push macOS matrix's exclusions --------------------------
 # The selector uses these exclusions for its macOS runner arithmetic.

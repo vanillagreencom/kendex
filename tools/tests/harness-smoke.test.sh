@@ -952,41 +952,60 @@ an unlisted CLAUDE.md fails|instruction:CLAUDE.md|fail|does not list CLAUDE.md
 a count of two differs, and does not claim both files listed|instruction:duplicate|differs|did not show both AGENTS.md and CLAUDE.md, and the model counts the AGENTS.md line twice
 a nested AGENTS.md listed from the root too passes|instruction:nested|pass|from sub/ and from the project root
 a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the call still ran"
+# Each run below shares settings that reach disjoint rows, so every row keeps
+# its own assertion on a run no other setting there changes: the subagent and
+# error events with a wrapped session hook (event:*, hook:session-*-row), the
+# tool session's hook feed (hook:block-*, helper:*, hook:pre-commit-check),
+# the mixed install (mixed-hook, and with STANDIN_SETTINGS=exit the skill
+# rows), the answer session (answer:*) and the skill-load session
+# (hook:skill-load-*). Each answer mode is refused on the row its check
+# guards: the token checks on sessionStart and the second-fire count on
+# agentStop.
 package_run "$SMOKE" STANDIN_WRAP=session-start-row STANDIN_ERRORS='start tool end' \
-  STANDIN_EVENTS='start sub-start substart-id sub-stop-own subagentstop-task lead-stop end'
+  STANDIN_EVENTS='start sub-start substart-id sub-stop-own subagentstop-task lead-stop end' \
+  STANDIN_DENIAL=generic STANDIN_ANSWER=silent STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
 package_table "a sessionStart under the subagent's session too fails|event:sessionStart|fail|the subagent's session id is sub-1
 a subagentStart naming the subagent fails|event:subagentStart|fail|sent keys
 a subagentStop naming the task tool as the agent fails|event:subagentStop|fail|sent agentType task
 a subagent's agentStop naming its own transcript fails|event:agentStop|fail|sub-1 in sub-1
 an errorOccurred for a tool's failure fails|event:errorOccurred|fail|tool_execution under err-1
-a wrapper whose judge read its payload under the wrapper's arguments ran|hook:session-start-row|pass|reading the payload Copilot sent"
-package_run "$SMOKE" STANDIN_WRAP=session-end-row STANDIN_EVENTS='start lead-stop end' STANDIN_ERRORS='start end'
+a wrapper whose judge read its payload under the wrapper's arguments ran|hook:session-start-row|pass|reading the payload Copilot sent
+a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
+and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook
+answer refuses silent|answer:sessionStart|fail|positive=
+a subagent call the parent's load let through fails|hook:skill-load-check|fail|the parent's load passed the subagent"
+package_run "$SMOKE" STANDIN_WRAP=session-end-row STANDIN_EVENTS='start lead-stop end' STANDIN_ERRORS='start end' \
+  STANDIN_FEED=helper STANDIN_SETTINGS=bad STANDIN_ANSWER=leak STANDIN_LOAD_SAYS=NOT-REFUSED
 package_table "a session that ran no subagent leaves the subagent rows unanswerable|event:agentStop|unanswerable|no single subagentStop
 a failed model call with no errorOccurred fails|event:errorOccurred|fail|fired no errorOccurred
-a judge's read under another wrapper's arguments is not this wrapper's run|hook:session-end-row|fail|never ran at SessionEnd"
-package_run "$SMOKE" STANDIN_DENIAL=generic
-package_table "a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
-and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook"
-package_run "$SMOKE" STANDIN_FEED=helper
-package_case "a hook whose trigger never reached it is unanswerable, not pass" hook:block-repo-copy unanswerable "the trigger never reached this hook"
-package_run "$SMOKE" STANDIN_SHAPE=bad STANDIN_HOOK_CWD=/ STANDIN_DROP_ENV=1 STANDIN_SKIP_HOOK=block-unsafe-rm
+a judge's read under another wrapper's arguments is not this wrapper's run|hook:session-end-row|fail|never ran at SessionEnd
+a hook whose trigger never reached it is unanswerable, not pass|hook:block-repo-copy|unanswerable|the trigger never reached this hook
+a Copilot that could not load .claude/settings.json fails the mixed install|mixed-hook|fail|could not be loaded
+answer refuses leak|answer:sessionStart|fail|positive=
+a refusal the reply does not relay is unanswerable|hook:skill-load-check|unanswerable|whether it saw the correction is unknown"
+package_run "$SMOKE" STANDIN_SHAPE=bad STANDIN_HOOK_CWD=/ STANDIN_DROP_ENV=1 STANDIN_SKIP_HOOK=block-unsafe-rm \
+  STANDIN_SETTINGS=exit STANDIN_ANSWER=nohook STANDIN_HELD="parent-after child-before"
 package_table "a payload with the command under another name fails|helper:payload|fail|carries no command the hooks' reader reads
 a hook run outside the project root differs|helper:cwd|differs|a hook runs in /
 a launch environment that does not reach the hook fails|helper:env|fail|is missing from the hook's or the tool call's environment
-a hook that never ran while others did fails|hook:block-unsafe-rm|fail|never ran at PreToolUse, while other hooks read their payloads"
-package_run "$SMOKE" STANDIN_CROSS=1
-package_case "a Copilot that also ran the .claude/hooks copies fails the mixed install" mixed-hook fail "ran the Claude Code copies, smoke-tool 1 time(s) and smoke-claude-only 1 time(s)"
-package_run "$SMOKE" STANDIN_SETTINGS=bad
-package_case "a Copilot that could not load .claude/settings.json fails the mixed install" mixed-hook fail "could not be loaded"
-package_run "$SMOKE" STANDIN_SETTINGS=exit
-package_case "a skill listing that exits non-zero leaves the mixed install unanswerable" mixed-hook unanswerable "copilot skill list exited 1: Error: settings are invalid"
-package_run "$SMOKE" STANDIN_HOOKS=0
+a hook that never ran while others did fails|hook:block-unsafe-rm|fail|never ran at PreToolUse, while other hooks read their payloads
+a skill listing that exits non-zero leaves the mixed install unanswerable|mixed-hook|unanswerable|copilot skill list exited 1: Error: settings are invalid
+answer refuses nohook|answer:sessionStart|fail|positive=
+a parent call held after its load fails the judge|hook:skill-load-check|fail|the parent's guarded call after its load
+and the carrier|hook:skill-load-record|fail|the load was not recorded for that agent"
+package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_ANSWER=error STANDIN_HELD="child-before child-after"
 package_table "tool calls with no hook run fail every hook row|hook:block-repo-copy|fail|ran no repository hook
-and the helper rows with them|helper:payload|fail|ran no repository hook"
-package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=path
-package_case "the fixture hook ran with the recorder on its PATH: the matcher is blamed" hook:pre-commit-check fail "the rendered matcher never matches"
-package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=nopath
-package_case "the fixture hook ran without the recorder: the PATH is blamed" hook:pre-commit-check unanswerable "without the launch PATH"
+and the helper rows with them|helper:payload|fail|ran no repository hook
+answer refuses error|answer:sessionStart|fail|positive=
+a subagent call held after its own load fails|hook:skill-load-check|fail|the subagent's guarded call after its own load"
+package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=path STANDIN_ANSWER=once STANDIN_LOAD=nologin
+package_table "the fixture hook ran with the recorder on its PATH: the matcher is blamed|hook:pre-commit-check|fail|the rendered matcher never matches
+answer refuses once|answer:agentStop|fail|positive=
+a session that cannot log in is pending on its proof|hook:skill-load-check|pending|before any guarded call: Error: Authentication token found
+and so is the carrier's row|hook:skill-load-record|pending|proof: tools/harness-smoke --only copilot"
+package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=nopath STANDIN_CROSS=1
+package_table "the fixture hook ran without the recorder: the PATH is blamed|hook:pre-commit-check|unanswerable|without the launch PATH
+a Copilot that also ran the .claude/hooks copies fails the mixed install|mixed-hook|fail|ran the Claude Code copies, smoke-tool 1 time(s) and smoke-claude-only 1 time(s)"
 
 # A run with no copilot: every package row is pending, the excluded hooks keep
 # their reason, and the pending rows count toward exit 3.
@@ -1009,32 +1028,139 @@ else
   cp "$TMP/pkg-bin-copilot" "$PKG_BIN/copilot"
 fi
 
-# Controls on the stand-in copy: a listing turn with file tools, a marker read
-# that never looks, a trigger
-# check that takes any record, and a nested reading that ignores the root
-# listing, each pass what their rows do not; a no-session row that never reads
-# the enforced cell leaves the lane-mail row unanswerable where its row wants
-# pending, and one that reads it skipped lets that run exit 0.
+# Controls on the stand-in copy: each plants one rule out and hands its row the
+# input that rule refuses, and the row reads the verdict the rule was there to
+# stop. Controls whose rows and settings are disjoint share one run, as the
+# runs above do; each plant is applied in turn to the intact copy and has to
+# change it. A no-session row that never reads the enforced cell leaves the
+# lane-mail row unanswerable where its row wants pending, and one that reads it
+# skipped lets that run exit 0, so that run takes no other plant.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 ln -s -- "$REPO/agents" "$STAND/agents"
 cp "$REPO"/hooks/*.sh "$STAND/hooks/"
 PKG_SKILLS_ALL="$(for f in "$REPO"/skills/*/SKILL.md; do f=${f%/SKILL.md}; printf '%s\n' "${f##*/}"; done)"
 PKG_AGENTS_ALL="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${f%.md}"; done)"
-plant "$STAND_SMOKE" 's/ --available-tools task --allow-all-tools -s$/ --allow-all-tools -s/'
-package_run "$STAND_SMOKE" STANDIN_TASK_AGENTS=
-package_case "control: a listing turn that can read files passes agents the task tool does not offer" agent:reviewer-doc pass "lists it"
-plant "$STAND_SMOKE" 's/^  elif \[ "\$hook" != block-bare-cd \] \&\& \[ -e "\$marker" \]; then$/  elif false; then/'
-package_run "$STAND_SMOKE" STANDIN_REFUSE=0
-package_case "control: a marker read that never looks passes a command that went through" hook:block-unsafe-rm pass "was never written"
-plant "$STAND_SMOKE" 's/^  elif ! denial=\$(pkg_denial "\$hook"); then$/  elif false; then/'
-package_run "$STAND_SMOKE" STANDIN_DENIAL=generic
-package_case "control: a tool-result read that never looks passes a refusal the model saw only as an exit code" hook:block-bare-cd pass "the model was shown: ;"
-plant "$STAND_SMOKE" 's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/'
-package_run "$STAND_SMOKE" STANDIN_FEED=helper
-package_case "control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached" hook:block-repo-copy fail "passes the payload Copilot sent"
-plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /'
+plants() { # FILE SED-SCRIPT... — each edit applied in turn to FILE.intact, each required to change it
+  local f="$1" e
+  shift
+  cp "$f.intact" "$f.planted"
+  for e; do
+    plant "$f" "$e" "$f.planted"
+    cp "$f" "$f.planted"
+  done
+}
+EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-task lead-stop end"
+# The disposable copy opens the fixture input instead of a terminal. The
+# interactive commands and every verdict check remain in the smoke runner.
+INTERACTIVE='s/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
+# Pin the one interactive negative check before planting it out. Enabling the
+# terminal fixture alone would change the copy even if this edit missed.
+interactive_negative='if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi'
+if [ "$(sed -n '/token="SMOKE-INTERACTIVE-/,/^answer_config()/p' "$STAND_SMOKE.intact" | grep -Fc "$interactive_negative")" -ne 1 ]; then
+  printf 'interactive negative check: expected one match\n' >&2
+  exit 2
+fi
+# Each answer control removes one check of the answer rows; the silent, leak
+# and error edits also reach the interactive session's own checks, so no run
+# that enables that session takes one of them.
+ANSWER_SILENT='s/grep -qxF "$token" "$transcript"/true/'
+ANSWER_LEAK='s/! grep -qF "$token" "$transcript"/true/'
+ANSWER_NOHOOK='s/\[ "$count" -gt 0 \]/true/'
+ANSWER_ERROR='s/\[ "$STATUS" -eq 0 \]/true/'
+ANSWER_ONCE='s/\[ "$count" -ge 2 \]/true/'
+
+plants "$STAND_SMOKE" "$ANSWER_SILENT" \
+  's/^      if \[ -n "\$lead" \] \&\& \[ "\$ids" = "\$lead" \]; then$/      if [ -n "$lead" ]; then/' \
+  's/ and \.errorContext == "model_call" and/ and/' \
+  's/^  elif \[ "\$hook" != block-bare-cd \] \&\& \[ -e "\$marker" \]; then$/  elif false; then/' \
+  's/^  if \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  if false; then/' \
+  's/^  \[ -n "\$args" \] \&\& \[ -n "\$judge" \] || return 1$/  return 1/' \
+  's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" || relayed=1$/  relayed=1/'
+package_run "$STAND_SMOKE" STANDIN_ANSWER=silent "$EV_BAD" STANDIN_ERRORS='start tool end' STANDIN_REFUSE=0 \
+  STANDIN_CROSS=1 STANDIN_WRAP=session-start-row STANDIN_LOAD_SAYS=NOT-REFUSED
+package_table "control: removed answer check passes silent|answer:sessionStart|pass|model repeated the hook-only token
+control: a sessionStart row that never compares the ids passes one under the subagent too|event:sessionStart|pass|fired it once
+control: an errorOccurred row that never reads errorContext passes a tool's failure|event:errorOccurred|pass|with errorContext model_call
+control: a marker read that never looks passes a command that went through|hook:block-unsafe-rm|pass|was never written
+control: a mixed-hook row that never counts the .claude/hooks copies passes a Copilot that ran them|mixed-hook|pass|and neither .claude/hooks copy
+control: a hook row that never looks under its judge fails a wrapper that ran|hook:session-start-row|fail|never ran at SessionStart
+control: a relay check that never reads the reply passes a refusal nobody saw|hook:skill-load-check|pass|its reply relaying"
+
+plants "$STAND_SMOKE" "$ANSWER_LEAK" \
+  's/ and (\.\[0\] | has("agentId") or has("agentType") | not) then "pass"$/ then "pass"/' \
+  's/^  elif ! denial=\$(pkg_denial "\$hook"); then$/  elif false; then/' \
+  's/^  if startup=\$(grep -m 1 -F .could not be loaded. <<<"\$OUT"); then$/  if false; then/' \
+  's/^    \[ "\$line" = "\$args" \] || continue$/    :/' \
+  's/elif grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "\$transcript"/elif true || grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "$transcript"/'
+package_run "$STAND_SMOKE" STANDIN_ANSWER=leak "$EV_BAD" STANDIN_DENIAL=generic STANDIN_SETTINGS=bad \
+  STANDIN_WRAP=session-end-row STANDIN_SUB=SMOKE-RULES-REACHED
+package_table "control: removed answer check passes leak|answer:sessionStart|pass|model repeated the hook-only token
+control: a subagentStart row that never reads its keys passes one naming the subagent|event:subagentStart|pass|naming no agentId
+control: a tool-result read that never looks passes a refusal the model saw only as an exit code|hook:block-bare-cd|pass|the model was shown: ;
+control: a mixed-hook row that never reads the startup passes a settings file Copilot could not load|mixed-hook|pass|reports no settings file it could not load
+control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran|hook:session-end-row|pass|reading the payload Copilot sent
+control: no subagent token check accepts the lead token alone|instruction:subagent|pass|SMOKE-RULES-REACHED-VIA-AGENT"
+
+# The session runs only where the skill-load cells read enforced: a summary
+# giving each a reason there leaves both rows excluded with that reason, no
+# session run.
+jq '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
+  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' \
+  "$STUB_INDEX.intact" >"$STUB_INDEX"
+if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
+  echo "harness-smoke.test: the planted summary edit changed nothing" >&2
+  exit 2
+fi
+plants "$STAND_SMOKE" "$ANSWER_NOHOOK" "$INTERACTIVE" \
+  's/^          and \.\[0\]\.agentType == "smoke-child" and/          and/' \
+  's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/' \
+  '/run copilot-mixed-startup /,/run copilot-mixed /s/^  if \[ "\$STATUS" -ne 0 \]; then$/  if false; then/'
+package_run "$STAND_SMOKE" STANDIN_ANSWER=nohook "$EV_BAD" STANDIN_FEED=helper STANDIN_SETTINGS=exit \
+  STANDIN_INTERACTIVE_ANSWER=leak STANDIN_COMPACT=none
+package_table "control: removed answer check passes nohook|answer:sessionStart|pass|model repeated the hook-only token
+control: a subagentStop row that never reads agentType passes the task tool's|event:subagentStop|pass|smoke-child as agentType
+control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached|hook:block-repo-copy|fail|passes the payload Copilot sent
+control: a mixed-hook row that never reads the listing's exit passes a listing that failed|mixed-hook|pass|reports no settings file it could not load
+interactive silent-control token leak fails|answer:userPromptSubmitted-interactive|fail|positive=pass negative=fail
+no manual compaction capture fails its dedicated row|event:preCompact|fail|/compact recorded no preCompact payload with trigger manual
+a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
+and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
+cp "$STUB_INDEX.intact" "$STUB_INDEX"
+
+plants "$STAND_SMOKE" "$ANSWER_ERROR" \
+  's/^          and any(\.\[\]; \.sessionId == \$sub and dir == \$lead)$/          and any(.[]; .sessionId == $sub)/' \
+  's/^  elif grep -qFx COPILOT_PROJECT_DIR <<<"\$tool_env"; then$/  elif false; then/' \
+  's/^  elif \[ "\$own" -gt 0 \]; then$/  elif true; then/' \
+  's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
+package_run "$STAND_SMOKE" STANDIN_ANSWER=error "$EV_BAD" STANDIN_TOOL_PROJECT_DIR=1 STANDIN_MIXED=0 \
+  STANDIN_NESTED_ROOT=1
+package_table "control: removed answer check passes error|answer:sessionStart|pass|model repeated the hook-only token
+control: an agentStop row that never reads the transcript passes a subagent naming its own|event:agentStop|pass|fired it twice
+control: an environment row that never reads COPILOT_PROJECT_DIR passes a tool call carrying it|helper:env|pass|reaches a hook and a tool call
+control: a mixed-hook row that never counts Copilot's own copy passes a run of none|mixed-hook|pass|ran .github/hooks/smoke-tool.sh 0 time(s)
+control: a nested reading that ignores the root listing differs where the root lists it|instruction:nested|differs|for the working directory only"
+
+plants "$STAND_SMOKE" "$ANSWER_ONCE" "$INTERACTIVE" \
+  '/token="SMOKE-INTERACTIVE-/,/^answer_config()/s/&& ! grep -qF "\$token" "\$transcript"/\&\& { true || ! grep -qF "$token" "$transcript"; }/' \
+  's/^  if \(.*smoke-events\/compact.*\); then$/  if true || { \1; }; then/' \
+  's/ --available-tools task --allow-all-tools -s$/ --allow-all-tools -s/' \
+  "s/^PKG_UNRAISED='SubagentStop PreCompact'\$/PKG_UNRAISED=''/"
+package_run "$STAND_SMOKE" STANDIN_ANSWER=once STANDIN_INTERACTIVE_ANSWER=leak STANDIN_COMPACT=none \
+  STANDIN_TASK_AGENTS=
+package_table "control: removed answer check passes once|answer:agentStop|pass|model repeated the hook-only token
+control: disabled interactive negative check passes the same leak|answer:userPromptSubmitted-interactive|pass|hook-only token repeated in interactive session, absent with silent hook
+control: no capture check passes absent manual compaction|event:preCompact|pass|/compact fired preCompact with trigger manual
+control: a listing turn that can read files passes agents the task tool does not offer|agent:reviewer-doc|pass|lists it
+control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent|hook:reviewer-stop-check|pass|reading the payload Copilot sent
+control: with every event read as raised, a compaction hook is judged without compaction|hook:lane-mail-compact|pass|reading the payload Copilot sent"
+
+plants "$STAND_SMOKE" "$INTERACTIVE" \
+  's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /'
 package_run "$STAND_SMOKE"
-package_case "control: a no-session row that ignores the enforced cell is unanswerable" lane-mail unanswerable "runs no lane session on copilot"
+package_table "interactive prompt context passes with a silent control|answer:userPromptSubmitted-interactive|pass|hook-only token repeated in interactive session, absent with silent hook
+manual compaction capture passes its dedicated row|event:preCompact|pass|/compact fired preCompact with trigger manual
+control: a no-session row that ignores the enforced cell is unanswerable|lane-mail|unanswerable|runs no lane session on copilot"
+
 plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot answer:userPromptSubmitted-interactive pending /    row copilot answer:userPromptSubmitted-interactive skipped /; s/^    row copilot event:preCompact pending /    row copilot event:preCompact skipped /'
 package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
 smoke-skill"
@@ -1044,126 +1170,7 @@ if [ "$PKG_RC" = 0 ]; then
 else
   bad "control: and that run exits 0" "rc=$PKG_RC, rows not passing: $(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { printf "%s ", $0 }' "$TMP/pkg-out")"
 fi
-plant "$STAND_SMOKE" 's/^  elif grep -qFx COPILOT_PROJECT_DIR <<<"\$tool_env"; then$/  elif false; then/'
-package_run "$STAND_SMOKE" STANDIN_TOOL_PROJECT_DIR=1
-package_case "control: an environment row that never reads COPILOT_PROJECT_DIR passes a tool call carrying it" helper:env pass "reaches a hook and a tool call"
-plant "$STAND_SMOKE" 's/^  if \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  if false; then/'
-package_run "$STAND_SMOKE" STANDIN_CROSS=1
-package_case "control: a mixed-hook row that never counts the .claude/hooks copies passes a Copilot that ran them" mixed-hook pass "and neither .claude/hooks copy"
-plant "$STAND_SMOKE" 's/^  if startup=\$(grep -m 1 -F .could not be loaded. <<<"\$OUT"); then$/  if false; then/'
-package_run "$STAND_SMOKE" STANDIN_SETTINGS=bad
-package_case "control: a mixed-hook row that never reads the startup passes a settings file Copilot could not load" mixed-hook pass "reports no settings file it could not load"
-plant "$STAND_SMOKE" '/run copilot-mixed-startup /,/run copilot-mixed /s/^  if \[ "\$STATUS" -ne 0 \]; then$/  if false; then/'
-package_run "$STAND_SMOKE" STANDIN_SETTINGS=exit
-package_case "control: a mixed-hook row that never reads the listing's exit passes a listing that failed" mixed-hook pass "reports no settings file it could not load"
-plant "$STAND_SMOKE" 's/^  elif \[ "\$own" -gt 0 \]; then$/  elif true; then/'
-package_run "$STAND_SMOKE" STANDIN_MIXED=0
-package_case "control: a mixed-hook row that never counts Copilot's own copy passes a run of none" mixed-hook pass "ran .github/hooks/smoke-tool.sh 0 time(s)"
-plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
-package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
-package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
-# Controls on the event rows and the package table's hook attribution: each
-# rule planted out passes the payload or the run its row fails.
-for answer_case in 'silent|sessionStart|grep -qxF "$token" "$transcript"|true' \
-  'leak|sessionStart|! grep -qF "$token" "$transcript"|true' \
-  'nohook|sessionStart|\[ "$count" -gt 0 \]|true' \
-  'error|sessionStart|\[ "$STATUS" -eq 0 \]|true' \
-  'once|agentStop|\[ "$count" -ge 2 \]|true'; do
-  IFS='|' read -r answer_mode answer_event answer_pattern answer_replacement <<<"$answer_case"
-  package_run "$SMOKE" "STANDIN_ANSWER=$answer_mode"
-  package_case "answer refuses $answer_mode" "answer:$answer_event" fail "positive="
-  cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-  plant "$STAND_SMOKE" "s/$answer_pattern/$answer_replacement/"
-  package_run "$STAND_SMOKE" "STANDIN_ANSWER=$answer_mode"
-  package_case "control: removed answer check passes $answer_mode" "answer:$answer_event" pass "model repeated the hook-only token"
-done
-EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-task lead-stop end"
-plant "$STAND_SMOKE" 's/^      if \[ -n "\$lead" \] \&\& \[ "\$ids" = "\$lead" \]; then$/      if [ -n "$lead" ]; then/'
-package_run "$STAND_SMOKE" "$EV_BAD"
-package_case "control: a sessionStart row that never compares the ids passes one under the subagent too" event:sessionStart pass "fired it once"
-plant "$STAND_SMOKE" 's/ and (\.\[0\] | has("agentId") or has("agentType") | not) then "pass"$/ then "pass"/'
-package_run "$STAND_SMOKE" "$EV_BAD"
-package_case "control: a subagentStart row that never reads its keys passes one naming the subagent" event:subagentStart pass "naming no agentId"
-plant "$STAND_SMOKE" 's/^          and \.\[0\]\.agentType == "smoke-child" and/          and/'
-package_run "$STAND_SMOKE" "$EV_BAD"
-package_case "control: a subagentStop row that never reads agentType passes the task tool's" event:subagentStop pass "smoke-child as agentType"
-plant "$STAND_SMOKE" 's/^          and any(\.\[\]; \.sessionId == \$sub and dir == \$lead)$/          and any(.[]; .sessionId == $sub)/'
-package_run "$STAND_SMOKE" "$EV_BAD"
-package_case "control: an agentStop row that never reads the transcript passes a subagent naming its own" event:agentStop pass "fired it twice"
-plant "$STAND_SMOKE" 's/ and \.errorContext == "model_call" and/ and/'
-package_run "$STAND_SMOKE" STANDIN_ERRORS='start tool end'
-package_case "control: an errorOccurred row that never reads errorContext passes a tool's failure" event:errorOccurred pass "with errorContext model_call"
-plant "$STAND_SMOKE" 's/^  \[ -n "\$args" \] \&\& \[ -n "\$judge" \] || return 1$/  return 1/'
-package_run "$STAND_SMOKE" STANDIN_WRAP=session-start-row
-package_case "control: a hook row that never looks under its judge fails a wrapper that ran" hook:session-start-row fail "never ran at SessionStart"
-plant "$STAND_SMOKE" 's/^    \[ "\$line" = "\$args" \] || continue$/    :/'
-package_run "$STAND_SMOKE" STANDIN_WRAP=session-end-row
-package_case "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran" hook:session-end-row pass "reading the payload Copilot sent"
-plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop PreCompact'\$/PKG_UNRAISED=''/"
-package_run "$STAND_SMOKE"
-package_case "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent" hook:reviewer-stop-check pass "reading the payload Copilot sent"
-package_case "control: with every event read as raised, a compaction hook is judged without compaction" hook:lane-mail-compact pass "reading the payload Copilot sent"
-plant "$STAND_SMOKE" 's/elif grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "\$transcript"/elif true || grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "$transcript"/'
-package_run "$STAND_SMOKE" STANDIN_SUB=SMOKE-RULES-REACHED
-package_case "control: no subagent token check accepts the lead token alone" instruction:subagent pass "SMOKE-RULES-REACHED-VIA-AGENT"
-# The disposable copy opens the fixture input instead of a terminal. The
-# interactive commands and every verdict check remain in the smoke runner.
-plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
-package_run "$STAND_SMOKE"
-package_case "interactive prompt context passes with a silent control" answer:userPromptSubmitted-interactive pass "hook-only token repeated in interactive session, absent with silent hook"
-package_case "manual compaction capture passes its dedicated row" event:preCompact pass "/compact fired preCompact with trigger manual"
-package_run "$STAND_SMOKE" STANDIN_INTERACTIVE_ANSWER=leak
-package_case "interactive silent-control token leak fails" answer:userPromptSubmitted-interactive fail "positive=pass negative=fail"
-# Pin the one interactive negative check before planting it out. Enabling the
-# terminal fixture alone would change the copy even if this edit missed.
-interactive_negative='if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi'
-if [ "$(sed -n '/token="SMOKE-INTERACTIVE-/,/^answer_config()/p' "$STAND_SMOKE.intact" | grep -Fc "$interactive_negative")" -ne 1 ]; then
-  printf 'interactive negative check: expected one match\n' >&2
-  exit 2
-fi
-plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@; /token="SMOKE-INTERACTIVE-/,/^answer_config()/s/&& ! grep -qF "\$token" "\$transcript"/\&\& { true || ! grep -qF "$token" "$transcript"; }/'
-package_run "$STAND_SMOKE" STANDIN_INTERACTIVE_ANSWER=leak
-package_case "control: disabled interactive negative check passes the same leak" answer:userPromptSubmitted-interactive pass "hook-only token repeated in interactive session, absent with silent hook"
-plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
-package_run "$STAND_SMOKE" STANDIN_COMPACT=none
-package_case "no manual compaction capture fails its dedicated row" event:preCompact fail "/compact recorded no preCompact payload with trigger manual"
-plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@; s/^  if \(.*smoke-events\/compact.*\); then$/  if true || { \1; }; then/'
-package_run "$STAND_SMOKE" STANDIN_COMPACT=none
-package_case "control: no capture check passes absent manual compaction" event:preCompact pass "/compact fired preCompact with trigger manual"
-
-# The skill-load session's other verdicts, on the committed table, whose
-# copilot cells of skill-load-check and skill-load-record read enforced; the
-# first package run above holds its passing verdicts.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-package_run "$STAND_SMOKE" STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
-package_case "a subagent call the parent's load let through fails" hook:skill-load-check fail "the parent's load passed the subagent"
-package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
-package_case "a refusal the reply does not relay is unanswerable" hook:skill-load-check unanswerable "whether it saw the correction is unknown"
-package_run "$STAND_SMOKE" STANDIN_HELD="parent-after child-before"
-package_table "a parent call held after its load fails the judge|hook:skill-load-check|fail|the parent's guarded call after its load
-and the carrier|hook:skill-load-record|fail|the load was not recorded for that agent"
-package_run "$STAND_SMOKE" STANDIN_HELD="child-before child-after"
-package_case "a subagent call held after its own load fails" hook:skill-load-check fail "the subagent's guarded call after its own load"
-package_run "$STAND_SMOKE" STANDIN_LOAD=nologin
-package_table "a session that cannot log in is pending on its proof|hook:skill-load-check|pending|before any guarded call: Error: Authentication token found
-and so is the carrier's row|hook:skill-load-record|pending|proof: tools/harness-smoke --only copilot"
-plant "$STAND_SMOKE" 's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" || relayed=1$/  relayed=1/'
-package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
-package_case "control: a relay check that never reads the reply passes a refusal nobody saw" hook:skill-load-check pass "its reply relaying"
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-# The session runs only where those cells read enforced: a summary giving each
-# a reason there leaves both rows excluded with that reason, no session run.
-jq '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
-  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' \
-  "$STUB_INDEX.intact" >"$STUB_INDEX"
-if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
-  echo "harness-smoke.test: the planted summary edit changed nothing" >&2
-  exit 2
-fi
-package_run "$STAND_SMOKE"
-package_table "a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
-and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
-cp "$STUB_INDEX.intact" "$STUB_INDEX"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -28,6 +28,8 @@
 #      to the runner alone, ends the run and the suite it was running
 #   6. a name filter — a bare one selects each suite whose name holds it,
 #      one written `=name` that suite alone, and `!` rejects either way
+#   8. --battery — the suites of the directory it names run in place of the
+#      runner's own, and the verdict line names that directory's tree
 #
 # Bash 3.2 compatible.
 
@@ -324,6 +326,30 @@ assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_
 mutate_file "$B/run-all.sh" 'unset ORCH_STATE_DIR' ': ORCH_STATE_DIR'
 run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
 assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=state " "control: inherited lane state fails the fixture assertion"
+
+echo "=== 8. --battery runs another directory's suites and names its tree ==="
+B="$TMP_ROOT/runner-parent/tests"
+battery "$B"
+mkdir -p "$B.bin"
+printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
+chmod +x "$B.bin/nproc"
+suite "$B" home-suite 0 'pass: 1   fail: 0'
+OTHER="$TMP_ROOT/other-tree/tests"
+mkdir -p "$OTHER"
+suite "$OTHER" other-suite 0 'pass: 2   fail: 0'
+battery_verdict() { # — what ran and the verdict line, from $OUT
+  printf 'rc=%s started=%s verdict=%s' "$RC" "$(printf '%s\n' "$OUT" | sed -n 's/^start suite=//p' | tr '\n' ' ')" \
+    "$(printf '%s\n' "$OUT" | sed -n 's/^\(.* tests: .*\)$/\1/p')"
+}
+RC=0
+OUT="$(env -i PATH="$B.bin:$PATH" HOME="$HOME" TMPDIR="$B.tmp" bash "$B/run-all.sh" --battery "$OTHER" 2>&1)" || RC=$?
+assert_eq "$(battery_verdict)" "rc=0 started=other-suite  verdict=other-tree tests: all 1 file(s) passed" \
+  "--battery runs that directory's suites, none of the runner's own, and names its tree"
+mutate_file "$B/run-all.sh" 'TEST_DIR="$(cd "$2" && pwd)" || exit 1' ':'
+RC=0
+OUT="$(env -i PATH="$B.bin:$PATH" HOME="$HOME" TMPDIR="$B.tmp" bash "$B/run-all.sh" --battery "$OTHER" 2>&1)" || RC=$?
+assert_eq "$(battery_verdict)" "rc=0 started=home-suite  verdict=runner-parent tests: all 1 file(s) passed" \
+  "control: with the directory left unread the runner's own suites run"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
