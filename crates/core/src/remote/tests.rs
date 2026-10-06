@@ -940,3 +940,27 @@ fn the_scope_last_fetched_is_the_newest_of_its_mirrors() {
         "a future stamp neither dates the scope nor hides a valid one"
     );
 }
+
+/// A pinned commit is served where either a published checkout or the
+/// mirror's objects can produce it, as `cached` reads it, and not where
+/// neither can.
+#[test]
+fn a_commit_is_served_by_its_checkout_or_its_mirror() {
+    for (case, keep_checkout, keep_mirror, served) in [
+        ("checkout only", true, false, true),
+        ("mirror only", false, true, true),
+        ("neither", false, false, false),
+    ] {
+        let f = fixture();
+        let published = sync(&f.env, REPO, None).unwrap();
+        let key = key_for(&f.env);
+        if !keep_checkout {
+            fs::remove_dir_all(&published.root).unwrap();
+            fs::remove_file(store::receipt_path(&f.env, &key, &published.commit)).unwrap();
+        }
+        if !keep_mirror {
+            fs::remove_dir_all(store::mirror_dir(&f.env, &key)).unwrap();
+        }
+        assert_eq!(serves(&f.env, REPO, &published.commit), served, "{case}");
+    }
+}

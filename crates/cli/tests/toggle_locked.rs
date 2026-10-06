@@ -17,6 +17,9 @@
 //! Held there, every package was skipped, the switched one stayed as it
 //! was behind a manifest that said otherwise, and the generated-paths
 //! inventory dropped the renders of every package skipped.
+//! A commit this machine has merely not fetched yet, the record a teammate
+//! committed against a newer catalog, is fetched and held: read fresh
+//! against the stale mirror, every package moved back to the older commit.
 #![cfg(unix)]
 
 use std::collections::BTreeSet;
@@ -54,6 +57,9 @@ enum Catalog {
     Moved,
     /// Rewritten so the recorded commit is gone, on a mirror fetched fresh.
     Rewritten,
+    /// Moved and recorded there by a teammate, while this machine's mirror
+    /// stops at the install: the record names a commit upstream still holds.
+    Behind,
 }
 
 struct Row {
@@ -183,6 +189,17 @@ const ROWS: &[Row] = &[
         changed: SOURCE_PATHS,
     },
     Row {
+        case: "kendex disable, record ahead of the mirror",
+        prepare: None,
+        setup: None,
+        catalog: Catalog::Behind,
+        verb: Verb::Cli(DISABLE_GUARD),
+        subject: GUARD,
+        enabled: Some(false),
+        requirement: None,
+        changed: HOOK_PATHS,
+    },
+    Row {
         case: "kendex disable, recorded commit gone",
         prepare: None,
         setup: None,
@@ -262,6 +279,29 @@ fn require_a_helper(world: &World) {
     let helper = world.catalog.join("skills/helper/SKILL.md");
     let before = fs::read_to_string(&helper).unwrap();
     write(&helper, &format!("{before}\nHelps more now.\n"));
+}
+
+/// A teammate brings the catalog current and commits the record there,
+/// while this machine's mirror is cloned again from the catalog as it stood
+/// at the install: the record names a commit upstream holds and this
+/// machine never fetched.
+#[allow(clippy::unwrap_used)]
+fn fall_behind(world: &World) {
+    move_the_catalog(world);
+    let applied = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "--scope", "project", "-y", "--leave"],
+    );
+    assert!(applied.status.success(), "{}", said(&applied));
+    commit(&world.project, "a teammate brings the catalog current");
+    let ahead = git(&world.catalog, &["rev-parse", "HEAD"]);
+    git(&world.catalog, &["reset", "-q", "--hard", "HEAD~1"]);
+    let cache = Env::host_rooted(&world.home).source_cache_dir();
+    fs::remove_dir_all(&cache).unwrap_or_else(|error| panic!("{}: {error}", cache.display()));
+    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(fetched.status.success(), "{}", said(&fetched));
+    git(&world.catalog, &["reset", "-q", "--hard", ahead.trim()]);
 }
 
 /// The catalog's history rewritten so the installed commit is gone from
@@ -363,7 +403,7 @@ fn expected_record(
     after: &serde_json::Value,
 ) -> serde_json::Value {
     match row.catalog {
-        Catalog::Moved => before,
+        Catalog::Moved | Catalog::Behind => before,
         Catalog::Rewritten => {
             let installed = &before["entries"]["hook:guard:claude"];
             let gone = installed["sourceCommit"].as_str().unwrap();
@@ -402,6 +442,7 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
         match row.catalog {
             Catalog::Moved => move_the_catalog(&world),
             Catalog::Rewritten => rewrite_the_catalog(&world),
+            Catalog::Behind => fall_behind(&world),
         }
         let before = record(&world);
         let before_listed = listed(&world);

@@ -518,36 +518,133 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
     );
 }
 
-/// A pin at a commit this machine's mirror cannot serve is taken back for a
-/// write that keeps the record, which would otherwise skip what it holds,
-/// and kept for the record's own reading. A revision the user pinned is
-/// neither.
+/// Where the cache cannot read a pinned commit, the repository is fetched
+/// once and the pin is released only if the commit is still unreadable:
+/// gone from upstream, not merely newer than the last fetch. A fetch that
+/// fails refuses the write and keeps every pin. A revision the user pinned
+/// is never touched.
 #[test]
-fn a_commit_nothing_serves_is_released_for_a_write_and_held_for_the_reading() {
+fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
+    struct Row {
+        case: &'static str,
+        served_before: bool,
+        served_after: bool,
+        fetch_fails: bool,
+        fetches: usize,
+        released: Option<bool>,
+    }
+    let rows = [
+        Row {
+            case: "served: no fetch, held",
+            served_before: true,
+            served_after: true,
+            fetch_fails: false,
+            fetches: 0,
+            released: Some(false),
+        },
+        Row {
+            case: "newer than the last fetch: fetched, held",
+            served_before: false,
+            served_after: true,
+            fetch_fails: false,
+            fetches: 1,
+            released: Some(false),
+        },
+        Row {
+            case: "gone upstream: fetched, released",
+            served_before: false,
+            served_after: false,
+            fetch_fails: false,
+            fetches: 1,
+            released: Some(true),
+        },
+        Row {
+            case: "fetch fails: refused, held",
+            served_before: false,
+            served_after: false,
+            fetch_fails: true,
+            fetches: 1,
+            released: None,
+        },
+    ];
+    let commit = "a".repeat(40);
+    let manifest = manifest_with(&[("one", None), ("two", None), ("held", Some("fff"))], &[]);
+    let lock = lock_with(&[
+        (
+            "skill:one:claude",
+            entry("one", Some(&commit), &[Reason::Requested]),
+        ),
+        (
+            "skill:two:claude",
+            entry("two", Some(&commit), &[Reason::Requested]),
+        ),
+    ]);
+    for row in rows {
+        let case = row.case;
+        let targets = Targets {
+            declarations: BTreeSet::new(),
+            reach: Reach::Carriers,
+        };
+        let (mut held, mut pins) = held_manifest(&manifest, &lock, &targets);
+        let fetched = std::cell::Cell::new(0);
+        let result = release(
+            &mut held,
+            &mut pins,
+            |_, _| match fetched.get() {
+                0 => row.served_before,
+                _ => row.served_after,
+            },
+            |_| {
+                fetched.set(fetched.get() + 1);
+                match row.fetch_fails {
+                    true => Err(CoreError::FetchFailed {
+                        repo: "owner/catalog".to_owned(),
+                        reason: "offline".to_owned(),
+                    }),
+                    false => Ok(()),
+                }
+            },
+        );
+        assert_eq!(fetched.get(), row.fetches, "{case}");
+        let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
+        assert_eq!(rev("held").as_deref(), Some("fff"), "{case}");
+        match row.released {
+            None => {
+                assert!(
+                    matches!(result, Err(CoreError::SourcePending { ref name }) if name == "cat"),
+                    "{case}: {result:?}"
+                );
+                assert_eq!(pins.pins().len(), 2, "{case}");
+            }
+            Some(released) => {
+                result.unwrap();
+                let pinned = (!released).then(|| commit.clone());
+                assert_eq!((rev("one"), rev("two")), (pinned.clone(), pinned), "{case}");
+                assert_eq!(pins.pins().len(), if released { 0 } else { 2 }, "{case}");
+            }
+        }
+    }
+}
+
+/// `verify --at-record` reads the record as written: its hold releases
+/// nothing and fetches nothing, even where no cache can read the commit.
+#[test]
+fn the_records_own_reading_releases_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+    let nowhere = format!("file://{}", tmp.path().join("nowhere").display());
     let gone = "a".repeat(40);
-    let manifest = manifest_with(&[("one", None), ("held", Some("fff"))], &["starter"]);
-    let mut lock = lock_with(&[(
+    let mut manifest = manifest_with(&[("one", None)], &[]);
+    manifest.sources.get_mut("cat").unwrap().repo = Some(nowhere.clone());
+    let lock = lock_with(&[(
         "skill:one:claude",
-        entry("one", Some(&gone), &[Reason::Requested]),
+        entry_from("one", Some(&gone), &[Reason::Requested], "cat", &nowhere),
     )]);
-    recorded_set(&mut lock, "starter", &gone);
+    let options = super::super::super::PlanOptions::at_record();
 
-    for (options, holds) in [
-        (super::super::super::PlanOptions::at_record(), true),
-        (super::super::super::PlanOptions::locked(), false),
-    ] {
-        let (planning, pins) = planning_manifest(&manifest, &lock, &options);
-        let (mut planning, mut pins) = (planning.into_owned(), pins.unwrap());
-        release_unserved(&env, &options, &mut planning, &mut pins);
-        let pinned = holds.then(|| gone.clone());
-        assert_eq!(planning.declared(ItemKind::Skill)["one"].rev, pinned);
-        assert_eq!(planning.bundles["starter"].rev, pinned);
-        assert_eq!(
-            planning.declared(ItemKind::Skill)["held"].rev.as_deref(),
-            Some("fff")
-        );
-        assert_eq!(pins.pins().len(), if holds { 2 } else { 0 });
-    }
+    let (planning, pins) = planning_manifest(&manifest, &lock, &options);
+    let (mut planning, mut pins) = (planning.into_owned(), pins.unwrap());
+    release_unserved(&env, &options, &mut planning, &mut pins).unwrap();
+    assert_eq!(planning.declared(ItemKind::Skill)["one"].rev, Some(gone));
+    assert_eq!(pins.pins().len(), 1);
 }

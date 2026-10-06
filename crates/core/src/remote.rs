@@ -194,6 +194,27 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
     }
 }
 
+/// Whether [`cached`] can read a pinned commit here: a published checkout,
+/// or the mirror's objects to publish one from. Nothing is published or
+/// fetched.
+pub(crate) fn serves(env: &Env, repo: &str, commit: &str) -> bool {
+    let key = cache_key(env, repo);
+    store::published(env, &key, commit).is_some()
+        || store::has_commit(&store::mirror_dir(env, &key), commit)
+}
+
+/// Bring one repository's mirror current under its lock, cloning it where
+/// there is none, and stamp the attempt.
+pub(crate) fn fetch_mirror(env: &Env, repo: &str) -> Result<()> {
+    let key = cache_key(env, repo);
+    let mirror = store::mirror_dir(env, &key);
+    let _guard = store::lock_repo(env, &key, repo)?;
+    let fetched =
+        store::ensure_mirror(&mirror, &clone_url(env, repo)).and_then(|()| store::fetch(&mirror));
+    stamp_fetch(env, &key, &mirror, &fetched);
+    fetched
+}
+
 /// Resolve from cache when possible, and fetch only on a real cache miss.
 pub(crate) fn cached_or_sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     match cached_strict(env, repo, rev)? {
@@ -280,22 +301,9 @@ pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {
         let Some(repo) = &decl.repo else {
             continue;
         };
-        let url = clone_url(env, repo);
-        let key = cache_key(env, repo);
-        let mirror = store::mirror_dir(env, &key);
-        let guard = match store::lock_repo(env, &key, repo) {
-            Ok(guard) => guard,
-            Err(error) => {
-                warnings.push(format!("{repo}: not checked ({error})"));
-                continue;
-            }
-        };
-        let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
-        stamp_fetch(env, &key, &mirror, &fetched);
-        if let Err(error) = fetched {
+        if let Err(error) = fetch_mirror(env, repo) {
             warnings.push(format!("{repo}: not checked ({error})"));
         }
-        drop(guard);
     }
     warnings
 }

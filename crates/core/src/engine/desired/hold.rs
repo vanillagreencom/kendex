@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Env;
+use crate::error::{CoreError, Result};
 
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::manifest::Manifest;
@@ -200,30 +201,62 @@ pub(crate) fn planning_manifest<'a>(
 
 /// Under a write that keeps the record
 /// ([`super::super::PlanOptions::keep_source_records`]), take back each pin
-/// at a commit this machine's mirror cannot serve, so its declaration
-/// resolves fresh: one more case the record cannot place. Held there it
-/// would read nothing and be skipped, and the write that skipped it would
-/// de-list what it renders. Any other hold keeps every pin, so `verify
-/// --at-record` still reports what the record names.
+/// at a commit gone from its source's history, so its declaration resolves
+/// fresh: one more case the record cannot place. Held there it would read
+/// nothing and be skipped, and the write that skipped it would de-list what
+/// it renders. A commit this machine has merely not fetched yet, the lock a
+/// teammate committed against a newer catalog, is fetched and stays held;
+/// read fresh against a stale mirror it would undo their update. Any other
+/// hold keeps every pin, so `verify --at-record` still reports what the
+/// record names.
 pub(crate) fn release_unserved(
     env: &Env,
     options: &super::super::PlanOptions,
     held: &mut Manifest,
     pins: &mut HeldPins,
-) {
+) -> Result<()> {
     if !options.keep_source_records {
-        return;
+        return Ok(());
     }
-    let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
-    let (kept, unserved) = std::mem::take(&mut pins.pins).into_iter().partition(|pin| {
-        *served
-            .entry((pin.repo.clone(), pin.commit.clone()))
-            .or_insert_with(|| {
-                crate::remote::mirror_commit(env, &pin.repo, Some(&pin.commit)).is_some()
-            })
-    });
-    HeldPins { pins: unserved }.unpin(held);
+    release(
+        held,
+        pins,
+        |repo, commit| crate::remote::serves(env, repo, commit),
+        |repo| crate::remote::fetch_mirror(env, repo),
+    )
+}
+
+/// [`release_unserved`] against the cache reads it is handed: `serves`
+/// answers whether a commit can be read here, `fetch` brings a repository's
+/// mirror current. Each repository holding a pin `serves` refuses is
+/// fetched once; a pin it still refuses after that is gone. A fetch that
+/// fails proves nothing about what upstream holds, so the write is refused
+/// and every pin stays.
+fn release(
+    held: &mut Manifest,
+    pins: &mut HeldPins,
+    serves: impl Fn(&str, &str) -> bool,
+    mut fetch: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    let mut unserved: BTreeMap<String, String> = BTreeMap::new();
+    for pin in &pins.pins {
+        if !unserved.contains_key(&pin.repo) && !serves(&pin.repo, &pin.commit) {
+            unserved.insert(pin.repo.clone(), pin.source.clone());
+        }
+    }
+    for (repo, source) in &unserved {
+        if fetch(repo).is_err() {
+            return Err(CoreError::SourcePending {
+                name: source.clone(),
+            });
+        }
+    }
+    let (kept, gone) = std::mem::take(&mut pins.pins)
+        .into_iter()
+        .partition(|pin| !unserved.contains_key(&pin.repo) || serves(&pin.repo, &pin.commit));
+    HeldPins { pins: gone }.unpin(held);
     pins.pins = kept;
+    Ok(())
 }
 
 /// The manifest a single-package update plans from: the targets read

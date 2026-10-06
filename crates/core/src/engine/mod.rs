@@ -551,7 +551,7 @@ fn desired_pass<'a>(
     let (mut planning, mut held_pins) =
         desired::hold::planning_manifest(&normalized, lock, options);
     if let Some(pins) = held_pins.as_mut() {
-        desired::hold::release_unserved(env, options, planning.to_mut(), pins);
+        desired::hold::release_unserved(env, options, planning.to_mut(), pins)?;
     }
     let mut state = desired_state(
         env,
