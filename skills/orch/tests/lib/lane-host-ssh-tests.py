@@ -107,6 +107,9 @@ remove)
   git worktree remove --force "$path" ;;
 esac
 ''')
+        # create reads the clone's settings through the worktree command's own loader.
+        (wt.parent / "lib").mkdir()
+        shutil.copy2(PACKAGE.parent / "worktree/scripts/lib/kendex-env.sh", wt.parent / "lib/kendex-env.sh")
         scripts = self.source / ".agents/skills/orch/scripts"
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
@@ -748,6 +751,80 @@ exec "$REAL_CAT" "$@"
         blind = self.call("cat", "--item", "TEST-1", "--", str(self.root / "nothing-here"))
         self.script.write_text(original)
         self.assertEqual(blind.returncode, 1, blind.stderr)
+
+    def fake_npm(self):
+        """An npm that logs its call and directory and fills node_modules, as ci does."""
+        self.executable(self.bin / "npm", '''#!/usr/bin/env bash
+printf 'npm %s in %s\\n' "$*" "$PWD" >> "$SSH_TEST_LOG"
+mkdir -p node_modules
+''')
+
+    def log_since(self, mark):
+        return (self.root / "calls").read_text().splitlines()[mark:]
+
+    def install_steps(self):
+        """Create through a changed and an unchanged lockfile; yield each step's
+        name, the installs expected, and the log lines its create wrote."""
+        self.fake_npm()
+        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = ".env.local ui/node_modules"\n')
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+        install = f"npm ci --no-audit --no-fund in {Path(self.row['clone']) / 'ui'}"
+        # Per step: its flags, the lockfile the source commits before it
+        # (None keeps the last), and the installs it runs.
+        steps = (
+            ("fresh clone", (), None, [install]),
+            ("unchanged lockfile", ("--relaunch",), None, []),
+            ("changed lockfile", ("--reuse",), '{"lockfileVersion": 3, "changed": true}\n', [install]),
+            ("unchanged again", ("--reuse",), None, []),
+        )
+        for name, flags, lockfile, installs in steps:
+            if lockfile is not None:
+                self.seed_source("ui/package-lock.json", lockfile)
+            mark = len(self.log_since(0)) if (self.root / "calls").exists() else 0
+            result = self.create(*flags)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            yield name, installs, self.log_since(mark)
+
+    def test_create_installs_a_linked_node_modules_once_per_lockfile(self):
+        """The clone, the lane's main checkout, installs what a node_modules
+        entry links before the setup that links it, and again only when the
+        committed lockfile changes."""
+        for name, installs, log in self.install_steps():
+            with self.subTest(step=name):
+                self.assertEqual([line for line in log if line.startswith("npm ")], installs)
+                if installs:
+                    creates = [i for i, line in enumerate(log) if line.startswith("worktree create ")]
+                    self.assertLess(log.index(installs[0]), creates[-1])
+
+    def test_control_install_without_its_lockfile_marker_runs_every_create(self):
+        original = self.script.read_text()
+        fragment = 'if test "$installed" = "$blob"; then continue; fi'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, ""))
+        unchanged = {name: log for name, _, log in self.install_steps()}["unchanged lockfile"]
+        self.assertTrue(any(line.startswith("npm ") for line in unchanged))
+
+    def test_create_installs_nothing_an_entry_does_not_ask_for(self):
+        """No node_modules entry, or one with no committed lockfile, runs no
+        install; the second names the lockfile it found missing."""
+        # Per row: the WORKTREE_SYMLINKS value, and the key line create prints.
+        rows = (
+            (".env.local", None),
+            (".env.local ui/node_modules",
+             b"lane-host-ssh: dependency-install-skipped path=ui/package-lock.json cause=no-committed-lockfile"),
+        )
+        self.fake_npm()
+        self.seed_source("package-lock.json", '{"lockfileVersion": 3}\n')
+        for n, (links, line) in enumerate(rows):
+            with self.subTest(links=links):
+                self.seed_source("kendex.settings.toml", f'[env]\nWORKTREE_SYMLINKS = "{links}"\n')
+                self.row["clone"] = str(self.root / f"clone-{n}")
+                self.inventory.write_text(json.dumps([self.row]))
+                result = self.create()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([call for call in self.log_since(0) if call.startswith("npm ")], [])
+                if line is not None:
+                    self.assertIn(line, result.stderr.splitlines())
 
     def test_relaunch_recreates_missing_worktree(self):
         first = self.create("--relaunch")

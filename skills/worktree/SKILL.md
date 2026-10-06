@@ -12,7 +12,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.0.0"
+  version: "1.0.1"
 tags: [git]
 ---
 

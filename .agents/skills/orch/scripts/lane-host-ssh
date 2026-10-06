@@ -271,6 +271,39 @@ def require_render(row):
 done''', row["clone"])
 
 
+def install_dependencies(row):
+    """Install each node_modules a WORKTREE_SYMLINKS entry links, in the clone.
+
+    The clone is the main checkout, the one place worktree --help lets an
+    install run; a worktree links its node_modules from here. The settings
+    come through the clone's own loader, so this reads what the worktree
+    command reads. npm ci empties node_modules first, so the marker of the
+    committed lockfile blob it was installed from lives inside it and survives
+    only a finished install: an unchanged lockfile installs nothing. An entry
+    climbing out of the clone is the worktree command's to refuse, never a
+    directory to install in.
+    """
+    remote(row, '''. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh"
+kendex_load_project_env "$1"
+read -r -a entries <<<"${WORKTREE_SYMLINKS:-}"
+for entry in ${entries[@]+"${entries[@]}"}; do
+  case "/$entry/" in */../*|*/./*|//*) continue ;; esac
+  case "$entry" in node_modules|*/node_modules) ;; *) continue ;; esac
+  lockfile=${entry%node_modules}package-lock.json
+  if ! blob=$(git -C "$1" rev-parse -q --verify "HEAD:$lockfile"); then
+    printf 'lane-host-ssh: dependency-install-skipped path=%s cause=no-committed-lockfile\\n' "$lockfile" >&2
+    continue
+  fi
+  marker="$1/$entry/.lane-host-install"
+  installed=""
+  if test -f "$marker"; then installed=$(cat -- "$marker") || exit 1; fi
+  if test "$installed" = "$blob"; then continue; fi
+  printf 'lane-host-ssh: dependency-install path=%s\\n' "$lockfile" >&2
+  (cd -- "$1/${entry%node_modules}" && npm ci --no-audit --no-fund) >&2
+  printf '%s\\n' "$blob" >"$marker"
+done''', row["clone"])
+
+
 def create(row, args, source):
     """Prepare the clone and account, then acquire the worktree through its owner."""
     result = remote(row, '''if test -f "$1/.git/lane-host-item"; then
@@ -346,7 +379,10 @@ fi''', row["clone"])
         put(row, approval.name if args.harness == "claude" else remote_account + "/" + approval.name, data)
     # An existing clone acquires ownership before shared files change. Run
     # setup again after preparation so its links, copies and identity are current.
+    # The install changes the shared node_modules, so it waits for that
+    # ownership too, and precedes the setup that links it.
     flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
+    install_dependencies(row)
     create_worktree(row, args.item, flags)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
@@ -502,6 +538,13 @@ create renders nothing and installs no Pi package: the worktree carries the
 render its base branch commits. A clone whose checkout lacks that render exits
 1 with render-missing, and one whose render is not committed at HEAD exits 1
 with render-untracked.
+For each WORKTREE_SYMLINKS entry naming a node_modules, create runs npm ci in
+the clone, the lane's main checkout, beside that entry's committed
+package-lock.json once it holds the item, before the worktree setup links it.
+node_modules/.lane-host-install records the lockfile blob installed, so an
+unchanged lockfile installs nothing; a failed install fails create. An entry
+with no committed package-lock.json installs nothing and prints
+dependency-install-skipped. Such an entry needs npm on the host.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Copilot
 copies nothing: it runs under COPILOT_HOME at the row's account, which holds its
 own stored login. When present,
