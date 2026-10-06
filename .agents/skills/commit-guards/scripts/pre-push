@@ -64,10 +64,12 @@ asked what landing HEAD there would DO to that tree: `--against`, two dots,
 against the oid git read from the destination's own advertisement. Three dots
 would answer what the branch adds over the ancestor the two share, which on a
 diverged or force-pushed branch excuses a file that in fact grows at the
-destination. The lanes that judge the commits a push adds rather than the
-tree, changelog-entries, start instead at the newer of HEAD's merge bases
-with that oid and with the remote's default branch (refs/remotes/REMOTE/HEAD),
-so a branch restacked onto new base commits is not judged for them.
+destination. changelog-entries asks instead which version increases the
+branch made. Where git records the remote's default branch
+(refs/remotes/REMOTE/HEAD, which a clone sets and `git remote set-head REMOTE
+-a` restores), its baseline is the newer of HEAD's merge bases with that oid
+and with that branch, so a push is not judged for commits already on the
+default branch, after a restack or not. Otherwise its baseline is the oid.
 
 Otherwise the scope is a best-effort LOCAL one — `--base`, what this branch
 adds over what this repository's refs for the remote last recorded — and not
@@ -269,11 +271,12 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   return 1
 }
 
-# Where the commits this push adds start, for the lanes that judge commits
-# rather than the tree they land. The two-dot range from the remote head is
-# right for a tree, and wrong for history after a restack: it holds every
-# commit the base branch gained since the branch last left it, which the
-# pusher did not author and cannot rewrite.
+# The baseline for the lanes that ask what the branch changed over its base
+# rather than what the destination's tree becomes. The remote head is the
+# right baseline for a tree, and wrong for those: wherever HEAD carries
+# commits the default branch already holds, a restack's or a release
+# branch's, the remote head's tree lacks what they changed, which the pusher
+# did not author and cannot rewrite.
 #
 # The newer of two merge bases with HEAD: the remote head's, past which the
 # branch's commits are new, and the default branch's, past which they are not
@@ -503,8 +506,8 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   # is what the destination gets.
   if ! zero_oid "$remote_oid" \
     && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
-    # The commit-history lanes take their own start, where it is not the
-    # remote head itself.
+    # The lanes judging the branch's changes over its base take their own
+    # baseline, where it is not the remote head itself.
     history=""
     if history_boundary history "$remote_oid" && [ "$history" != "$remote_oid" ]; then
       judge "against:$remote_oid:history:$history" "$ref" --against "$remote_oid" --history "$history"

@@ -435,8 +435,10 @@ assert_eq "must-fail: judged from the shared ancestor, that growth reads as a sh
 # the changelog rule refuses: a major bump with no Breaking entry, landed with
 # no hook. Two dots from the remote head would hold that base commit, which
 # the branch never authored; changelog-entries judges only what the branch
-# adds over the base. byte-ceiling keeps the remote head.
-restacked() { # VAR NAME BRANCH-BUMPS(0|1) [SKILL-SOURCE] — VAR gets a repo whose topic was restacked
+# adds over the base. byte-ceiling keeps the remote head. Mode 2 is the
+# follow-up push instead: the branch's own major already on the remote, no
+# restack, and one clean commit on top.
+restacked() { # VAR NAME MODE(0 clean|1 own major|2 follow-up) [SKILL-SOURCE] — VAR gets a repo whose topic was restacked or followed up
   local __v="$1" r=""
   new_repo r "$2" "${4:-}"
   printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling changelog-entries"\nCOMMIT_GUARDS_BYTE_CEILING_KB = "1"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json lib.json"\n' \
@@ -453,12 +455,19 @@ restacked() { # VAR NAME BRANCH-BUMPS(0|1) [SKILL-SOURCE] — VAR gets a repo wh
   printf -- '- A fix.\n' >"$r/changelog.d/fixed/topic.md"
   q git -C "$r" add changelog.d/fixed/topic.md
   q git -C "$r" commit -q -m "fix: the branch's own change"
-  if [ "$3" -eq 1 ]; then
+  if [ "$3" -ge 1 ]; then
     printf '{"version":"2.0.0"}\n' >"$r/lib.json"
     q git -C "$r" add lib.json
     q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the branch's own major"
   fi
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  if [ "$3" -eq 2 ]; then
+    printf 'more\n' >"$r/other.txt"
+    q git -C "$r" add other.txt
+    q git -C "$r" commit -q -m "feat: a clean follow-up"
+    eval "$__v=\$r"
+    return 0
+  fi
   q git -C "$r" checkout -q main
   printf '{"version":"2.0.0"}\n' >"$r/app.json"
   q git -C "$r" add app.json
@@ -492,6 +501,15 @@ assert_eq "a branch commit that breaks the changelog rule is still refused, and 
   "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
   "$(push_ref "$OWN_MAJOR" topic --force-with-lease)"
 
+# A follow-up push on a branch whose own major is already on the remote: the
+# remote head is newer than the default branch's merge base, so it stays the
+# baseline and the major is not judged again.
+FOLLOW_UP=""
+restacked FOLLOW_UP follow-up 2
+assert_eq "a follow-up push keeps the remote head as the baseline when it is the newer one" \
+  "rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0" \
+  "$(push_ref "$FOLLOW_UP" topic)"
+
 # The must-fail controls. A copy with no history boundary judges the
 # changelog rule from the remote head, and refuses the restack for the base's
 # major. A copy that hands every lane the boundary moves byte-ceiling off the
@@ -520,6 +538,18 @@ WHOLE_BATCH=""
 restacked WHOLE_BATCH whole-batch 0 "$RANGES"
 assert_eq "must-fail: with the boundary handed to every lane, byte-ceiling leaves the remote head" \
   "$(git -C "$WHOLE_BATCH" rev-parse main)" "$(tree_ref "$WHOLE_BATCH")"
+
+# And a copy that always takes the default branch's merge base judges the
+# follow-up from the fork point, refusing the major already on the remote.
+cp -- "$RANGES_KEPT" "$RANGES_LANE"
+sed -i.bak 's#|| pushed="$base"$#; pushed="$base"#' "$RANGES_LANE"
+rm -f -- "$RANGES_LANE.bak"
+assert_eq "the fork-point edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
+FORK_POINT=""
+restacked FORK_POINT fork-point 2 "$RANGES"
+assert_eq "must-fail: always from the fork point, the follow-up is refused for the major already pushed" \
+  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
+  "$(push_ref "$FORK_POINT" topic)"
 
 # ------------------------------------------------ the markdown lanes at push
 #

@@ -1,1 +1,1 @@
-- commit-guards: a force push after a restack is no longer refused by the changelog check for commits the base branch already holds.
+- commit-guards: pre-push no longer refuses a push for version bumps already on the remote's default branch, after a restack or on any other push carrying them.

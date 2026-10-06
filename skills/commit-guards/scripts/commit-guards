@@ -7,8 +7,8 @@
 #   commit-guards [all] --base REF the same batch over the changes since REF
 #   commit-guards [all] --against REF   the same batch over what those changes
 #                                  would do to REF's own tree
-#   ... --history REF              with a range, the commit-history lanes judge
-#                                  from REF instead
+#   ... --history REF              with a range, the lanes that judge the
+#                                  branch's changes over its base take REF
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
 # --skip-unscoped withholds the checks the run's scope leaves nothing for,
@@ -65,11 +65,11 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # instead — a range there would answer a smaller
 # question under the setting's name.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
-# The range lanes that judge the commits a range adds rather than the tree it
-# lands. A caller that knows where those commits start hands it as --history,
-# and these lanes take --against that ref in place of the range: the push
-# hook's range from a pre-restack remote head holds every base commit the
-# restack carried in, which the branch never authored.
+# The range lanes whose baseline is the branch's base rather than the tree
+# the range lands on: changelog-entries asks which version increases the
+# branch made. A caller that knows that base hands it as --history, and these
+# lanes take --against it in place of the range: the push hook's remote head
+# can predate base commits the branch carries, which it never authored.
 HISTORY_SCOPED_CHECKS="changelog-entries"
 # Withheld by a --skip-unscoped run, the push hook's: ../CHECKS.md § secrets.
 PUSH_WITHHELD_CHECKS="secrets"
@@ -88,8 +88,8 @@ $FULL_SCOPED_CHECKS get --all, the rest read the index by design.
 --base REF hands $RANGE_SCOPED_CHECKS --base REF instead (CI on a PR), and
 --against REF hands them --against REF (what the change does to REF's tree).
 --history REF, beside --base or --against, hands $HISTORY_SCOPED_CHECKS
---against REF instead: the commit REF names is where the commits the range
-adds start.
+--against REF instead: REF is the branch's base, the baseline for a lane
+that asks what the branch changed rather than what the tree becomes.
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 --skip-unscoped is for a caller whose scope stages nothing: it withholds every
 check that would then open no file, and $PUSH_WITHHELD_CHECKS, naming each one.
@@ -174,7 +174,7 @@ done
 [ "$SKIP_UNSCOPED" -eq 0 ] || [ "$SCOPE_MODE" != "staged" ] \
   || gg_fail scope-contradiction "--staged,--skip-unscoped" "--staged IS the scope those checks read, so nothing is unscoped under it"
 [ -z "$HISTORY_REF" ] || [ "$SCOPE_MODE" = base ] || [ "$SCOPE_MODE" = against ] \
-  || gg_fail history-without-range "$SCOPE_MODE" "--history narrows a range for the commit-history lanes; pass it with --base or --against"
+  || gg_fail history-without-range "$SCOPE_MODE" "--history sets the baseline of the lanes judging the branch's changes over its base; pass it with --base or --against"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2

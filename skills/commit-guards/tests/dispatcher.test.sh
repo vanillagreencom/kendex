@@ -218,6 +218,8 @@ run_rows \
   "a check outside the full-scoped set runs unflagged under --base|grown base-3|COMMIT_GUARDS_CHECKS=conflict-markers|all --base base|rc=0 $(steps base:base conflict-markers)$(ok conflict-markers)" \
   "'--base' without a ref is exit 2|grown base-4||all --base|rc=2 ${ERR}argument-missing=--base" \
   "'--staged' with '--base' is exit 2: one scope per batch|grown base-5||all --staged --base base|rc=2 ${ERR}scope-conflict=2" \
+  "'--history' with no range is exit 2: it sets a baseline only a range has|grown history-1||--history base|rc=2 ${ERR}history-without-range=all" \
+  "'--history' without a ref is exit 2|grown history-2||all --history|rc=2 ${ERR}argument-missing=--history" \
   "an unknown base ref is a check that could not complete|grown base-6|COMMIT_GUARDS_CHECKS=byte-ceiling|all --base no-such-ref|rc=2 $(steps base:no-such-ref byte-ceiling byte-ceiling)$INCOMPLETE"
 
 echo "=== a range never narrows a lane whose configured scope is the whole tree ==="
