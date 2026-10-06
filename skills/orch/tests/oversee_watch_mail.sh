@@ -957,6 +957,88 @@ WATCH_BIN="$TMP_ROOT/watch-ceiling" run_watch ORCH_WATCH_MAIL_INTERVAL=1 PATH="$
   >/dev/null 2>&1 || waived_rc=$?
 assert_eq "$waived_rc" "124" "control: with the clock waived the mail intervals are real and outlast a one-second ceiling"
 
+# --- a note to the overseer, read within a second of landing ----------------
+# A repeat watch over KEN-70, whose first pass drains the lane and reads the
+# overseer mailbox; the long pass and the next full mail pass are far off. On
+# the machine's own clock, since the claim is a latency.
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+fast_watch_start() { # WATCH_BIN
+  mail_reset KEN-70
+  printf '{"issue_id":"oversee","triaged":[],"lanes":[]}\n' > "$STUB_DIR/state.json"
+  : > "$STUB_DIR/cadence.log"
+  WATCH_BIN="$1" run_watch TMUX_PANE= OVERSEE_WATCH_SUCCEED=/nonexistent ORCH_WATCH_MAIL_INTERVAL=600 \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-logging.sh" REAL_LANE_MAIL="$LANE_MAIL" \
+    -- --interval 3600 --max-loops 2 --repeat 600 --state "$STUB_DIR/state.json" --item KEN-70 \
+    >"$STUB_DIR/fast.out" 2>"$STUB_DIR/fast.err" </dev/null &
+  FAST_JOB=$!
+  FAST_PID=""
+  for _ in $(seq 1 100); do
+    if grep -q '^mail inbox ' "$STUB_DIR/cadence.log" 2>/dev/null; then
+      FAST_PID="$(sed -n 's/^pid=//p' "$STUB_DIR/oversee-watch.pid" 2>/dev/null)" || FAST_PID=""
+      [[ -z "$FAST_PID" ]] || break
+    fi
+    sleep 0.1
+  done
+}
+fast_watch_stop() {
+  [[ -z "$FAST_PID" ]] || kill -TERM "$FAST_PID" 2>/dev/null || :
+  wait "$FAST_JOB" || :
+}
+fast_note() { # TEXT
+  printf '%s\n' "$1" > "$STUB_DIR/fast-note.txt"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$STUB_DIR/fast-note.txt" >/dev/null)
+}
+# COUNT notes, each sent once the one before is out and two seconds have gone
+# by. FAST_MS is each note's milliseconds from its send to its event line, or
+# `none` past five seconds; FAST_DRAINS the lane mailbox's reads, one a full
+# mail pass.
+fast_notes() { # WATCH_BIN COUNT
+  local n sent seen
+  fast_watch_start "$1"
+  FAST_MS=""
+  for n in $(seq 1 "$2"); do
+    sleep 2
+    fast_note "Note $n."
+    sent="$(now_ms)"
+    seen=none
+    for _ in $(seq 1 100); do
+      if [[ "$(grep -c '^EVENT owner-note ' "$STUB_DIR/fast.out" || :)" -ge "$n" ]]; then
+        seen=$(($(now_ms) - sent))
+        break
+      fi
+      sleep 0.05
+    done
+    FAST_MS+="${FAST_MS:+ }$seen"
+    [[ "$seen" != none ]] || break
+  done
+  fast_watch_stop
+  FAST_DRAINS="$(grep -c '^mail drain ' "$STUB_DIR/cadence.log" || :)"
+}
+new_case mail_overseer_fast
+fast_notes .agents/skills/orch/scripts/oversee-watch 5
+assert_eq "$(awk '{ for (i = 1; i <= NF; i++) if ($i == "none" || $i > 2000) late++ } END { printf "notes=%d late=%d", NF, late }' <<<"$FAST_MS") drains=$FAST_DRAINS" \
+  "notes=5 late=0 drains=1" \
+  "each note to the overseer is printed within 2 s of landing, and the lane mailbox is read by no extra pass (ms: $FAST_MS)" \
+  "$STUB_DIR/fast.err"
+# Control: no size the watch can read, so neither wait is cut short and the
+# first note waits out the mail interval.
+FAST_MUTANT="$(mutant_scripts fast-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/fast-mutant/github"
+mutate_file "$FAST_MUTANT" '  wc -c 2>/dev/null < "$OVERSEER_BOX" || echo none' '  echo none'
+new_case mail_overseer_fast_mutant
+fast_notes "$FAST_MUTANT" 1
+assert_eq "$FAST_MS" "none" "control: with the mailbox's size unread the first note waits for the mail pass" \
+  "$STUB_DIR/fast.err"
+# Control: a run that takes no due time from the mail-pass row, so each run a
+# note starts early reads every mailbox.
+DUE_MUTANT="$(mutant_scripts due-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/due-mutant/github"
+mutate_file "$DUE_MUTANT" 'then MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL)); else' 'then MAIL_DUE=0; else'
+new_case mail_overseer_due_mutant
+fast_notes "$DUE_MUTANT" 2
+assert_eq "more=$((FAST_DRAINS > 1))" "more=1" "control: without the row a run started on a note reads every mailbox" \
+  "$STUB_DIR/fast.err"
+
 # --- the overseer mailbox, read through its own cursor ----------------------
 # One note across three runs, each with a state directory of its own: a
 # successor started from another checkout, or with another --since, holds no

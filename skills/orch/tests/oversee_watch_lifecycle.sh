@@ -484,15 +484,21 @@ assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
   "and the command that long pass was waiting on" "$TMP_ROOT/e-term_long_pass"
 
 # A pass waiting out its mail interval in a tick sleep: a TERM ends it within
-# the bound and takes the sleep with it.
+# the bound and takes the sleep with it. The wait checks the overseer mailbox
+# each second, so the stub holds each one-second tick for thirty, past the
+# bound, and a sleep that outlived its pass would read alive.
 tick_case() { # NAME
   new_case "$1"
-  ( run_watch ORCH_WATCH_MAIL_INTERVAL=600 -- --interval 3600 --max-loops 2 \
+  mkdir -p "$STUB_DIR/bin"
+  printf '#!/usr/bin/env bash\n[[ "${1:-}" != 1 ]] || exec "%s" 30\nexec "%s" "$@"\n' \
+    "$REAL_SLEEP" "$REAL_SLEEP" > "$STUB_DIR/bin/sleep"
+  chmod +x "$STUB_DIR/bin/sleep"
+  ( run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=600 -- --interval 3600 --max-loops 2 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   TICK_PID=""
   for _ in $(seq 1 100); do
-    TICK_PID="$(descendant "$!" '^sleep [0-9]{2,}$')"
+    TICK_PID="$(descendant "$!" 'sleep 30$')"
     [[ -z "$TICK_PID" ]] || break
     "$REAL_SLEEP" 0.1
   done

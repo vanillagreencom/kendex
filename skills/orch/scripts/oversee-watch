@@ -284,6 +284,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the mail pass reported>
 #   long-pass<TAB>fleet<TAB><the epoch the last long pass started at>
+#   mail-pass<TAB>fleet<TAB><the epoch the last full mail pass started at>
 # Four rows are keyed by the overseer's own pane rather than by a lane, and
 # are pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
@@ -413,6 +414,17 @@ PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 # call.
 MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
 [[ "$MAIL_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || die mail-interval-invalid "" "value=$MAIL_INTERVAL"
+# The overseer mailbox, which every owner, Slack and peer note lands in. A wait
+# for the next mail pass checks its size once a second and reads it alone the
+# moment it moves, so a note waits a second rather than up to the mail
+# interval, and the lane mailboxes keep that interval. With no interval the
+# mail is read once a turn and nothing waits on this.
+OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")/to-lane.jsonl"
+# `none` for a mailbox not there yet or unreadable: the read it starts judges
+# it. wc -c, since stat's size flag differs between GNU and BSD.
+overseer_box_size() {
+  wc -c 2>/dev/null < "$OVERSEER_BOX" || echo none
+}
 UNREAD_SECS="${ORCH_DIRECTIVE_UNREAD_SECS:-300}"
 [[ "$UNREAD_SECS" =~ ^(0|[1-9][0-9]*)$ ]] || die unread-secs-invalid "" "value=$UNREAD_SECS"
 # How long a running lane record may stand with no status file before
@@ -766,6 +778,7 @@ watch_pane_gone() { # PANE
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
   watch_pid_release "$STATE_FILE"
+  [[ -z "$BOX_POLL_PID" ]] || kill -TERM "$BOX_POLL_PID" 2>/dev/null || :
   if [[ -n "$REPEAT_CHILD_PID" ]]; then
     kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
     wait "$REPEAT_CHILD_PID" 2>/dev/null || true
@@ -830,6 +843,25 @@ watch_claim() { # ARGV...
   fi
 }
 
+# Waits out the sleep PID, checking the overseer mailbox once a second while it
+# runs. Returns 1 once the mailbox has moved off SEEN, the sleep stopped and
+# reaped, and 0 when the sleep ends first, its status left for `wait`. The
+# check's own sleep is waited on in the background, as tick_sleep's is, and
+# repeat_stop takes it with the loop.
+BOX_POLL_PID=""
+box_wait() { # PID SEEN
+  while kill -0 "$1" 2>/dev/null; do
+    sleep 1 &
+    BOX_POLL_PID=$!
+    wait "$BOX_POLL_PID" || die sleep-failed "" "secs=1"
+    BOX_POLL_PID=""
+    [[ "$(overseer_box_size)" != "$2" ]] || continue
+    kill -TERM "$1" 2>/dev/null || :
+    wait "$1" 2>/dev/null || :
+    return 1
+  done
+}
+
 # The pass is handed the state itself and only the entries argv gave this
 # wrapper, never the merged set: a lane whose record closed while the pass
 # loops has to leave that pass's fleet, which a hand-passed --item never does.
@@ -838,6 +870,7 @@ watch_claim() { # ARGV...
 REPEAT_FIRST=1
 repeat_watch() { # ARGV...
   local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc fleet_state_dir delay
+  local box_seen
   fleet_state_dir="${STATE_FILE%/*}"
   [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
   check_repo_set
@@ -891,6 +924,11 @@ repeat_watch() { # ARGV...
     # The pass and the delay are waited on in the background (tick_sleep), so
     # a TERM on this loop reaches its trap at once and the trap stops the pass.
     pass_rc=0
+    # Before the pass, so a note landing while it runs, after its own read,
+    # moves the mailbox off this and cuts the delay below short. A note the
+    # pass did read cuts it short too, and the next pass reads the mailbox
+    # once more; its full mail pass keeps the time the mail-pass row sets.
+    box_seen="$(overseer_box_size)"
     OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
       OVERSEE_WATCH_REPEAT_OWNER="$$" \
       OVERSEE_WATCH_SESSION="$WATCH_SESSION" \
@@ -924,7 +962,9 @@ repeat_watch() { # ARGV...
     [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"
     OVERSEE_WATCH_SLEEP=repeat sleep "$delay" &
     REPEAT_CHILD_PID=$!
-    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"
+    if [[ "$MAIL_INTERVAL" -eq 0 ]] || box_wait "$REPEAT_CHILD_PID" "$box_seen"; then
+      wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"
+    fi
     REPEAT_CHILD_PID=""
   done
 }
@@ -1741,18 +1781,22 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # moves: its receipt for each directive passed. The overseer's own mailbox is
 # read last by `inbox --peek` and acknowledged only once its notes are
 # printed, so a stopped pass leaves them unread rather than taken and unsaid.
-check_mail() {
+# With `overseer`, that mailbox is read alone, and the lists a long pass takes
+# from the last full read stand.
+check_mail() { # [overseer]
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at at
   local mail_items host_flag args state="$MAIL_SEEN"
-  HOSTED_GONE_ITEMS=""
-  # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
-  # pass forked after it skips only the lanes whose read failed just now.
-  PASS_FAILED_ITEMS=""
   mail_items=()
-  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-    item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")
-  done
+  if [[ "${1:-}" != overseer ]]; then
+    HOSTED_GONE_ITEMS=""
+    # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
+    # pass forked after it skips only the lanes whose read failed just now.
+    PASS_FAILED_ITEMS=""
+    for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+      item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")
+    done
+  fi
   mail_items+=(overseer)
   for item in "${mail_items[@]}"; do
     root=""
@@ -3965,10 +4009,12 @@ tick_sleep() { # SECS
   wait "$TICK_SLEEP_PID"
   TICK_SLEEP_PID=""
 }
-# Until the next mail pass or long pass is due. A long pass in flight is
-# checked each second, so its block goes out within a second of its end. With no
-# mail interval the mail pass runs once a turn: a long pass in flight is waited
-# for, and with none the turn waits for the next one to come due.
+# Until the next mail pass or long pass is due, or the overseer mailbox moves
+# off BOX_SEEN. A long pass in flight and the mailbox are checked each second, so
+# a long pass's block goes out within a second of its end and a note within a
+# second of landing. With no mail interval the mail pass runs once a turn: a
+# long pass in flight is waited for, and with none the turn waits for the next
+# one to come due.
 tick_wait() {
   local now next
   while :; do
@@ -3985,13 +4031,21 @@ tick_wait() {
     [[ "$MAIL_INTERVAL" -gt 0 ]] || next="$LONG_DUE"
     [[ -n "$LONG_PID" || "$LONG_DUE" -ge "$next" ]] || next="$LONG_DUE"
     [[ "$next" -gt "$now" ]] || return 0
-    if [[ -n "$LONG_PID" ]]; then
-      tick_sleep 1
-    else
+    if [[ "$MAIL_INTERVAL" -eq 0 ]]; then
       tick_sleep "$((next - now))"
       return 0
     fi
+    tick_sleep 1
+    [[ "$(overseer_box_size)" == "$BOX_SEEN" ]] || return 0
   done
+}
+
+# One mail read: every mailbox or, with `overseer`, the overseer's alone. The
+# overseer mailbox's size is taken first, so a note landing during the read
+# moves it again and wakes the next wait.
+mail_turn() { # [overseer]
+  BOX_SEEN="$(overseer_box_size)"
+  overseer_down || check_mail "$@"
 }
 
 # One clock per turn. The stamp a lane's wall is observed on and the
@@ -4007,7 +4061,16 @@ PASS_NOW=""
 PASS_EVENT=0
 PASS_FAILED=0
 PASS_FAILED_ITEMS=""
-MAIL_DUE=0
+# The full mail pass is due an interval after the last one started, in this
+# run or an earlier one: a run started early on a note to the overseer reads
+# that mailbox alone first, and holds the lane mailboxes to their interval.
+if ! MAIL_DUE="$(lane_row_get mail-pass "$MAIL_SEEN" fleet)"; then
+  die state-read-failed "" "path=$MAIL_STATE_FILE" "row=mail-pass"
+fi
+if [[ "$MAIL_DUE" =~ ^[0-9]+$ ]]; then MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL)); else MAIL_DUE=0; fi
+# Empty until the first read, so a run's first turn reads the overseer mailbox
+# whether or not the full mail pass is due.
+BOX_SEEN=""
 # The run's end, asked at the foot of every turn and again once the wait after
 # it has taken a long pass in, so a run whose news is out never reads the mail
 # or the fleet once more first. Nothing ends while a long pass is in flight.
@@ -4023,7 +4086,7 @@ run_end() {
     MAIL_OWED=0
     # A turn of its own: the turn's reading predates the long pass it follows.
     PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
-    overseer_down || check_mail
+    mail_turn
   fi
   if [[ "$PASS_FAILED" -eq 1 ]]; then
     pr_watch_context
@@ -4047,7 +4110,10 @@ while :; do
   if [[ "$PASS_NOW" -ge "$MAIL_DUE" ]]; then
     MAIL_DUE=$((PASS_NOW + MAIL_INTERVAL))
     MAIL_OWED=0
-    overseer_down || check_mail
+    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$PASS_NOW")"
+    mail_turn
+  elif [[ "$(overseer_box_size)" != "$BOX_SEEN" ]]; then
+    mail_turn overseer
   fi
   ! long_due || long_start
   long_collect

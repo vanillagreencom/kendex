@@ -29,7 +29,13 @@ mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
 peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Before the
 overseer mailbox is read, `lane-mail resolve --default` closes due owner asks.
-Only an unanswered ask receives a recommendation answer. A read that waits
+Only an unanswered ask receives a recommendation answer. The interval is
+counted start to start and kept across runs in the state directory. Between
+two mail passes, and through a --repeat sleep, the overseer mailbox's size is
+checked once a second, and once it moves that mailbox alone is read, so a
+note to the overseer is printed within about a second while the lane
+mailboxes keep the interval; a run's first turn reads it alone too when no
+mail pass is due. ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
 on a lock or a slow host delays
 the mailboxes after it past that interval, as do the overseer pane below and,
 run in this loop, a run's one GitHub auth check before its first long pass
@@ -680,7 +686,8 @@ Options:
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
-                      pass did not exit 2, and run the next. A successor launch, a
+                      pass did not exit 2, and run the next, sooner once
+                      the overseer mailbox moves. A successor launch, a
                       notice-only recovery or an exhausted retry stops the
                       repeat command with status 0. Requires --state. A
                       window that tmux does not list is carried until a pass
@@ -909,7 +916,7 @@ Environment:
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
                               each lane mailbox's read position and when the
-                              last long pass started, plus claims/ and
+                              last mail and long passes started, plus claims/ and
                               usage/, both shared across the repositories
                               that point here
   ORCH_WATCH_MAIL_INTERVAL    seconds from the start of one mail pass to the
