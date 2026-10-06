@@ -724,6 +724,23 @@ rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 ful
 rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
 rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0'
 rollup() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" rollup) 2>"$CASE/err"; }
+# report_unchanged: report's rows, then whether the state directory's listing
+# and the state file, which holds the fleet log, are byte for byte as before.
+report_unchanged() {
+  local before out rc=0
+  cp -- "$CASE/state/workflow-state-oversee.json" "$CASE/state.before"
+  before="$(ls -A "$CASE/state")"
+  out="$( (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" report) 2>"$CASE/err")" || rc=$?
+  printf 'rc=%s\n%s\nunchanged=' "$rc" "$out"
+  if [[ "$(ls -A "$CASE/state")" == "$before" ]] && cmp -s -- "$CASE/state.before" "$CASE/state/workflow-state-oversee.json"; then
+    printf yes
+  else
+    printf no
+  fi
+}
+assert_eq "$(report_unchanged)" "rc=0
+$want
+unchanged=yes" "report prints the rollup rows and leaves the fleet state and its log byte-identical"
 assert_eq "$(rollup)" "$want" "one row per class with a record, in target order, unclassified last"
 assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"render,micro,standard,unclassified"' "each row joins the fleet log under its class"
 
@@ -731,6 +748,8 @@ new_case rollup-no-state
 rm -f -- "${CASE:?}/state/workflow-state-oversee.json"
 rc=0; out="$(rollup)" || rc=$?
 assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out= files=" "with no fleet state yet the rollup prints nothing, writes nothing and exits 0"
+rc=0; out="$( (cd "$REPO" && "$BIN" --state-dir "$CASE/state" report) 2>"$CASE/err")" || rc=$?
+assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out= files=" "and so does the report"
 assert_eq "$(record KEN-1 micro) $(head -n 1 "$CASE/err")" "rc=1  oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" "while a record refuses"
 
 echo "=== a negative interval written before the refusal enters no aggregate ==="
@@ -858,6 +877,13 @@ jq -n --argjson c "[$(cycle '"micro"' 100 met null false false),$(cycle '"micro"
   '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
   > "$CASE/state/workflow-state-oversee.json"
 assert_eq "$(rollup | grep -o 'p90=[0-9]*')" "p90=400" "control: a floor rank reports a p90 below the slowest tenth"
+
+control m-report oversee-cycle '    if [[ "$VERB" == rollup ]]; then' '    if true; then'
+new_case c-report
+jq -n --argjson c "[$(cycle '"micro"' 100 met null false false)]" \
+  '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
+  > "$CASE/state/workflow-state-oversee.json"
+assert_eq "$(report_unchanged | tail -n 1)" "unchanged=no" "control: a report that appends its rows changes the fleet state"
 
 control m-rollup-rounds oversee-cycle 'select(.kind == "fix") | .secs | interval // empty] | nr(0.5))' 'select(.kind == "review") | .secs | interval // empty] | nr(0.5))'
 new_case c-rollup-rounds

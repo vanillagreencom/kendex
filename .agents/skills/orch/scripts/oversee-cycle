@@ -6,6 +6,7 @@
 #   oversee-cycle [--state-dir DIR] record (--pr N | --commit SHA)
 #                 [--tier micro|small|standard] [--repo OWNER/REPO] ITEM
 #   oversee-cycle [--state-dir DIR] rollup
+#   oversee-cycle [--state-dir DIR] report
 #
 # --state-dir is the fleet state's directory, as workflow-state takes it.
 #
@@ -143,7 +144,8 @@
 #
 # rollup prints, and appends to the fleet log, one row per class with any
 # recorded lane, in the order of the target table, then unclassified; with no
-# fleet state yet it prints nothing and exits 0:
+# fleet state yet it prints nothing and exits 0. report prints the same rows
+# and writes nothing, for a reader without write access to the fleet state:
 #   rollup class=C items=N median=S p90=S misses=N review=N fix=N bot=N
 #     full_validations=N rounds_unread=N escaped=N refixed=N pr_rounds=N
 #     pr_rounds_unread=N round_median=S fix_median=S rounds_untimed=N
@@ -211,7 +213,7 @@ VERB="${1:-}"
 [[ $# -eq 0 ]] || shift
 case "$VERB" in
   --help | -h) usage; exit 0 ;;
-  record | rollup) ;;
+  record | rollup | report) ;;
   *) usage_error "${VERB:-verb}" ;;
 esac
 
@@ -222,7 +224,7 @@ STATE_FILE="$("$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} path oversee)" || 
 # A fleet with no state yet, a session stopping before its first launch, has
 # nothing to roll up; a record for a lane it never launched refuses.
 if [[ ! -f "$STATE_FILE" ]]; then
-  [[ "$VERB" != rollup ]] || exit 0
+  [[ "$VERB" == record ]] || exit 0
   refuse state-missing "$STATE_FILE"
 fi
 
@@ -232,7 +234,7 @@ log_row() { # ITEM TEXT
     >/dev/null 2>"$WORK/ws.err" || refuse fleet-log-failed "$1" "$WORK/ws.err"
 }
 
-if [[ "$VERB" == rollup ]]; then
+if [[ "$VERB" != record ]]; then
   [[ $# -eq 0 ]] || usage_error "$1"
   lines="$(jq -r --argjson targets "$TARGETS" "$CYCLE_DEFS"'
     def nr($p): sort as $a | ($a | length) as $n
@@ -263,8 +265,10 @@ if [[ "$VERB" == rollup ]]; then
   ' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    class="${line#rollup class=}"
-    log_row "${class%% *}" "$line"
+    if [[ "$VERB" == rollup ]]; then
+      class="${line#rollup class=}"
+      log_row "${class%% *}" "$line"
+    fi
     printf '%s\n' "$line"
   done <<<"$lines"
   exit 0

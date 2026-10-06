@@ -1,0 +1,1 @@
+- `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
