@@ -28,4 +28,4 @@
 | `1` | At least one document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
 | `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed or a missing jq. A settings-library refusal starts `doc-limits-error=` whatever its cause, so that level names no owner. |
 
-- `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and 2.0 removes it.
+- `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and a later release removes it.

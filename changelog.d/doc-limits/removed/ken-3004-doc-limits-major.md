@@ -1,0 +1,1 @@
+- **Breaking:** only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md` are measured, and a document over its limit fails the commit instead of warning. Trim or split the file.

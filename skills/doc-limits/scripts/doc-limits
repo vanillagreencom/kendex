@@ -29,7 +29,8 @@ matching class sets a measured document's limit; one with no matching class
 is outside this check. A document over its limit fails.
 --staged reads document sizes and tracked policy from the index.
 The default reads worktree files, falling back to the index for missing files.
---against REF is retired: it has no effect and prints a warning until 2.0.
+--against REF is retired: it has no effect and prints a warning until a later
+release removes it.
 No mode writes files or changes the index.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -89,8 +90,8 @@ while [ $# -gt 0 ]; do
       EXCLUDES_SET=1
       ;;
     --excludes=*) EXCLUDES_OPT="${1#--excludes=}"; EXCLUDES_SET=1 ;;
-    # Retired: the ref is read and has no effect, with a warning, until 2.0
-    # removes the flag.
+    # Retired: the ref is read and has no effect, with a warning, until a later
+    # release removes the flag.
     --against)
       [ $# -ge 2 ] || config_error argument-value-missing option --against "--against requires a ref"
       shift
@@ -104,7 +105,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$AGAINST_RETIRED" = 0 ] \
-  || notice argument-retired argument --against "::warning::doc-limits: --against and DOC_LIMITS_MARGIN_PCT no longer have an effect; run doc-limits without --against, which 2.0 refuses"
+  || notice argument-retired argument --against "::warning::doc-limits: --against and DOC_LIMITS_MARGIN_PCT no longer have an effect; run doc-limits without --against, which a later release refuses"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error repository-root-missing path "$PWD" "not inside a git repository"
 cd "$REPO_ROOT" 2>/dev/null || host_error repository-root-unreadable path "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX" 2>/dev/null)" || host_error temp-create-failed path "${TMPDIR:-/tmp}" "could not create a temporary directory"

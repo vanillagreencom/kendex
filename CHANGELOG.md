@@ -85,7 +85,7 @@ change came from an outside contributor.
 - Each test or sandbox run outside the validation gate names its question in the round notes first; two inconclusive answers in a row on one question send the agent back to code and logs.
 - A Codex dev agent holds its validation run inside the turn with exec_command and write_stdin polls, so a hosted lane no longer stalls when its turn ends mid-run.
 
-#### doc-limits 1.0.0
+#### doc-limits 2.0.0
 
 - doc-limits measures only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and every document over its limit fails; the other shipped classes, HTML and the warn-only budget are gone.
 
