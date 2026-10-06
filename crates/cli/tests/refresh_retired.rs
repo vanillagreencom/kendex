@@ -5,7 +5,8 @@
 //! and the workflow the skill's template was adopted into, which leaves
 //! the inventory, and verify then passes. A workflow the person edited
 //! stays, and verify keeps failing it. A tree one tool drops while the
-//! skill stays is no leaving, and the workflow stays.
+//! skill stays is no leaving, and the workflow stays. A kept copy deleted
+//! or edited by hand fails verify on its own row.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -195,4 +196,86 @@ fn dropping_the_tool_that_holds_the_template_keeps_the_adopted_workflow() {
     );
     let recorded = fs::read_to_string(project.join(".kendex-generated.json")).unwrap();
     assert!(recorded.contains(WORKFLOW), "{recorded}");
+}
+
+/// A kept retired item is held to its record: its copy on one tool
+/// deleted or edited by hand fails verify on that installation's row
+/// alone, and every other kept installation, the other retired item's
+/// included, still passes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
+    for (copy, edited_file, kind, name) in [
+        (
+            ".claude/hooks/check.sh",
+            ".claude/hooks/check.sh",
+            "hook",
+            "check",
+        ),
+        (
+            ".claude/skills/deploy",
+            ".claude/skills/deploy/SKILL.md",
+            "skill",
+            "deploy",
+        ),
+    ] {
+        for edited in [false, true] {
+            let case = format!("{kind} {name} edited={edited}");
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let (catalog, project) = adopted(&home);
+            write(
+                &catalog.join("kendex.toml"),
+                &format!(
+                    "{CATALOG}[retired.skills]\ndeploy = \"\"\n[retired.hooks]\ncheck = \"\"\n"
+                ),
+            );
+            let refreshed = kendex(
+                &home,
+                &project,
+                &["refresh", "--scope", "project", "--yes", "--leave"],
+            );
+            assert!(refreshed.status.success(), "{case}: {}", said(&refreshed));
+            let copy = project.join(copy);
+            assert!(
+                copy.exists(),
+                "{case}: the fixture installs {}",
+                copy.display()
+            );
+            match edited {
+                true => {
+                    let file = project.join(edited_file);
+                    let mut bytes = fs::read_to_string(&file).unwrap();
+                    bytes.push_str("# the person's line\n");
+                    write(&file, &bytes);
+                }
+                false if copy.is_dir() => fs::remove_dir_all(&copy).unwrap(),
+                false => fs::remove_file(&copy).unwrap(),
+            }
+
+            let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+
+            assert!(!verified.status.success(), "{case}: {}", said(&verified));
+            let document: kendex_core::attest::Document =
+                serde_json::from_slice(&verified.stdout).unwrap();
+            let failed: Vec<(&str, &str, Option<&str>)> = document
+                .rows
+                .iter()
+                .filter(|row| row.state == kendex_core::attest::State::Failed)
+                .map(|row| {
+                    (
+                        row.kind.as_str(),
+                        row.name.as_str(),
+                        row.harness.map(|harness| harness.name()),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                failed,
+                [(kind, name, Some("claude"))],
+                "{case}: {}",
+                said(&verified)
+            );
+        }
+    }
 }

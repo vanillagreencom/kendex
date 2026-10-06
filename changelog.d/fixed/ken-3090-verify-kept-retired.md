@@ -1,0 +1,1 @@
+- `kendex verify` fails a retired item kept installed when its files, or a Pi package's, were deleted or edited by hand, and says to remove it by name or refresh with `--prune`; before, it passed while the tool still registered the missing hook.

@@ -2,7 +2,8 @@
 //! is never rendered again, whether or not the catalog still carries it,
 //! and derives no companion its header requires. A plain refresh keeps
 //! what is installed exactly as recorded, with one notice keyed by the
-//! item's name that carries the catalog's migration. A prune takes the
+//! item's name that carries the catalog's migration, and a kept copy
+//! deleted or edited by hand is a conflict. A prune takes the
 //! copies, an emptied Copilot registry and a Pi package's registration with
 //! them, the records and the item's own declaration. Where nothing of it is
 //! kept, pruned or never installed, it is owed nothing. An armed hook
@@ -912,5 +913,74 @@ fn refresh_takes_what_a_deleted_declaration_left_except_an_edited_copy() {
         );
         apply::execute(&f.env, &report.plan).unwrap();
         assert_eq!(copy.exists(), edited, "{case}");
+    }
+}
+
+/// What the person did to a kept retired item's copy on one tool.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ByHand {
+    Untouched,
+    Deleted,
+    Edited,
+}
+
+/// A kept retired item is held to its record as any recorded item is: a
+/// copy deleted or edited by hand on one tool is a conflict on that tool's
+/// installation alone, the plan `kendex verify` reads failing that row,
+/// and an untouched copy raises none. A prune then takes the record of a
+/// copy that is gone and holds an edited one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
+    for (kind, name, harness) in [
+        (ItemKind::Hook, "doc-drift-check", HarnessId::Claude),
+        (ItemKind::Skill, "deploy", HarnessId::Claude),
+        (ItemKind::PiExtension, "old-ext", HarnessId::Pi),
+    ] {
+        for by_hand in [ByHand::Untouched, ByHand::Deleted, ByHand::Edited] {
+            let case = format!("{kind:?} {by_hand:?}");
+            let f = installed(kind, name);
+            f.retire(kind, name, "");
+            let copy = f.installed_copies(kind, name).remove(0);
+            match by_hand {
+                ByHand::Untouched => {}
+                ByHand::Deleted if copy.is_dir() => fs::remove_dir_all(&copy).unwrap(),
+                ByHand::Deleted => fs::remove_file(&copy).unwrap(),
+                ByHand::Edited => {
+                    let file = match kind {
+                        ItemKind::Skill => copy.join("SKILL.md"),
+                        ItemKind::PiExtension => copy.join("index.js"),
+                        _ => copy.clone(),
+                    };
+                    let mut bytes = fs::read_to_string(&file).unwrap();
+                    bytes.push_str("// the person's line\n");
+                    fs::write(&file, bytes).unwrap();
+                }
+            }
+
+            let report = audit(&f.env, &f.scope).unwrap();
+
+            let conflicted: Vec<HarnessId> = report
+                .drift
+                .iter()
+                .filter(|row| {
+                    row.kind == kind && row.name == name && row.state == DriftState::Conflict
+                })
+                .map(|row| row.harness)
+                .collect();
+            let changed = match by_hand {
+                ByHand::Untouched => vec![],
+                ByHand::Deleted | ByHand::Edited => vec![harness],
+            };
+            assert_eq!(conflicted, changed, "{case}");
+
+            let pruned = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
+            let key = lock::entry_key(kind, name, harness);
+            assert_eq!(
+                pruned.record.entries.contains_key(&key),
+                by_hand == ByHand::Edited,
+                "{case}"
+            );
+        }
     }
 }

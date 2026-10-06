@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::lock::{Lock, LockEntry, Reason, entry_key};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
+use crate::pi_ext::PackageState;
 
 use super::item_plan::KeptAsIs;
 use super::origin::Origins;
@@ -195,6 +196,13 @@ enum Verdict {
     /// with it, except a copy withheld for a companion that will not run,
     /// which is an answer, and what is known outranks what is not.
     Retained,
+    /// Kept as recorded because its catalog retired it and no prune takes
+    /// it (`Retirement::kept`). Nothing renders it again, so its record is
+    /// what its installed copy is held to: a copy gone or edited is a
+    /// conflict row. What it requires stays with it as for [`Retained`].
+    ///
+    /// [`Retained`]: Verdict::Retained
+    Retired,
     /// Not removable under the options: the left-over row, and offered to
     /// a sweep where nothing needs it.
     Left { unneeded: bool },
@@ -219,6 +227,15 @@ const WITHHELD: &str = "withheld: a hook it requires will not run here — will 
 /// The conflict a held orphan leaves, naming the remedy that takes it.
 const EDITED: &str =
     "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+
+/// The conflict a kept retired item's copy leaves once its files are gone.
+/// A prune takes the record with nothing left to hold.
+const RETIRED_GONE: &str = "its catalog retired it and its installed files are gone — refresh with --prune takes the record, or remove it by name";
+
+/// The conflict a kept retired item's copy leaves once its files were
+/// edited: a prune holds the edits as it holds any orphan's, so only
+/// naming it takes them.
+const RETIRED_EDITED: &str = "its catalog retired it and its installed files were edited on disk — remove it by name to take them";
 
 /// [`EDITED`] for an orphan something that stays derives: removing it by
 /// name would keep it removed on every tool, from what still requires it
@@ -276,28 +293,23 @@ pub(super) fn orphans(
         &mut origins,
     );
     keep_what_kept_records_require(lock, kept, &mut verdicts);
-    let row = |entry: &LockEntry, state, detail: String, cause| DriftRow {
-        kind: entry.kind,
-        name: entry.name.clone(),
-        harness: entry.harness,
-        scope: scope.clone(),
-        state,
-        detail,
-        cause,
-        compared: None,
-        also_in_the_way: Vec::new(),
-        remedy: None,
-    };
     for (key, verdict) in verdicts {
         let entry = &lock.entries[key];
         match verdict {
             Verdict::Retained => {
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
+            Verdict::Retired => {
+                if let Some(detail) = retired_copy(env, scope, entry) {
+                    drift.push(row(scope, entry, DriftState::Conflict, detail, None));
+                }
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
             Verdict::Left { unneeded } => {
                 drift.push(DriftRow {
                     remedy: Some(super::RowRemedy::Remove),
                     ..row(
+                        scope,
                         entry,
                         DriftState::Orphaned,
                         "left over from an earlier setup; nothing needs it anymore".into(),
@@ -311,12 +323,14 @@ pub(super) fn orphans(
             }
             Verdict::Held => {
                 drift.push(row(
+                    scope,
                     entry,
                     DriftState::Orphaned,
                     "no longer wanted — will be removed".into(),
                     None,
                 ));
                 drift.push(row(
+                    scope,
                     entry,
                     DriftState::Conflict,
                     edited(state, entry).into(),
@@ -326,6 +340,7 @@ pub(super) fn orphans(
             }
             Verdict::Needed { by } => {
                 drift.push(row(
+                    scope,
                     entry,
                     DriftState::Orphaned,
                     format!("needed by {by}, which stays installed — kept with it"),
@@ -338,7 +353,7 @@ pub(super) fn orphans(
                     true => WITHHELD,
                     false => "no longer wanted — will be removed",
                 };
-                drift.push(row(entry, DriftState::Orphaned, detail.into(), None));
+                drift.push(row(scope, entry, DriftState::Orphaned, detail.into(), None));
                 if entry.kind == ItemKind::PiExtension {
                     match pi_removal(env, scope, entry, config_edits) {
                         Ok(planned) => guard.extend(ops, planned),
@@ -347,6 +362,7 @@ pub(super) fn orphans(
                         // until it can be.
                         Err(unread) => {
                             drift.push(row(
+                                scope,
                                 entry,
                                 DriftState::Conflict,
                                 format!(
@@ -365,6 +381,28 @@ pub(super) fn orphans(
     }
     origins.notes(notes);
     Ok(sweepable)
+}
+
+/// One row the orphan pass says about `entry`.
+fn row(
+    scope: &Scope,
+    entry: &LockEntry,
+    state: DriftState,
+    detail: String,
+    cause: Option<super::DriftCause>,
+) -> DriftRow {
+    DriftRow {
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
+        scope: scope.clone(),
+        state,
+        detail,
+        cause,
+        compared: None,
+        also_in_the_way: Vec::new(),
+        remedy: None,
+    }
 }
 
 /// The verdict on every record no pass has planned for, in key order,
@@ -413,7 +451,7 @@ fn verdicts<'a>(
         // goes as a departed declaration does.
         let retirement = state.retired.get(&(entry.kind, entry.name.clone()));
         if retirement.is_some_and(|retired| retired.kept.contains(&entry.harness)) && !named {
-            verdicts.push((key, Verdict::Retained));
+            verdicts.push((key, Verdict::Retired));
             continue;
         }
         // Declared but skipped this pass (pending/disabled source, missing
@@ -504,7 +542,7 @@ fn keep_what_kept_records_require(
             .iter()
             .filter_map(|(key, verdict)| match verdict {
                 Verdict::Removed { .. } => None,
-                Verdict::Retained => Some((key.as_str(), false)),
+                Verdict::Retained | Verdict::Retired => Some((key.as_str(), false)),
                 Verdict::Left { .. } | Verdict::Held | Verdict::Needed { .. } => {
                     Some((key.as_str(), true))
                 }
@@ -610,13 +648,51 @@ fn still_declared(manifest: &Manifest, entry: &LockEntry) -> bool {
 /// where its installed files are the bytes its completed record names.
 /// Files already gone hold nothing.
 fn pi_edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    let state = crate::pi_ext::scope_root(env, scope).and_then(|root| {
-        crate::pi_ext::installed_state(&root, &entry.name, entry.rendered_hash.as_deref())
-    });
     !matches!(
-        state,
-        Ok(crate::pi_ext::PackageState::Current { .. } | crate::pi_ext::PackageState::Missing)
+        pi_state(env, scope, entry),
+        Ok(PackageState::Current { .. } | PackageState::Missing)
     )
+}
+
+/// Where a Pi package's installed files stand against its completed record.
+fn pi_state(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<PackageState> {
+    crate::pi_ext::scope_root(env, scope).and_then(|root| {
+        crate::pi_ext::installed_state(&root, &entry.name, entry.rendered_hash.as_deref())
+    })
+}
+
+/// The conflict a kept retired item's installed copy raises against its
+/// record, or `None` where every recorded file is there with the bytes the
+/// record names. A file counts as there under its switched-off name too.
+fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<String> {
+    let detail = match entry.kind {
+        ItemKind::PiExtension => match pi_state(env, scope, entry) {
+            Ok(PackageState::Current { .. }) => return None,
+            Ok(PackageState::Missing) => RETIRED_GONE,
+            Ok(PackageState::Different) => RETIRED_EDITED,
+            Err(unread) => {
+                return Some(format!(
+                    "its catalog retired it and its installed package could not be compared: {unread}"
+                ));
+            }
+        },
+        _ => {
+            let Owned { files, .. } = installed(env, scope, entry);
+            let gone = files.iter().any(|path| {
+                [disabled_name(path), path.clone()]
+                    .iter()
+                    .all(|candidate| !candidate.exists() && !candidate.is_symlink())
+            });
+            if gone {
+                RETIRED_GONE
+            } else if edit_holds(env, scope, entry) {
+                RETIRED_EDITED
+            } else {
+                return None;
+            }
+        }
+    };
+    Some(detail.to_owned())
 }
 
 /// Whether this installation only ever existed for another item's sake —
