@@ -1,0 +1,1 @@
+- `kendex remove` holds every package it does not name at the catalog commit `.kendex-lock.json` records, so removing one package no longer re-renders the rest at the newest catalog.

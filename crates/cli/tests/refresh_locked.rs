@@ -21,7 +21,7 @@ use super::verify_records::{World, commit, git, kendex, said, world, write};
 const RECORD: &str = ".kendex-lock.json";
 
 /// The tracked paths the working tree changed since the last commit.
-fn changed(world: &World) -> BTreeSet<String> {
+pub(crate) fn changed(world: &World) -> BTreeSet<String> {
     git(&world.project, &["status", "--porcelain", "--no-renames"])
         .lines()
         .map(|line| line[3..].to_owned())
@@ -29,7 +29,7 @@ fn changed(world: &World) -> BTreeSet<String> {
 }
 
 #[allow(clippy::unwrap_used)]
-fn record(world: &World) -> serde_json::Value {
+pub(crate) fn record(world: &World) -> serde_json::Value {
     serde_json::from_str(&fs::read_to_string(world.project.join(RECORD)).unwrap()).unwrap()
 }
 
@@ -58,7 +58,7 @@ fn record_without_agent_hashes(world: &World, agent: &str) -> serde_json::Value 
 /// A catalog commit past the install that changes every kind the consumer
 /// renders from it, fetched into the mirror.
 #[allow(clippy::unwrap_used)]
-fn move_the_catalog(world: &World) {
+pub(crate) fn move_the_catalog(world: &World) {
     for (path, text) in [
         ("skills/second/SKILL.md", "\nA paragraph added later.\n"),
         ("agents/review.md", "\nAlso read the tests.\n"),

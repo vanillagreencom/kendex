@@ -168,13 +168,16 @@ fn removal(
             .into_iter()
             .map(|name| (None, name)),
     );
+    // Held at the record: a removal names what goes, and a package it does
+    // not name re-rendered at a newer catalog commit is an update nobody
+    // asked for.
     let options = PlanOptions {
         remove_orphans: true,
         removal_filter: Some(removing),
         sweep_unneeded: sweep,
         uninstalled_bundles: bundles,
         hold_upstream_skills: !disown,
-        ..PlanOptions::default()
+        ..PlanOptions::locked()
     };
     for name in names {
         // Plugin has no declared-items table — it lives in `plugins` and

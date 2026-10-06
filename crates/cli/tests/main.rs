@@ -64,6 +64,7 @@ mod refresh_ledger;
 mod refresh_locked;
 mod release_workflow;
 mod remote_e2e;
+mod remove_locked;
 mod safety_print;
 mod template_cli;
 mod terms_first_run;
