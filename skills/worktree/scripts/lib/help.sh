@@ -117,12 +117,12 @@ Setup-path hardening:
   directory leaf.
 
 Dependencies:
-  No command runs a package-manager install: installs run only in the main
-  checkout, and only when the lockfile changed. Link it into each worktree
-  with a WORKTREE_SYMLINKS entry for the node_modules path. On a hosted lane
-  the host provider's create owns that install in its clone: orch's
-  lane-host-ssh runs it for a static SSH host, and another provider runs
-  the same step on its own hosts. A configured
+  No worktree command runs a package-manager install: installs run only in
+  the main checkout, and only when the lockfile changed. Link it into each
+  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. On a
+  hosted lane the host provider's create owns that install in its clone:
+  orch's lane-host-ssh runs it for a static SSH host, and any other host
+  provider owes the same step, per orch schemas/lane-host.md. A configured
   node_modules entry beside a worktree package.json always warns when its
   source is missing; a root package.json with nothing linked warns wherever
   links are set up, but not from repair-links. Limitation: linked node_modules
