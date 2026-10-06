@@ -1,5 +1,6 @@
 use super::*;
-use crate::lock::{BundleRef, InstallRef, LockEntry};
+use crate::engine::PlanOptions;
+use crate::lock::{BundleRef, InstallRef, LockEntry, SourceRev};
 use crate::manifest::{ItemDecl, SourceDecl};
 use crate::model::HarnessId;
 
@@ -40,7 +41,7 @@ fn held_for(manifest: &Manifest, lock: &Lock, kind: ItemKind, name: &str) -> (Ma
         declarations: BTreeSet::from([target]),
         reach: Reach::Carriers,
     };
-    held_manifest(manifest, lock, &targets)
+    held_manifest(manifest, lock, &targets, false)
 }
 
 fn entry_from(
@@ -102,6 +103,82 @@ fn recorded_set(lock: &mut Lock, name: &str, commit: &str) {
             commit: commit.to_owned(),
         },
     );
+}
+
+/// How a row builds the plan it reads through.
+type Plan = fn() -> PlanOptions;
+
+/// A source declared at `next` whose record was written at `recorded`:
+/// a write holds its followers only where the two agree, and the reading
+/// `verify --at-record` renders through holds them either way.
+#[test]
+fn a_redeclared_source_holds_only_for_the_record_reading() {
+    let rows: [(&str, Plan, Option<&str>, bool); 6] = [
+        ("at record, rev edited", PlanOptions::at_record, None, true),
+        (
+            "at record, rev applied",
+            PlanOptions::at_record,
+            Some("next"),
+            true,
+        ),
+        ("locked, rev edited", PlanOptions::locked, None, false),
+        (
+            "locked, rev applied",
+            PlanOptions::locked,
+            Some("next"),
+            true,
+        ),
+        (
+            "single package, rev edited",
+            || PlanOptions::for_package(ItemKind::Skill, "a"),
+            None,
+            false,
+        ),
+        (
+            "add, rev edited",
+            || PlanOptions::for_additions([]),
+            None,
+            false,
+        ),
+    ];
+    for (case, plan, recorded, holds) in rows {
+        let mut manifest = manifest_with(&[("a", None), ("b", None)], &["starter"]);
+        if let Some(source) = manifest.sources.get_mut("cat") {
+            source.rev = Some("next".to_owned());
+        }
+        let mut lock = lock_with(&[
+            (
+                "skill:a:claude",
+                entry("a", Some("aaa"), &[Reason::Requested]),
+            ),
+            (
+                "skill:b:claude",
+                entry("b", Some("bbb"), &[Reason::Requested]),
+            ),
+        ]);
+        recorded_set(&mut lock, "starter", "sss");
+        lock.sources.insert(
+            "cat".to_owned(),
+            SourceRev {
+                repo: "owner/catalog".to_owned(),
+                rev: recorded.map(str::to_owned),
+                commit: "aaa".to_owned(),
+            },
+        );
+
+        let (held, _) = planning_manifest(&manifest, &lock, &plan());
+        let expect = |commit: &str| holds.then(|| commit.to_owned());
+        assert_eq!(
+            held.declared(ItemKind::Skill)["b"].rev,
+            expect("bbb"),
+            "{case}: the follower"
+        );
+        assert_eq!(
+            held.bundles["starter"].rev,
+            expect("sss"),
+            "{case}: the set"
+        );
+    }
 }
 
 #[test]

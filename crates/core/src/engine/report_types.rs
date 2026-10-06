@@ -621,6 +621,15 @@ pub struct PlanOptions {
     /// `verify --at-record` keeps it held: skipped, the write would de-list
     /// its renders.
     pub keep_source_records: bool,
+    /// Under [`PlanOptions::update_only`], also hold the followers of a
+    /// source the record's account of was written for another repository
+    /// or revision than it is declared at now. A plan that writes leaves
+    /// this off, so each such follower reads the declared selector: held
+    /// at its recorded commit it would undo the edit while the record's
+    /// source entry says it was honoured. A reading sets it, because what
+    /// it renders is the record as it stands, and a rev edit not yet
+    /// applied has not moved it. Only [`PlanOptions::at_record`] sets this.
+    pub hold_redeclared_sources: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file
@@ -712,18 +721,26 @@ impl PlanOptions {
     /// A plan that names no package: every follower the record can place
     /// holds at the commit its lock entries record, so a re-render reads
     /// what is installed; one it cannot place resolves fresh, as
-    /// [`PlanOptions::update_only`] says. What `verify --at-record` checks
-    /// against.
+    /// [`PlanOptions::update_only`] says. A source declared at another
+    /// repository or revision than the record was written for still holds
+    /// ([`PlanOptions::hold_redeclared_sources`]). What `verify --at-record`
+    /// checks against.
     pub fn at_record() -> Self {
-        PlanOptions::for_packages([])
+        PlanOptions {
+            hold_redeclared_sources: true,
+            ..PlanOptions::for_packages([])
+        }
     }
 
     /// [`PlanOptions::at_record`] for a write: the record also keeps where
     /// it says each source sits, so a re-render of a project-side change
-    /// moves no catalog the record places. What `refresh --locked` writes.
+    /// moves no catalog the record places. A write does not hold a
+    /// redeclared source's followers: they read the selector now declared.
+    /// What `refresh --locked` and `apply` write.
     pub fn locked() -> Self {
         PlanOptions {
             keep_source_records: true,
+            hold_redeclared_sources: false,
             ..PlanOptions::at_record()
         }
     }
