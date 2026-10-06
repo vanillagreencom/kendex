@@ -306,14 +306,17 @@ def main():
                     reason = existing.get("state_reason")
                     note = "Closed upstream" + (f" as {reason.replace('_', ' ')}" if reason else "")
                 elif existing:
-                    url = filed = existing["html_url"]
+                    url = existing["html_url"]
                     note = "Existing open report"
                     # A thread whose evidence the issue body lacks adds its
-                    # text and evidence as a comment.
+                    # text and evidence as a comment. The finding counts as
+                    # filed only once that evidence is upstream: a filed row
+                    # resolves its consumer thread.
                     record = f"Review evidence: {evidence}\n"
                     if record not in (existing.get("body") or ""):
                         result = api(f"repos/{UPSTREAM}/issues/{existing['number']}/comments", {"body": body})
                         url = result["html_url"]
+                    filed = existing["html_url"]
                 else:
                     created = api(f"repos/{UPSTREAM}/issues", {"title": row["title"], "body": body,
                                                                "labels": ["bug", label, "agent:maintainer"]})

@@ -388,19 +388,29 @@ assert sorted(t for q in searched['searches'] for t in q)==sorted(i['title'][15:
 reset(incomplete=True); refused=attempt(skill/'scripts/refresh-report.py',[consumer_a],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # No token, a token denied everywhere and one that can search but not write
-# each leave the filing link. A rate limit is no access answer: the run fails
-# and waits for the next one.
+# each leave the finding unfiled with a link. A denied evidence comment on an
+# open App-filed issue leaves its thread unfiled too, linking that issue. A
+# rate limit is no access answer: the run fails and waits for the next one.
 denied='gh: Resource not accessible by integration (HTTP 403)'
 access='kendex Issues access is unavailable'
-for overrides, extra, note in [
- ({'KENDEX_ISSUES_TOKEN':''}, {}, 'Issues token unavailable'),
- ({}, {'fail':['all',denied]}, access),
- ({}, {'fail':['write',denied]}, access),
-]:
- reset(**extra); result=run(overrides=overrides)
- assert result['writes']==[] and 'issues/new?' in summary.read_text()
- assert results==[{'root':10,'issue':None,'note':note}], extra
- assert findings[0]['url'] in summary.read_text()
+access_rows=[
+ ({'KENDEX_ISSUES_TOKEN':''}, {}, findings[0], 'issues/new?', 'Issues token unavailable'),
+ ({}, {'fail':['all',denied]}, findings[0], 'issues/new?', access),
+ ({}, {'fail':['write',denied]}, findings[0], 'issues/new?', access),
+ ({}, {'fail':['write',denied],'issues':[issue]}, later_thread, issue['html_url'], access),
+]
+def unfiled(overrides, extra, row, link, note, driver=skill/'scripts/refresh-report.py'):
+ reset(**extra); result=run(driver,rows=[row],overrides=overrides); text=summary.read_text()
+ return (result['writes']==[] and link in text and row['url'] in text
+         and results==[{'root':row['root'],'issue':None,'note':note}])
+for overrides, extra, row, link, note in access_rows:
+ assert unfiled(overrides, extra, row, link, note), extra
+# The open issue's evidence comment is the write that files a later thread.
+needle='                    url = existing["html_url"]\n                    note = "Existing open report"\n'
+assert source.count(needle)==1
+mutant=root/'comment-deny.py'
+mutant.write_text(source.replace(needle,needle.replace('url = existing','url = filed = existing',1)))
+assert not unfiled(*access_rows[-1], driver=mutant)
 rate_limits=[
  'gh: API rate limit exceeded for installation ID 1234. If you reach out to GitHub Support for help, please include the request ID AB12:3C4D. (HTTP 403)',
  'gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)',
@@ -477,7 +487,7 @@ for needle,replacement,rows,expect in [
 # comment rather than the issue, each turn a case above red.
 for needle,replacement,overrides,runs in [
  ('            url = "https://github.com/" + UPSTREAM', '            url = filed = "https://github.com/" + UPSTREAM', {'KENDEX_ISSUES_TOKEN':''}, [(findings,{})]),
- ('url = result["html_url"]', 'url = filed = result["html_url"]', {}, [(findings,{}), ([later_thread],{'GITHUB_RUN_ID':'43'})]),
+ ('                    filed = existing["html_url"]\n', '                    filed = url\n', {}, [(findings,{}), ([later_thread],{'GITHUB_RUN_ID':'43'})]),
 ]:
  assert source.count(needle)==1
  mutant=root/'filed.py'; mutant.write_text(source.replace(needle,replacement))
