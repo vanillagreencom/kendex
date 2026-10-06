@@ -192,8 +192,7 @@ pub(crate) fn planning_manifest<'a>(
 ) -> (std::borrow::Cow<'a, Manifest>, Option<HeldPins>) {
     match &options.update_only {
         Some(targets) => {
-            let (held, pins) =
-                held_manifest(manifest, lock, targets, options.hold_redeclared_sources);
+            let (held, pins) = held_manifest(manifest, lock, targets, options.keep_source_records);
             (std::borrow::Cow::Owned(held), Some(pins))
         }
         None => (std::borrow::Cow::Borrowed(manifest), None),
@@ -302,17 +301,18 @@ fn release(
 ///
 /// A declaration the lock cannot place — nothing installed, installations
 /// disagreeing on their commit, any one of them recorded against a
-/// source this declaration does not read from, or, unless
-/// `hold_redeclared` ([`super::super::PlanOptions::hold_redeclared_sources`]),
-/// a source declared at another repository or revision than the record's
-/// account of it was written for — is left to resolve fresh: a wrong pin
-/// would move it somewhere nobody asked for, and fresh is what a
-/// whole-scope apply gives it anyway.
+/// source this declaration does not read from, or, under a write that
+/// keeps the record (`keeps_records`,
+/// [`super::super::PlanOptions::keep_source_records`]), a source declared
+/// at another repository or revision than the record's account of it was
+/// written for — is left to resolve fresh: a wrong pin would move it
+/// somewhere nobody asked for, and fresh is what a whole-scope apply gives
+/// it anyway.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
     targets: &Targets,
-    hold_redeclared: bool,
+    keeps_records: bool,
 ) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
     for target in &targets.declarations {
@@ -333,7 +333,7 @@ fn held_manifest(
                     })
             })
             .filter_map(|(name, decl)| {
-                let repo = held_repo(manifest, lock, &decl.source, hold_redeclared)?;
+                let repo = held_repo(manifest, lock, &decl.source, keeps_records)?;
                 let commit = held_at(lock, kind, name, &decl.source, repo)?;
                 Some((name.clone(), decl.source.clone(), repo.to_owned(), commit))
             })
@@ -358,7 +358,7 @@ fn held_manifest(
         if decl.rev.is_some() || exempted {
             continue;
         }
-        let Some(repo) = held_repo(manifest, lock, &decl.source, hold_redeclared) else {
+        let Some(repo) = held_repo(manifest, lock, &decl.source, keeps_records) else {
             continue;
         };
         let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
@@ -475,22 +475,24 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
     manifest.sources.get(source)?.repo.as_deref()
 }
 
-/// [`source_repo`] for a held plan: `None` also, unless `hold_redeclared`,
-/// where the record's account of the source was written for another
-/// repository or revision than it is declared at now. Every commit under
-/// such a source was read at a selector the person has since replaced, so
-/// a write that holds at one undoes the edit while the record's source
-/// entry, read afresh ([`super::super::PlanOptions::keep_source_records`]),
-/// says it was honoured. A source with no account is held to its entries
-/// alone.
+/// [`source_repo`] for a held plan: `None` also, under a write that keeps
+/// the record (`keeps_records`), where the record's account of the source
+/// was written for another repository or revision than it is declared at
+/// now. Every commit under such a source was read at a selector the person
+/// has since replaced, so a write that holds at one undoes the edit while
+/// the record's source entry, read afresh
+/// ([`super::super::PlanOptions::keep_source_records`]), says it was
+/// honoured. Any other hold, `verify --at-record`'s reading included, keeps
+/// the record as it stands. A source with no account is held to its
+/// entries alone.
 fn held_repo<'a>(
     manifest: &'a Manifest,
     lock: &Lock,
     source: &str,
-    hold_redeclared: bool,
+    keeps_records: bool,
 ) -> Option<&'a str> {
     let repo = source_repo(manifest, source)?;
-    if hold_redeclared {
+    if !keeps_records {
         return Some(repo);
     }
     let rev = manifest.sources.get(source)?.rev.as_deref();

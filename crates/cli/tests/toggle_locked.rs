@@ -355,12 +355,12 @@ fn require_a_helper(world: &World) {
 #[allow(clippy::unwrap_used)]
 fn fall_behind(world: &World) {
     move_the_catalog(world);
-    let applied = kendex(
+    let refreshed = kendex(
         &world.home,
         &world.project,
-        &["apply", "--scope", "project", "-y", "--leave"],
+        &["refresh", "--scope", "project", "-y", "--leave"],
     );
-    assert!(applied.status.success(), "{}", said(&applied));
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
     commit(&world.project, "a teammate brings the catalog current");
     let ahead = git(&world.catalog, &["rev-parse", "HEAD"]);
     git(&world.catalog, &["reset", "-q", "--hard", "HEAD~1"]);

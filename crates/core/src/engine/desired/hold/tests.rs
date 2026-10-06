@@ -108,19 +108,13 @@ fn recorded_set(lock: &mut Lock, name: &str, commit: &str) {
 /// How a row builds the plan it reads through.
 type Plan = fn() -> PlanOptions;
 
-/// A source declared at `next` whose record was written at `recorded`:
-/// a write holds its followers only where the two agree, and the reading
-/// `verify --at-record` renders through holds them either way.
+/// A source declared at `next` whose record was written at `recorded`: a
+/// write that keeps the record holds its followers only where the two
+/// agree, and every other hold, the reading `verify --at-record` renders
+/// through included, holds them either way.
 #[test]
-fn a_redeclared_source_holds_only_for_the_record_reading() {
+fn a_redeclared_source_unpins_only_under_a_write_that_keeps_the_record() {
     let rows: [(&str, Plan, Option<&str>, bool); 6] = [
-        ("at record, rev edited", PlanOptions::at_record, None, true),
-        (
-            "at record, rev applied",
-            PlanOptions::at_record,
-            Some("next"),
-            true,
-        ),
         ("locked, rev edited", PlanOptions::locked, None, false),
         (
             "locked, rev applied",
@@ -128,17 +122,24 @@ fn a_redeclared_source_holds_only_for_the_record_reading() {
             Some("next"),
             true,
         ),
+        ("at record, rev edited", PlanOptions::at_record, None, true),
+        (
+            "at record, rev applied",
+            PlanOptions::at_record,
+            Some("next"),
+            true,
+        ),
         (
             "single package, rev edited",
             || PlanOptions::for_package(ItemKind::Skill, "a"),
             None,
-            false,
+            true,
         ),
         (
             "add, rev edited",
             || PlanOptions::for_additions([]),
             None,
-            false,
+            true,
         ),
     ];
     for (case, plan, recorded, holds) in rows {
@@ -689,7 +690,7 @@ fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
         };
         let mut manifest = manifest.clone();
         manifest.sources.get_mut("cat").unwrap().enabled = !row.source_off;
-        let (mut held, mut pins) = held_manifest(&manifest, &lock, &targets);
+        let (mut held, mut pins) = held_manifest(&manifest, &lock, &targets, true);
         let fetched = std::cell::Cell::new(0);
         let probed = std::cell::Cell::new(0);
         let result = release(
