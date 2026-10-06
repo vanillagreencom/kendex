@@ -250,6 +250,10 @@ def with_lane_binding($model; $binding_floor):
 # charged as zero lanes. A record with no session reading is projected on the
 # binding bucket alone. The record keeps both rooms and the session charge
 # beside it, so a launch that stores the record names which window decided.
+# projected_window is that window, {bucket, pct, resets_at}: the session
+# window where its room is the smaller, the binding bucket otherwise, null
+# with no projection. A refusal on the projection names it, and a wall dates
+# to its reset rather than to the reset of the binding bucket.
 def with_lane_projection($burn_default; $now):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
    then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)
@@ -271,7 +275,12 @@ def with_lane_projection($burn_default; $now):
          session_charge_hours: (if $session_room == null then null else $session_hours end),
          projected_headroom_pct:
            (if $binding_room == null then null
-            else [$binding_room, $session_room] | map(select(. != null)) | min end)};
+            else [$binding_room, $session_room] | map(select(. != null)) | min end),
+         projected_window:
+           (if $binding_room == null then null
+            elif $session_room != null and $session_room < $binding_room
+            then {bucket: "session", pct: .session_5h_pct, resets_at: (.resets.session // null)}
+            else {bucket: .binding_bucket, pct: .wall, resets_at: (.binding_resets_at // null)} end)};
 
 # judged_wall over one record with_lane_projection has read: the projected
 # use wall_verdict judges, for the chooser and `pick --lane --projected`, so a

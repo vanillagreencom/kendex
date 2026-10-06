@@ -562,6 +562,25 @@ pi_control ctl-batch-claims-first lib/lane-model.sh \
 assert_eq "$(observe "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude")" \
   "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude" \
   "control: claims-first ordering turns the reset-weighted batch order red"
+
+# Each item's fleet record keeps the pick its own launch was judged on: the
+# second item's re-pick names eclaude and the first item's claim on claude.
+# Its control keeps the first pick's record through the re-pick, and the
+# second record names the account the first item took.
+batch_picks() { # STATE_DIR
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$1" get oversee \
+    '[.lanes[] | "\(.item):\(.account | split("/") | last)=\(.pick.account // "none" | split("/") | last):\(.pick.claims)"] | join(",")' | tr -d '"'
+}
+SPREAD_FLEET_CMD="cmd=true --model opus --effort high $COMPACTION_OFF_ALL"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/spread-fleet-1" "$PWD" || exit 1
+run_ot "$SPREAD_ENV;$SPREAD_FLEET_CMD" --harness claude --lane auto --state-dir "$TMP_ROOT/spread-fleet-1" KEN-4 KEN-5
+assert_eq "rc=$RC picks=$(batch_picks "$TMP_ROOT/spread-fleet-1")" "rc=0 picks=KEN-4:.claude=.claude:0,KEN-5:.eclaude=.eclaude:0" \
+  "each item of a batch records the pick its own launch was judged on"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/spread-fleet-2" "$PWD" || exit 1
+pi_control ctl-batch-pick-kept open-terminal '    LANE_PICK_RECORD="$record"
+' '' "$SPREAD_ENV;$SPREAD_FLEET_CMD" --harness claude --lane auto --state-dir "$TMP_ROOT/spread-fleet-2" KEN-4 KEN-5
+assert_eq "rc=$RC picks=$(batch_picks "$TMP_ROOT/spread-fleet-2")" "rc=0 picks=KEN-4:.claude=.claude:0,KEN-5:.eclaude=.claude:0" \
+  "control: a re-pick whose reading is not kept records the first item's pick on the second"
 H="$BATCH_SHARED_HOME"
 
 table \

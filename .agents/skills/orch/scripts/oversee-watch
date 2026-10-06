@@ -3791,6 +3791,9 @@ owed_accounts() { # HOST
 # twice, this machine's reading and the provider's, and a launch on a provider
 # runs under the provider's, so only rows `measured_through` `host` date a
 # provider's wall and only `local` rows the local host's; with none, `until=-`.
+# A row whose projected room the session window decided dates to that
+# window's reset, since the lanes on it wall there long before a weekly
+# window resets.
 # Exit 3 with none walled is every account unmeasured, and any other exit a
 # judgement that failed, named on stderr: both are `unjudged`.
 owed_wall() { # HOST HARNESS MODEL
@@ -3817,7 +3820,9 @@ owed_wall() { # HOST HARNESS MODEL
         through=host
         [[ "$host" != local ]] || through=local
         until="$(jq -r --arg h "$harness" --arg m "$model" --arg t "$through" "$LANE_MODEL_JQ"'
-          [.[] | select(.harness == $h and .measured_through == $t) | lane_binding($m) | .resets_at? // empty | strings]
+          [.[] | select(.harness == $h and .measured_through == $t)
+           | if .projected_window.bucket? == "session" then .projected_window.resets_at else lane_binding($m) | .resets_at? end
+           | strings]
           | min // "-"' \
           <<<"$OWED_LISTING" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")" "host=$host"
         OWED_VERDICT="verdict=dated harness=$harness until=$until"

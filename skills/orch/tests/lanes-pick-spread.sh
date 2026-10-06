@@ -69,7 +69,10 @@ claude_usage 10 86 5 Opus > "$FIXTURE_DIR/.wclaude.json"
 make_lane "$H" mclaude 3600
 claude_usage 10 20 84 Opus > "$FIXTURE_DIR/.mclaude.json"
 make_codex_token_lane "$H/.1codex" 3600
-jq -n '{rate_limit: {primary_window: {used_percent: 22, reset_at: 1900000000,
+# Its reset is ten hours past the suite clock, beyond the five-hour bound on
+# the session charge, so every row charges the full five hours.
+CODEX_RESET="$("$BIN/date" +%s)" || exit 1
+jq -n --argjson reset "$((CODEX_RESET + 36000))" '{rate_limit: {primary_window: {used_percent: 22, reset_at: $reset,
   limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.1codex.json"
 ALL_DIRS="ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude:$H/.cclaude"
 
@@ -251,8 +254,8 @@ table \
   "the named projection charges the added measured claim too|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=0 claims=2 burn_pct_per_lane_hour=6 projected_headroom_pct=68" \
   "enough claims wall the named measured projection|ORCH_LANE_DIRS=$H/.aclaude|claim:a:13|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=3 projected_headroom_pct=2"
 
-# The Codex window resets in 2030, so each claim is charged the shared burn
-# for the five-hour session horizon: 78 room less 12 claims at 0.9554 for 5
+# The Codex window resets beyond five hours, so each claim is charged the
+# shared burn for the five-hour session horizon: 78 room less 12 claims at 0.9554 for 5
 # hours leaves 20.68.
 ACCOUNT_HARNESS=codex table \
   "twelve sampled claims share the account burn in the chooser|ORCH_LANE_DIRS=$H/.1codex|claim:1:12|1:22:20:12:628|pick --harness codex --model gpt-6.1-sol --json|rc=0 config_dir=$H/.1codex claims=12 headroom_hundredths=2068" \
@@ -341,9 +344,15 @@ jq -n --argjson now "$NOW" '{five_hour: {utilization: 5, resets_at: ($now + 1620
 RQ_DIRS="ORCH_LANE_DIRS=$H/.rclaude:$H/.qclaude"
 table \
   "the sixth lane is not stacked on a weekly-bound account whose session the five on it spend before its reset|$RQ_DIRS|claim:r:5||$PICK|rc=0 config_dir=$H/.qclaude binding_bucket=weekly" \
-  "the named projection refuses the stacked account on its session window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 binding_bucket=weekly projected_headroom_pct=-2" \
+  "the named projection refuses the stacked account on its session window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 binding_bucket=weekly projected_headroom_pct=-2 projected_window.bucket=session key=pick-lane-walled,lane=$H/.rclaude,wall=2,bucket=session,max-pct=95,projected-headroom=-2" \
   "the same account with no claims keeps its room and is picked|$RQ_DIRS|||$PICK|rc=0 config_dir=$H/.rclaude"
 
+# Control: a refusal read from the binding bucket names the weekly window the
+# lanes did not wall.
+CTRL="$(mutant_scripts mutant-walled-binding lanes)" || exit 1
+mutate_file "$CTRL/lanes" "'if \$p and .projected_window != null then .projected_window.bucket else .binding_bucket end'" "'.binding_bucket'"
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: the named refusal read from the binding bucket names the weekly window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 key=pick-lane-walled,lane=$H/.rclaude,wall=2,bucket=weekly,max-pct=95,projected-headroom=-2"
 # Control: projected on the binding bucket alone, the stacked account keeps
 # its weekly room and takes the sixth lane.
 CTRL="$(mutant_scripts mutant-session-unprojected lib/lane-model.sh)" || exit 1

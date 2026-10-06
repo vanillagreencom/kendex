@@ -147,7 +147,9 @@
 #         charged the session burn for the hours left to that window's reset
 #         (1 to 5), whichever leaves less room. Account-wide rates use claims at sample time (at least one) as the
 #         divisor; model rates use one because claims omit models. With no
-#         rate, use ORCH_LANE_BURN_PCT_PER_HOUR, scaled to the window. So an
+#         rate, the binding bucket uses ORCH_LANE_BURN_PCT_PER_HOUR, scaled to
+#         the window. The session burn is the binding burn where the session
+#         binds, and ORCH_LANE_BURN_PCT_PER_HOUR otherwise. So an
 #         account whose room the lanes already on it will spend is dropped the
 #         way a walled one is. It never returns an OVERSEER SEAT, an account
 #         `.overseer.account` of a fleet state names: this checkout's fleet
@@ -486,13 +488,15 @@
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
 #   ORCH_LANE_BURN_PCT_PER_HOUR  Percentage points of the 5-hour session window
-#                      one live lane is expected to spend in an hour, charged
-#                      per claim where the account's rate is not measured or
-#                      nothing is claimed on it; a weekly window, plan-wide or
+#                      one live lane is expected to spend in an hour. The
+#                      binding bucket is charged it per claim for one hour
+#                      where the account's rate is not measured or nothing is
+#                      claimed on it; a weekly window, plan-wide or
 #                      model-scoped, is charged 5/168 of it and a monthly
-#                      Copilot pool 5/720, while the session window beside a
-#                      bucket that binds is charged it whole for each hour to
-#                      its reset (default 5; 0 charges nothing). Refused, before any lane is measured,
+#                      Copilot pool 5/720. The session window beside any
+#                      other binding bucket is charged it whole per claim for
+#                      each hour to its reset, measured rate or not (default
+#                      5; 0 charges nothing). Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
 #   ORCH_LANE_CODEX_CREDIT_FLOOR  Credits, never a percentage, a Codex
 #                      account past the threshold must exceed (default 5000,
@@ -792,7 +796,7 @@ message() {
       printf 'lanes: pick-lane-walled lane=%s wall=%s bucket=%s max-pct=%s projected-headroom=%s' "$1" "$2" "$3" "$4" "$5"
       [[ -z "${6:-}" ]] || printf ' credits=%s credit-floor=%s' "$6" "$7"
       printf '\n'
-      printf '%s\n' "that account's window for this model is at or above the threshold, under --projected once the lanes already on it are charged their expected burn; launching it would open on a usage banner"
+      printf '%s\n' "that account's window for this model is at or above the threshold, under --projected once the lanes already on it are charged their expected burn, and bucket is then the window whose projected room decided, the session window included; launching it would open on a usage banner"
       ;;
     pick-lane-unmeasured)
       printf 'lanes: pick-lane-unmeasured lane=%s model=%s\n' "$1" "$2"
@@ -2963,11 +2967,14 @@ cmd_pick_lane() {
 			return
 			;;
 		walled)
-			wall="$(jq -er '.wall' <<<"$record")" || {
+			# Under --projected the window whose projected room decided, which
+			# is the session window where the lanes on the account spend it
+			# first; the reading's binding bucket otherwise.
+			wall="$(jq -er --argjson p "$projected_verdict" 'if $p and .projected_window != null then .projected_window.pct else .wall end' <<<"$record")" || {
 				message pick-lane-failed "$dir" wall >&2
 				return 1
 			}
-			bucket="$(jq -er '.binding_bucket' <<<"$record")" || {
+			bucket="$(jq -er --argjson p "$projected_verdict" 'if $p and .projected_window != null then .projected_window.bucket else .binding_bucket end' <<<"$record")" || {
 				message pick-lane-failed "$dir" bucket >&2
 				return 1
 			}

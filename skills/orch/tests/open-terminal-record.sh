@@ -65,7 +65,17 @@ cat > "$BIN/gh" <<'EOF'
 [[ "${1:-}" == repo && -n "${STUB_GH_REPO:-}" ]] || exit 1
 printf '%s\n' "$STUB_GH_REPO"
 EOF
-printf '#!/usr/bin/env bash\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; esac\nexit 0\n' > "$BIN/lanes"
+# lanes judges every lane with room; where a row sets STUB_PICK_CLAIMS its
+# pick answers a reading charging that many claims, and otherwise none.
+cat > "$BIN/lanes" <<'LANES'
+#!/usr/bin/env bash
+case "${1:-}" in
+  check) exit 0 ;;
+  list) echo "[]" ;;
+  pick) [[ -z "${STUB_PICK_CLAIMS:-}" ]] || jq -cn --argjson n "$STUB_PICK_CLAIMS" '{config_dir: "/stub/lane", claims: $n}' ;;
+esac
+exit 0
+LANES
 # claude holds while the file STUB_CLAUDE_HOLD names exists, a woken turn
 # still running, and exits at once where no row sets it.
 printf '#!/usr/bin/env bash\nwhile [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done\nexit 0\n' > "$BIN/claude"
@@ -209,6 +219,8 @@ session_since() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.ite
 records() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | length'; }
 stamped() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo iso || echo "$1"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
+# pick_claims ITEM — the claims the record's pick reading charged, none without one.
+pick_claims() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .pick.claims // "none"' | tr -d '"'; }
 
 # A fleet launch names its harness and carries the words the fleet gate asks
 # for; a row about some other part of the launch passes that gate with this.
@@ -903,18 +915,46 @@ assert_eq "record=$(settled CC-73) marker=$(marker_at cc-73) window=$(field "$(r
   "once the host is ready the job launches the lane in its window and records it running, stamping running_at then"
 # A later launch that is not handed off drops the preparation it replaces, or
 # the watch would read that stale record of a live lane.
+STUB_PICK_CLAIMS=3 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
+assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 record=running none none pick=3" \
+  "a relaunch whose host answers at once drops the earlier preparation from the record and records its own pick reading"
+
+# A relaunch has not taken while its host prepares or after that wait fails,
+# so the pick reading of the launch that took stays beside its account.
+HAND_OFF_CMD="true --model claude-sonnet-5 --effort low" hand_off CC-73 STUB_PICK_CLAIMS=7 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
+assert_eq "rc=$RC record=$(prepared CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort) pick=$(pick_claims CC-73)" \
+  "rc=0 record=preparing prepare none model=opus effort=high pick=3" "a preparing relaunch keeps the prior model, effort and pick reading"
+touch "$TMP_ROOT/gate-73-relaunch"
+assert_eq "record=$(settled CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort) pick=$(pick_claims CC-73)" \
+  "record=stopped prepare wait-failed model=opus effort=high pick=3" "a stopped relaunch keeps the prior model, effort and pick reading"
+# A relaunch that runs on no judged reading drops the earlier one.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
-assert_eq "rc=$RC record=$(prepared CC-73)" "rc=0 record=running none none" \
-  "a relaunch whose host answers at once drops the earlier preparation from the record"
-
-# A relaunch has not taken while its host prepares or after that wait fails.
-HAND_OFF_CMD="true --model claude-sonnet-5 --effort low" hand_off CC-73 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
-assert_eq "rc=$RC record=$(prepared CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort)" \
-  "rc=0 record=preparing prepare none model=opus effort=high" "a preparing relaunch keeps the prior model and effort"
-touch "$TMP_ROOT/gate-73-relaunch"
-assert_eq "record=$(settled CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort)" \
-  "record=stopped prepare wait-failed model=opus effort=high" "a stopped relaunch keeps the prior model and effort"
+assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 record=running none none pick=none" \
+  "a running relaunch on no judged reading drops the pick an earlier launch recorded"
+# Controls, one per rule. A record that drops the pick on a relaunch that has
+# not taken shows the new reading beside the old account; one that keeps it
+# through a running relaunch on no reading shows the old reading.
+PICK_KEEP_OT="$(mutant_scripts pick-keep-mutant open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/pick-keep-mutant"
+mutate_file "$PICK_KEEP_OT" 'del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id)' 'del(.harness, .model, .effort, .preference_entry, .account, .session_id)'
+PICK_DROP_OT="$(mutant_scripts pick-drop-mutant open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/pick-drop-mutant"
+mutate_file "$PICK_DROP_OT" 'del(.preference_entry, .pick)' 'del(.preference_entry)'
+STUB_PICK_CLAIMS=4 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
+HAND_OFF_CMD="true --model claude-sonnet-5 --effort low" hand_off CC-73 STUB_PICK_CLAIMS=7 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-keep" LANE_HOST_STUB_WAIT_STATUS=1 -- SCRIPT="$PICK_KEEP_OT" --relaunch
+assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 record=preparing prepare none pick=7" \
+  "control: a preparing relaunch that drops the kept pick records a reading its account was never judged on"
+touch "$TMP_ROOT/gate-73-keep"
+settled CC-73 >/dev/null
+STUB_PICK_CLAIMS=4 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$PICK_DROP_OT" --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
+assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 record=running none none pick=4" \
+  "control: a running relaunch that keeps the earlier pick records a reading this launch never took"
 
 # The host's preparation fails: the job closes the window and records the lane
 # stopped with the reason, the record lane-close takes.

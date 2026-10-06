@@ -125,6 +125,14 @@ hosted() {
     '. + [$h | .measured_through = "host"]' "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.hosted.json"
   mv -- "$STUB_DIR/lanes.hosted.json" "$STUB_DIR/lanes.json"
 }
+# sessioned NAME — the shared world with codex2 walled by its lanes on the
+# session window, which resets long before its weekly one.
+sessioned() {
+  world "$1"
+  jq -c 'map(if .alias == "codex2" then .projected_window = {bucket: "session", pct: 10, resets_at: "2026-09-28T05:00:00Z"} else . end)' \
+    "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.session.json"
+  mv -- "$STUB_DIR/lanes.session.json" "$STUB_DIR/lanes.json"
+}
 # noisy NAME — the shared world whose listings each write a keyed notice.
 noisy() {
   world "$1"
@@ -205,6 +213,12 @@ done <<'ROWS'
 a|yes|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-06T00:00:00Z
 no|no|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
 ROWS
+
+sessioned owed_session
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(owed KEN-3)" \
+  "rc=0 owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-09-28T05:00:00Z" \
+  "a wall the session projection decided dates to the session reset" "$ERR"
 
 # Rows: case | pick's exit and reply for codex. Every account unmeasured and a
 # pick that fails are both unjudged; the failure is named.
@@ -306,6 +320,7 @@ world@without the roster membership test a harness with no account is asked of p
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
 world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
 hosted@without the reading filter a hosted wall dates to the local copy's reset@select(.harness == $h and .measured_through == $t)@select(.harness == $h)@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+sessioned@without the deciding window a session wall dates to the weekly reset@if .projected_window.bucket? == "session" then .projected_window.resets_at else lane_binding($m) | .resets_at? end@lane_binding($m) | .resets_at?@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
 noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=0 provider-x=0
 ROWS
 

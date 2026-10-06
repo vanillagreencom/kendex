@@ -37,7 +37,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 # lanes: a named lane's judge answers walled once the row's wall file exists,
-# and `--lane auto` picks the account the row's pick file names, printing the
+# with the record that file holds or a five_hour wall where it is empty, and `--lane auto` picks the account the row's pick file names, printing the
 # record open-terminal asks for and recording the ORCH_STATE_DIR it ran under,
 # `unset` for none, beside that file.
 cat > "$BIN/lanes" <<'EOF'
@@ -46,6 +46,7 @@ case "${1:-}" in
   list) echo "[]" ;;
   pick)
     if [[ " $* " == *" --lane "* ]]; then
+      if [[ -s "$STUB_WALL" ]]; then cat -- "$STUB_WALL"; exit 3; fi
       [[ ! -e "$STUB_WALL" ]] || { echo '{"wall":97,"binding_bucket":"five_hour","projected_headroom_pct":3}'; exit 3; }
     else
       printf '%s\n' "${ORCH_STATE_DIR-unset}" > "$STUB_PICK.state"
@@ -538,6 +539,26 @@ await_exit "$WAITER"
 assert_eq "rc=$(rc one) $(key one | tail -n 1) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
   "rc=1 open-terminal: lane-model-walled lane=$LANE_A model=opus pct=97 bucket=five_hour projected-headroom=3 opened=no" \
   "a named lane whose window walled during the wait is refused rather than launched"
+# A weekly-bound account the lanes on it wall on their session window: the
+# refusal names that window and its reading, not the weekly bucket that binds.
+# Its control reads the binding bucket and names the weekly window instead.
+SESSION_WALL='{"wall":46,"binding_bucket":"weekly","projected_headroom_pct":-2,"projected_window":{"bucket":"session","pct":2,"resets_at":"2026-10-06T08:00:00Z"}}'
+row wall-session
+printf '%s\n' "$SESSION_WALL" > "$ROW/wall"
+launch one 10 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one | tail -n 1)" \
+  "rc=1 open-terminal: lane-model-walled lane=$LANE_A model=opus pct=2 bucket=session projected-headroom=-2" \
+  "a named lane walled on its session projection names the session window"
+WALL_OT="$(mutant_scripts session-wall-control open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/session-wall-control"
+mutate_file "$WALL_OT" 'if .projected_window != null then .projected_window.pct else .wall end' '.wall'
+mutate_file "$WALL_OT" 'if .projected_window != null then .projected_window.bucket else .binding_bucket end' '.binding_bucket'
+row wall-session-control
+printf '%s\n' "$SESSION_WALL" > "$ROW/wall"
+OT="$WALL_OT" launch one 10 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one | tail -n 1)" \
+  "rc=1 open-terminal: lane-model-walled lane=$LANE_A model=opus pct=46 bucket=weekly projected-headroom=-2" \
+  "control: read from the binding bucket the refusal names the weekly window the lanes did not wall"
 row wait-repick
 printf '%s\n' "$LANE_A" > "$ROW/pick"
 seed_running CC-9

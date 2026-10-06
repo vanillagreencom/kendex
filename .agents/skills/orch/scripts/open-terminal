@@ -1049,11 +1049,13 @@ named_lane_judge() {
     # so the launch proceeds exactly as it did before this gate existed.
     4) ;;
     3)
-      lane_wall="$(jq -er '.wall' <<<"$lane_record")" || {
+      # The window whose projected room decided, which `lanes` names; the
+      # reading's binding bucket where it made no projection.
+      lane_wall="$(jq -er 'if .projected_window != null then .projected_window.pct else .wall end' <<<"$lane_record")" || {
         ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-wall" >&2
         return 1
       }
-      lane_bucket="$(jq -er '.binding_bucket' <<<"$lane_record")" || {
+      lane_bucket="$(jq -er 'if .projected_window != null then .projected_window.bucket else .binding_bucket end' <<<"$lane_record")" || {
         ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
         return 1
       }

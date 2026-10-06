@@ -216,10 +216,23 @@ lane_claim_write "$(lane_claims_dir "$TEST_REPO")" "$OT_TMUX_SERVER_PID" %1 "$HO
 STUB
 chmod +x "$WAIT_BIN/sleep"
 rejudge_command='claude --dangerously-skip-permissions {brief}'
+# Each record also names the account its pick reading judged and the claims
+# that reading charged: the batch's second item sees the first item's claim,
+# and the wait sees the other fleet's. The batch's unkept control drops the
+# walk's reading, and no record names a pick.
 for surface in batch wait; do
-  for control in live mutant; do
+  controls=(live mutant)
+  [[ "$surface" != batch ]] || controls+=(unkept)
+  for control in "${controls[@]}"; do
     OT="$REPO/scripts/open-terminal"
-    if [[ "$control" == mutant ]]; then
+    if [[ "$control" == unkept ]]; then
+      OT="$(mutant_scripts "unkept-rejudge-$surface" open-terminal)/open-terminal"
+      orch_fixture_shared_libs "$TMP_ROOT/unkept-rejudge-$surface"
+      git -C "$TMP_ROOT/unkept-rejudge-$surface" init -q
+      git -C "$TMP_ROOT/unkept-rejudge-$surface" config gc.auto 0
+      git -C "$TMP_ROOT/unkept-rejudge-$surface" config maintenance.auto false
+      mutate_file "$OT" 'LANE_PICK_RECORD="$preference_record" PREFERENCE_ENTRY=' 'PREFERENCE_ENTRY='
+    elif [[ "$control" == mutant ]]; then
       OT="$(mutant_scripts "mutant-rejudge-$surface" open-terminal)/open-terminal"
       orch_fixture_shared_libs "$TMP_ROOT/mutant-rejudge-$surface"
       git -C "$TMP_ROOT/mutant-rejudge-$surface" init -q
@@ -253,13 +266,15 @@ for surface in batch wait; do
       [[ -n "$command" ]] || continue
       commands+="$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command"),"
     done <<<"$(sed -n '/^clear; /p' "$RUN/tmux" 2>/dev/null || true)"
-    records="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes | map([.item,.harness,.model,.preference_entry] | join(":")) | join(",")' | tr -d '\"')"
+    records="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes | map([.item,.harness,.model,.preference_entry,(.pick.account // "none" | split("/") | last),(.pick.claims | tostring)] | join(":")) | join(",")' | tr -d '\"')"
     if [[ "$surface:$control" == batch:live ]]; then
-      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high,CC-12:claude:opus:claude:opus:medium'
+      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high:.claude:0,CC-12:claude:opus:claude:opus:medium:.claude:1'
+    elif [[ "$surface:$control" == batch:unkept ]]; then
+      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high:none:null,CC-12:claude:opus:claude:opus:medium:none:null'
     elif [[ "$surface:$control" == batch:mutant ]]; then
-      want='1|fable:high,|CC-11:claude:fable:claude:fable:high'
+      want='1|fable:high,|CC-11:claude:fable:claude:fable:high:.claude:0'
     elif [[ "$control" == live ]]; then
-      want='0|opus:medium,|CC-12:claude:opus:claude:opus:medium'
+      want='0|opus:medium,|CC-12:claude:opus:claude:opus:medium:.claude:1'
     else
       want='1||'
     fi
