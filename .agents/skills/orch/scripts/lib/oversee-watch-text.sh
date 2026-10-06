@@ -209,11 +209,15 @@ The long pass's events, checked and reported in this order:
                              both failed. last= names the newer run and since=
                              is the older run's createdAt. report=initial starts
                              a new incident; report=repeat continues a standing
-                             incident, including a cause change. cause= is the last
-                             refresh-error= or kendex-hook- diagnostic in the
-                             newer run's failed-step log, without gh's prefix;
-                             unread means the log could not be read or had no
-                             such diagnostic. Reported once, again when the
+                             incident, including a cause change. cause= is the
+                             newer run's failed-step log line of the highest
+                             rank, read without gh's job, step and timestamp
+                             prefix, the last such line on a tie: a failed:
+                             row, a FAIL check= row, an Error: line, a
+                             refresh-error= line, then the text from
+                             kendex-hook- on in a hook warning; unread means
+                             the log could not be read or held no ranked line.
+                             Reported once, again when the
                              cause changes, and every ORCH_OVERSEER_MARK_REPEAT
                              long passes while it stands. A success clears it.
                              A new pair is reported only when its newer run is

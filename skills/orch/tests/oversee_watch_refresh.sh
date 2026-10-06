@@ -120,6 +120,7 @@ for row in \
   'invalid-shape|json|{}|1|' \
   'log-unread|log|HTTP 410: logs expired|1|unread' \
   'no-diagnostic|text|unrelated failed-step output|0|unread' \
+  'hook-warning|text|R\tS\tT warning: kendex-hook-carrier-missing: hook=a\nR\tS\tT other output|0|kendex-hook-carrier-missing: hook=a' \
   'failed-over-warnings|text|R\tS\tT warning: kendex-hook-carrier-missing a\nR\tS\tT FAIL check=c value=v\nR\tS\tT failed: doc-drift-check: not found\nR\tS\tT kendex-hook-carrier-missing b\nR\tS\tT Error: refresh failed: 1 problem(s)|0|failed: doc-drift-check: not found' \
   'fail-check-over-warnings|text|R\tS\tT kendex-hook-excluded: hook=a\nR\tS\tT ok check=b value=c\nR\tS\tT FAIL check=workflow-edited value=.github/workflows/w.yml\nR\tS\tT   FAIL check=indented value=x\nR\tS\tT Error: refresh failed: 1 problem(s)\nR\tS\tT kendex-hook-excluded: hook=d|0|FAIL check=workflow-edited value=.github/workflows/w.yml' \
   'error-over-warnings|text|R\tS\tT Error: first\nR\tS\tT refresh-error=dirty value=x\nR\tS\tT Error: refresh failed: 1 problem(s)\nR\tS\tT kendex-hook-carrier-missing b|0|Error: refresh failed: 1 problem(s)' \

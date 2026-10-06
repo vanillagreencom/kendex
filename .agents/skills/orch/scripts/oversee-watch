@@ -1582,7 +1582,7 @@ check_refresh() {
         /^failed: / { rank = 5 }
         !rank && /^FAIL check=/ { rank = 4 }
         !rank && /^Error: / { rank = 3 }
-        !rank && match($0, /refresh-error=/) { rank = 2; text = substr($0, RSTART) }
+        !rank && /^refresh-error=/ { rank = 2 }
         !rank && match($0, /kendex-hook-/) { rank = 1; text = substr($0, RSTART) }
         rank && rank >= best { best = rank; cause = text }
         END { gsub("\t", " ", cause); sub(/\r$/, "", cause); print cause }' <<<"$log")" \
