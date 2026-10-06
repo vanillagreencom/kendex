@@ -197,7 +197,8 @@
 #         earliest reset among the walled candidates' projected_window, judged
 #         with --model as the pick is, the binding reset where one has no
 #         projection, and null where none states a reset: when a launch of
-#         that harness and model can first find room.
+#         that harness and model can first find room. A deciding window whose
+#         reset is unknown states none; the binding reset never stands in.
 #         Where ORCH_LANE_HOST names a provider that answers `accounts`, the
 #         candidates are the rows `list` merges, with each account the provider
 #         reports judged on the provider's reading IN PLACE OF this machine's:

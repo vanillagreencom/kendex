@@ -368,6 +368,19 @@ table \
   "the chooser's refusal dates r's wall to its session reset|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||$PICK|rc=3 walled=1 walled_resets_at=$R_SESSION_RESET" \
   "a pick on Sonnet dates o's wall to the Sonnet window's reset|ORCH_LANE_DIRS=$H/.oclaude|||$PICK --model sonnet|rc=3 walled=1 walled_resets_at=$O_SONNET_RESET" \
   "a pick naming no model dates o's wall to the most-consumed Opus window's reset|ORCH_LANE_DIRS=$H/.oclaude|||$PICK|rc=3 walled=1 walled_resets_at=$O_OPUS_RESET"
+# u is weekly-bound at 90 with its session at 80 and no session reset: five
+# lanes wall it on the session window, charged one hour each, and a wall
+# whose deciding reset nobody stated is undated rather than dated to the
+# weekly reset. Its control lets the weekly reset stand in.
+make_lane "$H" uclaude 3600
+jq -n --argjson now "$NOW" '{five_hour: {utilization: 80, resets_at: null},
+  seven_day: {utilization: 90, resets_at: ($now + 288000 | todate)}, limits: []}' > "$FIXTURE_DIR/.uclaude.json"
+table \
+  "a session wall with no stated reset is undated, not dated to the weekly reset|ORCH_LANE_DIRS=$H/.uclaude|claim:u:5||$PICK|rc=3 walled=1 walled_resets_at=null"
+CTRL="$(mutant_scripts mutant-reset-stand-in lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'if .projected_window == null then .binding_resets_at else .projected_window.resets_at end' '.projected_window.resets_at // .binding_resets_at'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: the binding reset standing in dates an unknown session wall to the weekly reset|ORCH_LANE_DIRS=$H/.uclaude|claim:u:5||$PICK|rc=3 walled=1 walled_resets_at=$(jq -nr --argjson now "$NOW" '$now + 288000 | todate')"
 # Control: with no deciding window in the output, r's wall dates to the
 # weekly reset days away.
 CTRL="$(mutant_scripts mutant-window-unnamed lib/lane-model.sh)" || exit 1

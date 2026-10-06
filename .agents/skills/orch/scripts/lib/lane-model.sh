@@ -420,7 +420,9 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
                   | del(.wall, .verdict) | lane_public end),
       qualifying: ([ .[] | select(.verdict == "room") ] | length),
       walled: ([ .[] | select(.verdict == "walled") ] | length),
-      walled_resets_at: ([ .[] | select(.verdict == "walled") | (.projected_window.resets_at // .binding_resets_at) | strings ] | min),
+      walled_resets_at: ([ .[] | select(.verdict == "walled")
+                           | if .projected_window == null then .binding_resets_at else .projected_window.resets_at end
+                           | strings ] | min),
       unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
       cloud_repo_unset: [ .[] | select(.verdict == "cloud-repo-unset") | .config_dir ],
       cloud_credit_unread: [ .[] | select(._credit_unread) | .alias ],
