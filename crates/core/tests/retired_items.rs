@@ -2,15 +2,15 @@
 //! is never rendered again, whether or not the catalog still carries it,
 //! and derives no companion its header requires. A plain refresh keeps
 //! what is installed exactly as recorded, with one notice keyed by the
-//! item's name that carries the catalog's migration, and a hook requiring
-//! it stays armed where it is kept. A prune takes the copies, an emptied
-//! Copilot registry and a Pi package's registration with them, the records
-//! and the item's own declaration. Where nothing of it is kept, pruned or
-//! never installed, it is owed nothing and an armed hook requiring it is
-//! withheld. A rebound declaration keeps the source conflict. Every other
-//! name the catalog does not carry keeps the refusal that fails a refresh,
-//! so a retirement cannot hide a typo. Refresh also takes what a
-//! declaration deleted by hand left, except a copy the person edited.
+//! item's name that carries the catalog's migration. A prune takes the
+//! copies, an emptied Copilot registry and a Pi package's registration with
+//! them, the records and the item's own declaration. Where nothing of it is
+//! kept, pruned or never installed, it is owed nothing. An armed hook
+//! requiring it is withheld, kept or not. A rebound declaration keeps the
+//! source conflict. Every other name the catalog does not carry keeps the
+//! refusal that fails a refresh, so a retirement cannot hide a typo.
+//! Refresh also takes what a declaration deleted by hand left, except a
+//! copy the person edited.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -22,12 +22,12 @@ use std::path::PathBuf;
 use kendex_core::apply::{self, Op};
 use kendex_core::engine::ops;
 use kendex_core::engine::{
-    DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions, RowRemedy, audit,
-    plan_apply,
+    AgentModelRequest, DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions,
+    RowRemedy, agent_model_request, audit, plan_apply, planned_closure,
 };
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
-use kendex_core::model::{ItemKind, Scope};
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::{lock, pi_ext};
 
 const HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: NAME\n# event: PreToolUse\n# matcher: Bash\n# description: hold the call\n# ---\nexit 0\n";
@@ -488,6 +488,16 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
             matches!(wanted, InBundle),
             "{row}: the bundle declaration moved"
         );
+
+        // A plain refresh after the prune owes the item nothing, a bundle
+        // still listing it included, and says nothing of it.
+        let after = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+
+        assert_eq!(warned(&after), Vec::<(ItemKind, String)>::new(), "{row}");
+        for written in [name, COMPANION] {
+            let files = written_files(&after, written);
+            assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {written}");
+        }
     }
 }
 
@@ -528,20 +538,57 @@ fn an_unknown_hook_name_keeps_the_refusal() {
     }
 }
 
-/// A hook whose header requires a hook the catalog retires: installed
-/// first, retired after, carried or deleted; or retired before its first
-/// install. Where the judge is kept, a plain refresh notices it and keeps
-/// the hook armed beside it. Where nothing of it is kept, before its first
-/// install or after a prune, the hook is withheld with a warning of its
-/// own rather than armed alone, and a plain refresh after a prune does not
-/// arm it again.
+/// What became of the judge before its catalog retired it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Before {
+    Installed,
+    SwitchedOff,
+    NeverInstalled,
+}
+
+/// What the person did after the retirement, ahead of a plain refresh.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum After {
+    Nothing,
+    Pruned,
+    RemovedByName,
+}
+
+/// A hook whose header requires a hook the catalog retires is withheld
+/// from every tool with a warning of its own, rather than armed beside a
+/// judge that is never written again, whether the judge is kept, pruned,
+/// never installed, switched off or removed by name. The declarations stay
+/// complete: the retirement is the catalog's answer, so the walks outside
+/// a plan, the closure and the managed agent lookup, read it as one too.
 #[test]
-#[allow(clippy::unwrap_used)]
-fn a_hook_requiring_a_retired_hook_is_armed_only_beside_a_kept_one() {
-    for (row, installed_first, deleted) in [
-        ("installed, then retired", true, false),
-        ("installed, then retired and deleted", true, true),
-        ("retired before its first install", false, false),
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
+fn a_hook_requiring_a_retired_hook_is_withheld() {
+    for (row, before, after) in [
+        (
+            "installed, then retired: kept",
+            Before::Installed,
+            After::Nothing,
+        ),
+        (
+            "installed, then retired and pruned",
+            Before::Installed,
+            After::Pruned,
+        ),
+        (
+            "retired before its first install",
+            Before::NeverInstalled,
+            After::Nothing,
+        ),
+        (
+            "switched off, then retired",
+            Before::SwitchedOff,
+            After::Nothing,
+        ),
+        (
+            "installed, retired, then removed by name",
+            Before::Installed,
+            After::RemovedByName,
+        ),
     ] {
         let f = installed(ItemKind::Hook, "boss");
         write_item(&f, ItemKind::Hook, "judge");
@@ -552,65 +599,73 @@ fn a_hook_requiring_a_retired_hook_is_armed_only_beside_a_kept_one() {
             header.replacen("# ---\nexit", "# requires: [judge]\n# ---\nexit", 1),
         )
         .unwrap();
-        if installed_first {
+        if before == Before::SwitchedOff {
+            let manifest = f.project.join("kendex.toml");
+            let mut text = fs::read_to_string(&manifest).unwrap();
+            text.push_str("\n[hooks.judge]\nsource = \"cat\"\nenabled = false\n");
+            fs::write(&manifest, text).unwrap();
+        }
+        if before != Before::NeverInstalled {
             let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
             apply::execute(&f.env, &report.plan).unwrap();
-            for copy in f.installed_copies(ItemKind::Hook, "judge") {
-                assert!(
-                    copy.exists(),
-                    "{row}: the fixture installs {}",
-                    copy.display()
-                );
-            }
-        }
-        if deleted {
-            fs::remove_file(f.catalog_copy(ItemKind::Hook, "judge")).unwrap();
+            assert_ne!(
+                recorded_of(&f, "judge"),
+                Vec::new(),
+                "{row}: no judge record"
+            );
         }
         f.retire(ItemKind::Hook, "judge", "");
+        let done = match after {
+            After::Nothing => None,
+            After::Pruned => Some(plan_apply(&f.env, &f.scope, &prune_options()).unwrap()),
+            After::RemovedByName => {
+                Some(ops::remove(&f.env, &f.scope, &["judge".to_owned()], None, false).unwrap())
+            }
+        };
+        if let Some(done) = done {
+            let files = written_files(&done, "boss");
+            assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {after:?}");
+            apply::execute(&f.env, &done.plan).unwrap();
+        }
 
         let plain = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
-        let noticed = match installed_first {
-            true => "judge",
-            false => "boss",
-        };
+
         assert_eq!(
-            warned(&plain),
-            [(ItemKind::Hook, noticed.to_owned())],
+            plain.declaration_status,
+            DeclarationStatus::Complete,
             "{row}"
         );
         assert_eq!(not_found_keys(&plain), Vec::<String>::new(), "{row}");
+        assert!(
+            warned(&plain).contains(&(ItemKind::Hook, "boss".to_owned())),
+            "{row}: {:?}",
+            warned(&plain)
+        );
+        for name in ["boss", "judge"] {
+            let files = written_files(&plain, name);
+            assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {name}");
+        }
         apply::execute(&f.env, &plain.plan).unwrap();
+        assert_eq!(
+            recorded_of(&f, "boss"),
+            Vec::new(),
+            "{row}: boss is recorded"
+        );
+        let kept = (before, after) == (Before::Installed, After::Nothing);
         for name in ["boss", "judge"] {
             for copy in f.installed_copies(ItemKind::Hook, name) {
-                assert_eq!(copy.exists(), installed_first, "{row}: {}", copy.display());
+                let stays = kept && name == "judge";
+                assert_eq!(copy.exists(), stays, "{row}: {}", copy.display());
             }
         }
-
-        for options in [prune_options(), refresh_options()] {
-            let report = plan_apply(&f.env, &f.scope, &options).unwrap();
-            assert_eq!(not_found_keys(&report), Vec::<String>::new(), "{row}");
-            assert_eq!(
-                warned(&report),
-                [(ItemKind::Hook, "boss".to_owned())],
-                "{row}"
-            );
-            assert_eq!(
-                written_files(&report, "boss"),
-                Vec::<PathBuf>::new(),
-                "{row}"
-            );
-            assert_eq!(
-                written_files(&report, "judge"),
-                Vec::<PathBuf>::new(),
-                "{row}"
-            );
-            apply::execute(&f.env, &report.plan).unwrap();
-            for name in ["boss", "judge"] {
-                for copy in f.installed_copies(ItemKind::Hook, name) {
-                    assert!(!copy.exists(), "{row}: {} stays", copy.display());
-                }
-            }
-        }
+        let manifest = ops::manifest_for_reading(&f.env, &f.scope).unwrap();
+        let (_, closure) = planned_closure(&f.env, &f.scope, &manifest);
+        assert_eq!(closure, DeclarationStatus::Complete, "{row}");
+        let lookup = agent_model_request(&f.env, &f.project, HarnessId::Claude, "scout");
+        assert!(
+            matches!(lookup, Ok(AgentModelRequest::Unmanaged)),
+            "{row}: the managed agent lookup failed"
+        );
     }
 }
 

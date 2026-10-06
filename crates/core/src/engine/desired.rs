@@ -431,7 +431,7 @@ impl DesiredState {
         source: &str,
         migration: &str,
         via: RetiredVia,
-    ) -> &Retirement {
+    ) {
         let recorded = |harness: &HarnessId| {
             let key = crate::lock::entry_key(kind, name, *harness);
             !self.prune_retired && self.recorded.contains(&key)
@@ -446,9 +446,8 @@ impl DesiredState {
                 via,
                 kept,
             };
-            self.retired.insert(key.clone(), retirement);
+            self.retired.insert(key, retirement);
         }
-        &self.retired[&key]
     }
 
     /// Whether an item its catalog retired is kept nowhere this pass:
@@ -797,8 +796,9 @@ impl RetiredVia {
 /// refresh at a consumer still wanting it runs: one line keyed by the
 /// item's name, saying where it stands and how to remove it, ending with
 /// the catalog's migration. A derived one kept nowhere gets none: nothing
-/// of it is installed, and a requirer's finding says what it costs. The
-/// commands in the line are the owner's ruled exception to engine rule 18.
+/// of it is installed; a requirer's warning names it, and a bundle member
+/// is silent. The commands in the line are the owner's ruled exception to
+/// engine rule 18.
 fn retired(kind: ItemKind, name: &str, retirement: &Retirement) -> Option<super::ItemWarning> {
     let source = &retirement.source;
     let line = match (&retirement.via, retirement.kept.is_empty()) {

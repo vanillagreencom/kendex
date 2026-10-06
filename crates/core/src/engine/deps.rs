@@ -277,14 +277,11 @@ fn withheld_past_pin(
     let mut expansion = walked.clone();
     expansion.redeclare(ItemKind::Hook, hook, &decl, asked);
     // The resolutions already read are handed on, so the second walk
-    // resolves no source the first one did, and so is the record a retired
-    // companion is kept by, so the two walks agree on where it runs. It
-    // judges no pin: only the hook's withholding is read off it.
+    // resolves no source the first one did. It judges no pin: only the
+    // hook's withholding is read off it.
     let mut scratch = DesiredState {
         sources: state.sources.clone(),
         pinned: state.pinned.clone(),
-        prune_retired: state.prune_retired,
-        recorded: state.recorded.clone(),
         ..DesiredState::default()
     };
     let from_hook = VecDeque::from([(ItemKind::Hook, hook.to_owned())]);
@@ -334,6 +331,7 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
     }
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
+        state.warnings.extend(found.answered);
         state.withheld.extend(
             found
                 .withheld
@@ -350,6 +348,10 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
 struct Wanted {
     deps: Vec<Dep>,
     findings: Vec<ItemWarning>,
+    /// Findings that leave the declarations complete: a companion its
+    /// catalog retired, the catalog's own answer, and a withholding taken
+    /// on from a companion, whose own finding says what is missing.
+    answered: Vec<ItemWarning>,
     withheld: BTreeMap<HarnessId, Withholding>,
     /// Whether the parent is switched on: only a hook that would run is
     /// withheld, since one that is off arms nothing beside a missing judge.
@@ -475,7 +477,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                 because,
             } = companion;
             found.withhold(tools.iter().copied(), because);
-            found.findings.push(finding(
+            found.answered.push(finding(
                 &NotWritten::Withheld,
                 kind,
                 dep_kind,
@@ -521,7 +523,7 @@ fn withhold_orphans(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion) 
             };
             found.withhold(tools.iter().copied(), Withholding::Orphaned);
             found
-                .findings
+                .answered
                 .push(orphaned_finding(kind, &parent, &requirers, &tools));
         }
     }
@@ -695,6 +697,7 @@ fn wanted_by(
     let mut wanted = Wanted {
         deps: Vec::new(),
         findings: Vec::new(),
+        answered: Vec::new(),
         withheld: BTreeMap::new(),
         armed: parent_decl.enabled,
         left_out: Vec::new(),
@@ -902,7 +905,7 @@ fn derive(
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
     for (dep_kind, dep, key) in companions {
-        let mut harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
+        let harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
         let source = key.0.as_str();
         let found = &mut wanted.findings;
         let because = match catalogs.offer(&key, dep_kind, &dep) {
@@ -926,20 +929,16 @@ fn derive(
                 wanted.deps.push(landed);
                 continue;
             }
-            // Retired, the companion is never written again: it runs only
-            // where its record is kept (`Retirement::kept`), and anywhere
-            // else an armed hook is withheld rather than armed alone.
+            // Retired, the companion is never written again, so an armed
+            // hook is withheld from every tool rather than armed beside a
+            // copy kept only until the next prune.
             Offer::Retired(migration) => {
                 let via = super::desired::RetiredVia::RequiredBy {
                     kind,
                     name: parent.to_owned(),
                 };
-                let kept = &state.retire(dep_kind, &dep, source, migration, via).kept;
-                harnesses.retain(|harness| !kept.contains(harness));
-                if harnesses.is_empty() {
-                    continue;
-                }
-                found.push(warn(
+                state.retire(dep_kind, &dep, source, migration, via);
+                wanted.answered.push(warn(
                     kind,
                     parent,
                     format!("{parent} requires {dep}, which the catalog '{source}' retired"),
