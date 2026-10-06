@@ -340,8 +340,8 @@ pull_request|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests
 merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard
 pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
 merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard
-merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB
-merge_group|$SOURCE_PROOF_ROW|$MACOS_QUEUE_JOB
+merge_group|$ORCH_PROOF_ROW|bot-instructions cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB
+merge_group|$SOURCE_PROOF_ROW|bot-instructions $MACOS_QUEUE_JOB
 ROWS
 [ "$job_rows" -ge 14 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
@@ -723,7 +723,7 @@ esac
 plant "$WORKFLOW" "needs.changes.outputs.shell_os != '[\"macos-latest\"]'" "true" \
   "$TMP/wf-os-unread.yml" skill-suites-shard
 check "must-fail: a job ignoring runner proof repeats the Linux shell job" \
-  "cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard" \
+  "bot-instructions cargo-macos cargo-tests-windows $MACOS_QUEUE_JOB skill-suites-shard" \
   "$(running "$TMP/wf-os-unread.yml" "$ORCH_PROOF_ROW" success merge_group)"
 
 # The shard key reading no selection expands the whole roster on a diff that

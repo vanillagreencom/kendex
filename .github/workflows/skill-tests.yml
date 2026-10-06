@@ -12,16 +12,17 @@ name: Skill Tests
 # turns it and the changed paths into one `<lane>=true|false` line per gated
 # lane and the list of shell shards the changed packages select, and every
 # `if:` in this file reads one of those lines. Of the gated jobs, a `render`
-# or `trivial` diff runs the bot-instructions job alone, which on a pull
-# request also carries the document byte ceilings and the work-marker scan.
-# Every other diff, and
+# or `trivial` diff runs the bot-instructions job alone, whose steps the
+# bot_instructions lane entry in `tools/ci-job-set` lists. Every other diff,
+# and
 # a `trivial` one changing a path tools/rust-reads names, runs that job, the
 # shell shards its packages select and each other lane as `tools/ci-job-set`
 # selects it; the invariant comment there is the one statement of what each
 # lane runs. A merge group whose tree its pull request's passing run
 # already tested reuses that run's proof: the action reads the record that
 # run left, `tools/ci-job-set` re-derives what it ran from it and stands
-# those lanes down, so such a group runs nothing the pull request did. The
+# those lanes down but bot-instructions, whose changelog step judges the
+# group's own base, so such a group runs nothing else the pull request did. The
 # pull request selects every lane, shard and runner the merge group selects
 # for the same paths, and the `changes` job's call
 # of `tools/ci-job-set --event-parity` refuses a selection that differs by
@@ -371,7 +372,8 @@ jobs:
       # committing worktree, so a branch cut before a rule landed commits
       # past it; here the merged tree's copy judges the range the changes job
       # classifies. Both events: a merge group is the run that sees the base
-      # the branch actually merges into.
+      # the branch actually merges into, and no proof stands this job down
+      # there, because a proof record names no base.
       - id: changelog-entries
         name: changelog-entries (fragments and package versions over the change)
         if: always()

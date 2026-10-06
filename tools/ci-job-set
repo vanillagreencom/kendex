@@ -87,6 +87,8 @@
 #     event; each covered lane stands down here. A shell runner stands down
 #     where that record selected it over every shard this diff selects.
 #     A lane or shard outside that record keeps its current selection.
+#     bot_instructions is never covered: its changelog step judges the
+#     range from this event's base, and a record names no base.
 #     queue_macos_shards reads the macOS shell bit before any proof: no
 #     pull request runs the queue's macOS legs, so no proof covers them.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
@@ -101,10 +103,10 @@
 #     lane, so a change to a lane or to its selection runs on the pull
 #     request that makes it. Any path under .github/ selects every shard.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
-#     seconds-long verify job: its check and, on a pull request, the
-#     document byte ceilings and the work-marker scan. The classifier
-#     proved a `render` diff by re-rendering it, and a `trivial` one is
-#     inside the docs path set and its line ceiling, or a plan of any size.
+#     seconds-long verify job, whose steps its lane entry below lists. The
+#     classifier proved a `render` diff by re-rendering it, and a `trivial`
+#     one is inside the docs path set and its line ceiling, or a plan of any
+#     size.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a
@@ -118,10 +120,13 @@
 #                       lists are non-empty. shell_os names the unproven
 #                       runners. .github/workflows/skill-tests.yml owns the
 #                       jobs and events that consume these values.
-#   bot_instructions    the rendered review-bot instruction files and the root
-#                       AGENTS.md region they own and, on a pull request,
-#                       the document byte ceilings and the index-wide
-#                       work-marker scan.
+#   bot_instructions    on both events, the check of the rendered review-bot
+#                       instruction files and the root AGENTS.md region they
+#                       own, and changelog-entries --base over the range from
+#                       the event's base: fragments and package versions. On
+#                       a pull request also the document byte ceilings, the
+#                       index-wide work-marker scan and the secrets scan of
+#                       the commits it adds.
 #   cargo_linux         the workspace tests on Linux.
 #   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.
@@ -633,6 +638,8 @@ for lane in $LEGS $JOBS; do
   ran=false
   [ -z "$was" ] || ran="$(sel_get "$was" "$lane")"
   case "$lane" in linux | macos) [ "$covered" = true ] || ran=false ;; esac
+  # The changelog step's verdict reads the base, which the record lacks.
+  case "$lane" in bot_instructions) ran=false ;; esac
   if [ "$value:$ran" = true:true ]; then
     value=false
     printf 'ci-job-set: proof=reused lane=%s\n' "$lane" >&2
