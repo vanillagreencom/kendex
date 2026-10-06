@@ -77,8 +77,9 @@ pub(super) struct UnreadableBundle {
     pub fix: String,
 }
 
-/// The table a catalog's own `kendex.toml` declares its sets under.
-const BUNDLES: &str = "bundles";
+/// The table a catalog's own `kendex.toml` declares its sets under, and
+/// the one its `[retired]` table retires sets under.
+pub(super) const BUNDLES: &str = "bundles";
 
 /// The one key beside the member lists a set's body may carry.
 const DESCRIPTION: &str = "description";
@@ -261,6 +262,18 @@ pub fn offered(sealed: &SealedSource, config: &SourceConfig) -> Result<Vec<Catal
         .iter()
         .map(|entry| from_plugin(sealed, entry))
         .collect()
+}
+
+/// The name of every set this catalog offers, read without their members.
+pub fn names(config: &SourceConfig) -> Vec<String> {
+    match &config.plugin_registry {
+        None => config.bundles.keys().cloned().collect(),
+        Some(registry) => registry
+            .plugins
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect(),
+    }
 }
 
 /// The set this catalog offers under one name, or `None` when it offers none.

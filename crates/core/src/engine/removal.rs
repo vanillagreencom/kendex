@@ -539,6 +539,17 @@ fn verdicts<'a>(
             ));
             continue;
         }
+        // A member of a declared set this pass could not expand stays as
+        // recorded: the set is still asked for, and this pass cannot say
+        // what it holds (`DesiredState::kept_bundles`).
+        let kept_by_bundle = entry.reasons.iter().any(|reason| match reason {
+            Reason::MemberOf { bundle } => state.kept_bundles.contains(bundle),
+            Reason::Requested | Reason::RequiredBy { .. } => false,
+        });
+        if kept_by_bundle && !named {
+            verdicts.push((key, Verdict::Retained));
+            continue;
+        }
         // An item its catalog retired stays where it is kept
         // (`Retirement::kept`, which a removal by name leaves out) and the
         // walk does not withhold it; anywhere else it goes as a departed

@@ -58,10 +58,7 @@ pub(super) fn expand(
         {
             let edge = (
                 Reason::MemberOf {
-                    bundle: BundleRef {
-                        source: decl.source.clone(),
-                        name: name.clone(),
-                    },
+                    bundle: bundle_ref(name, &decl.source),
                 },
                 harnesses,
             );
@@ -193,6 +190,13 @@ fn installable(
     // reached through here and never through the item pass, so without this
     // a bundle-only manifest is told nothing its catalog reported.
     super::catalog::notes(config, &decl.source, state);
+    // `[retired]` answers before the set is looked for, as it does for an
+    // item, so a catalog that retired a set and deleted it answers as one
+    // still carrying it.
+    if let Some(migration) = config.retired_bundle(name) {
+        retire(name, &decl.source, migration, state);
+        return Vec::new();
+    }
     let offered = match crate::source::bundles::find(sealed, config, name) {
         Ok(offered) => offered,
         // The set is installed and this pass cannot say what it holds. The
@@ -214,12 +218,16 @@ fn installable(
             return Vec::new();
         }
     };
+    // Refused as a declared item the catalog does not carry is: a set
+    // renamed in its catalog would otherwise uninstall what it brought in
+    // from every consumer that declared it, and say so only in passing.
     let Some(bundle) = offered else {
         state.mark_incomplete();
-        state.notes.push(format!(
-            "bundle {name}: the catalog '{}' offers no set by that name",
-            decl.source
-        ));
+        state.kept_bundles.insert(bundle_ref(name, &decl.source));
+        let offered = crate::source::bundles::names(config);
+        let key = format!("bundle {name}");
+        let note = super::desired::not_offered(&key, &decl.source, "bundle", offered);
+        state.notes.push(note);
         return Vec::new();
     };
     let mut installable = Vec::new();
@@ -282,6 +290,34 @@ fn installable(
         ));
     }
     installable
+}
+
+/// A declared set its catalog retired. Short of a prune, what it installed
+/// stays as recorded, with one notice keyed by the set that ends with the
+/// catalog's migration; its commands are engine rule 18's exception for a
+/// retired item's notice. A prune drops the
+/// declaration (`desired::settle_retired`), and what only the set carried
+/// then goes as any leftover does.
+fn retire(name: &str, source: &str, migration: &str, state: &mut DesiredState) {
+    if state.prune_retired {
+        state.pruned_bundles.insert(name.to_owned());
+        return;
+    }
+    state.kept_bundles.insert(bundle_ref(name, source));
+    let line = format!(
+        "bundle {name}: retired by {source}; kept; remove it with kendex refresh --prune (or kendex remove {name})"
+    );
+    state.notes.push(match migration.is_empty() {
+        true => line,
+        false => format!("{line}; {migration}"),
+    });
+}
+
+fn bundle_ref(name: &str, source: &str) -> BundleRef {
+    BundleRef {
+        source: source.to_owned(),
+        name: name.to_owned(),
+    }
 }
 
 /// What two sets carrying one member cannot agree on, once the tools and the

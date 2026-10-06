@@ -60,6 +60,9 @@ pub struct SourceConfig {
     /// one-line migration a consumer still declaring it reads; empty where
     /// the catalog gave none.
     pub retired: BTreeMap<(ItemKind, String), String>,
+    /// The sets this catalog retired, by name, each with its migration
+    /// line as [`SourceConfig::retired`] carries an item's.
+    pub retired_bundles: BTreeMap<String, String>,
 }
 
 impl SourceConfig {
@@ -127,6 +130,12 @@ impl SourceConfig {
         self.retired
             .get(&(kind, name.to_owned()))
             .map(String::as_str)
+    }
+
+    /// The migration line for a set this catalog retired, `None` for one it
+    /// did not.
+    pub fn retired_bundle(&self, name: &str) -> Option<&str> {
+        self.retired_bundles.get(name).map(String::as_str)
     }
 
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
@@ -351,7 +360,8 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 }
 
 /// `[retired]`: one table per kind, keyed as a manifest declares that kind,
-/// naming each retired item with its migration line. A table that will not
+/// naming each retired item with its migration line, and `[retired.bundles]`
+/// naming each retired set the same way. A table that will not
 /// read retires nothing and is a finding: a consumer still declaring the
 /// item has it installed where the catalog carries it, and refused, which
 /// removes nothing, where it does not.
@@ -359,24 +369,34 @@ fn read_retired(config: &mut SourceConfig, table: &toml::Table) {
     let Some(retired) = table.get("retired") else {
         return;
     };
-    let mut read = BTreeMap::new();
+    let lines = |names: &toml::Value| -> Option<BTreeMap<String, String>> {
+        let lines = names.as_table()?.iter();
+        lines
+            .map(|(name, line)| Some((name.clone(), line.as_str()?.to_owned())))
+            .collect()
+    };
+    let (mut read, mut sets) = (BTreeMap::new(), BTreeMap::new());
     let whole = retired.as_table().is_some_and(|kinds| {
         kinds.iter().all(|(key, names)| {
+            let Some(lines) = lines(names) else {
+                return false;
+            };
+            if key == bundles::BUNDLES {
+                sets.extend(lines);
+                return true;
+            }
             let kind = ItemKind::ALL
                 .into_iter()
                 .find(|kind| *kind != ItemKind::Plugin && format!("{}s", kind.name()) == *key);
-            kind.zip(names.as_table()).is_some_and(|(kind, names)| {
-                names.iter().all(|(name, migration)| {
-                    migration
-                        .as_str()
-                        .map(|line| read.insert((kind, name.clone()), line.to_owned()))
-                        .is_some()
-                })
-            })
+            let Some(kind) = kind else {
+                return false;
+            };
+            read.extend(lines.into_iter().map(|(name, line)| ((kind, name), line)));
+            true
         })
     });
     match whole {
-        true => config.retired = read,
+        true => (config.retired, config.retired_bundles) = (read, sets),
         false => config.config_findings.push(CatalogFinding::new(
             crate::manifest::MANIFEST_FILE,
             "`[retired]` could not be read, so it retires nothing",

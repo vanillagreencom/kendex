@@ -1,9 +1,12 @@
 //! Installing and uninstalling a curated set from the command line: one flag
 //! declares the set, and taking it away says which members go, which stay,
-//! and what accounts for each.
+//! and what accounts for each. A declared set its catalog renamed fails a
+//! refresh and keeps its members; one the catalog retired keeps them until
+//! a prune.
 #![cfg(unix)]
 
 use crate::test_util;
+use test_util::rooted;
 
 use std::fs;
 use std::path::Path;
@@ -147,4 +150,94 @@ fn a_bundle_the_catalog_lacks_is_refused() {
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(said.contains("no bundle called 'nonesuch'"), "{said}");
     assert!(!project.join("kendex.toml").exists());
+}
+
+/// The catalog renames the set a consumer declared: refresh fails and its
+/// members stay installed. Retiring it instead lets a plain refresh pass
+/// with one notice keyed by the set and its members kept, and a prune drops
+/// the declaration and takes them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declared_bundle_gone_from_its_catalog_fails_refresh_unless_retired() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = catalog(&home);
+    let added = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            catalog.to_str().unwrap(),
+            "--bundle",
+            "starter",
+            "--harness",
+            "claude",
+            "-y",
+        ],
+    );
+    assert!(added.status.success(), "{}", printed(&added));
+    let members = [".claude/skills/alpha", ".claude/agents/writer.md"].map(|m| project.join(m));
+    let refresh = |extra: &[&str]| {
+        let args = [
+            &["refresh", "--scope", "project", "--yes", "--leave"][..],
+            extra,
+        ]
+        .concat();
+        kendex(&home, &project, &args)
+    };
+    let declared = || {
+        let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        manifest
+            .get("bundles")
+            .and_then(|bundles| bundles.get("starter"))
+            .is_some()
+    };
+
+    let set = "description = \"the starter set\"\nskills = [\"alpha\", \"beta\"]\nagents = [\"writer\"]\n";
+    write(&catalog, "kendex.toml", &format!("[bundles.begin]\n{set}"));
+    let renamed = refresh(&[]);
+    let said = printed(&renamed);
+    assert!(!renamed.status.success(), "{said}");
+    for member in &members {
+        assert!(member.exists(), "{} is gone: {said}", member.display());
+    }
+    assert!(declared(), "{said}");
+
+    write(
+        &catalog,
+        "kendex.toml",
+        &format!("[bundles.begin]\n{set}[retired.bundles]\nstarter = \"declare begin\"\n"),
+    );
+    let kept = refresh(&[]);
+    let said = printed(&kept);
+    assert!(kept.status.success(), "{said}");
+    let keyed = said
+        .lines()
+        .filter(|line| line.contains("bundle starter: "))
+        .count();
+    assert_eq!(keyed, 1, "{said}");
+    for member in &members {
+        assert!(member.exists(), "{} is gone: {said}", member.display());
+    }
+
+    let pruned = refresh(&["--prune"]);
+    let said = printed(&pruned);
+    assert!(pruned.status.success(), "{said}");
+    for member in &members {
+        assert!(!member.exists(), "{} stays: {said}", member.display());
+    }
+    assert!(!declared(), "{said}");
+}
+
+fn printed(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }

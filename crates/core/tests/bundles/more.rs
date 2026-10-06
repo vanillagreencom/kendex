@@ -212,18 +212,19 @@ fn a_member_whose_name_a_shell_would_expand_is_refused() {
     assert!(!settings.exists() || !fs::read_to_string(&settings).unwrap().contains("$(id)"));
 }
 
-/// A name the catalog offers no set under is reported rather than silently
-/// installing nothing.
+/// A name the catalog offers no set under is refused rather than silently
+/// installing nothing, in the note `kendex refresh` fails on
+/// (`refresh_failures` in the CLI's `engine_common.rs`), which names the
+/// sets the catalog does offer.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_the_catalog_does_not_offer_is_reported() {
     let f = fixture("[bundles.nope]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("bundle nope") && note.contains("no set by that name")),
+        report.notes.iter().any(|note| {
+            note.starts_with("bundle nope: not found in source 'cat'") && note.contains("starter")
+        }),
         "{:?}",
         report.notes
     );

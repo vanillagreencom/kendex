@@ -313,6 +313,14 @@ pub struct DesiredState {
     /// What this pass removes by name (`PlanOptions::removal_filter`): a
     /// retired item named there is not kept ([`DesiredState::kept_as_recorded`]).
     pub(super) removal_filter: Option<Vec<super::report_types::RemovalName>>,
+    /// Declared sets this pass could not expand whose installed members it
+    /// keeps as recorded (`removal::verdicts`): one its catalog no longer
+    /// offers, which fails the refresh, and one it retired, short of a
+    /// prune.
+    pub(super) kept_bundles: BTreeSet<crate::lock::BundleRef>,
+    /// Declared sets their catalog retired, under a prune:
+    /// `settle_retired` drops each declaration.
+    pub(super) pruned_bundles: BTreeSet<String>,
     /// The entry keys of the record this pass read: where a retired item
     /// is kept ([`Retirement::kept`]).
     pub(super) recorded: BTreeSet<String>,
@@ -1024,12 +1032,13 @@ fn settle_retired(
             changed = true;
         }
     }
+    for name in &state.pruned_bundles {
+        changed |= updated.bundles.remove(name).is_some();
+    }
     changed
 }
 
-/// The note for a declaration the catalog does not carry. It names what the
-/// source does offer of that kind, so a declaration left on a name the
-/// catalog retired reads its remedy in the line that refuses it.
+/// The note for a declaration the catalog does not carry.
 fn not_offered_note(
     sealed: &SealedSource,
     config: &SourceConfig,
@@ -1037,18 +1046,23 @@ fn not_offered_note(
     name: &str,
     source: &str,
 ) -> String {
-    let mut offered = list_items(sealed, config, kind);
+    let offered = list_items(sealed, config, kind);
+    not_offered(name, source, kind.name(), offered)
+}
+
+/// The note for a declaration of a `noun` its catalog does not carry,
+/// keyed by `key`. It names what the source does offer of that noun, so a
+/// declaration left on a name the catalog renamed reads its remedy in the
+/// line that refuses it. `kendex refresh` fails on its "not found in
+/// source" (`refresh_failures` in the CLI's `engine_common.rs`).
+pub(super) fn not_offered(key: &str, source: &str, noun: &str, mut offered: Vec<String>) -> String {
     offered.sort();
     offered.dedup();
     if offered.is_empty() {
-        return format!(
-            "{name}: not found in source '{source}', which offers no {}",
-            kind.name()
-        );
+        return format!("{key}: not found in source '{source}', which offers no {noun}");
     }
     format!(
-        "{name}: not found in source '{source}' — its {}s are {}; declare one of those",
-        kind.name(),
+        "{key}: not found in source '{source}' — its {noun}s are {}; declare one of those",
         offered.join(", ")
     )
 }

@@ -349,34 +349,50 @@ engineer = ["dev"]
 /// consumer still declares.
 #[test]
 fn a_retired_table_reads_whole_or_retires_nothing() {
-    for (row, table, retired) in [
+    for (row, table, retired, sets) in [
         (
             "per kind",
-            "[retired.hooks]\nold-check = \"\"\n[retired.pi-extensions]\nold-ext = \"declare new-ext\"\n",
+            "[retired.hooks]\nold-check = \"\"\n[retired.pi-extensions]\nold-ext = \"declare new-ext\"\n[retired.bundles]\nold-set = \"declare new-set\"\n",
             vec![
                 ((ItemKind::Hook, "old-check"), ""),
                 ((ItemKind::PiExtension, "old-ext"), "declare new-ext"),
             ],
+            vec![("old-set", "declare new-set")],
         ),
         (
             "a list for a kind",
             "[retired]\nhooks = [\"old-check\"]\n",
             vec![],
+            vec![],
         ),
-        ("an unknown kind", "[retired.plugins]\nold = \"\"\n", vec![]),
+        (
+            "an unknown kind",
+            "[retired.plugins]\nold = \"\"\n",
+            vec![],
+            vec![],
+        ),
         (
             "a migration that is no string",
             "[retired.hooks]\nold-check = true\n",
+            vec![],
             vec![],
         ),
         (
             "a readable entry then an unreadable one",
             "[retired.hooks]\na-check = \"\"\nb-check = true\n",
             vec![],
+            vec![],
+        ),
+        (
+            "an unreadable set beside a readable item",
+            "[retired.hooks]\nold-check = \"\"\n[retired.bundles]\nold-set = true\n",
+            vec![],
+            vec![],
         ),
         (
             "an unusable catalog",
             "catalog = 3\n[retired.hooks]\nold-check = \"\"\n",
+            vec![],
             vec![],
         ),
     ] {
@@ -393,6 +409,12 @@ fn a_retired_table_reads_whole_or_retires_nothing() {
             .map(|((kind, name), line)| ((*kind, name.as_str()), line.as_str()))
             .collect();
         assert_eq!(read, retired, "{row}");
+        let read_sets: Vec<(&str, &str)> = config
+            .retired_bundles
+            .iter()
+            .map(|(name, line)| (name.as_str(), line.as_str()))
+            .collect();
+        assert_eq!(read_sets, sets, "{row}");
         assert_eq!(
             config.config_findings.is_empty(),
             !retired.is_empty(),
