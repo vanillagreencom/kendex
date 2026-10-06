@@ -306,6 +306,7 @@ pub(super) fn orphans(
     for (key, verdict) in verdicts {
         let entry = &lock.entries[key];
         let withheld = said.get(key).copied();
+        let orphan = |detail: String| row(scope, entry, DriftState::Orphaned, detail, None);
         match verdict {
             Verdict::Retained => {
                 new_lock.entries.insert(key.clone(), entry.clone());
@@ -333,13 +334,7 @@ pub(super) fn orphans(
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Held => {
-                drift.push(row(
-                    scope,
-                    entry,
-                    DriftState::Orphaned,
-                    going(withheld),
-                    None,
-                ));
+                drift.push(orphan(going(withheld)));
                 drift.push(row(
                     scope,
                     entry,
@@ -360,13 +355,7 @@ pub(super) fn orphans(
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Removed { .. } => {
-                drift.push(row(
-                    scope,
-                    entry,
-                    DriftState::Orphaned,
-                    going(withheld),
-                    None,
-                ));
+                drift.push(orphan(going(withheld)));
                 if entry.kind == ItemKind::PiExtension {
                     match pi_removal(env, scope, entry, config_edits) {
                         Ok(planned) => guard.extend(ops, planned),
