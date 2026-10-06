@@ -477,7 +477,7 @@ impl DesiredState {
             .into_iter()
             .filter(|harness| self.kept_as_recorded(kind, name, *harness))
             .collect();
-        let by = super::RetiredBy {
+        let by = RetiredBy {
             source: source.to_owned(),
             migration: migration.to_owned(),
         };
@@ -847,11 +847,32 @@ impl ItemCtx<'_> {
     }
 }
 
+/// The catalog that retired an item (`[retired]`), and what it says to
+/// do instead; displayed as a removal preview's reason
+/// (`SetChange::dropped`).
+#[derive(Debug, Clone)]
+pub(super) struct RetiredBy {
+    /// The declared source whose catalog retired it.
+    pub(super) source: String,
+    /// The catalog's one-line migration, empty where it gave none.
+    migration: String,
+}
+
+impl std::fmt::Display for RetiredBy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "retired by {}", self.source)?;
+        match self.migration.is_empty() {
+            true => Ok(()),
+            false => write!(f, "; {}", self.migration),
+        }
+    }
+}
+
 /// An item its catalog retired (`[retired]`), as this pass met it; what a
 /// pass does with one is `PlanOptions::prune_retired`'s.
 #[derive(Debug, Clone)]
 pub struct Retirement {
-    pub(super) by: super::RetiredBy,
+    pub(super) by: RetiredBy,
     /// The person's own declaration brought it in, the one a manifest edit
     /// drops; false for a bundle member or a requirement.
     declared: bool,
@@ -890,9 +911,12 @@ fn retired(
             name: name.to_owned(),
             global: matches!(scope, Scope::Global),
         };
-        remedy
-            .render(None)
-            .map(crate::drift::report::Fix::into_command)
+        // Rendered for no named project, the command runs where the
+        // notice is read.
+        remedy.render(None).map(|fix| match fix {
+            crate::drift::report::Fix::Here(command)
+            | crate::drift::report::Fix::Elsewhere(command) => command,
+        })
     };
     let line = match (standing, retirement.declared, recorded) {
         (RetiredStanding::Uninstalled, false, _) | (RetiredStanding::Pruned, false, false) => {

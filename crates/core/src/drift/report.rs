@@ -166,16 +166,6 @@ pub enum Fix {
     Elsewhere(String),
 }
 
-impl Fix {
-    /// The command, for a reader outside the drift report, who reads it
-    /// where the line it sits on was planned.
-    pub fn into_command(self) -> String {
-        match self {
-            Fix::Here(command) | Fix::Elsewhere(command) => command,
-        }
-    }
-}
-
 /// The project a project-scope remedy has to name, and whose it is: the
 /// two differ in which verbs reach it by being typed in the checked
 /// directory. Serialized as the path alone.

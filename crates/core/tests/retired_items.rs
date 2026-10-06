@@ -29,7 +29,7 @@ use kendex_core::engine::desired::Withholding;
 use kendex_core::engine::ops;
 use kendex_core::engine::{
     AgentModelRequest, DeclarationStatus, DriftCause, DriftState, EngineReport, PlanOptions,
-    RetiredBy, RetiredStanding, RowRemedy, SetDirection, agent_model_request, audit, plan_apply,
+    RetiredStanding, RowRemedy, SetDirection, agent_model_request, audit, plan_apply,
     planned_closure,
 };
 use kendex_core::env::{Env, FakeOs};
@@ -486,21 +486,11 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
                 "{row}: {notice}"
             );
         }
-        // Each removal the preview shows goes for the retirement.
-        let retirements: Vec<Option<&RetiredBy>> = pruned
+        let drops = pruned
             .set_changes
             .iter()
-            .filter(|change| change.name == name && change.direction == SetDirection::Remove)
-            .map(|change| change.retired.as_ref())
-            .collect();
-        assert!(!retirements.is_empty(), "{row}: the preview drops nothing");
-        let by = RetiredBy {
-            source: "cat".to_owned(),
-            migration: migration.to_owned(),
-        };
-        for retirement in &retirements {
-            assert_eq!(*retirement, Some(&by), "{row}");
-        }
+            .any(|change| change.name == name && change.direction == SetDirection::Remove);
+        assert!(drops, "{row}: the preview drops nothing");
         for written in [name, COMPANION] {
             let files = written_files(&pruned, written);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {written}");

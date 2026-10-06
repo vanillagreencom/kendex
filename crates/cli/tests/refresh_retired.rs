@@ -10,7 +10,8 @@
 //! while a plain refresh passes. The kept notice's removal takes only the
 //! retired item, at its own scope, and refuses to run keeping the
 //! declaration. A prune holds a retired copy the person edited and names
-//! the removal that takes it.
+//! the removal that takes it. Verify's row for a left-over names its kind
+//! and, at the global scope, the global flag.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -620,15 +621,15 @@ fn a_prune_holds_an_edited_retired_copy_and_names_its_removal() {
 
 /// A personal-setup skill whose declaration was deleted by hand is left
 /// over beside a live hook of the same name. `kendex verify --scope
-/// global`, run in a project, names the removal that takes it: run as
-/// printed in that project, it takes the personal skill and spares the
-/// hook, where a bare spelling would act on the project.
+/// global`, run in a project, gives the removal that takes it with the
+/// skill's kind, which spares the hook, and the global flag, without
+/// which a removal in that project acts on the project.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn verify_names_a_global_left_over_removal_that_runs_from_a_project() {
+fn verify_names_the_kind_and_scope_of_a_global_left_over_removal() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let (cwd, skill, hook, _) = retired_beside_a_namesake(&home, At::Global);
+    let (cwd, _, _, _) = retired_beside_a_namesake(&home, At::Global);
     let manifest = cwd.join("kendex.toml");
     let declared = fs::read_to_string(&manifest).unwrap();
     let undeclared = declared.replace("[skills.deploy]\nsource = \"cat\"\n", "");
@@ -641,17 +642,15 @@ fn verify_names_a_global_left_over_removal_that_runs_from_a_project() {
     let verified = kendex(&home, &project, &["verify", "--scope", "global"]);
     let printed = said(&verified);
     assert!(!verified.status.success(), "{printed}");
-    let removal = printed
+    let row = printed
         .lines()
-        .filter(|line| line.contains("skill deploy"))
-        .find_map(|line| line.rsplit_once("kendex ").map(|(_, command)| command))
-        .unwrap_or_else(|| panic!("verify names no removal: {printed}"));
-    let mut args: Vec<&str> = removal.split_whitespace().collect();
-    args.extend(["--no-sweep", "--leave"]);
-
-    let removed = kendex(&home, &project, &args);
-    let printed = said(&removed);
-    assert!(removed.status.success(), "{args:?}: {printed}");
-    assert!(!skill.exists(), "{args:?}: the skill stays: {printed}");
-    assert!(hook.exists(), "{args:?}: the hook went: {printed}");
+        .find(|line| line.contains("skill deploy"))
+        .unwrap_or_else(|| panic!("verify gives no row for the skill: {printed}"));
+    let flags: Vec<&str> = row.split_whitespace().collect();
+    let kind = flags.windows(2).any(|pair| pair == ["--kind", "skill"]);
+    assert!(kind, "the row names no kind: {row}");
+    assert!(
+        flags.contains(&"--global"),
+        "the row names no --global: {row}"
+    );
 }

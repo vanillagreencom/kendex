@@ -142,7 +142,7 @@ mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ForkEdit,
     Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions, Reach, Registrations,
-    RetiredBy, RetiredStanding, RowRemedy, StoodIn, StoodInRecord, Targets,
+    RetiredStanding, RowRemedy, StoodIn, StoodInRecord, Targets,
 };
 
 pub(super) struct PlanOwnership {

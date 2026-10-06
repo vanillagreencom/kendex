@@ -165,27 +165,6 @@ pub enum RowRemedy {
     RemoveEdited,
 }
 
-/// The catalog that retired an item (`[retired]`), and what it says to
-/// do instead.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct RetiredBy {
-    /// The declared source whose catalog retired it.
-    pub source: String,
-    /// The catalog's one-line migration, empty where it gave none.
-    pub migration: String,
-}
-
-impl std::fmt::Display for RetiredBy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "retired by {}", self.source)?;
-        match self.migration.is_empty() {
-            true => Ok(()),
-            false => write!(f, "; {}", self.migration),
-        }
-    }
-}
-
 /// Where a plan leaves an item its catalog retired, read off what the
 /// removal pass decided for each copy the record holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

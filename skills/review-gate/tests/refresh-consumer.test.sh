@@ -264,13 +264,13 @@ cp "$TMP/state/body" "$TMP/clean-body"
 reset_default
 REFRESH_SAID="deploy: retired by cat; this prune removes it; declare deploy-next
   - remove skill deploy for Claude Code — retired by cat; declare deploy-next
-check: retired by cat; this prune holds its edited files; remove them with kendex remove --kind hook check"
+check: retired by cat; this prune removes it"
 run_refresh retired pass render
 unset REFRESH_SAID
 expected_retired='Retired items:
 ```text
 deploy: retired by cat; this prune removes it; declare deploy-next
-check: retired by cat; this prune holds its edited files; remove them with kendex remove --kind hook check
+check: retired by cat; this prune removes it
 ```'
 if [ "$RC" -eq 0 ] && [[ "$(cat "$TMP/state/body")" == *"$expected_retired"* ]] &&
     ! grep -qF 'remove skill deploy' "$TMP/state/body"; then

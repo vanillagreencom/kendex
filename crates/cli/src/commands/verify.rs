@@ -1171,28 +1171,22 @@ fn say_row(
         ),
         Some(row) => Some(match row.remedy {
             Some(remedy) => {
-                // The drift report's own spelling, at the row's scope: a
-                // bare name also removes a live item of another kind that
-                // shares it.
-                let removal = kendex_core::drift::report::Remedy::Remove {
-                    kind: entry.kind,
-                    name: name.clone(),
-                    global: row.scope == Scope::Global,
-                }
-                .render(None)
-                .map(kendex_core::drift::report::Fix::into_command);
-                match (remedy, removal) {
-                    (RowRemedy::Remove, Some(command)) => {
-                        format!("{} — refresh takes it, or {command}", row.detail)
+                // The kind rides along: a bare name also removes a live
+                // item of another kind that shares it. A personal-setup
+                // row is out of reach of a removal at the project.
+                let global = match row.scope {
+                    Scope::Global => " and --global",
+                    _ => "",
+                };
+                let removal = format!("remove {name} with --kind {kind}{global}");
+                match remedy {
+                    RowRemedy::Remove => {
+                        format!("{} — refresh takes it, or {removal}", row.detail)
                     }
-                    (RowRemedy::RemoveEdited, Some(command)) => format!(
-                        "{}; its files were edited, which refresh holds — {command}",
+                    RowRemedy::RemoveEdited => format!(
+                        "{}; its files were edited, which refresh holds — {removal}",
                         row.detail
                     ),
-                    (RowRemedy::Remove, None) => row.detail.clone(),
-                    (RowRemedy::RemoveEdited, None) => {
-                        format!("{}; its files were edited, which refresh holds", row.detail)
-                    }
                 }
             }
             None => row.detail.clone(),
