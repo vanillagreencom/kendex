@@ -595,14 +595,7 @@ fn fresh_lock(
     options: &PlanOptions,
     held: &[HeldPin],
 ) -> (Lock, scope_writes::RecordReadings) {
-    let readings = record_readings(
-        env,
-        manifest,
-        state,
-        lock,
-        options.keep_source_records,
-        held,
-    );
+    let readings = record_readings(env, manifest, state, lock, options, held);
     let fresh = Lock {
         version: crate::lock::LOCK_VERSION,
         entries: lock

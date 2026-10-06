@@ -350,3 +350,132 @@ fn at_record_leaves_a_declared_revision_to_itself() {
     assert!(output.status.success(), "{}", said(&output));
     assert_eq!(record_detail(&document), "", "{document:?}");
 }
+
+/// A record whose source entry was edited by hand to another repository
+/// or revision speaks for a declaration the manifest does not make, and
+/// the record row names it under `--at-record` as under the plain verify,
+/// though every follower of that source still holds at its recorded
+/// commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn at_record_holds_the_records_source_entry_to_the_manifest() {
+    let world = world();
+    let catalog = format!("file://{}", world.catalog.display());
+    let rows: [(&str, RecordEdit, String); 2] = [
+        (
+            "another repository",
+            Box::new(|lock| lock["sources"]["cat"]["repo"] = "other/repo".into()),
+            "source cat: recorded for other/repo at the source's own revision, declared as"
+                .to_owned(),
+        ),
+        (
+            "another revision",
+            Box::new(|lock| {
+                let entry = lock["sources"]["cat"].clone();
+                lock["sources"]["cat"] = serde_json::json!({
+                    "repo": entry["repo"],
+                    "rev": "v1",
+                    "commit": entry["commit"],
+                });
+            }),
+            format!("source cat: recorded for {catalog} at v1, declared as {catalog} at"),
+        ),
+    ];
+    for (label, edit, problem) in rows {
+        git(&world.project, &["checkout", "-q", "--", RECORD]);
+        edit_json(&world.project.join(RECORD), edit);
+        let (output, document) = at_record(&world, None);
+        assert!(!output.status.success(), "{label}: {}", said(&output));
+        let detail = record_detail(&document);
+        assert!(detail.contains(&problem), "{label}: {detail}");
+    }
+}
+
+/// A `[sources]` revision edit no write has applied yet leaves every
+/// follower held at its recorded commit, and `--at-record` reads the
+/// source at the revision declared now: each held commit trails it and
+/// answers to its history, so a rollback past what is installed fails,
+/// and a revision the mirror cannot serve is named rather than passed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn at_record_weighs_an_unapplied_revision_edit_at_the_declared_revision() {
+    /// The revision a row declares the catalog at.
+    enum Declared {
+        Moved,
+        Installed,
+        Unserved,
+    }
+    for (label, current_first, declares) in [
+        ("forward to the moved catalog", false, Declared::Moved),
+        ("back to the install commit", true, Declared::Installed),
+        (
+            "a revision the mirror cannot serve",
+            false,
+            Declared::Unserved,
+        ),
+    ] {
+        let world = world();
+        let catalog = format!("file://{}", world.catalog.display());
+        let installed = head(&world.catalog);
+        append(
+            &world,
+            "skills/second/SKILL.md",
+            "\nA paragraph added later.\n",
+        );
+        commit(&world.catalog, "the catalog moves on");
+        let moved = head(&world.catalog);
+        let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+        assert!(fetched.status.success(), "{label}: {}", said(&fetched));
+        if current_first {
+            let output = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+            assert!(output.status.success(), "{label}: {}", said(&output));
+            commit(&world.project, "brought current");
+        }
+        let held_at = if current_first { &moved } else { &installed };
+        let declared = match declares {
+            Declared::Moved => moved.as_str(),
+            Declared::Installed => installed.as_str(),
+            Declared::Unserved => "no-such-branch",
+        };
+        let manifest = world.project.join("kendex.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        let redeclared = text.replacen(
+            "[sources.cat]\n",
+            &format!("[sources.cat]\nrev = \"{declared}\"\n"),
+            1,
+        );
+        assert_ne!(redeclared, text, "{label}");
+        write(&manifest, &redeclared);
+        commit(&world.project, "the catalog pinned, not applied");
+
+        let (output, document) = at_record(&world, None);
+        assert!(!output.status.success(), "{label}: {}", said(&output));
+        let detail = record_detail(&document);
+        let named = |problem: &str| detail.contains(problem);
+        let off_history =
+            format!("skill second: held at {held_at} is not on the declared revision's history");
+        match declares {
+            Declared::Unserved => assert!(
+                named("source cat: the mirror cannot serve the declared revision"),
+                "{label}: {detail}"
+            ),
+            Declared::Moved | Declared::Installed => {
+                assert!(
+                    trails(&document).contains(&("cat", held_at.as_str(), declared)),
+                    "{label}: {document:?}"
+                );
+                assert!(
+                    named(&format!(
+                        "source cat: recorded for {catalog} at the source's own revision, declared as {catalog} at {declared}"
+                    )),
+                    "{label}: {detail}"
+                );
+                assert_eq!(
+                    named(&off_history),
+                    matches!(declares, Declared::Installed),
+                    "{label}: {detail}"
+                );
+            }
+        }
+    }
+}

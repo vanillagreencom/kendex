@@ -16,7 +16,7 @@ use crate::source::{ResolvedSource, SourceState};
 
 use super::config_edits;
 use super::desired::DesiredState;
-use super::report_types::{HeldPin, StoodIn, StoodInRecord};
+use super::report_types::{HeldPin, PlanOptions, StoodIn, StoodInRecord};
 
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
@@ -151,9 +151,9 @@ pub(super) enum Reading<T> {
     /// Not read this pass, by the plan's choice rather than for want of a
     /// resolution: the record's entry is carried forward and no proof
     /// names it. Either it was written for the declaration as it stands
-    /// ([`super::PlanOptions::keep_source_records`]), or the pass held
-    /// followers of a redeclared source at commits read under the selector
-    /// the entry names, so the edit stays pending in the record.
+    /// ([`PlanOptions::keep_source_records`]), or a write held followers
+    /// of a redeclared source at commits read under the selector the entry
+    /// names, so the edit stays pending in the record.
     Kept,
     /// Nothing to record: a path or reserved source, a disabled one, a
     /// name the manifest does not declare, and a set read from any of
@@ -172,20 +172,23 @@ pub(super) struct RecordReadings {
 /// Reads every declared source and set for the record. A source no item
 /// named, one only a Pi extension names among them, has no resolution in
 /// the pass and is read from its mirror alone, so its entry is held to the
-/// declaration like any other; where `keeps_records` is set and the
-/// record's entry for such a source was written for the repository and
-/// revision declared now, that entry is kept instead. A redeclared source
-/// is read afresh, since the record speaks for another declaration, unless
-/// `held` pins a follower of it: that pass read the follower under the
+/// declaration like any other; under
+/// [`PlanOptions::keep_source_records`], where the record's entry for such
+/// a source was written for the repository and revision declared now, that
+/// entry is kept instead. A redeclared source is read afresh, since the
+/// record speaks for another declaration, unless a plan that writes held a
+/// follower of it (`held`): that write read the follower under the
 /// selector the record names and did not apply the edit, so the record
-/// keeps saying so, and the next write that keeps the record
-/// ([`super::PlanOptions::keep_source_records`]) still finds it pending.
+/// keeps saying so, and the next write that keeps the record still finds
+/// it pending. A plan never applied ([`PlanOptions::never_applied`]) reads
+/// it afresh all the same: its record is what the lock is proved against,
+/// and a kept entry would prove the lock against itself.
 pub(super) fn record_readings(
     env: &Env,
     manifest: &Manifest,
     state: &DesiredState,
     lock: &Lock,
-    keeps_records: bool,
+    options: &PlanOptions,
     held: &[HeldPin],
 ) -> RecordReadings {
     let sources = manifest
@@ -195,13 +198,14 @@ pub(super) fn record_readings(
             let reading = match repository(manifest, name) {
                 Some((repo, rev)) => match lock.sources.get(name) {
                     Some(recorded)
-                        if !recorded.written_for(repo, rev)
+                        if !options.never_applied
+                            && !recorded.written_for(repo, rev)
                             && held.iter().any(|pin| &pin.source == name) =>
                     {
                         Reading::Kept
                     }
                     recorded => {
-                        let keeps = keeps_records
+                        let keeps = options.keep_source_records
                             && recorded.is_some_and(|recorded| recorded.written_for(repo, rev));
                         commit_reading(env, repo, rev, state.sources.get(name), keeps).map(
                             |commit| SourceRev {

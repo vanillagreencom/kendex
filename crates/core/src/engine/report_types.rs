@@ -625,8 +625,9 @@ pub struct PlanOptions {
     /// hold keeps it: held at its recorded commit, the write would keep
     /// the source's entry and no write would ever apply the edit, while a
     /// single-package update or an add holds those followers, keeps that
-    /// entry, and leaves the edit pending, and `verify --at-record`
-    /// renders the record as it stands.
+    /// entry, and leaves the edit pending, and `verify --at-record` holds
+    /// them too but reads the source at the revision declared now
+    /// ([`PlanOptions::never_applied`]).
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
@@ -667,6 +668,13 @@ pub struct PlanOptions {
     /// empty. Only verify reads it, and judging a pin walks the pinned
     /// hook's requirements again, so every other plan leaves this off.
     pub judge_pins: bool,
+    /// Nothing applies this plan: verify reads it to prove the lock
+    /// against the record it would write. Such a record reads every
+    /// declared source where its mirror resolves now, where a hold that
+    /// writes keeps the entry of a redeclared source it held a follower of,
+    /// so the edit stays pending; kept here, that entry would be the lock's
+    /// own, and the proof would weigh the lock against itself.
+    pub never_applied: bool,
 }
 
 /// The declarations a plan scoped to some packages brings current, and how
@@ -722,7 +730,9 @@ impl PlanOptions {
     /// [`PlanOptions::update_only`] says. A source declared at another
     /// repository or revision than the record was written for still holds,
     /// since what this reads is the record as it stands. What
-    /// `verify --at-record` checks against.
+    /// `verify --at-record` checks against, with
+    /// [`PlanOptions::never_applied`] set so each source reads at the
+    /// revision declared now.
     pub fn at_record() -> Self {
         PlanOptions::for_packages([])
     }

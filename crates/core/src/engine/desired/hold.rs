@@ -484,8 +484,9 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// other hold, `verify --at-record`'s reading included, keeps the record as
 /// it stands; a single-package update or an add writes the source's entry
 /// unchanged too (`record_readings`), so the edit stays pending for the
-/// next write that keeps the record. A source with no account is held to
-/// its entries alone.
+/// next write that keeps the record, while `verify --at-record` reads the
+/// source at the revision declared now. A source with no account is held
+/// to its entries alone.
 fn held_repo<'a>(
     manifest: &'a Manifest,
     lock: &Lock,
