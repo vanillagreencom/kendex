@@ -35,14 +35,10 @@
 #      runner's own, and the verdict line names that directory's tree
 #   9. --alone — with --battery, the suites it names run alone, and a suite
 #      sharing a name with one in the runner's own ALONE list runs pooled
-#  10. the bounds — a suite still running RUN_ALL_SUITE_SECS after its own
-#      start, or at RUN_ALL_DEADLINE_EPOCH, gets TERM, then KILL, through every
-#      process under it, a child that left its process group included; it
-#      reports red under the keyed line of the bound that stopped it, with the
-#      row it printed last, even where it exits 0 on the stop. The suite bound
-#      counts from the suite's start and the deadline from the run's, no suite
-#      starts past the deadline and each left unstarted reports red, and a
-#      bound that is not a number refuses
+#  10. the bounds — one table, a row for each rule run-all.sh's header states
+#      for RUN_ALL_SUITE_SECS and RUN_ALL_DEADLINE_EPOCH, each with the
+#      control that plants a defect in that rule alone; and a bound that is
+#      not a number refuses
 #
 # Bash 3.2 compatible.
 
@@ -391,37 +387,52 @@ assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$2")' ':')" "rc=
   "control: --alone left unread runs every suite pooled"
 
 echo "=== 10. a suite past its bound is stopped and reported under its own name ==="
-# The hang the bound exists for: a suite blocked on a child that set up its own
-# process group and ignores TERM, as GNU timeout does once it has sent its
-# signal and while it waits on a command that never ends. The child writes
-# its pid; the suite's EXIT trap marks that TERM came before KILL.
-hang_battery() { # DIR [FROM TO]...
+# Three batteries, each run on one worker. clock: three suites that sleep two
+# seconds, then pass, so the third starts four seconds into the run and cannot
+# end before six. trapped: one suite that prints a row, then loops until TERM,
+# on which it exits 0. hang: the hang the bound exists for, one suite that
+# prints a row, then blocks on a child that set up its own process group and
+# ignores TERM, as GNU timeout does once it has sent its signal and while it
+# waits on a command that never ends; the child writes its pid, and the suite's
+# EXIT trap marks that TERM came before KILL.
+bound_battery() { # DIR KIND
+  local name
   battery "$1"
-  suite "$1" green 0 'pass: 1   fail: 0'
-  cat >"$1/hang.sh" <<'EOF'
+  case "$2" in
+    clock)
+      for name in c1 c2 c3; do
+        printf '#!/usr/bin/env bash\nsleep 2\necho "pass: 1   fail: 0"\n' >"$1/$name.sh"
+      done
+      ;;
+    trapped)
+      printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\necho ok-before-hang\nwhile :; do sleep 1; done\n' >"$1/trapped.sh"
+      ;;
+    hang)
+      cat >"$1/hang.sh" <<'EOF'
 #!/usr/bin/env bash
 trap 'echo cleaned >"$MARK"' EXIT
-echo 'ok    the row before the hang'
+echo ok-before-hang
 perl -e 'setpgrp(0, 0); $SIG{TERM} = "IGNORE"; open my $f, ">", $ENV{PIDFILE} or die; print $f "$$\n"; close $f; exec "sleep", "1000" or die'
 EOF
-  local dir="$1"
-  shift
-  while [ "$#" -ge 2 ]; do mutate_file "$dir/run-all.sh" "$1" "$2"; shift 2; done
+      ;;
+    *) echo "bound_battery: no battery named '$2'" >&2; exit 1 ;;
+  esac
 }
 
-# Runs DIR's battery under the bound SETTING names, and under a deadline of
-# this file's own, since a runner without the bound never ends: $OUT and $RC
-# as run_battery leaves them, RC=hung where the deadline ended the run, and
-# CHILD the hung child's state once the run is over, alive or gone. A child
-# still alive is killed here; one gone is never signalled, since its pid may
-# by now name another process.
-run_bounded() { # DIR SETTING
+# Runs DIR's battery on one worker with each VAR=VALUE in its environment, and
+# under a deadline of this file's own, since a defect in the stop can leave the
+# runner running: $OUT and $RC as run_battery leaves them, RC=hung where that
+# deadline ended the run, and CHILD the hung child's state once the run is
+# over, alive, gone or never-started. A child still alive is killed here; one
+# gone is never signalled, since its pid may by now name another process.
+run_bounded() { # DIR [VAR=VALUE]...
   local dir="$1" runner until=$((SECONDS + 40)) child
+  shift
   mkdir -p "$dir.bin"
-  printf '#!/usr/bin/env bash\necho 2\n' >"$dir.bin/nproc"
+  printf '#!/usr/bin/env bash\necho 1\n' >"$dir.bin/nproc"
   chmod +x "$dir.bin/nproc"
   set -m
-  env -i PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$2" \
+  env -i PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$@" \
     PIDFILE="$dir.pid" MARK="$dir.mark" bash "$dir/run-all.sh" >"$dir.out" 2>&1 &
   runner=$!
   set +m
@@ -446,114 +457,107 @@ run_bounded() { # DIR SETTING
   fi
 }
 
-# The keyed line and the last row the line after it carries, from $OUT.
-stopped_of() { # NAME
-  printf '%s\n' "$OUT" | awk -v k=" suite=$1 " \
-    'index($0, "run-all.sh: ") == 1 && index($0, k) { print; getline; n = index($0, "ok    "); print (n ? substr($0, n) : "no-row") }' | tr '\n' ';'
+# One line for a bounded run: its status, the red suites, each stop in report
+# order as NAME:BOUND:DETAIL:LAST from its keyed line and the `last line:` after
+# it, the hung child's state and the cleanup mark.
+bound_outcome() { # DIR
+  printf 'rc=%s red=%s stops=%s child=%s mark=%s' "$RC" "$(failed_of | sed 's/ $//')" \
+    "$(printf '%s\n' "$OUT" | awk '
+      $1 == "run-all.sh:" && $3 ~ /^suite=/ {
+        stop = substr($3, 7) ":" $2 ":" $4; getline; sub(/^last line: /, "")
+        printf "%s%s:%s", sep, stop, $0; sep = " "
+      }')" \
+    "$CHILD" "$(cat "$1.mark" 2>/dev/null)"
 }
 
-# The suite bound and the run deadline, each stopping the hung suite.
-# SETTING|KEYED LINE
-HANG_ROWS='RUN_ALL_SUITE_SECS=2|run-all.sh: suite-timeout suite=hang seconds=2
-RUN_ALL_DEADLINE_EPOCH=+2|run-all.sh: run-deadline suite=hang started=yes'
-while IFS='|' read -r setting keyed; do
-  case "$setting" in *=+*) setting="${setting%%=*}=$(($(date +%s) + ${setting#*=+}))" ;; esac
-  B="$TMP_ROOT/bound-${setting%%=*}"
-  hang_battery "$B"
-  run_bounded "$B" "$setting"
-  assert_eq "rc=$RC failed=$(failed_of) child=$CHILD mark=$(cat "$B.mark" 2>/dev/null)" \
-    "rc=1 failed=hang  child=gone mark=cleaned" \
-    "${setting%%=*}: a hung suite is stopped: TERM reaches its cleanup, KILL its child outside its process group, and the run exits 1 naming it"
-  assert_eq "$(stopped_of hang)|$(line_of hang)|$(line_of green)" \
-    "$keyed;ok    the row before the hang;|suite=hang seconds=N pass=0 fail=1|suite=green seconds=N pass=1 fail=0" \
-    "${setting%%=*}: the stopped suite's keyed line names its bound and the row it printed last, and the suite beside it still reports"
-done <<<"$HANG_ROWS"
-
-B="$TMP_ROOT/bound-off"
-hang_battery "$B" '      stop_overdue "$k"' '      :'
-run_bounded "$B" RUN_ALL_SUITE_SECS=2
-assert_eq "rc=$RC" "rc=hung" "control: with the bound never acted on, the hung suite holds the run"
-
-B="$TMP_ROOT/bound-nokill"
-hang_battery "$B" '  signal_tree KILL "$tree"' '  :'
-run_bounded "$B" RUN_ALL_SUITE_SECS=2
-assert_eq "rc=$RC child=$CHILD" "rc=1 child=alive" \
-  "control: with no KILL after the grace, the child that ignores TERM outlives the run"
-
-# A suite that traps the stop and exits 0 never finished either.
-trapped_battery() { # DIR [FROM TO]
-  battery "$1"
-  printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\necho "ok    the row before the hang"\nwhile :; do sleep 1; done\n' \
-    >"$1/trapped.sh"
-  [ "$#" -lt 3 ] || mutate_file "$1/run-all.sh" "$2" "$3"
-}
-B="$TMP_ROOT/bound-trapped"
-trapped_battery "$B"
-run_bounded "$B" RUN_ALL_SUITE_SECS=2
-assert_eq "rc=$RC failed=$(failed_of)|$(line_of trapped)" "rc=1 failed=trapped |suite=trapped seconds=N pass=0 fail=1" \
-  "a suite that exits 0 on the stop is still red"
-B="$TMP_ROOT/bound-trapped-ctl"
-trapped_battery "$B" '[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]'
-run_bounded "$B" RUN_ALL_SUITE_SECS=2
-assert_eq "rc=$RC failed=$(failed_of)" "rc=0 failed=" \
-  "control: judged by its exit status alone, the stopped suite reads green"
-
-# Which clock each bound reads. One worker runs three two-second suites in
-# turn, so the third starts four seconds into the run and cannot end before
-# six: a suite bound of 5 seconds never reaches a suite on its own clock, and
-# a deadline 6 seconds out always reaches the third. Each control swaps the
-# clock and expects the other outcome.
-clock_battery() { # DIR [FROM TO]...
-  local name
-  battery "$1"
-  for name in c1 c2 c3; do
-    printf '#!/usr/bin/env bash\nsleep 2\necho "pass: 1   fail: 0"\n' >"$1/$name.sh"
-  done
-  local dir="$1"
-  shift
-  while [ "$#" -ge 2 ]; do mutate_file "$dir/run-all.sh" "$1" "$2"; shift 2; done
-}
-# The first suite's report and the bound that stopped the third, or none.
-clock_outcome() { # DIR SETTING
-  local stop3
-  run_battery "$1" 1 "$2"
-  stop3="$(printf '%s\n' "$OUT" | sed -n 's/^run-all\.sh: \([a-z-]*\) suite=c3 .*/\1/p')"
-  printf 'rc=%s %s c3=%s' "$RC" "$(line_of c1)" "${stop3:-none}"
-}
+# The defect each control plants in its copy of run-all.sh, by name, as
+# mutate_file FROM and TO pairs.
 GATE='{ [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }'
+edit_of() { # NAME
+  case "$1" in
+    suite-from-run) EDIT=('SLOT_DUE[k]=$((SECONDS + SUITE_SECS))' 'SLOT_DUE[k]=$((started + SUITE_SECS))') ;;
+    deadline-from-suite) EDIT=('SLOT_DUE[k]=$DEADLINE' 'SLOT_DUE[k]=$((SECONDS + DEADLINE - started))' "$GATE" '{ :; }') ;;
+    deadline-always) EDIT=('if [ -n "$DEADLINE" ] && [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; then' 'if [ -n "$DEADLINE" ]; then') ;;
+    later-wins) EDIT=('[ "$DEADLINE" -le "${SLOT_DUE[k]}" ]' '[ "$DEADLINE" -ge "${SLOT_DUE[k]}" ]') ;;
+    stop-skipped) EDIT=('      stop_overdue "$k"' '      :') ;;
+    gate-removed) EDIT=("$GATE" '{ :; }') ;;
+    unstarted-green) EDIT=('report "${SUITES[next]}" none 0 unstarted' 'report "${SUITES[next]}" 0 0') ;;
+    term-skipped) EDIT=('  signal_tree TERM "$tree"' '  :') ;;
+    kill-skipped) EDIT=('  signal_tree KILL "$tree"' '  :') ;;
+    tree-root-only) EDIT=('table="$(lane_process_table)" || table=""' 'table=""') ;;
+    red-by-status) EDIT=('[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]') ;;
+    last-dropped) EDIT=('SLOT_LAST[$1]="$(awk' 'SLOT_LAST[$1]="$(: awk') ;;
+    *) echo "edit_of: no edit named '$1'" >&2; exit 1 ;;
+  esac
+}
 
-B="$TMP_ROOT/clock-suite"
-clock_battery "$B"
-assert_eq "$(clock_outcome "$B" RUN_ALL_SUITE_SECS=5)" "rc=0 suite=c1 seconds=N pass=1 fail=0 c3=none" \
-  "the suite bound counts from the suite's own start: a suite that starts late keeps its whole bound"
-B="$TMP_ROOT/clock-suite-ctl"
-clock_battery "$B" 'SLOT_DUE[k]=$((SECONDS + SUITE_SECS))' 'SLOT_DUE[k]=$((started + SUITE_SECS))'
-assert_eq "$(clock_outcome "$B" RUN_ALL_SUITE_SECS=5)" "rc=1 suite=c1 seconds=N pass=1 fail=0 c3=suite-timeout" \
-  "control: counted from the run's start, the suite bound stops the third suite"
-
-B="$TMP_ROOT/clock-run"
-clock_battery "$B"
-assert_eq "$(clock_outcome "$B" RUN_ALL_DEADLINE_EPOCH=$(($(date +%s) + 6)))" \
-  "rc=1 suite=c1 seconds=N pass=1 fail=0 c3=run-deadline" \
-  "the deadline counts from the run's start: the third suite never runs past it"
-B="$TMP_ROOT/clock-run-ctl"
-clock_battery "$B" 'SLOT_DUE[k]=$DEADLINE' 'SLOT_DUE[k]=$((SECONDS + DEADLINE - started))' "$GATE" '{ :; }'
-assert_eq "$(clock_outcome "$B" RUN_ALL_DEADLINE_EPOCH=$(($(date +%s) + 6)))" "rc=0 suite=c1 seconds=N pass=1 fail=0 c3=none" \
-  "control: counted from each suite's start, the deadline lets the third suite finish"
-
-# A deadline already past starts nothing, and names each suite red; the
-# `removed` row is the start gate's control.
-# START GATE|EXPECTED
-PAST_ROWS='kept|rc=1 started= failed=c1 c2 c3  keyed=started=no started=no started=no
-removed|rc=1 started=c1 c2 c3 failed=c1 c2 c3  keyed=started=yes started=yes started=yes'
-while IFS='|' read -r edit want; do
-  B="$TMP_ROOT/past-$edit"
-  if [ "$edit" = removed ]; then clock_battery "$B" "$GATE" '{ :; }'; else clock_battery "$B"; fi
-  run_battery "$B" 1 RUN_ALL_DEADLINE_EPOCH="$(date +%s)"
-  assert_eq "rc=$RC started=$(started_of | paste -sd ' ' -) failed=$(failed_of) keyed=$(printf '%s\n' "$OUT" |
-    sed -n 's/^run-all\.sh: run-deadline suite=c[123] //p' | paste -sd ' ' -)" "$want" \
-    "a deadline already past, start gate $edit: $want"
-done <<<"$PAST_ROWS"
+# Every rule run-all.sh's header states for the bounds, one row each: the
+# battery and settings that reach the rule, the outcome they give, the defect
+# planted in that rule alone, and the outcome under it. A setting written
+# VAR=+N is the time N seconds after its run starts. An outcome is a pattern;
+# the one `*` stands where load decides whether the deadline found the third
+# clock suite started. Rows sharing a battery and settings with no `+` share one
+# run of the unmutated runner.
+# RULE|BATTERY|SETTINGS|OUTCOME|CONTROL|CONTROL OUTCOME
+BOUND_ROWS='the suite bound counts from the suite own start, so a suite that starts late keeps its whole bound|clock|RUN_ALL_SUITE_SECS=5|rc=0 red= stops= child=never-started mark=|suite-from-run|rc=1 red=c3 stops=c3:suite-timeout:seconds=5:none child=never-started mark=
+the deadline counts from the run start, so a suite that starts late gets only the time left|clock|RUN_ALL_DEADLINE_EPOCH=+6|rc=1 red=c3 stops=c3:run-deadline:started=*:none child=never-started mark=|deadline-from-suite|rc=0 red= stops= child=never-started mark=
+a suite still running at its bound is stopped|clock|RUN_ALL_SUITE_SECS=1|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
+with both bounds set and the suite bound the earlier, the suite bound stops the suite|trapped|RUN_ALL_SUITE_SECS=2 RUN_ALL_DEADLINE_EPOCH=+5|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|deadline-always|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=
+with both bounds set and the deadline the earlier, the deadline stops the suite|trapped|RUN_ALL_SUITE_SECS=6 RUN_ALL_DEADLINE_EPOCH=+3|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=|later-wins|rc=1 red=trapped stops=trapped:suite-timeout:seconds=6:ok-before-hang child=never-started mark=
+no suite starts once the deadline has passed|clock|RUN_ALL_DEADLINE_EPOCH=+0|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=no:none c2:run-deadline:started=no:none c3:run-deadline:started=no:none child=never-started mark=|gate-removed|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=yes:none c2:run-deadline:started=yes:none c3:run-deadline:started=yes:none child=never-started mark=
+a suite the deadline left unstarted reports red|clock|RUN_ALL_DEADLINE_EPOCH=+0|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=no:none c2:run-deadline:started=no:none c3:run-deadline:started=no:none child=never-started mark=|unstarted-green|rc=0 red= stops= child=never-started mark=
+the stop sends TERM first, which the suite cleanup runs on|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|term-skipped|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=
+the stop sends KILL after the grace to a process that ignores TERM|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|kill-skipped|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=alive mark=cleaned
+the stop reaches every process under the suite, one that left its process group included|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|tree-root-only|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=alive mark=cleaned
+a stopped suite that exits 0 on the stop still reports red|trapped|RUN_ALL_SUITE_SECS=2|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|red-by-status|rc=0 red= stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=
+the stop names the row the suite printed last|trapped|RUN_ALL_SUITE_SECS=2|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|last-dropped|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:none child=never-started mark='
+n=0
+shared=""
+shared_outcome=""
+while IFS='|' read -r rule kind settings want edit control_want; do
+  n=$((n + 1))
+  for variant in row control; do
+    if [ "$variant" = row ] && [ -n "$shared" ] && [ "$kind $settings" = "$shared" ]; then
+      got="$shared_outcome"
+    else
+      B="$TMP_ROOT/bound-$n-$variant"
+      bound_battery "$B" "$kind"
+      if [ "$variant" = control ]; then
+        edit_of "$edit"
+        e=0
+        while [ "$e" -lt "${#EDIT[@]}" ]; do
+          mutate_file "$B/run-all.sh" "${EDIT[e]}" "${EDIT[e + 1]}"
+          e=$((e + 2))
+        done
+      fi
+      args=()
+      for setting in $settings; do
+        case "$setting" in *=+*) setting="${setting%%=*}=$(($(date +%s) + ${setting#*=+}))" ;; esac
+        args+=("$setting")
+      done
+      run_bounded "$B" "${args[@]}"
+      got="$(bound_outcome "$B")"
+      if [ "$variant" = row ]; then
+        case "$settings" in
+          *=+*) shared="" ;;
+          *) shared="$kind $settings"; shared_outcome="$got" ;;
+        esac
+      fi
+    fi
+    if [ "$variant" = row ]; then
+      expect="$want" name="$rule"
+    else
+      expect="$control_want" name="control, $edit: $rule fails"
+    fi
+    # shellcheck disable=SC2053 # the outcome is a pattern
+    if [[ "$got" == $expect ]]; then
+      pass "$name"
+    else
+      fail "$name" "expected: $expect"
+      printf '        got:      %s\n' "$got"
+    fi
+  done
+done <<<"$BOUND_ROWS"
 
 # SETTING|REFUSAL PREFIX
 JUNK_ROWS='RUN_ALL_SUITE_SECS=x|run-all.sh: RUN_ALL_SUITE_SECS
