@@ -7,10 +7,12 @@ unanswered review thread, root being the thread's first comment id and the
 rest its REST review-comment fields. The head's generated inventory binds each
 reported path. Review text is data; only the upstream verifier confirms a
 defect. GitHub issue titles carry a fingerprint of the package, the path
-inside it, and the head lines the comment names, joined by its wording
-where that text occurs more than once in the file at head (its wording alone
-for a file-level or base-side comment). The lookup is GitHub issue search over every state, App-authored
-issues only, plus this run's own filings.
+inside its directory (none for a single-file package), and the head lines the
+comment names, joined by its wording where that text occurs more than once in
+the file at head (its wording alone for a file-level or base-side comment).
+The lookup counts App-authored issues in every state: GitHub issue search,
+then, on a miss, the issues updated within its indexing lag, plus this run's
+own filings.
 
 A finding is filed upstream only where kendex report --dry-run routes its one
 package to vanillagreencom/kendex with a package label. Every other finding is
@@ -52,6 +54,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+from datetime import datetime, timedelta, timezone
 import shlex
 import subprocess
 import sys
@@ -66,6 +69,9 @@ SEARCH_TERMS = 3
 # gh api stderr for a primary or secondary rate limit, which GitHub answers
 # with HTTP 403 or 429 like an access denial; checked before the denial.
 RATE_LIMIT = re.compile(r"HTTP 429\b|rate limit", re.IGNORECASE)
+# GitHub search indexes a new issue late and documents no bound; an hour of
+# updated issues covers another consumer's filing from the same schedule tick.
+INDEX_LAG = timedelta(hours=1)
 
 
 def settings_report():
@@ -168,13 +174,14 @@ def main():
             raise RuntimeError("kendex issue API failed: " + result.stderr)
         return json.loads(result.stdout)
 
-    def search(markers):
-        """Every issue, open or closed, whose title may carry one of markers.
-
-        Anyone can open an issue on the public tracker and close their own,
+    def answers(issue):
+        """Anyone can open an issue on the public tracker and close their own,
         so only one a GitHub App wrote, which no outside user can author as
-        or close, answers a finding.
-        """
+        or close, answers a finding."""
+        return "pull_request" not in issue and (issue.get("user") or {}).get("type") == "Bot"
+
+    def search(markers):
+        """Every issue, open or closed, whose title may carry one of markers."""
         terms = " OR ".join(m.removeprefix("[kendex-render:").removesuffix("]") for m in markers)
         pages = api("search/issues?" + urlencode({"q": f"repo:{UPSTREAM} is:issue in:title {terms}",
                                                   "per_page": 100}))
@@ -182,8 +189,19 @@ def main():
                                                   and isinstance(p.get("items"), list) for p in pages):
             # An incomplete search cannot prove that no issue answers a finding.
             raise RuntimeError("incomplete upstream issue search")
-        return [i for page in pages for i in page["items"]
-                if "pull_request" not in i and (i.get("user") or {}).get("type") == "Bot"]
+        return [i for page in pages for i in page["items"] if answers(i)]
+
+    def recent():
+        """Every issue updated within the search index lag, open or closed.
+
+        Every consumer's refresh runs on the same schedule, so another run's
+        filing of the same finding can be minutes old and absent from search.
+        """
+        since = (datetime.now(timezone.utc) - INDEX_LAG).strftime("%Y-%m-%dT%H:%M:%SZ")
+        pages = api(f"repos/{UPSTREAM}/issues?" + urlencode({"state": "all", "since": since, "per_page": 100}))
+        if not isinstance(pages, list) or not all(isinstance(p, list) for p in pages):
+            raise RuntimeError("unreadable upstream issue list")
+        return [i for page in pages for i in page if answers(i)]
 
     rows = []
     for finding in json.load(sys.stdin):
@@ -215,16 +233,17 @@ def main():
             args = shlex.split(command)
             if "--repo" in args and args[args.index("--repo") + 1] == UPSTREAM and "--label" in args:
                 row["label"] = args[args.index("--label") + 1]
-                # The path inside the package: after its directory, or the
-                # file itself for a single-file package matched by stem.
-                rest = parts[parts.index(name) + 1:] if name in parts else ()
-                inner = PurePosixPath(*rest) if rest else PurePosixPath(parts[-1])
+                # The path inside the package directory. A single-file
+                # package matched by stem has none: its rendered filename
+                # differs by harness (runtime.md, runtime.toml).
+                inner = "/".join(parts[parts.index(name) + 1:]) if name in parts else ""
                 # The identity holds no consumer repository or rendered path,
                 # and the review wording only where reviewed() adds it.
-                identity = json.dumps([name, str(inner), reviewed(finding)],
+                identity = json.dumps([name, inner, reviewed(finding)],
                                       ensure_ascii=False, separators=(",", ":"))
                 row["marker"] = f"[kendex-render:{hashlib.sha256(identity.encode()).hexdigest()}]"
-                row["title"] = f"{row['marker']} Review finding in {name}/{inner}"[:256]
+                where = f"{name}/{inner}" if inner else name
+                row["title"] = f"{row['marker']} Review finding in {where}"[:256]
         row["note"] = "Issues token unavailable" if row["label"] else unrouted
         rows.append(row)
 
@@ -232,13 +251,17 @@ def main():
     # nothing.
     known = {}
     markers = list(dict.fromkeys(r["marker"] for r in rows if r["marker"]))
+
+    def remember(issues):
+        for issue in issues:
+            marker = next((m for m in markers if issue["title"].startswith(m)), None)
+            if marker and (marker not in known or issue["state"] == "open"):
+                known[marker] = issue
+
     if token and markers:
         try:
             for chunk in range(0, len(markers), SEARCH_TERMS):
-                for issue in search(markers[chunk:chunk + SEARCH_TERMS]):
-                    marker = next((m for m in markers if issue["title"].startswith(m)), None)
-                    if marker and (marker not in known or issue["state"] == "open"):
-                        known[marker] = issue
+                remember(search(markers[chunk:chunk + SEARCH_TERMS]))
         except PermissionError as error:
             for row in rows:
                 if row["label"]:
@@ -261,6 +284,8 @@ def main():
             url = "https://github.com/" + UPSTREAM + "/issues/new?" + urlencode({"title": row["title"], "body": body})
         if token and label:
             try:
+                if marker not in known:
+                    remember(recent())
                 existing = known.get(marker)
                 if existing and existing["state"] != "open":
                     url = filed = existing["html_url"]
@@ -279,8 +304,8 @@ def main():
                     created = api(f"repos/{UPSTREAM}/issues", {"title": row["title"], "body": body,
                                                                "labels": ["bug", label, "agent:maintainer"]})
                     url = filed = created["html_url"]
-                    # Search indexes a new issue late; this run's own filings
-                    # answer its later rows.
+                    # This run's own filings answer its later rows without
+                    # another read.
                     known[marker] = created
                     note = "Filed for upstream confirmation"
             except PermissionError as error:

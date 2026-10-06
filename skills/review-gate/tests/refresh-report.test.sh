@@ -9,6 +9,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
 if python3 - "$SKILL_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -121,6 +122,7 @@ for needle, replacement in [
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3
 import json,os,sys
+from datetime import datetime, timezone
 from pathlib import Path
 name=Path(sys.argv[0]).name
 assert "KENDEX_ISSUES_TOKEN" not in os.environ
@@ -131,7 +133,7 @@ if name=="git":
  if sys.argv[1]=="fetch": sys.exit(0)
  if sys.argv[-1].endswith(".kendex-generated.json"):
   print(json.dumps([".agents/skills/review-gate/SKILL.md",".agents/skills/review-gate/scripts/test.sh",
-                    ".claude/agents/maintainer.md",".claude/agents/runtime.md",
+                    ".claude/agents/maintainer.md",".claude/agents/runtime.md",".codex/agents/runtime.toml",
                     ".claude/skills/review-gate/SKILL.md",".github/agents/reviewer.agent.md",
                     ".kendex-generated.json",".kendex-lock.json"]))
  elif sys.argv[-1].endswith(".kendex-lock.json"): print(Path(os.environ["HISTORICAL_LOCK"]).read_text())
@@ -160,10 +162,21 @@ else:
    result={"html_url":"https://github.com/vanillagreencom/kendex/issues/1#comment"}
   else:
    number=len(w["issues"])+1
+   # lag: the lookups ("search", "list") that do not yet return this filing.
    result=dict(p,number=number,state="open",state_reason=None,user={"login":"kendex[bot]","type":"Bot"},
-               html_url=f"https://github.com/vanillagreencom/kendex/issues/{number}")
+               html_url=f"https://github.com/vanillagreencom/kendex/issues/{number}",
+               updated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),lag=w.get("lag",[]))
    w["issues"].append(result)
   state.write_text(json.dumps(w)); print(json.dumps(result))
+ elif sys.argv[2].startswith("repos/vanillagreencom/kendex/issues?"):
+  # The REST issue list: every issue updated at or after since, in the
+  # state asked for, one page per --paginate --slurp element.
+  from urllib.parse import parse_qs, urlsplit
+  q={k:v[0] for k,v in parse_qs(urlsplit(sys.argv[2]).query).items()}
+  assert "--paginate" in sys.argv and "--slurp" in sys.argv
+  items=[i for i in w["issues"] if "list" not in i.get("lag",[]) and i.get("updated_at","")>=q["since"]
+         and q["state"] in ("all",i["state"])]
+  print(json.dumps([items]))
  else:
   # GitHub search: substring title matches, closed issues included unless
   # the query narrows to is:open. Free text past 256 characters, qualifiers
@@ -175,7 +188,7 @@ else:
   if len(" ".join(terms))>256:
    print("gh: Validation Failed: The search is longer than 256 characters. (HTTP 422)",file=sys.stderr); sys.exit(1)
   w.setdefault("searches",[]).append(terms); state.write_text(json.dumps(w))
-  items=[i for i in w["issues"] if any(t in i["title"] for t in terms)
+  items=[i for i in w["issues"] if any(t in i["title"] for t in terms) and "search" not in i.get("lag",[])
          and ("is:open" not in q or i["state"]=="open")]
   print(json.dumps([{"total_count":len(items),"incomplete_results":bool(w.get("incomplete")),"items":items}]))
 ''')
@@ -210,7 +223,8 @@ block='run() {\n  if a; then\n    x\n  fi\n}\n\n'
 files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
        '.claude/skills/review-gate/SKILL.md':'\n'.join(skill_md[:4]+['## Project Instructions','']+skill_md[4:]),
        '.agents/skills/review-gate/scripts/test.sh':block*3,
-       '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent}
+       '.claude/agents/runtime.md':agent,'.claude/agents/maintainer.md':agent,
+       '.codex/agents/runtime.toml':'name = "x"\ndeveloper_instructions = """\nDo the work.\n"""\n'}
 def reset(**extra):
  world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
 def attempt(driver, rows, overrides):
@@ -257,15 +271,18 @@ consumer_a=dict(findings[0],root=30,path='.agents/skills/review-gate/SKILL.md',b
 consumer_b=dict(consumer_a,root=40,path='.claude/skills/review-gate/SKILL.md',body='These two steps run backwards.',
                 line=8,start_line=7,url='https://github.com/other/repo/pull/9#discussion_r40')
 second_consumer={'GH_REPO':'other/repo','GITHUB_RUN_ID':'43'}
-def package_line(driver=skill/'scripts/refresh-report.py'):
- reset(); run(driver,rows=[consumer_a]); folded=run(driver,rows=[consumer_b],overrides=second_consumer)
+def package_line(driver=skill/'scripts/refresh-report.py', lag=()):
+ reset(lag=list(lag)); run(driver,rows=[consumer_a]); folded=run(driver,rows=[consumer_b],overrides=second_consumer)
  if len(folded['issues'])!=1 or results[0]['note']!='Existing open report': return 'consumers'
  folded['issues'][0].update(state='closed',state_reason='not_planned'); world.write_text(json.dumps(folded))
  later=run(driver,rows=[consumer_a],overrides={'GITHUB_RUN_ID':'44'})
  if later['writes']!=folded['writes'] or results!=[{'root':30,'issue':folded['issues'][0]['html_url'],
                                                     'note':'Closed upstream as not planned'}]: return 'closed'
  return 'one'
-assert package_line()=='one'
+# Consumers on one schedule report together: the second run's search misses
+# the first run's filing, and the issue list still answers it.
+for lag in ((), ('search',)):
+ assert package_line(lag=lag)=='one', lag
 # The fold stops at the line: another line of the same file, a base-side
 # comment and a file-level comment are their own findings, and the
 # wording identifies the last two.
@@ -283,6 +300,7 @@ same_claim=[first_fi, dict(first_fi,root=33,line=10)]
 fences=[dict(consumer_a,root=34,line=3,start_line=None), dict(consumer_b,root=35,line=1,start_line=None,body=consumer_a['body'])]
 agent_a=dict(consumer_a,root=60,path='.claude/agents/runtime.md',line=3,start_line=None)
 agents=[agent_a, dict(agent_a,root=61,body='Another wording.'), dict(agent_a,root=62,path='.claude/agents/maintainer.md')]
+harnesses=[agent_a, dict(agent_a,root=65,path='.codex/agents/runtime.toml',body='Another wording.')]
 file_ends=[dict(agent_a,root=63,line=1), dict(agent_a,root=64,line=4,body='Another wording.')]
 for rows, issues in [
  ([consumer_a, other_line], 2),
@@ -292,6 +310,7 @@ for rows, issues in [
  (fences, 1),
  (file_ends, 2),
  (agents, 2),
+ (harnesses, 1),
  ([base_side, dict(base_side,body='Another wording.')], 2),
  ([dict(consumer_a,line=None,start_line=None), dict(consumer_b,line=None,start_line=None)], 2),
  ([consumer_a, consumer_b], 1),
@@ -312,6 +331,11 @@ def reshaped(text, driver=skill/'scripts/refresh-report.py'):
  return len(later['issues']), results[0]['note']
 for text in reshapes:
  assert reshaped(text)==(2,'Filed for upstream confirmation'), text
+# Search and the issue list both miss this run's own filing; a repeat in the
+# run rides on that filing.
+def own_filing(driver=skill/'scripts/refresh-report.py'):
+ reset(lag=['search','list']); return len(run(driver,rows=[consumer_a, consumer_b])['issues'])
+assert own_filing()==1
 # Each thread folded onto this run's own filing leaves its text and evidence.
 def folded_evidence(driver=skill/'scripts/refresh-report.py'):
  reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
@@ -323,7 +347,8 @@ assert len(comments)==1 and consumer_b['url'] in comments[0] and '> '+consumer_b
 reset(); spoofed_title=run(rows=[consumer_a])['issues'][0]['title']
 def spoofed(state, driver=skill/'scripts/refresh-report.py'):
  planted=dict(number=1,title=spoofed_title,body='Planted.',state=state,state_reason=None if state=='open' else 'completed',
-              user={'login':'someone','type':'User'},html_url='https://github.com/vanillagreencom/kendex/issues/1')
+              user={'login':'someone','type':'User'},html_url='https://github.com/vanillagreencom/kendex/issues/1',
+              updated_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
  reset(issues=[planted]); writes=run(driver,rows=[consumer_a])['writes']
  return [w.get('title') for w in writes]==[spoofed_title] and results[0]['issue'].endswith('/issues/2')
 for state in ('open','closed'):
@@ -412,7 +437,7 @@ source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
  ('if path in records else set()', 'if False and path in records else set()', findings, 'path'),
  ('elif existing:', 'elif False and existing:', findings, 'dedup'),
- ('[name, str(inner), reviewed(finding)]', '[name, str(inner), reviewed(finding), finding["url"]]', inline_pair, 'instance'),
+ ('[name, inner, reviewed(finding)]', '[name, inner, reviewed(finding), finding["url"]]', inline_pair, 'instance'),
  ('            ).stderr', '            ).stdout', findings, 'stream'),
 ]:
  assert source.count(needle)==1
@@ -452,18 +477,28 @@ for name, row, overrides, note in not_filed_rows:
 # Each identity and lookup rule: the consumer repository or the wording in
 # the identity of unique text, an open-only search, a closed issue read as
 # open, and this run's own filing forgotten.
-for needle,replacement,expect in [
- ('[name, str(inner), reviewed(finding)]', '[repo, name, str(inner), reviewed(finding)]', 'consumers'),
- ('[name, str(inner), reviewed(finding)]', '[name, str(inner), finding["body"]]', 'consumers'),
- ('        return [text]\n', '        return [text, finding["body"]]\n', 'consumers'),
- ('is:issue in:title', 'is:issue is:open in:title', 'closed'),
- ('if existing and existing["state"] != "open":', 'if False and existing:', 'closed'),
+# The issue list answers a recent closed issue, so the open-only search
+# control hides it from the list. The issue list lookup, its states and its
+# since bound each turn the unindexed case red.
+for needle,replacement,expect,lag in [
+ ('[name, inner, reviewed(finding)]', '[repo, name, inner, reviewed(finding)]', 'consumers', ()),
+ ('[name, inner, reviewed(finding)]', '[name, inner, finding["body"]]', 'consumers', ()),
+ ('        return [text]\n', '        return [text, finding["body"]]\n', 'consumers', ()),
+ ('is:issue in:title', 'is:issue is:open in:title', 'closed', ('list',)),
+ ('if existing and existing["state"] != "open":', 'if False and existing:', 'closed', ()),
+ ('                    remember(recent())\n', '                    pass\n', 'consumers', ('search',)),
+ ('{"state": "all", "since"', '{"state": "open", "since"', 'closed', ('search',)),
+ ('datetime.now(timezone.utc) - INDEX_LAG', 'datetime.now(timezone.utc) + INDEX_LAG', 'consumers', ('search',)),
 ]:
  assert source.count(needle)==1, needle
  mutant=root/'identity.py'; mutant.write_text(source.replace(needle,replacement))
- assert package_line(mutant)==expect, needle
+ assert package_line(mutant,lag)==expect, needle
+needle='                    known[marker] = created\n'
+assert source.count(needle)==1
+mutant=root/'own-filing.py'; mutant.write_text(source.replace(needle,'                    pass\n'))
+assert own_filing(mutant)==2
 for needle,replacement,rows,issues in [
- ('                    known[marker] = created\n', '                    pass\n', [consumer_a, consumer_b], 2),
+ ('if name in parts else ""', 'if name in parts else parts[-1]', harnesses, 2),
  ('start = start or end', 'start = end', [consumer_a, same_end], 1),
  ('return [text, finding["body"]]', 'return [text]', repeated_text, 1),
  ('return [text, finding["body"]]', 'return [text, finding["body"], start]', same_claim, 2),
@@ -493,7 +528,7 @@ for needle,replacement,check,expect in [
  ('return [text, finding["body"]]', 'return [text]', lambda d: [reshaped(t,d) for t in reshapes],
   [(1,'Closed upstream as completed')]*len(reshapes)),
  ('if record not in (existing.get("body") or ""):', 'if run not in existing["body"]:', folded_evidence, []),
- ('and (i.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
+ (' and (issue.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
  ('if RATE_LIMIT.search(result.stderr):', 'if False:', lambda d: rate_limited(rate_limits[0],d), False),
 ]:
  assert source.count(needle)==1, needle
