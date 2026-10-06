@@ -346,13 +346,13 @@ fn plan_removals(
     scope_notes: &mut Vec<String>,
 ) -> Result<(Vec<SetChange>, set_change::Said, removal::Retired)> {
     // Ahead of the guard, which keeps every path the new record holds.
-    let kept_by_sets = plan_pass::plan_kept_members(env, scope, lock, state, drift, new_lock, kept);
+    let kept_by_sets = plan_pass::plan_kept_members(lock, state, new_lock);
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, new_lock));
     stale::stale_emitted(lock, new_lock, &mut guard, ops)?;
-    let mut decided_keys = plan_pass::plan_not_written(
+    let decided_keys = plan_pass::plan_not_written(
         env,
         scope,
         manifest,
@@ -365,7 +365,6 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
-    decided_keys.extend(kept_by_sets);
     let removed = removal::orphans(
         env,
         scope,
@@ -374,6 +373,7 @@ fn plan_removals(
         state,
         options,
         &decided_keys,
+        &kept_by_sets,
         kept,
         &mut guard,
         drift,

@@ -10,8 +10,9 @@
 //! stays keeps its rows in the inventory, through a refresh that fails on
 //! a renamed set too, and a prune takes them. A kept copy deleted or
 //! edited by hand, a Pi package's included, fails verify on its own row
-//! while a plain refresh passes. The kept notice's removal takes only the
-//! retired item, at its own scope, and refuses to run keeping the
+//! while a plain refresh passes. Removing the judge a kept set's hook
+//! requires takes the hook with it. The kept notice's removal takes only
+//! the retired item, at its own scope, and refuses to run keeping the
 //! declaration. A prune holds a retired copy the person edited and names
 //! the removal that takes it. Verify's row for a left-over names its kind
 //! and, at the global scope, the global flag.
@@ -858,4 +859,99 @@ fn a_member_another_set_renders_lists_what_that_render_writes() {
         Vec::<&str>::new(),
         "{listed:?}"
     );
+}
+
+/// A set carrying a hook and the judge it requires stops being offered,
+/// retired or renamed, and a refresh keeps both. Removing the judge by
+/// name takes the hook with it, since a hook left armed beside nothing
+/// refuses every call it guards, and verify then names neither.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_kept_sets_judge_takes_the_hook_that_requires_it() {
+    let pair = "[bundles.ship]\nhooks = [\"boss\", \"judge\"]\n";
+    let next = "[bundles.ship-next]\nhooks = [\"boss\", \"judge\"]\n";
+    for (case, kept) in [
+        (
+            "retired",
+            format!("{CATALOG}{next}[retired.bundles]\nship = \"\"\n"),
+        ),
+        ("renamed", format!("{CATALOG}{next}")),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = home.join("catalog");
+        let project = home.join("consumer");
+        write(&catalog.join("kendex.toml"), &format!("{CATALOG}{pair}"));
+        write(
+            &catalog.join("hooks/boss.sh"),
+            &HOOK
+                .replace("name: check", "name: boss")
+                .replace("# ---\nexit", "# requires: [judge]\n# ---\nexit"),
+        );
+        write(
+            &catalog.join("hooks/judge.sh"),
+            &HOOK.replace("name: check", "name: judge"),
+        );
+        write(
+            &project.join("kendex.toml"),
+            &manifest(&catalog, "\"claude\"", BY_SET),
+        );
+        repository(&project);
+        let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
+        assert!(installed.status.success(), "{case}: {}", said(&installed));
+        let [boss, judge] =
+            ["boss", "judge"].map(|name| project.join(format!(".claude/hooks/{name}.sh")));
+        for hook in [&boss, &judge] {
+            assert!(
+                hook.exists(),
+                "{case}: the fixture installs {}",
+                hook.display()
+            );
+        }
+        let settings = project.join(".claude/settings.json");
+        let registered = fs::read_to_string(&settings).unwrap();
+        assert!(registered.contains("boss.sh"), "{case}: {registered}");
+        commit(&project, "installed");
+
+        write(&catalog.join("kendex.toml"), &kept);
+        let refreshed = kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
+        for hook in [&boss, &judge] {
+            assert!(hook.exists(), "{case}: {}", said(&refreshed));
+        }
+
+        let removed = kendex(&home, &project, &["remove", "judge", "--leave"]);
+        let printed = said(&removed);
+        assert!(removed.status.success(), "{case}: {printed}");
+        for hook in [&boss, &judge] {
+            assert!(
+                !hook.exists(),
+                "{case}: {} stays: {printed}",
+                hook.display()
+            );
+        }
+        let registered = fs::read_to_string(&settings).unwrap_or_default();
+        assert!(!registered.contains("boss.sh"), "{case}: {registered}");
+        let verified = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+        let document: kendex_core::attest::Document = serde_json::from_slice(&verified.stdout)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{case}: the document does not parse: {error}\n{}",
+                    said(&verified)
+                )
+            });
+        let named: Vec<_> = document
+            .rows
+            .iter()
+            .filter(|row| row.kind == "hook")
+            .map(|row| (row.name.as_str(), row.state))
+            .collect();
+        assert_eq!(named, [], "{case}: {}", said(&verified));
+        if case == "retired" {
+            assert!(verified.status.success(), "{case}: {}", said(&verified));
+        }
+    }
 }

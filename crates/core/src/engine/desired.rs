@@ -320,8 +320,9 @@ pub struct DesiredState {
     /// they require, by entry key, each with the edges tying it to them it
     /// was recorded under (`bundles::kept_members`). The item pass adds
     /// those edges to what it writes for one of them, `plan_pass::plan_kept_members` keeps
-    /// every other one before anything is taken, and the inventory keeps
-    /// that one's rows (`generated_paths::Unrendered`).
+    /// every other one before anything is taken, `removal::orphans` takes
+    /// a hook among them whose companion goes, and the inventory keeps the
+    /// rows of what stays (`generated_paths::Unrendered`).
     pub(super) kept_members: BTreeMap<String, BTreeSet<crate::lock::Reason>>,
     /// Declared sets their catalog retired, under a prune:
     /// `settle_retired` drops each declaration.

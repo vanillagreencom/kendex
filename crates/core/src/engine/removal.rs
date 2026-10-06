@@ -154,21 +154,21 @@ pub(super) fn removal_ops(
 /// the same tree twice: one tree is one op and one line in the preview, not
 /// a second op with nothing left to do.
 pub(super) struct TrashGuard {
+    /// The paths the new record holds.
     keep: BTreeSet<PathBuf>,
-    protected: BTreeSet<PathBuf>,
+    /// The paths this pass writes.
+    written: BTreeSet<PathBuf>,
     trashed: BTreeSet<PathBuf>,
 }
 
 impl TrashGuard {
     pub(super) fn new(items: &[desired::Desired], keep: BTreeSet<PathBuf>) -> TrashGuard {
-        let protected = items
-            .iter()
-            .flat_map(|item| item.artifact.paths())
-            .chain(keep.iter().cloned())
-            .collect();
         TrashGuard {
             keep,
-            protected,
+            written: items
+                .iter()
+                .flat_map(|item| item.artifact.paths())
+                .collect(),
             trashed: BTreeSet::new(),
         }
     }
@@ -177,7 +177,16 @@ impl TrashGuard {
         let Op::Trash { path, .. } = op else {
             return true;
         };
-        !self.protected.contains(path) && self.trashed.insert(path.clone())
+        !self.written.contains(path)
+            && !self.keep.contains(path)
+            && self.trashed.insert(path.clone())
+    }
+
+    /// Keep only the paths a record in `held`, the new record's paths as
+    /// they now stand, still holds: a record left out of it after the guard
+    /// was built no longer keeps what it alone held.
+    fn hold_only(&mut self, held: &BTreeSet<PathBuf>) {
+        self.keep.retain(|path| held.contains(path));
     }
 
     pub(super) fn extend(
@@ -211,6 +220,15 @@ enum Verdict {
     ///
     /// [`Retained`]: Verdict::Retained
     Retired,
+    /// Kept as recorded by a declared set this pass could not expand,
+    /// whose record `plan_pass::plan_kept_members` wrote ahead of the
+    /// guard. One a retired set keeps is held to its record as a
+    /// [`Retired`] one is, since nothing renders it again. What it requires
+    /// stays with it, and it goes where a companion it requires goes
+    /// ([`settle_lacking`]), out of the record that pass wrote.
+    ///
+    /// [`Retired`]: Verdict::Retired
+    KeptBySet { retired: bool },
     /// Not removable under the options: the left-over row, carrying the
     /// removal that takes it, and offered to a sweep where nothing needs
     /// it.
@@ -268,7 +286,9 @@ fn edited(state: &desired::DesiredState, entry: &LockEntry) -> &'static str {
 }
 
 /// `decided_keys` are the records the refusal and withheld passes already
-/// planned for; nothing here asks about them again. `kept`
+/// planned for; nothing here asks about them again. `kept_by_sets` are the
+/// records a declared set this pass could not expand keeps, already in
+/// `new_lock` ([`Verdict::KeptBySet`]). `kept`
 /// is every record an earlier pass kept as it was in place of writing it,
 /// whose requirements this pass keeps with it. Returns what a sweep could
 /// take, and where the plan leaves each retired item.
@@ -281,6 +301,7 @@ pub(super) fn orphans(
     state: &desired::DesiredState,
     options: &PlanOptions,
     decided_keys: &BTreeSet<String>,
+    kept_by_sets: &BTreeSet<String>,
     kept: &KeptAsIs,
     guard: &mut TrashGuard,
     drift: &mut Vec<DriftRow>,
@@ -299,10 +320,12 @@ pub(super) fn orphans(
         state,
         options,
         decided_keys,
+        kept_by_sets,
         guard,
         &mut origins,
     );
     let lacking = settle_lacking(lock, kept, state, &mut verdicts);
+    unkeep_taken(env, scope, kept_by_sets, &verdicts, guard, new_lock);
     let said = said_of(lock, state, &verdicts, &lacking);
     let going = |said: Option<&str>| match said {
         Some(said) => format!("{said} — will be removed"),
@@ -319,6 +342,11 @@ pub(super) fn orphans(
             Verdict::Retired => {
                 drift.extend(retired_copy(env, scope, entry));
                 new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::KeptBySet { retired } => {
+                if *retired {
+                    drift.extend(retired_copy(env, scope, entry));
+                }
             }
             Verdict::Left { unneeded, remedy } => {
                 drift.push(DriftRow {
@@ -368,15 +396,7 @@ pub(super) fn orphans(
                         // would be one nobody looked at; the record stays
                         // until it can be.
                         Err(unread) => {
-                            drift.push(row(
-                                scope,
-                                entry,
-                                DriftState::Conflict,
-                                format!(
-                                    "Pi carrier cleanup could not read what it would take: {unread}; package and record were kept"
-                                ),
-                                None,
-                            ));
+                            drift.push(pi_unread(scope, entry, &unread));
                             new_lock.entries.insert(key.clone(), entry.clone());
                         }
                     }
@@ -389,6 +409,44 @@ pub(super) fn orphans(
     origins.notes(notes);
     let retired = standings(lock, state, new_lock, &verdicts);
     Ok((sweepable, said, retired))
+}
+
+/// A record a kept set holds that [`settle_lacking`] takes leaves the new
+/// record `plan_pass::plan_kept_members` wrote it to ahead of the guard,
+/// and the guard stops keeping the paths only it held, so its removal can
+/// take them.
+fn unkeep_taken(
+    env: &Env,
+    scope: &Scope,
+    kept_by_sets: &BTreeSet<String>,
+    verdicts: &[(&String, Verdict)],
+    guard: &mut TrashGuard,
+    new_lock: &mut Lock,
+) {
+    let taken = verdicts.iter().filter(|(key, verdict)| {
+        kept_by_sets.contains(*key) && matches!(verdict, Verdict::Removed { .. })
+    });
+    let mut released = false;
+    for (key, _) in taken {
+        released |= new_lock.entries.remove(*key).is_some();
+    }
+    if released {
+        guard.hold_only(&super::owned::paths(env, scope, new_lock));
+    }
+}
+
+/// The conflict a Pi package's removal leaves where the plan could not
+/// read what it would take.
+fn pi_unread(scope: &Scope, entry: &LockEntry, unread: &crate::error::CoreError) -> DriftRow {
+    row(
+        scope,
+        entry,
+        DriftState::Conflict,
+        format!(
+            "Pi carrier cleanup could not read what it would take: {unread}; package and record were kept"
+        ),
+        None,
+    )
 }
 
 /// What each record's row and set change say of a withholding or a
@@ -509,6 +567,7 @@ fn verdicts<'a>(
     state: &desired::DesiredState,
     options: &PlanOptions,
     decided_keys: &BTreeSet<String>,
+    kept_by_sets: &BTreeSet<String>,
     guard: &TrashGuard,
     origins: &mut Origins,
 ) -> Vec<(&'a String, Verdict)> {
@@ -526,6 +585,11 @@ fn verdicts<'a>(
     let mut verdicts = Vec::new();
     for (key, entry) in &lock.entries {
         if desired_keys.contains(key) || decided_keys.contains(key) {
+            continue;
+        }
+        if kept_by_sets.contains(key) {
+            let retired = state.kept_by_retired_bundle(key);
+            verdicts.push((key, Verdict::KeptBySet { retired }));
             continue;
         }
         let named = options.named_for_removal(entry.kind, &entry.name);
@@ -637,9 +701,10 @@ fn verdicts<'a>(
 /// what requires it ([`keep_what_kept_records_require`]), and keeps
 /// nothing it required, so every verdict is read again from the first ones
 /// until no more copies lack one. Only a copy that would otherwise stay
-/// is asked: one retained for want of an answer has nothing decided on
-/// it, and one already taken goes for its own reason. Returns the copies
-/// that lack a companion.
+/// is asked, one a set this pass could not expand keeps included: one
+/// retained for want of an answer has nothing decided on it, and one
+/// already taken goes for its own reason. Returns the copies that lack a
+/// companion.
 fn settle_lacking<'a>(
     lock: &Lock,
     carried: &KeptAsIs,
@@ -732,9 +797,10 @@ fn keep_what_kept_records_require(
             .filter_map(|(key, verdict)| match verdict {
                 Verdict::Removed { .. } => None,
                 Verdict::Retained | Verdict::Retired => Some((key.as_str(), false)),
-                Verdict::Left { .. } | Verdict::Held | Verdict::Needed { .. } => {
-                    Some((key.as_str(), true))
-                }
+                Verdict::KeptBySet { .. }
+                | Verdict::Left { .. }
+                | Verdict::Held
+                | Verdict::Needed { .. } => Some((key.as_str(), true)),
             })
             .collect();
         let mut changed = false;
