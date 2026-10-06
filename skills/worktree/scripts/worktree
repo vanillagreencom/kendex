@@ -776,42 +776,41 @@ caller_exported() { # NAME — 0 when the caller exported NAME
   [[ $'\n'"$CALLER_ENV_NAMES"$'\n' == *$'\n'"$1"$'\n'* ]]
 }
 
-# The keys the main checkout's committed settings exported into this process,
-# one per line, that still hold the committed value. Git hands its hooks this
-# process's environment, and a hook lane's settings resolver reads an exported
-# key ahead of the pushed tree's own settings, so a branch that changes one of
-# these keys would be judged by the main checkout's value. A key the caller
-# exported is the caller's to decide, and one the private env file changed is
-# a personal override no branch carries; neither is listed, nor is a key from
-# a settings file git does not track, which is a local override too. The files
-# are loaded again through the project loader into a subshell cleared of every
-# key the caller did not export, so what it exports there is what they assign.
-committed_settings_keys() {
-  local name="" line="" loaded="" file="" rc=0
-  loaded="$(
-    while IFS= read -r name; do
-      caller_exported "$name" || unset "$name"
-    done < <(compgen -e)
-    for file in kendex.settings.toml .kendex/settings.toml; do
-      rc=0
-      git -C "$PROJECT_ROOT" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || rc=$?
-      # --error-unmatch keeps exit 1 for an untracked path alone.
-      case "$rc" in
-        0) kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1 ;;
-        1) ;;
-        *) exit 1 ;;
-      esac
-    done
-    while IFS= read -r name; do
-      caller_exported "$name" || printf '%s=%s\n' "$name" "${!name}"
-    done < <(compgen -e)
-  )" || return 1
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    name="${line%%=*}"
-    [[ "${!name-}" != "${line#*=}" ]] || printf '%s\n' "$name"
-  done <<<"$loaded"
-}
+# The keys the main checkout's tracked settings files exported, one per line.
+# Git hands this environment to its hooks, whose settings resolvers read an
+# exported key ahead of the pushed tree's own settings. A layer is told by the
+# names it assigns, never by value: the caller's exports, and any key an
+# untracked settings file or the private env file assigns, are overrides no
+# branch carries. Each layer reloads into this subshell, cleared first of
+# every key the caller did not export.
+committed_settings_keys() (
+  name="" file="" rc=0 private="" tracked="" untracked=()
+  kendex_private_env_file private "$PROJECT_ROOT" || exit 1
+  while IFS= read -r name; do
+    caller_exported "$name" || unset "$name"
+  done < <(compgen -e)
+  for file in kendex.settings.toml .kendex/settings.toml; do
+    rc=0
+    git -C "$PROJECT_ROOT" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || rc=$?
+    # --error-unmatch keeps exit 1 for an untracked path alone.
+    case "$rc" in
+      0) kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1 ;;
+      1) untracked+=("$file") ;;
+      *) exit 1 ;;
+    esac
+  done
+  tracked="$(compgen -e)"
+  while IFS= read -r name; do
+    caller_exported "$name" || unset "$name"
+  done <<<"$tracked"
+  for file in ${untracked[@]+"${untracked[@]}"}; do
+    kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1
+  done
+  kendex_source_env_file "$PROJECT_ROOT/$private" || exit 1
+  while IFS= read -r name; do
+    [[ -n "${!name+x}" ]] || printf '%s\n' "$name"
+  done <<<"$tracked"
+)
 
 # Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
 # PUSH_AUTO_REBASE; returns 1 with the usage error on stderr for anything it
