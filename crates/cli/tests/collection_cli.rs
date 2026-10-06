@@ -212,10 +212,7 @@ fn a_member_skipped_on_conflict_ends_the_run_on_its_own_status() {
     assert_eq!(run.status.code(), Some(3), "{text}");
     let named: Vec<&str> = text
         .lines()
-        .filter_map(|line| {
-            line.split_once("skipped-on-conflict=")
-                .map(|(_, item)| item)
-        })
+        .filter_map(|line| line.strip_prefix("skipped-on-conflict="))
         .collect();
     assert_eq!(named, ["skill gh"], "{text}");
     assert!(

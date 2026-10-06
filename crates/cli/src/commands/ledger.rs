@@ -223,14 +223,17 @@ impl SkippedOnConflict {
     pub const STATUS: u8 = 3;
 }
 
-/// One `skipped-on-conflict=<kind> <name>` line per item, each name
-/// escaped here, then the reason. Its breaks are its own:
-/// `ui::refusal` splits it into lines where it prints.
+/// A `partial-install skipped=<count>` headline, then one
+/// `skipped-on-conflict=<kind> <name>` line per item, each name escaped
+/// here, then the reason. Its breaks are its own: `ui::refusal` splits it
+/// into lines where it prints and prefixes the first, so the headline
+/// takes the prefix and every item line is spelled the same.
 impl std::fmt::Display for SkippedOnConflict {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut items: Vec<&(ItemKind, String)> = self.items.iter().collect();
         items.sort();
         items.dedup();
+        writeln!(out, "partial-install skipped={}", items.len())?;
         for (kind, name) in items {
             writeln!(
                 out,

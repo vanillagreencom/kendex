@@ -14,7 +14,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 /// The status `kendex_cli`'s `SkippedOnConflict` exits with; the line
-/// automation keys on is `skipped-on-conflict=<kind> <name>`.
+/// automation keys on is `skipped-on-conflict=<kind> <name>`, every one
+/// spelled alike under an `Error: partial-install skipped=<count>`
+/// headline.
 const SKIPPED: i32 = 3;
 
 #[allow(clippy::expect_used)]
@@ -88,14 +90,23 @@ fn kept(project: &Path, name: &str) -> bool {
         .is_ok_and(|body| body.contains("Written by hand."))
 }
 
-/// The keyed lines a run named, in the order it printed them.
+/// The keyed lines a run named, in the order it printed them: a line
+/// that opens on the key, as a script anchoring on it reads it.
 fn named(printed: &str) -> Vec<String> {
     printed
         .lines()
-        .filter_map(|line| {
-            line.split_once("skipped-on-conflict=")
-                .map(|(_, item)| item.to_owned())
-        })
+        .filter_map(|line| line.strip_prefix("skipped-on-conflict="))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The refusal's headline and the keyed lines under it, exactly as
+/// printed, or nothing for a run that printed no headline.
+fn refusal(printed: &str, items: usize) -> Vec<&str> {
+    printed
+        .lines()
+        .skip_while(|line| !line.starts_with("Error: partial-install"))
+        .take(items + 1)
         .collect()
 }
 
@@ -169,6 +180,16 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             run: Run::Add(&["--skill", "review-gate,linear"]),
             status: SKIPPED,
             names: &["skill review-gate"],
+            lands: &["linear"],
+        },
+        Row {
+            case: "two named skills",
+            in_the_way: &["review-gate", "notes"],
+            before: &[],
+            edited: &[],
+            run: Run::Add(&["--skill", "review-gate,notes,linear"]),
+            status: SKIPPED,
+            names: &["skill notes", "skill review-gate"],
             lands: &["linear"],
         },
         Row {
@@ -285,6 +306,22 @@ fn a_run_with_no_terminal_fails_on_a_skip_of_what_it_was_asked_for() {
             row.case
         );
         assert_eq!(named(&printed), row.names, "{}: {printed}", row.case);
+        let expected: Vec<String> = match row.names.len() {
+            0 => Vec::new(),
+            count => std::iter::once(format!("Error: partial-install skipped={count}"))
+                .chain(
+                    row.names
+                        .iter()
+                        .map(|name| format!("skipped-on-conflict={name}")),
+                )
+                .collect(),
+        };
+        assert_eq!(
+            refusal(&printed, row.names.len()),
+            expected,
+            "{}: {printed}",
+            row.case
+        );
         for name in row.lands {
             assert!(
                 installed(&project, name),

@@ -1227,7 +1227,8 @@ fn a_refused_commit_keeps_its_status_over_a_skip() {
             "refusing={refusing}: {text}"
         );
         assert!(
-            text.contains("skipped-on-conflict=agent scout"),
+            text.lines()
+                .any(|line| line == "skipped-on-conflict=agent scout"),
             "refusing={refusing}: {text}"
         );
     }
