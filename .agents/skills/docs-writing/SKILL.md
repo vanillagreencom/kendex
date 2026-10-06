@@ -11,7 +11,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.7"
+  version: "3.0.8"
 tags: [docs]
 ---
 
@@ -140,8 +140,8 @@ Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), 
 
 A fact has exactly one home. Ask the questions in order and stop at the first yes:
 
-1. Would a later agent, reading the code alone, reverse this choice? A decision record: the choice, why, the rejected option and the revisit trigger, under the decider bar. Example: [examples/decision.md](examples/decision.md), one dismiss owner kept over per-component handling.
-2. Is it a rule an agent follows while doing one kind of work under those choices? An architecture doc, citing decision IDs and never restating them. Example: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another.
+1. Is it one option kept over a named rejected alternative, whose reason the code cannot show and which a doc's rules cite rather than restate? A decision record: the choice, why, the rejected option and the revisit trigger, under the decider bar. Example: [examples/decision.md](examples/decision.md), one dismiss owner kept over per-component handling, cited by the design-system doc's rule.
+2. Is it the approach one reader's task runs under, or a rule followed while doing it? An architecture doc: the approach, its why and its rules, citing any decision it rests on by ID and never restating it. Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another; [examples/architecture-design-system.md](examples/architecture-design-system.md), every value a component draws comes from the token file.
 3. Neither. A feature's behaviour, what a page, key or button does, lives in the code, its tests and the tracker item that asked for it. Counter-example: [examples/behaviour-spec.md](examples/behaviour-spec.md), a window written up control by control, with where each line goes.
 
 ### Decision records
