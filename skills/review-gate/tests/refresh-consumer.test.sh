@@ -648,7 +648,7 @@ for row in apply apply-control apply-failure apply-failure-control; do
   calls="$(awk '{ print $1 }' "$TMP/state/kendex" | tr '\n' ' ')"
   case "$row" in
     apply)
-      if [ "$RC" -eq 0 ] && [ "$calls" = 'refresh apply verify --version ' ] &&
+      if [ "$RC" -eq 0 ] && [ "$calls" = 'help refresh apply verify --version ' ] &&
           grep -qxF 'apply --scope project --yes --leave' "$TMP/state/kendex" &&
           [ "$after" != "$before" ] &&
           ! git --git-dir="$TMP/remote" cat-file -e refs/heads/kendex/refresh:.claude/hooks/leftover.sh 2>/dev/null; then
@@ -661,7 +661,7 @@ for row in apply apply-control apply-failure apply-failure-control; do
       else bad 'apply control' "$OUT"; fi ;;
     apply-failure)
       if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=apply value=5' <<<"$OUT" &&
-          [ "$calls" = 'refresh apply ' ] && [ "$after" = "$before" ] &&
+          [ "$calls" = 'help refresh apply ' ] && [ "$after" = "$before" ] &&
           ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
         ok 'a failed apply stops the run before publication'
       else bad 'apply failure' "$OUT"; fi ;;

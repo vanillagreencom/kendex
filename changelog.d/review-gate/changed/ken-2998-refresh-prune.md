@@ -1,0 +1,1 @@
+- The consumer refresh passes --prune when the installed kendex offers it, so items the catalog retired leave the consumer in the refresh pull request.
