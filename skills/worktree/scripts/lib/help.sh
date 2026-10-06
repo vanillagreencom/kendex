@@ -623,10 +623,11 @@ temporary HTTPS rewrite and 'gh auth git-credential' config. Remote URLs and
 git config are not modified. KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never forces
 the normal SSH path.
 
-Settings: git push and its hooks do not inherit the main checkout's committed
-kendex.settings.toml or .kendex/settings.toml values, so a pre-push lane reads
-the pushed branch's own settings. A value the caller exported, or one
-.env.local sets, still reaches them.
+Settings: git push and its hooks do not inherit the values of the main
+checkout's tracked kendex.settings.toml or .kendex/settings.toml, so a
+pre-push lane reads the pushed branch's own settings. A value the caller
+exported, one .env.local sets, or one from an untracked settings file still
+reaches them.
 
 Options:
   -u, --set-upstream    Set upstream tracking branch

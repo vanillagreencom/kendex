@@ -782,17 +782,26 @@ caller_exported() { # NAME — 0 when the caller exported NAME
 # key ahead of the pushed tree's own settings, so a branch that changes one of
 # these keys would be judged by the main checkout's value. A key the caller
 # exported is the caller's to decide, and one the private env file changed is
-# a personal override no branch carries; neither is listed. The settings are
-# loaded again through the project loader into a subshell cleared of every
+# a personal override no branch carries; neither is listed, nor is a key from
+# a settings file git does not track, which is a local override too. The files
+# are loaded again through the project loader into a subshell cleared of every
 # key the caller did not export, so what it exports there is what they assign.
 committed_settings_keys() {
-  local name="" line="" loaded=""
+  local name="" line="" loaded="" file="" rc=0
   loaded="$(
     while IFS= read -r name; do
       caller_exported "$name" || unset "$name"
     done < <(compgen -e)
-    kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
-    kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
+    for file in kendex.settings.toml .kendex/settings.toml; do
+      rc=0
+      git -C "$PROJECT_ROOT" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || rc=$?
+      # --error-unmatch keeps exit 1 for an untracked path alone.
+      case "$rc" in
+        0) kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1 ;;
+        1) ;;
+        *) exit 1 ;;
+      esac
+    done
     while IFS= read -r name; do
       caller_exported "$name" || printf '%s=%s\n' "$name" "${!name}"
     done < <(compgen -e)
