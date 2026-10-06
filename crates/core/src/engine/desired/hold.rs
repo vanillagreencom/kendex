@@ -185,32 +185,42 @@ impl HeldPin {
 /// `update_only` — a pinned copy of it, paired with the synthetic pins to
 /// strip from any manifest the plan writes.
 pub(crate) fn planning_manifest<'a>(
-    env: &Env,
     manifest: &'a Manifest,
     lock: &Lock,
     options: &super::super::PlanOptions,
 ) -> (std::borrow::Cow<'a, Manifest>, Option<HeldPins>) {
     match &options.update_only {
         Some(targets) => {
-            let (mut held, mut pins) = held_manifest(manifest, lock, targets);
-            if !options.hold_unserved {
-                release_unserved(env, &mut held, &mut pins);
-            }
+            let (held, pins) = held_manifest(manifest, lock, targets);
             (std::borrow::Cow::Owned(held), Some(pins))
         }
         None => (std::borrow::Cow::Borrowed(manifest), None),
     }
 }
 
-/// Take back each pin at a commit this machine's cache cannot serve, so
-/// its declaration resolves fresh. Held there it would read nothing and be
-/// skipped, and the write that skipped it would de-list what it renders.
-fn release_unserved(env: &Env, held: &mut Manifest, pins: &mut HeldPins) {
+/// Under a write that keeps the record
+/// ([`super::super::PlanOptions::keep_source_records`]), take back each pin
+/// at a commit this machine's mirror cannot serve, so its declaration
+/// resolves fresh: one more case the record cannot place. Held there it
+/// would read nothing and be skipped, and the write that skipped it would
+/// de-list what it renders. Any other hold keeps every pin, so `verify
+/// --at-record` still reports what the record names.
+pub(crate) fn release_unserved(
+    env: &Env,
+    options: &super::super::PlanOptions,
+    held: &mut Manifest,
+    pins: &mut HeldPins,
+) {
+    if !options.keep_source_records {
+        return;
+    }
     let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
     let (kept, unserved) = std::mem::take(&mut pins.pins).into_iter().partition(|pin| {
         *served
             .entry((pin.repo.clone(), pin.commit.clone()))
-            .or_insert_with(|| crate::remote::serves(env, &pin.repo, &pin.commit))
+            .or_insert_with(|| {
+                crate::remote::mirror_commit(env, &pin.repo, Some(&pin.commit)).is_some()
+            })
     });
     HeldPins { pins: unserved }.unpin(held);
     pins.pins = kept;

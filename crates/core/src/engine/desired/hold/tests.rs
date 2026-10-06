@@ -518,9 +518,10 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
     );
 }
 
-/// A pin at a commit this machine's cache cannot serve is taken back for a
-/// write, which would otherwise skip what it holds, and kept for the
-/// record's own reading. A revision the user pinned is neither.
+/// A pin at a commit this machine's mirror cannot serve is taken back for a
+/// write that keeps the record, which would otherwise skip what it holds,
+/// and kept for the record's own reading. A revision the user pinned is
+/// neither.
 #[test]
 fn a_commit_nothing_serves_is_released_for_a_write_and_held_for_the_reading() {
     let tmp = tempfile::tempdir().unwrap();
@@ -537,7 +538,9 @@ fn a_commit_nothing_serves_is_released_for_a_write_and_held_for_the_reading() {
         (super::super::super::PlanOptions::at_record(), true),
         (super::super::super::PlanOptions::locked(), false),
     ] {
-        let (planning, pins) = planning_manifest(&env, &manifest, &lock, &options);
+        let (planning, pins) = planning_manifest(&manifest, &lock, &options);
+        let (mut planning, mut pins) = (planning.into_owned(), pins.unwrap());
+        release_unserved(&env, &options, &mut planning, &mut pins);
         let pinned = holds.then(|| gone.clone());
         assert_eq!(planning.declared(ItemKind::Skill)["one"].rev, pinned);
         assert_eq!(planning.bundles["starter"].rev, pinned);
@@ -545,6 +548,6 @@ fn a_commit_nothing_serves_is_released_for_a_write_and_held_for_the_reading() {
             planning.declared(ItemKind::Skill)["held"].rev.as_deref(),
             Some("fff")
         );
-        assert_eq!(pins.unwrap().pins().len(), if holds { 2 } else { 0 });
+        assert_eq!(pins.pins().len(), if holds { 2 } else { 0 });
     }
 }

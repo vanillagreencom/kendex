@@ -553,11 +553,9 @@ pub struct PlanOptions {
     /// its revision — resolves at the source's tip; every other unpinned
     /// remote declaration and bundle is read at the commit its lock
     /// entries record, so a sibling follower does not move as a side
-    /// effect. A package the lock cannot place (never installed,
-    /// installations disagreeing on their commit, or, unless
-    /// [`PlanOptions::hold_unserved`], a commit this machine cannot read)
-    /// resolves fresh, which is what a whole-scope apply does for it
-    /// anyway. The whole-scope
+    /// effect. A package the lock cannot place (never installed, or
+    /// installations disagreeing on their commit) resolves fresh, which
+    /// is what a whole-scope apply does for it anyway. The whole-scope
     /// apply never sets this, and refresh sets it only as
     /// [`PlanOptions::locked`].
     ///
@@ -585,17 +583,11 @@ pub struct PlanOptions {
     /// at the source's tip while its source's entry is kept. Only
     /// [`PlanOptions::locked`] sets this: `verify --at-record` weighs the
     /// record against where each source resolves now, and reads that off
-    /// the record this pass would write.
+    /// the record this pass would write. A write also reads fresh a
+    /// declaration held at a commit this machine cannot read, where
+    /// `verify --at-record` keeps it held: skipped, the write would de-list
+    /// its renders.
     pub keep_source_records: bool,
-    /// Under a hold, keep a declaration pinned at its recorded commit even
-    /// where this machine's cache cannot serve that commit: the source's
-    /// history was rewritten past it and the mirror never fetched it. Off,
-    /// such a declaration resolves fresh, one more case the record cannot
-    /// place, because a write that held it would skip it and de-list its
-    /// renders. Only [`PlanOptions::at_record`] sets this: `verify
-    /// --at-record` reports what the record names, and a commit nothing
-    /// serves is part of that report.
-    pub hold_unserved: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file
@@ -690,21 +682,15 @@ impl PlanOptions {
     /// [`PlanOptions::update_only`] says. What `verify --at-record` checks
     /// against.
     pub fn at_record() -> Self {
-        PlanOptions {
-            hold_unserved: true,
-            ..PlanOptions::for_packages([])
-        }
+        PlanOptions::for_packages([])
     }
 
     /// [`PlanOptions::at_record`] for a write: the record also keeps where
     /// it says each source sits, so a re-render of a project-side change
-    /// moves no catalog the record places, and a declaration whose recorded
-    /// commit nothing serves resolves fresh ([`PlanOptions::hold_unserved`]).
-    /// What `refresh --locked` writes.
+    /// moves no catalog the record places. What `refresh --locked` writes.
     pub fn locked() -> Self {
         PlanOptions {
             keep_source_records: true,
-            hold_unserved: false,
             ..PlanOptions::at_record()
         }
     }

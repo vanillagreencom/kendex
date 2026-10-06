@@ -1,1 +1,1 @@
-- A command that holds packages at the commit `.kendex-lock.json` records reads one at the newest catalog where that commit is gone, instead of skipping it and dropping its generated paths.
+- `kendex refresh --locked`, `remove`, `enable`, `disable` and the source switches read a package at the newest catalog where its recorded commit is gone, instead of skipping it.
