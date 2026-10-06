@@ -55,6 +55,11 @@
 # session_meta keeps only the identity and version fields. The legacy-shaped
 # rows drop the events of a Paginated capture, as Legacy mode writes none.
 # The child thread already has its own transcript_path, not Claude's layout.
+# The subagent captures are a Codex 0.160.1 subagent's lone text(await ...)
+# read of a skill holding a DEL, with max_output_tokens above its size, and
+# the payload of its next guarded call: Codex printed the DEL raw, and the
+# payload carries agent_id and agent_type beside a transcript_path naming the
+# child's own rollout. Only the payload's paths are placeholders.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -371,6 +376,7 @@ legacy-failed|skill-load-check-codex-0.160.0-legacy|failed-read|rc=2 first=skill
 legacy-compound-js|skill-load-check-codex-0.160.0-legacy|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound JavaScript in a Legacy rollout
 legacy-escaped|skill-load-check-codex-0.160.0-child-whole|no-event:1,4|rc=0 first=-|functions.exec escaped read with no events
 legacy-cut|skill-load-check-codex-0.160.0-child-cut|no-event:1,4|rc=2 first=skill-load-check: unloaded=demo|functions.exec read cut by max_output_tokens with no events
+subagent-del|skill-load-check-codex-0.160.1-subagent-del|original|rc=0 first=-|functions.exec child whole read printing DEL raw
 ROWS
 }
 # One wrapper, one skill judged per row.
@@ -434,6 +440,31 @@ legacy_guard_row() { exec_rows captured-failed; }
 exec_rows
 truncated_reads_rows
 
+# The captured payload of the subagent's guarded call, judged against the
+# rollout its transcript_path names: the child's own read passes, and a
+# rollout without it refuses.
+child_payload_rows() { # optional row key for a planted-copy control
+  local key transcript want label
+  cp -- "$HOOK" "$JUDGE"
+  : >"$TMP_ROOT/child-empty.jsonl"
+  while IFS='|' read -r key transcript want label; do
+    [ -z "${1:-}" ] || [ "$key" = "$1" ] || continue
+    payload=$(jq -c --arg t "$transcript" --arg c "$REPO" '.transcript_path = $t | .cwd = $c' \
+      "$TEST_DIR/fixtures/skill-load-check-codex-0.160.1-subagent-payload.json")
+    set +e
+    (cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$JUDGE" \
+      >/dev/null 2>"$ERR_FILE" <<<"$payload")
+    rc=$?
+    set -e
+    assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+  done <<ROWS
+own|$TEST_DIR/fixtures/skill-load-check-codex-0.160.1-subagent-del.jsonl|rc=0 first=-|captured subagent call after its own read
+none|$TMP_ROOT/child-empty.jsonl|rc=2 first=skill-load-check: unloaded=linear|captured subagent call with no read in its rollout
+ROWS
+}
+child_payload_rows
+exec_del_row() { exec_rows subagent-del; child_payload_rows own; }
+
 skill_load_control exec-direct-text "$HOOK" '      | .input | strings' \
   '      | select(startswith("const"))' HOOK exec_captured_row 'functions.exec captured direct text read'
 skill_load_control exec-recognition "$HOOK" '    def exec_cmds:' \
@@ -484,6 +515,10 @@ skill_load_control exec-whole "$HOOK" '    | ($texts | join("")) as $printed' \
 skill_load_control exec-print-form "$HOOK" '    | ($texts | join("")) as $printed' \
   '    | ($statements | map(.json = false)) as $statements' HOOK exec_print_form_row \
   'functions.exec truncated output keeps a whole read' 'functions.exec child whole escaped read'
+# Escapes DEL as jq's tojson does, which Codex does not.
+skill_load_control exec-del "$HOOK" 'join("\u007f") else . end) as $whole' \
+  '          | (if $statements[$at].json then tojson | .[1:-1] else $whole end) as $whole' HOOK exec_del_row \
+  'functions.exec child whole read printing DEL raw' 'captured subagent call after its own read'
 # Passes every candidate line through jq's raw line reader before it is
 # judged. Only a jq whose raw reader decodes each buffer of a line alone, as
 # 1.7 does, changes the child-whole event line that way; on one that decodes

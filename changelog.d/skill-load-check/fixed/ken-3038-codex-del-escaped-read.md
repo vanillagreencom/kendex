@@ -1,0 +1,1 @@
+- skill-load-check counts a whole Codex `functions.exec` skill read printed through `text(await ...)` when the skill holds a DEL character, so the call the skill gates is no longer refused.

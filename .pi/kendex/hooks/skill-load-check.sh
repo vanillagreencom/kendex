@@ -717,7 +717,9 @@ esac
 # when its event's aggregated_output appears whole in the joined text, as
 # its statement printed it: `text(await ...)` prints the result object as
 # JSON, so the output there is JSON-escaped, and the `.output` spellings
-# print it raw. In
+# print it raw. A measured Codex 0.160.1 read of every C0 and C1 control
+# printed each one as jq's tojson escapes it except DEL, which Codex prints
+# raw and tojson writes as `\u007f`, so DEL is kept raw. In
 # a measured wrapper of four printed reads the cut took the end of one read
 # and the start of the next, and the other two arrived whole. An event with
 # no aggregated_output string proves no read.
@@ -798,7 +800,8 @@ if [ "$CALL" = codex ]; then
             and (test("^Warning: truncated output [(]original token count: [0-9]+[)]\n") | not))))
       or ($items[$index + 1 + $at].item | .status == "completed" and .exit_code == 0
         and (.aggregated_output
-          | if type == "string" then (if $statements[$at].json then tojson | .[1:-1] else . end) as $whole
+          | if type == "string" then (if $statements[$at].json
+              then split("\u007f") | map(tojson | .[1:-1]) | join("\u007f") else . end) as $whole
               | $printed | contains($whole)
             else false end)))
     | $cmds[$at] as $cmd
