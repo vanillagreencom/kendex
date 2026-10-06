@@ -256,7 +256,7 @@ git -C "$SKILLS" config user.email test@example.com
 git -C "$SKILLS" config user.name test
 git -C "$SKILLS" config gc.auto 0
 git -C "$SKILLS" config maintenance.auto false
-skill_commit() { # BRANCH VERSION BODY
+skill_commit() { # BRANCH VERSION BODY [EXTRA_FILE]
   local file
   # The seed commit is the repository's first, on its initial branch.
   [ -z "${SKILLS_BASE:-}" ] || git -C "$SKILLS" checkout -q -b "$1" "$SKILLS_BASE"
@@ -264,6 +264,7 @@ skill_commit() { # BRANCH VERSION BODY
     mkdir -p "$SKILLS/${file%/*}"
     printf -- '---\nname: x\nmetadata:\n  author: a\n  version: "%s"\n---\n\n%s\n' "$2" "$3" >"$SKILLS/$file"
   done
+  [ -z "${4:-}" ] || printf 'edit\n' >"$SKILLS/$4"
   git -C "$SKILLS" add -A
   git -C "$SKILLS" commit -qm "$1"
 }
@@ -271,10 +272,14 @@ skill_commit seed 1.0.0 '  version: "1.0.0"'
 SKILLS_BASE="$(git -C "$SKILLS" rev-parse HEAD)"
 skill_commit version-raise 1.0.1 '  version: "1.0.0"'
 skill_commit version-and-body 1.0.1 '  version: "1.0.1"'
+# skills/x/AGENTS.md sorts after .agents/skills/x/SKILL.md, so the exempt
+# render is read before a path that must still select small.
+skill_commit version-and-agents 1.0.1 '  version: "1.0.0"' skills/x/AGENTS.md
 # branch|expected|row
 SKILL_ROWS=(
   "version-raise|tier=micro brief=micro cause=estimate-within-micro rc=0|a metadata.version raise in a SKILL.md and its render stays micro"
   "version-and-body|tier=small brief=small cause=instruction-file rc=0|another changed SKILL.md line still selects small"
+  "version-and-agents|tier=small brief=small cause=instruction-file rc=0|an exempt raise leaves later paths in the range classified"
 )
 for row in "${SKILL_ROWS[@]}"; do
   IFS='|' read -r branch want name <<<"$row"
