@@ -205,11 +205,14 @@ pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineRepor
         });
     }
     manifest.sources.remove(name);
-    persist_and_plan(env, scope, manifest)
+    // Held at the record, as a package removal is: this names one source,
+    // and every package it does not name stays at its recorded commit.
+    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
 }
 
 /// Disabling deactivates the source's installations in place; re-enabling
-/// restores them (they stay declared throughout — not drift).
+/// restores them (they stay declared throughout — not drift). Every other
+/// package holds at its recorded commit, as [`remove_source`] holds it.
 pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Result<EngineReport> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     let Some(decl) = manifest.sources.get_mut(name) else {
@@ -218,7 +221,7 @@ pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Res
         });
     };
     decl.enabled = enabled;
-    persist_and_plan(env, scope, manifest)
+    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
 }
 
 #[cfg(test)]

@@ -421,7 +421,10 @@ pub fn toggle(
             plugin.enabled = enabled;
         }
     }
-    let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::default())?;
+    // Held at the record, as a removal is: a toggle names what switches,
+    // and a package it does not name re-rendered at a newer catalog commit
+    // is an update nobody asked for.
+    let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::locked())?;
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)
 }
