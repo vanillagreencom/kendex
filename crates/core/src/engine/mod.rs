@@ -250,6 +250,83 @@ pub fn plan_scope(
     let generated =
         generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
 
+    let planned = Planned {
+        drift,
+        ops,
+        scope_notes,
+        set_changes,
+        repo_effects_leaving,
+        sweepable,
+        kept,
+        safety,
+        instruction_shims,
+        item_pass,
+        resolved_sources,
+        generated,
+        edited,
+        installations,
+        wanted,
+        readings,
+        new_lock,
+        held,
+    };
+    report(env, scope, &manifest, lock, options, state, planned)
+}
+
+/// What the passes of [`plan_scope`] planned, beside the desired state,
+/// that [`report`] reads off.
+struct Planned {
+    drift: Vec<DriftRow>,
+    ops: Vec<PlannedOp>,
+    scope_notes: Vec<String>,
+    set_changes: Vec<SetChange>,
+    repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
+    sweepable: Vec<SetChange>,
+    kept: Vec<KeptInstall>,
+    safety: Vec<ItemSafety>,
+    instruction_shims: Vec<ShimStanding>,
+    item_pass: plan_pass::ItemPass,
+    resolved_sources: BTreeMap<(String, Option<String>), crate::lock::SourceRev>,
+    generated: GeneratedPaths,
+    edited: BTreeSet<std::path::PathBuf>,
+    installations: BTreeMap<String, Installation>,
+    wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
+    readings: scope_writes::RecordReadings,
+    new_lock: Lock,
+    held: Vec<HeldPin>,
+}
+
+/// The report of one [`plan_scope`] pass: what it planned, with the
+/// desired state moved in after every read of it.
+fn report(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    options: &PlanOptions,
+    mut state: desired::DesiredState,
+    planned: Planned,
+) -> Result<EngineReport> {
+    let Planned {
+        drift,
+        ops,
+        scope_notes,
+        set_changes,
+        repo_effects_leaving,
+        sweepable,
+        kept,
+        safety,
+        instruction_shims,
+        item_pass,
+        resolved_sources,
+        generated,
+        edited,
+        installations,
+        wanted,
+        readings,
+        new_lock,
+        held,
+    } = planned;
     state.warnings.extend(state.agent_names.warnings());
     let retired_bundles = state.retired_bundles();
     let report = EngineReport {
@@ -288,7 +365,7 @@ pub fn plan_scope(
         held,
         asked: Asked::Declared,
     };
-    settled(env, scope, &manifest, lock, options, &state.items, report)
+    settled(env, scope, manifest, lock, options, &state.items, report)
 }
 
 /// Finalize the kept Pi records and plan the native switches a declaration
