@@ -468,25 +468,27 @@ impl EngineReport {
         }
     }
 
-    /// What the plan says of an item it withholds from every one of
-    /// `harnesses` for a reason that takes its copy
+    /// What the plan says of an item it writes on no tool and withholds
+    /// on at least one for a reason that takes its copy
     /// ([`super::desired::Withholding::said`]), the reason that outranks
-    /// the rest where tools differ. `None` where any of them is not so
-    /// withheld, since the plan still writes the item there, and for no
-    /// tools at all.
-    pub fn withheld_said(
-        &self,
-        kind: ItemKind,
-        name: &str,
-        harnesses: &[HarnessId],
-    ) -> Option<&'static str> {
-        let mut strongest = None;
-        for harness in harnesses {
-            let because = *self.withheld.get(&(kind, name.to_owned(), *harness))?;
-            because.said()?;
-            strongest = strongest.max(Some(because));
+    /// the rest where tools differ. `None` where the plan writes it
+    /// anywhere ([`EngineReport::installations`]): apply records it there.
+    /// A tool the item's own header leaves out is no tool it is written on,
+    /// so it neither answers nor blocks this.
+    pub fn withheld_said(&self, kind: ItemKind, name: &str) -> Option<&'static str> {
+        let written = self
+            .installations
+            .values()
+            .any(|installation| installation.kind == kind && installation.name == name);
+        if written {
+            return None;
         }
-        strongest.and_then(super::desired::Withholding::said)
+        self.withheld
+            .iter()
+            .filter(|((held, named, _), _)| *held == kind && named == name)
+            .map(|(_, because)| *because)
+            .max()
+            .and_then(super::desired::Withholding::said)
     }
 
     /// Whether the plan writes this package on none of the tools it is

@@ -672,8 +672,7 @@ struct Gap {
     kind: ItemKind,
     name: String,
     /// Why the plan writes it nowhere, where a withholding that takes its
-    /// copy holds it on every tool the plan places it on
-    /// ([`EngineReport::withheld_said`]), with the package's
+    /// copy says so ([`EngineReport::withheld_said`]), with the package's
     /// own warnings, which name what it runs with and the fix: apply
     /// records nothing for it, so the record's remedy would do nothing.
     withheld: Option<(&'static str, Vec<kendex_core::engine::ItemWarning>)>,
@@ -687,7 +686,7 @@ struct Gap {
 /// Named once each, in the order the scope declares them, with the
 /// installations the declarations did not account for after.
 fn gap_rows(
-    declared: &[(ItemKind, String, Vec<HarnessId>)],
+    declared: &[(ItemKind, String)],
     lock: &kendex_core::lock::Lock,
     report: &kendex_core::engine::EngineReport,
     placer: &Placer,
@@ -714,13 +713,13 @@ fn gap_rows(
     let listed = |gap: &[Gap], kind: ItemKind, name: &str| {
         gap.iter().any(|g| g.kind == kind && g.name == name)
     };
-    for (kind, name, harnesses) in declared {
+    for (kind, name) in declared {
         let placed =
             |entry: &kendex_core::lock::LockEntry| entry.kind == *kind && entry.name == *name;
         if !named(name) || lock.entries.values().any(placed) || listed(&gap, *kind, name) {
             continue;
         }
-        let withheld = report.withheld_said(*kind, name, harnesses).map(|said| {
+        let withheld = report.withheld_said(*kind, name).map(|said| {
             let warnings = report
                 .warnings
                 .iter()
@@ -935,12 +934,12 @@ fn declared_packages(
     Declared {
         wanted: wanted
             .into_iter()
-            .map(|declared| (declared.kind, declared.name, declared.harnesses))
+            .map(pair)
             .chain(
                 manifest
                     .plugins
-                    .iter()
-                    .map(|(name, decl)| (ItemKind::Plugin, name.clone(), vec![decl.harness])),
+                    .keys()
+                    .map(|name| (ItemKind::Plugin, name.clone())),
             )
             .collect(),
         left_out: left_out.into_iter().map(pair).collect(),
@@ -950,8 +949,8 @@ fn declared_packages(
 
 /// A scope's declarations, split by whether the record owes them an entry.
 struct Declared {
-    /// What the record must hold, with the tools the plan places each on.
-    wanted: Vec<(ItemKind, String, Vec<HarnessId>)>,
+    /// What the record must hold.
+    wanted: Vec<(ItemKind, String)>,
     /// What installs on none of the scope's tools, by its own harnesses line.
     left_out: Vec<(ItemKind, String)>,
     /// Whether the expansion reached every declaration. An incomplete one

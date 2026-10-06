@@ -339,6 +339,12 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
                 .into_iter()
                 .map(|(harness, because)| ((kind, name.clone(), harness), because)),
         );
+        state.retired_companions.extend(
+            found
+                .retired_companions
+                .into_iter()
+                .map(|(harness, companions)| ((kind, name.clone(), harness), companions)),
+        );
     }
 }
 
@@ -357,6 +363,10 @@ struct Wanted {
     /// ([`withhold_orphans`]), whose findings say why they are gone.
     answered: Vec<ItemWarning>,
     withheld: BTreeMap<HarnessId, Withholding>,
+    /// For each tool the parent is withheld from for a retirement, the
+    /// companions whose standing it took that reason from
+    /// ([`DesiredState::retired_companions`]).
+    retired_companions: BTreeMap<HarnessId, BTreeSet<Node>>,
     /// Whether the parent is switched on: only a hook that would run is
     /// withheld, since one that is off arms nothing beside a missing judge.
     armed: bool,
@@ -375,6 +385,26 @@ impl Wanted {
                 .entry(tool)
                 .and_modify(|held| *held = (*held).max(because))
                 .or_insert(because);
+        }
+    }
+
+    /// [`Wanted::withhold`], for a reason taken from `companion`'s
+    /// standing: a retirement records the companion, whose own verdict
+    /// says whether the parent still has it (`removal::settle_retired_pairs`).
+    fn withhold_for(
+        &mut self,
+        tools: impl IntoIterator<Item = HarnessId>,
+        because: Withholding,
+        companion: &Node,
+    ) {
+        for tool in tools {
+            self.withhold([tool], because);
+            if because == Withholding::Retired {
+                self.retired_companions
+                    .entry(tool)
+                    .or_default()
+                    .insert(companion.clone());
+            }
         }
     }
 }
@@ -501,10 +531,12 @@ fn withhold_kept_retired(wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredSta
                     findings: Vec::new(),
                     answered: Vec::new(),
                     withheld: BTreeMap::new(),
+                    retired_companions: BTreeMap::new(),
                     armed: true,
                     left_out: Vec::new(),
                 });
-            found.withhold(tools.iter().copied(), Withholding::Retired);
+            let companion = (dep_kind, dep.clone());
+            found.withhold_for(tools.iter().copied(), Withholding::Retired, &companion);
             found.answered.push(finding(
                 &NotWritten::Withheld,
                 kind,
@@ -591,7 +623,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                 tools,
                 because,
             } = companion;
-            found.withhold(tools.iter().copied(), because);
+            found.withhold_for(tools.iter().copied(), because, &(dep_kind, dep.clone()));
             found.answered.push(finding(
                 &NotWritten::Withheld,
                 kind,
@@ -814,6 +846,7 @@ fn wanted_by(
         findings: Vec::new(),
         answered: Vec::new(),
         withheld: BTreeMap::new(),
+        retired_companions: BTreeMap::new(),
         armed: parent_decl.enabled,
         left_out: Vec::new(),
     };
@@ -1053,10 +1086,9 @@ fn derive(
             // hook is withheld on these `harnesses` rather than armed beside
             // a copy kept only until the next prune; the rule is
             // docs/authoring/README.md's `[retired]` paragraph. The fix is
-            // the consumer's: the catalog's own is to drop the line. Where
-            // the retired copy stays installed the pair is the person's to
-            // settle under the plan's options; where it goes, the hook
-            // lacks it and goes whatever the options.
+            // the consumer's: the catalog's own is to drop the line. Whether
+            // the retired copy is still there for the hook is its own
+            // verdict's to say (`removal::settle_retired_pairs`).
             Offer::Retired(migration) => {
                 state.retire(dep_kind, &dep, source, migration, false);
                 let declared = match manifest.declared(kind).contains_key(parent) {
@@ -1075,13 +1107,8 @@ fn derive(
                     },
                 ));
                 if withholds {
-                    for harness in &harnesses {
-                        let because = match state.kept_as_recorded(dep_kind, &dep, *harness) {
-                            true => Withholding::Retired,
-                            false => Withholding::Requires,
-                        };
-                        wanted.withhold([*harness], because);
-                    }
+                    let companion = (dep_kind, dep.clone());
+                    wanted.withhold_for(harnesses, Withholding::Retired, &companion);
                 }
                 continue;
             }

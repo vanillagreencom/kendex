@@ -190,6 +190,7 @@ impl TrashGuard {
 /// What the orphan pass decided for one record, before any row or op is
 /// written: every verdict is known before the first is acted on, so a
 /// record a held one requires can be kept with it.
+#[derive(Clone)]
 enum Verdict {
     /// Kept with no row, for want of an answer: its declaration's source
     /// is unreachable, or its origin will not read. What it requires stays
@@ -292,7 +293,7 @@ pub(super) fn orphans(
         guard,
         &mut origins,
     );
-    keep_what_kept_records_require(lock, kept, &mut verdicts);
+    settle_retired_pairs(lock, kept, state, &mut verdicts);
     let withheld = |entry: &LockEntry| withheld_said(state, entry);
     let going = |entry: &LockEntry| match withheld(entry) {
         Some(said) => format!("{said} — will be removed"),
@@ -518,6 +519,61 @@ fn verdicts<'a>(
         verdicts.push((key, verdict));
     }
     verdicts
+}
+
+/// [`keep_what_kept_records_require`], with each copy withheld for a
+/// retirement ([`Withholding::Retired`]) decided off its companions' own
+/// verdicts, so a retired hook and the hook it runs with are answered
+/// together: where a companion it took that reason from goes on its tool
+/// (taken, or with no record there), the copy lacks it and goes as one
+/// withheld for a companion that will not run does, whatever the options;
+/// otherwise it is the orphan its first verdict says. A copy that goes
+/// keeps nothing it required, so every verdict is read again from the
+/// first ones until no more copies lack a companion.
+fn settle_retired_pairs(
+    lock: &Lock,
+    carried: &KeptAsIs,
+    state: &desired::DesiredState,
+    verdicts: &mut Vec<(&String, Verdict)>,
+) {
+    let first = verdicts.clone();
+    let mut lacking: BTreeSet<&String> = BTreeSet::new();
+    loop {
+        *verdicts = first.clone();
+        for (key, verdict) in verdicts.iter_mut() {
+            if lacking.contains(key) {
+                let named = matches!(verdict, Verdict::Removed { named: true, .. });
+                *verdict = Verdict::Removed {
+                    named,
+                    withheld: true,
+                };
+            }
+        }
+        keep_what_kept_records_require(lock, carried, verdicts);
+        let going: BTreeSet<&str> = verdicts
+            .iter()
+            .filter(|(_, verdict)| matches!(verdict, Verdict::Removed { .. }))
+            .map(|(key, _)| key.as_str())
+            .collect();
+        let before = lacking.len();
+        for (key, _) in verdicts.iter() {
+            let entry = &lock.entries[*key];
+            let held = (entry.kind, entry.name.clone(), entry.harness);
+            let Some(companions) = state.retired_companions.get(&held) else {
+                continue;
+            };
+            let lacks = companions.iter().any(|(kind, name)| {
+                let theirs = entry_key(*kind, name, entry.harness);
+                !lock.entries.contains_key(&theirs) || going.contains(theirs.as_str())
+            });
+            if lacks {
+                lacking.insert(*key);
+            }
+        }
+        if lacking.len() == before {
+            return;
+        }
+    }
 }
 
 /// A record that stays installed with its recorded bytes, whichever pass

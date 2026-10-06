@@ -627,7 +627,7 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
         &'a [&'a str],
         &'a [&'a str],
     );
-    let rows: [Row; 11] = [
+    let rows: [Row; 12] = [
         (
             "installed, then retired: kept",
             Over::Boss,
@@ -672,6 +672,15 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             "",
             &[],
             &[],
+        ),
+        (
+            "both edited, then pruned: held together",
+            Over::Boss,
+            Before::Installed,
+            After::Pruned,
+            "",
+            &["boss", "judge"],
+            &["boss", "judge"],
         ),
         (
             "an edited requirer, the judge then removed by name",
@@ -788,9 +797,9 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
                 assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {after:?} {name}");
             }
             apply::execute(&f.env, &done.plan).unwrap();
-            // The judge goes here, so nothing the plan leaves runs beside
+            // Where the judge goes, nothing the plan leaves runs beside
             // none, the person's edits included.
-            for name in over.hooks() {
+            for name in over.hooks().iter().filter(|name| !stays.contains(name)) {
                 for copy in f.installed_copies(ItemKind::Hook, name) {
                     assert!(!copy.exists(), "{row}: {after:?} leaves {}", copy.display());
                 }
@@ -823,7 +832,14 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
             let files = written_files(&plain, name);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {name}");
         }
-        for name in edited.iter().filter(|name| stays.contains(name)) {
+        // The judge is withheld, and so held, only in the knot; kept, it
+        // has no row.
+        let withheld = |name: &&&str| over.hooks().contains(*name) || over == Over::Knot;
+        for name in edited
+            .iter()
+            .filter(|name| stays.contains(name))
+            .filter(withheld)
+        {
             let held = plain.drift.iter().any(|drift| {
                 drift.name == *name
                     && drift.state == DriftState::Conflict
@@ -1141,62 +1157,42 @@ fn a_kept_retired_hook_goes_with_a_requirement_withheld_refreshes_later() {
     }
 }
 
-/// What the report says of a declaration withheld on its tools, the one
-/// answer verify's gap row reads: said only where every tool the plan
-/// places it on withholds it for a reason that takes its copy, as the
-/// reason that outranks the rest. A tool still planned, or held for a
-/// catalog that does not answer, leaves the record's own remedy standing.
+/// What the report says of a hook requiring a retired judge, the one
+/// answer verify's gap row reads: the withholding only where the plan
+/// writes the hook on no tool. Its own harnesses line leaving Claude Code
+/// out, the hook is written nowhere and withheld on Copilot alone; its
+/// requires-on line naming only Copilot, it is written on Claude Code, so
+/// apply records it there.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_withholding_is_said_only_where_every_tool_withholds_the_copy() {
-    use HarnessId::{Claude, Copilot};
-    use Withholding::{Orphaned, Requires, Retired, Unanswered};
-    for (row, withheld, said) in [
+fn a_withholding_is_said_only_where_the_plan_writes_the_hook_nowhere() {
+    for (row, line, said) in [
+        ("withheld on every tool", "", Withholding::Retired.said()),
         (
-            "withheld on one of two tools",
-            &[(Copilot, Retired)][..],
-            None,
+            "its own line leaves Claude Code out",
+            "# harnesses: [copilot]\n",
+            Withholding::Retired.said(),
         ),
         (
-            "retired on both",
-            &[(Claude, Retired), (Copilot, Retired)][..],
-            Retired.said(),
-        ),
-        (
-            "retired and lacking",
-            &[(Claude, Retired), (Copilot, Requires)][..],
-            Requires.said(),
-        ),
-        (
-            "one unanswered",
-            &[(Claude, Unanswered), (Copilot, Retired)][..],
-            None,
-        ),
-        (
-            "one orphaned",
-            &[(Claude, Orphaned), (Copilot, Requires)][..],
+            "required only on Copilot",
+            "# requires-on: [copilot]\n",
             None,
         ),
     ] {
-        let mut report = EngineReport::observed(
-            kendex_core::apply::Plan::landed(Scope::Global, Vec::new()).unwrap(),
-        );
-        for (harness, because) in withheld {
-            report
-                .withheld
-                .insert((ItemKind::Hook, "boss".to_owned(), *harness), *because);
+        let f = installed(ItemKind::Hook, "boss");
+        write_item(&f, ItemKind::Hook, "judge");
+        require(&f, "boss", "judge");
+        if !line.is_empty() {
+            let copy = f.catalog_copy(ItemKind::Hook, "boss");
+            let header = fs::read_to_string(&copy).unwrap();
+            let lined = header.replacen("# ---\nexit", &format!("{line}# ---\nexit"), 1);
+            assert_ne!(lined, header, "{row}: no header to add to");
+            fs::write(&copy, lined).unwrap();
         }
+        f.retire(ItemKind::Hook, "judge", "");
 
-        let answer = report.withheld_said(ItemKind::Hook, "boss", &[Claude, Copilot]);
+        let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
-        assert_eq!(answer, said, "{row}");
+        assert_eq!(report.withheld_said(ItemKind::Hook, "boss"), said, "{row}");
     }
-    assert_eq!(
-        EngineReport::observed(
-            kendex_core::apply::Plan::landed(Scope::Global, Vec::new()).unwrap()
-        )
-        .withheld_said(ItemKind::Hook, "boss", &[]),
-        None,
-        "no tools"
-    );
 }

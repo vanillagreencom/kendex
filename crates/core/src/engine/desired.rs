@@ -371,6 +371,14 @@ pub struct DesiredState {
     /// invariant 4's conflict where the record is another catalog's
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
+    /// For each hook and tool withheld for a retirement
+    /// ([`Withholding::Retired`]), the companions it runs with there whose
+    /// standing it took that reason from: a retired hook, a requirer
+    /// withheld for one, or what a kept retired hook's record requires.
+    /// The removal pass reads each one's own verdict to say whether the
+    /// hook still has it (`removal::settle_retired_pairs`).
+    pub(super) retired_companions:
+        BTreeMap<(ItemKind, String, HarnessId), BTreeSet<(ItemKind, String)>>,
     /// Hooks whose pin keeps them off a tool where the walk, asked again
     /// with that pin dropped, withholds them (`deps::withheld_past_pin`);
     /// empty unless `judge_pins` is set.
@@ -403,15 +411,15 @@ pub enum Withholding {
     /// record, as an orphan whose declaration's source is unreachable does,
     /// and a companion this hook alone derives is not orphaned by it.
     Unanswered,
-    /// A hook it requires was retired by its catalog and stays installed
-    /// there as recorded, or, for a retired hook kept as recorded, a hook
-    /// its record requires is withheld there and its copy goes: the knot
-    /// of hooks that require each other goes together, for the retirement.
-    /// Nothing it runs with is gone yet, and only the person's choice
-    /// settles it, so an installed copy is an orphan disposed of under the
-    /// plan's options, the person's edits held, by `removal::orphans`.
-    /// Where the retired hook does not stay (pruned, named for removal,
-    /// never recorded), the requirer lacks it: [`Withholding::Requires`].
+    /// A hook it requires was retired by its catalog, or a hook it
+    /// requires is withheld for that, or, for a retired hook kept as
+    /// recorded, a hook its record requires is withheld there and its copy
+    /// goes: the knot of hooks that require each other goes together, for
+    /// the retirement. An installed copy is an orphan disposed of under the
+    /// plan's options, the person's edits held, by `removal::orphans`,
+    /// while every companion it took the reason from stays installed there
+    /// (`DesiredState::retired_companions`); once one goes, it lacks that
+    /// companion and goes as [`Withholding::Requires`] does.
     Retired,
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
