@@ -310,7 +310,7 @@ A `create` whose `review_born` is false is the same command without that flag.
 
 **Linear only.** With `TRACKER=github`, record `positioning: n/a (github)` in § 8 and skip.
 
-Once every create has landed and its relations and parent are attached — never per create — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue is blocked by a non-Done issue in another project, or it is P4 with no blocking relations.
+Once every create has landed and its relations and parent are attached — never per create — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue's `blocked_by_open` names an issue in another project (linear SKILL.md § Blocked Label vs Issue Relations), or it is P4 with no blocking relations.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects get [PROJECT_ID] | jq -r '.state'
@@ -330,11 +330,11 @@ Propagate to children — Linear `issues children [ISSUE_ID] --recursive --forma
 
 For each issue cancelled in § 7.1 or § 7.2:
 
-**Linear**: `issues list-relations [CANCELED_ID]`, then `issues remove-relation [CANCELED_ID] --blocks [TARGET_ID]` for each `blocks` relation to a non-cancelled issue. `related` relations stay as historical record.
+**Linear**: every relation stays; a cancelled blocker leaves its targets' `blocked_by_open` (linear SKILL.md § Blocked Label vs Issue Relations).
 
 **GitHub**: there are no relation objects. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
 
-If a target is left with no remaining blocker and this audit created an issue covering the same domain: under `auto`, leave the blocker absent and report the candidate in § 8; under `ask`, ask "[ISSUE_ID] unblocked by cancellation of [ISSUE_ID]. Add blocker?" and execute approved additions.
+If a target's `blocked_by_open` is left empty and this audit created an issue covering the same domain: under `auto`, leave the blocker absent and report the candidate in § 8; under `ask`, ask "[ISSUE_ID] unblocked by cancellation of [ISSUE_ID]. Add blocker?" and execute approved additions.
 
 For decision-eliminated or superseded cancellations, take the old pattern from `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason` and check the parent and siblings (GitHub: the § 1.2.2 inventory) for non-cancelled issues whose title or description still names it. Under `auto`, leave these references unchanged and report them in § 8. Under `ask`, ask "Update stale references?" before rewriting title or description and commenting `"Updated: [OLD] → [NEW] per [DECISION_ID]"`.
 

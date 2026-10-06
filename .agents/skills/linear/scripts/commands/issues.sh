@@ -196,6 +196,7 @@ Relation Options (add-relation):
   --blocked-by <id>     This issue is blocked by another
   --related <id>        Mark as related
   --duplicate <id>      Mark as duplicate
+  --peer-rule-violation remove-relation: the tpm-audit structural repair
 
 Activate Options:
   --agent <name>        Apply the exclusive agent:<name> issue label together
@@ -2554,6 +2555,23 @@ add_relation() {
     echo "$normalized"
 }
 
+# A Done or Canceled blocker's relation is history, ../../SKILL.md § Blocked Label vs Issue Relations
+# says; $2 = true is tpm-audit's structural repair, for a pair the peer rule refuses.
+refuse_completed_blocker() {
+    local relation blocker id state blocker_parent blocked_parent
+    relation=$(graphql_query 'query RelationBlocker($id: String!) { issueRelation(id: $id) { type issue { identifier state { name type } parent { identifier } } relatedIssue { parent { identifier } } } }' \
+        "$(jq -cn --arg id "$1" '{id: $id}')") || return 1
+    blocker=$(jq -r "$ISSUE_RELATION_JQ"'.issueRelation | select(.type == "blocks" and (.issue | issue_is_open | not)) | [.issue.identifier, .issue.state.name, .issue.parent.identifier // "", .relatedIssue.parent.identifier // ""] | join("|")' <<<"$relation") || return 1
+    [ -n "$blocker" ] || return 0
+    IFS='|' read -r id state blocker_parent blocked_parent <<<"$blocker"
+    if [ "$2" = "true" ] && ! blocking_level_ok "$blocker_parent" "$blocked_parent"; then
+        echo "linear: removed=completed-blocker blocker=$id state=$state route=peer-rule-violation" >&2
+        return 0
+    fi
+    echo "linear: refused=completed-blocker blocker=$id state=$state section=\"linear SKILL.md § Blocked Label vs Issue Relations\"" >&2
+    return 1
+}
+
 remove_relation() {
     local first_arg="$1"
     shift || true
@@ -2562,6 +2580,7 @@ remove_relation() {
     if [[ "$first_arg" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
         # Direct UUID: delete by relation ID
         local relation_id="$first_arg"
+        refuse_completed_blocker "$relation_id" "$([ "${1:-}" != --peer-rule-violation ] || echo true)" || return 1
         local mutation='
         mutation DeleteRelation($id: String!) {
             issueRelationDelete(id: $id) {
@@ -2580,9 +2599,14 @@ remove_relation() {
     local blocked_by=""
     local related=""
     local duplicate=""
+    local peer_rule_violation=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --peer-rule-violation)
+            peer_rule_violation="true"
+            shift
+            ;;
         --blocks)
             blocks="$2"
             shift 2
@@ -2673,6 +2697,7 @@ remove_relation() {
         return 1
     fi
 
+    refuse_completed_blocker "$relation_id" "$peer_rule_violation" || return 1
     # Delete the relation
     local mutation='
     mutation DeleteRelation($id: String!) {

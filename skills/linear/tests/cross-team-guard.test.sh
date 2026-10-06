@@ -76,6 +76,8 @@ jq -cj '
               {entity: {id: "9c8d7e6f-5a4b-4c3d-9e2f-1a0b9c8d7e6f", identifier: "KEN-1", url: "u",
                 archivedAt: "2026-10-05T00:00:00Z", trashed: true}}
             else {} end)}}
+    elif ($q | contains("RelationBlocker")) then
+      {data: {issueRelation: {type: "related", issue: issue("VGS-1"), relatedIssue: issue("KEN-1")}}}
     elif ($q | contains("ValidateBlocking")) then
       {data: {issue1: issue($v.id1), issue2: issue($v.id2)}}
     elif ($q | contains("teams(filter: {id: {eq:")) then
