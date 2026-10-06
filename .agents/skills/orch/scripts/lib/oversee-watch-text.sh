@@ -715,9 +715,10 @@ Options:
                       or closed while the run loops joins or leaves it with
                       no restart. A `lanes[]` entry whose status is `parked`,
                       its sandbox stopped by `lane-close --park` with its disk
-                      kept, is one --item for the merged check alone: its
-                      pane is gone and its mailbox and state are on a stopped
-                      disk, so no other check reads it, and the merge of the
+                      kept, is one --item for the merged check and the
+                      lane-long age alone: its pane is gone and its mailbox
+                      and state are on a stopped disk, so no other check
+                      reads it, and the merge of the
                       pull request its `parked` names, in that repository,
                       prints parked-merged in the same pass and at every
                       heartbeat while the record reads parked, and closes
@@ -979,7 +980,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item, each status and harness one word, and a launch_queue of item keys. The watch stops rather than carry a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts every record whose status is not running, which the watch does not carry as a lane, and parked the records among those it carries for the merged check alone.' ;;
+    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts every record whose status is not running, which the watch does not carry as a lane, and parked the records among those it carries for the merged check and the lane-long age alone.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     prepare-secs-invalid) text='ORCH_WATCH_PREPARE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;

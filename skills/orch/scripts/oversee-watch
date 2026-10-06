@@ -427,7 +427,7 @@ LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
 # How long after an item's first launch in this fleet, its record's
 # launched_at, which relaunches and handoffs keep, a running or parked lane is
-# reported once as lane-long for the overseer to name the cause.
+# reported once as lane-long.
 LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-14400}"
 [[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"
 # The state's records the pane never judges and the start-stall check reads,
@@ -604,10 +604,10 @@ PREPARE_ROWS_FILTER='
   | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
-# The parked records, one per line as item and `<repo>#<number>`: a lane
+# The parked records, as item, `<repo>#<number>` and launched_at: a lane
 # lane-close --park stopped with its disk kept, and the pull request its park
-# judged, whose merge alone the merged check hands on as parked-merged.
-# Nothing else reads it: its pane is gone and its mailbox is on a stopped
+# judged, whose merge alone the merged check hands on as parked-merged. Only
+# it and lane-long read one: its pane is gone and its mailbox on a stopped
 # disk. The repository is lowercased here, the one spelling check_repo_set
 # gives every --repo, so the key meets the merged side's whatever case the
 # record's writer used: GitHub reads owner and repository names

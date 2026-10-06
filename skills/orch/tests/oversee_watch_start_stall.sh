@@ -139,6 +139,19 @@ assert_eq "events=$EVENTS unread=$(grep -c '^oversee-watch: start-stall-unread i
 watch 14400 "${HOSTED_ENV[@]}"
 assert_eq "events=$EVENTS" "events=EVENT lane-long issue-5 age=14400 stage=none|EVENT lane-long issue-6 age=14400 stage=dev round 1" \
   "a hosted lane past the lane-long bound carries the Step line its host holds, or none" "$STUB_DIR/err"
+# A hosted read that failed is unread, never none: issue-6's host holds a Step
+# line, which a read that went through would carry.
+new_case lane_long_hosted_unread
+REMOTE_DISK="$STUB_DIR/remote"
+mkdir -p "$REMOTE_DISK/srv/lane/issue-6/tmp/lane-mail/issue-6"
+printf 'gitdir: /srv/clone/.git/worktrees/issue-6\n' > "$REMOTE_DISK/srv/lane/issue-6/.git"
+printf 'step: dev round 1\n' > "$REMOTE_DISK/srv/lane/issue-6/tmp/lane-status-issue-6.md"
+write_state "$(launched issue-6 /srv/lane/issue-6 claude "$FIXTURE_HOST")"
+HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
+watch 14400 "${HOSTED_ENV[@]}" LANE_HOST_STUB_CAT_STATUS=5 LANE_HOST_STUB_CAT_ITEM=issue-6 \
+  LANE_HOST_STUB_CAT_PATH=/srv/lane/issue-6/tmp/lane-status-issue-6.md
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-6 age=14400 stage=unread" \
+  "a hosted lane whose status read failed is lane-long with stage=unread" "$STUB_DIR/err"
 
 echo "=== a lane whose kind writes no file starts with its own pull request ==="
 # One claude-cloud record per case, its mail_root a local worktree holding no
@@ -161,14 +174,15 @@ for row in "start_stall_cloud_none||EVENT start-stalled issue-7 age=700" "start_
 done
 
 echo "=== a lane past ORCH_WATCH_LANE_AGE_SECS is lane-long once, across a relaunch and a handoff ==="
-# issue-1 was launched at LAUNCHED; issue-2 an hour later, so it stays under
-# the bound until the last pass; issue-3 is parked.
+# issue-1 was launched at LAUNCHED; issue-2 an hour later and recorded running
+# an hour after that, so it crosses at the last pass only when aged from its
+# launched_at, not its running_at; issue-3 is parked.
 new_case lane_long
 ROOT_1="$(worktree issue-1 status)"
 ROOT_2="$(worktree issue-2 status)"
 long_state() { # STATUS_1 [RUNNING_AFTER_1]
   write_state "$(launched issue-1 "$ROOT_1" claude "" "${2:-}" | jq -c --arg s "$1" '.status = $s')" \
-    "$(launched issue-2 "$ROOT_2" claude | jq -c '.launched_at = "2026-08-15T11:00:00Z"')" \
+    "$(launched issue-2 "$ROOT_2" claude "" 7200 | jq -c '.launched_at = "2026-08-15T11:00:00Z"')" \
     "$(launched issue-3 /srv/lane/issue-3 claude | jq -c '.status = "parked" | .parked = {pr: 9, repo: "owner/repo", head: "abc", at: "2026-08-15T10:30:00Z"}')"
 }
 # STATUS_1|RUNNING_AFTER_1|AGE|WANT: a pass under the bound, the pass that
