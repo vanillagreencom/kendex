@@ -1,1 +1,1 @@
-- `kendex enable`/`disable`, the app's switch and `kendex source remove`/`enable`/`disable` hold packages they do not name at the commit `.kendex-lock.json` records, not the newest catalog.
+- `kendex enable`/`disable`, the app's switch and `kendex source enable`/`disable`/`remove` hold packages they do not name at the commit `.kendex-lock.json` records.

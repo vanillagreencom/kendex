@@ -581,9 +581,9 @@ pub struct PlanOptions {
     /// written for. The Pi settle resolves outside the plan, so a Pi
     /// package the record cannot place installs and records its own entry
     /// at the source's tip while its source's entry is kept. Only
-    /// [`PlanOptions::locked`] sets this: `verify --at-record` weighs the
-    /// record against where each source resolves now, and reads that off
-    /// the record this pass would write.
+    /// [`PlanOptions::locked`] and [`PlanOptions::switching`] set this:
+    /// `verify --at-record` weighs the record against where each source
+    /// resolves now, and reads that off the record this pass would write.
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
@@ -689,6 +689,18 @@ impl PlanOptions {
         PlanOptions {
             keep_source_records: true,
             ..PlanOptions::at_record()
+        }
+    }
+
+    /// [`PlanOptions::locked`] with these declarations reading fresh, as an
+    /// add reads the ones it writes: what a switch on or off asks for. A
+    /// switched declaration has to resolve to be switched, and held at a
+    /// recorded commit the mirror no longer serves it would be skipped
+    /// behind a manifest that says it switched.
+    pub fn switching(declarations: impl IntoIterator<Item = Held>) -> Self {
+        PlanOptions {
+            keep_source_records: true,
+            ..PlanOptions::for_additions(declarations)
         }
     }
 

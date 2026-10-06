@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::apply::{Op, PlannedOp, Pre};
 
-use super::{EngineReport, PlanOptions, plan_scope};
+use super::{EngineReport, Held, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, Reason, lock_path};
@@ -362,6 +362,7 @@ pub fn toggle(
 ) -> Result<EngineReport> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     let lock = crate::lock::load(&lock_path(env, scope))?;
+    let mut switched = Vec::new();
     for name in names {
         let kinds: Vec<ItemKind> = match kind {
             Some(kind) => vec![kind],
@@ -413,6 +414,10 @@ pub fn toggle(
             }
             if let Some(decl) = manifest.declared_mut(kind).get_mut(name) {
                 decl.enabled = enabled;
+                switched.push(Held::Item {
+                    kind,
+                    name: name.clone(),
+                });
             }
         }
         if kind.is_none()
@@ -421,10 +426,11 @@ pub fn toggle(
             plugin.enabled = enabled;
         }
     }
-    // Held at the record, as a removal is: a toggle names what switches,
-    // and a package it does not name re-rendered at a newer catalog commit
-    // is an update nobody asked for.
-    let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::locked())?;
+    // Every package it does not name is held at the record, as a removal
+    // holds it: re-rendered at a newer catalog commit it is an update
+    // nobody asked for.
+    let options = PlanOptions::switching(switched);
+    let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)
 }
