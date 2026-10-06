@@ -1235,7 +1235,8 @@ pi_suite_failed() { # DIR
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
-#   reference    a file under references/
+#   doc          a file under references/ and any other .md file: a
+#                skill's SKILL.md, README.md, workflows/ and schemas/
 # A module is scanned as a lib is, and a test module as a helper is, but a
 # changed one maps to no suite: a Python module is reached by an import that
 # spells no path. Status 1, printing nothing, is a path of no role:
@@ -1258,7 +1259,7 @@ path_role() { # DIR REL
     hooks:*.sh) echo script ;;
     hooks:*) return 1 ;;
     *:scripts/*) echo script ;;
-    *:references/*) echo reference ;;
+    *:references/* | *.md) echo doc ;;
     *) return 1 ;;
   esac
 }
@@ -1272,7 +1273,7 @@ skill_suites() { # DIR
   done
 }
 # Every file of a tree the reach scan reads, as `<role> <path>` lines: each
-# file path_role gives a role other than reference.
+# file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
   for f in "$1"/*.sh "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
@@ -1313,23 +1314,35 @@ scan_load() { # DIR
   done <<<"$(skill_files "$1")"
   SCAN_DIR=$1
 }
-# The indexes of the scanned files that read the reference REL, one per line:
+# The indexes of the scanned files that read the doc REL, one per line:
 # each whose code, its comment lines dropped, names
-#   - its path below a `/references/` segment, which prose citing
-#     `references/<file>` does not;
-#   - the references directory itself, as a glob, a find or a path built on
-#     it does;
-#   - or a skill-root variable, one whose name holds SKILL, or a path ending
-#     in /skills among the start paths of a find, a walk that meets every
-#     reference.
-# A comment citing a reference reads nothing, nor does a find from any other
-# start or a walk in another language.
-reference_readers() { # REL
-  local rel="$1" i code
+#   - its path after a slash, `/references/<file>` or `/SKILL.md`, which
+#     prose citing `references/<file>` does not;
+#   - its directory, as a glob, a find or a path built on it does: for a doc
+#     below a directory of the tree, that directory's `/<dir>` with nothing
+#     of a longer name after it; for a doc at the tree's root, a skill-root
+#     variable, one whose name holds SKILL, followed by a slash and no name,
+#     as `"$SKILL_DIR"/*.md` or `"$SKILL_DIR/$doc"`;
+#   - or a skill-root variable or a path ending in /skills among the start
+#     paths of a find, a walk that meets every doc.
+# A comment citing a doc reads nothing, nor does a find from any other start
+# or a walk in another language. With FIELD, an extended regular expression,
+# only the readers whose code also matches it are listed.
+doc_readers() { # REL [FIELD]
+  local rel="$1" field="${2-}" i code dir
+  case "$rel" in
+    */*)
+      dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[^/[:alnum:]._-])"
+      ;;
+    *) dir='\$\{?[A-Z_]*SKILL[A-Z_]*\}?"?/[^[:alnum:]._-]' ;;
+  esac
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     code=${SCAN_CODE[i]}
+    if [ -n "$field" ] && ! grep -qE -e "$field" <<<"$code"; then
+      continue
+    fi
     if grep -qF -e "/$rel" <<<"$code" ||
-      grep -qE -e '/references(/?$|/[^[:alnum:]._-]|[^/[:alnum:]._-])' <<<"$code" ||
+      grep -qE -e "$dir" <<<"$code" ||
       grep -qE -e '(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?(\$\{?[A-Z_]*SKILL[A-Z_]*\}?|[^[:space:]"]*/skills)"?([[:space:]]|\)|$)' <<<"$code"; then
       printf '%s\n' "$i"
     fi
@@ -1350,7 +1363,7 @@ reach_join() { # ROLE PATH
 }
 # The suites run for one changed path of a tree, a skill or hooks/,
 # REL being the path inside it; this comment, with path_role's table and
-# reference_readers' for a reference, is the one statement of the rule.
+# doc_readers' for a doc, is the one statement of the rule.
 #   - A changed or deleted script, lib or helper starts a scan over
 #     skill_files with its name as the first needle. A file joins the reach
 #     when its code, comment lines dropped, names a needle as `/<name>`, the
@@ -1364,9 +1377,13 @@ reach_join() { # ROLE PATH
 #     script in the reach: the suite's name, `_` read as `-` and `.test`
 #     dropped, is the script's name without extension or starts with it and
 #     `-`.
-#   - A changed or deleted reference starts the same scan from the files
-#     reference_readers names, each adding its needle by its role. A
-#     reference no file reads runs nothing.
+#   - A changed or deleted doc starts the same scan from the files
+#     doc_readers names, each adding its needle by its role. A doc no file
+#     reads runs nothing. FIELD, which the caller passes as version_reader
+#     for a SKILL.md whose one changed line is its metadata.version, narrows
+#     those files to the ones doc_readers lists for it: under the version
+#     rule every change to a skill raises that line, and a reader of the rest
+#     of the file is no reader of it.
 #   - A deleted suite whose reach holds no suite runs nothing.
 #   - A path of no role, a changed module or test module, and a path whose
 #     reach holds no suite map to no suite.
@@ -1375,11 +1392,11 @@ reach_join() { # ROLE PATH
 # only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
-# deleted suite or a reference no file reads; status 1 is a path mapped to no
+# deleted suite or a doc no file reads; status 1 is a path mapped to no
 # suite, status 2 a file the scan could not read, and status 3 a role
 # reach_join does not know, a broken guard.
-mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n hit names readers f t name base out="" nl=$'\n'
+mapped_suites() { # DIR REL [FIELD]
+  local dir="$1" rel="$2" field="${3-}" role="" i n hit names readers f t name base out="" nl=$'\n'
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   role=$(path_role "$dir" "$rel") || return 1
@@ -1388,8 +1405,8 @@ mapped_suites() { # DIR REL
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
   done
-  if [ "$role" = reference ]; then
-    readers=$(reference_readers "$rel")
+  if [ "$role" = doc ]; then
+    readers=$(doc_readers "$rel" "$field")
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do
       reached[i]=1
@@ -1466,6 +1483,31 @@ mapped_suites() { # DIR REL
   fi
   MAPPED=$out
 }
+# The SKILL.md text on stdin less its metadata.version line: an indented
+# `version:` key in the frontmatter under the top-level `metadata:` key.
+without_version() {
+  awk '
+    NR == 1 { front = $0 == "---"; print; next }
+    front && $0 == "---" { front = 0 }
+    front && /^[^[:space:]#]/ { key = $0 }
+    front && key ~ /^metadata:[[:space:]]*$/ && /^[[:space:]]+version:/ { next }
+    { print }
+  '
+}
+# Whether the SKILL.md at PATH differs from the suites' base in its
+# metadata.version line alone: the two match once without_version drops that
+# line from each. A side that cannot be read, a file the base lacks among
+# them, is no such change. Trailing newlines are not compared.
+version_only() { # PATH
+  local old new
+  old=$(git show "$suites_base:$1" 2>/dev/null) || return 1
+  new=$(cat -- "$1" 2>/dev/null) || return 1
+  [ "$(without_version <<<"$old")" = "$(without_version <<<"$new")" ]
+}
+# What code reading that line spells: the dotted key, or the nested key with
+# the space its frontmatter line puts after the colon, which `schema_version`,
+# `--version` and a JSON `"version":` do not.
+version_reader='(^|[^[:alnum:]_-])(metadata\.version|version:[[:space:]])'
 if [ "$MODE" != default ] && lane_on shell_shards; then
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders.
@@ -1519,7 +1561,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             map_status=0
-            mapped_suites "$d" "$rel" || map_status=$?
+            field=""
+            if [ "$rel" = SKILL.md ] && version_only "$f"; then field=$version_reader; fi
+            mapped_suites "$d" "$rel" "$field" || map_status=$?
             sel=$MAPPED
             case "$map_status" in
               0) ;;
