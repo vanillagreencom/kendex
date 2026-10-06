@@ -1,1 +1,1 @@
-- `kendex refresh` fails on a declared bundle its catalog no longer offers and keeps its members; a catalog retires a bundle under `[retired.bundles]`. A retired item or a kept bundle's member keeps its rows in `.kendex-generated.json` until a prune or a removal takes it.
+- `kendex refresh` fails on a declared bundle its catalog no longer offers and keeps its members; a catalog can retire a bundle under `[retired.bundles]`.
