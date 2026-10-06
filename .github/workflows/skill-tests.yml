@@ -498,6 +498,18 @@ jobs:
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps: &skill-suite-steps
+      # run-all.sh stops every suite still running at this Unix time and names
+      # each in the log, so a hang fails by name before the job ceiling cancels
+      # the leg with none. It counts from the job's first step, whatever the
+      # checkout, the installs and a cold kendex-cli build then take, and ends
+      # 60s inside the ceiling: in merge-group run 37477526298 the orch legs
+      # spent 2-4s setting up before this step and up to 5s in post steps
+      # after the suites, and a stop gives a suite's processes 10s before KILL.
+      - name: the run-all.sh deadline, inside this leg's job ceiling
+        env:
+          CEILING_MINUTES: *skill-suite-timeout
+        run: echo "RUN_ALL_DEADLINE_EPOCH=$(( $(date +%s) + CEILING_MINUTES * 60 - 60 ))" >>"$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

@@ -99,8 +99,9 @@ check() { # check <desc> <expected> <actual>
 
 # --- The sandbox: the real roster, none of the real work --------------------
 SANDBOX="$TMP/battery"
-mkdir -p "$SANDBOX/lib"
+mkdir -p "$SANDBOX/lib" "$TMP/scripts/lib"
 cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
+cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/scripts/lib/lane-state.sh"
 printf '#!/usr/bin/env bash\n: # the sandbox clears nothing; its suites are empty\n' \
   > "$SANDBOX/lib/git-env.sh"
 roster=""
