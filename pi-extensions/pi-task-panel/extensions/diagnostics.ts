@@ -30,7 +30,7 @@ const PERSISTENCE_FAILURE_EXPLANATIONS = {
 	"session-entry-no-sidecar":
 		"The task panel session history entry was not written, and neither was the sidecar file. A session restart loses this change. The next successful task panel save records it.",
 	"branch-state-missing":
-		"The task list at this point of the session was too large for session history, and no sidecar file holds it: the session was forked or copied, newer large lists replaced it, or it was older than 5 days. The panel shows the last list session history holds.",
+		"The task list at this point of the session was too large for session history, and no sidecar file holds it: the session was forked or copied, newer large lists replaced it, its working directory was removed, or it was older than 5 days. The panel shows the last list session history holds.",
 } as const;
 
 export type TaskPanelPersistenceFailure = keyof typeof PERSISTENCE_FAILURE_EXPLANATIONS;
