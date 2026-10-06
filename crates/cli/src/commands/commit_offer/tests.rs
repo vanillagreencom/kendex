@@ -645,6 +645,33 @@ fn the_flags_are_read_off_the_verb_the_person_ran() {
             .is_err(),
         "a verb that never offers took the flag"
     );
+
+    // The held offer names `--allow-repo-effects` only where this reads
+    // `Some`, so each row runs kendex's own command surface.
+    for (argv, carried) in [
+        (
+            &["kendex", "x/y", "--commit", "--allow-repo-effects"][..],
+            Some(true),
+        ),
+        (
+            &["kendex", "add", "x/y", "--commit", "--allow-repo-effects"][..],
+            Some(true),
+        ),
+        (&["kendex", "apply", "--commit"][..], Some(false)),
+        (
+            &["kendex", "remove", "x", "--commit", "--allow-repo-effects"][..],
+            Some(true),
+        ),
+        (&["kendex", "refresh", "--commit"][..], None),
+        (&["kendex", "enable", "x", "--commit"][..], None),
+    ] {
+        let matches = crate::Cli::command().get_matches_from(argv);
+        assert_eq!(
+            super::CommitFlags::from_matches(&matches).allow_repo_effects,
+            carried,
+            "{argv:?}"
+        );
+    }
 }
 
 /// A reading before the write that would not run leaves every changed file

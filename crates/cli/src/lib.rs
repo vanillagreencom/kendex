@@ -87,7 +87,8 @@ enum Command {
         /// Take the files away and leave kendex.toml untouched; refresh installs what it lists again
         #[arg(long, conflicts_with_all = ["sweep", "no_sweep"])]
         keep_declaration: bool,
-        /// Say yes to setting up a package that holds the commit
+        /// With --commit, --push or --pull-request, say yes to setting up a
+        /// package that holds the commit
         // Read off the matches by `CommitFlags::from_matches`, the offer
         // being the one place it is answered.
         #[arg(long)]

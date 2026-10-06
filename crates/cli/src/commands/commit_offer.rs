@@ -360,8 +360,10 @@ fn make(
             let held = Held {
                 set_up,
                 answered,
-                // The flag says yes only on a run that commits: `--leave`
-                // returned above, and a run with no answer commits nothing.
+                // The flag says yes only beside a choice flag that commits,
+                // `--leave` having returned above. With no choice flag a
+                // person at the prompt is asked, and with nobody there
+                // nothing is set up.
                 yes: super::repo_effects::yes(
                     session.flags.allow_repo_effects == Some(true) && answered.is_some(),
                     person,

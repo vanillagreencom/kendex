@@ -1028,37 +1028,28 @@ fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
 /// A run that rewrites a package nobody set up in this checkout is held
 /// at the commit. `--allow-repo-effects` on a run that commits sets the
 /// package up there, so the one command commits the package with its
-/// render. Without a commit choice the flag sets nothing up, and a verb
-/// that does not carry the flag is not told to pass it. `held` is whether
-/// the setup line naming the way on names the flag; `None` where no such
-/// line is owed.
+/// render. Without a commit choice the flag sets nothing up, and on a verb
+/// that does not carry it nothing is set up. Which verbs carry the flag is
+/// `the_flags_are_read_off_the_verb_the_person_ran`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn allow_repo_effects_sets_up_a_held_package_and_commits_its_render() {
-    for (args, code, set_up, held) in [
+    for (args, code, set_up) in [
         (
             &["apply", "--yes", "--commit", "--allow-repo-effects"][..],
             Some(0),
             true,
-            None,
         ),
-        (
-            &["apply", "--yes", "--commit"][..],
-            Some(1),
-            false,
-            Some(true),
-        ),
+        (&["apply", "--yes", "--commit"][..], Some(1), false),
         (
             &["apply", "--yes", "--allow-repo-effects"][..],
             Some(0),
             false,
-            Some(true),
         ),
         (
             &["refresh", "--yes", "--scope", "project", "--commit"][..],
             Some(1),
             false,
-            Some(false),
         ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
@@ -1092,11 +1083,6 @@ fn allow_repo_effects_sets_up_a_held_package_and_commits_its_render() {
             set_up,
             "{args:?}: {text}"
         );
-        let way_on = text
-            .lines()
-            .find(|line| line.contains("set it up here first"))
-            .map(|line| line.contains("--allow-repo-effects"));
-        assert_eq!(way_on, held, "{args:?}: {text}");
     }
 }
 

@@ -24,7 +24,8 @@ Options:
           what it lists again
 
       --allow-repo-effects
-          Say yes to setting up a package that holds the commit
+          With --commit, --push or --pull-request, say yes to setting up a
+          package that holds the commit
 
       --commit
           Commit the files kendex wrote, without asking

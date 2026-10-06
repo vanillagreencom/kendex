@@ -24,7 +24,8 @@ Options:
 
       --allow-repo-effects
           Say yes to the repository changes a newly installed package asks for,
-          and to setting up a package that holds the commit
+          and, with --commit, --push or --pull-request, to setting up a package
+          that holds the commit
 
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
