@@ -116,7 +116,15 @@ fi
 git checkout -B kendex/refresh "$base"
 export KENDEX_UI=plain
 refresh_status=0
-refresh_output="$(kendex refresh --scope project --yes --leave 2>&1)" || refresh_status=$?
+# --prune takes what the catalog retired; a plain refresh keeps it. kendex
+# 1.11.0 adds the flag, and the latest release this runs under can predate
+# it, so it is passed where the installed kendex lists it; 1.12.0 drops the
+# probe.
+refresh_help="$(kendex help refresh 2>/dev/null || true)"
+case "$refresh_help" in
+  *--prune*) refresh_output="$(kendex refresh --scope project --yes --leave --prune 2>&1)" || refresh_status=$? ;;
+  *) refresh_output="$(kendex refresh --scope project --yes --leave 2>&1)" || refresh_status=$? ;;
+esac
 printf '%s\n' "$refresh_output"
 if [ "$refresh_status" -ne 0 ]; then
   printf 'refresh-error=refresh value=%s\n' "$refresh_status" >&2

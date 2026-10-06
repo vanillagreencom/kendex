@@ -40,9 +40,9 @@ pub fn clear_install_completion(env: &Env, scope: &crate::model::Scope, name: &s
 pub enum Resolved {
     Ships(DeclaredPackage),
     /// The catalog retired it (`[retired.pi-extensions]`), whether or not it
-    /// still carries the package: nothing installs, settles or records it.
+    /// still carries the package: nothing installs, settles or re-records
+    /// it, and the plan keeps or prunes what is recorded.
     Retired {
-        source_repo: String,
         migration: String,
     },
 }
@@ -60,7 +60,6 @@ pub fn resolve_declared(
     let config = crate::source::source_config_for(&sealed, &ready.provenance)?;
     if let Some(migration) = config.retired(crate::model::ItemKind::PiExtension, name) {
         return Ok(Resolved::Retired {
-            source_repo: ready.provenance,
             migration: migration.to_owned(),
         });
     }

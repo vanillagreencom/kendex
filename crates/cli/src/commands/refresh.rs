@@ -18,8 +18,9 @@ use crate::ui::{self, Span};
 /// Regenerate every declared installation, and re-derive what those
 /// declarations pull in — a dependency that appeared upstream, one that went
 /// away. Regenerating is automatic; changing *what is installed* is shown
-/// first and needs an answer. Recorded agents no longer declared here
-/// are removed; other orphans nobody derived are left for `remove` and `apply`.
+/// first and needs an answer. A record nothing declares or derives anymore
+/// is removed, an edited copy held; an item its catalog retired stays as
+/// recorded unless `--prune` takes it.
 #[derive(clap::Args)]
 pub struct RefreshArgs {
     #[arg(short = 'g', long)]
@@ -36,6 +37,9 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
+    /// Remove every item its catalog retired, with its files and its entry in kendex.toml; without it a retired item stays installed
+    #[arg(long)]
+    prune: bool,
     /// Render each package that follows its source at the commit the install record names, so a re-render of a project-side change moves no catalog; a package the record cannot place resolves as usual
     #[arg(long)]
     locked: bool,
@@ -62,6 +66,21 @@ impl RefreshArgs {
             false => Catalog::Current,
         }
     }
+
+    fn takes(&self) -> Takes {
+        Takes {
+            discard_edits: self.discard_edits,
+            prune: self.prune,
+        }
+    }
+}
+
+/// What a refresh may take beyond what it regenerates: the person's edits,
+/// and the items their catalogs retired.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Takes {
+    pub discard_edits: bool,
+    pub prune: bool,
 }
 
 /// Which commit a refresh renders each package that follows its source at.
@@ -269,7 +288,7 @@ fn prepare_scope(
     env: &Env,
     scope: kendex_core::model::Scope,
     catalog: Catalog,
-    discard_edits: bool,
+    takes: Takes,
 ) -> PreparedScope {
     let synced = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
         Ok(manifest) => {
@@ -281,7 +300,8 @@ fn prepare_scope(
     };
     let options = PlanOptions {
         sweep_unneeded: true,
-        overwrite_edited: discard_edits,
+        overwrite_edited: takes.discard_edits,
+        prune_retired: takes.prune,
         ..catalog.plan_options()
     };
     let report = {
@@ -312,7 +332,7 @@ fn prepare_scopes(
     verbose: bool,
     yes: bool,
     catalog: Catalog,
-    discard_edits: bool,
+    takes: Takes,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes_at(env, filter, target.path())?;
     super::header("refresh", &scopes);
@@ -322,7 +342,7 @@ fn prepare_scopes(
     super::project::target_registrable(env, target, &scopes)?;
     let prepared: Vec<_> = scopes
         .into_iter()
-        .map(|scope| prepare_scope(env, scope, catalog, discard_edits))
+        .map(|scope| prepare_scope(env, scope, catalog, takes))
         .collect();
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
@@ -484,7 +504,7 @@ pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
         args.verbose,
         args.yes,
         args.catalog(),
-        args.discard_edits,
+        args.takes(),
     )
 }
 
@@ -495,7 +515,7 @@ pub fn run(
     verbose: bool,
     yes: bool,
     catalog: Catalog,
-    discard_edits: bool,
+    takes: Takes,
 ) -> CliResult {
     let mut refreshed_anything = false;
     let mut failures: Vec<String> = Vec::new();
@@ -505,7 +525,7 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let prepared = prepare_scopes(env, filter, target, verbose, yes, catalog, discard_edits)?;
+    let prepared = prepare_scopes(env, filter, target, verbose, yes, catalog, takes)?;
 
     for prepared in prepared {
         let scope = prepared.scope;

@@ -33,7 +33,7 @@ Each numbered rule has one test of the same number in `crates/core/tests/invaria
 15. Manifest and lock reads convert no format version: this build reads exactly the version it writes and refuses any other, leaving the file byte for byte.
 16. Beside every tracked `AGENTS.md` kendex writes and verifies a `CLAUDE.md` whose whole content is `@AGENTS.md`, and for Gemini a `context.fileName` key; a missing, stale or symlinked shim is drift (`crates/core/tests/instruction_shims.rs`).
 17. A credential a package declares under `[secrets]` is written only to the project's private env file, created owner-readable, never to `kendex.settings.toml`, and only after the rule that makes git ignore it is written.
-18. kendex never emits a pasteable command line: an error, a hint or a remedy presents the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set.
+18. kendex never emits a pasteable command line: an error, a hint or a remedy presents the verb and its parameters as data. Two exceptions: the session-start drift report, whose remedies come from a fixed template set, and the notice a kept retired item gets, whose `kendex refresh --prune` and `kendex remove` the owner ruled.
 
 `refresh --locked` plans each declaration with no revision of its own at the commit its lock entries agree on, resolves one the lock cannot place at the source's tip, and records only what the plan read, so a project-side re-render changes no catalog commit in `.kendex-lock.json`; without the flag, refresh brings every catalog current. `crates/cli/tests/refresh_locked.rs` holds it.
 

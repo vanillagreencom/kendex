@@ -870,7 +870,8 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize
 /// engine's report answers which those are
 /// ([`EngineReport::left_out_by_own_line`]). Nor is a declaration naming
 /// an item its catalog retired ([`EngineReport::retired`]), which the plan
-/// skips with a warning and installs nothing for.
+/// never renders: a kept one is held to its record like any other, and one
+/// never installed is owed none.
 ///
 /// The closure is read with the `options` and the record the audit
 /// rendered through, so under `--at-record` a package held at its recorded

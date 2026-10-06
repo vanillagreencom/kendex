@@ -1,1 +1,1 @@
-- A catalog retires items in `[retired]`: refresh warns where one is still wanted, removes its files and unedited adopted workflows, and removes every unedited undeclared leftover.
+- Refresh removes leftovers nothing declares and keeps an item its catalog retires in `[retired]`, with a notice; `refresh --prune` removes it, its declaration and unedited adopted workflows.

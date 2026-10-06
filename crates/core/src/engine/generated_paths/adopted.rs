@@ -2,7 +2,8 @@
 //! The package's adoption command writes the declaration; refresh only
 //! updates its hash. Recorded paths never become apply or restore targets;
 //! a copy still at the bytes of the template its leaving package shipped
-//! leaves with that package.
+//! leaves with that package, and one a kept retired package shipped is
+//! held to the template in that package's tree.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -159,14 +160,15 @@ fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
     )
 }
 
-/// `leaving` holds the trees of the packages this pass takes out of the
-/// scope (`super::leaving_trees`). A record whose template sits in one,
-/// with the copy still at that template's bytes, plans the copy's trash
-/// into `ops` and leaves the inventory.
+/// `trees` holds the installed trees no declared item renders this pass
+/// ([`super::TemplateTrees`]). A record whose template sits in a leaving
+/// one, with the copy still at that template's bytes, plans the copy's
+/// trash into `ops` and leaves the inventory. One whose template sits in a
+/// kept retired package is held to that template's bytes.
 pub(super) fn collect(
     root: &Path,
     state: &DesiredState,
-    leaving: &[PathBuf],
+    trees: &super::TemplateTrees,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Option<BTreeMap<PathBuf, AdoptedWorkflow>>> {
     let Some(text) = crate::fs::read_if_exists(&root.join(INVENTORY))? else {
@@ -229,9 +231,16 @@ pub(super) fn collect(
                     Err(error) => return Err(CoreError::io(&path, error)),
                 }
             }
-            None => match leaving
-                .iter()
-                .any(|tree| template.starts_with(tree))
+            None if trees.kept_holds(&template) => match found(&path, &template)? {
+                Found::Adopted => {}
+                Found::Absent => problems.push("adopted workflow is missing".to_owned()),
+                Found::Other => problems.push(format!(
+                    "differs from template {} in its retired package, which stays installed",
+                    record.template
+                )),
+            },
+            None => match trees
+                .leaving_holds(&template)
                 .then(|| found(&path, &template))
                 .transpose()?
             {

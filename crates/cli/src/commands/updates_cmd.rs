@@ -118,7 +118,7 @@ fn run_with(
             false,
             yes,
             super::refresh::Catalog::Current,
-            false,
+            super::refresh::Takes::default(),
         );
     }
     let report = evaluate(env, &scope)?;

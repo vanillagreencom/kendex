@@ -76,7 +76,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
     // the consumer refresh report (KEN-2797) reads `doc-drift-check: ` from
     // the first byte of a `2>&1` capture, so nothing may print before the
     // key, no glyph and no indent included.
-    let keyed = "doc-drift-check: retired hook, entry skipped; delete [hooks.doc-drift-check] from kendex.toml";
+    let keyed = "doc-drift-check: retired by kendex; kept; remove it with kendex refresh --prune (or kendex remove doc-drift-check)";
     let retired = [ItemWarning {
         kind: ItemKind::Hook,
         name: "doc-drift-check".into(),

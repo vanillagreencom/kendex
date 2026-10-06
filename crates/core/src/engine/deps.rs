@@ -929,9 +929,20 @@ fn derive(
                 wanted.deps.push(landed);
                 continue;
             }
-            // Retired, the companion is never written, which withholds an
-            // armed hook that requires it rather than arming it alone.
+            // Retired, the companion is never written again. Kept as
+            // recorded, the hook stays armed beside it; pruned, it is
+            // gone, which withholds an armed hook rather than arming it
+            // alone.
             Offer::Retired(migration) => {
+                let via = super::desired::RetiredVia::RequiredBy {
+                    kind,
+                    name: parent.to_owned(),
+                };
+                let retirement = super::desired::Retirement::new(source, migration, via);
+                state.retire(dep_kind, &dep, retirement);
+                if !state.prune_retired {
+                    continue;
+                }
                 found.push(warn(
                     kind,
                     parent,

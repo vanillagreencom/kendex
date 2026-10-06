@@ -140,6 +140,7 @@ case "$1" in
     [ "${TEST_APPLY_EXIT:-0}" -eq 0 ] || exit "$TEST_APPLY_EXIT"
     rm -f -- .claude/hooks/leftover.sh ;;
   verify) [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ] ;;
+  help) [ "$TEST_LISTS_PRUNE" != yes ] || printf '      --prune\n' ;;
   *) exit 2 ;;
 esac
 SH
@@ -232,6 +233,22 @@ runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi
+# The refresh passes --prune where the installed kendex lists it, and leaves
+# it out under a release that predates the flag.
+for lists in yes no; do
+  reset_default
+  : >"$TMP/state/kendex"
+  LISTS_PRUNE="$lists"
+  run_refresh current pass render
+  unset LISTS_PRUNE
+  case "$lists" in
+    yes) expected='refresh --scope project --yes --leave --prune' ;;
+    *) expected='refresh --scope project --yes --leave' ;;
+  esac
+  if [ "$RC" -eq 0 ] && grep -qxF "$expected" "$TMP/state/kendex"; then
+    ok "refresh passes --prune only where kendex lists it (lists=$lists)"
+  else bad "prune probe lists=$lists" "$OUT"; fi
+done
 reset_default
 run_refresh stale pass render
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
@@ -506,10 +523,10 @@ for row in \
     ok "$name classifier queue-only line appears under Consumer settings"
   else bad "$name classifier queue-only line" "$OUT"; fi
 done
-# kendex refresh names a retired [hooks] entry on one bare line and exits 0.
+# kendex refresh names a kept retired [hooks] entry on one bare line and exits 0.
 # Only a refresh line with that exact prefix joins Consumer settings; the
 # control drops the forwarding arm.
-RETIRE_LINE='doc-drift-check: retired hook, entry skipped; delete [hooks.doc-drift-check] from kendex.toml'
+RETIRE_LINE='doc-drift-check: retired by kendex; kept; remove it with kendex refresh --prune (or kendex remove doc-drift-check)'
 for row in \
   "retire-line|$RETIRE_LINE|- <code>$RETIRE_LINE</code>" \
   "other-prefix|warning: $RETIRE_LINE|" \

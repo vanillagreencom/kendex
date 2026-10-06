@@ -58,7 +58,7 @@ agents = ["scout"]
 old-check = "declare new-check"
 ```
 
-A consumer still declaring a retired item refreshes with one warning carrying its migration, and that refresh removes what the item installed, with any workflow adopted from its templates that still holds the template's bytes. An edited copy stays, and verify keeps failing it. An armed hook that requires a retired item is withheld with a warning naming it; any other item that requires one installs, with that warning.
+A consumer still declaring a retired item refreshes with one notice keyed by its name that carries its migration, and the item stays installed as it is. `kendex refresh --prune` removes it, its declaration, and any workflow adopted from its templates that still holds the template's bytes; an edited copy stays, and verify keeps failing it. Under `--prune` an armed hook that requires a retired item is withheld with a warning naming it; any other item that requires one installs, with that warning.
 
 Without a `[marketplace]` table the directory listing falls back to what GitHub knows. A `kendex.toml` that exists but does not parse makes the whole catalog a finding, never a silently different catalog.
 

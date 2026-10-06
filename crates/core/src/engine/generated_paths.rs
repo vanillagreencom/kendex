@@ -391,14 +391,14 @@ fn git_failed(
 /// Collect what this pass renders and plan the inventory write for it.
 /// The collection is handed back so the report can carry it to the commit
 /// offer: one collection, so the inventory and the offer cannot disagree.
-/// `leaving` is [`leaving_trees`]: an adopted workflow still at the bytes
-/// of a template in one of them leaves with its package.
+/// `trees` is [`TemplateTrees::of`]: an adopted workflow still at the bytes
+/// of a template in a leaving tree leaves with its package.
 pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
     drift: &[super::DriftRow],
-    leaving: &[PathBuf],
+    trees: &TemplateTrees,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
     let mut generated = collect(state, shims, drift);
@@ -408,7 +408,7 @@ pub(super) fn plan(
     if !root.join(".git").exists() {
         return Ok(generated);
     }
-    let Some(adopted) = adopted::collect(root, state, leaving, ops)? else {
+    let Some(adopted) = adopted::collect(root, state, trees, ops)? else {
         // Verify reports the malformed document. An apply must retain it:
         // rewriting it could erase adoption declarations it cannot read.
         return Ok(generated);
@@ -448,27 +448,61 @@ pub(super) fn plan(
     Ok(generated)
 }
 
-/// The trees of every package this pass takes out of the scope: its kind
-/// and name are in `before` and not in `after`, and the trees are the
-/// positions its old records wrote. A tree one tool drops while another
-/// keeps the package is not among them.
-pub(super) fn leaving_trees(
-    env: &Env,
-    scope: &Scope,
-    before: &crate::lock::Lock,
-    after: &crate::lock::Lock,
-) -> Vec<PathBuf> {
-    let staying: BTreeSet<(ItemKind, &str)> = after
-        .entries
-        .values()
-        .map(|entry| (entry.kind, entry.name.as_str()))
-        .collect();
-    before
-        .entries
-        .values()
-        .filter(|entry| !staying.contains(&(entry.kind, entry.name.as_str())))
-        .flat_map(|entry| super::owned::installed(env, scope, entry).files)
-        .collect()
+/// The installed trees an adopted workflow's template can sit in while no
+/// declared item renders it this pass.
+#[derive(Debug, Default)]
+pub(super) struct TemplateTrees {
+    /// Every package this pass takes out of the scope: its kind and name
+    /// are in the old record and not in the new one. A tree one tool drops
+    /// while another keeps the package is not among them.
+    leaving: Vec<PathBuf>,
+    /// Every retired package this pass keeps as recorded.
+    kept: Vec<PathBuf>,
+}
+
+impl TemplateTrees {
+    /// Read off the positions the records wrote: `before` the record this
+    /// pass read, `after` the one it writes.
+    pub(super) fn of(
+        env: &Env,
+        scope: &Scope,
+        state: &DesiredState,
+        before: &crate::lock::Lock,
+        after: &crate::lock::Lock,
+    ) -> TemplateTrees {
+        let staying: BTreeSet<(ItemKind, &str)> = after
+            .entries
+            .values()
+            .map(|entry| (entry.kind, entry.name.as_str()))
+            .collect();
+        let trees = |lock: &crate::lock::Lock, keep: &dyn Fn(&crate::lock::LockEntry) -> bool| {
+            lock.entries
+                .values()
+                .filter(|entry| keep(entry))
+                .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+                .collect()
+        };
+        TemplateTrees {
+            leaving: trees(before, &|entry| {
+                !staying.contains(&(entry.kind, entry.name.as_str()))
+            }),
+            kept: trees(after, &|entry| {
+                state
+                    .retired
+                    .contains_key(&(entry.kind, entry.name.clone()))
+            }),
+        }
+    }
+
+    /// Whether `template` sits in a tree this pass takes away.
+    fn leaving_holds(&self, template: &Path) -> bool {
+        self.leaving.iter().any(|tree| template.starts_with(tree))
+    }
+
+    /// Whether `template` sits in a retired package this pass keeps.
+    fn kept_holds(&self, template: &Path) -> bool {
+        self.kept.iter().any(|tree| template.starts_with(tree))
+    }
 }
 
 /// This repository's own committed inventory, held to what this pass

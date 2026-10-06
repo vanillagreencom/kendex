@@ -408,14 +408,25 @@ fn verdicts<'a>(
             ));
             continue;
         }
+        // An item its catalog retired stays exactly as recorded until the
+        // person prunes the scope or names it; then it goes as a departed
+        // declaration does.
+        let retired = state
+            .retired
+            .contains_key(&(entry.kind, entry.name.clone()));
+        if retired && !options.prune_retired && !named {
+            verdicts.push((key, Verdict::Retained));
+            continue;
+        }
         // Declared but skipped this pass (pending/disabled source, missing
         // from source): keep the record, it is not an orphan. A declaration
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
-        let departed_harness = state
-            .processed
-            .contains_key(&(entry.kind, entry.name.clone()));
+        let departed_harness = retired
+            || state
+                .processed
+                .contains_key(&(entry.kind, entry.name.clone()));
         let unreachable_source = still_declared(manifest, entry) && !departed_harness;
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is

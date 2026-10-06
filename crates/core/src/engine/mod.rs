@@ -243,20 +243,14 @@ pub fn plan_scope(
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
-    let leaving_trees = generated_paths::leaving_trees(env, scope, lock, &new_lock);
+    let trees = generated_paths::TemplateTrees::of(env, scope, &state, lock, &new_lock);
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
     plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
-    let generated = generated_paths::plan(
-        scope,
-        &state,
-        &instruction_shims,
-        &drift,
-        &leaving_trees,
-        &mut ops,
-    )?;
+    let generated =
+        generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
 
     state.warnings.extend(state.agent_names.warnings());
     let report = EngineReport {
@@ -275,7 +269,7 @@ pub fn plan_scope(
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
-        retired: state.retired,
+        retired: state.retired.into_keys().collect(),
         set_changes,
         sweepable,
         kept,
@@ -513,7 +507,7 @@ fn installations(
     let root = crate::pi_ext::scope_root(env, scope)?;
     let kind = crate::model::ItemKind::PiExtension;
     for name in manifest.pi_extensions.keys() {
-        if state.retired.contains(&(kind, name.clone())) {
+        if state.prunes(kind, name) {
             continue;
         }
         let Ok(path) = crate::pi_ext::package_path(&root, name) else {
@@ -569,6 +563,7 @@ fn desired_pass<'a>(
         options.hold_upstream_skills,
         held_pins.as_ref(),
         options.judge_pins,
+        options.prune_retired,
     )?;
     state.agent_names.extend(agent_names);
     if renamed && state.manifest_update.is_none() {
@@ -605,7 +600,7 @@ fn fresh_lock(
             .filter(|(_, entry)| {
                 entry.kind == crate::model::ItemKind::PiExtension
                     && manifest.pi_extensions.contains_key(&entry.name)
-                    && !state.retired.contains(&(entry.kind, entry.name.clone()))
+                    && !state.prunes(entry.kind, &entry.name)
             })
             .map(|(key, entry)| (key.clone(), entry.clone()))
             .collect(),

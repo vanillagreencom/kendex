@@ -169,8 +169,8 @@ skills = ["commit-guards"]
 
 # Items this catalog no longer ships, one table per kind (skills, agents,
 # hooks, commands, mcp-servers, output-styles, pi-extensions), each name with
-# a migration line (empty for none). A consumer still declaring one refreshes
-# with one warning carrying it, and the refresh removes what it installed.
+# a migration line (empty for none). A consumer still declaring one keeps it
+# installed, with one notice carrying it, until `kendex refresh --prune`.
 [retired.hooks]
 doc-drift-check = ""
 

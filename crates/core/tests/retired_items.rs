@@ -1,13 +1,14 @@
 //! An item its catalog retires (`[retired]` in the catalog's kendex.toml)
-//! leaves nothing installed: a declaration or bundle still naming it is
-//! skipped with one warning carrying the catalog's migration, whether or
-//! not the catalog still carries the item, derives no companion its header
-//! requires, and the copies an earlier refresh installed come out in the
-//! sweep, an emptied Copilot registry and a Pi package's registration with
-//! them; an armed hook requiring it is withheld. Every other name the
-//! catalog does not carry keeps the refusal that fails a refresh, so a
-//! retirement cannot hide a typo. Refresh also takes what a declaration
-//! deleted by hand left, except a copy the person edited.
+//! is never rendered again, whether or not the catalog still carries it,
+//! and derives no companion its header requires. A plain refresh keeps
+//! what is installed exactly as recorded, with one notice keyed by the
+//! item's name that carries the catalog's migration, and a hook requiring
+//! it stays armed. A prune takes the copies, an emptied Copilot registry
+//! and a Pi package's registration with them, the records and the item's
+//! own declaration, and withholds an armed hook requiring it. Every other
+//! name the catalog does not carry keeps the refusal that fails a refresh,
+//! so a retirement cannot hide a typo. Refresh also takes what a
+//! declaration deleted by hand left, except a copy the person edited.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -206,6 +207,14 @@ fn refresh_options() -> PlanOptions {
     }
 }
 
+/// `refresh --prune`'s plan.
+fn prune_options() -> PlanOptions {
+    PlanOptions {
+        prune_retired: true,
+        ..refresh_options()
+    }
+}
+
 /// The note `refresh_failures` in the CLI's `engine_common.rs` turns into
 /// a failed refresh; this is its machine-read spelling. Only the key of
 /// each such note comes back: a failure message prints these, and a note
@@ -262,7 +271,8 @@ fn trash_paths(report: &EngineReport) -> Vec<PathBuf> {
 /// The hook the retired hook's header requires in the companion row.
 const COMPANION: &str = "companion-check";
 
-/// One row per item kind, catalog state and way of wanting it: the
+/// One row per item kind, catalog state and way of wanting it, kept by a
+/// plain refresh and then pruned: the
 /// retired hook removed; still carried, as the KEN-2967 stub is; carried
 /// with a header requiring a companion the catalog also carries, as the
 /// pre-retirement header of doc-drift-check required lane-mail-check; a
@@ -271,7 +281,7 @@ const COMPANION: &str = "companion-check";
 /// registry, left holding only its version, goes with the hook.
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
-fn a_retired_item_still_declared_is_skipped_with_one_warning_and_swept() {
+fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
     use Wanted::{Declared, InBundle};
     for (row, kind, name, wanted, carried, requires_companion, migration) in [
         (
@@ -359,6 +369,9 @@ fn a_retired_item_still_declared_is_skipped_with_one_warning_and_swept() {
         }
         f.retire(kind, name, migration);
 
+        let recorded = recorded_of(&f, name);
+        assert!(!recorded.is_empty(), "{row}: the fixture records nothing");
+
         let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
 
         assert_eq!(
@@ -368,23 +381,23 @@ fn a_retired_item_still_declared_is_skipped_with_one_warning_and_swept() {
         );
         assert_eq!(not_found_keys(&report), Vec::<String>::new(), "{row}");
         assert_eq!(warned(&report), [(kind, name.to_owned())], "{row}");
-        let retired = &report.warnings[0];
-        assert_eq!(retired.harness, None, "{row}");
+        let notice = &report.warnings[0];
+        assert_eq!(notice.harness, None, "{row}");
         // The key the consumer refresh report (KEN-2797) matches in a
         // `kendex refresh` capture, the name, a colon and one space; it
         // forwards the line opening `doc-drift-check: ` today. The
         // catalog's migration ends the line, whole.
         assert!(
-            retired.message.starts_with(&format!("{name}: ")),
-            "{row}: the warning message is not keyed by the item name"
+            notice.message.starts_with(&format!("{name}: ")),
+            "{row}: the notice is not keyed by the item name"
         );
         match migration.is_empty() {
             false => assert!(
-                retired.message.ends_with(&format!("; {migration}")),
-                "{row}: the warning does not carry the migration"
+                notice.message.ends_with(&format!("; {migration}")),
+                "{row}: the notice does not carry the migration"
             ),
             true => assert!(
-                !retired.message.ends_with(';') && !retired.message.ends_with(' '),
+                !notice.message.ends_with(';') && !notice.message.ends_with(' '),
                 "{row}: an empty migration leaves a trailing separator"
             ),
         }
@@ -392,8 +405,34 @@ fn a_retired_item_still_declared_is_skipped_with_one_warning_and_swept() {
             let files = written_files(&report, written);
             assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {written}");
         }
-        let trashed = trash_paths(&report);
+        // Apply, which removes orphans, keeps it too.
+        let applied = PlanOptions {
+            remove_orphans: true,
+            ..PlanOptions::default()
+        };
+        let applying = plan_apply(&f.env, &f.scope, &applied).unwrap();
+        for planned in [&report, &applying] {
+            let trashed = trash_paths(planned);
+            for copy in f.installed_copies(kind, name) {
+                assert!(!trashed.contains(&copy), "{row}: kept, yet {trashed:?}");
+            }
+        }
         apply::execute(&f.env, &report.plan).unwrap();
+        for copy in f.installed_copies(kind, name) {
+            assert!(copy.exists(), "{row}: kept, yet {} is gone", copy.display());
+        }
+        assert_eq!(recorded_of(&f, name), recorded, "{row}: the record moved");
+
+        let pruned = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
+
+        assert_eq!(not_found_keys(&pruned), Vec::<String>::new(), "{row}");
+        assert_eq!(warned(&pruned), Vec::<(ItemKind, String)>::new(), "{row}");
+        for written in [name, COMPANION] {
+            let files = written_files(&pruned, written);
+            assert_eq!(files, Vec::<PathBuf>::new(), "{row}: {written}");
+        }
+        let trashed = trash_paths(&pruned);
+        apply::execute(&f.env, &pruned.plan).unwrap();
         for copy in f.installed_copies(kind, name) {
             assert!(
                 !copy.exists(),
@@ -401,15 +440,33 @@ fn a_retired_item_still_declared_is_skipped_with_one_warning_and_swept() {
                 copy.display()
             );
         }
+        assert_eq!(
+            recorded_of(&f, name),
+            Vec::new(),
+            "{row}: the record keeps it"
+        );
+        let manifest = kendex_core::engine::ops::manifest_for_reading(&f.env, &f.scope).unwrap();
         assert!(
-            !kendex_core::lock::load(&f.project.join(".kendex-lock.json"))
-                .unwrap()
-                .entries
-                .values()
-                .any(|entry| entry.name == name),
-            "{row}: the record keeps the retired item"
+            !manifest.declared(kind).contains_key(name),
+            "{row}: the declaration stays"
+        );
+        assert_eq!(
+            manifest.bundles.contains_key(BUNDLE),
+            matches!(wanted, InBundle),
+            "{row}: the bundle declaration moved"
         );
     }
+}
+
+/// The lock entries naming `name`, as the record on disk holds them.
+#[allow(clippy::unwrap_used)]
+fn recorded_of(f: &Fixture, name: &str) -> Vec<lock::LockEntry> {
+    lock::load(&lock::lock_path(&f.env, &f.scope))
+        .unwrap()
+        .entries
+        .into_values()
+        .filter(|entry| entry.name == name)
+        .collect()
 }
 
 /// The must-fail control: a hook name that is merely absent keeps the
@@ -438,12 +495,14 @@ fn an_unknown_hook_name_keeps_the_refusal() {
     }
 }
 
-/// A hook whose header requires a hook the catalog then retires is withheld
-/// with a warning of its own rather than left armed beside a judge that is
-/// gone, and both installed copies come out.
+/// A hook whose header requires a hook the catalog then retires stays armed
+/// beside the kept judge on a plain refresh, which notices the judge. A
+/// prune withholds the hook with a warning of its own rather than leaving
+/// it armed beside a judge that is gone, and both installed copies come
+/// out.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hook_requiring_a_retired_hook_is_withheld_and_comes_out() {
+fn a_hook_requiring_a_retired_hook_stays_armed_until_a_prune() {
     let f = installed(ItemKind::Hook, "boss");
     write_item(&f, ItemKind::Hook, "judge");
     let boss = f.catalog_copy(ItemKind::Hook, "boss");
@@ -460,7 +519,17 @@ fn a_hook_requiring_a_retired_hook_is_withheld_and_comes_out() {
     }
     f.retire(ItemKind::Hook, "judge", "");
 
-    let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+    let kept = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+    assert_eq!(warned(&kept), [(ItemKind::Hook, "judge".to_owned())]);
+    assert_eq!(trash_paths(&kept), Vec::<PathBuf>::new());
+    apply::execute(&f.env, &kept.plan).unwrap();
+    for name in ["boss", "judge"] {
+        for copy in f.installed_copies(ItemKind::Hook, name) {
+            assert!(copy.exists(), "{} is gone", copy.display());
+        }
+    }
+
+    let report = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
 
     assert_eq!(not_found_keys(&report), Vec::<String>::new());
     assert_eq!(warned(&report), [(ItemKind::Hook, "boss".to_owned())]);

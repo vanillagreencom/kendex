@@ -38,7 +38,8 @@ pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, T
     let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
         return Ok(BTreeMap::new());
     };
-    let state = super::desired::desired_state(env, scope, &manifest, &lock, false, None, false)?;
+    let state =
+        super::desired::desired_state(env, scope, &manifest, &lock, false, None, false, false)?;
     Ok(state.settings_templates)
 }
 

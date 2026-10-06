@@ -1,11 +1,11 @@
-//! One `kendex refresh` leaves nothing of what the catalog retired: a still
-//! declared hook and skill each print one warning keyed by the item name,
-//! their copies and the workflow the skill's template was adopted into come
-//! out, the inventory forgets that workflow, and `kendex verify` then
-//! passes. A workflow the person edited stays, and verify keeps failing it.
-//! Before the catalog could retire them, the skill was not found and the
-//! workflow stayed recorded under a package no longer declared. A tree one
-//! tool drops while the skill stays is no leaving, and the workflow stays.
+//! A catalog retires a still declared hook and skill. A plain `kendex
+//! refresh`, asked or with `--yes`, keeps both exactly as installed and
+//! prints one notice keyed by each name, and `kendex verify` passes. `kendex
+//! refresh --prune` takes their copies, their records, their declarations
+//! and the workflow the skill's template was adopted into, which leaves
+//! the inventory, and verify then passes. A workflow the person edited
+//! stays, and verify keeps failing it. A tree one tool drops while the
+//! skill stays is no leaving, and the workflow stays.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -63,9 +63,18 @@ fn adopted(home: &Path) -> (PathBuf, PathBuf) {
     (catalog, project)
 }
 
+/// The lines of `printed` keyed by `name`, the consumer refresh report's
+/// reading of a refresh capture.
+fn keyed(printed: &str, name: &str) -> usize {
+    printed
+        .lines()
+        .filter(|line| line.starts_with(&format!("{name}: ")))
+        .count()
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
-fn one_refresh_takes_a_retired_hook_and_skill_with_its_adopted_workflow() {
+fn a_plain_refresh_keeps_retired_items_and_a_prune_takes_them() {
     for edited in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
@@ -80,37 +89,71 @@ fn one_refresh_takes_a_retired_hook_and_skill_with_its_adopted_workflow() {
         if edited {
             write(&workflow, EDITED);
         }
-
         write(
             &catalog.join("kendex.toml"),
             &format!(
                 "{CATALOG}[retired.skills]\ndeploy = \"declare deploy-next\"\n[retired.hooks]\ncheck = \"\"\n"
             ),
         );
-        let refreshed = kendex(
+
+        for args in [
+            &["refresh", "--scope", "project", "--leave"][..],
+            &["refresh", "--scope", "project", "--yes", "--leave"][..],
+        ] {
+            let refreshed = kendex(&home, &project, args);
+            let printed = said(&refreshed);
+            assert!(refreshed.status.success(), "{args:?}: {printed}");
+            for name in ["deploy", "check"] {
+                assert_eq!(keyed(&printed, name), 1, "{args:?} {name}: {printed}");
+            }
+            for copy in [&hook, &skill, &workflow] {
+                assert!(
+                    copy.exists(),
+                    "{args:?}: {} is gone: {printed}",
+                    copy.display()
+                );
+            }
+        }
+        // The kept items pass; an edited workflow fails as it always has.
+        let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+        assert_eq!(
+            verified.status.success(),
+            !edited,
+            "edited={edited}: {}",
+            said(&verified)
+        );
+
+        let pruned = kendex(
             &home,
             &project,
-            &["refresh", "--scope", "project", "--yes", "--leave"],
+            &[
+                "refresh", "--scope", "project", "--prune", "--yes", "--leave",
+            ],
         );
-        let printed = said(&refreshed);
-        assert!(refreshed.status.success(), "edited={edited}: {printed}");
-        for name in ["deploy", "check"] {
-            let keyed = printed
-                .lines()
-                .filter(|line| line.starts_with(&format!("{name}: ")))
-                .count();
-            assert_eq!(keyed, 1, "edited={edited}: {name}: {printed}");
-        }
+        let printed = said(&pruned);
+        assert!(pruned.status.success(), "edited={edited}: {printed}");
         for copy in [&hook, &skill] {
             assert!(!copy.exists(), "{} stays: {printed}", copy.display());
         }
-        let recorded = fs::read_to_string(&inventory).unwrap();
         assert_eq!(
             fs::read_to_string(&workflow).ok().as_deref(),
             edited.then_some(EDITED),
             "edited={edited}: {printed}"
         );
+        let recorded = fs::read_to_string(&inventory).unwrap();
         assert_eq!(recorded.contains(WORKFLOW), edited, "{recorded}");
+        let manifest: toml::Table = fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        for table in ["skills", "hooks"] {
+            assert!(
+                manifest
+                    .get(table)
+                    .is_none_or(|declared| declared.as_table().is_some_and(toml::Table::is_empty)),
+                "edited={edited}: [{table}] keeps a declaration: {manifest}"
+            );
+        }
 
         let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
         assert_eq!(

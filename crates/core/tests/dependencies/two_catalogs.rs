@@ -118,22 +118,31 @@ fn a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not() {
     assert_eq!(landed(&f, "judge", HarnessId::Codex), (false, false));
 }
 
-/// The wrapper's catalog offers the judge and the manifest declares it from
-/// the other catalog, which retired it. The plan writes no judge, so the
-/// wrapper is withheld on every tool rather than armed alone: retirement is
-/// read in the catalog the judge resolves to, not the wrapper's.
+/// The wrapper's catalog offers the judge, and a bundle the manifest
+/// declares brings it from the other catalog, which retired it. A prune
+/// writes no judge and leaves the bundle declared, so the wrapper is
+/// withheld on every tool rather than armed alone: retirement is read in
+/// the catalog the judge resolves to, not the wrapper's.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper() {
     let (f, other) =
-        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[bundles.judges]\nsource = \"other\"\n");
     fs::write(
         other.join("kendex.toml"),
-        "is_source_catalog = true\n[retired.hooks]\njudge = \"\"\n",
+        "is_source_catalog = true\n[bundles.judges]\ndescription = \"judges\"\nhooks = [\"judge\"]\n[retired.hooks]\njudge = \"\"\n",
     )
     .unwrap();
 
-    let report = audit(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            prune_retired: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     assert!(
         !findings_on(&report, "deliver").is_empty(),
         "{:?}",
