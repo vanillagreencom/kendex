@@ -90,11 +90,11 @@ A dev agent holds its `dev-validate-run` inside the turn with the same tools, un
 
 | Step | Call | Return |
 |------|------|--------|
-| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]`, `yield_time_ms` 30000 | The start launches the run detached and blocks until the verdict, so the call returns the `state=started` line and a `session_id`. Keep that line's `run-dir=` value. |
+| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]`, `yield_time_ms` 30000 | A `session_id` and the output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
 | Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | Each return holds the output since the previous one. A return with an `exit_code` ended the command. |
-| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000, then the Wait step | Taken when a session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out, or ends with no `state=` verdict line. |
+| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000, then the Wait step | Taken only for a run whose `state=started` line was read: when its session ended with no verdict line and no refusal line, or when a `--wait` session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out. |
 
-Never end the turn while the run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
+A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and is never resumed: `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). Once a `state=started` line is read, never end the turn while that run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
 
 ## Lane mailbox
 
