@@ -34,7 +34,7 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
 ```
 
-Before an item launches beside running lanes or open pull requests, judge file overlap. The item's touched set is its Location paths plus, for each path its body says it deletes or renames, every tracked file that names that path on the base: `git grep -l -F -e [PATH] origin/[BASE_BRANCH] --`, each line prefixed `origin/[BASE_BRANCH]:`. Compare that set with each open pull request's files (`gh pr diff [N] --name-only`) and each running lane's touched set. A shared file serializes the launch behind that lane, or the brief names the shared files as in scope.
+Before an item launches beside running lanes or open pull requests, judge file overlap. `[BASE_BRANCH]`, here and in § 3, is what `.agents/skills/orch/scripts/resolve-base-branch .` prints in the main checkout. The item's touched set is its Location paths plus, for each path its body says it deletes or renames, every tracked file that names that path on the base: `git grep -l -F -e [PATH] origin/[BASE_BRANCH] --`, each line prefixed `origin/[BASE_BRANCH]:`. Compare that set with each open pull request's files (`gh pr diff [N] --name-only`) and each running lane's touched set. A shared file holds the launch until the lane or pull request that holds it merges, or the brief names the shared files as in scope.
 
 ## 3. Launch
 

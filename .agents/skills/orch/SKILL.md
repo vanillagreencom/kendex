@@ -12,7 +12,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "4.1.8"
+  version: "4.1.9"
 tags: [automation]
 ---
 
