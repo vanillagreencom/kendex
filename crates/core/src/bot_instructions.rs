@@ -9,7 +9,7 @@ use crate::engine::GeneratedPaths;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
-use crate::repo_effects::{ArmError, DeclaredEffects, Ran};
+use crate::repo_effects::{ArmError, DeclaredEffects};
 
 const PACKAGE: &str = "bot-instructions";
 
@@ -46,7 +46,9 @@ pub fn render_once(
     let Some(declared) = crate::engine::installed_declaration(env, scope, PACKAGE)? else {
         return Ok(None);
     };
-    crate::repo_effects::run_installer(scope, &declared, &[]).map(|ran| Some(ran.report))
+    let installer = declared.installer()?;
+    let ran = crate::repo_effects::run_installer(scope, &declared, installer, &[])?;
+    Ok(Some(ran.report))
 }
 
 /// Paths written by one successful render.
@@ -135,11 +137,19 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         Mode::Write => &[],
         Mode::Discover => &["--dry-run"],
     };
-    let Ran {
-        installer, report, ..
-    } = crate::repo_effects::run_installer(scope, &declared, extra)
-        .map_err(|error| failed(&root, &declared, &error))?;
+    // An armed package that declares no installer has nothing to render
+    // with, which fails the render naming the package.
+    let installer = declared
+        .installer()
+        .map_err(|error| crate::repo_effects::err(error.to_string()))?;
     let command = declared.command(&root, installer);
+    let report = crate::repo_effects::run_installer(scope, &declared, installer, extra)
+        .map_err(|error| CoreError::BotInstructionsRender {
+            root: root.clone(),
+            command: command.clone(),
+            detail: error.to_string(),
+        })?
+        .report;
     if report.code != 0 {
         return Err(CoreError::BotInstructionsRender {
             root,
@@ -216,19 +226,6 @@ fn protocol_error(root: &Path, command: &str, line: &str, detail: &str) -> CoreE
         root: root.to_owned(),
         command: command.to_owned(),
         detail: format!("{detail}: {line}"),
-    }
-}
-
-/// A render that could not run. A package with no installer has no render
-/// command to name, so it reads as every other surface reads it.
-fn failed(root: &Path, declared: &DeclaredEffects, error: &ArmError) -> CoreError {
-    match declared.effects.installer.as_deref() {
-        Some(installer) => CoreError::BotInstructionsRender {
-            root: root.to_owned(),
-            command: declared.command(root, installer),
-            detail: error.to_string(),
-        },
-        None => crate::repo_effects::err(error.to_string()),
     }
 }
 

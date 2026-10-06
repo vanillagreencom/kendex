@@ -185,22 +185,43 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
     Ok(())
 }
 
-/// Ask, once, for every pending package at once. A session with no terminal
-/// needs `--allow-repo-effects` said out loud: a scripted install or a CI
-/// run must never arm a repository's hooks because nobody was there to
-/// decline.
+/// Who gives a repository effect its yes.
+#[derive(Clone, Copy)]
+pub enum Yes {
+    /// The run said it out loud with `--allow-repo-effects`.
+    Given,
+    /// A person at a terminal is asked.
+    Ask,
+    /// Nobody is there to ask, which is a no: a scripted install or a CI
+    /// run must never arm a repository's hooks because nobody was there to
+    /// decline.
+    Nobody,
+}
+
+/// The one rule for every repository effect's yes: the run's own say-so
+/// wins, a person at the prompt is asked, and nobody there is a no.
+pub fn yes(allowed: bool, person: bool) -> Yes {
+    match (allowed, person) {
+        (true, _) => Yes::Given,
+        (false, true) => Yes::Ask,
+        (false, false) => Yes::Nobody,
+    }
+}
+
+/// Ask, once, for every pending package at once.
 pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         return Ok(false);
     }
-    if allowed {
-        return Ok(true);
-    }
-    if !std::io::stdin().is_terminal() {
-        ui::report::notice(
-            "repository changes not made: no terminal to ask at — pass --allow-repo-effects to say yes here",
-        );
-        return Ok(false);
+    match yes(allowed, std::io::stdin().is_terminal()) {
+        Yes::Given => return Ok(true),
+        Yes::Nobody => {
+            ui::report::notice(
+                "repository changes not made: no terminal to ask at — pass --allow-repo-effects to say yes here",
+            );
+            return Ok(false);
+        }
+        Yes::Ask => {}
     }
     let question = match pending.len() {
         1 => format!("make {}'s repository changes?", pending[0].name),

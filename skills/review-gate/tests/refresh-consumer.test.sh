@@ -85,19 +85,20 @@ cat >"$TMP/bin/kendex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 # The runner calls the render verb under env -i, so it reads no test
-# setting. Like kendex, it runs the installed package's render where the
-# package is, and says so where it is not. Where the state holds old-engine
-# it answers as a release before the verb: help refuses the name, and the
-# bare name is read as a source to add, which refuses with no terminal.
-if [ -e @STATE@/old-engine ]; then
-  case "${1:-} ${2:-}" in
-    'help bot-instructions-render') printf "error: unrecognized subcommand 'bot-instructions-render'\n" >&2; exit 2 ;;
-    'bot-instructions-render '*) printf 'error: no terminal to ask at\n' >&2; exit 1 ;;
-  esac
+# setting; a row drives it through the state. probe-exit is what help answers
+# for the verb, 0 where unset. render-exit and render-said are the verb's
+# exit and output where a row sets them; otherwise, like kendex, it runs the
+# installed package's render where the package is, and says so where it is
+# not.
+if [ "${1:-} ${2:-}" = 'help bot-instructions-render' ]; then
+  exit "$(cat @STATE@/probe-exit 2>/dev/null || printf 0)"
 fi
-[ "${1:-} ${2:-}" != 'help bot-instructions-render' ] || exit 0
 if [ "${1:-}" = bot-instructions-render ]; then
   env >@STATE@/render-env
+  if [ -e @STATE@/render-exit ]; then
+    cat @STATE@/render-said
+    exit "$(cat @STATE@/render-exit)"
+  fi
   launcher=.agents/skills/bot-instructions/scripts/bot-instructions
   [ -x "$launcher" ] || { printf 'bot-instructions-render=absent\n'; exit 0; }
   exec "$launcher" render
@@ -190,7 +191,7 @@ exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
 file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
-file_edit "$TMP/bin" kendex 2 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 5 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -1541,30 +1542,47 @@ for mutation in none unstaged; do
   cp "$TMP/bot-runner" "$runner"
 done
 unset REFRESH_ADDS
-# A render that fails stops publication: the run exits with its record and
-# the rolling branch keeps the head it had. A runner that carries on is the
-# control.
-reset_default
-printf 'schema = 6\n\n[bot-instructions]\nschema = 2\n' >"$repo/kendex.toml"
-commit "$repo"
-git -C "$repo" push -q origin main
-render_stop=$'"$render_status" >&2\n  exit 1\n'
-for mutation in none continued; do
-  reset_default
-  [ "$mutation" = none ] || bot_runner_edit "$render_stop" $'"$render_status" >&2\n'
-  before="$(git --git-dir="$TMP/bot-remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-  run_refresh bot-failed pass render
-  after="$(git --git-dir="$TMP/bot-remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-  stopped=no
-  if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=bot-instructions-render value=1' <<<"$OUT" &&
-      [ "$before" = "$after" ]; then stopped=yes; fi
-  case "$mutation:$stopped" in
-    none:yes) ok 'a failed refresh render stops before any push' ;;
-    continued:no) ok 'control: a runner that continues past a failed render publishes' ;;
-    *) bad "failed render mutation=$mutation" "$OUT" ;;
-  esac
-  cp "$TMP/bot-runner" "$runner"
-done
+# Every arm of the runner's probe and render case statements but the
+# unconfigured one, which the real package drives below: the probe's exit,
+# the verb's exit and output (- where it is not reached), the run's exit, the
+# line that arm owes, whether the run publishes, and the runner edit that must
+# break the row. An old engine refuses help with 2 and the bare verb with 1.
+bot_arm() { # NAME PROBE RENDER_EXIT RENDER_SAID RC LINE PUBLISHED OLD NEW
+  local mutation published held
+  for mutation in none "$1"; do
+    reset_default
+    rm -f -- "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
+    printf '%s\n' "$2" >"$TMP/state/probe-exit"
+    if [ "$3" != - ]; then
+      printf '%s\n' "$3" >"$TMP/state/render-exit"
+      printf '%s\n' "$4" >"$TMP/state/render-said"
+    fi
+    [ "$mutation" = none ] || bot_runner_edit "$8" "$9"
+    run_refresh "bot-arm-$1" pass render
+    published=no
+    ! grep -q '^refresh-state=' <<<"$OUT" || published=yes
+    held=no
+    if [ "$RC" -eq "$5" ] && grep -qxF -- "$6" <<<"$OUT" && [ "$published" = "$7" ]; then held=yes; fi
+    case "$mutation:$held" in
+      none:yes) ok "bot-instructions $1: exit $5 with $6" ;;
+      "$1":no) ok "control: bot-instructions $1 breaks without its runner line" ;;
+      *) bad "bot-instructions $1 mutation=$mutation" "$OUT" ;;
+    esac
+    cp "$TMP/bot-runner" "$runner"
+  done
+}
+skip_line='refresh-render=skipped package=bot-instructions cause='
+bot_arm engine 2 1 'error: no terminal to ask at' 0 "${skip_line}engine" yes \
+  'kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?' 'true'
+bot_arm probe-error 1 - - 1 'refresh-error=bot-instructions-probe value=1' no \
+  $'"$probe_status" >&2\n    exit 1\n' $'"$probe_status" >&2\n'
+bot_arm absent 0 0 'bot-instructions-render=absent' 0 "${skip_line}absent" yes \
+  "  0) if grep -qxF 'bot-instructions-render=absent' <<<\"\$render_output\"; then render_skip=absent; fi ;;"$'\n' ''
+bot_arm render-error 0 1 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=1' no \
+  $'"$render_status" >&2\n  exit 1\n' $'"$render_status" >&2\n'
+bot_arm refused 0 2 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=2' no \
+  "grep -qx 'bot-instructions: unconfigured=.*'" 'true'
+rm -f -- "${TMP:?}/state/probe-exit" "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
 # A consumer that installed the package and never configured it is not set
 # up by a refresh: the package refuses as unconfigured, nothing renders, and
 # the run says why. A runner that does not read the record is the control,
@@ -1587,48 +1605,6 @@ for mutation in none unread; do
     none:yes) ok 'an unconfigured bot-instructions install is not rendered by a refresh, and the run says so' ;;
     unread:no) ok 'control: a runner that ignores the unconfigured record fails the refresh' ;;
     *) bad "unconfigured bot-instructions mutation=$mutation" "$OUT" ;;
-  esac
-  cp "$TMP/bot-runner" "$runner"
-done
-# An engine released before the render verb keeps the refresh it had: the
-# run says why nothing rendered and publishes. A runner that calls the verb
-# without asking the engine is the control, and fails on the old engine's
-# refusal.
-: >"$TMP/state/old-engine"
-for mutation in none unprobed; do
-  reset_default
-  [ "$mutation" = none ] || bot_runner_edit 'kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?' 'true'
-  run_refresh bot-old-engine pass render
-  kept=no
-  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-render=skipped package=bot-instructions cause=engine' <<<"$OUT" &&
-      grep -q '^refresh-state=pushed ' <<<"$OUT"; then kept=yes; fi
-  case "$mutation:$kept" in
-    none:yes) ok 'an engine without the render verb publishes the refresh and says it rendered nothing' ;;
-    unprobed:no) ok 'control: a runner that does not probe the engine fails on the old engine' ;;
-    *) bad "old engine mutation=$mutation" "$OUT" ;;
-  esac
-  cp "$TMP/bot-runner" "$runner"
-done
-rm -f -- "${TMP:?}/state/old-engine"
-# Where no bot-instructions package is installed the run still says it
-# rendered nothing; a runner that does not read kendex's answer is silent.
-reset_default
-git -C "$repo" rm -q -r -- .agents/skills/bot-instructions
-commit "$repo"
-git -C "$repo" push -q origin main
-REFRESH_BOT=""
-absent_case="  0) if grep -qxF 'bot-instructions-render=absent' <<<\"\$render_output\"; then render_skip=absent; fi ;;
-"
-for mutation in none silent; do
-  reset_default
-  [ "$mutation" = none ] || bot_runner_edit "$absent_case" ''
-  run_refresh bot-absent pass render
-  said=no
-  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-render=skipped package=bot-instructions cause=absent' <<<"$OUT"; then said=yes; fi
-  case "$mutation:$said" in
-    none:yes) ok 'a refresh with no bot-instructions install says it rendered nothing' ;;
-    silent:no) ok 'control: a runner that ignores the absent answer says nothing' ;;
-    *) bad "absent bot-instructions mutation=$mutation" "$OUT" ;;
   esac
   cp "$TMP/bot-runner" "$runner"
 done

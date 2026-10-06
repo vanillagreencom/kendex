@@ -109,7 +109,8 @@ Options:
           Hold what this installs at the resolved version (manual updates)
 
       --allow-repo-effects
-          Say yes to the repository changes a package declares
+          Say yes to the repository changes a package declares, and to setting
+          up a package that holds the commit
 
       --setting <KEY=VALUE>
           Write a project setting a package here declares, as KEY=VALUE; a key

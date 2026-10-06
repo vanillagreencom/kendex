@@ -68,7 +68,8 @@ pub struct AddFlags {
     /// Hold what this installs at the resolved version (manual updates)
     #[arg(long)]
     hold: bool,
-    /// Say yes to the repository changes a package declares
+    /// Say yes to the repository changes a package declares, and to setting
+    /// up a package that holds the commit
     #[arg(long)]
     allow_repo_effects: bool,
     /// Write a project setting a package here declares, as KEY=VALUE; a key kendex.settings.toml already assigns keeps its value

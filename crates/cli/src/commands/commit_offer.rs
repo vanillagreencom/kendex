@@ -23,6 +23,7 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
 use super::CliResult;
+use super::repo_effects::Yes;
 use crate::ui;
 
 mod block;
@@ -57,12 +58,11 @@ pub struct CommitFlags {
     /// The commit message to use instead of the default
     #[arg(long)]
     pub message: Option<String>,
-    /// The verb's own `--allow-repo-effects`: the yes to setting up a
-    /// package that holds the commit, given where nobody is asked. Each
-    /// verb that carries the flag declares it, so it is read off the
-    /// matches and never parsed here.
+    /// The verb's own `--allow-repo-effects`, `None` where the verb does
+    /// not carry it. Each verb that carries the flag declares it, so it is
+    /// read off the matches and never parsed here.
     #[arg(skip)]
-    pub allow_repo_effects: bool,
+    pub allow_repo_effects: Option<bool>,
 }
 
 impl CommitFlags {
@@ -87,7 +87,11 @@ impl CommitFlags {
             pull_request: flag("pull_request"),
             leave: flag("leave"),
             message: at.try_get_one::<String>("message").ok().flatten().cloned(),
-            allow_repo_effects: flag("allow_repo_effects"),
+            allow_repo_effects: at
+                .try_get_one::<bool>("allow_repo_effects")
+                .ok()
+                .flatten()
+                .copied(),
         }
     }
 }
@@ -356,8 +360,13 @@ fn make(
             let held = Held {
                 set_up,
                 answered,
-                person,
-                allowed: session.flags.allow_repo_effects,
+                // The flag says yes only on a run that commits: `--leave`
+                // returned above, and a run with no answer commits nothing.
+                yes: super::repo_effects::yes(
+                    session.flags.allow_repo_effects == Some(true) && answered.is_some(),
+                    person,
+                ),
+                flag: session.flags.allow_repo_effects.is_some(),
             };
             match hold(env, scope, &scan, &stale, held, &mut generated)? {
                 Hold::Ended(outcome) => return Ok(Some(outcome)),
@@ -421,10 +430,10 @@ struct Held {
     set_up: bool,
     /// The choice a flag named, if one did.
     answered: Option<Choice>,
-    /// A person is at the prompt to be asked.
-    person: bool,
-    /// The run said yes to the setup with `--allow-repo-effects`.
-    allowed: bool,
+    /// Who gives the setup its yes.
+    yes: Yes,
+    /// The verb carries `--allow-repo-effects`.
+    flag: bool,
 }
 
 /// How a held offer ends: an outcome, or a setup that ran, after which the
@@ -459,19 +468,19 @@ fn hold(
     }
     // One setup per offer. A package still not ready after its own setup
     // ran is not one a second run of it fixes.
-    if held.set_up || !(held.person || held.allowed) {
-        ui::stderr(&block::stale_way_on(&style, held.set_up));
-        return Ok(Hold::Ended(match (held.set_up, held.answered) {
-            (false, None) => Outcome::Nothing,
-            (true, _) | (false, Some(_)) => Outcome::CommitRefused,
-        }));
-    }
-    let picked = match held.allowed {
-        true => {
+    let picked = match (held.set_up, held.yes) {
+        (true, _) | (false, Yes::Nobody) => {
+            ui::stderr(&block::stale_way_on(&style, held.set_up, held.flag));
+            return Ok(Hold::Ended(match (held.set_up, held.answered) {
+                (false, None) => Outcome::Nothing,
+                (true, _) | (false, Some(_)) => Outcome::CommitRefused,
+            }));
+        }
+        (false, Yes::Given) => {
             block::disclose_stale(stale);
             block::Held::SetUp
         }
-        false => block::pick_stale(stale)?,
+        (false, Yes::Ask) => block::pick_stale(stale)?,
     };
     match picked {
         block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),

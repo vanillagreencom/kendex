@@ -196,8 +196,14 @@ pub fn stale(style: &Style, scan: &Scan, stale: &[Stale]) -> Vec<String> {
 }
 
 /// Where nobody is at the prompt to set the package up, or its setup ran
-/// and it is still not ready: what is left to the person.
-pub fn stale_way_on(style: &Style, set_up: bool) -> Vec<String> {
+/// and it is still not ready: what is left to the person. `flag` is whether
+/// the verb that ran carries `--allow-repo-effects`, which is named only
+/// there.
+pub fn stale_way_on(style: &Style, set_up: bool, flag: bool) -> Vec<String> {
+    let flag = match flag {
+        true => " with --allow-repo-effects on a run that commits,",
+        false => "",
+    };
     match set_up {
         true => said_as(
             style,
@@ -207,7 +213,9 @@ pub fn stale_way_on(style: &Style, set_up: bool) -> Vec<String> {
         false => said_as(
             style,
             Status::Decision,
-            "set it up here first: at a terminal, where kendex offers it, with --allow-repo-effects, or with Set up on its package page in the app",
+            &format!(
+                "set it up here first: at a terminal, where kendex offers it,{flag} or with Set up on its package page in the app"
+            ),
         ),
     }
 }

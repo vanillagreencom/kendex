@@ -1025,37 +1025,78 @@ fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
     project
 }
 
-/// An apply that rewrites a package nobody set up in this checkout is held
-/// at the commit; `--allow-repo-effects` sets the package up there, so the
-/// one command commits the package with its render. Without the flag, the
-/// control, the commit is held and nothing is set up.
+/// A run that rewrites a package nobody set up in this checkout is held
+/// at the commit. `--allow-repo-effects` on a run that commits sets the
+/// package up there, so the one command commits the package with its
+/// render. Without a commit choice the flag sets nothing up, and a verb
+/// that does not carry the flag is not told to pass it. `held` is whether
+/// the setup line naming the way on names the flag; `None` where no such
+/// line is owed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn allow_repo_effects_sets_up_a_held_package_and_commits_its_render() {
-    for (flags, code, committed) in [
-        (&["--commit", "--allow-repo-effects"][..], Some(0), true),
-        (&["--commit"][..], Some(1), false),
+    for (args, code, set_up, held) in [
+        (
+            &["apply", "--yes", "--commit", "--allow-repo-effects"][..],
+            Some(0),
+            true,
+            None,
+        ),
+        (
+            &["apply", "--yes", "--commit"][..],
+            Some(1),
+            false,
+            Some(true),
+        ),
+        (
+            &["apply", "--yes", "--allow-repo-effects"][..],
+            Some(0),
+            false,
+            Some(true),
+        ),
+        (
+            &["refresh", "--yes", "--scope", "project", "--commit"][..],
+            Some(1),
+            false,
+            Some(false),
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = unarmed_consumer(&tmp);
 
-        let (output, text) = apply(&home, &project, flags);
+        let output = kendex(&home, &project, args);
+        let text = said(&output);
 
-        assert_eq!(output.status.code(), code, "{flags:?}: {text}");
+        assert_eq!(output.status.code(), code, "{args:?}: {text}");
         let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
         let carried = |path: &str| files.lines().any(|line| line == path);
         assert_eq!(
             carried(".github/copilot-instructions.md"),
-            committed,
-            "{flags:?}: {files}\n{text}"
+            set_up,
+            "{args:?}: {files}\n{text}"
         );
         assert_eq!(
             carried(".claude/skills/bot-instructions/SKILL.md"),
-            committed,
-            "{flags:?}: {files}\n{text}"
+            set_up,
+            "{args:?}: {files}\n{text}"
         );
-        assert_eq!(head_subject(&project) != "catalog", committed, "{flags:?}");
+        assert_eq!(head_subject(&project) != "catalog", set_up, "{args:?}");
+        assert_eq!(
+            project.join(".git/kendex/armed").exists(),
+            set_up,
+            "{args:?}: {text}"
+        );
+        assert_eq!(
+            project.join(".github/copilot-instructions.md").exists(),
+            set_up,
+            "{args:?}: {text}"
+        );
+        let way_on = text
+            .lines()
+            .find(|line| line.contains("set it up here first"))
+            .map(|line| line.contains("--allow-repo-effects"));
+        assert_eq!(way_on, held, "{args:?}: {text}");
     }
 }
 

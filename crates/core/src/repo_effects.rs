@@ -205,8 +205,6 @@ pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {
 pub struct Ran<'a> {
     /// The repository it ran in.
     pub repo: &'a std::path::Path,
-    /// The installer as the package declared it.
-    pub installer: &'a str,
     pub report: crate::guard::GuardReport,
 }
 
@@ -215,26 +213,18 @@ pub struct Ran<'a> {
 ///
 /// The one launch of an installer: arming judges the exit and writes the
 /// record after it, and the bot-instructions render, which is that
-/// package's installer, reads the report itself. So a package that
-/// declares no installer is [`ArmError::NothingToRun`] on every surface.
+/// package's installer, reads the report itself. `installer` is the
+/// answer [`DeclaredEffects::installer`] gave.
 pub fn run_installer<'a>(
     scope: &'a crate::model::Scope,
-    declared: &'a DeclaredEffects,
+    declared: &DeclaredEffects,
+    installer: &str,
     extra: &[&str],
-) -> std::result::Result<Ran<'a>, ArmError> {
-    let Some(installer) = declared.effects.installer.as_deref() else {
-        return Err(ArmError::NothingToRun {
-            name: declared.name.clone(),
-        });
-    };
+) -> crate::error::Result<Ran<'a>> {
     let (repo, program, mut argv) = resolve_script(scope, &declared.root, installer)?;
     argv.extend(extra.iter().map(Into::into));
     let report = launch_script(repo, &program, argv, None)?;
-    Ok(Ran {
-        repo,
-        installer,
-        report,
-    })
+    Ok(Ran { repo, report })
 }
 
 /// Run one package's declared installer, here and now, judge its exit,
@@ -248,11 +238,8 @@ pub fn arm(
     scope: &crate::model::Scope,
     declared: &DeclaredEffects,
 ) -> std::result::Result<crate::guard::GuardReport, ArmError> {
-    let Ran {
-        repo,
-        installer,
-        report,
-    } = run_installer(scope, declared, &[])?;
+    let installer = declared.installer()?;
+    let Ran { repo, report } = run_installer(scope, declared, installer, &[])?;
     if report.code != 0 {
         return Err(ArmError::Failed {
             name: declared.name.clone(),
@@ -377,6 +364,17 @@ impl From<crate::error::CoreError> for ArmError {
 }
 
 impl DeclaredEffects {
+    /// The installer the package declared, or [`ArmError::NothingToRun`]
+    /// where it declared none: the one answer every surface reads.
+    pub fn installer(&self) -> std::result::Result<&str, ArmError> {
+        self.effects
+            .installer
+            .as_deref()
+            .ok_or_else(|| ArmError::NothingToRun {
+                name: self.name.clone(),
+            })
+    }
+
     /// Spell one declared script as a command run from `repo`.
     ///
     /// Repository-effect errors and disclosures must point at the installed

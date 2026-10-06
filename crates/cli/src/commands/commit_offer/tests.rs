@@ -628,6 +628,7 @@ fn the_flags_are_read_off_the_verb_the_person_ran() {
     assert!(flags.push && !flags.commit && !flags.pull_request && !flags.leave);
     assert_eq!(flags.message.as_deref(), Some("m"));
     assert_eq!(flags.answered(), Some(Choice::Push));
+    assert_eq!(flags.allow_repo_effects, None, "a verb without the flag");
 
     let none =
         super::CommitFlags::from_matches(&Fake::command().get_matches_from(["kendex", "list"]));
