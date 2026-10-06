@@ -199,47 +199,19 @@ pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {
     }
 }
 
-/// One run of a package's declared installer, before anyone judges its
-/// exit.
-#[derive(Debug)]
-pub struct Ran<'a> {
-    /// The repository it ran in.
-    pub repo: &'a std::path::Path,
-    pub report: crate::guard::GuardReport,
-}
-
-/// Run one package's declared installer here and hand back what it said,
-/// `extra` appended to its declared arguments.
-///
-/// The one launch of an installer: arming judges the exit and writes the
-/// record after it, and the bot-instructions render, which is that
-/// package's installer, reads the report itself. `installer` is the
-/// answer [`DeclaredEffects::installer`] gave.
-pub fn run_installer<'a>(
-    scope: &'a crate::model::Scope,
-    declared: &DeclaredEffects,
-    installer: &str,
-    extra: &[&str],
-) -> crate::error::Result<Ran<'a>> {
-    let (repo, program, mut argv) = resolve_script(scope, &declared.root, installer)?;
-    argv.extend(extra.iter().map(Into::into));
-    let report = launch_script(repo, &program, argv, None)?;
-    Ok(Ran { repo, report })
-}
-
-/// Run one package's declared installer, here and now, judge its exit,
-/// and record the arming where it exited cleanly.
+/// Run one package's declared installer, here and now, and judge its exit.
 ///
 /// The run is the whole of it: what it wrote is on disk for anyone to look
-/// at, and the record decides only whether kendex may later run the
-/// package's declared check and render unasked. Every surface that arms
-/// calls this, so an installer that failed reads the same on each of them.
+/// at, and nothing kendex stores decides what a later run does. Every
+/// surface that has a yes calls this, so a package with nothing to run and
+/// an installer that failed read the same on each of them.
 pub fn arm(
     scope: &crate::model::Scope,
     declared: &DeclaredEffects,
 ) -> std::result::Result<crate::guard::GuardReport, ArmError> {
     let installer = declared.installer()?;
-    let Ran { repo, report } = run_installer(scope, declared, installer, &[])?;
+    let (repo, program, argv) = resolve_script(scope, &declared.root, installer)?;
+    let report = launch_script(repo, &program, argv, None)?;
     if report.code != 0 {
         return Err(ArmError::Failed {
             name: declared.name.clone(),
