@@ -13,8 +13,9 @@
 # requires exit 0, protocol model-resolution-v1 and the same decision fields.
 #
 # No claude on PATH skips the suite on a developer machine and fails it
-# under CI. No kendex, or one older than this checkout's core, skips the core
-# contract rows by name unless ORCH_REQUIRE_KENDEX is set.
+# under CI. No kendex, or one whose answer carries no `warning` field, skips
+# the core contract rows by name unless ORCH_REQUIRE_KENDEX is set; a kendex
+# that exits nonzero fails the suite.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -100,6 +101,7 @@ warning-line@hooks/register.js@await $.ui.log(line);@await $.ui.log(`model-resol
 stderr-line@hooks/register.js@const stderr = line === '' ? '' : ` stderr=${line}`;@const stderr = '';@core stderr failure starts no child|core failure shows its refusal and makes no model call|managed read failure starts no child
 core-warning@hooks/register.js@${typeof warning === 'string' ? ` warning=${warning}` : ''}@@managed read failure starts no child
 warning-absent@hooks/register.js@const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);@const warning = response.warning;@a kendex without the warning field still warns once
+warning-diagnosed@hooks/register.js@const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);@const warning = response.warning ?? warningAbsent;@inherit preserves native input|unmanaged preserves native input
 context-parse@hooks/register.js@throw new Error(`model-resolution: invalid=KENDEX_MODEL_CONTEXT cause=${error.message}`);@throw error;@unparseable launch context starts no child
 context-object@hooks/register.js@return { ...record(context, 'KENDEX_MODEL_CONTEXT') };@return { ...context };@a launch context that is no object starts no child
 truncated@hooks/register.js@if (result.isStdoutTruncated === true) throw@if (result.isStdoutTruncated === true && false) throw@truncated response starts no child
@@ -195,45 +197,67 @@ contract() {
 }
 
 # The fixtures carry core's `warning` field, which kendex first sends in the first release after 1.11.0.
-# A kendex that answers the plugin's own no-list context without it predates
-# this checkout's core, and the contract rows are skipped as for no kendex.
+# core_probe asks the kendex on PATH about the plugin's own no-list context and
+# prints `ready`, `skip REASON` for no kendex or an answer without the field,
+# or `fail core-exit=N stderr=LINE` for a kendex that exits nonzero.
 mkdir -p "$TMP_ROOT/home"
 NO_LIST='{"protocol":"model-resolution-v1","harness":"claude","account":"native-session","host":"native-process","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"claude:mods-model-list"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}'
-core_absent='no kendex on PATH'
-if command -v kendex >/dev/null 2>&1; then
-  core_absent='the kendex on PATH sends no warning field'
-  if probe="$(cd -- "$TMP_ROOT" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
-    kendex tier-model claude --model standard --json --runtime-context-json "$NO_LIST" 2>/dev/null)" &&
-    jq -e 'has("warning")' <<<"$probe" >/dev/null 2>&1; then
-    core_absent=''
+core_probe() {
+  local probe rc=0 line=''
+  if ! command -v kendex >/dev/null 2>&1; then
+    printf 'skip no kendex on PATH\n'
+    return
   fi
-fi
-if [[ -n "$core_absent" ]]; then
-  if [[ -n "${ORCH_REQUIRE_KENDEX:-}" ]]; then
-    fail "ORCH_REQUIRE_KENDEX is set and $core_absent for the core contract"
+  probe="$(cd -- "$TMP_ROOT" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
+    kendex tier-model claude --model standard --json --runtime-context-json "$NO_LIST" 2>"$TMP_ROOT/probe.err")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    IFS= read -r line <"$TMP_ROOT/probe.err" || true
+    printf 'fail core-exit=%s stderr=%s\n' "$rc" "$line"
+  elif jq -e 'has("warning")' <<<"$probe" >/dev/null 2>&1; then
+    printf 'ready\n'
   else
-    for scenario in $CONTRACT_SCENARIOS contract-fixture contract-key; do
-      printf '  skip  core answers %s: %s\n' "$scenario" "$core_absent"
-    done
+    printf 'skip the kendex on PATH sends no warning field\n'
   fi
-else
-  copy_plugin contract
-  verdicts="$(contract "$TMP_ROOT/contract")" || { fail 'core contract scenarios printed'; verdicts=''; }
-  for scenario in $CONTRACT_SCENARIOS; do
-    assert_eq "$(grep "^$scenario " <<<"$verdicts" || true)" "$scenario ok" "core answers $scenario as its fixture does"
-  done
+}
 
-  # A fixture core would not give, and a context key core does not read.
-  copy_plugin contract-fixture
-  edit "$TMP_ROOT/contract-fixture/tests/lib/fixtures.ts" "tag: 'observed-session-or-default', selector: 'opus'," "tag: 'observed-session-or-default', selector: 'sonnet',"
-  verdicts="$(contract "$TMP_ROOT/contract-fixture")" || verdicts=''
-  assert_eq "$(grep '^step-observed ' <<<"$verdicts" || true)" 'step-observed differs' 'control contract-fixture reddens: step-observed'
-  copy_plugin contract-key
-  edit "$TMP_ROOT/contract-key/hooks/register.js" 'providers: [], currentProvider: null,' 'providers: [], provider: null,'
-  verdicts="$(contract "$TMP_ROOT/contract-key")" || verdicts=''
-  assert_eq "$(grep '^spawn-default ' <<<"$verdicts" || true)" 'spawn-default core-exit=1' 'control contract-key reddens: spawn-default'
-  assert_eq "$(grep '^step-observed ' <<<"$verdicts" || true)" 'step-observed core-exit=1' 'control contract-key reddens: step-observed'
-fi
+# A kendex that fails the probe fails the suite rather than skipping.
+mkdir -p "$TMP_ROOT/failing-kendex"
+printf '#!/bin/sh\necho "error: fixture probe failure" >&2\nexit 3\n' >"$TMP_ROOT/failing-kendex/kendex"
+chmod +x "$TMP_ROOT/failing-kendex/kendex"
+assert_eq "$(PATH="$TMP_ROOT/failing-kendex:$PATH" core_probe)" 'fail core-exit=3 stderr=error: fixture probe failure' 'control core-probe-exit fails, not skips'
+
+core="$(core_probe)"
+case "$core" in
+  fail\ *)
+    fail "core contract probe ${core#fail }" ;;
+  skip\ *)
+    if [[ -n "${ORCH_REQUIRE_KENDEX:-}" ]]; then
+      fail "ORCH_REQUIRE_KENDEX is set and ${core#skip } for the core contract"
+    else
+      for scenario in $CONTRACT_SCENARIOS contract-fixture contract-key; do
+        printf '  skip  core answers %s: %s\n' "$scenario" "${core#skip }"
+      done
+    fi ;;
+  ready)
+    copy_plugin contract
+    verdicts="$(contract "$TMP_ROOT/contract")" || { fail 'core contract scenarios printed'; verdicts=''; }
+    for scenario in $CONTRACT_SCENARIOS; do
+      assert_eq "$(grep "^$scenario " <<<"$verdicts" || true)" "$scenario ok" "core answers $scenario as its fixture does"
+    done
+
+    # A fixture core would not give, and a context key core does not read.
+    copy_plugin contract-fixture
+    edit "$TMP_ROOT/contract-fixture/tests/lib/fixtures.ts" "tag: 'observed-session-or-default', selector: 'opus'," "tag: 'observed-session-or-default', selector: 'sonnet',"
+    verdicts="$(contract "$TMP_ROOT/contract-fixture")" || verdicts=''
+    assert_eq "$(grep '^step-observed ' <<<"$verdicts" || true)" 'step-observed differs' 'control contract-fixture reddens: step-observed'
+    copy_plugin contract-key
+    edit "$TMP_ROOT/contract-key/hooks/register.js" 'providers: [], currentProvider: null,' 'providers: [], provider: null,'
+    verdicts="$(contract "$TMP_ROOT/contract-key")" || verdicts=''
+    assert_eq "$(grep '^spawn-default ' <<<"$verdicts" || true)" 'spawn-default core-exit=1' 'control contract-key reddens: spawn-default'
+    assert_eq "$(grep '^step-observed ' <<<"$verdicts" || true)" 'step-observed core-exit=1' 'control contract-key reddens: step-observed' ;;
+  *)
+    fail "core contract probe=unexpected value=[$core]" ;;
+esac
 
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

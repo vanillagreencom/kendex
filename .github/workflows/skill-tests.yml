@@ -97,10 +97,10 @@ name: Skill Tests
 # figures in the comment above it or its job, with headroom, so a hang there
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
-# the job `timeout-minutes` above their steps, 30 minutes on every macOS leg
-# and on the Linux `rest` and `orch-terminal` legs that build kendex-cli from
-# the checkout first, and 15 on every other Linux leg. The per-shard figures
-# behind each budget are in the comment above it.
+# the `timeout-minutes` expression of the skill-suites-shard job, which is
+# the list of legs held to 30 minutes, every macOS leg among them; every
+# other leg takes 15. The per-shard figures behind each budget are in the
+# comment above it.
 # Every pull request pays its selected Linux shards, and the merge queue stands them down where the proof
 # above holds, so the slowest of them is charged once per merge there. It is
 # charged twice where the group runs them again: a base that moved or an
@@ -473,12 +473,13 @@ jobs:
     # third runs this leg in roughly a third of that time. The three shards
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
-    # The Linux `rest`, `orch-terminal` and `orch-rest` legs build kendex-cli
-    # (debug) from the checkout ahead of their suites, and a cold cargo cache
-    # — the first run after a merge, and after each rustc release — pays the
-    # whole build. Its duration on a runner is unmeasured, so those legs take
-    # the macOS ceiling until a figure is recorded here; `orch-rest` also
-    # installs Claude Code from npm for claude-model-classes.sh.
+    # The Linux legs the `if:` of the `kendex from this checkout` step names
+    # build kendex-cli (debug) from the checkout ahead of their suites, and a
+    # cold cargo cache — the first run after a merge, and after each rustc
+    # release — pays the whole build. Its duration on a runner is unmeasured,
+    # so a leg that builds kendex takes the macOS ceiling until a figure is
+    # recorded here; the expression below is the list of legs that take it,
+    # and `review-gate`, which builds kendex too, is not on it.
     # The `guards-hooks`, `guards-tools` and `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a

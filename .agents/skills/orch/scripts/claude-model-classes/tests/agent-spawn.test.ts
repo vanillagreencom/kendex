@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing';
-import { install, launch, observedOpus, spawnDefault, spawnSelected } from './lib/fixtures.ts';
+import { install, launch, observedOpus, passThrough, spawnDefault, spawnSelected } from './lib/fixtures.ts';
 
 test('core selector reaches one startup with the child directory and identity', async ($, on) => {
   const fixture = install(on, spawnSelected, { variables: { KENDEX_MODEL_CONTEXT: JSON.stringify(launch) } });
@@ -19,14 +19,15 @@ test('core selector reaches one startup with the child directory and identity', 
   expect(fixture.calls[0].context.default).toEqual({ tag: 'native-default' });
 });
 
-for (const tag of ['inherit', 'unmanaged']) {
+for (const tag of ['inherit', 'unmanaged'] as const) {
   test(`${tag} preserves native input`, async ($, on) => {
-    install(on, { ...spawnSelected, resolution: { tag } });
+    const fixture = install(on, passThrough(tag));
     let started = 0;
     on('agent.spawn', ($, e) => { started += 1; return { model: e.model ?? 'parent', agentId: 'child' }; });
     const result = await $.agent.spawn({ prompt: 'fixture', subagentType: 'runtime', model: 'opus' });
     expect(result.model).toBe('opus');
     expect(started).toBe(1);
+    expect(fixture.warnings).toEqual([]);
   });
 }
 

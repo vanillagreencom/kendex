@@ -34,6 +34,9 @@ export const spawnSelected = {
   warning: 'model-resolution: requested=fast selected=sonnet causes=fallback source=',
 };
 
+/** An `inherit` child, or one kendex does not manage when `tag` is `unmanaged`. */
+export const passThrough = (tag: 'inherit' | 'unmanaged') => ({ protocol, harness: 'claude', request: { tag: 'inherit' }, resolution: { tag } });
+
 /** A `standard` child with no model list. */
 export const spawnDefault = {
   protocol, harness: 'claude', request: { tag: 'class', class: 'standard' },
