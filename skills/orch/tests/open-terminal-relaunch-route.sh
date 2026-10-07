@@ -349,13 +349,17 @@ run_ot codex "$HARNESS_SCREEN" codex
 RUN_ENV=()
 assert_eq "rc=$RC launched=$(launched)" 'rc=0 launched=1' \
   'control: without the result tag check pending counts as a launched Codex'
-control selection-cat 'if ! selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")"; then' 'if selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")"; then'
+control selection-cat '    selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then' '    selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then'
 RUN_ENV=(LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=/srv/lane/tmp/lane-mail/KEN-1/relaunch-selection)
 run_ot codex "$HARNESS_SCREEN" codex
 RUN_ENV=()
 assert_eq "rc=$RC failed=$(said '^open-terminal: relaunch-selection-failed item=KEN-1 operation=cat')" 'rc=1 failed=0' \
   'control: an inverted read check loses the host cat failure classification'
-control selection-put 'if ! printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then' 'if printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then'
+control selection-put '    printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then' '    printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then'
 RUN_ENV=(LANE_HOST_STUB_PUT_STATUS=1)
 run_ot codex "$HARNESS_SCREEN" codex
 RUN_ENV=()
