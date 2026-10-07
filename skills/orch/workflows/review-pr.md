@@ -495,10 +495,14 @@ After delegating children, apply the § 4 bounded re-review rule to their diff.
 
 ## 9. Return
 
-In a lane whose brief names a status file, write its review line, `Review: [VERDICT]`; `[VERDICT]` is the verdict this return hands its caller, the one [submit-pr.md](submit-pr.md) § 6.1 gate 1 reads. With workflow state `pr_order` reading `open-first`, keep § 1's pending line instead: this review's fix round is still local, and the overseer must not approve or request Copilot on the head it replaces. Record that this review returned, which lets [submit-pr.md](submit-pr.md) § 2 run its triage, write this verdict once its push lands, and arm the pull request:
+`[VERDICT]` is the verdict this return hands its caller, the one [submit-pr.md](submit-pr.md) § 6.1 gate 1 reads. Read workflow state `pr_order` and take one branch:
 
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
-```
+- **`open-first`**: keep § 1's pending line, and write no verdict line: this review's fix round is still local, and the overseer must not approve or request Copilot on the head it replaces. Record that this review returned, which lets [submit-pr.md](submit-pr.md) § 2 run its triage, write this verdict once its push lands, and arm the pull request:
+
+  ```bash
+  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
+  ```
+
+- **Any other value, or absent**: in a lane whose brief names a status file, write its review line, `Review: [VERDICT]`. Record no workflow state: a review-first lane, a re-submit review and a trivial-diff skip leave `pr_order` as they found it.
 
 **Managed**: return to the parent workflow's next section. **Standalone**: session complete — the summary is in § 8.

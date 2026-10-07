@@ -88,7 +88,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
-   **Open-first head.** On that `open-first-returned` pass, once the push lands, this step owns the pushed head: it ends the overseer's hold and routes the head once. In a lane whose brief names a status file, write the review line `Review: [VERDICT]` in place of the pending line, `[VERDICT]` being the verdict [review-pr.md](review-pr.md) § 9 returned, then record the pass:
+   **Open-first head.** On that `open-first-returned` pass, once the push lands, this step owns the pushed head: it ends the overseer's hold and routes the head once. In a lane whose brief names a status file, write the review line `Review: [VERDICT]` in place of the pending line, `[VERDICT]` being the verdict [review-pr.md](review-pr.md) § 9 returned. Then, lane or not, record the pass, so no later pass repeats the triage-first branch:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-pushed
