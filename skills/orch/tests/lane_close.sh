@@ -121,6 +121,15 @@ if [[ "$1" == cat ]]; then
   esac
 fi
 [[ "$1" != touch ]] || exit 0
+# list is the provider's inventory, read only after a hosted mailbox read
+# fails: LANE_CLOSE_HOST_LIST replaces its rows, a row naming KEN-1 by
+# default, and LANE_CLOSE_HOST_LIST_STATUS fails it.
+if [[ "$1" == list ]]; then
+  [[ "${LANE_CLOSE_HOST_LIST_STATUS:-0}" -eq 0 ]] \
+    || { printf 'lane-host-fixture: list-failed\n' >&2; exit "$LANE_CLOSE_HOST_LIST_STATUS"; }
+  printf '%b' "${LANE_CLOSE_HOST_LIST-acme/repo/KEN-1\trunning\t1h\tsandbox-1\n}"
+  exit 0
+fi
 # stop is the provider signalling the lane's harness on its host: the harness
 # ends, and the pane falls back to the bare shell its window keeps, which the
 # lane judge reads as exited. LANE_CLOSE_NO_EXIT is a harness that outlives the
@@ -708,6 +717,46 @@ for row in "${ABSENT_ROWS[@]}"; do
   IFS='|' read -r label script pane host_env want <<<"$row"
   absent_row "$script" "$pane" "$host_env"
   assert_eq "$ABSENT_CLOSE" "$want" "$label"
+done
+
+echo '=== a provider that lists no sandbox for a terminal item closes the record alone ==='
+# The provider's close --force removed the sandbox and it answers item-unknown
+# to every item verb, the mailbox read first, so lane-mail refuses. A hosted
+# record, windowless (PANE -), stopped (PANE stopped) or idle in its window
+# under PANE, is closed by SCRIPT on
+# the env ENV sets; GONE_CLOSE reads the host-absent line, the refusal, the
+# provider list, stop and close, the item files, the window kill and record.
+gone_row() { # SCRIPT PANE ENV [ARGS...]
+  local envs var script="$1" pane="$2"
+  case "$pane" in
+    -) write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN" ;;
+    stopped) write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN" ;;
+    *) write_state running claude /host; write_panes "$pane"; claude_screen ;;
+  esac
+  read -ra envs <<<"$3"
+  shift 3
+  for var in "${envs[@]}"; do export "$var"; done
+  run_close "$script" "$@"
+  for var in "${envs[@]}"; do unset "${var%%=*}"; done
+  GONE_CLOSE="rc=$RC absent=$(grep -cx 'lane-close: host-absent item=KEN-1 host=/host mail-status=2' <<<"$OUT" || true) refused=$(grep -c '^lane-close: mail-read-failed item=KEN-1 ' <<<"$ERR" || true) list=$(grep -c '^list host=/host$' "$HOST_CALLS" || true) stop=$(stop_count KEN-1 claude) close=$(close_call_count) removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+NO_ROW='acme/repo/KEN-9\trunning\t1h\tsandbox-9\n'
+# label|script|pane|env|args|expected
+GONE_ROWS=(
+  "a windowless record on a canceled item whose provider lists no sandbox closes done, no stop or close|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=canceled LANE_CLOSE_HOST_LIST=$NO_ROW||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
+  "an idle record on a terminal item whose provider lists no sandbox closes done and kills its window|$SCRIPT|python|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=1 status=done"
+  "a provider still listing the item, in another case, keeps the refusal|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\trunning\t1h\tsandbox-1\n||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"
+  "a list that fails keeps the refusal|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST_STATUS=1||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"
+  "a stopped record on a terminal item reads its tracker there and closes done|$SCRIPT|stopped|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=$NO_ROW||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
+  "a stopped record on an item the tracker holds open reads no list and keeps the refusal|$SCRIPT|stopped|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=started LANE_CLOSE_HOST_LIST=$NO_ROW||rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=stopped"
+  "--keep-sandbox reads no list and keeps the refusal|$SCRIPT|python|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=$NO_ROW|--keep-sandbox|rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=running"
+  "control: without the list reading the gone sandbox strands the record at mail-read-failed|$(mutant lane-close-gone '  if [[ -n "$host" && "$KEEP_SANDBOX" == false && "$PARK" == false ]]; then' '  if false; then')|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=canceled LANE_CLOSE_HOST_LIST=$NO_ROW||rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=running"
+  "control: a list read without the item match closes a listed sandbox's record|$(mutant lane-close-gone-match "END { exit !found }' <<<\"\$listing\"; then" "END { exit 1 }' <<<\"\$listing\"; then")|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\\trunning\\t1h\\tsandbox-1\\n||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
+)
+for row in "${GONE_ROWS[@]}"; do
+  IFS='|' read -r label script pane gone_env gone_args want <<<"$row"
+  if [[ -n "$gone_args" ]]; then gone_row "$script" "$pane" "$gone_env" "$gone_args"; else gone_row "$script" "$pane" "$gone_env"; fi
+  assert_eq "$GONE_CLOSE" "$want" "$label"
 done
 
 echo '=== an idle harness ends by signal, nothing typed into its pane ==='

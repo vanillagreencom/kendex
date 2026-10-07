@@ -113,6 +113,7 @@ message() { # REASON FIELD=VALUE...
         'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
     parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check, which hands that merge to the overseer as parked-merged.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
+    host-absent) printf '%s\n' "The lane mailbox could not be read, mail-status= being lane-mail's exit, and the provider's list names no sandbox for this terminal item, so no session holds an ask. The record closes with no provider stop or close; its files and window go as in any full close." ;;
     host-kept) printf '%s\n' 'The host kind has no stop: the session runs on until the operator archives it from the claude.ai sidebar. The record reads done and the local worktree is removed.' ;;
     host-capabilities-unread) printf '%s\n' 'lane-host could not declare the capability line of the host the record names, or declared a stop this close has no arm for; lane-host'"'"'s own words are above this line. Nothing was stopped and the record is unchanged.' ;;
     worktree-remove-failed) printf '%s\n' "The item's worktree on this machine could not be removed; worktree remove names the cause above this line. The record is unchanged, and a second close retries the removal." ;;
@@ -289,6 +290,13 @@ reply, which is why the two differ: --keep-sandbox on an exited lane records
 stopped and refuses nothing, and the full close of that stopped record refuses
 until the ask is answered. Answering is the one thing that lifts it. A mailbox
 that cannot be read refuses as mail-read-failed.
+A hosted mailbox that cannot be read, on a full close of an item the tracker
+answers terminal, is weighed against lane-host list instead: where no row's
+first field ends in /ITEM, in any case, the provider holds no sandbox for the
+item, as its close --force leaves it, so no session holds an ask. The close
+prints host-absent with mail-status=, lane-mail's exit, and closes the record
+done with no provider stop or close, the item's files and window going as in
+any full close. A list that fails or names the item keeps mail-read-failed.
 
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
@@ -459,8 +467,7 @@ refuse_unanswered_ask() {
   out="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}")" || rc=$?
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] \
     || { message lane-host-busy "item=$ITEM" step=mail-read >&2; exit "$rc"; }
-  [[ "$rc" -eq 0 ]] \
-    || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=$rc" >&2; exit 1; }
+  [[ "$rc" -eq 0 ]] || close_absent_record "$rc"
   [[ -n "$out" ]] || return 0
   # `pending` lists the lane's unread directives too, which the lane owes
   # nothing to the overseer for; only an ask is waiting on an answer.
@@ -475,6 +482,37 @@ refuse_unanswered_ask() {
   epoch="${ask_id%%-*}"
   if [[ "$epoch" =~ ^[0-9]+$ ]] && now="$(date -u +%s)"; then age="$((now - epoch))s"; fi
   message ask-unanswered "item=$ITEM" "ask=$ask_id" "age=$age" "count=$ask_count" >&2
+  exit 1
+}
+
+# A hosted mailbox read that fails on a full close of a terminal item, where
+# the provider's own list names no sandbox for the item: one its close --force
+# or a hand close removed. That item has no session an ask could reach, no
+# harness to stop and nothing to close, yet a provider may refuse every item
+# verb for it rather than answer the protocol's empty match, so the record
+# closes alone. The list is read rather than the provider's words, and a row
+# naming the item in any case, a list that fails, or any other close keeps the
+# mail-read-failed refusal.
+HOST_ABSENT=false
+close_absent_record() { # MAIL_STATUS
+  local listing rc=0 tracker_rc=0
+  if [[ -n "$host" && "$KEEP_SANDBOX" == false && "$PARK" == false ]]; then
+    [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
+    [[ -n "$ITEM_END" ]] || tracker_terminal || tracker_rc=$?
+    if [[ "$tracker_rc" -eq 0 ]]; then
+      listing="$(ORCH_LANE_HOST="$host" "$LANE_HOST" list)" || rc=$?
+      [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "item=$ITEM" step=list >&2; exit "$rc"; }
+      if [[ "$rc" -eq 0 ]] && ! awk -F'\t' -v item="/$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')" '
+          { name = tolower($1) }
+          length(name) >= length(item) && substr(name, length(name) - length(item) + 1) == item { found = 1 }
+          END { exit !found }' <<<"$listing"; then
+        message host-absent "item=$ITEM" "host=$host" "mail-status=$1"
+        HOST_ABSENT=true
+        finish_close
+      fi
+    fi
+  fi
+  message mail-read-failed "item=$ITEM" "root=$mail_root" "status=$1" >&2
   exit 1
 }
 
@@ -534,7 +572,7 @@ item_merged() {
 
 close_host() {
   local rc=0 out err args=(close --item "$ITEM")
-  [[ -n "$host" ]] || return 0
+  [[ -n "$host" && "$HOST_ABSENT" == false ]] || return 0
   [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; return 1; }
   if [[ "$ITEM_END" == completed ]] && item_merged; then args+=(--merged); fi
   out="$(mktemp)" || return 1
