@@ -294,6 +294,10 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # Submit reuses only the full run; CI runs what tools/ci-job-set selects.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
+# Preview the same suite selection before launching validation. An all-suite
+# pre-open run uses this command's scoped route; PR CI holds the full record.
+DEV_VALIDATE_SELECTION_CMD = "tools/guard --selection"
+
 # The required CI context runs the tools/guard lanes through tools/ci-job-set,
 # so a review-comment fix round on an open pull request leaves its validation
 # to that check.

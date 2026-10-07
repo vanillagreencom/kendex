@@ -1,0 +1,1 @@
+- All-suite validation previews use PR CI or scoped local suites. Reused timeout evidence requires the current finding prefix.

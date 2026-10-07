@@ -569,7 +569,7 @@ receipt_table \
   "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
   "a failing validate on the same receipt is retried^impl^.validate=\"FAILING: lint\"^$FILE_ARGS^verdict=retry reason=valid" \
   "a fix round's pass beside its ci run is accepted^fix^.validate=\"pass\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=accept reason=valid validate=pass validate_mode=ci" \
-  "a ci run on an implement round is invalid^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=retry reason=invalid" \
+  "a ci run on an implement round is accepted^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=accept reason=valid validate_mode=ci" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
@@ -599,10 +599,10 @@ mutate_file "$CHECK" '    --argjson validate_class_base "$validate_class_base"' 
 receipt_table "control: dropping the class base echo reds its assertion^impl^.validate_class_base=\"$CLASS_BASE\"^$FILE_ARGS^reason=valid validate_class_base=null"
 CHECK="$CHECK_SHIPPED"
 
-# Control: without the kind rule an implement round's ci run is valid.
+# Control: a fix-only mode rule rejects an implement run the runner left to CI.
 CHECK="$(mutant_scripts ci-kind dev-artifact-check)/dev-artifact-check" || exit 1
-mutate_file "$CHECK" '.validate_mode == "ci" and $k == "fix"' '.validate_mode == "ci"'
-receipt_table "control: without the kind rule an implement round's ci run is valid^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=accept reason=valid"
+mutate_file "$CHECK" 'or .validate_mode == "ci")' 'or (.validate_mode == "ci" and $k == "fix"))'
+receipt_table "control: the fix-only rule turns implement CI admission red^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=retry reason=invalid"
 CHECK="$CHECK_SHIPPED"
 
 echo "=== the validation wall time reaches the orchestrator ==="

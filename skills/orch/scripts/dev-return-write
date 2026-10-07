@@ -259,9 +259,9 @@ range or ci, and a --validate pass needs a run that passed, no-verdict a run the
 timeout ended and a --validate-note naming the scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it,
 or --validate-record below; a FAILING round with no run omits both and
-records validate_mode null. validate_class_base is the round base --record
-reports the run's class was read from, absent where the class covered the
-branch; submit reuses only a full pass without one or with selection
+records validate_mode null. validate_class_base is the base --record reports:
+the round base or, for scoped full execution, the branch merge base.
+Submit reuses only a full pass without one or with selection
 battery. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD

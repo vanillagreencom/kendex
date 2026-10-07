@@ -261,6 +261,20 @@ space_stop() { # KEY VALUE — a full run without room ends here, before any lat
 # development completion and submit: everything, plus the touched trees.
 MODE=default
 range_base=""
+selection_only=0
+scoped_only=0
+if [ "${1:-}" = --selection ]; then
+  selection_only=1
+  shift
+  if [ "${DEV_VALIDATE_SCOPED:-false}" = true ]; then scoped_only=1; fi
+  if [ "$#" -eq 0 ]; then
+    if [ -n "${DEV_VALIDATE_BASE:-}" ]; then
+      set -- --range "$DEV_VALIDATE_BASE"
+    else
+      set -- --full
+    fi
+  fi
+fi
 case "${1:-}" in
   --full) MODE=full; shift ;;
   --range)
@@ -270,7 +284,7 @@ case "${1:-}" in
     shift 2
     ;;
   --help | -h)
-    printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
+    printf '%s\n' 'usage: tools/guard [--selection] [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
       '--range BASE: the default rules over the changes since BASE, working tree included,' \
       '        cargo clippy for the crates they touch, any non-Markdown file inside' \
@@ -288,7 +302,11 @@ case "${1:-}" in
       '        plus the suites of a touched skill or of hooks/ its changed files map to' \
       '        (mapped_suites), and the suites of the tool and Pi-package trees it touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
-      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.'
+      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
+      '--selection: report selection=all|subset without running checks or suites.' \
+      '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
+      '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
+      '        the same suite mapper, leaving the full record to pull-request CI.'
     exit 0
     ;;
 esac
@@ -402,6 +420,7 @@ lane_on() { # LANE — tools/ci-job-set's name for it
 }
 
 reported_lanes=guard-scans
+if [ "$selection_only" -eq 0 ] || [ "$scoped_only" -eq 1 ]; then
 
 # The commit chain's ceiling check reads the index; completion reads the
 # working tree.
@@ -1223,6 +1242,8 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
   [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
 fi
 
+fi
+
 # Range and full validation run the suites CI runs for the trees the touched
 # set names, beside the cargo and UI runs: a skill's own tests, hooks/tests
 # for a hook, tools/tests for a tool, and a Pi package's declared script
@@ -1276,6 +1297,8 @@ path_role() { # DIR REL
     hooks:*/*) return 1 ;;
     hooks:*.sh) echo script ;;
     hooks:*) return 1 ;;
+    tools:*.md) echo doc ;;
+    tools:*) echo script ;;
     *:scripts/*) echo script ;;
     *:references/* | *.md) echo doc ;;
     *) return 1 ;;
@@ -1294,7 +1317,7 @@ skill_suites() { # DIR
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  for f in "$1"/*.sh "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$f" ] || continue
     role=$(path_role "$1" "${f#"$1"/}") || continue
     case "$role" in
@@ -1586,6 +1609,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
         suite_selection=all
+        [ "$selection_only" -eq 0 ] || [ "$scoped_only" -eq 1 ] || continue
         if ! command -v jq >/dev/null 2>&1; then
           say missing-tool jq
           continue
@@ -1600,17 +1624,26 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ -d "$d/tests" ] || continue
         run=all
         case "$d" in skills/* | hooks) run="" ;; esac
+        [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
+            if [ "$scoped_only" -eq 1 ]; then
+              role=$(path_role "$d" "$rel") || continue
+              case "$role" in script | lib | helper | module | suite | test-module) ;; *) continue ;; esac
+            fi
             map_status=0
             mapped_suites "$d" "$rel" || map_status=$?
             sel=$MAPPED
             case "$map_status" in
               0) ;;
-              1) note suites "all reason=unmapped path=$f"; run=all; break ;;
-              2) note suites "all reason=unreadable path=$f"; run=all; break ;;
-              *) say mapped-suites "$map_status path=$f"; run=all; break ;;
+              1) if [ "$scoped_only" -eq 1 ]; then continue; fi
+                 note suites "all reason=unmapped path=$f"; run=all; break ;;
+              2) if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; run=""; break; fi
+                 note suites "all reason=unreadable path=$f"; run=all; break ;;
+              *) say mapped-suites "$map_status path=$f"
+                 if [ "$scoped_only" -eq 1 ]; then run=""; else run=all; fi
+                 break ;;
             esac
             run="$run$sel
 "
@@ -1637,6 +1670,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             filters+=("=${t%.sh}")
           done <<<"$run"
         fi
+        if [ "$selection_only" -eq 1 ] && [ "$scoped_only" -eq 0 ]; then continue; fi
         if [ -f "$d/tests/run-all.sh" ]; then
           # A mapped run hands run-all.sh each suite as `=name`, which it
           # matches whole; with none it runs the whole set.
@@ -1657,6 +1691,15 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   done
 fi
 [ -n "$suite_selection" ] || suite_selection=all
+if [ "$selection_only" -eq 1 ]; then
+  if [ "$scoped_only" -eq 1 ]; then
+    printf 'validate: lanes=scoped-suites selection=subset\n'
+    printf 'scoped=true\n'
+  else
+    printf 'selection=%s\n' "$suite_selection"
+  fi
+  exit "$fail"
+fi
 
 if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their

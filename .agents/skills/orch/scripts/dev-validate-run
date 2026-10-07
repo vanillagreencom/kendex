@@ -95,11 +95,12 @@
 #       takes a receipt's mode, class base and wall time from it, a receipt's
 #       pass needs its pass and its no-verdict its no-verdict. Fix-round
 #       binding belongs to dev-return-write, per schemas/dev-return.md.
-#   dev-validate-run --resolve-mode --worktree PATH
-#       Print the mode a --validate-mode range run in that worktree records,
-#       read-only and starting nothing: range, or full where the project sets
-#       no DEV_VALIDATE_RANGE_CMD. dev-artifact-check judges a fix round's
-#       receipt against it.
+#   dev-validate-run --resolve-mode --worktree PATH [--base REF]
+#       Print a range request's mode, read-only and starting nothing. Without
+#       --base it resolves the local command: range, or full without a range
+#       command. dev-artifact-check uses that fallback mode and admits ci
+#       separately for an open pull request. With --base it also previews
+#       selection and applies the same ci resolution as a real range start.
 #   dev-validate-run --last-pass --worktree PATH
 #       Print the newest run in that worktree that ran a full or range command
 #       to a pass and whose start records both the HEAD and the tree it
@@ -180,6 +181,17 @@
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #
+# Full and range starts may also resolve to ci before launching their command.
+# DEV_VALIDATE_SELECTION_CMD, optional, previews the command's own selection
+# with one selection=all or selection=subset line. It receives the same class,
+# docs verdict, paths and base as validation. Only all attempts the existing
+# ci route. Unset, failed or unreported selection keeps local validation.
+# Before a pull request exists, an eligible all selection runs that selector
+# with DEV_VALIDATE_SCOPED=true: the selector executes its changed-file suites
+# and reports the usual validate: line with selection=subset. start and
+# --record carry scoped=true. A scoped full run records the branch merge base
+# as class-base, so submit cannot reuse it as a whole-branch battery pass.
+#
 # A start reads the worktree's earlier runs before it runs anything. An
 # earlier full or range run counts as evidence when all of these hold:
 #   - its command ran and the bound ended it: no bound-run= line in its start;
@@ -189,6 +201,7 @@
 #     which a command may select its lanes by, and the same DEV_VALIDATE_BASE,
 #     its validate-base= line, which a range command validates from;
 #   - its log holds no finding line;
+#   - its recorded finding prefix equals the current setting;
 #   - its bound was at least this one's;
 #   - this run reads every changed path it read.
 # Such a run says this run would end at the bound as well: the project's
@@ -226,7 +239,7 @@
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
-#   validate-mode=full|range                                                  (--resolve-mode)
+#   validate-mode=full|range|ci                                               (--resolve-mode)
 #   run-dir=… head=SHA tree=SHA                                               (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
 #   run-dir=… pid=N                                                           (--live)
@@ -420,7 +433,7 @@ run_has_finding() { # RUN_DIR
 # where there is none.
 BOUND_RUN_DIR=""
 BOUND_RUN_EXIT=""
-find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX
   local start_file dir secs line rc guard_exit ran
   BOUND_RUN_DIR="" BOUND_RUN_EXIT=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
@@ -436,6 +449,7 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE
     [[ "$(start_field "$start_file" class)" == "$5" ]] || continue
     [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue
     [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue
+    [[ "$(start_field "$start_file" finding-prefix)" == "$8" ]] || continue
     line="$(cat "$dir/exit" 2>/dev/null)" || continue
     [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
     guard_exit="${BASH_REMATCH[1]}"
@@ -583,7 +597,7 @@ case "$mode" in
     check_seconds option=--poll "$poll"
     if [[ "$mode" != start ]]; then
       [[ "$validate_mode_given" == false ]] || die option-unused "option=--validate-mode" "mode=$mode"
-      [[ "$base_given" == false ]] || die option-unused "option=--base" "mode=$mode"
+      [[ "$base_given" == false || "$mode" == resolve ]] || die option-unused "option=--base" "mode=$mode"
     else
       case "$validate_mode" in
         full) [[ "$base_given" == false ]] || die option-unused "option=--base" "validate-mode=$validate_mode" ;;
@@ -628,6 +642,16 @@ resolve_range_mode() {
 CI_RULES_JQ='.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context'
 CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((.contexts // []) + [(.checks // [])[] | .context]) | .[] else error("protection unreadable") end'
 
+# Both requested CI and automatic all-suite resolution use the same coverage
+# rule: CI may stand checks down for unmeasured, render or docs-only changes.
+ci_class_covered() {
+  [[ -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]] || return 1
+  case "$class" in
+    micro|small|standard) return 0 ;;
+  esac
+  return 1
+}
+
 # Whether the pull request CI validates the change, as --help's ci mode states
 # it: the current directory's project names the context, and the base branch
 # of the current branch's open pull request requires it. Where it does not, sets ci_fallback to the cause --help names.
@@ -670,7 +694,7 @@ ci_runs_validation() {
 }
 
 # --- Resolve: the mode a range run records here, read-only -------------------
-if [[ "$mode" == resolve ]]; then
+if [[ "$mode" == resolve && "$base_given" == false ]]; then
   cd "$worktree"
   resolve_range_mode
   printf 'validate-mode=%s\n' "$validate_mode"
@@ -678,7 +702,8 @@ if [[ "$mode" == resolve ]]; then
 fi
 
 # --- Start: resolve the bound, record it, launch the run detached ------------
-if [[ "$mode" == start ]]; then
+if [[ "$mode" == start || "$mode" == resolve ]]; then
+  [[ "$mode" != resolve ]] || validate_mode=range
   worktree="$(cd "$worktree" && pwd)"
   # orch-env resolves the project from the working directory, so the settings
   # read is the worktree's own.
@@ -713,11 +738,7 @@ if [[ "$mode" == start ]]; then
   if [[ "$validate_mode" == ci ]]; then
     validate_mode=range
     ci_fallback=class-uncovered
-    if [[ -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]]; then
-      case "$class" in
-        micro|small|standard) if ci_runs_validation; then validate_mode=ci; fi ;;
-      esac
-    fi
+    if ci_class_covered && ci_runs_validation; then validate_mode=ci; fi
   fi
   if [[ "$validate_mode" != full ]]; then
     [[ "$validate_mode" == ci ]] || resolve_range_mode
@@ -737,6 +758,38 @@ if [[ "$mode" == start ]]; then
     fi
     [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
   fi
+  scoped=false
+  if [[ "$validate_mode" != ci ]]; then
+    selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
+      || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
+    if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
+      selection=""
+      if selection="$(DEV_VALIDATE_CLASS="$class" DEV_VALIDATE_DOCS_ONLY="$docs_only" \
+          DEV_VALIDATE_PATHS="$class_scratch/paths" DEV_VALIDATE_BASE="$base_sha" DEV_VALIDATE_SCOPED=false \
+          "$BASH" -c "$selection_cmd" 2>"$class_scratch/selection.log")" \
+        && selection="$(sed -n '/^selection=/p' <<<"$selection")" \
+        && [[ "$selection" == selection=all ]] && ci_class_covered; then
+        if ci_runs_validation; then
+          validate_mode=ci
+          class_base=""
+        elif [[ "$ci_fallback" == base-unresolved ]]; then
+          # The selector owns scoped execution too; no second suite map
+          # or project-specific command lives in this runner.
+          scoped=true
+          cmd="$selection_cmd"
+          if [[ -z "$class_base" ]]; then
+            scoped_base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")" \
+              && class_base="$(git merge-base HEAD "origin/$scoped_base")" \
+              || die scoped-base-unresolved
+          fi
+        fi
+      fi
+    fi
+  fi
+  if [[ "$mode" == resolve ]]; then
+    printf 'validate-mode=%s\n' "$validate_mode"
+    exit 0
+  fi
   # Read against an empty default, never 3600: orch-env replaces a non-numeric
   # effective value with a numeric default of its own, so a setting of 90m would
   # arrive here as 3600 and the refusal below could never fire. The default is
@@ -753,7 +806,7 @@ if [[ "$mode" == start ]]; then
   # than this one reads answers it: --help states which run counts.
   bound_ended=false
   if [[ "$validate_mode" != ci && "$fresh" == false && -z "$class_fallback" ]]; then
-    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only" "$base_sha"
+    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only" "$base_sha" "$finding_prefix"
     [[ -z "$BOUND_RUN_DIR" ]] || bound_ended=true
   fi
 
@@ -783,6 +836,7 @@ if [[ "$mode" == start ]]; then
   run_dir="$worktree/tmp/dev-validate-$run_id"
   mkdir -p "$run_dir"
   mv -- "$class_scratch/class.log" "$run_dir/class.log"
+  [[ ! -f "$class_scratch/selection.log" ]] || mv -- "$class_scratch/selection.log" "$run_dir/selection.log"
   [[ ! -f "$class_scratch/ci.log" ]] || mv -- "$class_scratch/ci.log" "$run_dir/ci.log"
   mv -- "$class_scratch/paths" "$run_dir/paths"
   printf '%s' "$cmd" > "$run_dir/cmd"
@@ -797,6 +851,7 @@ if [[ "$mode" == start ]]; then
     printf 'class=%s\n' "$class"
     printf 'docs-only=%s\n' "$docs_only"
     printf 'validate-mode=%s\n' "$validate_mode"
+    [[ "$scoped" == false ]] || printf 'scoped=true\n'
     printf 'validate-base=%s\n' "$base_sha"
     [[ -z "$orphaned_sha" ]] || printf 'validate-base-orphaned=%s\n' "$orphaned_sha"
     [[ "$validate_mode" == ci || -z "$ci_fallback" ]] || printf 'ci-fallback=%s\n' "$ci_fallback"
@@ -895,6 +950,7 @@ if [[ "$mode" == child ]]; then
   job_unit_read "$run_dir/runner" || die no-run "path=$run_dir/runner"
   child_cmd="$(cat "$run_dir/cmd")"
   child_base="$(start_field "$run_dir/start" validate-base)" || die no-run "path=$run_dir/start"
+  child_scoped="$(start_field "$run_dir/start" scoped)" || die no-run "path=$run_dir/start"
   [[ -z "$child_base" ]] || export DEV_VALIDATE_BASE="$child_base"
   # Recorded before the command starts, so a waiter that finds no sentinel can
   # tell a run still going from one the host killed. Written whole, like the
@@ -926,6 +982,7 @@ if [[ "$mode" == child ]]; then
   # command, still in this group or unit, is ended by the teardown below,
   # TERM first and KILL a grace later, once the verdict is on disk.
   DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY="$child_docs_only" \
+    DEV_VALIDATE_SCOPED="${child_scoped:-false}" \
     DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \
     bash -c 'bash -c "$1"; rc=$?; : > "$2"; exit "$rc"' _ "$child_cmd" "$run_dir/own-exit" >> "$run_dir/log" 2>&1 || status=$?
   ended="$(date -u '+%s %Y-%m-%dT%H:%M:%SZ')"
@@ -1065,9 +1122,11 @@ if [[ "$mode" == record ]]; then
   fi
   record_orphaned="$(start_field "$run_dir/start" validate-base-orphaned)"
   record_class_base="$(start_field "$run_dir/start" class-base)"
-  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
+  record_scoped="$(start_field "$run_dir/start" scoped)"
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
-    "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing"
+    "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing" \
+    "${record_scoped:+ scoped=$record_scoped}"
   exit 0
 fi
 
