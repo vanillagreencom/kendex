@@ -724,10 +724,15 @@ fi
 # incomplete package is its author's or installer's to repair, which the
 # chain names unrun at every commit, and a missing host tool is the
 # operator's to provision, which py-names names as a gap.
+# The chain resolves its companions from the repository root, so setup does.
+sibling_in_repo() { # SKILL — its directory on stdout; 1 when absent
+  (cd -- "$REPO_ABS" && gg_resolve_sibling "$SCRIPT_DIR" "$1")
+}
+
 setup_notices() {
   local skill dir
   for skill in doc-limits preflight bot-instructions; do
-    dir="$(cd -- "$REPO_ABS" && gg_resolve_sibling "$SCRIPT_DIR" "$skill")" || continue
+    gg_path dir sibling_in_repo "$skill" || continue
     [ -x "$dir/scripts/$skill" ] \
       || warn package-incomplete "$(gg_shown "$dir/scripts/$skill")" "The $skill skill is installed at $(gg_shown "$dir"), but its lane script is missing or not executable, so every commit will name that lane unrun.
 Reinstall it with kendex refresh; if that does not restore it, report it with kendex report."
