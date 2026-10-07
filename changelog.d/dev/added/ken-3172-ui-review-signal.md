@@ -1,1 +1,1 @@
-- A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, and the completion summary lists its before and after screenshots under Screenshots.
+- A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, builds the view to code-quality's polish bar and the design-system doc `QA_UI_DESIGN_DOC` names, and lists before and after screenshots of each changed view in its completion, bundle or fix summary.

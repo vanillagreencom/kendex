@@ -35,7 +35,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ### UI lens
 
-Under `Trigger: needs-ui-review` this lens is the whole review. Read the consumer's design-system doc, the path `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""` prints, and the before and after screenshots the dev summary lists. Judge each changed view against that doc and the polish bar in the `frontend` agent's Discipline, the diff included for token use.
+Under `Trigger: needs-ui-review` this lens is the whole review. Read the consumer's design-system doc, the path `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""` prints, and the before and after screenshots the dev summary lists. Judge each changed view against that doc and the polish bar in `.agents/skills/code-quality/references/ui.md`, the diff included for token use.
 
 - A changed view with no before and after screenshot is a blocker: the change cannot be judged.
 - A regression from before to after, a one-off value where the doc has a token, or copy a first-time user would misread is a blocker. A lesser polish gap is a `fix` suggestion.

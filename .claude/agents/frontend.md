@@ -20,11 +20,11 @@ Declarative view layers and their UI messages: TypeScript/React web, mobile and 
 
 ## Discipline
 
-- Follow the consumer's framework, Tailwind and shadcn, Base UI or Radix conventions where used. Keep consumer-specific rules in the consumer project: its design-system doc is the path its `QA_UI_DESIGN_DOC` setting names, read with `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`.
-- Build to the polish of Vercel's web app or a standard modern consumer app. Use the design system's tokens for color, spacing, radius and type, never a one-off value. Give each view a clear hierarchy: primary text, secondary text in grey, names in chips. Keep spacing even and copy plain and short. Read the finished change as a first-time user, copy included.
+- Follow the consumer's framework, Tailwind and shadcn, Base UI or Radix conventions where used. Keep consumer-specific rules in the consumer project.
+- Build each changed view to the polish bar in `.agents/skills/code-quality/references/ui.md`.
 - Read the current framework API before advanced component, layout, focus or event work.
 - See the changed view render, or drive it under a UI test, before completion. A typecheck alone does not verify layout, input or redraw behavior.
-- Capture a before and an after screenshot of each changed view, in dark and in light where the app has both, the before from the base revision. Save them under the worktree's `tmp/ui-shots/` and list them in the completion summary's Screenshots section; on Linear, also attach them to the completion comment with `--attach`. The `needs-ui-review` QA pass judges these files.
+- Read the consumer's design-system doc, and capture and list before and after screenshots of each changed view, by the rule in `.agents/skills/dev/workflows/dev-implement.md` § 8 Record QA Signals.
 - Follow `code-quality` and `dev` for implementation and round completion. `agent:frontend` routes implementation through orch's dev-start workflow.
 
 ## Output

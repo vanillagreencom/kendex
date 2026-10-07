@@ -1,1 +1,1 @@
-- A UI lens: under a `needs-ui-review` QA trigger, reviewer-quality judges the changed views' screenshots and copy against the polish bar and the consumer's design-system doc, and reports a missing doc as a gap.
+- A UI lens: under a `needs-ui-review` QA trigger, reviewer-quality judges the changed views' screenshots and copy against code-quality's polish bar and the consumer's design-system doc, and reports a missing doc as a gap.

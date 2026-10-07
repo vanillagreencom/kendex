@@ -378,6 +378,8 @@ Drop a signal when the triggering code is trivial or test-only; never drop one f
 
 Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`, `needs-ui-review` → `reviewer-quality`, whose UI lens judges the dev summary's before and after screenshots against the design-system doc `QA_UI_DESIGN_DOC` names; a project may override the mapping in its instructions. For each, delegate and wait.
 
+A `needs-ui-review` delegation's Dev summary carries a Screenshots list. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
+
 Fill `Worktree:` by the rule at the top of this workflow.
 
 <delegation_format>

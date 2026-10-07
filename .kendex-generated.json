@@ -39,6 +39,7 @@
   ".agents/skills/code-quality/references/bash.md",
   ".agents/skills/code-quality/references/rust.md",
   ".agents/skills/code-quality/references/typescript.md",
+  ".agents/skills/code-quality/references/ui.md",
   ".agents/skills/commit-guards/CHECKS.md",
   ".agents/skills/commit-guards/README.md",
   ".agents/skills/commit-guards/SKILL.md",

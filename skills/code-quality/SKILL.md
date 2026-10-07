@@ -11,7 +11,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.0.0"
+  version: "1.1.0"
 tags: [review]
 ---
 
@@ -88,6 +88,7 @@ Load only the references for the code being changed:
 - Rust, Cargo or Rust benchmarks: [references/rust.md](references/rust.md).
 - Bash or shell suites: [references/bash.md](references/bash.md).
 - TypeScript or JavaScript: [references/typescript.md](references/typescript.md).
+- A view, layout, styling or UI copy, in any stack: [references/ui.md](references/ui.md).
 
 ## Comments and Prose
 

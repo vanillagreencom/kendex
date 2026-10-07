@@ -9,7 +9,7 @@ Code-writing rules for AI coding agents. Repository owners use this skill to sup
 - Keep fixture interfaces out of shipped APIs while permitting private test access.
 - Require checks to fail on the defects they claim to catch, one control for each independent rule a guard enforces.
 - Set test rules for defect controls, typed results, progress evidence and checks selected from what a change affects.
-- Load Rust, Bash and TypeScript rules only for the stack being changed.
+- Load Rust, Bash and TypeScript rules only for the stack being changed, and the UI polish bar only for a changed view.
 - Direct markdown work to the docs-writing skill.
 
 ## Install
