@@ -304,16 +304,56 @@ fn the_verdict_counts_the_rows_it_closes() {
         (many(1), "1 item needs attention — see the lines above"),
         (every_kind(), "7 items need attention — see the lines above"),
     ];
+    let said = |report: &CheckReport| {
+        verdict(
+            report,
+            &page(report, Verbosity::Verbose),
+            Verbosity::Verbose,
+        )
+        .map(|(_, text)| text)
+    };
     for (report, want) in rows {
-        assert_eq!(verdict(&page(&report, Verbosity::Verbose)), want);
+        assert_eq!(said(&report).as_deref(), Some(want));
     }
     let mut remedied = many(2);
     for line in &mut remedied.sections[0].lines {
         line.remedy = Some(Remedy::Apply { global: false });
     }
     assert_eq!(
-        verdict(&page(&remedied, Verbosity::Verbose)),
-        "2 items need attention — each line above says what to run"
+        said(&remedied).as_deref(),
+        Some("2 items need attention — each line above says what to run")
+    );
+}
+
+/// A check whose only lines wait on the background refresh does not claim
+/// the installs match: by default it draws nothing, and `--verbose` draws
+/// the lines and closes on the pending check. A clean report is the
+/// control that still closes on the all-clear.
+#[test]
+fn a_check_left_waiting_on_the_refresh_never_claims_all_clear() {
+    let waiting = CheckReport {
+        sections: vec![section(
+            "could not check",
+            vec![line(Class::Settling, "skill 'gh': history unread", None)],
+        )],
+        snapshot_age_secs: None,
+        ..clean()
+    };
+    let quiet = screen(&plain(), &waiting, "here", Verbosity::Default);
+    assert!(quiet.report.is_empty(), "{:?}", quiet.report);
+    assert!(quiet.verdict.is_empty(), "{:?}", quiet.verdict);
+    let verbose = screen(&plain(), &waiting, "here", Verbosity::Verbose);
+    assert_eq!(
+        verbose.report,
+        ["could not check:", "  skill 'gh': history unread"]
+    );
+    assert_eq!(
+        verbose.verdict,
+        ["1 item not checked yet — the background refresh checks again"]
+    );
+    assert_eq!(
+        screen(&plain(), &clean(), "here", Verbosity::Verbose).verdict,
+        ["all clear — every install matches its source"]
     );
 }
 

@@ -15,7 +15,7 @@ use crate::model::{ItemKind, Scope};
 
 /// Bumped when the shape changes; an older or newer snapshot reads as
 /// absent, which the check reports as not-yet-evaluated.
-pub const SNAPSHOT_SCHEMA: u32 = 3;
+pub const SNAPSHOT_SCHEMA: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

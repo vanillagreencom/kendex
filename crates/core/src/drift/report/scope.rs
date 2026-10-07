@@ -1023,21 +1023,53 @@ impl ScopeCheck<'_> {
                     ));
                 }
             } else {
-                // A fetch that is due re-derives the comparison in the
-                // background refresh this check starts, which settles most
-                // of these: a cached copy missing a commit is the usual one.
-                let settles =
-                    stamp_for(self.env, &note.repo).is_some_and(|stamp| stamp.is_stale(self.now));
-                sections.unknown.push(Line {
-                    class: match settles {
-                        true => Class::Settling,
-                        false => Class::Unknown,
-                    },
-                    text: format!("{prefix}{kind} '{name}': {}", shown(&note.message)).into(),
-                    remedy: None,
-                    detail: note.detail.as_deref().map(verbatim),
-                });
+                sections.unknown.push(self.unreadable_line(manifest, note));
             }
+        }
+    }
+
+    /// The could-not-check line for evidence the last comparison could not
+    /// read, at the mirror state that produced it.
+    ///
+    /// A fetch that is due re-derives the comparison in the background
+    /// refresh this check starts, which settles most of these: a cached
+    /// copy missing a commit is the usual one. That refresh fetches only
+    /// the enabled sources this manifest declares, so a note on any other
+    /// mirror has no retry coming and stays could-not-check.
+    fn unreadable_line(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        note: &crate::drift::snapshot::UnreadableSnapshot,
+    ) -> Line {
+        let fetched = !note.repo.is_empty() && {
+            let mirror = crate::remote::cache_key(self.env, &note.repo);
+            manifest.is_some_and(|manifest| {
+                manifest.sources.values().any(|source| {
+                    source.enabled
+                        && source
+                            .repo
+                            .as_deref()
+                            .is_some_and(|repo| crate::remote::cache_key(self.env, repo) == mirror)
+                })
+            })
+        };
+        let settles = fetched
+            && stamp_for(self.env, &note.repo).is_some_and(|stamp| stamp.is_stale(self.now));
+        Line {
+            class: match settles {
+                true => Class::Settling,
+                false => Class::Unknown,
+            },
+            text: format!(
+                "{}{} '{}': {}",
+                self.prefix,
+                note.kind.name(),
+                shown(&note.name),
+                shown(&note.message)
+            )
+            .into(),
+            remedy: None,
+            detail: note.detail.as_deref().map(verbatim),
         }
     }
 

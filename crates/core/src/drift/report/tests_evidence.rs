@@ -161,21 +161,44 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
 /// A could-not-check whose source is due a fetch is settled by the
 /// background refresh the check starts for that fetch: the line is
 /// settling, the check is clean, and the refresh it relies on is wanted.
-/// The same note after a fetch that just ran is could-not-check.
+/// Rows: the same note after a fetch that just ran; a source declared
+/// under another spelling of the same mirror, which that refresh fetches;
+/// and a disabled source, which it never fetches, so the note stays
+/// could-not-check.
 #[test]
 fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
-    for (fetched_ago, class, status) in [
+    let due = 2 * stamps::TTL.as_secs();
+    for (fetched_ago, declared, enabled, class, status) in [
+        (due, "owner/repo", true, Class::Settling, CheckStatus::Clean),
+        (0, "owner/repo", true, Class::Unknown, CheckStatus::Unknown),
         (
-            2 * stamps::TTL.as_secs(),
+            due,
+            "https://github.com/owner/repo.git",
+            true,
             Class::Settling,
             CheckStatus::Clean,
         ),
-        (0, Class::Unknown, CheckStatus::Unknown),
+        (
+            due,
+            "owner/repo",
+            false,
+            Class::Unknown,
+            CheckStatus::Unknown,
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
         let scope = project_scope(tmp.path());
-        write_manifest(&env, &scope, &manifest_with_remote());
+        assert_eq!(
+            crate::remote::cache_key(&env, declared),
+            crate::remote::cache_key(&env, "owner/repo"),
+            "the rows name one mirror"
+        );
+        let mut manifest = manifest_with_remote();
+        let source = manifest.sources.get_mut("cat").unwrap();
+        source.repo = Some(declared.into());
+        source.enabled = enabled;
+        write_manifest(&env, &scope, &manifest);
         crate::drift::snapshot::store(
             &env,
             &scope,
@@ -210,13 +233,74 @@ fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
             crate::drift::copies::CheckMode::Settle,
         );
         let line = &report.sections[0].lines[0];
-        assert_eq!(line.class, class);
-        assert_eq!(report.status, status);
+        assert_eq!(line.class, class, "{declared} enabled={enabled}");
+        assert_eq!(report.status, status, "{declared} enabled={enabled}");
         assert_eq!(
             line.detail.as_deref(),
             Some("git log failed: fatal: bad object f7db7e89")
         );
         if class == Class::Settling {
+            assert!(wants_background_refresh(
+                &env,
+                std::slice::from_ref(&scope),
+                &report
+            ));
+        }
+    }
+}
+
+/// A snapshot from before the schema split a warning's message from its
+/// detail carries the git command and its output in `message`. It reads as
+/// not yet evaluated, so that text never reaches the report and the
+/// background refresh derives a current one. The current schema with the
+/// same note is the control that does print it.
+#[test]
+fn a_snapshot_from_before_the_detail_split_reads_as_not_evaluated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    write_manifest(&env, &scope, &manifest_with_remote());
+    record_refs(&env, "owner/repo", Some("refs"));
+    for (schema, current) in [(3, false), (SNAPSHOT_SCHEMA, true)] {
+        let path = crate::drift::snapshot::snapshot_path(&env, &scope);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema": schema,
+                "taken-at": crate::clock::unix_now(),
+                "scope": scope.canonical().label(),
+                "packages": [],
+                "unreadable": [{
+                    "kind": "skill",
+                    "name": "gh",
+                    "message": "history could not be read: git log failed: fatal: bad object f7db7e89",
+                    "repo": "owner/repo",
+                    "refs-state": "refs",
+                }],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let loaded = crate::drift::snapshot::load(&env, &scope);
+        assert_eq!(
+            matches!(loaded, crate::drift::snapshot::SnapshotFile::Current(_)),
+            current,
+            "schema {schema}: {loaded:?}"
+        );
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
+        let said = report
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .any(|line| line.text.contains("bad object"));
+        assert_eq!(said, current, "schema {schema}: {report:?}");
+        if !current {
             assert!(wants_background_refresh(
                 &env,
                 std::slice::from_ref(&scope),

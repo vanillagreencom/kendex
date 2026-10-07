@@ -137,7 +137,9 @@ fn screen(style: &Style, checked: &CheckReport, target: &str, verbosity: Verbosi
     Screen {
         head: style.header("check", target),
         report,
-        verdict: style.summary(outcome(checked.status), &verdict(&page)),
+        verdict: verdict(checked, &page, verbosity)
+            .map(|(status, text)| style.summary(status, &text))
+            .unwrap_or_default(),
     }
 }
 
@@ -182,8 +184,10 @@ fn outcome(status: CheckStatus) -> Status {
 /// How the run ended, describing the complete report above it. The pointer
 /// to those lines is named only where every counted line has a remedy. A
 /// line the background refresh settles asks nothing of the reader, so it
-/// is not counted.
-fn verdict(page: &Page) -> String {
+/// is not counted; but a check left with only such lines has not found
+/// every install matching its source either. By default it says nothing,
+/// as the session report does, and `--verbose` says the check is pending.
+fn verdict(checked: &CheckReport, page: &Page, verbosity: Verbosity) -> Option<(Status, String)> {
     let items: Vec<_> = page
         .sections
         .iter()
@@ -191,10 +195,32 @@ fn verdict(page: &Page) -> String {
         .filter(|item| item.class != Class::Settling)
         .collect();
     if items.is_empty() {
-        return "all clear — every install matches its source".to_owned();
+        let settling = checked
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .filter(|line| line.class == Class::Settling)
+            .count();
+        return match (settling, verbosity) {
+            (0, _) => Some((
+                Status::Done,
+                "all clear — every install matches its source".to_owned(),
+            )),
+            (_, Verbosity::Default) => None,
+            (settling, Verbosity::Verbose) => Some((
+                Status::Notice,
+                format!(
+                    "{settling} item{} not checked yet — the background refresh checks again",
+                    match settling {
+                        1 => "",
+                        _ => "s",
+                    }
+                ),
+            )),
+        };
     }
     let every = items.iter().all(|item| item.fix.is_some());
-    format!(
+    let text = format!(
         "{} item{} need{} attention{}",
         items.len(),
         match items.len() {
@@ -209,7 +235,8 @@ fn verdict(page: &Page) -> String {
             true => " — each line above says what to run",
             false => " — see the lines above",
         }
-    )
+    );
+    Some((outcome(checked.status), text))
 }
 
 #[cfg(test)]
