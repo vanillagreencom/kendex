@@ -255,7 +255,8 @@ impl Remedy {
     /// [`Fix::Elsewhere`], its refresh owner's to run from the main
     /// checkout: the command is still the fix, and the marker the renderer
     /// adds says why it will not run where the report was read. The plan
-    /// writes nothing and runs here.
+    /// and `updates`, which writes only the snapshot outside the checkout,
+    /// run here.
     /// The worktree's own project is reached by every bare verb typed
     /// there, so its command carries no path and runs here.
     pub fn render(&self, target: Option<&ProjectTarget>) -> Option<Fix> {
@@ -339,7 +340,11 @@ impl Remedy {
         };
         let elsewhere = match named {
             None | Some(ProjectTarget::Worktree(_)) => false,
-            Some(ProjectTarget::MainCheckout(_)) => self.mutates(),
+            // `updates` without `--apply` and the plan write nothing in the
+            // checkout, so the hook passes them from the worktree.
+            Some(ProjectTarget::MainCheckout(_)) => {
+                !matches!(self, Remedy::Plan { .. } | Remedy::Updates { .. })
+            }
         };
         Some(match elsewhere {
             true => Fix::Elsewhere(command),

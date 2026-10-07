@@ -175,8 +175,8 @@ refuse() { # KEY VALUE [CAUSE]
       verb_kind "$VERB"
       case "$OWNER:$NAMED" in
         main:named)
-          echo "  The project it names, $PROJECT, has no $MANIFEST of its own in its worktree, so its declarations are the main checkout's (the first line of 'git worktree list'); a write there renders into that checkout and removes what it does not expect there." >&2
-          echo "  Name a project that holds its own manifest, or run the bare command from the main checkout, or pass $GLOBAL_FORM for a global change." >&2
+          echo "  The project it names, $PROJECT, has no $MANIFEST of its own in its worktree, so its declarations are those of its own repository's main checkout (the first line of 'git -C $PROJECT worktree list'); a write there renders into that checkout and removes what it does not expect there." >&2
+          echo "  Name a project that holds its own manifest, or run the bare command from the same place in that main checkout, or pass $GLOBAL_FORM for a global change." >&2
           ;;
         main:*)
           target_form "$VERB"

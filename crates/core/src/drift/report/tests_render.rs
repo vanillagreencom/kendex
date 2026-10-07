@@ -114,7 +114,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
     // The label, the remedy, and its rendering unnamed, against the main
     // checkout's project and against the checked worktree's own.
     type Row = (&'static str, Remedy, Option<Fix>, Option<Fix>, Option<Fix>);
-    let rows: [Row; 9] = [
+    let rows: [Row; 10] = [
         (
             "apply",
             Remedy::Apply { global: false },
@@ -142,6 +142,13 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex apply --plan"),
             here("kendex apply --plan --project-path '/w/app'"),
             here("kendex apply --plan"),
+        ),
+        (
+            "updates, a listing whose snapshot lives outside the checkout",
+            Remedy::Updates { global: false },
+            here("kendex updates"),
+            here("kendex updates --project-path '/w/app'"),
+            here("kendex updates"),
         ),
         (
             "update-pi, which has no --project-path form and writes where it is typed",
