@@ -1,0 +1,1 @@
+- Complete research without a decision record when admission or approval rules do not permit one.

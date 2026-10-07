@@ -112,6 +112,8 @@ Record a decision only under the decider skill's admission and approval rules. F
 
 When the new decision replaces specific components of an active decision without superseding it wholesale, update that decision's status to `Active ([COMPONENTS] → [NEW_DECISION_ID])` in both its file and its INDEX row.
 
+If no decision is recorded, skip section 6.2 and decision-only updates. Use the research findings for requirements and scope, omit the decision suffix from child titles, set decision_ref to null, and use the Key Findings and Outcome output below.
+
 ### 6.2 Append the Decision to Blocked Issues
 
 **Skip if** `.blocks` is empty. For each blocked issue and its recursive children, skip when `**Decision**: [DECISION_ID]` is already present; otherwise add `**Decision [DECISION_ID]**: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` directly after the § 4 Research block.

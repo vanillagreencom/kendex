@@ -1,0 +1,1 @@
+- Preserve withdrawn decisions and historical citations during documentation rewrites.
