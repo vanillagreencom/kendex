@@ -2921,6 +2921,60 @@
         }
       ]
     },
+    "hook:dev-stop-check:claude": {
+      "name": "dev-stop-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bd7dc41f1d1414d80965d1fe5299c44ef6bf27d29b0a673df1dd5b88f9e2eac6",
+      "renderedHash": "5fa04c96825575820f0800a7693dcebbb7174492c61f5d9c4a62f8eba8ddab01",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "dev-stop-check",
+        "paths": [
+          ".claude/hooks/dev-stop-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "SubagentStop",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/dev-stop-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:dev-stop-check:codex": {
+      "name": "dev-stop-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bd7dc41f1d1414d80965d1fe5299c44ef6bf27d29b0a673df1dd5b88f9e2eac6",
+      "renderedHash": "5fa04c96825575820f0800a7693dcebbb7174492c61f5d9c4a62f8eba8ddab01",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "dev-stop-check",
+        "paths": [
+          ".codex/hooks/dev-stop-check.sh"
+        ]
+      },
+      "registration": {
+        "event": "SubagentStop",
+        "command": "p='.codex/hooks/dev-stop-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
     "hook:lane-mail-check:claude": {
       "name": "lane-mail-check",
       "kind": "hook",
@@ -6744,8 +6798,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "86b8fccba407c53e020ecf3a7cdb7240a6a40769d43016826199819eaf1f0bea",
-      "renderedHash": "66a3110131457ce64e62999243bd1341ff64ed3f562403d2a9a029574d74a0dd",
+      "sourceHash": "a9e5c639a6ec2d5219b963d6d981b70231ba34cdc06edf5a2bba445fef9505c1",
+      "renderedHash": "e0b5331a167574ce303d8571880d46fd82d3dbc3b3ebf31fb9b000e4c8d3cb5e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6809,6 +6863,15 @@
           "by": {
             "source": ".",
             "kind": "hook",
+            "name": "dev-stop-check",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
             "name": "lane-mail-check",
             "harness": "claude"
           }
@@ -6821,8 +6884,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "86b8fccba407c53e020ecf3a7cdb7240a6a40769d43016826199819eaf1f0bea",
-      "renderedHash": "66a3110131457ce64e62999243bd1341ff64ed3f562403d2a9a029574d74a0dd",
+      "sourceHash": "a9e5c639a6ec2d5219b963d6d981b70231ba34cdc06edf5a2bba445fef9505c1",
+      "renderedHash": "e0b5331a167574ce303d8571880d46fd82d3dbc3b3ebf31fb9b000e4c8d3cb5e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6885,6 +6948,15 @@
           "by": {
             "source": ".",
             "kind": "hook",
+            "name": "dev-stop-check",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
             "name": "lane-mail-check",
             "harness": "codex"
           }
@@ -6897,8 +6969,8 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "86b8fccba407c53e020ecf3a7cdb7240a6a40769d43016826199819eaf1f0bea",
-      "renderedHash": "66a3110131457ce64e62999243bd1341ff64ed3f562403d2a9a029574d74a0dd",
+      "sourceHash": "a9e5c639a6ec2d5219b963d6d981b70231ba34cdc06edf5a2bba445fef9505c1",
+      "renderedHash": "e0b5331a167574ce303d8571880d46fd82d3dbc3b3ebf31fb9b000e4c8d3cb5e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6973,8 +7045,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "86b8fccba407c53e020ecf3a7cdb7240a6a40769d43016826199819eaf1f0bea",
-      "renderedHash": "66a3110131457ce64e62999243bd1341ff64ed3f562403d2a9a029574d74a0dd",
+      "sourceHash": "a9e5c639a6ec2d5219b963d6d981b70231ba34cdc06edf5a2bba445fef9505c1",
+      "renderedHash": "e0b5331a167574ce303d8571880d46fd82d3dbc3b3ebf31fb9b000e4c8d3cb5e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8125,7 +8197,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "759be4dcaaa54e6268682622d44fb5baec98d492"
+      "commit": "f11f5ae1df27d9995625c4277f32fad618d11cc3"
     }
   }
 }
