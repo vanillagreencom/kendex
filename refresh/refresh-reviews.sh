@@ -3,7 +3,7 @@
 # PR and each one merged in the last 24 hours. Run from the consumer checkout
 # after refresh-consumer.sh in the same job, under the refresh workflow's
 # concurrency group, with GH_REPO, its scoped GH_TOKEN and the upstream
-# KENDEX_ISSUES_TOKEN. The default-branch change-class beside this package
+# KENDEX_ISSUES_TOKEN. The release checkout's change-class
 # proves the render class, reading the kendex sources that job's
 # `kendex refresh` fetched. No script from the pull request is executed.
 #
@@ -79,7 +79,7 @@ for dependency in gh jq git python3; do
   command -v "$dependency" >/dev/null || fail dependency "$dependency" 'A required command is unavailable.'
 done
 . "$script_dir/lib/review-findings.sh" || fail library review-findings 'A required review-gate library could not load.'
-CLASSIFIER="$script_dir/../../harness-ci/scripts/change-class"
+CLASSIFIER="$script_dir/../skills/harness-ci/scripts/change-class"
 [ -x "$CLASSIFIER" ] || fail classifier "$CLASSIFIER" 'The harness-ci change classifier is not installed beside this package.'
 ROOT="$(git rev-parse --show-toplevel)" || fail checkout "$PWD" 'Run from the consumer checkout.'
 class_log="$(mktemp)" || fail scratch mktemp 'Could not create the classifier log.'

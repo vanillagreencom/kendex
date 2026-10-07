@@ -13,7 +13,8 @@ if ! REAL_KENDEX="$(command -v kendex)"; then
   fi
 fi
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)" || { echo 'refresh-consumer: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "refresh-consumer: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'refresh-consumer: scratch=resolve-failed' >&2; exit 1; }
@@ -129,14 +130,12 @@ cat >"$TMP/bin/kendex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 # The runner calls the render verb under env -i, so it reads no test
-# setting; a row drives it through the state. probe-exit is what help answers
-# for the verb, 0 where unset. render-exit and render-said are the verb's
+# setting; a row drives it through the state. render-exit and render-said are the verb's
 # exit and output where a row sets them; otherwise, like kendex, it runs the
 # installed package's render where the package is, and says so where it is
 # not.
-if [ "${1:-} ${2:-}" = 'help bot-instructions-render' ]; then
-  exit "$(cat @STATE@/probe-exit 2>/dev/null || printf 0)"
-fi
+# The retired-inline control still asks the old help question.
+if [ "${1:-}" = help ] && [ "${2:-}" = bot-instructions-render ]; then exit 0; fi
 if [ "${1:-}" = bot-instructions-render ]; then
   env >@STATE@/render-env
   if [ -f @STATE@/classifier-proof ]; then
@@ -198,11 +197,14 @@ case "$1" in
     if [[ " $* " == *' --json '* ]] && [ -f "$TEST_STATE/classifier-proof" ]; then
       failed=0
       [ "$(cat "$TEST_STATE/classifier-proof")" != verify-not-clean ] || failed=1
-      jq -cn --argjson failed "$failed" \
-        '{version:1,checked:3,failed:$failed,rows:[{state:"ok",positions:[
+      owned=false
+      [ "$(cat "$TEST_STATE/classifier-proof")" != owned-clean ] || owned=true
+      jq -cn --argjson failed "$failed" --argjson owned "$owned" \
+        '{version:1,checked:3,failed:$failed,rows:[{state:"ok",positions:([
           {path:"rendered.txt",owns:"file"},
           {path:".kendex-generated.json",owns:"file"},
-          {path:".agents/skills/probe",owns:"tree"}]}]}'
+          {path:".agents/skills/probe",owns:"tree"}
+          ] + (if $owned then [{path:".github/copilot-instructions.md",owns:"file"}] else [] end))}]}'
     else
       [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ]
     fi ;;
@@ -263,7 +265,7 @@ exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
 file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
-file_edit "$TMP/bin" kendex 6 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 5 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -285,9 +287,9 @@ printf '%s\n' "${TEST_CLASS_NOTES:-queue-only: queue_only=false cause=no-queue-p
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
-printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/refresh/adopt-refresh.sh"
 chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
-chmod +x "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+chmod +x "$repo/refresh/adopt-refresh.sh"
 printf 'current\n' >"$repo/rendered.txt"
 commit "$repo"
 git init --bare -q "$TMP/remote"
@@ -299,7 +301,7 @@ git -C "$repo" push -q origin main
 : >"$TMP/state/creates"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
-runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+runner="$repo/refresh/refresh-consumer.sh"
 
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
@@ -332,7 +334,7 @@ if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/create
 # GitHub's visible head can lag the push. Its merge command can also succeed
 # without arming the pull request. Keep those service outcomes independent.
 cp "$runner" "$TMP/arm-runner"
-arm_helper="${runner%/*}/lib/arm-published-head.sh"
+arm_helper="${runner%/*}/../skills/review-gate/scripts/lib/arm-published-head.sh"
 cp "$arm_helper" "$TMP/arm-helper"
 printf '%s\n' "$second" >"$TMP/state/old-head"
 for row in \
@@ -453,13 +455,13 @@ for mutation in body summary failure; do
   cp "$TMP/version-runner" "$runner"
   case "$mutation" in
     body)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^printf -v body ' \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 '^printf -v body ' \
         's/"\$version_report"/""/' ;;
     summary)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^  printf .*GITHUB_STEP_SUMMARY' \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 '^  printf .*GITHUB_STEP_SUMMARY' \
         's/"\$version_report"/""/' ;;
     failure)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^if ! engine_version=' \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 '^if ! engine_version=' \
         '/^if ! engine_version=/,/^fi$/s/exit 1/: # exit 1/' ;;
   esac
   commit "$repo"
@@ -582,7 +584,7 @@ REVIEW_MODEL = "FaBlE"
 OTHER_MODEL = "fable"
 TOML
   if [ "$mode" = control ]; then
-    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$repo" refresh/refresh-consumer.sh 1 \
       '^      deprecated_models\+=\(' 's/^      deprecated_models+=(/      : # &/'
   fi
   commit "$repo"
@@ -619,10 +621,10 @@ for mode in report committed-control notes-control; do
   printf '[env]\nPR_REVIEW_GATE = "on"\nSECOND_OPINION_TIMEOUT = "300"\nSECOND_OPINION_COUNT = "1"\n' >"$repo/kendex.settings.toml"
   case "$mode" in
     committed-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^    committed\+=\(' 's/^    committed+=(/    : # &/' ;;
     notes-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         "queue-settings-unreadable'\\) setting_notes\\+=\\(" '/queue-settings-unreadable/s/setting_notes+=("\$line")/:/' ;;
   esac
   commit "$repo"
@@ -672,7 +674,7 @@ for row in \
   cp "$TMP/stale-runner" "$runner"
   rm -f -- "${repo:?}/kendex.settings.toml"
   if [ "$name" = forward-control ]; then
-    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$repo" refresh/refresh-consumer.sh 1 \
       "cause=queue-list-undeclared' \\|" \
       "s/'queue-only: '\\*' cause=queue-list-undeclared'/'queue-only: '*/"
   fi
@@ -704,7 +706,7 @@ for mode in refusal refusal-control; do
   cp "$TMP/stale-runner" "$runner"
   rm -f -- "${repo:?}/.agents/skills/review-gate/retired-settings.json"
   if [ "$mode" = refusal-control ]; then
-    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$repo" refresh/refresh-consumer.sh 1 \
       'refresh-error=settings-report' '/refresh-error=settings-report/{n;s/exit 1/: # exit 1/;}'
   fi
   commit "$repo"
@@ -713,10 +715,10 @@ for mode in refusal refusal-control; do
   : >"$TMP/state/calls"
   run_refresh "unreadable-$mode" pass render
   if [ "$mode" = refusal ]; then
-    if refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/.agents/skills/review-gate/scripts/refresh-report.py"; then
+    if refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/refresh/refresh-report.py"; then
       ok 'an unreadable retired list stops before publication or merge changes'
     else bad 'unreadable retired list refusal' "$OUT"; fi
-  elif [ "$RC" -eq 0 ] && ! refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/.agents/skills/review-gate/scripts/refresh-report.py"; then
+  elif [ "$RC" -eq 0 ] && ! refresh_stopped_at_settings "$before" "refresh-error=settings-report value=$repo/refresh/refresh-report.py"; then
     ok 'control: a dropped report refusal publishes without the report'
   else bad 'report refusal control' "$OUT"; fi
 done
@@ -738,10 +740,10 @@ for mode in absent absent-control current current-control; do
   esac
   case "$mode" in
     absent-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^if \[ -f kendex\.settings\.toml \]; then$' 's/^if \[ -f kendex\.settings\.toml \]; then$/if true; then # &/' ;;
     current-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^  \[ -z "\$settings_report" \] \|\| ' 's/^  \[ -z "\$settings_report" \] || /  : # &/' ;;
   esac
   commit "$repo"
@@ -804,10 +806,10 @@ for row in apply apply-control apply-failure apply-failure-control; do
   esac
   case "$row" in
     apply-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^kendex apply --scope project --yes --leave' 's/^kendex apply /: # &/' ;;
     apply-failure-control)
-      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 \
         'refresh-error=apply' '/refresh-error=apply/{n;s/exit 1/: # exit 1/;}' ;;
   esac
   commit "$repo"
@@ -1025,6 +1027,58 @@ PROOF_CONTROL
   esac
   reset_default
 done
+# A checked-in classifier can refuse the very refresh that would replace it.
+# Judge the same consumer with the actual release classifier, then with the
+# retired inline workflow's preserved default-branch scripts.
+reset_default
+mkdir -p "$TMP/judging-release/skills"
+cp -R "$REFRESH_DIR" "$TMP/judging-release/refresh"
+cp -R "$SKILL_DIR" "$TMP/judging-release/skills/review-gate"
+cp -R "$SKILL_DIR/../harness-ci" "$TMP/judging-release/skills/harness-ci"
+cp -R "$SKILL_DIR/../orch" "$TMP/judging-release/skills/orch"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$TMP/judging-release/refresh/adopt-refresh.sh"
+chmod +x "$TMP/judging-release/refresh/adopt-refresh.sh"
+cp "$TEST_DIR/fixtures/stale-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
+git -C "$SKILL_DIR" show a75766f9d:skills/review-gate/scripts/refresh-consumer.sh >"$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+cp "$TMP/judging-release/refresh/adopt-refresh.sh" "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+printf '[".github/copilot-instructions.md",".kendex-generated.json","rendered.txt"]\n' >"$repo/.kendex-generated.json"
+commit "$repo"
+git -C "$repo" push -q origin main
+git -C "$repo" worktree add --detach "$TMP/retired-inline" HEAD
+printf 'owned-clean\n' >"$TMP/state/classifier-proof"
+# The rolling branch proposes scripts that must never judge their own PR.
+git -C "$repo" checkout -q -B kendex/refresh main
+for path in harness-ci/scripts/change-class review-gate/scripts/refresh-consumer.sh; do
+  printf '#!/usr/bin/env bash\n: >"$TEST_STATE/judging-hostile"\nexit 89\n' >"$repo/.agents/skills/$path"
+done
+commit "$repo"
+git -C "$repo" push -q --force origin kendex/refresh
+reset_default
+for route in release retired-inline; do
+  reset_default
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
+  if [ "$route" = release ]; then
+    runner="$TMP/judging-release/refresh/refresh-consumer.sh"
+  else
+    runner="$TMP/retired-inline/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+  fi
+  run_refresh "stale-classifier-$route" pass render
+  if [ "$route" = release ]; then
+    if refresh_class_matches render pushed 'cause=renders-match-their-sources' PATCH &&
+        ! grep -q '^refresh-error=read value=class$' <<<"$OUT" &&
+        [ ! -e "$TMP/state/judging-hostile" ]; then
+      ok 'the release classifier publishes render measured=true despite the stale checked-in classifier'
+    else bad 'release classifier stale-consumer delivery' "$OUT"; fi
+  elif refresh_stopped_at_class "$before" &&
+      grep -qxF 'class: class=standard measured=false cause=render-path-unowned path=.github/copilot-instructions.md' <<<"$OUT"; then
+    ok 'control: the retired inline shape stops the same fixture at refresh-error=read value=class'
+  else bad 'retired inline stale-classifier control' "$OUT"; fi
+done
+runner="$repo/refresh/refresh-consumer.sh"
+reset_default
+rm -- "$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh" "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 rm -f -- "$TMP/state/classifier-proof"
 cp "$TMP/class-double" "$repo/.agents/skills/harness-ci/scripts/change-class"
 cp "$TMP/class-inventory" "$repo/.kendex-generated.json"
@@ -1038,7 +1092,7 @@ CLASS_REASON='cause=renders-match-their-sources'
 # remote must keep the competitor, with no pull request or merge call.
 for row in lease lease-control; do
   reset_default
-  runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+  runner="$repo/refresh/refresh-consumer.sh"
   if [ "$row" = lease-control ]; then
     python3 - "$runner" <<'LEASE_CONTROL'
 from pathlib import Path
@@ -1264,7 +1318,7 @@ printf '[env]\nORCH_OVERSEER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.sett
 commit "$repo"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/settings-trusted" HEAD
-runner="$TMP/settings-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+runner="$TMP/settings-trusted/refresh/refresh-consumer.sh"
 cp "$runner" "$TMP/boundary-runner"
 cp -R "$repo/.agents/skills/orch" "$TMP/release-orch"
 FRESH_ORCH="$TMP/release-orch"
@@ -1338,7 +1392,7 @@ PY_PARSER_CONTROL
   fi
   if [ "$name" = absent ]; then
     # A forced parser block must break the same successful absent-orch row.
-    file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
       '^  orch=absent$' 's/^  orch=absent$/  orch=present # &/'
     reset_default
     before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
@@ -1349,7 +1403,7 @@ PY_PARSER_CONTROL
     else bad 'absent optional orch control' "$OUT"; fi
     cp "$TMP/boundary-runner" "$runner"
     # A committed scan run only beside orch drops the same retired row.
-    file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
       '^if \[ -f kendex\.settings\.toml \]; then$' \
       's/^if \[ -f kendex\.settings\.toml \]; then$/if [ "$3" = present ] \&\& [ -f kendex.settings.toml ]; then # \&/'
     reset_default
@@ -1400,7 +1454,7 @@ for output in noise extra-field empty; do
     ok "$output parser output stops before publication or merge changes"
   else bad "$output parser output refusal" "$OUT"; fi
   if [ "$output" = extra-field ]; then
-    file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
       '^if \[ "\$settings_lines" -ne 1 \] \|\|' \
       's/^if \[ "\$settings_lines" -ne 1 \].*; then$/if false; then # &/'
     reset_default
@@ -1477,7 +1531,9 @@ rm -f -- "$repo/.env.local" "$repo/private.env"
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
-cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
+cp "$SKILL_DIR/tests/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
+# The retired runner resolves the report beside itself, before the directory move.
+git -C "$SKILL_DIR" show a75766f9d:skills/review-gate/scripts/refresh-report.py >"$repo/.agents/skills/review-gate/scripts/refresh-report.py"
 chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh
 # The old validator checks the engine's tracked path, never its body.
 printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/scripts/review-writer.sh"
@@ -1496,6 +1552,8 @@ for bridge in retained missing; do
   reset_default
   REFRESH_SKILL="$TMP/catalog-$bridge"
   cp -R "$SKILL_DIR" "$REFRESH_SKILL"
+  # Build C retains the old writer bridge for already installed inline runners.
+  cp "$TMP/shipped-historical" "$REFRESH_SKILL/templates/kendex-refresh.yml"
   if [ "$bridge" = missing ]; then
     rm -- "$REFRESH_SKILL/templates/review-gate-writer.yml"
   fi
@@ -1506,7 +1564,7 @@ for bridge in retained missing; do
   if [ "$bridge" = retained ]; then
     if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" &&
         [ -s "$TMP/state/creates" ] && [ ! -e "$repo/.agents/skills/review-gate/scripts/validate-workflow.sh" ]; then
-      ok 'pre-platform refresh opens its PR against the current catalog'
+      ok 'pre-platform refresh opens its PR with the retained writer bridge'
     else bad 'pre-platform refresh bridge' "$OUT"; fi
   elif [ "$RC" -eq 2 ] &&
       grep -qxF "review-gate-error=template-missing value=$repo/.agents/skills/review-gate/templates/review-gate-writer.yml" <<<"$OUT" &&
@@ -1534,7 +1592,7 @@ git --git-dir="$TMP/secure-remote" config maintenance.auto false
 git -C "$repo" remote add origin "$TMP/secure-remote"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/trusted" HEAD
-runner="$TMP/trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+runner="$TMP/trusted/refresh/refresh-consumer.sh"
 cp -R "$repo/.agents/skills/review-gate/templates" "$TMP/fresh-templates"
 printf '\n# fresh refresh template\n' >>"$TMP/fresh-templates/kendex-refresh.yml"
 ship_refresh_template "$TMP/fresh-templates/kendex-refresh.yml"
@@ -1546,12 +1604,12 @@ warning_count="$(awk '/^refresh-warning=legacy-writer / { count++ } END { print 
 if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
     retirement_matches "$repo" .github/workflows/gate.yml .agents/skills/review-gate/templates/review-gate-writer.yml preserved &&
     [ "$warning_count" -eq 1 ] && grep -qxF 'refresh-warning=legacy-writer value=.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT" &&
-    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml" &&
+    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
     python3 - "$repo" <<'INVENTORY'
 import hashlib,json,sys
 from pathlib import Path
 root=Path(sys.argv[1]); entries=json.loads((root/'.kendex-generated.json').read_text())
-assert {e['path'] for e in entries}=={'.github/workflows/kendex-refresh.yml', '.github/workflows/gate.yml'}
+assert {e['path'] for e in entries}=={'.github/workflows/gate.yml'}
 for entry in (e for e in entries if e['path'] == '.github/workflows/kendex-refresh.yml'):
  assert entry['templateHash']=='sha256:'+hashlib.sha256((root/entry['path']).read_bytes()).hexdigest()
  assert (root/entry['path']).read_bytes()==(root/entry['template']).read_bytes()
@@ -1585,7 +1643,7 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); needle='"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"'
 assert s.count(needle)==1
-replacement='.agents/skills/review-gate/scripts/adopt-refresh.sh --templates-dir "$templates" # '+needle
+replacement='refresh/adopt-refresh.sh --templates-dir "$templates" # '+needle
 p.write_text(s.replace(needle,replacement))
 TRUST_CONTROL
 reset_default
@@ -1609,15 +1667,15 @@ git --git-dir="$TMP/no-writer-remote" config maintenance.auto false
 git -C "$repo" remote add origin "$TMP/no-writer-remote"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/no-writer-trusted" HEAD
-runner="$TMP/no-writer-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+runner="$TMP/no-writer-trusted/refresh/refresh-consumer.sh"
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
 rm -f -- "${TMP:?}/state/hostile"
 run_refresh refreshed pass render
 if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ] &&
     [ ! -e "$repo/.github/workflows/review-gate-writer.yml" ] &&
-    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml" &&
-    jq -e '[.[] | objects | .path] == [".github/workflows/kendex-refresh.yml"]' "$repo/.kendex-generated.json" >/dev/null; then
+    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
+    jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then
   ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
 else bad 'no-writer refresh' "$OUT"; fi
 # The shared workflow names its release tree's caller template. The run
@@ -1630,13 +1688,12 @@ cp "$runner" "$TMP/release-runner"
 for mutation in none ignored; do
   reset_default
   if [ "$mutation" = ignored ]; then
-    file_edit "$TMP/no-writer-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+    file_edit "$TMP/no-writer-trusted" refresh/refresh-consumer.sh 1 \
       '--templates-dir "\$templates"$' 's/--templates-dir "\$templates"$/--templates-dir "$ROOT\/.agents\/skills\/review-gate\/templates" # "$templates"/'
   fi
-  RUNNER_ARGS=(--templates-dir "$TMP/release/refresh")
+  cp "$CALLER" "${runner%/*}/kendex-refresh.yml"
   run_refresh release-caller pass render
-  RUNNER_ARGS=()
-  matched=no
+    matched=no
   if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
       cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
       jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then matched=yes; fi
@@ -1696,7 +1753,7 @@ git --git-dir="$TMP/bot-remote" config maintenance.auto false
 git -C "$repo" remote add origin "$TMP/bot-remote"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/bot-trusted" HEAD
-runner="$TMP/bot-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+runner="$TMP/bot-trusted/refresh/refresh-consumer.sh"
 cp "$runner" "$TMP/bot-runner"
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
@@ -1787,29 +1844,21 @@ for mutation in none unstaged; do
   cp "$TMP/bot-runner" "$runner"
 done
 unset REFRESH_ADDS
-# Every arm of the runner's probe and render case statements but the
-# unconfigured one, which the real package drives below: the probe's exit,
-# the verb's exit and output (- where it is not reached), the run's exit, the
-# line that arm owes, whether the run publishes, and the runner edit that must
-# break the row. An old engine refuses help with 2 and the bare verb with 1.
-bot_arm() { # NAME PROBE RENDER_EXIT RENDER_SAID RC LINE PUBLISHED OLD NEW
+# Each render result is exercised with the actual render call and its refusal.
+bot_arm() { # NAME RENDER_EXIT RENDER_SAID RC LINE PUBLISHED OLD NEW
   local mutation published held
   for mutation in none "$1"; do
     reset_default
-    rm -f -- "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
-    printf '%s\n' "$2" >"$TMP/state/probe-exit"
-    if [ "$3" != - ]; then
-      printf '%s\n' "$3" >"$TMP/state/render-exit"
-      printf '%s\n' "$4" >"$TMP/state/render-said"
-    fi
-    [ "$mutation" = none ] || bot_runner_edit "$8" "$9"
+    printf '%s\n' "$2" >"$TMP/state/render-exit"
+    printf '%s\n' "$3" >"$TMP/state/render-said"
+    [ "$mutation" = none ] || bot_runner_edit "$7" "$8"
     run_refresh "bot-arm-$1" pass render
     published=no
     ! grep -q '^refresh-state=' <<<"$OUT" || published=yes
     held=no
-    if [ "$RC" -eq "$5" ] && grep -qxF -- "$6" <<<"$OUT" && [ "$published" = "$7" ]; then held=yes; fi
+    if [ "$RC" -eq "$4" ] && grep -qxF -- "$5" <<<"$OUT" && [ "$published" = "$6" ]; then held=yes; fi
     case "$mutation:$held" in
-      none:yes) ok "bot-instructions $1: exit $5 with $6" ;;
+      none:yes) ok "bot-instructions $1: exit $4 with $5" ;;
       "$1":no) ok "control: bot-instructions $1 breaks without its runner line" ;;
       *) bad "bot-instructions $1 mutation=$mutation" "$OUT" ;;
     esac
@@ -1817,17 +1866,13 @@ bot_arm() { # NAME PROBE RENDER_EXIT RENDER_SAID RC LINE PUBLISHED OLD NEW
   done
 }
 skip_line='refresh-render=skipped package=bot-instructions cause='
-bot_arm engine 2 1 'error: no terminal to ask at' 0 "${skip_line}engine" yes \
-  'kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?' 'true'
-bot_arm probe-error 1 - - 1 'refresh-error=bot-instructions-probe value=1' no \
-  $'"$probe_status" >&2\n    exit 1\n' $'"$probe_status" >&2\n'
-bot_arm absent 0 0 'bot-instructions-render=absent' 0 "${skip_line}absent" yes \
+bot_arm absent 0 'bot-instructions-render=absent' 0 "${skip_line}absent" yes \
   "  0) if grep -qxF 'bot-instructions-render=absent' <<<\"\$render_output\"; then render_skip=absent; fi ;;"$'\n' ''
-bot_arm render-error 0 1 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=1' no \
+bot_arm render-error 1 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=1' no \
   $'"$render_status" >&2\n  exit 1\n' $'"$render_status" >&2\n'
-bot_arm refused 0 2 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=2' no \
+bot_arm refused 2 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=2' no \
   "grep -qx 'bot-instructions: unconfigured=.*'" 'true'
-rm -f -- "${TMP:?}/state/probe-exit" "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
+rm -f -- "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
 # A consumer that installed the package and never configured it is not set
 # up by a refresh: the package refuses as unconfigured, nothing renders, and
 # the run says why. A runner that does not read the record is the control,

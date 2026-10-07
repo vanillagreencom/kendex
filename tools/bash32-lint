@@ -263,7 +263,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
   die_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
 if [ "$#" -eq 0 ]; then
   cd "$ROOT" || die unenterable "$ROOT"
-  set -- skills/*/scripts skills/*/tests hooks
+  set -- skills/*/scripts skills/*/tests hooks refresh
 fi
 
 at_root() { # at_root PATH — a roster path, read from the toplevel.

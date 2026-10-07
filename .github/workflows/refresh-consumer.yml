@@ -133,7 +133,7 @@ jobs:
           REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
         run: |
           set -euo pipefail
-          exec "$GITHUB_WORKSPACE/kendex/skills/review-gate/scripts/refresh-consumer.sh" --templates-dir "$GITHUB_WORKSPACE/kendex/refresh"
+          exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-consumer.sh"
       - name: Mint the kendex issue token
         id: issues-token
         continue-on-error: true
@@ -154,4 +154,4 @@ jobs:
           KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
         run: |
           set -euo pipefail
-          exec "$GITHUB_WORKSPACE/kendex/skills/review-gate/scripts/refresh-reviews.sh"
+          exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-reviews.sh"

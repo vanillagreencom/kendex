@@ -1567,6 +1567,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         tree=hooks
         rel="${f#*hooks/}"
         ;;
+      refresh/*)
+        tree=refresh
+        rel="${f#refresh/}"
+        ;;
       tools/*)
         tree=tools
         rel="${f#tools/}"

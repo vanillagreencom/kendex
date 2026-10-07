@@ -12,7 +12,7 @@ if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
   printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the provisioned kendex environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Exact templates from kendex default-branch history permit adoption. Refresh hand edits are refused and preserved.'
   exit 0
 fi
-templates="$SCRIPT_DIR/../templates"
+templates="$SCRIPT_DIR"
 adoption=refresh
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -75,7 +75,7 @@ case "$caller" in
   *) printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2 ;;
 esac
 REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SECRETS="$template_secrets" \
-  "$SCRIPT_DIR/validate-standard.sh" --environment-only
+  "$SCRIPT_DIR/../skills/review-gate/scripts/validate-standard.sh" --environment-only
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 # The public catalog is shipment evidence. Consumer history and supplied

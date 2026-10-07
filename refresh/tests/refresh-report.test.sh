@@ -4,11 +4,12 @@
 # the default double uses that CLI's stderr routing stream.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
-if python3 - "$SKILL_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
+if python3 - "$REFRESH_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -20,7 +21,7 @@ import sys
 skill, root = map(Path, sys.argv[1:3])
 real_cli = sys.argv[3]
 # Refresh-consumer owns the parse. This mode only formats its three arrays.
-reporter = skill / 'scripts/refresh-report.py'
+reporter = skill / 'refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
 fable = 'ORCH_OVERSEER_PREFERENCE = "claude:Fable:high"'
 def settings_run(entries, script=reporter):
@@ -61,9 +62,10 @@ assert both.index('## Settings') < both.index('## Deprecated models') and len(mo
 source = reporter.read_text()
 # The settings mode reads the package's retired list beside its scripts
 # directory, so a mutant runs from the same layout.
-mutants = root / 'package/scripts'
+mutants = root / 'package/refresh'
 mutants.mkdir(parents=True)
-(root / 'package/retired-settings.json').write_bytes((skill / 'retired-settings.json').read_bytes())
+(root / 'package/skills/review-gate').mkdir(parents=True)
+(root / 'package/skills/review-gate/retired-settings.json').write_bytes((skill.parent / 'skills/review-gate/retired-settings.json').read_bytes())
 # A runner installed before deprecated_models emits two arrays to this reporter.
 two_keys = dict(refused=[], deprecated=['claude:1:high'])
 legacy = settings_run(two_keys)
@@ -237,7 +239,7 @@ def reset(**extra):
 def attempt(driver, rows, overrides):
  return subprocess.run(['python3',str(driver),'a'*40,'1'],input=json.dumps(rows),text=True,
                        capture_output=True,env=dict(env,**(overrides or {})),cwd=root)
-def run(driver=skill/'scripts/refresh-report.py', rows=findings, overrides=None):
+def run(driver=skill/'refresh-report.py', rows=findings, overrides=None):
  result=attempt(driver, rows, overrides)
  assert result.returncode==0,result.stderr
  results[:]=json.loads(result.stdout)
@@ -278,7 +280,7 @@ consumer_a=dict(findings[0],root=30,path='.agents/skills/review-gate/SKILL.md',b
 consumer_b=dict(consumer_a,root=40,path='.claude/skills/review-gate/SKILL.md',body='These two steps run backwards.',
                 line=8,start_line=7,url='https://github.com/other/repo/pull/9#discussion_r40')
 second_consumer={'GH_REPO':'other/repo','GITHUB_RUN_ID':'43'}
-def package_line(driver=skill/'scripts/refresh-report.py', lag=()):
+def package_line(driver=skill/'refresh-report.py', lag=()):
  reset(lag=list(lag)); filed=run(driver,rows=[consumer_a])
  # The first consumer filed 50 minutes before the second one runs: inside
  # the documented index lag, outside a narrowed one.
@@ -342,7 +344,7 @@ for rows, issues in [
 # is inserted above the reviewed `fi` or one deleted, another claim on the
 # same line is filed anew.
 reshapes=(block*4, block*2)
-def reshaped(text, driver=skill/'scripts/refresh-report.py'):
+def reshaped(text, driver=skill/'refresh-report.py'):
  reset(); closed=run(driver,rows=[dict(first_fi,line=10)])
  closed['issues'][0].update(state='closed',state_reason='completed')
  closed['files'][first_fi['path']]=text; world.write_text(json.dumps(closed))
@@ -353,11 +355,11 @@ for text in reshapes:
  assert reshaped(text)==(2,'Filed for upstream confirmation'), text
 # Search and the issue list both miss this run's own filing; a repeat in the
 # run rides on that filing.
-def own_filing(driver=skill/'scripts/refresh-report.py'):
+def own_filing(driver=skill/'refresh-report.py'):
  reset(lag=['search','list']); return len(run(driver,rows=[consumer_a, consumer_b])['issues'])
 assert own_filing()==1
 # Each thread folded onto this run's own filing leaves its text and evidence.
-def folded_evidence(driver=skill/'scripts/refresh-report.py'):
+def folded_evidence(driver=skill/'refresh-report.py'):
  reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
  return [w['body'] for w in writes if 'title' not in w]
 comments=folded_evidence()
@@ -365,7 +367,7 @@ assert len(comments)==1 and consumer_b['url'] in comments[0] and '> '+consumer_b
 # An issue an outside user wrote carrying the marker, open or closed, answers
 # nothing and gets no comment: the finding is filed anew.
 reset(); spoofed_title=run(rows=[consumer_a])['issues'][0]['title']
-def spoofed(state, driver=skill/'scripts/refresh-report.py'):
+def spoofed(state, driver=skill/'refresh-report.py'):
  planted=dict(number=1,title=spoofed_title,body='Planted.',state=state,state_reason=None if state=='open' else 'completed',
               user={'login':'someone','type':'User'},html_url='https://github.com/vanillagreencom/kendex/issues/1',
               updated_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
@@ -374,18 +376,18 @@ def spoofed(state, driver=skill/'scripts/refresh-report.py'):
 for state in ('open','closed'):
  assert spoofed(state), state
 # A comment naming lines past the head file is no line it was shown.
-reset(); refused=attempt(skill/'scripts/refresh-report.py',[dict(consumer_a,line=99)],None)
+reset(); refused=attempt(skill/'refresh-report.py',[dict(consumer_a,line=99)],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # Searches stay under GitHub's query length and cover every marker; an
 # incomplete search proves no absence and files nothing.
 many=[dict(consumer_a,root=50+n,line=None,start_line=None,body=f'Defect {n}.') for n in range(4)]
 # Four findings that miss search read the recent issue list once.
-def listed(driver=skill/'scripts/refresh-report.py'):
+def listed(driver=skill/'refresh-report.py'):
  reset(); searched=run(driver,rows=many); return searched, searched.get('lists')
 searched, lists = listed()
 assert len(searched['issues'])==4 and len({r['issue'] for r in results})==4 and lists==1
 assert sorted(t for q in searched['searches'] for t in q)==sorted(i['title'][15:79] for i in searched['issues'])
-reset(incomplete=True); refused=attempt(skill/'scripts/refresh-report.py',[consumer_a],None)
+reset(incomplete=True); refused=attempt(skill/'refresh-report.py',[consumer_a],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # No token, a token denied everywhere and one that can search but not write
 # each leave the finding unfiled with a link. A denied evidence comment on an
@@ -399,7 +401,7 @@ access_rows=[
  ({}, {'fail':['write',denied]}, findings[0], 'issues/new?', access),
  ({}, {'fail':['write',denied],'issues':[issue]}, later_thread, issue['html_url'], access),
 ]
-def unfiled(overrides, extra, row, link, note, driver=skill/'scripts/refresh-report.py'):
+def unfiled(overrides, extra, row, link, note, driver=skill/'refresh-report.py'):
  reset(**extra); result=run(driver,rows=[row],overrides=overrides); text=summary.read_text()
  return (result['writes']==[] and link in text and row['url'] in text
          and results==[{'root':row['root'],'issue':None,'note':note}])
@@ -416,7 +418,7 @@ rate_limits=[
  'gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)',
  'gh: Too Many Requests (HTTP 429)',
 ]
-def rate_limited(message, driver=skill/'scripts/refresh-report.py'):
+def rate_limited(message, driver=skill/'refresh-report.py'):
  reset(fail=['search',message]); result=attempt(driver,findings,None)
  return result.returncode!=0 and 'rate-limited endpoint=search/issues?' in result.stderr \
         and json.loads(world.read_text())['writes']==[]
@@ -446,7 +448,7 @@ def not_filed(driver, row, overrides, note):
  return (world['writes']==[] and results==[{'root':10,'issue':None,'note':note}]
          and row['url'] in text and 'issues/new' not in text)
 for name, row, overrides, note in not_filed_rows:
- assert not_filed(skill/'scripts/refresh-report.py', row, overrides, note), name
+ assert not_filed(skill/'refresh-report.py', row, overrides, note), name
 # A late merged-PR report must keep the recorded package route after removal
 # or replacement through the consumer's supported package commands.
 for drift in ('removed', 'replaced'):
@@ -458,7 +460,7 @@ for drift in ('removed', 'replaced'):
  assert len(run()['issues'])==1, drift
 # The current checkout is now foreign-owned. Removing historical isolation
 # must turn the report into fallback, even though its inventory is still valid.
-source=(skill/'scripts/refresh-report.py').read_text()
+source=(skill/'refresh-report.py').read_text()
 needle='cwd=project, env=consumer_env'
 assert source.count(needle)==1
 mutant=root/'current-checkout.py'
@@ -466,7 +468,7 @@ mutant.write_text(source.replace(needle,'cwd=None if True else project, env=cons
 reset(); assert run(mutant)['writes']==[]
 assert results[0]['note']==elsewhere
 # Controls preserve matching text while removing each independent rule.
-source=(skill/'scripts/refresh-report.py').read_text()
+source=(skill/'refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
  ('if path in records else set()', 'if False and path in records else set()', findings, 'path'),
  ('elif existing:', 'elif False and existing:', findings, 'dedup'),

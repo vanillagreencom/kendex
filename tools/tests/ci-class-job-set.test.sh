@@ -433,6 +433,7 @@ kendex.toml|[]
 agents/reviewer.md|[]
 .kendex-lock.json|[]
 skills/CLAUDE.md|["guards-scans"]
+refresh/runner.sh|["review-gate","guards-scans"]
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
@@ -471,7 +472,8 @@ s/^        want_package tools$/        :/@skills/price-handling/scripts/x
 s/^        want_shard guards-hooks$/        :/@skills/price-handling/scripts/x
 s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
 s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
-s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
+s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
+s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@refresh/runner.sh
 s/\[ "\$build" = false \] || .*/:/@crates/demo/src/unnamed.rs
 s/ want_shard orch-rest; }/ }/@crates/demo/src/unnamed.rs
 s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md

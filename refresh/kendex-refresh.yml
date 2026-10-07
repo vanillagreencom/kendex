@@ -1,4 +1,4 @@
-# Adopted into .github/workflows/ by scripts/adopt-refresh.sh, which checks
+# Adopted into .github/workflows/ by refresh/adopt-refresh.sh from a kendex release checkout, which checks
 # the kendex environment and its secrets first; copy it verbatim only through
 # that script. The job maps the two app secrets the shared workflow declares;
 # their values come from this repository's kendex environment. The shared
@@ -17,12 +17,45 @@ name: Refresh kendex
     - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
-concurrency:
-  group: kendex-refresh
-  cancel-in-progress: false
-
 jobs:
+  # A run held on the kendex environment gate never times out, and it holds
+  # the refresh group, so every later run queues behind it. The gate has no
+  # reviewers and no wait timer, so a run still waiting 30 minutes after its
+  # last state change is stuck. This job takes no group; it force-cancels
+  # such a run before this run's refresh asks for the group.
+  release:
+    if: github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Release a refresh stuck on its environment gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          stuck="$(gh api "repos/$GH_REPO/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "waiting" and now - (.updated_at | fromdateiso8601) > 1800) | .id')"
+          for run in $stuck; do
+            # GitHub has no cancel conditioned on a run's status, and no
+            # reviewer exists to reject the gate, so re-read the run just
+            # before the cancel and skip one that has left waiting.
+            status="$(gh api "repos/$GH_REPO/actions/runs/$run" --jq .status)"
+            if [ "$status" != waiting ]; then
+              printf 'refresh-release-skipped=%s status=%s\n' "$run" "$status"
+              continue
+            fi
+            gh api --method POST "repos/$GH_REPO/actions/runs/$run/force-cancel" >/dev/null
+            printf 'refresh-released=%s\n' "$run"
+          done
   refresh:
+    needs: release
+    if: ${{ success() && github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    concurrency:
+      group: kendex-refresh
+      cancel-in-progress: false
     permissions:
       contents: read
     uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1

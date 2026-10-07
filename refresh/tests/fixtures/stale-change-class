@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The pre-KEN-3290 consumer answer for a generated bot-instruction path.
+set -euo pipefail
+printf 'class: class=standard measured=false cause=render-path-unowned path=.github/copilot-instructions.md\n' >&2
+printf 'change_class=standard\n'

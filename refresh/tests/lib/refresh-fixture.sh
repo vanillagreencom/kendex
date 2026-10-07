@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Consumer workflow fixtures use the shared sandbox and real API parser.
 . "$TEST_DIR/lib/sandbox.sh"
-. "$TEST_DIR/lib/workflow-edit.sh"
+. "$SKILL_DIR/tests/lib/workflow-edit.sh"
 # Shipment history is a data-only catalog. Only the transport in disposable
 # adopter copies changes; production has no fixture setting or acceptance path.
 CATALOG="$TMP/catalog"
@@ -17,8 +17,8 @@ commit "$CATALOG"
 cp "$SKILL_DIR/templates/kendex-refresh.yml" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
 commit "$CATALOG"
 
-trust_refresh_transport() { # DISPOSABLE_ROOT
-  python3 - "$1/.agents/skills/review-gate/scripts/adopt-refresh.sh" "$CATALOG" <<'TRANSPORT'
+trust_refresh_transport() { # DISPOSABLE_ROOT [HISTORICAL_SCRIPT]
+  python3 - "${2:-$1/refresh/adopt-refresh.sh}" "$CATALOG" <<'TRANSPORT'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve(); text = p.read_text()
@@ -37,7 +37,7 @@ ship_refresh_template() { # TEMPLATE_FILE
 }
 
 # The shared workflow's caller ships at its own catalog path.
-CALLER="$SKILL_DIR/../../refresh/kendex-refresh.yml"
+CALLER="$REFRESH_DIR/kendex-refresh.yml"
 ship_caller_template() { # TEMPLATE_FILE
   mkdir -p "$CATALOG/refresh"
   cp "$1" "$CATALOG/refresh/kendex-refresh.yml"
@@ -63,7 +63,7 @@ cp -R "$SKILL_DIR/../orch" "$PRISTINE/.agents/skills/orch"
 BIN="$TMP/bin"
 FIXTURES="$TMP/github"
 mkdir -p "$BIN" "$FIXTURES"
-cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
+cp "$SKILL_DIR/tests/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 cat >"$BIN/sleep" <<'SLEEP'
 #!/usr/bin/env bash
@@ -81,6 +81,12 @@ printf '{"secrets":[{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY
 run_refresh_command() {
   local root="$1" script="$2"
   shift 2
+  if [ "${script##*/}" = adopt-refresh.sh ]; then
+    case " $* " in
+      *' --templates-dir '*) ;;
+      *) set -- --templates-dir "$root/.agents/skills/review-gate/templates" "$@" ;;
+    esac
+  fi
   RC=0
   OUT="$(cd "$root" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" \
     GH_SHIM_FIXTURES="$FIXTURES" GH_SHIM_FAIL="${SHIM_FAIL:-}" \
@@ -328,7 +334,7 @@ real_refresh_fixture() { # NAME
   git -C "$repo" config user.name fixture
   git -C "$repo" config user.email fixture@example.invalid
   cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-  printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/refresh/adopt-refresh.sh"
   printf 'Hand edit.\n' >>"$repo/.agents/skills/probe/SKILL.md"
 }
 
@@ -339,7 +345,7 @@ publish_real_fixture() {
   git --git-dir="$real_root/remote" config maintenance.auto false
   git -C "$repo" remote add origin "$real_root/remote"
   git -C "$repo" push -q origin main
-  runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+  runner="$repo/refresh/refresh-consumer.sh"
   : >"$TMP/state/pr"
   : >"$TMP/state/creates"
   : >"$TMP/state/calls"

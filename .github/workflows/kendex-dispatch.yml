@@ -29,4 +29,4 @@ jobs:
       - name: Signal installed repositories
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: skills/review-gate/scripts/dispatch-refresh.sh
+        run: refresh/dispatch-refresh.sh

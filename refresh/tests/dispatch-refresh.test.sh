@@ -2,11 +2,12 @@
 # Dispatch reads the installation's repositories and sends consumer events.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
-DISPATCH='.agents/skills/review-gate/scripts/dispatch-refresh.sh'
+DISPATCH='refresh/dispatch-refresh.sh'
 printf '{"repositories":[{"full_name":"vanillagreencom/kendex","archived":false},{"full_name":"acme/first","archived":false},{"full_name":"acme/retired","archived":true}]}\n' >"$FIXTURES/installation-repositories.json"
 printf '{"repositories":[{"full_name":"acme/last","archived":false}]}\n' >"$FIXTURES/installation-repositories.page2.json"
 EXPECTED='POST repos/acme/first/dispatches event_type=kendex-refresh

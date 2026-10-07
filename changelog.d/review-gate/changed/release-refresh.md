@@ -1,0 +1,1 @@
+- Consumer refresh calls the shared release workflow. Refresh scripts and checks run from that release checkout, so a stale consumer copy cannot block a released fix.

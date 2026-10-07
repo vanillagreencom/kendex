@@ -219,8 +219,8 @@ fn an_ignored_tracked_output_warns_and_fails_only_under_strict() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_consumer_refresh_passes_on_an_ignored_tracked_output() {
-    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/review-gate/scripts/refresh-consumer.sh");
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../refresh/refresh-consumer.sh");
     let text = std::fs::read_to_string(&script).unwrap();
     let lines: Vec<&str> = text
         .lines()

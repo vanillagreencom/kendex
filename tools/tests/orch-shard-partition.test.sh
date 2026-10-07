@@ -311,7 +311,7 @@ fi
 #
 # Rosters are taken by RUNNING each step's run block against a `bash` that
 # does nothing, in a sandbox whose workflow is the copy under test and whose
-# skills/, tools/ and hooks/ are this tree. What a block prints as
+# skills/, refresh/, tools/ and hooks/ are this tree. What a block prints as
 # `=== <path>` is its roster, produced by that block's own globs, skip arms
 # and fallbacks rather than by a second reading of them here.
 #
@@ -325,6 +325,7 @@ mkdir -p "$PART/.github/workflows"
 ln -s "$ROOT/skills" "$PART/skills"
 ln -s "$ROOT/tools"  "$PART/tools"
 ln -s "$ROOT/hooks"  "$PART/hooks"
+ln -s "$ROOT/refresh" "$PART/refresh"
 # `bash "$t"` in a roster loop resolves to this and does nothing, so a loop
 # prints its roster without running a suite. Only `bash` is shimmed; grep, sed
 # and printf stay the host's.
@@ -448,7 +449,7 @@ shell_partition_args() { # <workflow> ; actual arguments from the shell roster i
 UNIV="$TMP/universe"
 (
   cd "$ROOT" || exit 1
-  for f in skills/*/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh; do
+  for f in skills/*/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh refresh/tests/*.test.sh; do
     [[ "$f" == "$runner" ]] && continue
     case "$f" in "$LINEAR_PREFIX"*) continue ;; esac
     printf '%s\n' "$f"
@@ -530,7 +531,7 @@ fi
 # A roster claimed twice.
 wf_twice="$TMP/wf-roster-repeated.yml"
 awk '{
-  if (index($0, "for t in skills/review-gate/tests/*.test.sh; do"))
+  if (index($0, "for t in skills/review-gate/tests/*.test.sh refresh/tests/*.test.sh; do"))
     sub(/; do/, " skills/worktree/tests/*.sh; do")
   print
 }' "$WORKFLOW" > "$wf_twice"
@@ -773,6 +774,16 @@ if [[ -s "$TMP/owners-slack" &&
 else
   bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing"
 fi
+
+# The moved suites need the refresh path to reach the review-gate shard.
+awk '$0 ~ /^      refresh\/\*) want_package refresh ;;$/ { n++; next } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/owner-tools/ci-job-set" || bad "refresh selection control changed nothing"
+grep "^review-gate	refresh/tests/" "$OWNERS" >"$TMP/owners-refresh" ||
+  bad "refresh selection control has no suite"
+if [[ -s "$TMP/owners-refresh" &&
+  "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-refresh")" == "$(cat "$TMP/owners-refresh")" ]]; then
+  ok "must-fail: removing refresh selection names every omitted refresh suite"
+else bad "refresh shard selection control"; fi
 
 # --- 4c. The main-push macOS matrix's exclusions --------------------------
 # The selector uses these exclusions for its macOS runner arithmetic.

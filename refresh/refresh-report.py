@@ -63,7 +63,7 @@ from tempfile import TemporaryDirectory
 from urllib.parse import urlencode
 
 UPSTREAM = "vanillagreencom/kendex"
-RETIRED = Path(__file__).parent.parent / "retired-settings.json"
+RETIRED = Path(__file__).parent.parent / "skills/review-gate/retired-settings.json"
 # GitHub search caps a query at 256 characters besides its operators and
 # qualifiers; three 64-character fingerprints fit, four would not with spaces.
 SEARCH_TERMS = 3

@@ -354,6 +354,7 @@ consumers() {
 # mode=package its `<package> <how>`.
 PACKAGE_AWK='
   /^skills\/[^\/]+\/(scripts|tests)\// { split($0, part, "/"); package = "skills/" part[2] }
+  /^refresh\// { package = "refresh" }
   /^tools\// { package = "tools" }
   /^hooks\// { package = "hooks" }
   /^pi-extensions\// { package = "pi-extensions" }
@@ -383,7 +384,7 @@ want_shard() { # SHARD...
 want_package() { # PACKAGE
   case "$1" in
     skills/orch) want_shard orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest ;;
-    skills/review-gate) want_shard review-gate ;;
+    skills/review-gate | refresh) want_shard review-gate ;;
     skills/commit-guards) want_shard guards-commit guards-hooks ;;
     skills/linear) want_shard linear linear-controls ;;
     skills/bot-instructions | skills/preflight) want_shard linear ;;
@@ -449,12 +450,13 @@ select_shards() { # BUILD(true|false)
         want_package tools
         want_shard guards-hooks
         ;;
+      refresh/*) want_package refresh ;;
       tools/*) want_package tools ;;
       hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) want_package hooks ;;
       pi-extensions/pi-claude-bridge/*) want_package pi-extensions/pi-claude-bridge ;;
       pi-extensions/*) want_package pi-extensions ;;
     esac
-    case "$path" in skills/* | hooks/* | tools/*) want_shard guards-scans ;; esac
+    case "$path" in skills/* | hooks/* | tools/* | refresh/*) want_shard guards-scans ;; esac
     # A file outside every skill is searched for by its own path, save a
     # root file of prose: a bare AGENTS.md or README.md is every fixture's.
     case "$path" in
@@ -492,7 +494,7 @@ $path" ;;
     while read -r package how; do
       case "$package:$how" in
         skills/*:script) reach_skill "${package#skills/}" ;;
-        skills/*:suite | tools:* | hooks:* | pi-extensions*:*) want_package "$package" ;;
+        skills/*:suite | refresh:* | tools:* | hooks:* | pi-extensions*:*) want_package "$package" ;;
         :) ;;
       esac
     done <<<"$found"

@@ -4,7 +4,8 @@
 # run's replies; a resolve failure also keeps its prior reply.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP_ROOT="$(mktemp -d)" || { echo "refresh-reviews: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "refresh-reviews: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "refresh-reviews: scratch=resolve-failed" >&2; exit 1; }
@@ -16,8 +17,8 @@ mkdir -p "$BIN" "$TMP/home" "$TMP/skills/harness-ci/scripts" "$TMP/skills/review
 cp "$TEST_DIR/lib/refresh-gh.py" "$BIN/gh"
 chmod +x "$BIN/gh"
 # Every copy of the writer sits beside this classifier, as the package does.
-SCRIPTS="$TMP/skills/review-gate/scripts"
-cp -R "$SKILL_DIR/scripts" "$SCRIPTS"
+SCRIPTS="$TMP/refresh"
+cp -R "$REFRESH_DIR" "$SCRIPTS"
 # The classifier and the reporter are dependencies with their own suites.
 # This suite proves the writer consumes the classifier's exact answer and
 # answers each finding by the issue the reporter names.
@@ -97,8 +98,8 @@ run_writer() {
 }
 # A mutant is a copy of the scripts directory beside the same classifier.
 mutant() { # NAME NEEDLE REPLACEMENT
-  cp -R "$SCRIPTS" "$TMP/skills/review-gate/$1"
-  python3 - "$TMP/skills/review-gate/$1/refresh-reviews.sh" "$2" "$3" <<'MUTATE'
+  cp -R "$SCRIPTS" "$TMP/$1"
+  python3 - "$TMP/$1/refresh-reviews.sh" "$2" "$3" <<'MUTATE'
 from pathlib import Path
 import sys
 p, needle, replacement = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -109,7 +110,7 @@ changed = s.replace(needle, replacement)
 assert changed != s, needle
 p.write_text(changed)
 MUTATE
-  DRIVER="$TMP/skills/review-gate/$1/refresh-reviews.sh"
+  DRIVER="$TMP/$1/refresh-reviews.sh"
 }
 
 # Filed and resolved: each automatic thread on the open rolling pull request

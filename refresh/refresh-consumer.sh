@@ -1,35 +1,22 @@
 #!/usr/bin/env bash
 # Runs with the consumer's default-branch checkout as the working directory,
-# from either that checkout's preserved copy or the kendex release tree the
-# shared workflow checked out. It rebuilds the rolling branch from the
+# from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
 # checkout, never executes the remote rolling branch, and pushes only after
 # the shared classifier measures the complete diff. It requests auto-merge
 # after GitHub shows the published head. SKILL.md defines the arm outcomes.
-# --templates-dir names the directory holding the refresh workflow template
-# to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
 # whose render did not run also gets
-# refresh-render=skipped package=bot-instructions cause=absent|unconfigured|engine.
+# refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load from the trusted runner before refresh replaces its installed files.
-source "$SCRIPT_DIR/lib/arm-published-head.sh"
-templates=""
-if [ "$#" -eq 2 ] && [ "$1" = --templates-dir ] && [ -n "$2" ]; then
-  if ! templates="$(cd -- "$2" && pwd -P)"; then
-    printf 'refresh-error=templates value=%s\n' "$2" >&2
-    exit 2
-  fi
-elif [ "$#" -gt 0 ]; then
-  printf 'refresh-error=arguments value=%s\n' "$#" >&2
-  exit 2
-fi
+source "$SCRIPT_DIR/../skills/review-gate/scripts/lib/arm-published-head.sh"
+templates="$SCRIPT_DIR"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
-templates="${templates:-$ROOT/.agents/skills/review-gate/templates}"
 : "${GH_REPO:?GH_REPO names the running repository}"
 : "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
 : "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
@@ -118,7 +105,7 @@ git checkout -B kendex/refresh "$base"
 export KENDEX_UI=plain
 refresh_status=0
 # --prune takes what the catalog retired; a plain refresh keeps it. kendex
-# 1.11.0 adds the flag, and the latest release this runs under can predate
+# 1.11.0 adds the flag, and the release this runs under can predate
 # it, so it is passed where the installed kendex lists it; 1.12.0 drops the
 # probe.
 refresh_help="$(kendex help refresh 2>/dev/null || true)"
@@ -220,27 +207,11 @@ git add -A
 render_status=0
 render_output=""
 render_skip=""
-# The inline template installs the latest stable kendex, and every release
-# through 1.10.1 lacks the verb: it reads the name as a source to add and
-# refuses. Such an engine keeps the outcome it had before the verb, an
-# unrendered refresh. Remove the probe once the latest stable release
-# carries the verb.
-probe_status=0
-env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex help bot-instructions-render >/dev/null 2>&1 || probe_status=$?
-case "$probe_status" in
-  0)
-    render_output="$(env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-instructions-render 2>&1)" || render_status=$?
-    printf '%s\n' "$render_output"
-    case "$render_status" in
-      0) if grep -qxF 'bot-instructions-render=absent' <<<"$render_output"; then render_skip=absent; fi ;;
-      2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
-    esac
-    ;;
-  2) render_skip=engine ;;
-  *)
-    printf 'refresh-error=bot-instructions-probe value=%s\n' "$probe_status" >&2
-    exit 1
-    ;;
+render_output="$(env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-instructions-render 2>&1)" || render_status=$?
+printf '%s\n' "$render_output"
+case "$render_status" in
+  0) if grep -qxF 'bot-instructions-render=absent' <<<"$render_output"; then render_skip=absent; fi ;;
+  2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
 esac
 if [ -n "$render_skip" ]; then
   printf 'refresh-render=skipped package=bot-instructions cause=%s\n' "$render_skip"
@@ -251,8 +222,7 @@ fi
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
-# Only the running copy of this script, the preserved default-branch copy or
-# the kendex release tree, consumes its output or publishes. Without orch the
+# Only this script in the kendex release tree consumes its output or publishes. Without orch the
 # parse still scans the committed [env] table, which needs only this
 # package's settings library.
 orch=present
@@ -262,7 +232,7 @@ if [ ! -e "$ROOT/.agents/skills/orch" ] && [ ! -L "$ROOT/.agents/skills/orch" ];
 fi
 if ! env -i PATH="$PATH" HOME="$HOME" bash -s -- "$SCRIPT_DIR" "$ROOT" "$orch" >"$TMP/settings.json" <<'SETTINGS_PARSE'
 set -euo pipefail
-source "$1/lib/settings.sh"
+source "$1/../skills/review-gate/scripts/lib/settings.sh"
 OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
 if [ "$3" = present ]; then
@@ -381,7 +351,7 @@ else
   state=pushed
 fi
 class_result=0
-class_output="$("$SCRIPT_DIR/../../harness-ci/scripts/change-class" --event pull_request --base "$base" --head "$head" --repo "$ROOT" 2>&1)" || class_result=$?
+class_output="$("$SCRIPT_DIR/../skills/harness-ci/scripts/change-class" --event pull_request --base "$base" --head "$head" --repo "$ROOT" 2>&1)" || class_result=$?
 printf '%s\n' "$class_output" >&2
 class=""
 class_line=""

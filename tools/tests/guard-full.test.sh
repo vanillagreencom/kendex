@@ -708,6 +708,30 @@ narrow_row_holds all && [[ "$OUT" == *"guard-note: suites=1/1 reason=mapped tree
 git -C "$R" reset -q --hard "$narrow_head"
 FULL_GUARD=0
 
+echo "=== refresh changes run the release-tree suites ==="
+FULL_GUARD=1
+mkdir -p "$R/refresh/tests"
+printf '#!/usr/bin/env bash\necho refresh-runner\n' >"$R/refresh/refresh-consumer.sh"
+printf '#!/usr/bin/env bash\necho refresh-suite-ran\n' >"$R/refresh/tests/refresh-consumer.test.sh"
+git -C "$R" add refresh
+git -C "$R" commit -q -m "chore: release refresh fixture"
+printf 'echo changed\n' >>"$R/refresh/refresh-consumer.sh"
+run_guard
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== refresh/tests/refresh-consumer.test.sh"* ]] &&
+  [[ "$OUT" == *"refresh-suite-ran"* ]] \
+  && ok "a changed release script runs its refresh suite" \
+  || bad "release refresh suite selection" "rc=$RC out=$OUT"
+if mutant_guard '/^      refresh\/\*)$/,/^        ;;/d'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+  [ "$RC" -eq 0 ] && [[ "$OUT" != *"refresh-suite-ran"* ]] \
+    && ok "control: removing refresh selection skips the changed script's suite" \
+    || bad "release refresh suite selection control" "rc=$RC out=$OUT"
+else bad "release refresh selection control changed nothing"; fi
+git -C "$R" reset -q --hard HEAD
+FULL_GUARD=0
+
 echo "=== a test binary's death by a signal is named apart from a failing test ==="
 FULL_GUARD=1
 # A workspace for the test run; the rustup stub above answers the cross-target

@@ -18,3 +18,6 @@
 *.icns binary
 *.ttf binary
 *.mp4 binary
+refresh/kendex-refresh.yml text eol=lf
+skills/review-gate/templates/kendex-refresh.yml text eol=lf
+.agents/skills/review-gate/templates/kendex-refresh.yml text eol=lf

@@ -37,7 +37,7 @@ Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provisio
 
 ## Consumer refresh
 
-An existing consumer first follows [references/adoption.md § Trusted removal for an existing consumer](references/adoption.md#trusted-removal-for-an-existing-consumer). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs use `scripts/adopt-refresh.sh` to adopt the refresh workflow. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
+An existing consumer first follows [references/adoption.md § Trusted removal for an existing consumer](references/adoption.md#trusted-removal-for-an-existing-consumer). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs run `refresh/adopt-refresh.sh` from a kendex checkout at a release tag. Each consumer calls the shared workflow, which runs its scripts from that release checkout. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 
 ## 4. Operations
 
@@ -52,10 +52,10 @@ The overseer's fallback approval and emergency merge follow the managing reposit
 | `scripts/pr-watch.sh` | Reduce open pull requests to attention lines from GitHub's review state. |
 | `scripts/validate-standard.sh` | Report rulesets, required checks, app installation and secret placement. |
 | `scripts/provision-environment.sh` | Provision the organization's declared app-secret environment. |
-| `scripts/adopt-refresh.sh` | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
-| `scripts/install-latest.sh` | Install the latest stable release selected at run time before refresh. |
-| `scripts/refresh-consumer.sh` | Rebuild the rolling refresh branch from the default branch and open or update its pull request at any measured class. Refuse held render edits before workflow adoption or publication. Preserve workflow edits under the [adoption contract](references/adoption.md#automatic-consumer-refresh). Wait for GitHub to show the published head before arming app-token auto-merge. A head that stays unseen produces an unarmed warning. Confirm that the arm enabled auto-merge, queued or merged the pull request. The merge queue merges it once the required approval, thread resolution and checks pass. The body names the class, classifier cause and path. An unmeasured class stops publication. |
-| `scripts/refresh-reviews.sh` | Handle automatic review findings under the [thread-resolution rules](references/adoption.md#automatic-consumer-refresh). |
-| `scripts/dispatch-refresh.sh` | Signal consumers visible to the catalog app installation. |
+| `refresh/adopt-refresh.sh` in the release checkout | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
+| `scripts/install-latest.sh` | Install the latest stable release for kendex CI and the retained writer template. |
+| `refresh/refresh-consumer.sh` in the release checkout | Rebuild the rolling refresh branch from the default branch and open or update its pull request at any measured class. Run the classifier from the same release checkout. Refuse held render edits before workflow adoption or publication. Preserve workflow edits under the [adoption contract](references/adoption.md#automatic-consumer-refresh). Wait for GitHub to show the published head before arming app-token auto-merge. A head that stays unseen produces an unarmed warning. Confirm that the arm enabled auto-merge, queued or merged the pull request. The merge queue merges it once the required approval, thread resolution and checks pass. The body names the class, classifier cause and path. An unmeasured class stops publication. |
+| `refresh/refresh-reviews.sh` in the release checkout | Handle automatic review findings under the [thread-resolution rules](references/adoption.md#automatic-consumer-refresh). |
+| `refresh/dispatch-refresh.sh` in the catalog checkout | Signal consumers visible to the catalog app installation. |
 
 Reviewer routing for installed packages: [references/vendored-paths.md](references/vendored-paths.md).

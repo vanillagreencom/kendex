@@ -1,6 +1,9 @@
-# Copy verbatim into .github/workflows/ with scripts/adopt-refresh.sh.
-# Schedule and manual runs work in any consumer with the app-secret kendex
-# environment. Opening a pull request needs that repository's app token.
+# Adopted into .github/workflows/ by refresh/adopt-refresh.sh from a kendex release checkout, which checks
+# the kendex environment and its secrets first; copy it verbatim only through
+# that script. The job maps the two app secrets the shared workflow declares;
+# their values come from this repository's kendex environment. The shared
+# workflow runs the refresh from the kendex release the major tag names.
+# Opening a pull request needs that repository's app token.
 # Auto-merge depends on the published head becoming visible in GitHub.
 # review-gate SKILL.md defines the arm outcomes and merge requirements.
 # The instant repository_dispatch signal needs the organization's lanes app
@@ -13,9 +16,6 @@ name: Refresh kendex
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch: {}
-
-permissions:
-  contents: read
 
 jobs:
   # A run held on the kendex environment gate never times out, and it holds
@@ -52,74 +52,13 @@ jobs:
           done
   refresh:
     needs: release
-    if: ${{ !cancelled() && github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    timeout-minutes: 30
-    environment: kendex
-    # Never cancel-in-progress: that would cancel a refresh mid-flight.
+    if: ${{ success() && github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     concurrency:
       group: kendex-refresh
       cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          fetch-depth: 0
-          persist-credentials: false
-      # Resolve the latest release and its installer commit together at run time.
-      - name: Install latest released kendex
-        env:
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          exec .agents/skills/review-gate/scripts/install-latest.sh
-      - name: Preserve default-branch scripts
-        run: |
-          set -euo pipefail
-          git worktree add --detach "$RUNNER_TEMP/refresh-skills" HEAD
-      - name: Mint the repository app token
-        id: token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.FLEET_GH_APP_ID }}
-          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-          permission-administration: read
-          permission-metadata: read
-          permission-actions: read
-          permission-environments: read
-          permission-secrets: read
-          permission-organization-secrets: read
-      - name: Refresh and arm the rolling pull request
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
-        run: |
-          set -euo pipefail
-          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-consumer.sh"
-      - name: Mint the kendex issue token
-        id: issues-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.FLEET_GH_APP_ID }}
-          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
-          owner: vanillagreencom
-          repositories: kendex
-          permission-issues: write
-      # Thread-resolution rules: review-gate references/adoption.md,
-      # Automatic consumer refresh.
-      - name: File rendered-file findings upstream and resolve them
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh"
+    permissions:
+      contents: read
+    uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1
+    secrets:
+      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
+      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}

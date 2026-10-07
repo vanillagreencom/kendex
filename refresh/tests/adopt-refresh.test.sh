@@ -2,13 +2,14 @@
 # Exercise consumer adoption with the real environment validator.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)" || { echo 'adopt-refresh: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "adopt-refresh: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'adopt-refresh: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
-ADOPT='.agents/skills/review-gate/scripts/adopt-refresh.sh'
+ADOPT='refresh/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
 TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
 # Seed a committed, owned writer to make retirement ordering observable.
@@ -240,7 +241,7 @@ fi
 
 # Adoption must consume the environment validator's status, even if the
 # validator still emits the same failure record and provisioning command.
-file_edit "$DIR" "$ADOPT" 1 '^  "\$SCRIPT_DIR/validate-standard.sh" --environment-only$' \
+file_edit "$DIR" "$ADOPT" 1 '^  "\$SCRIPT_DIR/../skills/review-gate/scripts/validate-standard.sh" --environment-only$' \
   's/ --environment-only$/ --environment-only || true/'
 chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
@@ -464,7 +465,7 @@ CONTROLS
 # renames one secret in a copy of the adopter. shared-refresh-workflow.test.sh
 # holds the declared secrets equal to those its steps read.
 caller_names_match() { # ADOPTER
-  python3 - "$1" "$SKILL_DIR/../../.github/workflows/refresh-consumer.yml" <<'NAMES'
+  python3 - "$1" "$REFRESH_DIR/../.github/workflows/refresh-consumer.yml" <<'NAMES'
 import re, sys
 adopter, shared = (open(path).read() for path in sys.argv[1:])
 names = re.search(r"^shared_environment=(\S+)\nshared_secrets='([^']*)'$", adopter, re.M)
@@ -478,10 +479,10 @@ assert [names.group(1)] == environments, (names.group(1), environments)
 assert names.group(2) == ';'.join(secrets), (names.group(2), secrets)
 NAMES
 }
-if caller_names_match "$SKILL_DIR/scripts/adopt-refresh.sh"; then ok 'caller environment and secret names equal the shared workflow declarations'
+if caller_names_match "$REFRESH_DIR/adopt-refresh.sh"; then ok 'caller environment and secret names equal the shared workflow declarations'
 else bad 'caller names differ from the shared workflow'; fi
-sed 's/FLEET_GH_APP_PRIVATE_KEY/FLEET_GH_APP_KEY/' "$SKILL_DIR/scripts/adopt-refresh.sh" >"$TMP/renamed-adopter"
-if ! cmp -s "$SKILL_DIR/scripts/adopt-refresh.sh" "$TMP/renamed-adopter" && ! caller_names_match "$TMP/renamed-adopter" 2>/dev/null; then
+sed 's/FLEET_GH_APP_PRIVATE_KEY/FLEET_GH_APP_KEY/' "$REFRESH_DIR/adopt-refresh.sh" >"$TMP/renamed-adopter"
+if ! cmp -s "$REFRESH_DIR/adopt-refresh.sh" "$TMP/renamed-adopter" && ! caller_names_match "$TMP/renamed-adopter" 2>/dev/null; then
   ok 'control: a renamed caller secret turns the names row red'
 else bad 'caller names control'; fi
 
@@ -511,9 +512,11 @@ then ok 'the rendered caller template adopts with the shared workflow names'
 else bad "rendered caller adoption (rc=$RC)" "$OUT"; fi
 cp "$TMP/caller-inventory" "$DIR/.kendex-generated.json"
 cp "$TMP/caller-workflow" "$DIR/$REFRESH"
-git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$DIR/$ADOPT"
-trust_refresh_transport "$DIR"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+historical_adopt="$DIR/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$historical_adopt"
+chmod +x "$historical_adopt"
+trust_refresh_transport "$DIR" "$historical_adopt"
+run_refresh_command "$DIR" "$historical_adopt"
 if [ "$RC" -ne 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/caller-workflow" && grep -q '^review-gate-error=standard-setting-missing ' <<<"$OUT"; then
   ok 'control: the v1.5.1 adopter refuses the rendered caller template'
 else bad "v1.5.1 adopter control (rc=$RC)" "$OUT"; fi

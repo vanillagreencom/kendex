@@ -712,7 +712,7 @@ jobs:
           failed=""
           # The suites only: the decision-table runner beside them is the
           # other suite jobs'.
-          for t in skills/review-gate/tests/*.test.sh; do
+          for t in skills/review-gate/tests/*.test.sh refresh/tests/*.test.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
