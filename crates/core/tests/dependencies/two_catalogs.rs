@@ -139,7 +139,7 @@ fn a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper() {
         &f.scope,
         &PlanOptions {
             prune_retired: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -185,7 +185,7 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
         &f.scope,
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -305,7 +305,7 @@ fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_t
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -399,7 +399,7 @@ fn a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row() {
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -530,7 +530,7 @@ fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -590,7 +590,7 @@ fn a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed() {
         &f.scope,
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -702,7 +702,7 @@ fn a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed() {
         &f.scope,
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -865,7 +865,7 @@ fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -941,7 +941,7 @@ fn a_companion_is_orphaned_only_by_its_requirers_final_withholding() {
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();

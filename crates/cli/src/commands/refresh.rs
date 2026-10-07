@@ -96,7 +96,7 @@ pub enum Catalog {
 impl Catalog {
     fn plan_options(self) -> PlanOptions {
         match self {
-            Catalog::Current => PlanOptions::default(),
+            Catalog::Current => PlanOptions::current(),
             Catalog::Recorded => PlanOptions::locked(),
         }
     }

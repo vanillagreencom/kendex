@@ -538,7 +538,7 @@ fn debug_of_anything_holding_a_secret_redacts_it() {
     };
     let options = crate::engine::PlanOptions {
         secrets_draft: Some(draft.clone()),
-        ..Default::default()
+        ..crate::engine::PlanOptions::current()
     };
     for shown in [format!("{draft:?}"), format!("{options:?}")] {
         assert!(!shown.contains(secret), "{shown}");

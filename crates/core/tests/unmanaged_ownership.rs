@@ -82,7 +82,7 @@ fn deploy_row(rows: &[DriftRow]) -> &DriftRow {
 #[allow(clippy::unwrap_used)]
 fn a_copy_install_never_owns_the_shared_tree() {
     let w = with_method("copy");
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
     // The second tool reads the shared tree, and somebody's files are there.
@@ -116,7 +116,7 @@ fn a_copy_install_never_owns_the_shared_tree() {
 
     let discard = PlanOptions {
         overwrite_edited: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -138,7 +138,7 @@ fn a_copy_install_never_owns_the_shared_tree() {
 #[allow(clippy::unwrap_used)]
 fn changing_how_a_skill_installs_never_claims_the_new_position() {
     let w = with_method("copy");
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
     declare_for(&w, "[\"claude\"]");
@@ -159,7 +159,7 @@ fn changing_how_a_skill_installs_never_claims_the_new_position() {
 
     let discard = PlanOptions {
         overwrite_edited: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -233,7 +233,7 @@ fn a_switched_off_install_is_still_ours_to_update() {
         root: project.clone(),
     };
     let apply_now = || {
-        let report = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+        let report = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
         apply::execute(&env, &report.plan).unwrap();
     };
 
@@ -279,7 +279,7 @@ fn deploy_row_named<'a>(rows: &'a [DriftRow], name: &str) -> &'a DriftRow {
 #[allow(clippy::unwrap_used)]
 fn what_kendex_already_looks_after_is_never_adopted() {
     let w = with_method("copy");
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
     let installed = w.home.join("app/.claude/skills/deploy/SKILL.md");
     assert!(installed.is_file(), "the fixture never installed anything");
@@ -339,7 +339,7 @@ fn the_take_over_shows_the_path_it_moves() {
     let scope = Scope::Project { root: project };
     let taking_over = PlanOptions {
         replace_unmanaged: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_apply(&env, &scope, &taking_over).unwrap();
     let moves: Vec<String> = report
@@ -364,7 +364,7 @@ fn the_take_over_shows_the_path_it_moves() {
 fn a_link_pointing_at_an_installation_is_never_captured() {
     let w = with_method("copy");
     declare_for(&w, "[\"claude\", \"codex\"]");
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
     // A second declaration whose position is a link into the first's copy.

@@ -267,3 +267,65 @@ fn overlapping_sets_added_to_different_tools_share_their_member() {
         assert!(lock.entries.contains_key(&key), "{key} is not installed");
     }
 }
+
+/// The manifest's explicit source edits apply when an add names a package:
+/// a new revision supplies both followers, and a new repository supplies
+/// the added package without overwriting an installation it does not offer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_reads_an_explicitly_redeclared_source() {
+    for replacement_repo in [false, true] {
+        let w = world();
+        write_skill(&w.upstream, "a", "", "a version one.");
+        let first = commit(&w.upstream, "installed");
+        declare(&w, "[skills.a]\nsource = \"cat\"\n");
+        sync_and_apply(&w);
+
+        let (repo, revision) = if replacement_repo {
+            let repo = "owner/replacement";
+            let upstream = w.home.join("git").join(repo);
+            std::fs::create_dir_all(&upstream).unwrap();
+            super::git(&upstream, &["init", "--quiet", "-b", "main"]);
+            write_skill(&upstream, "b", "", "b version two.");
+            (repo, commit(&upstream, "replacement"))
+        } else {
+            write_skill(&w.upstream, "a", "", "a version two.");
+            write_skill(&w.upstream, "b", "", "b version two.");
+            (super::REPO, commit(&w.upstream, "later"))
+        };
+        let source_rev = if replacement_repo {
+            String::new()
+        } else {
+            format!("rev = \"{revision}\"\n")
+        };
+        super::write_manifest(
+            &w,
+            &format!(
+                "schema = 6\n[sources.cat]\nrepo = \"{repo}\"\n{source_rev}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n[skills.a]\nsource = \"cat\"\n",
+            ),
+        );
+        fetch_mirrors(&w);
+        let report = add_skills(&w, &["b"]);
+        apply::execute(&w.env, &report.plan).unwrap();
+
+        assert!(installed_body(&w, "b").contains("b version two."));
+        assert_eq!(
+            locked_commit(&w, "b"),
+            revision,
+            "replacement_repo={replacement_repo}"
+        );
+        let lock = super::load_lock(&super::lock_path(&w.env, &w.scope)).unwrap();
+        assert_eq!(lock.sources["cat"].repo, repo);
+        assert_eq!(lock.sources["cat"].commit, revision);
+        if replacement_repo {
+            assert!(installed_body(&w, "a").contains("a version one."));
+            assert_eq!(locked_commit(&w, "a"), first);
+        } else {
+            assert!(
+                installed_body(&w, "a").contains("a version two."),
+                "replacement_repo={replacement_repo}"
+            );
+            assert_eq!(locked_commit(&w, "a"), revision);
+        }
+    }
+}

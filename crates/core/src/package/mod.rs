@@ -177,7 +177,7 @@ pub fn set_rev(
         kind,
         name,
         rev,
-        &crate::engine::PlanOptions::default(),
+        &crate::engine::PlanOptions::locked(),
     )
 }
 

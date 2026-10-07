@@ -725,7 +725,7 @@ fn judge_switches() -> [(&'static str, Switch); 6] {
                 &f.scope,
                 &PlanOptions {
                     remove_orphans: true,
-                    ..PlanOptions::default()
+                    ..PlanOptions::current()
                 },
             )
             .unwrap()
@@ -737,7 +737,7 @@ fn judge_switches() -> [(&'static str, Switch); 6] {
                 &f.scope,
                 &PlanOptions {
                     sweep_unneeded: true,
-                    ..PlanOptions::default()
+                    ..PlanOptions::current()
                 },
             )
             .unwrap()
@@ -860,7 +860,7 @@ fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
             &PlanOptions {
                 remove_orphans: true,
                 overwrite_edited: discard,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -967,7 +967,7 @@ fn follow_remedy(f: &Fixture, name: &str, detail: &str) {
             &PlanOptions {
                 remove_orphans: true,
                 overwrite_edited: discard_edits,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap(),
@@ -1112,7 +1112,7 @@ fn an_edited_orphans_remedy_takes_only_what_its_row_names() {
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -1214,7 +1214,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
             true,
             PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
             true,
             HarnessId::Codex,
@@ -1233,7 +1233,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
             true,
             PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
             true,
             HarnessId::Codex,
@@ -1254,7 +1254,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
                 remove_orphans: true,
                 removal_filter: Some(vec![(None, "unrelated".to_owned())]),
                 sweep_unneeded: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
             false,
             HarnessId::Codex,
@@ -1268,7 +1268,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
             false,
             PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
             false,
             HarnessId::Claude,

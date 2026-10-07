@@ -268,7 +268,7 @@ fn edit_facts(
         scope,
         manifest,
         lock,
-        &crate::engine::PlanOptions::default(),
+        &crate::engine::PlanOptions::current(),
     ) {
         Ok(report) => {
             fork_edited.extend(

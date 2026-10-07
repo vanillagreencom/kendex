@@ -724,3 +724,159 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
         }
     }
 }
+
+/// The collection pin and template customization pass must retain every
+/// installation from the sibling catalog fetched past the lock.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn collection_and_template_writers_hold_a_moved_sibling_catalog() {
+    for collection in [true, false] {
+        let world = world();
+        move_the_catalog(&world);
+        let before = record(&world);
+        let sibling_path = world.project.join(".claude/skills/second/SKILL.md");
+        let bytes = fs::read(&sibling_path).unwrap();
+        if collection {
+            let pinned = super::collection_cli::upstream(&world.home);
+            let env = Env::host_rooted(&world.home).with_var(
+                "KENDEX_GIT_BASE",
+                &format!("file://{}/git", world.home.display()),
+            );
+            kendex_core::remote::sync(&env, "acme/kit", None).unwrap();
+            let manifest = world.project.join("kendex.toml");
+            let declared = fs::read_to_string(&manifest).unwrap();
+            write(
+                &manifest,
+                &format!("{declared}\n[sources.kit]\nrepo = \"acme/kit\"\n"),
+            );
+            let link = format!(
+                "https://kendex.ai/c/{}",
+                super::collection_cli::COLLECTION_ID
+            );
+            let output = super::collection_cli::kendex(
+                &world.home,
+                &world.project,
+                &super::collection_cli::resolver(&pinned),
+                &["add", &link, "-y", "--leave"],
+            );
+            assert!(output.status.success(), "{}", said(&output));
+            let declared = fs::read_to_string(&manifest).unwrap();
+            let declared: toml::Value = toml::from_str(&declared).unwrap();
+            assert_eq!(
+                declared["skills"]["gh"]["rev"].as_str(),
+                Some(pinned.as_str())
+            );
+            assert!(world.project.join(".claude/skills/gh/SKILL.md").is_file());
+        } else {
+            let donor = world.home.join("donor");
+            write(
+                &donor.join(".kendex-local/skills/template-item/SKILL.md"),
+                "---\nname: template-item\ndescription: template item\n---\nTemplate bytes.\n",
+            );
+            write(
+                &donor.join("kendex.toml"),
+                "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.template-item]\nsource = \"local\"\n[skill-instructions]\ntemplate-item = \"Carried instruction.\"\n",
+            );
+            for args in [
+                vec!["apply", "--scope", "project", "-y", "--leave"],
+                vec![
+                    "template",
+                    "create",
+                    "Writer",
+                    "--from-project",
+                    donor.to_str().unwrap(),
+                    "--include-local",
+                    "--include-customizations",
+                    "-y",
+                ],
+            ] {
+                let output = kendex(&world.home, &donor, &args);
+                assert!(output.status.success(), "{}", said(&output));
+            }
+            let output = kendex(
+                &world.home,
+                &world.project,
+                &[
+                    "template",
+                    "install",
+                    "Writer",
+                    "--project",
+                    world.project.to_str().unwrap(),
+                    "-y",
+                ],
+            );
+            assert!(output.status.success(), "{}", said(&output));
+            let installed =
+                fs::read_to_string(world.project.join(".claude/skills/template-item/SKILL.md"))
+                    .unwrap();
+            assert!(installed.contains("Template bytes."));
+            assert!(installed.contains("Carried instruction."));
+        }
+        assert_eq!(
+            fs::read(&sibling_path).unwrap(),
+            bytes,
+            "collection={collection}"
+        );
+        let after = record(&world);
+        for table in ["entries", "sources", "bundles"] {
+            for (key, value) in before[table].as_object().unwrap() {
+                assert_eq!(
+                    &after[table][key], value,
+                    "collection={collection}: {table}.{key}"
+                );
+            }
+        }
+    }
+}
+
+/// Fork and rename write a local copy while retaining every sibling catalog
+/// installation, including when the sibling mirror has fetched a later tip.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_and_rename_hold_a_moved_sibling_catalog() {
+    for rename in [false, true] {
+        let world = world();
+        if rename {
+            let output = kendex(
+                &world.home,
+                &world.project,
+                &["fork", "agent", "review", "--leave"],
+            );
+            assert!(output.status.success(), "{}", said(&output));
+            commit(&world.project, "local copy before rename");
+        }
+        move_the_catalog(&world);
+        let before = record(&world);
+        let sibling = world.project.join(".claude/skills/second/SKILL.md");
+        let bytes = fs::read(&sibling).unwrap();
+        let name = if rename { "renamed" } else { "review" };
+        let args = if rename {
+            vec!["fork", "agent", "review", "--rename", name, "--leave"]
+        } else {
+            vec!["fork", "agent", "review", "--leave"]
+        };
+        let output = kendex(&world.home, &world.project, &args);
+        assert!(output.status.success(), "{}", said(&output));
+        let installed =
+            fs::read_to_string(world.project.join(format!(".claude/agents/{name}.md"))).unwrap();
+        assert!(installed.contains("Review it."));
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(world.project.join("kendex.toml")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["agents"][name]["source"].as_str(), Some("local"));
+        if rename {
+            assert!(manifest["agents"].get("review").is_none());
+            assert!(!world.project.join(".claude/agents/review.md").exists());
+        }
+        assert_eq!(fs::read(&sibling).unwrap(), bytes, "rename={rename}");
+        let after = record(&world);
+        for table in ["entries", "sources", "bundles"] {
+            for (key, value) in before[table].as_object().unwrap() {
+                if table == "entries" && value["kind"] == "agent" && value["name"] == "review" {
+                    continue;
+                }
+                assert_eq!(&after[table][key], value, "rename={rename}: {table}.{key}");
+            }
+        }
+    }
+}

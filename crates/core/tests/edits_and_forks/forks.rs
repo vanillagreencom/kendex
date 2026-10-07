@@ -759,7 +759,7 @@ fn a_sweep_of_an_absorbed_fork_leaves_its_content_in_the_source() {
         &w.scope,
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

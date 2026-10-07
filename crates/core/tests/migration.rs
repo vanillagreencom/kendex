@@ -134,7 +134,7 @@ fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
     let planted = "2020-01-01T00:00:00Z";
     for (label, half_present) in [("the half present", true), ("the half gone", false)] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
-        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         apply::execute(&f.env, &install.plan).unwrap();
         let lock_path = f.scope_lock();
         let mut lock = load_lock(&lock_path).unwrap();
@@ -151,7 +151,7 @@ fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
         }
 
         let before = kendex_core::clock::timestamp();
-        let again = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let again = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         apply::execute(&f.env, &again.plan).unwrap();
         let after = kendex_core::clock::timestamp();
 
@@ -287,7 +287,7 @@ fn matching_renders_are_recorded_without_being_rewritten() {
             .run()
             .unwrap();
         assert!(initialized.status.success());
-        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         apply::execute(&f.env, &install.plan).unwrap();
         let rendered = f.project().join(".agents/skills/gh/SKILL.md");
         let before = fs::read(&rendered).unwrap();
@@ -336,7 +336,7 @@ fn matching_renders_are_recorded_without_being_rewritten() {
 #[allow(clippy::unwrap_used)]
 fn recording_existing_refuses_a_render_that_does_not_match() {
     let f = fixture(&MANIFEST_SCHEMA.to_string());
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
     let rendered = f.project().join(".agents/skills/gh/SKILL.md");
     fs::write(&rendered, "person's edit\n").unwrap();
@@ -366,7 +366,7 @@ fn recovery_accepts_clean_crlf_but_rechecks_exact_bytes() {
         git(f.project(), &["config", "user.email", "test@example.com"]);
         git(f.project(), &["config", "user.name", "Test"]);
 
-        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         apply::execute(&f.env, &install.plan).unwrap();
         let rendered = f.project().join(".agents/skills/gh/SKILL.md");
         let lf = fs::read(&rendered).unwrap();
@@ -405,7 +405,7 @@ fn recovery_requires_the_whole_declared_set() {
         "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"claude\"\n",
     ] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
-        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         apply::execute(&f.env, &install.plan).unwrap();
         fs::remove_file(f.scope_lock()).unwrap();
         fs::write(&f.manifest_path, format!("{}{extra}", f.original)).unwrap();
@@ -421,7 +421,7 @@ fn recovery_requires_the_whole_declared_set() {
 #[test]
 fn recovery_rechecks_render_bytes_before_recording() {
     let f = fixture(&MANIFEST_SCHEMA.to_string());
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
     fs::remove_file(f.scope_lock()).unwrap();
     let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
@@ -453,7 +453,7 @@ fn recovery_accepts_informational_dependency_notes() {
     .unwrap();
     let adapter = kendex_core::harness::adapter(kendex_core::model::HarnessId::Codex);
     fs::create_dir_all(adapter.default_global_root(&f.env)).unwrap();
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     assert!(
         install
             .notes
@@ -476,7 +476,7 @@ fn recovery_refuses_an_unresolved_required_dependency() {
         "---\nname: gh\ndescription: fixture\ndependencies:\n  required: [missing]\n---\nBody.\n",
     )
     .unwrap();
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
     assert!(f.project().join(".agents/skills/gh/SKILL.md").is_file());
     fs::remove_file(f.scope_lock()).unwrap();

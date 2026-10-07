@@ -123,7 +123,7 @@ pub(crate) fn adoption_world(template: &str) -> World {
         root: project.clone(),
     };
     let plan =
-        kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::default())
+        kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::current())
             .unwrap();
     kendex_core::apply::execute(&env, &plan.plan).unwrap();
     World {

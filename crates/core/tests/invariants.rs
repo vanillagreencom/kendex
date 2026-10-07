@@ -152,7 +152,7 @@ fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
         &kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap(),
         &kendex_core::engine::PlanOptions {
             overwrite_edited: true,
-            ..Default::default()
+            ..kendex_core::engine::PlanOptions::current()
         },
     )
     .unwrap();

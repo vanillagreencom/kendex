@@ -214,7 +214,7 @@ fn write_item(f: &Fixture, kind: ItemKind, name: &str) {
 fn refresh_options() -> PlanOptions {
     PlanOptions {
         sweep_unneeded: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     }
 }
 
@@ -433,7 +433,7 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         // Apply, which removes orphans, keeps it too.
         let applied = PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         };
         let applying = plan_apply(&f.env, &f.scope, &applied).unwrap();
         for planned in [&report, &applying] {

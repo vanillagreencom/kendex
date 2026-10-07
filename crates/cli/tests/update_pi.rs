@@ -597,7 +597,7 @@ fn orphan_cleanup_takes_the_pi_package_its_registration_and_its_record_together(
     };
     let options = kendex_core::engine::PlanOptions {
         remove_orphans: true,
-        ..Default::default()
+        ..kendex_core::engine::PlanOptions::current()
     };
     let report = kendex_core::engine::plan_apply(&env, &scope, &options).unwrap();
     kendex_core::apply::execute(&env, &report.plan).unwrap();

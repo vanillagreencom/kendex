@@ -1,6 +1,6 @@
 use clap::Args;
 
-use kendex_core::engine::audit;
+use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
@@ -55,23 +55,15 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     // A rename leaves the old name's artifacts and lock entries behind as
     // orphans, so its follow-up removes them by name — otherwise the tool
     // ends up with both names installed.
-    let report = match &args.rename {
-        Some(_) => kendex_core::engine::plan_scope(
-            env,
-            &scope,
-            &kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
-                env, &scope,
-            ))?
-            .ok_or("this place lists nothing to install")?,
-            &kendex_core::lock::load(&kendex_core::lock::lock_path(env, &scope))?,
-            &kendex_core::engine::PlanOptions {
-                remove_orphans: true,
-                removal_filter: Some(vec![(None, args.name.clone())]),
-                ..Default::default()
-            },
-        )?,
-        None => audit(env, &scope)?,
+    let options = PlanOptions {
+        remove_orphans: args.rename.is_some(),
+        removal_filter: args
+            .rename
+            .as_ref()
+            .map(|_| vec![(None, args.name.clone())]),
+        ..PlanOptions::locked()
     };
+    let report = plan_apply(env, &scope, &options)?;
     print_safety(&report.safety, Listing::Every);
     apply_report(env, &report)?;
     match args.rename {

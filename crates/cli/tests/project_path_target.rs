@@ -112,7 +112,7 @@ fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
                 root: project.clone(),
             },
         ] {
-            let report = engine::plan_apply(&env, &scope, &engine::PlanOptions::default()).unwrap();
+            let report = engine::plan_apply(&env, &scope, &engine::PlanOptions::current()).unwrap();
             apply::execute(&env, &report.plan).unwrap();
         }
         let global_append = kendex_core::pi_ext::append_system_path(

@@ -50,7 +50,7 @@ fn adopted_workflow_equality_uses_declared_templates_without_writing_yaml() {
             serde_json::from_str(&fs::read_to_string(&inventory).unwrap()).unwrap();
         entries.push(serde_json::json!({"path":WORKFLOW,"template":TEMPLATE,"templateHash":HASH}));
         fs::write(&inventory, serde_json::to_string(&entries).unwrap()).unwrap();
-        let plan = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+        let plan = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
         apply::execute(&env, &plan.plan).unwrap();
         let recorded: Vec<serde_json::Value> =
             serde_json::from_slice(&fs::read(&inventory).unwrap()).unwrap();
@@ -83,7 +83,7 @@ fn adopted_workflow_equality_uses_declared_templates_without_writing_yaml() {
             _ => unreachable!(),
         }
         let before = fs::read(project.join(WORKFLOW)).ok();
-        let plan = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+        let plan = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
         let owned = plan.generated.owned(project);
         assert!(
             !owned.contains(&project.join(WORKFLOW)),

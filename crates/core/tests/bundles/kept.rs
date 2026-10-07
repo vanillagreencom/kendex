@@ -48,7 +48,7 @@ fn kept_rows(extra_skills: &str) -> [(&'static str, String); 2] {
 fn refresh(f: &Fixture) {
     let options = PlanOptions {
         sweep_unneeded: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_apply(&f.env, &f.scope, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -109,7 +109,7 @@ fn a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads() {
         catalog_bundles(&f.source, &kept);
         refresh(&f);
 
-        let report = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        let report = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         let rows: Vec<_> = report
             .drift
             .iter()
@@ -184,10 +184,10 @@ fn a_copy_a_retired_set_keeps_is_held_to_its_record() {
         }
 
         for options in [
-            PlanOptions::default(),
+            PlanOptions::current(),
             PlanOptions {
                 sweep_unneeded: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         ] {
             let report = plan_apply(&f.env, &f.scope, &options).unwrap();

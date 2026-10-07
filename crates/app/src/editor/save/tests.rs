@@ -119,7 +119,7 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
     let lock = load_lock(&lock_path(&env, &scope)).unwrap();
     let options = PlanOptions {
         manifest_base: Some(base),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
     assert!(
@@ -175,7 +175,7 @@ fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
     let lock = load_lock(&lock_path(&env, &scope)).unwrap();
     let options = PlanOptions {
         manifest_base: Some(base),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
     assert!(
@@ -751,7 +751,7 @@ fn a_refusal_after_the_uninstaller_ran_says_what_it_ran() {
         &lock,
         &PlanOptions {
             manifest_base: Some(base),
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

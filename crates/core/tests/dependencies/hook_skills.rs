@@ -419,7 +419,7 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
                 &f.scope,
                 &PlanOptions {
                     sweep_unneeded: true,
-                    ..PlanOptions::default()
+                    ..PlanOptions::current()
                 },
             )
             .unwrap();
@@ -566,7 +566,7 @@ fn a_same_named_hook_does_not_undo_a_skill_removal_when_its_catalog_returns() {
             &f.scope,
             &PlanOptions {
                 sweep_unneeded: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();

@@ -85,7 +85,7 @@ pub(crate) fn arrive(f: &Fixture, skills: &[&str]) -> kendex_core::engine::Engin
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let options = kendex_core::engine::PlanOptions {
         arriving_skills: skills.iter().map(|name| (*name).to_owned()).collect(),
-        ..kendex_core::engine::PlanOptions::default()
+        ..kendex_core::engine::PlanOptions::current()
     };
     let report =
         kendex_core::engine::plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();

@@ -160,7 +160,7 @@ fn a_plugin_refused_this_pass_keeps_its_record_under_refreshs_sweep() {
         &Scope::Global,
         &kendex_core::engine::PlanOptions {
             sweep_unneeded: true,
-            ..kendex_core::engine::PlanOptions::default()
+            ..kendex_core::engine::PlanOptions::current()
         },
     )
     .unwrap();

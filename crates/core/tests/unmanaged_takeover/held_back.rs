@@ -18,7 +18,7 @@ use super::{World, foreign_install, take_over, world};
 fn named(kind: ItemKind, name: &str) -> PlanOptions {
     PlanOptions {
         replace_unmanaged_names: Some(vec![(kind, name.into())]),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     }
 }
 

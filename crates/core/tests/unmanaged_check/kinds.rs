@@ -79,7 +79,7 @@ fn the_line_names_the_tool_it_is_about() {
 #[allow(clippy::unwrap_used)]
 fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
     let w = world();
-    let first = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let first = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &first.plan).unwrap();
 
     declare(
@@ -93,7 +93,7 @@ fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
         "the tool that came before",
     );
 
-    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     assert!(
         planned.drift.iter().any(
             |row| row.name == "deploy" && row.state == DriftState::Unmanaged

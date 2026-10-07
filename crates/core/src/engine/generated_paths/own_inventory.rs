@@ -227,7 +227,7 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
     let scope = Scope::Project {
         root: root.to_path_buf(),
     };
-    let report = match plan_apply(env, &scope, &PlanOptions::default()) {
+    let report = match plan_apply(env, &scope, &PlanOptions::current()) {
         Ok(report) => report,
         Err(error) => return unplanned(error.to_string()),
     };

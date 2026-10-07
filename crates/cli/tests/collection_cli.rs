@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[allow(clippy::expect_used)]
-fn kendex(home: &Path, cwd: &Path, api: &str, args: &[&str]) -> Output {
+pub(crate) fn kendex(home: &Path, cwd: &Path, api: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
@@ -62,7 +62,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// A git upstream at `<home>/git/acme/kit` holding one skill, answering
 /// with the commit the collection pins.
 #[allow(clippy::unwrap_used)]
-fn upstream(home: &Path) -> String {
+pub(crate) fn upstream(home: &Path) -> String {
     let dir = home.join("git/acme/kit");
     fs::create_dir_all(dir.join("skills/gh")).unwrap();
     fs::write(
@@ -76,12 +76,12 @@ fn upstream(home: &Path) -> String {
     git(&dir, &["rev-parse", "HEAD"])
 }
 
-const COLLECTION_ID: &str = "aB3-_dEf12345678";
+pub(crate) const COLLECTION_ID: &str = "aB3-_dEf12345678";
 
 /// A resolver that answers one request with the collection and then goes
 /// away: the base URL the binary reads as `KENDEX_API`.
 #[allow(clippy::unwrap_used)]
-fn resolver(commit: &str) -> String {
+pub(crate) fn resolver(commit: &str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let body = format!(

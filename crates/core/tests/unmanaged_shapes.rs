@@ -84,7 +84,7 @@ fn shared(body: &str) -> World {
 fn take_over() -> PlanOptions {
     PlanOptions {
         replace_unmanaged: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     }
 }
 
@@ -273,7 +273,7 @@ fn a_tree_write_says_which_tool_it_is_for() {
     fs::create_dir_all(&blocked).unwrap();
     fs::write(blocked.join("SKILL.md"), BEFORE).unwrap();
 
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     let written: Vec<String> = report
         .plan
         .ops

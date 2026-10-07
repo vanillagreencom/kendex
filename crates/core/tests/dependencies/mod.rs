@@ -203,7 +203,7 @@ fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -216,7 +216,7 @@ fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

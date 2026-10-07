@@ -736,7 +736,7 @@ fn fresh_lock(
 /// refused at the door, so this answers for it with the refusal rather
 /// than with an empty report.
 pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
-    plan_apply(env, scope, &PlanOptions::default())
+    plan_apply(env, scope, &PlanOptions::current())
 }
 
 /// Plan what disk needs to match declaration, from the manifest as it sits

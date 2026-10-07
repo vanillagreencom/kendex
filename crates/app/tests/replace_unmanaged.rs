@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 
@@ -305,7 +305,7 @@ fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
     let report = kendex_core::engine::plan_apply(
         &f.env,
         &f.scope,
-        &kendex_core::engine::PlanOptions::default(),
+        &kendex_core::engine::PlanOptions::current(),
     )
     .unwrap();
     kendex_core::apply::execute(&f.env, &report.plan).unwrap();
@@ -348,4 +348,103 @@ fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
         "the page cannot see it: {:?}",
         after.exits
     );
+}
+
+/// Apply and Replace read the sibling catalog at the installed revision,
+/// even when a background fetch has brought its mirror current.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn apply_and_replace_hold_a_moved_sibling_catalog() {
+    for replace in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = home.join("project");
+        let catalog = home.join("sibling");
+        let subject = home.join("subject");
+        for (root, name, body) in [
+            (&catalog, "sibling", "Installed sibling."),
+            (&subject, "deploy", "Requested package."),
+        ] {
+            fs::create_dir_all(root.join(format!("skills/{name}"))).unwrap();
+            fs::write(root.join("kendex.toml"), "[catalog]\n").unwrap();
+            fs::write(
+                root.join(format!("skills/{name}/SKILL.md")),
+                format!("---\nname: {name}\ndescription: {name}\n---\n{body}\n"),
+            )
+            .unwrap();
+        }
+        let git = |args: &[&str]| {
+            let out = kendex_core::process::Hardened::git(args, Some(&catalog))
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
+                .run()
+                .unwrap();
+            assert!(out.status.success());
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        git(&["-c", "commit.gpgsign=false", "commit", "-qm", "installed"]);
+        fs::create_dir_all(&project).unwrap();
+        let declared = format!(
+            "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.sibling]\nrepo = \"file://{}\"\n[sources.subject]\n{}\n[skills.sibling]\nsource = \"sibling\"\n",
+            catalog.display(),
+            source_path(&subject),
+        );
+        fs::write(project.join("kendex.toml"), &declared).unwrap();
+        let env = Env::fake(&home, FakeOs::Linux);
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let repo = format!("file://{}", catalog.display());
+        kendex_core::remote::sync(&env, &repo, None).unwrap();
+        let install = kendex_core::engine::plan_apply(
+            &env,
+            &scope,
+            &kendex_core::engine::PlanOptions::current(),
+        )
+        .unwrap();
+        kendex_core::apply::execute(&env, &install.plan).unwrap();
+        let lock = || -> serde_json::Value {
+            serde_json::from_slice(&fs::read(project.join(".kendex-lock.json")).unwrap()).unwrap()
+        };
+        let before = lock();
+        let rendered = project.join(".claude/skills/sibling/SKILL.md");
+        let bytes = fs::read(&rendered).unwrap();
+        let upstream = catalog.join("skills/sibling/SKILL.md");
+        let old = fs::read_to_string(&upstream).unwrap();
+        fs::write(&upstream, format!("{old}Later catalog bytes.\n")).unwrap();
+        git(&["add", "-A"]);
+        git(&["-c", "commit.gpgsign=false", "commit", "-qm", "later"]);
+        kendex_core::remote::sync(&env, &repo, None).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!("{declared}\n[skills.deploy]\nsource = \"subject\"\n"),
+        )
+        .unwrap();
+        if replace {
+            let path = project.join(".claude/skills/deploy/SKILL.md");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "Unmanaged package.").unwrap();
+            replace_unmanaged(&env, &scope, ItemKind::Skill, "deploy".into()).unwrap();
+        } else {
+            kendex_app::audit::apply_scope(&env, &scope, false).unwrap();
+        }
+        assert!(
+            fs::read_to_string(project.join(".claude/skills/deploy/SKILL.md"))
+                .unwrap()
+                .contains("Requested package.")
+        );
+        assert_eq!(fs::read(&rendered).unwrap(), bytes, "replace={replace}");
+        let after = lock();
+        assert_eq!(
+            after["entries"]["skill:sibling:claude"], before["entries"]["skill:sibling:claude"],
+            "replace={replace}"
+        );
+        assert_eq!(
+            after["sources"]["sibling"], before["sources"]["sibling"],
+            "replace={replace}"
+        );
+    }
 }

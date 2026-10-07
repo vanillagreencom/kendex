@@ -137,7 +137,7 @@ fn save(f: &Fixture, edits: Vec<SettingsEdit>, base: Base) -> Result<(), CoreErr
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let options = PlanOptions {
         settings_draft: Some(SettingsDraft { edits, base }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
     apply::execute(&f.env, &report.plan)?;
@@ -164,7 +164,7 @@ fn install(f: &Fixture) {
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let options = PlanOptions {
         arriving_skills: manifest.skills.keys().cloned().collect(),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -274,7 +274,7 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
             edits: vec![set("DEPTH", "7")],
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     let writes: Vec<String> = report
@@ -334,7 +334,7 @@ fn a_manifest_and_a_settings_edit_land_as_one_transaction() {
             edits: vec![set("REVIEWERS", "arch")],
             base: base_now(&f),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &edited, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -675,7 +675,7 @@ fn an_arrival_over_an_assignment_no_script_reads_still_names_the_key() {
             kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
         let options = PlanOptions {
             arriving_skills: manifest.skills.keys().cloned().collect(),
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         };
         let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
 

@@ -100,7 +100,7 @@ fn deploy_row(rows: &[DriftRow]) -> &DriftRow {
 fn take_over() -> PlanOptions {
     PlanOptions {
         replace_unmanaged: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     }
 }
 

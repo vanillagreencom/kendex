@@ -110,7 +110,7 @@ fn apply_now(f: &Fixture) -> EngineReport {
 fn take_over(f: &Fixture) -> EngineReport {
     let options = PlanOptions {
         replace_unmanaged: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     plan_apply(&f.env, &f.scope, &options).unwrap()
 }
@@ -1033,7 +1033,7 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
         let dropping = || {
             let options = PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             };
             plan_apply(&f.env, &f.scope, &options).unwrap()
         };

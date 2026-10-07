@@ -163,7 +163,7 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
         &f.scope,
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -214,7 +214,7 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
         declare(&f, "\"codex\"");
         let mut options = PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         };
         let report = plan_apply(&f.env, &f.scope, &options).unwrap();
         let conflicted = report

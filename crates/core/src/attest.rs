@@ -186,7 +186,7 @@ impl Reading {
     /// applied: verify only reads the plan.
     pub fn plan_options(self) -> crate::engine::PlanOptions {
         let options = match self {
-            Reading::Current => crate::engine::PlanOptions::default(),
+            Reading::Current => crate::engine::PlanOptions::current(),
             Reading::Recorded => crate::engine::PlanOptions::at_record(),
         };
         crate::engine::PlanOptions {

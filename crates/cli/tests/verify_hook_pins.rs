@@ -310,7 +310,7 @@ fn check(case: &Case) {
     );
     let judged = PlanOptions {
         judge_pins: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = kendex_core::engine::plan_apply(&env, &scope, &judged).unwrap();
     let unjudged = kendex_core::engine::audit(&env, &scope).unwrap();

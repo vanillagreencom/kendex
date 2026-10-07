@@ -58,7 +58,7 @@ fn updating_one_follower_leaves_its_siblings_at_their_commits() {
         &w.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

@@ -175,10 +175,9 @@ pub fn audit_all() -> Result<Vec<AuditView>, String> {
     Ok(scopes.iter().map(|scope| view(&env, scope)).collect())
 }
 
-/// The apply path plans through the same loader the audit view used, so
-/// the listed plan is what executes, and a manifest the view refused is
-/// refused here too. (Orphan removal is the one opt-in extra; the dialog
-/// lists each left-behind item beside its checkbox.)
+/// Apply uses the audit view's manifest loader and retains recorded catalog
+/// revisions. A manifest the view refused is refused here too. The dialog
+/// lists each orphan beside its removal checkbox.
 pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<AuditView, String> {
     // A manifest that vanished since the preview must be said out loud,
     // not answered with a silent empty apply.
@@ -190,7 +189,7 @@ pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<Aud
     let options = PlanOptions {
         remove_orphans,
         removal_filter: None,
-        ..PlanOptions::default()
+        ..PlanOptions::locked()
     };
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
     settle_report(env, scope, &report)
@@ -246,7 +245,7 @@ pub fn replace_unmanaged(
         scope,
         &engine::PlanOptions {
             replace_unmanaged_names: Some(vec![(kind, name)]),
-            ..Default::default()
+            ..PlanOptions::locked()
         },
     )
     .map_err(|e| e.to_string())?;

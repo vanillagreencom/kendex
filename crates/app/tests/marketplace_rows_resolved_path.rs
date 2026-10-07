@@ -59,7 +59,7 @@ fn installed_project(env: &Env, home: &Path, name: &str) -> Scope {
     )
     .unwrap();
     let report =
-        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::default())
+        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::current())
             .unwrap();
     kendex_core::apply::execute(env, &report.plan).unwrap();
     scope

@@ -42,7 +42,7 @@ fn a_member_removed_while_the_catalog_is_offline_stays_removed() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

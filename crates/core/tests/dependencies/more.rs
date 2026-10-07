@@ -31,7 +31,7 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -51,7 +51,7 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -79,7 +79,7 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
         &PlanOptions {
             remove_orphans: true,
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -158,7 +158,7 @@ fn refresh_previews_what_upstream_added_and_took_away() {
             &f.scope,
             &PlanOptions {
                 sweep_unneeded: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap()
@@ -177,7 +177,7 @@ fn refresh_previews_what_upstream_added_and_took_away() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -193,7 +193,7 @@ fn refresh_previews_what_upstream_added_and_took_away() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -239,7 +239,7 @@ fn a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -275,7 +275,7 @@ fn a_removal_is_written_down_with_the_record_deleted() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -382,7 +382,7 @@ fn an_unreadable_catalog_never_sweeps_a_dependency() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

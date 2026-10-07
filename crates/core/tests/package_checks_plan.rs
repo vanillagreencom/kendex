@@ -130,7 +130,7 @@ fn the_preview_lists_every_position_the_install_writes_and_no_other_tool() {
         .flat_map(|planned| planned.op.touched())
         .collect();
     apply::execute(&w.env, &install).unwrap();
-    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     written.extend(
         render
             .plan
@@ -280,9 +280,9 @@ fn a_preview_at_a_moved_project_refuses() {
 fn install(w: &World) -> engine::EngineReport {
     let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &plan).unwrap();
-    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     apply::execute(&w.env, &render.plan).unwrap();
-    engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap()
+    engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap()
 }
 
 /// The position one tool's registration occupies, taken from the preview
@@ -321,9 +321,9 @@ fn every_target_registered_reads_each_tool_and_not_just_one() {
         &w,
         "[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\n",
     );
-    let other = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let other = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     apply::execute(&w.env, &other.plan).unwrap();
-    let quiet = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let quiet = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     assert!(
         kendex_core::lock::lock_path(&w.env, &w.scope).exists(),
         "the fixture needs an install record that names no target of the check"
@@ -344,7 +344,7 @@ fn every_target_registered_reads_each_tool_and_not_just_one() {
     // One tool's registration taken away, the other left exactly as it is.
     let gone = registration_of(&w, HarnessId::Pi);
     fs::remove_file(&gone).unwrap();
-    let short = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let short = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     assert!(
         !drift::setup::every_target_registered(&w.env, &w.scope, &short).unwrap(),
         "{} is gone and the answer still reads complete: {:?}",
@@ -413,7 +413,7 @@ fn a_folder_that_goes_away_before_the_render_refuses_at_the_apply() {
     let declaration = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &declaration).unwrap();
 
-    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     assert!(!render.plan.is_empty(), "nothing to render");
 
     // Strictly this interval: the plan is built, then the folder goes,
@@ -458,7 +458,7 @@ fn a_narrowed_declaration_is_brought_up_to_the_tools_the_script_runs_in() {
 
     // Nothing is registered anywhere, and the answer must say so rather
     // than read the narrowed tool's silence as coverage.
-    let before = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let before = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     assert!(
         !drift::setup::every_target_registered(&w.env, &w.scope, &before).unwrap(),
         "an unasked-for target has no row, and no row read as registered: {:?}",
@@ -602,7 +602,7 @@ fn a_conflict_at_the_checks_own_target_is_named_on_a_re_enable() {
 
     // And the scope read back is incomplete and able to say why, rather
     // than reporting a state with no reason at all.
-    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     let waiting = drift::setup::targets_waiting(&w.env, &w.scope, &after).unwrap();
     assert!(!waiting.is_empty(), "{:?}", after.drift);
     assert!(
@@ -855,11 +855,11 @@ fn a_first_enable_names_no_conflict_but_still_says_why_after() {
     // The write, as the command runs it.
     let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &plan).unwrap();
-    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     let _ = apply::execute(&w.env, &render.plan);
 
     // Read back: incomplete, and able to say why.
-    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current()).unwrap();
     let waiting = drift::setup::targets_waiting(&w.env, &w.scope, &after).unwrap();
     assert!(
         waiting.contains(&HarnessId::Claude),
@@ -897,7 +897,7 @@ fn a_re_enable_has_nothing_of_the_persons_waiting() {
     );
     apply::execute(
         &w.env,
-        &engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default())
+        &engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::current())
             .unwrap()
             .plan,
     )

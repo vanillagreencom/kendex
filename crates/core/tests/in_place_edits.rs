@@ -89,12 +89,12 @@ impl World {
 
     #[allow(clippy::unwrap_used)]
     fn plan(&self) -> kendex_core::engine::EngineReport {
-        plan_apply(&self.env, &self.scope, &PlanOptions::default()).unwrap()
+        plan_apply(&self.env, &self.scope, &PlanOptions::current()).unwrap()
     }
 
     #[allow(clippy::unwrap_used)]
     fn apply(&self) -> kendex_core::engine::EngineReport {
-        let report = plan_apply(&self.env, &self.scope, &PlanOptions::default()).unwrap();
+        let report = plan_apply(&self.env, &self.scope, &PlanOptions::current()).unwrap();
         apply::execute(&self.env, &report.plan).unwrap();
         report
     }

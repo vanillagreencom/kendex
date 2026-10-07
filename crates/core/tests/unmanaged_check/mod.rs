@@ -158,7 +158,7 @@ fn a_copy_that_differs_is_stale_and_the_take_over_is_its_fix() {
         &w.scope,
         &PlanOptions {
             replace_unmanaged: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -261,7 +261,7 @@ fn a_copy_the_render_matches_is_recorded_without_a_word() {
         written,
         "a record that already holds every install is not rewritten"
     );
-    let re = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let re = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     assert!(
         re.drift.iter().all(|row| row.state != DriftState::Conflict),
         "nothing was blocked: {:?}",
@@ -410,7 +410,7 @@ fn a_hook_is_left_to_the_plan_that_can_read_it() {
     let text = report(&w);
     assert!(!text.contains("'guard'"), "{text}");
 
-    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     assert!(
         planned
             .drift
@@ -488,7 +488,7 @@ fn nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest() {
         w.home.join("catalog/skills/scout-eyes/SKILL.md"),
         "---\nname: scout-eyes\ndescription: sees far\n---\nUpstream.\n",
     );
-    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     assert!(
         planned
             .plan

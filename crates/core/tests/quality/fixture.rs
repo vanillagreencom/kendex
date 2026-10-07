@@ -90,7 +90,7 @@ pub fn manifest_of(f: &Fixture) -> kendex_core::manifest::Manifest {
 pub fn plan(f: &Fixture) -> kendex_core::engine::EngineReport {
     let manifest = manifest_of(f);
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
-    plan_scope(&f.env, &f.scope, &manifest, &lock, &PlanOptions::default()).unwrap()
+    plan_scope(&f.env, &f.scope, &manifest, &lock, &PlanOptions::current()).unwrap()
 }
 
 /// A copied skill lands in the tool's own directory.

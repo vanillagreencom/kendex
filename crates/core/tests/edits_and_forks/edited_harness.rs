@@ -114,7 +114,7 @@ fn discarding_edits_can_move_a_hold_in_the_same_apply() {
         Some("main"),
         &PlanOptions {
             overwrite_edited_names: Some(vec![(ItemKind::Skill, "gh".to_owned())]),
-            ..Default::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

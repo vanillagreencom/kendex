@@ -181,7 +181,7 @@ fn check_against(env: &Env, root: &Path, declared: &Manifest, lock: &Lock) -> St
     };
     let options = PlanOptions {
         overwrite_edited: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     match plan_scope(env, &scope, declared, lock, &options) {
         Ok(report) => judge(&report, root),

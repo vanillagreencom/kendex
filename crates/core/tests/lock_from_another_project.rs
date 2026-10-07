@@ -89,7 +89,7 @@ fn project(root: &Path) -> Scope {
 fn refresh() -> PlanOptions {
     PlanOptions {
         sweep_unneeded: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     }
 }
 

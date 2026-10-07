@@ -727,7 +727,7 @@ pub type RecordedGone = (ItemKind, String);
 /// item of another kind along with it.
 pub type RemovalName = (Option<ItemKind>, String);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlanOptions {
     /// Render each agent with the skills its declaration holds and keep the
     /// lock's upstream record as it is, leaving what upstream gained since
@@ -912,6 +912,32 @@ pub enum Reach {
 }
 
 impl PlanOptions {
+    /// Read every catalog at its current revision. Refresh and current-state
+    /// inspection use this; writes that retain installed revisions use locked().
+    pub fn current() -> Self {
+        Self {
+            hold_upstream_skills: false,
+            remove_orphans: false,
+            removal_filter: None,
+            sweep_unneeded: false,
+            prune_retired: false,
+            uninstalled_bundles: Vec::new(),
+            overwrite_edited: false,
+            replace_unmanaged: false,
+            replace_unmanaged_names: None,
+            overwrite_edited_names: None,
+            update_only: None,
+            keep_source_records: false,
+            manifest_base: None,
+            settings_draft: None,
+            supplied_settings: Vec::new(),
+            secrets_draft: None,
+            arriving_skills: BTreeSet::new(),
+            judge_pins: false,
+            never_applied: false,
+        }
+    }
+
     /// A plan scoped to one package: it resolves at its source's tip while
     /// every other follower in the scope holds at the commit its lock
     /// records. What every single-package surface asks for — the Updates
@@ -933,7 +959,7 @@ impl PlanOptions {
                     .collect(),
                 reach: Reach::Carriers,
             }),
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         }
     }
 
@@ -960,7 +986,7 @@ impl PlanOptions {
     ///
     /// The plan of every write that brings no catalog current: a removal,
     /// a switch, a source change, an editor save, the package-check render.
-    /// [`PlanOptions::default`] reads every source where its mirror sits
+    /// [`PlanOptions::current`] reads every source where its mirror sits
     /// now, so a write planned from it moves every package whose catalog
     /// moved since the install, which only `refresh` is asked to do.
     pub fn locked() -> Self {
@@ -971,14 +997,15 @@ impl PlanOptions {
     }
 
     /// The plan an add makes: the items and the sets it declares come
-    /// current, and nothing else moves ([`Reach::Declared`]).
+    /// current, and nothing else moves ([`Reach::Declared`]). Unread
+    /// source records retain the installed revision.
     pub fn for_additions(declarations: impl IntoIterator<Item = Held>) -> Self {
         PlanOptions {
             update_only: Some(Targets {
                 declarations: declarations.into_iter().collect(),
                 reach: Reach::Declared,
             }),
-            ..PlanOptions::default()
+            ..PlanOptions::locked()
         }
     }
 

@@ -272,7 +272,7 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
         &lock,
         &PlanOptions {
             overwrite_edited: true,
-            ..Default::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -311,7 +311,7 @@ fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
         &lock,
         &PlanOptions {
             overwrite_edited_names: Some(vec![(ItemKind::Skill, "gh".to_owned())]),
-            ..Default::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -375,7 +375,7 @@ fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
         &lock,
         &PlanOptions {
             overwrite_edited_names: Some(vec![(ItemKind::Skill, "rev".to_owned())]),
-            ..Default::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -474,7 +474,7 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
         &w.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

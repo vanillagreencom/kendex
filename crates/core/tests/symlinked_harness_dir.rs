@@ -177,7 +177,7 @@ fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
         &kendex_core::engine::PlanOptions {
             remove_orphans: true,
             removal_filter: Some(vec![(None, "ship".into())]),
-            ..kendex_core::engine::PlanOptions::default()
+            ..kendex_core::engine::PlanOptions::current()
         },
     )
     .unwrap_err();
@@ -273,7 +273,7 @@ fn the_line_a_confirmation_draws_names_the_landed_position() {
         &f.scope,
         &kendex_core::engine::PlanOptions {
             replace_unmanaged: true,
-            ..kendex_core::engine::PlanOptions::default()
+            ..kendex_core::engine::PlanOptions::current()
         },
     )
     .unwrap();

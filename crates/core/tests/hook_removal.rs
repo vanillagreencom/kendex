@@ -104,7 +104,7 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
                     &PlanOptions {
                         remove_orphans: true,
                         sweep_unneeded: true,
-                        ..PlanOptions::default()
+                        ..PlanOptions::current()
                     },
                 )
                 .unwrap()
@@ -298,7 +298,7 @@ fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
         &PlanOptions {
             remove_orphans: true,
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

@@ -203,7 +203,7 @@ fn an_origin_does_not_cross_into_an_unmanaged_harness() {
         root: project.clone(),
     };
     let report =
-        crate::engine::plan_apply(&env, &scope, &crate::engine::PlanOptions::default()).unwrap();
+        crate::engine::plan_apply(&env, &scope, &crate::engine::PlanOptions::current()).unwrap();
     crate::apply::execute(&env, &report.plan).unwrap();
     let lock_path = crate::lock::lock_path(&env, &scope);
     let mut lock = crate::lock::load(&lock_path).unwrap();

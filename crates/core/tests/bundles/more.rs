@@ -30,7 +30,7 @@ fn an_upstream_member_removal_previews_before_anything_uninstalls() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -78,7 +78,7 @@ fn an_upstream_member_addition_previews_too() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

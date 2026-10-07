@@ -304,7 +304,7 @@ fn a_member_removed_from_a_bundle_stays_removed() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -320,7 +320,7 @@ fn a_member_removed_from_a_bundle_stays_removed() {
         &f.scope,
         &PlanOptions {
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

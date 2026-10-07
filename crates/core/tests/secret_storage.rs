@@ -186,7 +186,7 @@ fn planned(f: &Fixture, draft: SecretsDraft) -> Result<Vec<PathBuf>, CoreError> 
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let options = PlanOptions {
         secrets_draft: Some(draft),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
     Ok(report
@@ -214,7 +214,7 @@ fn save(f: &Fixture, draft: SecretsDraft) -> Result<Vec<String>, CoreError> {
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let options = PlanOptions {
         secrets_draft: Some(draft),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
     let said: Vec<String> = report.plan.ops.iter().map(PlannedOp::line).collect();
@@ -535,7 +535,7 @@ fn a_credential_named_at_global_scope_is_refused() {
             choose: false,
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let refused = plan_scope(&f.env, &Scope::Global, &manifest, &lock, &options);
     let Err(error) = refused else {
@@ -704,7 +704,7 @@ fn a_plan_carrying_a_credential_never_renders_it() {
             choose: false,
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
 

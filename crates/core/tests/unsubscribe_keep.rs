@@ -133,7 +133,7 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
     // And the follow-up apply leaves the scope clean — the kept agent
     // renders exactly as it was installed.
     let resync =
-        kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::default())
+        kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::current())
             .unwrap();
     apply::execute(&env, &resync.plan).unwrap();
     let settled = kendex_core::engine::audit(&env, &scope).unwrap();

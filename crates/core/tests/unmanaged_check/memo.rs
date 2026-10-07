@@ -204,7 +204,7 @@ fn a_record_write_retires_the_memo() {
         "the memo holds what it proved: {memo}"
     );
 
-    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
     let mut recorded = kendex_core::lock::load(&lock_path).unwrap();
     let guard = kendex_core::lock::entry_key(

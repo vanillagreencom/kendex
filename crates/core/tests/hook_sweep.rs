@@ -141,7 +141,7 @@ fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
         &PlanOptions {
             remove_orphans: true,
             sweep_unneeded: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap()

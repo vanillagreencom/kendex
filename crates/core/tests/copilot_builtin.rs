@@ -451,7 +451,7 @@ fn builtin_source_refuses_non_native_declarations_and_legacy_settings() {
             &scope,
             &manifest,
             &Default::default(),
-            &Default::default(),
+            &kendex_core::engine::PlanOptions::current(),
         )
         .unwrap();
         assert_eq!(

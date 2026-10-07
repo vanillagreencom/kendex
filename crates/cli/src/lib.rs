@@ -487,7 +487,7 @@ fn generated_paths(env: &Env) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("not inside a project (no harness marker found walking up)")?;
     let scope = kendex_core::model::Scope::Project { root };
     let report =
-        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::default())?;
+        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::current())?;
     let paths: Vec<String> = kendex_core::commit_offer::scan(
         &scope,
         &report.generated,

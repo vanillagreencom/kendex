@@ -209,7 +209,7 @@ fn a_supplied_setting_at_the_personal_scope_is_refused() {
     let f = fixture(true);
     let options = PlanOptions {
         supplied_settings: supplied(&[("DEPTH", "5")]),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let refused = plan_scope(
         &f.env,

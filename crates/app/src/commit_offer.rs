@@ -620,7 +620,7 @@ fn drawn(
 /// The paths kendex renders in a project, which only a plan names.
 fn generated(env: &Env, scope: &Scope) -> Result<kendex_core::engine::GeneratedPaths, String> {
     let mut generated =
-        kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::default())
+        kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::current())
             .map(|report| report.generated)
             .map_err(|error| error.to_string())?;
     kendex_core::bot_instructions::add_to_generated(env, scope, &mut generated)

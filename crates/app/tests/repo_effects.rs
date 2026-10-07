@@ -379,7 +379,7 @@ fn a_write_that_must_remove_nothing_refuses_when_it_would() {
         &f.scope,
         &kendex_core::engine::PlanOptions {
             remove_orphans: true,
-            ..Default::default()
+            ..kendex_core::engine::PlanOptions::current()
         },
     )
     .unwrap();

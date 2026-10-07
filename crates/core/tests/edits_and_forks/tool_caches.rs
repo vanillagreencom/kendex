@@ -86,7 +86,7 @@ fn orphan_cleanup(w: &World) -> kendex_core::error::Result<kendex_core::engine::
         &lock,
         &PlanOptions {
             remove_orphans: true,
-            ..Default::default()
+            ..PlanOptions::current()
         },
     )
 }

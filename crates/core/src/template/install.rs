@@ -1131,7 +1131,7 @@ fn commit_rendered(
         destination,
         &manifest,
         &lock,
-        &crate::engine::PlanOptions::default(),
+        &crate::engine::PlanOptions::locked(),
     )?;
     engine_ops::ensure_manifest_persisted(env, destination, &manifest, &mut report)?;
     landed.commit(env, &report.plan, |_| {})

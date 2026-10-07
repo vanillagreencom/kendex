@@ -400,7 +400,7 @@ fn selection_acquisition_follows_enable_and_composed_replacement() {
                     &record,
                     &engine::PlanOptions {
                         remove_orphans: true,
-                        ..Default::default()
+                        ..engine::PlanOptions::current()
                     },
                 )
                 .unwrap();
@@ -532,7 +532,7 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
                     &record,
                     &engine::PlanOptions {
                         overwrite_edited_names: Some(vec![(ItemKind::OutputStyle, name.into())]),
-                        ..Default::default()
+                        ..engine::PlanOptions::current()
                     },
                 )
                 .unwrap();
@@ -649,7 +649,7 @@ fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
                             overwrite_edited: discard == "all",
                             overwrite_edited_names: (discard == "named")
                                 .then(|| vec![(ItemKind::OutputStyle, "STE".into())]),
-                            ..Default::default()
+                            ..engine::PlanOptions::current()
                         },
                     )
                     .unwrap();
@@ -778,7 +778,7 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
                 &record,
                 &engine::PlanOptions {
                     remove_orphans: true,
-                    ..Default::default()
+                    ..engine::PlanOptions::current()
                 },
             )
             .unwrap();
@@ -878,7 +878,7 @@ fn two_styles_refuse_before_any_scope_write() {
             &f.scope,
             &typed,
             &lock::Lock::default(),
-            &engine::PlanOptions::default()
+            &engine::PlanOptions::current()
         )
         .is_err()
     );
@@ -973,7 +973,7 @@ fn linked_directories_land_once_and_linked_settings_refuse() {
             &record,
             &engine::PlanOptions {
                 overwrite_edited: true,
-                ..Default::default()
+                ..engine::PlanOptions::current()
             },
         )
         .unwrap();

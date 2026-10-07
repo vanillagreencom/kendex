@@ -153,7 +153,7 @@ fn replace_unmanaged_preserves_an_in_place_source_tree() {
     let before = tree_bytes(&source);
     let options = PlanOptions {
         replace_unmanaged: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
 
     let report = plan_apply(&world.env, &world.scope, &options).unwrap();
@@ -173,7 +173,7 @@ fn removing_an_applied_in_place_skill_preserves_its_source_tree() {
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
 
     let lock_path = kendex_core::lock::lock_path(&world.env, &world.scope);
@@ -207,7 +207,7 @@ fn removing_a_legacy_in_place_record_preserves_its_source_tree() {
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     let lock_path = kendex_core::lock::lock_path(&world.env, &world.scope);
     let mut lock = kendex_core::lock::load(&lock_path).unwrap();
@@ -245,7 +245,7 @@ fn check_reports_a_missing_link_for_a_new_target_harness() {
         "schema = 6\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
     )
     .unwrap();
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     fs::write(
         world.project.join("kendex.toml"),
@@ -272,11 +272,11 @@ fn disabling_an_applied_in_place_skill_preserves_its_source() {
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     set_manifest(&world, "\"claude\", \"codex\", \"pi\"", false);
 
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     assert!(report.drift.iter().any(|row| {
         row.name == "deploy" && row.state == kendex_core::engine::DriftState::Conflict
     }));
@@ -299,7 +299,7 @@ fn disabling_an_applied_in_place_skill_preserves_its_source() {
 fn check_reports_a_missing_pathless_in_place_source() {
     let world = world();
     set_manifest(&world, "\"codex\"", true);
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     fs::remove_dir_all(world.project.join(".agents/skills/deploy")).unwrap();
 
@@ -338,7 +338,7 @@ fn an_in_place_command_still_renders_its_codex_skill_tree() {
         root: project.clone(),
     };
 
-    let report = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
     apply::execute(&env, &report.plan).unwrap();
 
     let rendered = fs::read_to_string(project.join(".agents/skills/ship/SKILL.md")).unwrap();
@@ -355,7 +355,7 @@ fn an_in_place_command_still_renders_its_codex_skill_tree() {
 fn an_inaccessible_in_place_source_is_could_not_check() {
     let world = world();
     set_manifest(&world, "\"codex\"", true);
-    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     assert_unreadable_parent_is_unknown(&world, &world.project.join(".agents/skills/deploy"));
 }

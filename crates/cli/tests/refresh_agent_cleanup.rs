@@ -37,7 +37,7 @@ fn a_project_refresh_retires_dropped_agents_and_verify_passes() {
         for (root, target) in [(&project, &scope), (&sibling, &sibling_scope)] {
             fs::create_dir_all(root).unwrap();
             fs::write(root.join("kendex.toml"), manifest(Some("old"))).unwrap();
-            let installed = plan_apply(&env, target, &PlanOptions::default()).unwrap();
+            let installed = plan_apply(&env, target, &PlanOptions::current()).unwrap();
             apply::execute(&env, &installed.plan).unwrap();
         }
         let old = project.join(".claude/agents/old.md");
@@ -84,7 +84,7 @@ fn a_project_refresh_retires_dropped_agents_and_verify_passes() {
         // used after the consumer command is red, and live verify fails.
         // Disabling removal::verdicts' dropped_agent condition also turns
         // the consumer refresh assertions red with the orphan still installed.
-        let without_cleanup = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+        let without_cleanup = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
         apply::execute(&env, &without_cleanup.plan).unwrap();
         let control = (old.is_file() || parked.is_file()) && recorded() && !removed();
         let verify_failed = !kendex(&verify).status.success();

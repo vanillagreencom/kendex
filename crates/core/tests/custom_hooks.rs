@@ -89,7 +89,7 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
         &scope(&w),
         &PlanOptions {
             remove_orphans: true,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

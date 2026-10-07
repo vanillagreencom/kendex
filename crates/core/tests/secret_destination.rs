@@ -141,7 +141,7 @@ fn save(f: &Fixture, file: &str, choose: bool) -> Result<(), CoreError> {
             choose,
             base,
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
     apply::execute(&f.env, &report.plan)?;
@@ -553,7 +553,7 @@ fn a_named_file_is_recorded_with_no_credential_typed() {
             choose: true,
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -592,7 +592,7 @@ fn a_named_file_git_tracks_is_refused_before_the_choice_is_recorded() {
             choose: true,
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let refused = plan_scope(&f.env, &f.scope, &manifest, &lock, &options);
     let Err(error) = refused else {
@@ -623,7 +623,7 @@ fn a_save_that_neither_stores_nor_names_writes_nothing() {
             choose: false,
             base: Base::absent(),
         }),
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();

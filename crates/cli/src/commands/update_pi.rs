@@ -536,7 +536,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
-        let installed = install_rows(env, plan, &PlanOptions::default())?;
+        let installed = install_rows(env, plan, &PlanOptions::current())?;
         updated += installed.count;
         failures.extend(
             installed
@@ -641,7 +641,7 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
         let Ok(report) = kendex_core::engine::plan_apply(
             env,
             &plan.scope,
-            &kendex_core::engine::PlanOptions::default(),
+            &kendex_core::engine::PlanOptions::current(),
         ) else {
             continue;
         };

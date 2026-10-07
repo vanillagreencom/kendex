@@ -231,12 +231,12 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
         });
 
         for (mode, options) in [
-            ("refresh", PlanOptions::default()),
+            ("refresh", PlanOptions::current()),
             (
                 "apply",
                 PlanOptions {
                     remove_orphans: true,
-                    ..PlanOptions::default()
+                    ..PlanOptions::current()
                 },
             ),
         ] {
@@ -277,7 +277,7 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
             &scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();
@@ -621,7 +621,7 @@ fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
             &scope,
             &PlanOptions {
                 remove_orphans: true,
-                ..PlanOptions::default()
+                ..PlanOptions::current()
             },
         )
         .unwrap();

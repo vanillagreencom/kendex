@@ -44,7 +44,7 @@ pub fn audit_without_record(
     )?;
     let options = PlanOptions {
         judge_pins,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let mut report = plan_scope(env, scope, manifest, &seed, &options)?;
     let matching = proven_entries(
@@ -172,7 +172,7 @@ pub fn compare_unmanaged_copies(
     occupied: &BTreeMap<String, Occupied>,
 ) -> Result<UnmanagedCopies> {
     let scope = &scope.canonical();
-    let report = plan_scope(env, scope, manifest, disk, &PlanOptions::default())?;
+    let report = plan_scope(env, scope, manifest, disk, &PlanOptions::current())?;
     let planned = planned_record(&report);
     // A pass that would rewrite the manifest — an agent's skill list
     // merged from upstream, a reserved name moved — records entries built

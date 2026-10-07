@@ -290,7 +290,7 @@ fn narrowing_harnesses_orphans_the_stranded_installation() {
         &PlanOptions {
             remove_orphans: true,
             removal_filter: None,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();
@@ -320,7 +320,7 @@ fn an_unreadable_source_item_never_orphans_its_installation() {
         &PlanOptions {
             remove_orphans: true,
             removal_filter: None,
-            ..PlanOptions::default()
+            ..PlanOptions::current()
         },
     )
     .unwrap();

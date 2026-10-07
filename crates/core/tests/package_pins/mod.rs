@@ -471,7 +471,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     remote::sync_sources(&w.env, &loaded).unwrap();
     let options = PlanOptions {
         remove_orphans: true,
-        ..PlanOptions::default()
+        ..PlanOptions::current()
     };
     let report = plan_apply(&w.env, &w.scope, &options).unwrap();
 
