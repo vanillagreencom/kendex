@@ -1325,7 +1325,7 @@ scan_load() { # DIR
               }
             }
             rest = $0
-            while (match(rest, /(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[./])/)) {
+            while (match(rest, /(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[.\/])/)) {
               name = substr(rest, RSTART, RLENGTH)
               sub(/^[;&|({[:space:]]*/, "", name)
               sub(/=.*/, "", name)
