@@ -245,7 +245,8 @@ fn outcome(page: &Page) -> String {
 /// The bounded plain-text rendering for the session-start hook. Empty when
 /// nothing is left to show. By default each section is its title with the
 /// item count, one example and how many more there are, then one outcome
-/// line and the next step; [`Verbosity::Verbose`] lists every item with its
+/// line and the next step where a line offers a refresh;
+/// [`Verbosity::Verbose`] lists every item with its
 /// technical detail. Every budget counts its own overflow line, and no line
 /// is cut mid-way: command arguments remain complete.
 pub fn render_plain(report: &CheckReport, verbosity: Verbosity) -> String {
