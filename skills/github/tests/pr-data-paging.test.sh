@@ -28,13 +28,18 @@ eq()  { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2  got: $1"; }
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/repo"
 git -C "$TMP_ROOT/repo" init -q
+# The EXIT trap removes this repository, so git's background writers stay off.
+git -C "$TMP_ROOT/repo" config gc.auto 0
+git -C "$TMP_ROOT/repo" config maintenance.auto false
 STUB_LOG="$TMP_ROOT/calls.log"
 export STUB_LOG
 
 # Counts: STUB_FILES, STUB_COMMENTS, STUB_THREADS, STUB_THREAD_COMMENTS (on
 # the first thread; every other thread holds one). A case that plants a bad
-# page sets STUB_BREAK_KIND, STUB_BREAK_CURSOR and STUB_BREAK_DATA: the call
-# of that kind after that cursor returns STUB_BREAK_DATA as its `data`.
+# page sets STUB_BREAK_KIND, STUB_BREAK_CURSOR and STUB_BREAK_DATA: the first
+# call of that kind after that cursor returns STUB_BREAK_DATA as its `data`,
+# and a repeat of it gets the real page, so a walk that should have stopped
+# ends with output instead of spinning to the page bound.
 cat >"$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -59,7 +64,8 @@ case "$query" in
     *)               kind=header ;;
 esac
 printf '%s %s\n' "$kind" "$cursor" >>"$STUB_LOG"
-if [ "$kind" = "${STUB_BREAK_KIND:-}" ] && [ "$cursor" = "${STUB_BREAK_CURSOR:-}" ]; then
+if [ "$kind" = "${STUB_BREAK_KIND:-}" ] && [ "$cursor" = "${STUB_BREAK_CURSOR:-}" ] \
+    && [ "$(grep -cxF -- "$kind $cursor" "$STUB_LOG")" = 1 ]; then
     printf '{"data":%s}\n' "$STUB_BREAK_DATA"
     exit 0
 fi
@@ -145,65 +151,68 @@ eq "$(jq -c '[.repository.pullRequest.reviewThreads.nodes[0].comments | keys]' <
   "raw thread comments past the limit carry no pageInfo"
 
 echo
-echo "--- must-fail controls: a pager that stops early reads as incomplete ---"
+echo "--- must-fail controls: a walk cut short reads as incomplete ---"
 
-# A disposable copy of the scripts with one walk cut short. Each mutation
-# asserts its match, so a control that no longer reaches its code says so.
-mutant() { # $1 = name, $2 = file under scripts/, $3 = text, $4 = replacement
-    local dir="$TMP_ROOT/mut-$1"
-    rm -rf -- "$dir"
-    cp -R "$SCRIPTS" "$dir"
-    python3 - "$dir/$2" "$3" "$4" <<'PY'
-import sys
-p, old, new = sys.argv[1:]
-s = open(p).read()
-if s.count(old) != 1:
-    sys.exit("mutation target matched %d times" % s.count(old))
-open(p, "w").write(s.replace(old, new))
-PY
-    printf '%s\n' "$dir"
+# shellcheck source=lib/mutant-copy.sh
+. "$TEST_DIR/lib/mutant-copy.sh"
+mutant() { # NAME FROM TO FILE: prints the scripts dir of a copy with that one line replaced
+    mutant_copy_edit "$TMP_ROOT/mut-$1" "$2" "$3" "$4" >/dev/null
+    printf '%s\n' "$TMP_ROOT/mut-$1/skills/github/scripts"
 }
 STUB_FILES=101 STUB_COMMENTS=51 STUB_THREADS=1 STUB_THREAD_COMMENTS=11
-dir="$(mutant one-page lib/github-api.sh '[ "$has_next" = "true" ] || break' 'break')"
+dir="$(mutant one-page '        [ "$has_next" = "true" ] || break' '        break' lib/github-api.sh)"
 out="$(run "$dir")" || true
 eq "$(counts "$out")" "100 51 1 11" "control: a one-page connection walk loses the 101st file"
-dir="$(mutant no-follow-up commands/pr-data.sh 'select(.value.comments.pageInfo.hasNextPage)' 'select(false)')"
+dir="$(mutant no-follow-up '        | select(.value.comments.pageInfo.hasNextPage)' '        | select(false)' commands/pr-data.sh)"
 out="$(run "$dir")" || true
 eq "$(counts "$out")" "101 51 1 10" "control: no thread follow-up loses the 11th comment"
 
 echo
 echo "--- fail-closed: an unverifiable page prints nothing ---"
 
-fails_closed() { # $1 = name, $2 = kind, $3 = cursor, $4 = data, $5 = expected cause
-    STUB_BREAK_KIND="$2" STUB_BREAK_CURSOR="$3" STUB_BREAK_DATA="$4"
-    export STUB_BREAK_KIND STUB_BREAK_CURSOR STUB_BREAK_DATA
-    local out rc=0
-    out="$(run "$SCRIPTS")" || rc=$?
-    [[ "$rc" -ne 0 && -z "$out" ]] && ok "$1" || bad "$1" "rc=$rc out=$out"
-    grep -Fq -- "$5" "$ERR" && ok "$1, and the diagnostic names its cause" \
-      || bad "$1, and the diagnostic names its cause" "wanted: $5  got: $(cat "$ERR")"
-    unset STUB_BREAK_KIND STUB_BREAK_CURSOR STUB_BREAK_DATA
+# A refusal is judged by what a caller sees and where the walk stopped, never
+# by its wording: a non-zero status, nothing on stdout, a JSON error object on
+# stderr, and the planted page as the last call, made once. A walk that went
+# on past the planted page, or asked for it again, did not refuse it.
+closed_at() { # SCRIPTS KIND CURSOR DATA: status 0 when refused at the planted page
+    local out rc=0 seen
+    out="$(export STUB_BREAK_KIND="$2" STUB_BREAK_CURSOR="$3" STUB_BREAK_DATA="$4"; run "$1")" || rc=$?
+    [[ "$rc" -ne 0 && -z "$out" ]] || return 1
+    jq -e '(.error | type) == "string"' "$ERR" >/dev/null 2>&1 || return 1
+    [[ "$(tail -n 1 -- "$STUB_LOG")" == "$2 $3" ]] || return 1
+    seen="$(grep -cxF -- "$2 $3" "$STUB_LOG")" || return 1
+    [[ "$seen" == 1 ]]
 }
-STUB_FILES=101 STUB_COMMENTS=51 STUB_THREADS=1 STUB_THREAD_COMMENTS=11
-fails_closed "a malformed second files page" files C100 \
-    '{"repository":{"pullRequest":{"files":null}}}' 'malformed PR file pagination data'
-STUB_COMMENTS=101
-fails_closed "a PR comments cursor that does not advance" comments C100 \
-    '{"repository":{"pullRequest":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"C100"}}}}}' \
-    'PR comment pagination cursor did not advance'
-STUB_COMMENTS=51
-STUB_THREADS=101
-fails_closed "a malformed second review thread page" threads C100 \
-    '{"repository":{"pullRequest":{"reviewThreads":null}}}' 'malformed review thread pagination data'
-STUB_THREADS=1
-fails_closed "a thread whose comment page says more follow without a cursor" threads "" \
-    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_0","comments":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-    'malformed review thread comment pagination data'
-fails_closed "a thread with no comment pageInfo" threads "" \
-    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_0","comments":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-    'malformed review thread comment pagination data'
-fails_closed "a thread comment follow-up page that is not a thread" thread-comments C10 \
-    '{"node":null}' 'malformed review thread comment pagination data'
+
+# Each guard's control is a copy with that guard's line disabled: the cases
+# that guard owns must then stop reading as refused, so no neighbouring rule
+# is what refuses them.
+PAGE_CHECK="$(mutant page-check "        if ! jq -e \"\$path\"' as \$t" "        if false && ! jq -e \"\$path\"' as \$t" lib/github-api.sh)"
+ADVANCE_CHECK="$(mutant advance-check '        if [ "$next_cursor" = "$cursor" ]; then' '        if false; then' lib/github-api.sh)"
+THREAD_CHECK="$(mutant thread-check "    if ! jq -e 'all(.[];" "    if false && ! jq -e 'all(.[];" commands/pr-data.sh)"
+
+THREAD_NO_CURSOR='{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_0","comments":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+THREAD_NO_PAGEINFO='{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_0","comments":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+COMMENTS_STALL='{"repository":{"pullRequest":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"C100"}}}}}'
+FILES_NULL='{"repository":{"pullRequest":{"files":null}}}'
+THREADS_NULL='{"repository":{"pullRequest":{"reviewThreads":null}}}'
+NODE_NULL='{"node":null}'
+
+# name | guard | files comments threads thread-comments | kind | cursor | page data variable
+while IFS='|' read -r name guard sizes kind cursor data; do
+    read -r STUB_FILES STUB_COMMENTS STUB_THREADS STUB_THREAD_COMMENTS <<<"$sizes"
+    closed_at "$SCRIPTS" "$kind" "$cursor" "${!data}" && ok "$name" || bad "$name" "rc/out/log: $(cat "$STUB_LOG")"
+    closed_at "${!guard}" "$kind" "$cursor" "${!data}" \
+      && bad "control: without the $guard guard, $name is not refused" "still refused" \
+      || ok "control: without the $guard guard, $name is not refused"
+done <<'ROWS'
+a malformed second files page|PAGE_CHECK|101 51 1 11|files|C100|FILES_NULL
+a malformed second review thread page|PAGE_CHECK|2 1 101 1|threads|C100|THREADS_NULL
+a thread comment follow-up page that is not a thread|PAGE_CHECK|2 1 1 11|thread-comments|C10|NODE_NULL
+a PR comments cursor that does not advance|ADVANCE_CHECK|2 101 1 1|comments|C100|COMMENTS_STALL
+a thread whose comment page says more follow without a cursor|THREAD_CHECK|2 1 1 1|threads||THREAD_NO_CURSOR
+a thread with no comment pageInfo|THREAD_CHECK|2 1 1 1|threads||THREAD_NO_PAGEINFO
+ROWS
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
