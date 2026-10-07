@@ -241,6 +241,69 @@ fn marketplace_unsubscribe_removes_or_keeps() {
     assert!(manifest.contains("source = \"local\""), "{manifest}");
 }
 
+/// Both CLI decisions reach transfer when every member survives a rewritten
+/// catalog. A bare unsubscribe also needs no package decision in that state.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn marketplace_unsubscribe_transfers_every_surviving_member() {
+    use test_util::unsubscribe::{Gained, assert_kept_source, installed_then_gained};
+    for flag in [Some("--remove-packages"), Some("--keep-packages"), None] {
+        let (_tmp, env, scope) = installed_then_gained(Gained::RewrittenHistory);
+        let kendex_core::model::Scope::Project { root } = &scope else {
+            unreachable!();
+        };
+        let manifest = kendex_core::engine::ops::manifest_for_mutation(&env, &scope).unwrap();
+        assert!(
+            kendex_core::engine::detach::closure(&env, &scope, "cat", &manifest)
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        let mut args = vec!["marketplace", "unsubscribe", "cat"];
+        args.extend(flag);
+        let output = kendex(&env.home, root, &args);
+        assert!(
+            output.status.success(),
+            "{flag:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
+        assert_kept_source(&env, &scope, &lock, &format!("CLI {flag:?}"));
+    }
+}
+
+/// Empty subscriptions still leave without a decision flag or with either
+/// explicit decision. No package declaration is added by keeping nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn marketplace_unsubscribe_drops_an_empty_subscription() {
+    for flag in [None, Some("--remove-packages"), Some("--keep-packages")] {
+        let tmp = fixture_home();
+        let home = test_util::rooted(&tmp);
+        let project = home.join("dev/app");
+        let catalog = home.join("catalog").display().to_string();
+        let subscribed = kendex(
+            &home,
+            &project,
+            &["marketplace", "subscribe", &catalog, "--name", "cat"],
+        );
+        assert!(subscribed.status.success());
+        let mut args = vec!["marketplace", "unsubscribe", "cat"];
+        args.extend(flag);
+        let output = kendex(&home, &project, &args);
+        assert!(
+            output.status.success(),
+            "{flag:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let env = kendex_core::env::Env::host_rooted(&home);
+        let scope = kendex_core::model::Scope::Project { root: project };
+        let manifest = kendex_core::engine::ops::manifest_for_mutation(&env, &scope).unwrap();
+        assert!(!manifest.sources.contains_key("cat"));
+        assert!(manifest.skills.is_empty());
+    }
+}
+
 /// Subscribing prints the preview line naming scope, alias, and target,
 /// and a full URL declares a remote rather than a folder path.
 #[test]

@@ -165,19 +165,8 @@ fn run_unsubscribe(
     let manifest = kendex_core::engine::ops::manifest_for_mutation(env, &scope)?;
     let closure = detach::closure(env, &scope, name, &manifest)?;
 
-    // Nothing installed: a plain confirm, whichever flag (or none) was passed.
-    if closure.items.is_empty() {
-        let report = kendex_core::source_ops::remove_source(env, &scope, name)?;
-        apply_report(env, &report)?;
-        say(&format!(
-            "{}: unsubscribed from '{name}'",
-            scope_label(&scope)
-        ));
-        return Ok(());
-    }
-
     match (remove_packages, keep_packages) {
-        (false, false) => {
+        (false, false) if !closure.items.is_empty() => {
             return Err(format!(
                 "'{name}' has {} package(s) installed — pass --remove-packages to remove them or --keep-packages to keep them as your own copies",
                 closure.items.len()
@@ -189,7 +178,7 @@ fn run_unsubscribe(
             let plan = detach::source(env, &scope, name)?;
             kendex_core::apply::execute(env, &plan)?;
         }
-        (true, _) => {
+        (_, false) => {
             let report = detach::remove(env, &scope, name, discard_edits)?;
             apply_report(env, &report)?;
         }

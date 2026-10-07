@@ -225,7 +225,8 @@ fn rebound_survivors(
 /// carries transfer to that bundle's source before the normal plan compares
 /// and records their installations. An edited
 /// installation is never swept without a decision — remove refuses while any
-/// package is edited unless `discard_edits` says to take the edits too.
+/// leaving package is edited unless `discard_edits` says to take those edits
+/// too. Surviving packages keep their edit hold.
 pub fn remove(
     env: &Env,
     scope: &Scope,
@@ -264,7 +265,13 @@ pub fn remove(
                 .collect(),
         ),
         sweep_unneeded: true,
-        overwrite_edited: discard_edits,
+        overwrite_edited_names: discard_edits.then(|| {
+            closure
+                .items
+                .iter()
+                .map(|item| (item.kind, item.name.clone()))
+                .collect()
+        }),
         ..super::PlanOptions::locked()
     };
     let rebound = rebound_survivors(env, &scope, source_name, &without, &lock)?;
@@ -361,8 +368,8 @@ fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
     Ok(target)
 }
 
-/// Unsubscribe but keep the packages: convert each installation to a local one
-/// and remove the source. This copies each item's **source-form** bytes from
+/// Unsubscribe but keep the packages that would leave: convert each to a local
+/// installation and remove the source. This copies each item's **source-form** bytes from
 /// the catalog at the exact commit it was installed from into the scope's local
 /// source, flips its declaration to `local`, and records the conversion as a
 /// fork whose bytes did not change. The local writes are ordered before the
