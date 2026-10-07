@@ -647,8 +647,10 @@
 # alias `list` gives that spelling (`1claude` for `~/.1claude`), as well as
 # against its canonical config dir: a store several homes share sees one
 # account under each home's path, and every claim on it, whichever home wrote
-# it, counts and is charged once against that account. Usage numbers lag a launch by minutes, so `pick` called
-# twice in a row would hand the same account both lanes; the claim count is
+# it, counts and is charged once against that account. A dir named the bare
+# harness word (`~/.claude`) is each home's own default login and keys by its
+# path alone, unless ORCH_LANE_ALIASES names it. Usage numbers lag a launch by
+# minutes, so `pick` called twice in a row would hand the same account both lanes; the claim count is
 # the correction, and it orders `pick` ahead of headroom. Each claim is also
 # charged its expected burn in the projected wall the chooser and
 # `pick --lane --projected` judge; `pick --lane` alone and `list` keep the
@@ -2313,20 +2315,32 @@ load_lane_claims() {
 		[[ -n "$line" ]] || continue
 		cfg="${line%%$'\t'*}"
 		named="${line##*$'\t'}"
-		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$(lane_alias_for "${named:-$cfg}")"$'\n'
+		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$(lane_account_name "${named:-$cfg}")"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
+}
+
+# The name a store several homes share knows DIR's account by: the alias `list`
+# gives it, or nothing for a home's own default account. A dir named the bare
+# harness word (`~/.claude`, `~/.codex`, `~/.copilot`) is the login that
+# harness falls back to in whatever home it sits, so two users' `~/.claude` are
+# two accounts, and only an ORCH_LANE_ALIASES name joins it to another home's.
+lane_account_name() { # DIR
+	local alias base
+	alias="$(lane_alias_for "$1")"
+	base="$(basename -- "$1")"
+	base="${base#.}"
+	[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf '%s' "$alias"
 }
 
 # Live claims against DIR's account. A store several homes share names one
 # account by as many paths as there are homes (`/home/a/.eclaude`,
 # `/home/b/.eclaude`), so a claim counts against DIR where its canonical config
-# dir is DIR's, or where the account name `list` gives the spelling its launch
-# named, ORCH_LANE_ALIASES applied, is the one `list` gives DIR. One account is
-# charged every claim on it whichever home wrote each. Reads
-# LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
+# dir is DIR's, or where lane_account_name of the spelling its launch named is
+# DIR's and not empty. One account is charged every claim on it whichever home
+# wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
 account_claims() { # DIR
-	LANE_CLAIMS_CANON_Q="$(lane_claims_canon "$1")" LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$1")" \
-		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"] { n++ }
+	LANE_CLAIMS_CANON_Q="$(lane_claims_canon "$1")" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" \
+		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]) { n++ }
 			END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
 }
 

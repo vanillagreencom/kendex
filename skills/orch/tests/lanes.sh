@@ -1142,7 +1142,8 @@ stage_panes() {
 # stage_claims SPEC — the claim files for one run, `name:server:pane:dir` items
 # separated by `;`: server is live or dead, dir one of the home's lane names,
 # `claude/` for a trailing slash, `link` for a symlink to claude, `away` for
-# eclaude reached from a second home, `aliased` for a second home's `.other`
+# eclaude reached from a second home, `awaydefault` for that home's own
+# `.claude`, `aliased` for a second home's `.other`
 # whose launch named it by that spelling and whose canonical target is
 # `creds-b`, `written` for that claim written through lane_claim_write, `bs`
 # for the backslash-named lane; `junk` writes a malformed record. Any other
@@ -1170,6 +1171,7 @@ stage_claims() {
       claude/) dir="$H/.claude/" ;;
       link) dir="$TMP_ROOT/claude-link" ;;
       away) dir="$AWAY_HOME/.eclaude"; mkdir -p "$dir" ;;
+      awaydefault) dir="$AWAY_HOME/.claude"; mkdir -p "$dir" ;;
       aliased)
         dir="$AWAY_HOME/creds-b"; named="$AWAY_HOME/.other"
         mkdir -p "$dir"; ln -sfn "$dir" "$named"
@@ -1250,7 +1252,10 @@ claims_table \
   "the one-lane form counts the same claims the fleet pick and the listing do|live:%1,live:%2|one:live:%1:claude||pick --lane $H/.claude --harness claude --json|rc=0 claims=1" \
   "a malformed claim record is dropped on read|live:%1|junk||$LIST|files=none" \
   "claims on one account from two homes count under that one account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=2 claude.claims=0" \
-  "the one-lane form charges both homes' claims to the account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=2"
+  "the one-lane form charges both homes' claims to the account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=2" \
+  "another home's own .claude is another account, never charged to this one|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=1"
+ORCH_LANE_ALIASES="claude=work" claims_table \
+  "a .claude both homes alias to one account name counts as that one account|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|work.claims=2"
 
 # The fleet names one account `work` in both homes: this home's `.eclaude` and
 # the other's `.other`, a symlink to a target named for neither.
@@ -1264,17 +1269,21 @@ ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
 # by the canonical target's name, or written with no named spelling, the
 # aliased claim misses `work` the same way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" ' || $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]' ''
+mutate_file "$claims_scripts/lanes" ' || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"])' ''
 LANES="$claims_scripts/lanes" claims_table \
   "control: a path key counts two homes' claims on one account as two accounts|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" '"$(lane_alias_for "${named:-$cfg}")"' '"$(lane_alias_for "$cfg")"'
+mutate_file "$claims_scripts/lanes" '"$(lane_account_name "${named:-$cfg}")"' '"$(lane_account_name "$cfg")"'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
 mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" > "$tmp"' '"$7" "" > "$tmp"'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
+claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1
+mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf' 'printf'
+LANES="$claims_scripts/lanes" claims_table \
+  "control: keying a home's default .claude by its bare name charges every home's default to it|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=2"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
 if [[ "$(id -u)" -eq 0 ]]; then
