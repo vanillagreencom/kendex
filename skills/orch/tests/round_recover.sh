@@ -81,11 +81,11 @@ new_round() { # NAME ISSUE RID EXIT
 # base_sha and ROUND_SHA. Unless COMMITTED is no, the round then
 # commits its fix, growing the branch, so HEAD_SHA is one commit past
 # ROUND_SHA.
-new_fix_round() { # NAME N RID EXIT [COMMITTED] [SOURCE]
+new_fix_round() { # NAME N RID EXIT [COMMITTED] [SOURCE] [PR_OPEN]
   local source=()
   new_round "$1" "issue-$2" "$3" "$4"
   [[ -z "${6:-}" ]] || source=(--source "$6")
-  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${source[@]+"${source[@]}"} \
+  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" --pr-open "${7:-false}" ${source[@]+"${source[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
   # The record's delegation time is the state's, fifty seconds ago, so the
   # run new_round started since then belongs to this round.
@@ -275,9 +275,9 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
-# A ci run passed at once and left a pr-comments round to the pull request
-# CI: a pass beside it recovers the round.
-new_fix_round fix-ci 782 5-9 none yes pr-comments
+# A ci run passed at once and left an open pull request's review round to CI:
+# a pass beside it recovers the round.
+new_fix_round fix-ci 782 5-9 none yes pr-review true
 add_run "$WT" 1 10 0 "$DEAD_PID" ci
 transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
 run --worktree "$WT" --issue issue-782 --round-id 5-9 --transcript "$TMP_ROOT/fix-ci.jsonl"
