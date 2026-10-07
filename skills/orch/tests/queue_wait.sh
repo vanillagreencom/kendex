@@ -186,6 +186,10 @@ case "${1:-}" in
         echo '[{"name":"build","state":"FAILURE"}]'
         exit 1
       fi
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending" ]]; then
+        echo '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]'
+        exit 8
+      fi
       echo '[{"name":"build","state":"SUCCESS"}]'
       exit 0
     fi
@@ -482,8 +486,8 @@ table "$QW" \
   'still queued at the deadline is a timeout, never a silent success|open_queued|1 1 3 --json --no-check-probe||rc=1 status=timeout verdict=queued in_merge_queue=true merge_queue_state=QUEUED' \
   'closed without merging|state:last=closed,queue:last=in|1 1 10 --json --no-check-probe||rc=1 verdict=closed' \
   'a transient error is absorbed and counted|state:1=open,state:last=merged,queue:1=fail502,queue:last=in|||rc=0 verdict=merged transient_api_errors=1' \
-  'a failed required check on an armed PR disarms through the probe|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=failure|rc=1 verdict=disarmed cause=check_failed' \
-  '--no-check-probe leaves the same PR queued|open_armed|1 1 3 --json --no-check-probe|STUB_PR_CHECKS_MODE=failure|verdict=queued' \
+  'a failed required check on an armed PR is armed_blocked through the probe|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=failure|rc=1 status=complete verdict=armed_blocked cause=check_failed' \
+  '--no-check-probe reads no rollup: the same PR awaits checks unread|open_armed|1 1 3 --json --no-check-probe|STUB_PR_CHECKS_MODE=failure|verdict=armed_awaiting_checks cause=checks_unread' \
   'a one-poll queued verdict exposes the age of its sample|open_queued|1 1 1 --json --no-check-probe||verdict=queued polls=1 has_last_poll_age_seconds=true' \
   'the last sleep is clamped to the remaining budget|open_queued|1 3 4 --json --no-check-probe||elapsed_seconds=4'
 
@@ -548,6 +552,22 @@ table '1 1 8 --json --no-check-probe' \
   'every check-run read failing is unknown, never zero, and warns|open_queued_head,checkruns:last=fail502|1 1 5 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkrun_warned=true progress_head_polls=5 progress_check_reads=0 last_running_count=null' \
   'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
   'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
+
+echo "=== an armed PR GitHub has not enqueued reads the PR's own check rollup ==="
+# No queue entry means no merge-group head, so progress is never the verdict
+# there: a running check is armed_awaiting_checks, which merge-pr § 5 waits
+# out with no recovery cycle; a failed check, or every check green with still
+# no entry, is armed_blocked. progress_unobservable stays the enqueued-entry
+# reading (the progress table above).
+table '1 1 3 --json' \
+  'pending required checks await, never progress_unobservable|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending progress_head_polls=0' \
+  'every check green and still no entry is armed_blocked|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
+  'an enqueued entry keeps its progress reading|open_queued_head,checkruns:last=c1.1||STUB_PR_CHECKS_MODE=pending|rc=1 verdict=queued cause=still_progressing'
+
+echo "=== text mode names the armed verdicts on stdout ==="
+table '1 1 3' \
+  'armed_awaiting_checks|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 text_verdict=armed_awaiting_checks' \
+  'armed_blocked|open_armed||STUB_PR_CHECKS_MODE=failure|rc=1 text_verdict=armed_blocked'
 
 echo "=== the verdict names the repository it read ==="
 # The resolution ladder is lib/gh-repo.sh's, and gh-repo-resolve.test.sh holds

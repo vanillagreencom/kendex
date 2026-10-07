@@ -274,13 +274,23 @@ Use the output as `MAIN_REPO_ROOT`.
    | `conflicting` | The guarded Restack cycle below |
    | `ejected` | Recovery cycle below, using the resolved gate mode and `[RECOVERY_COUNT]` |
    | `disarmed` | Recovery cycle below |
+   | `armed_blocked` | Armed, never enqueued, and GitHub will not enqueue it: a failed check (`cause: check_failed`) or every check green with no queue entry (`cause: not_mergeable`). Recovery cycle below |
    | `dequeued` | Late-findings triage below; on `cause: late_findings_dequeue_failed` confirm the dequeue or the disarm first |
-   | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: progress_unobservable` means no poll could read the queue's checks, which is not evidence of an idle queue: run the wait again on the same head under the bound below, rather than straight into the Recovery cycle. `cause: stalled` takes the Recovery cycle below |
+   | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: progress_unobservable` means the queue entry's head could not be read, which is not evidence of an idle queue: run the wait again on the same head under the bound below, rather than straight into the Recovery cycle. `cause: stalled` takes the Recovery cycle below |
+   | `armed_awaiting_checks` | Armed, not yet enqueued, no check failed: GitHub enqueues the PR when its required checks pass. Run the wait again on the same head, spending no recovery cycle, under the wall-clock budget below |
    | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
    | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, by § 1's no-armed-hand-back rule. Hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat has no limit. Keep the lane active until a terminal verdict; after a merge, run steps 2-6.
+
+   For `armed_awaiting_checks`, record the time of the first such result on this head and read the budget once:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-env QUEUE_WAIT_ARMED_MINUTES 90
+   ```
+
+   Repeat the wait while that many minutes have not passed since the recorded time; a new head, or any other verdict, clears the record. Past the budget, hand back with the PR's pending check names and the minutes waited, skipping steps 2-6: the budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed.
 
    For `progress_unobservable`, repeat once on the same head. A second consecutive `progress_unobservable` takes the Recovery cycle, as `stalled` does. Keep the lane active for steps 2-6. The progress counts in `queue-wait --help` report what the wait could read; neither gates the route.
 

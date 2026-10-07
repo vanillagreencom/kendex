@@ -129,7 +129,7 @@ write_fixture state last "$(pr_state OPEN UNKNOWN)"
 write_fixture queue last "$q_armed_only"
 err="$TMP_ROOT/e4"
 out="$(run_queue_wait -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "UNKNOWN mergeable routes nothing" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "armed_awaiting_checks" "UNKNOWN mergeable routes nothing" "$err"
 
 new_case mergeable_clean
 write_fixture state last "$(pr_state OPEN MERGEABLE)"
