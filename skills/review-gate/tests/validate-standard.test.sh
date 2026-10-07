@@ -34,6 +34,34 @@ JSON
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 
+# This suite's wrapper injects real gh diagnostics at the secret read only.
+mv "$BIN/gh" "$BIN/gh-base"
+cat >"$BIN/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [ "$arg" = repos/acme/widgets/environments/kendex/secrets ] && [ -f "$GH_SHIM_FIXTURES/.retry-error" ]; then
+    count=0
+    [ ! -f "$GH_SHIM_FIXTURES/.retry-count" ] || count="$(cat "$GH_SHIM_FIXTURES/.retry-count")"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$GH_SHIM_FIXTURES/.retry-count"
+    limit="$(cat "$GH_SHIM_FIXTURES/.retry-limit")"
+    if [ "$count" -le "$limit" ]; then
+      printf 'PARTIAL_SECRET\n'
+      cat "$GH_SHIM_FIXTURES/.retry-error" >&2
+      exit 1
+    fi
+  fi
+done
+exec "${BASH_SOURCE[0]%/*}/gh-base" "$@"
+SH
+cat >"$BIN/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$GH_SHIM_FIXTURES/.retry-waits"
+SH
+chmod +x "$BIN/gh" "$BIN/sleep"
+
 # The consumer checkouts the script runs from, each declaring the
 # organization's values in its own kendex.settings.toml or not. `full` is the
 # consumer every case uses unless it names another; its secret names are out
@@ -548,6 +576,69 @@ ROWS
 # The mode guard's control reaches the real validator with the same argument,
 # but makes it execute unrelated checks. The narrow-mode assertion goes red.
 cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-script.keep"
+
+echo "=== transient reads retry, permanent failures keep their first answer ==="
+retry_case() { # DIAGNOSTIC FAILURES ATTEMPTS WAITS RC
+  local dir="$TMP/retry-case" got_attempts got_waits want
+  rm -rf -- "${dir:?}"
+  cp -R "$ENV_BASE" "$dir"
+  printf '%b\n' "$1" >"$dir/.retry-error"
+  printf '%s\n' "$2" >"$dir/.retry-limit"
+  run "$dir" '' --environment-only
+  got_attempts="$(cat "$dir/.retry-count")"
+  got_waits=""
+  [ ! -f "$dir/.retry-waits" ] || got_waits="$(tr '\n' ',' <"$dir/.retry-waits")"
+  want="$ENV_BASELINE"
+  if [ "$5" -eq 1 ]; then
+    want='ok check=standard-environment value=custom:branch:main
+FAIL check=standard-environment-secrets value=unreadable'
+  fi
+  CASE_MATCH=false
+  if [ "$RC" -eq "$5" ] && [ "$OUT" = "$want" ] && [ "$got_attempts" = "$3" ] && [ "$got_waits" = "$4" ]; then
+    CASE_MATCH=true
+  fi
+  CASE_DIFF="rc=$RC want $5; attempts=$got_attempts want $3; waits=$got_waits want $4
+$RAW"
+}
+# Consumer refresh reads the report rows. A failed page's partial stdout
+# must not contaminate the successful answer on the next attempt.
+while IFS='~' read -r name diagnostic failures attempts waits rc; do
+  [ -n "$name" ] || continue
+  retry_case "$diagnostic" "$failures" "$attempts" "$waits" "$rc"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
+done <<'ROWS'
+500 once recovers~gh: Server Error (HTTP 500)~1~2~1,~0
+500 three times remains unreadable~gh: Server Error (HTTP 500)~3~3~1,2,~1
+502 recovers after both waits~gh: Bad Gateway (HTTP 502)~2~3~1,2,~0
+503 recovers~gh: Service Unavailable (HTTP 503)~1~2~1,~0
+504 recovers~gh: Gateway Timeout (HTTP 504)~1~2~1,~0
+no HTTP answer recovers~error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com~1~2~1,~0
+transport EOF recovers~Get "https://api.github.com/repos/acme/widgets/environments/kendex/secrets": EOF~1~2~1,~0
+transport failure stays bounded~Get "https://api.github.com/repos/acme/widgets/environments/kendex/secrets": context deadline exceeded~3~3~1,2,~1
+404 stays on its first answer~gh: Not Found (HTTP 404)~1~1~~1
+401 stays on its first answer~gh: Bad credentials (HTTP 401)~1~1~~1
+501 stays on its first answer~gh: Not Implemented (HTTP 501)~1~1~~1
+HTTP status takes precedence~gh: Not Found (HTTP 404)\nerror connecting to api.github.com~1~1~~1
+jq error stays on its first answer~failed to parse jq expression: unexpected token~1~1~~1
+authentication error stays on its first answer~To get started with GitHub CLI, please run: gh auth login~1~1~~1
+usage error stays on its first answer~unknown flag: --bad~1~1~~1
+ROWS
+
+# Each changed retry rule has a control in the disposable script copy.
+while IFS='@' read -r name match edit diagnostic failures attempts waits rc; do
+  [ -n "$name" ] || continue
+  file_edit "$SKILL" scripts/validate-standard.sh 1 "$match" "$edit"
+  retry_case "$diagnostic" "$failures" "$attempts" "$waits" "$rc"
+  if [ "$CASE_MATCH" = false ]; then ok "control: $name"; else bad "control: $name" "$CASE_DIFF"; fi
+  cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+done <<'ROWS'
+HTTP retry removed@500\|502\|503\|504\) retryable=1@s/500|502|503|504) retryable=1/500|502|503|504) retryable=0/@gh: Server Error (HTTP 500)@1@2@1,@0
+transport retry removed@Get "http://.*retryable=1@s/retryable=1/retryable=0/@error connecting to api.github.com@1@2@1,@0
+retry bound shortened@"\$attempt" -lt 2@s/"$attempt" -lt 2/"$attempt" -lt 1/@gh: Server Error (HTTP 500)@3@3@1,2,@1
+HTTP precedence removed@if \[\[ "\$error" =~ HTTP@s/if \[\[ "\$error" =~ HTTP/if false \&\& [[ "$error" =~ HTTP/@gh: Not Found (HTTP 404)\nerror connecting to api.github.com@1@1@@1
+doubling wait removed@delay=\$\(\(delay \* 2\)\)@s/delay=$((delay \* 2))/delay=1/@gh: Server Error (HTTP 500)@3@3@1,2,@1
+ROWS
+
 file_edit "$SKILL" scripts/validate-standard.sh 1 '^  ENVIRONMENT_ONLY=1$' 's/^  ENVIRONMENT_ONLY=1$/  ENVIRONMENT_ONLY=0/'
 chmod +x "$SKILL/scripts/validate-standard.sh"
 run "$ENV_BASE" '' --environment-only

@@ -236,14 +236,33 @@ trap 'rm -rf -- "$SCRATCH"' EXIT
 READ_OUT=""
 READ_ERR=""
 read_api() { # ENDPOINT FILTER [--paginate]
-  local rc=0
+  local rc attempt=0 delay=1 error retryable
   READ_ERR=""
-  READ_OUT="$(gh api ${3:+"$3"} "$1" --jq "$2" </dev/null 2>"$SCRATCH/err")" || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  if ! READ_ERR="$(sed -n '1p' "$SCRATCH/err")" || [ -z "$READ_ERR" ]; then
-    READ_ERR="gh exited $rc"
-  fi
-  return 1
+  while :; do
+    rc=0
+    READ_OUT="$(gh api ${3:+"$3"} "$1" --jq "$2" </dev/null 2>"$SCRATCH/err")" || rc=$?
+    [ "$rc" -eq 0 ] && { READ_ERR=""; return 0; }
+    if ! READ_ERR="$(sed -n '1p' "$SCRATCH/err")" || [ -z "$READ_ERR" ]; then
+      READ_ERR="gh exited $rc"
+    fi
+    error="$(cat "$SCRATCH/err")" || return 1
+    retryable=0
+    # gh's HTTP status takes precedence over its connection diagnostics.
+    # Local jq, authentication and usage errors cannot recover by waiting.
+    if [[ "$error" =~ HTTP[[:space:]]+([0-9][0-9][0-9]) ]]; then
+      case "${BASH_REMATCH[1]}" in
+        500|502|503|504) retryable=1 ;;
+      esac
+    else
+      case "$error" in
+        *'error connecting to '*|*'Get "https://'*'": '*|*'Get "http://'*'": '*) retryable=1 ;;
+      esac
+    fi
+    [ "$retryable" -eq 1 ] && [ "$attempt" -lt 2 ] || return 1
+    sleep "$delay" || return 1
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
 }
 jq_string() { jq -n --arg v "$1" '$v'; }
 
