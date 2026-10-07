@@ -1143,7 +1143,7 @@ stage_panes() {
 # separated by `;`: server is live or dead, dir one of the home's lane names,
 # `claude/` for a trailing slash, `link` for a symlink to claude, `away` for
 # eclaude reached from a second home, `awaydefault` for that home's own
-# `.claude`, `aliased` for a second home's `.other`
+# `.claude`, `srv` for a second `.eclaude` this home lists beside its own, `aliased` for a second home's `.other`
 # whose launch named it by that spelling and whose canonical target is
 # `creds-b`, `written` for that claim written through lane_claim_write, `bs`
 # for the backslash-named lane; `junk` writes a malformed record. Any other
@@ -1172,6 +1172,7 @@ stage_claims() {
       link) dir="$TMP_ROOT/claude-link" ;;
       away) dir="$AWAY_HOME/.eclaude"; mkdir -p "$dir" ;;
       awaydefault) dir="$AWAY_HOME/.claude"; mkdir -p "$dir" ;;
+      srv) dir="$TMP_ROOT/srv/.eclaude"; mkdir -p "$dir" ;;
       aliased)
         dir="$AWAY_HOME/creds-b"; named="$AWAY_HOME/.other"
         mkdir -p "$dir"; ln -sfn "$dir" "$named"
@@ -1256,6 +1257,10 @@ claims_table \
   "another home's own .claude is another account, never charged to this one|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=1"
 ORCH_LANE_ALIASES="claude=work" claims_table \
   "a .claude both homes alias to one account name counts as that one account|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|work.claims=2"
+# Two lanes this home lists share the alias `eclaude`; a claim on one is never
+# charged to the other.
+ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.eclaude" claims_table \
+  "a claim on one of two listed lanes sharing an alias is never charged to the other|live:%1|theirs:live:%1:srv||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=0"
 
 # The fleet names one account `work` in both homes: this home's `.eclaude` and
 # the other's `.other`, a symlink to a target named for neither.
@@ -1284,6 +1289,10 @@ claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf' 'printf'
 LANES="$claims_scripts/lanes" claims_table \
   "control: keying a home's default .claude by its bare name charges every home's default to it|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=2"
+claims_scripts="$(mutant_scripts mutant-claims-own-named lanes)" || exit 1
+mutate_file "$claims_scripts/lanes" 'case "$own" in *$'"'"'\n'"'"'"$cfg"$'"'"'\n'"'"'*) ;; *) key="$(lane_account_name "${named:-$cfg}")" ;; esac' 'key="$(lane_account_name "${named:-$cfg}")"'
+ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.eclaude" LANES="$claims_scripts/lanes" claims_table \
+  "control: naming a claim a listed lane holds charges it to the other lane sharing its alias|live:%1|theirs:live:%1:srv||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
 if [[ "$(id -u)" -eq 0 ]]; then

@@ -649,10 +649,13 @@
 # account under each home's path, and every claim on it, whichever home wrote
 # it, counts and is charged once against that account. A dir named the bare
 # harness word (`~/.claude`) is each home's own default login and keys by its
-# path alone, unless ORCH_LANE_ALIASES names it. Usage numbers lag a launch by
-# minutes, so `pick` called twice in a row would hand the same account both lanes; the claim count is
-# the correction, and it orders `pick` ahead of headroom. Each claim is also
-# charged its expected burn in the projected wall the chooser and
+# path alone, unless ORCH_LANE_ALIASES names it. A claim on a lane this machine
+# lists is that lane's by its path alone: an alias is not unique, and two
+# local lanes sharing one stay two accounts; only another home's claim is
+# matched by name, and charged to every local lane carrying it. Usage numbers
+# lag a launch by minutes, so `pick` called twice in a row would hand the same
+# account both lanes; the claim count is the correction, and it orders `pick`
+# ahead of headroom. Each claim is also charged its expected burn in the projected wall the chooser and
 # `pick --lane --projected` judge; `pick --lane` alone and `list` keep the
 # reading's verdict, with the projection beside it.
 #
@@ -2305,17 +2308,28 @@ emit_lane() {
 # command substitution, and a read failure recorded there would die with the
 # subshell instead of reaching the decision.
 load_lane_claims() {
-	local line cfg named
+	local line cfg named h d own=$'\n' key
 	LANE_CLAIMS_RC=0
 	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" fleet)" || LANE_CLAIMS_RC=$?
 	LANE_CLAIM_ACCOUNTS=""
+	# An alias is not unique: two of this machine's own lanes can share one
+	# (`/home/u/.foo` and `/srv/u/.foo`). A claim on one of them is that lane's
+	# by its path, and only a claim no lane here holds, another home's, is
+	# named, so a name never moves a claim between two lanes this run lists.
+	for h in claude codex copilot; do
+		while IFS= read -r d; do
+			[[ -z "$d" ]] || own+="$(lane_claims_canon "$d")"$'\n'
+		done < <(lane_dirs "$h")
+	done
 	# The canonical config dir is the first field and the named spelling the
 	# last, empty on a record written before claims carried it.
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		cfg="${line%%$'\t'*}"
 		named="${line##*$'\t'}"
-		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$(lane_account_name "${named:-$cfg}")"$'\n'
+		key=""
+		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) key="$(lane_account_name "${named:-$cfg}")" ;; esac
+		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
 }
 
@@ -2336,8 +2350,8 @@ lane_account_name() { # DIR
 # account by as many paths as there are homes (`/home/a/.eclaude`,
 # `/home/b/.eclaude`), so a claim counts against DIR where its canonical config
 # dir is DIR's, or where lane_account_name of the spelling its launch named is
-# DIR's and not empty. One account is charged every claim on it whichever home
-# wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
+# DIR's and not empty, which load_lane_claims leaves only on another home's
+# claim. One account is charged every claim on it whichever home wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
 account_claims() { # DIR
 	LANE_CLAIMS_CANON_Q="$(lane_claims_canon "$1")" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" \
 		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]) { n++ }
