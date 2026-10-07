@@ -13,15 +13,6 @@ spec="$candidate/skills/bot-instructions"
 mkdir -p "$spec/schemas" || exit 1
 cp "$BI_ROOT/skills/bot-instructions/SKILL.md" "$spec/SKILL.md" || exit 1
 cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec/schemas/renders.md" || exit 1
-python3 - "$spec/SKILL.md" <<'PY' || exit 1
-from pathlib import Path
-import re, sys
-p = Path(sys.argv[1])
-s = p.read_text()
-changed, count = re.subn(r'(?m)^  version: "[^"]+"$', '  version: "candidate"', s)
-assert count == 1 and changed != s
-p.write_text(changed)
-PY
 bi_must_adopt --repo "$candidate" --spec "$spec" || exit 1
 bi_must render --repo "$candidate" --spec "$spec" || exit 1
 bi_commit "$candidate"

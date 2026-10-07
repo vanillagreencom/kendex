@@ -91,10 +91,7 @@ EOF
 # heading: set equality in both directions, since the one-directional half
 # leaves the orphaned row unchecked. Positions in a column run 1..n once
 # each. The two all-eight columns lose a block and Codex or Macroscope loses
-# it with every other validator green. A spec copy with no readable version
-# would land a doctrine change under a stamp naming doctrine it does not
-# carry; a version carrying `-->` would close the marker comment and put the
-# rest into a generated file as live reviewer instructions. Two `## Doctrine`
+# it with every other validator green. Two `## Doctrine`
 # sections, or none, is an error rather than a guess. Doctrine text is under
 # the same content refusals as repo text, applied where it is read
 # (`renders.md` § Render-side second checks): a `---` under a text line is a
@@ -111,8 +108,6 @@ a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `round
 a gap in a column, whose positions must run 1..n~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 9 |~red:doctrine-routing:column 'code-review.md' positions are [1, 3, 4, 5, 6, 7, 8, 9], not 1..n
 a block missing from the code-review.md column~schemas/renders.md~| `reply-contract` | 8 |~| `reply-contract` | – |~red:doctrine-routing:column 'code-review.md' omits 'reply-contract'
 a block missing from the macroscope doctrine.md column~schemas/renders.md~re:(\| `reply-contract` \|.*\| )8 \|\n~\g<1>– |\n~red:doctrine-routing:column 'macroscope doctrine.md' omits 'reply-contract'
-a spec copy with no readable version~SKILL.md~re:\n  version: "[^"]*"~~msg:no `version:` under metadata
-a spec version that would close its own comment~SKILL.md~re:(\n  version: ")([^"]*)(")~\g<1>\g<2> --> <!-- x\g<3>~msg:is outside [A-Za-z0-9.+-]
 two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\n\ny\n\n## Adding a repo\n~msg:exactly one is required
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
 a heading line in doctrine text, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal

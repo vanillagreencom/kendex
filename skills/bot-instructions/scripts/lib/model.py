@@ -68,7 +68,7 @@ class RenderModel:
         function's output, so the string this render writes and the string
         ownership is tested for are one.
         """
-        return marker_mod.comment(style, self.doctrine.version, self.inputs)
+        return marker_mod.comment(style, self.inputs)
 
 
 def _assemble(config, doctrine):

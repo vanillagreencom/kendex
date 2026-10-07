@@ -26,7 +26,7 @@ class BotInstructionsError(Exception):
 
 
 class SpecError(BotInstructionsError):
-    """The spec copy is unusable: no version, no doctrine, a broken table."""
+    """The spec copy is unusable: no doctrine, a broken table."""
 
     key = "spec"
 

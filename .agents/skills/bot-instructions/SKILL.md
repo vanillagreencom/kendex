@@ -9,7 +9,6 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.6.1"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -92,7 +91,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 ## A pull request changing its own review
 
-- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. The package's own source repository runs the pull request's checker always.
+- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning that the pull request changes the package. The package's own source repository runs the pull request's checker always.
 
 ## The render inputs
 

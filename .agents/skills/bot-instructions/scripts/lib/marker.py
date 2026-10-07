@@ -38,14 +38,14 @@ def style_for(path):
     return HTML
 
 
-def comment(style, version, inputs):
+def comment(style, inputs):
     """The marker this package writes. The one statement of its form.
 
     The HTML form is ONE line, so the whole marker is the line `owns` tests.
     The `#` form runs to two, both of them comments in every format that takes
     it, `.macroscope/ignore.md` included.
     """
-    head = f"{MARKER_TOKEN} {version} from {', '.join(inputs)}."
+    head = f"{MARKER_TOKEN} from {', '.join(inputs)}."
     if style == HTML:
         return f"<!-- {head} {MARKER_CLOSE} -->"
     return f"# {head}\n# {MARKER_CLOSE}"

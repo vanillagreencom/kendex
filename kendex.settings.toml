@@ -326,10 +326,8 @@ COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md changelog.d/*/*/*.md"
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extensions/*/package.json"
 
 # The catalog packages a changelog.d/<package>/ fragment may name. Skills,
-# hooks and agents are declared by their own file and carry no version: a
-# SKILL.md that states no metadata.version owes no raise. bot-instructions
-# alone states one, since it stamps that version into the files it
-# generates, so each change to it raises its version.
+# hooks and agents are declared by their own file and carry no version, so
+# a change to one owes no raise.
 COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = "skills/*/SKILL.md hooks/*.sh agents/*.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg

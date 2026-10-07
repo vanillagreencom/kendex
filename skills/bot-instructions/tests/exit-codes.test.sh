@@ -21,7 +21,7 @@ bi_real() { ( cd -- "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
 # `rendered` is a fresh repo that checks clean; the words after it move it
 # off that state: `stale-copilot` appends to a generated file, `no-git`
 # deletes the repository, `spec:no-doctrine` names a spec copy whose SKILL.md
-# carries a version and no `## Doctrine` section.
+# carries no `## Doctrine` section.
 bi_world() {
   local word
   repo="$(bi_rendered_repo "exit-$1-$$-$RANDOM")" || return 1
@@ -34,7 +34,7 @@ bi_world() {
         BI_SPEC="$BI_TMP/spec-no-doctrine"
         rm -rf -- "${BI_SPEC:?}"
         mkdir -p "$BI_SPEC/schemas"
-        printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine here\n' > "$BI_SPEC/SKILL.md"
+        printf -- '# no doctrine here\n' > "$BI_SPEC/SKILL.md"
         cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$BI_SPEC/schemas/renders.md"
         ;;
       *) printf 'unknown world word: %s\n' "$word" >&2; return 1 ;;
@@ -95,7 +95,7 @@ spec_repo="$(bi_rendered_repo exit-spec-value)" || exit 1
 spec_dir="$BI_TMP/spec-value-empty"
 rm -rf -- "${spec_dir:?}"
 mkdir -p "$spec_dir/schemas"
-printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine\n' > "$spec_dir/SKILL.md"
+printf -- '# no doctrine\n' > "$spec_dir/SKILL.md"
 cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec_dir/schemas/renders.md"
 status=0
 out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
@@ -170,7 +170,7 @@ rm -rf -- "${badblock:?}"
 mkdir -p "$badblock/schemas"
 # A level-1 or level-2 heading would END the Doctrine section rather than sit
 # inside the block, so the refusal never sees it. This one stays in the body.
-printf -- '---\nmetadata:\n  version: "x"\n---\n\n## Doctrine\n\n### one\n\ntext\n\n#### a heading inside the block\n' \
+printf -- '## Doctrine\n\n### one\n\ntext\n\n#### a heading inside the block\n' \
   > "$badblock/SKILL.md"
 cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$badblock/schemas/renders.md"
 status=0

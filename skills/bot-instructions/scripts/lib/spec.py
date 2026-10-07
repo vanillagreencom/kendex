@@ -1,4 +1,4 @@
-"""The spec copy: version, doctrine blocks, default surfaces, and the routing table.
+"""The spec copy: doctrine blocks, default surfaces, and the routing table.
 
 SKILL.md § Doctrine defines a spec copy as a copy of this package whose
 `SKILL.md` carries the doctrine section and whose `schemas/renders.md` carries
@@ -7,9 +7,9 @@ holds one against the other and reading them from different copies would red
 on every legitimate doctrine change.
 
 **The package validates its own spec copy for shape, and trusts it for
-content.** The version and the input paths are interpolated into a comment
-that no structured-file validator need be in the render to catch, so both are
-held to a class that cannot close a comment. Doctrine text is trusted the way
+content.** The input paths are interpolated into a comment that no
+structured-file validator need be in the render to catch, so they are held to
+a class that cannot close a comment. Doctrine text is trusted the way
 the rest of this package's own bytes are, and is re-checked only against the
 content refusals, which `refusals.py` owns.
 """
@@ -20,25 +20,19 @@ import tomllib
 from .constants import (
     FROZEN_BLOCK_IDS,
     MARKER_PATH_CLASS,
-    MARKER_VERSION_CLASS,
     ROUTING_COLUMNS,
 )
 from .errors import BotInstructionsError, InputError, SpecError
 from . import markdown, refusals
 
-# A version reaches a `#` comment and an HTML comment. Anything outside this
-# class could close one and put the rest into a generated file as live
-# reviewer instructions.
-_VERSION_CLASS = re.compile(f"^[{MARKER_VERSION_CLASS}]+$")
 _PATH_CLASS = re.compile(f"^[{MARKER_PATH_CLASS}]+$")
 
 _DASH = "–"
 
 
 class Doctrine:
-    def __init__(self, blocks, version, routing, positions, surfaces):
+    def __init__(self, blocks, routing, positions, surfaces):
         self.blocks = blocks            # id -> text
-        self.version = version
         self.routing = routing          # column -> [block ids in order]
         # The `## Default surfaces` entries as the TOML parsed them. Validated
         # against the manifest's own surface schema where they meet the
@@ -81,29 +75,6 @@ def check_marker_path(path):
             "rather than escapes"
         )
     return path
-
-
-def read_version(skill_text, where):
-    if not skill_text.startswith("---\n"):
-        raise SpecError(f"{where}: no YAML frontmatter, so no version to stamp the marker with")
-    end = skill_text.find("\n---\n", 3)
-    if end == -1:
-        raise SpecError(f"{where}: frontmatter is not closed")
-    for line in skill_text[4:end].splitlines():
-        m = re.match(r'^\s{2}version:\s*"?([^"\n]*)"?\s*$', line)
-        if m:
-            version = m.group(1).strip()
-            if not _VERSION_CLASS.match(version):
-                raise SpecError(
-                    f"{where}: version {version!r} is outside [{MARKER_VERSION_CLASS}]. The marker "
-                    "interpolates it into a comment, and a version carrying `-->` or a "
-                    "newline would end that comment"
-                )
-            return version
-    raise SpecError(
-        f"{where}: no `version:` under metadata. A spec copy with no readable version "
-        "would land a doctrine change under a stamp naming doctrine it does not carry"
-    )
 
 
 def parse_doctrine(skill_text, where):
@@ -244,7 +215,6 @@ def load(spec_tree, skill_rel, renders_rel):
         renders_text = spec_tree.read(renders_rel)
         if renders_text is None:
             raise SpecError(f"{renders_rel}: the spec copy has no routing table")
-        version = read_version(skill_text, skill_rel)
         blocks = parse_doctrine(skill_text, skill_rel)
         surfaces = parse_default_surfaces(skill_text, skill_rel)
         routing, positions = parse_routing(renders_text, renders_rel)
@@ -255,7 +225,7 @@ def load(spec_tree, skill_rel, renders_rel):
         # command line holds the spec root it resolved and fills it in.
         exc.from_spec = True
         raise
-    return Doctrine(blocks, version, routing, positions, surfaces)
+    return Doctrine(blocks, routing, positions, surfaces)
 
 
 def frozen_ids():
