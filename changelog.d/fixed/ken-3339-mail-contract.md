@@ -1,1 +1,0 @@
-- Pi hook maintainer documentation delegates mailbox decisions to the lane-mail hook.

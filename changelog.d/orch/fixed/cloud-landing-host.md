@@ -1,1 +1,0 @@
-- Cloud sessions launch landing lanes on the fleet's configured runner. A fleet configured only for cloud sessions keeps local landing because it has no runner that can land the change.

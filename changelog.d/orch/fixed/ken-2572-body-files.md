@@ -1,1 +1,0 @@
-- Issue descriptions and review comments use body files to preserve Markdown without shell expansion.

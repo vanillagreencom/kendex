@@ -40,6 +40,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex remove` records a removal that has nothing installed to take: a declaration a refresh withheld leaves kendex.toml, a dependency already taken off disk with `--keep-declaration` is written to `[suppressed]`, and an optional extra chosen by hand is taken back. Before, it printed "Nothing removed" and the next refresh installed the item.
 - Pi package updates report unresolved sources and unreadable manifests as not evaluated, update other packages, and exit with an error.
 - Verification names scoped refresh actions for stale packages and missing recorded commits. JSON keeps version 1 with optional action metadata. Base revision failures carry no refresh action.
+- Mailbox wake tests cover delivery of overseer answers to idle Pi lanes.
+- Pi hook maintainer documentation delegates mailbox decisions to the lane-mail hook.
 
 ### Packages
 
@@ -140,6 +142,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Completion validation accepts Completion Summary and Bundle Complete headings in any letter case.
 - Issue reads (`issues get`, `bulk-get`, `list`, `list-relations`) list a `related` relation on both issues, including the one that did not create it, which they previously left out.
 - A `--max` list no longer holds every page in the shell: the pager spools each page to a temporary file and merges them in one `jq` read, so a large backlog stays bounded by `jq`. `SKILL.md` routes a text search through `issues list --search`, never a `--max` list filtered locally.
+- Issue activation and completion accept `--format ids` to print only the identifier.
 
 #### orch
 
@@ -167,6 +170,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - The Pi carrier recovery text says `update-pi` is refused only in a linked worktree with no manifest of its own.
 - `oversee-cycle record` reads a hosted lane's review and fix rounds in the state directory the lane itself uses, named by its worktree's settings, instead of the overseer's own `ORCH_STATE_DIR`. Once the host answers that the lane's worktree is gone, it reads them from the `kept=` archive its close left in the fleet log during the lane's current session. `lane-host-ssh close` now archives the item's workflow state wherever those settings place it, names that file in the archive's `lane-host-state` member, and stops as `state-unresolved` when the state directory cannot be resolved.
 - Codex lanes keep job-runner waiter completion inside the active turn so approval, CI and merge waits continue when the job ends.
+- Lane inboxes and mailbox watches deliver unread answers to notices. Answers returned by a wait stay read.
+- Cloud sessions launch landing lanes on the fleet's configured runner. A fleet configured only for cloud sessions keeps local landing because it has no runner that can land the change.
+- Issue descriptions and review comments use body files to preserve Markdown without shell expansion.
+- Remove temporary mailbox copies after an answered wait or a failed inbox or wait lock on hosts without flock.
+- A mailbox wait delivers earlier unread answers, directives and halts before advancing the read cursor.
 
 #### preflight
 

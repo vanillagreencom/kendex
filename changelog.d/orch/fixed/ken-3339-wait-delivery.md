@@ -1,1 +1,0 @@
-- A mailbox wait delivers earlier unread answers, directives and halts before advancing the read cursor.
