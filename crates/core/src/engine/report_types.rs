@@ -415,6 +415,25 @@ pub struct EngineReport {
     pub wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// What the request behind this pass asked for.
     pub asked: Asked,
+    /// The declarations a disowning removal takes out of kendex.toml.
+    /// Empty on every other pass: a manifest save the planner makes of its
+    /// own accord (an agent alias renamed, a retired item pruned) drops
+    /// no declaration, and a removal that keeps declarations writes none.
+    pub dropped: Vec<DroppedDeclaration>,
+}
+
+/// One declaration a removal takes out of kendex.toml, by the table it
+/// leaves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DroppedDeclaration {
+    /// An item's own table, `[plugins]` included.
+    Item {
+        kind: ItemKind,
+        name: String,
+    },
+    Bundle {
+        name: String,
+    },
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -523,6 +542,7 @@ impl EngineReport {
             withheld: BTreeMap::new(),
             retired_bundles: BTreeMap::new(),
             asked: Asked::Declared,
+            dropped: Vec::new(),
         }
     }
 
