@@ -10,10 +10,13 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=../scripts/lib/formatters.sh
 source "$SKILL_DIR/scripts/lib/formatters.sh"
 assert_tmpdir TMP_ROOT
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # KEN-1 created the related relation to KEN-2; KEN-3 created the one to KEN-1,
 # so KEN-1 sees it only under inverseRelations. The inverse blocks relation
