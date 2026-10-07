@@ -288,9 +288,8 @@ mutate_file "$OWNERSHIP_CTRL/lib/lane-claims.sh" \
 assert_eq "$(CTX_LANES="$OWNERSHIP_CTRL/lanes" run_ctx --json | jq -c '[.[] | select(.pane == "%42") | .context_tokens]')" \
   '[950000]' 'control: omitting fleet ownership attributes this fleet reading to the foreign claim'
 RESERVATION_CTRL="$(mutant_scripts mutant-context-reservation lanes)" || exit 1
-# The context verb's own load, at its two-tab depth: the chooser's one-tab
-# load reads the fleet form too.
-mutate_file "$RESERVATION_CTRL/lanes" $'\t\tload_lane_claims fleet' $'\t\tload_lane_claims count'
+# The one load every verb reads the claim store through.
+mutate_file "$RESERVATION_CTRL/lanes" '"$(lane_claims_dir "$PROJECT_ROOT")" fleet)"' '"$(lane_claims_dir "$PROJECT_ROOT")" count)"'
 assert_eq "$(CTX_LANES="$RESERVATION_CTRL/lanes" run_ctx --json | jq -c '[.[] | select(.pane == "-") | .lane]')" \
   '["reserved-window"]' 'control: count mode leaks a reservation into the context report'
 rm -f "${STATE:?}"/claims/foreign-*.claim "${STATE:?}"/claims/empty-*.claim "${STATE:?}/claims/report.reserve"

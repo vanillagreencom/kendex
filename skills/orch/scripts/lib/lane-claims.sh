@@ -25,9 +25,14 @@
 # link to it: every record is written group-readable whatever the writer's
 # umask, so a store whose group every fleet user shares reads across homes, and
 # `lanes` counts a claim by the account its config dir names, never by the
-# home-specific path.
+# home-specific path alone.
 #
-# Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>\t<fleet>`.
+# Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>\t
+# <fleet>\t<named>`.
+# The config dir is canonical; `named` is the spelling the launch named the lane
+# by, before canonicalisation, so a reader can name the account as `lanes list`
+# does from a discovered path. A record written before it carried one has none,
+# and a reader names that claim's account from its canonical config dir.
 # The fleet is the oversee state file of the fleet the launch was judged in
 # (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
 # what lets one store serve several fleets: open-terminal's fleet cap counts
@@ -91,19 +96,20 @@ lane_claims_canon() {
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
 # pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's fleet
-# cap counts, each line ends in `\t<fleet>` and the live reservations are among
-# them, read in full before the claims are listed: a launch writes its claim or
-# its record before it drops its reservation, so a reservation gone by the
-# time it is read is a claim the later listing finds, or a record for a caller
-# that reads its records after this.
+# cap counts, each line ends in `\t<fleet>\t<named>` and the live
+# reservations are among them, read in full before the claims are listed: a
+# launch writes its claim or its record before it drops its reservation, so a
+# reservation gone by the time it is read is a claim the later listing finds,
+# or a record for a caller that reads its records after this.
 # The four-field form is the default because lane-context appends its own
-# fifth field. Mode `fleet` retains fleet identity without adding reservations;
-# a context selector removes that field before the caller flag is appended.
+# fifth field. Mode `fleet` carries the same two fields without adding
+# reservations; a context selector removes them before the caller flag is
+# appended.
 # $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
-  local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet rc=0
+  local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet named rc=0
   local rechecked=0 recheck_ok=1 live_now fresh line rest kinds=claim kind
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
@@ -129,7 +135,7 @@ lane_claims_read() {
       [[ -f "$f" ]] || continue
       # Cleared every iteration: a failed read must never leave the previous
       # record's fields standing in for this one.
-      server=""; pane=""; cfg=""; window=""; fleet=""
+      server=""; pane=""; cfg=""; window=""; fleet=""; named=""
       if [[ ! -r "$f" ]]; then
         # A claim that cannot be read is a launch that cannot be seen: reported,
         # left in place, and carried out as a failure so a caller deciding where
@@ -150,6 +156,8 @@ lane_claims_read() {
       # The creation stamp is for a reader of the file, not for liveness.
       rest="${rest#*$'\t'}"
       fleet="${rest%%$'\t'*}"
+      rest="${rest#*$'\t'}"
+      named="${rest%%$'\t'*}"
       if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
         rm -f -- "$f"
         continue
@@ -194,7 +202,7 @@ lane_claims_read() {
       # count compares strings, and a hand-written or older record must still
       # land on the account discovery reports.
       if [[ "$mode" == count || "$mode" == fleet ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet" "$named"
       else
         printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
       fi
@@ -253,7 +261,7 @@ lane_claims_config_dir() {
 
 # Writes one record under SUFFIX, its path left in LANE_CLAIM_PATH.
 # $1: claims dir, $2: suffix, $3: server pid, $4: pane id, $5: config dir,
-# $6: window, $7: fleet.
+# $6: window, $7: fleet. The config dir is recorded canonical and as named.
 lane_claim_put() {
   local dir="$1" suffix="$2" cfg tmp
   cfg="$(lane_claims_canon "$5")"
@@ -261,11 +269,13 @@ lane_claim_put() {
   tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
   # Named with its suffix only once complete: a reader must never see a
   # half-written record and prune a live lane over it.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" "$5" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   # mktemp creates mode 600, which no default ACL widens: a store shared by
   # several homes would refuse every other home's read as unreadable-claim.
-  chmod g+r -- "$tmp" || { rm -f -- "$tmp"; return 1; }
+  # `--` before the mode: BSD chmod applies a mode followed by `--`, then
+  # exits 1 taking `--` for a file.
+  chmod -- g+r "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$tmp.$suffix" || { rm -f -- "$tmp"; return 1; }
   # shellcheck disable=SC2034  # read by lib/lane-cap.sh's cap_reserve
   LANE_CLAIM_PATH="$tmp.$suffix"

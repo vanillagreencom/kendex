@@ -1142,10 +1142,12 @@ stage_panes() {
 # stage_claims SPEC — the claim files for one run, `name:server:pane:dir` items
 # separated by `;`: server is live or dead, dir one of the home's lane names,
 # `claude/` for a trailing slash, `link` for a symlink to claude, `away` for
-# eclaude reached from a second home, `bs` for the backslash-named lane; `junk` writes a malformed record. Any other token is
+# eclaude reached from a second home, `aliased` for a second home's `.other`
+# whose launch named it by that spelling and whose canonical target is
+# `creds-b`, `bs` for the backslash-named lane; `junk` writes a malformed record. Any other token is
 # a typo and aborts the suite rather than staging the opposite world.
 stage_claims() {
-  local spec="$1" items item name server pane dir pid
+  local spec="$1" items item name server pane dir pid named
   STORE="$RUN/store"
   mkdir -p "$STORE/claims"
   [[ -n "$spec" ]] || return 0
@@ -1156,6 +1158,7 @@ stage_claims() {
       continue
     fi
     IFS=':' read -r name server pane dir <<<"$item"
+    named=""
     case "$server" in
       live) pid="$LIVE_PID" ;;
       dead) pid="$DEAD_PID" ;;
@@ -1166,6 +1169,10 @@ stage_claims() {
       claude/) dir="$H/.claude/" ;;
       link) dir="$TMP_ROOT/claude-link" ;;
       away) dir="$AWAY_HOME/.eclaude"; mkdir -p "$dir" ;;
+      aliased)
+        dir="$AWAY_HOME/creds-b"; named="$AWAY_HOME/.other"
+        mkdir -p "$dir"; ln -sfn "$dir" "$named"
+        ;;
       bs)
         dir="$BSDIR"
         mkdir -p "$BSDIR"
@@ -1174,7 +1181,11 @@ stage_claims() {
         ;;
       *) echo "stage_claims: unknown dir token in $item" >&2; exit 1 ;;
     esac
-    printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' "$pid" "$pane" "$dir" "$name" > "$STORE/claims/$name.claim"
+    printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z' "$pid" "$pane" "$dir" "$name" > "$STORE/claims/$name.claim"
+    # The record lane_claim_put writes ends in the fleet and the named spelling;
+    # the other tokens stage the older record that carries neither.
+    [[ -z "$named" ]] || printf '\t\t%s' "$named" >> "$STORE/claims/$name.claim"
+    printf '\n' >> "$STORE/claims/$name.claim"
   done
 }
 
@@ -1231,13 +1242,23 @@ claims_table \
   "claims on one account from two homes count under that one account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=2 claude.claims=0" \
   "the one-lane form charges both homes' claims to the account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=2"
 
-# Control: keyed by the home-specific path, the second home's claim lands on a
-# key no listed lane carries and the account reads half its load.
+# The fleet names one account `work` in both homes: this home's `.eclaude` and
+# the other's `.other`, a symlink to a target named for neither.
+WORK_ALIASES="eclaude=work,other=work"
+ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
+  "a claim keys by the alias its launch named, not its canonical target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=2 claude.claims=0"
+
+# Controls: keyed by the canonical path alone, the second home's claim lands
+# on a key no listed lane carries and the account reads half its load; keyed
+# by the canonical target's name, the aliased claim misses `work` the same way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" 'LANE_CLAIM_ACCOUNTS+="$(lane_alias_for "$cfg")"' 'LANE_CLAIM_ACCOUNTS+="$cfg"'
-mutate_file "$claims_scripts/lanes" 'LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$(lane_claims_canon "$1")")"' 'LANE_CLAIMS_ACCOUNT_Q="$(lane_claims_canon "$1")"'
+mutate_file "$claims_scripts/lanes" ' || $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]' ''
 LANES="$claims_scripts/lanes" claims_table \
   "control: a path key counts two homes' claims on one account as two accounts|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=1 claude.claims=0"
+claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
+mutate_file "$claims_scripts/lanes" '"$(lane_alias_for "${named:-$cfg}")"' '"$(lane_alias_for "$cfg")"'
+ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
+  "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
 if [[ "$(id -u)" -eq 0 ]]; then

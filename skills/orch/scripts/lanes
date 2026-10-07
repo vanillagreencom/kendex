@@ -643,11 +643,11 @@
 # one per tmux lane it launches under a resolved lane, and a claim is live
 # while its pane is (stored under $OVERSEE_WATCH_STATE_DIR/claims, else
 # <project root>/tmp/oversee-watch/claims; a claim whose pane is gone is
-# pruned on read). A claim counts against the account its config dir names,
-# the alias `list` gives it (`1claude` for `~/.1claude`), not the path: a store
-# several homes share sees one account under each home's path, and every
-# claim on it, whichever home wrote it, counts and is charged once against
-# that account. Usage numbers lag a launch by minutes, so `pick` called
+# pruned on read). A claim counts against the account its launch named, the
+# alias `list` gives that spelling (`1claude` for `~/.1claude`), as well as
+# against its canonical config dir: a store several homes share sees one
+# account under each home's path, and every claim on it, whichever home wrote
+# it, counts and is charged once against that account. Usage numbers lag a launch by minutes, so `pick` called
 # twice in a row would hand the same account both lanes; the claim count is
 # the correction, and it orders `pick` ahead of headroom. Each claim is also
 # charged its expected burn in the projected wall the chooser and
@@ -2303,23 +2303,31 @@ emit_lane() {
 # command substitution, and a read failure recorded there would die with the
 # subshell instead of reaching the decision.
 load_lane_claims() {
-	local cfg rest
+	local line cfg named
 	LANE_CLAIMS_RC=0
-	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" "${1:-}")" || LANE_CLAIMS_RC=$?
+	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" fleet)" || LANE_CLAIMS_RC=$?
 	LANE_CLAIM_ACCOUNTS=""
-	while IFS=$'\t' read -r cfg rest; do
-		[[ -z "$cfg" ]] || LANE_CLAIM_ACCOUNTS+="$(lane_alias_for "$cfg")"$'\n'
+	# The canonical config dir is the first field and the named spelling the
+	# last, empty on a record written before claims carried it.
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		cfg="${line%%$'\t'*}"
+		named="${line##*$'\t'}"
+		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$(lane_alias_for "${named:-$cfg}")"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
 }
 
 # Live claims against DIR's account. A store several homes share names one
 # account by as many paths as there are homes (`/home/a/.eclaude`,
-# `/home/b/.eclaude`), so a claim counts by the account name `list` gives its
-# canonical config dir, and one account is charged every claim on it whichever
-# home wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
+# `/home/b/.eclaude`), so a claim counts against DIR where its canonical config
+# dir is DIR's, or where the account name `list` gives the spelling its launch
+# named, ORCH_LANE_ALIASES applied, is the one `list` gives DIR. One account is
+# charged every claim on it whichever home wrote each. Reads
+# LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
 account_claims() { # DIR
-	LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$(lane_claims_canon "$1")")" \
-		awk '$0 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"] { n++ } END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
+	LANE_CLAIMS_CANON_Q="$(lane_claims_canon "$1")" LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$1")" \
+		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"] { n++ }
+			END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
 }
 
 # EXCLUDE is the config dirs, one a line, that `pick` omits before the chooser
@@ -3109,7 +3117,7 @@ cmd_pick() {
 		copilot_pool_entries >/dev/null || return 1
 		pool_roots="$(lane_dirs pi all)"
 	fi
-	load_lane_claims fleet
+	load_lane_claims
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
@@ -3368,7 +3376,7 @@ LANE_CLAIMS_LIVE=""
 # Non-zero when the claim store could not be read: `list` still reports what
 # it measured, `pick` refuses rather than deciding on an unknown.
 LANE_CLAIMS_RC=0
-# The account each live claim names, one a line, in LANE_CLAIMS_LIVE's order.
+# One `<canonical config dir>\t<account>` line per live claim.
 LANE_CLAIM_ACCOUNTS=""
 
 # shellcheck source=lib/lane-claims.sh
@@ -3672,7 +3680,7 @@ case "$SUB" in
 		lane_context_handoff_due 0 1 "$HANDOFF_CONTEXT_PCT" >/dev/null || context_rc=$?
 		[[ "$context_rc" -ne 2 ]] || die invalid-handoff-context "$HANDOFF_CONTEXT_PCT"
 		validate_lane_settings
-		load_lane_claims fleet
+		load_lane_claims
 		# An unreadable claim store is not an empty fleet: reporting no lanes
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
