@@ -53,7 +53,9 @@ fn consumer_record_owes_no_copilot_only_workflow_hooks() {
     use kendex_core::model::{HarnessId, ItemKind, Scope};
 
     const EXCLUDED: &[&str] = &["lane-mail-compact", "lane-mail-prompt", "lane-mail-start"];
-    const RECORDER: &str = "skill-load-record";
+    // A workflow hook on Claude, Codex and Pi that the record lacks: verify
+    // still owes it, so the exclusion is not a blanket pass on record gaps.
+    const OWED: &str = "lane-mail-deliver";
     const MANIFEST: &str = include_str!("fixtures/example-consumer/manifest.toml");
     const RECORD: &str = include_str!("fixtures/example-consumer/install-record.json");
 
@@ -92,7 +94,7 @@ fn consumer_record_owes_no_copilot_only_workflow_hooks() {
         "catalog expansion must finish"
     );
     let record: serde_json::Value = serde_json::from_str(RECORD).unwrap();
-    for name in EXCLUDED.iter().copied().chain([RECORDER]) {
+    for name in EXCLUDED.iter().copied().chain([OWED]) {
         assert!(
             planned
                 .iter()
@@ -111,7 +113,7 @@ fn consumer_record_owes_no_copilot_only_workflow_hooks() {
 
     let mut args = vec!["verify", "--scope", "project", "--json", "lane-mail-check"];
     args.extend(EXCLUDED);
-    args.push(RECORDER);
+    args.push(OWED);
     let verified = kendex(&home, &project, &args);
     let document: Document = serde_json::from_slice(&verified.stdout)
         .unwrap_or_else(|error| panic!("verify document: {error}\n{}", said(&verified)));
@@ -134,9 +136,9 @@ fn consumer_record_owes_no_copilot_only_workflow_hooks() {
     assert_eq!(
         unrecorded,
         [
-            ("hook", RECORDER, Some(HarnessId::Claude)),
-            ("hook", RECORDER, Some(HarnessId::Codex)),
-            ("hook", RECORDER, Some(HarnessId::Pi)),
+            ("hook", OWED, Some(HarnessId::Claude)),
+            ("hook", OWED, Some(HarnessId::Codex)),
+            ("hook", OWED, Some(HarnessId::Pi)),
         ],
         "listed/not-recorded: {unrecorded:?}\n{}",
         said(&verified)

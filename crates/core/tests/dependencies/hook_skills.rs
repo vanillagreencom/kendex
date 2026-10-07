@@ -4,13 +4,13 @@
 use super::hooks::{findings_on, messages};
 use super::*;
 
-const CHECK: &str = "#!/usr/bin/env bash\n# ---\n# name: skill-load-check\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex, opencode, cursor, pi, gemini, copilot, antigravity]\n# requires: [skill-load-record]\n# requires-skills: [commit-guards]\n# ---\nexit 0\n";
-const RECORDER: &str = "#!/usr/bin/env bash\n# ---\n# name: skill-load-record\n# event: PostToolUse\n# harnesses: [copilot]\n# requires: [skill-load-check]\n# ---\nexit 0\n";
-const DECLARED: &str = "[hooks.skill-load-check]\nsource = \"cat\"\n";
+const JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex, opencode, cursor, pi, gemini, copilot, antigravity]\n# requires: [recorder]\n# requires-skills: [commit-guards]\n# ---\nexit 0\n";
+const RECORDER: &str = "#!/usr/bin/env bash\n# ---\n# name: recorder\n# event: PostToolUse\n# harnesses: [copilot]\n# requires: [judge]\n# ---\nexit 0\n";
+const DECLARED: &str = "[hooks.judge]\nsource = \"cat\"\n";
 const ALL: &str = "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"gemini\", \"copilot\", \"antigravity\"";
 
-/// The catalog recorder runs on all four harnesses, while the check needs
-/// it only on Copilot. Local opt-outs still remove the check on Copilot.
+/// The catalog recorder runs on all four harnesses, while the judge needs
+/// it only on Copilot. Local opt-outs still remove the judge on Copilot.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn requiring_hook_scopes_companions_without_scoping_required_skills() {
@@ -21,15 +21,13 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
         (
             FOUR,
             Some("enabled = false"),
-            Some(
-                "missing required dependency: skill-load-check requires skill-load-record, which is switched off",
-            ),
+            Some("missing required dependency: judge requires recorder, which is switched off"),
         ),
         (
             FOUR,
             Some("harnesses = [\"claude\"]"),
             Some(
-                "missing required dependency: GitHub Copilot runs skill-load-check without skill-load-record, which it requires",
+                "missing required dependency: GitHub Copilot runs judge without recorder, which it requires",
             ),
         ),
         ("\"claude\"", Some("enabled = false"), None),
@@ -38,16 +36,14 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
         (
             FOUR,
             None,
-            Some(
-                "skill-load-check requires skill-load-record, which the catalog 'cat' does not offer",
-            ),
+            Some("judge requires recorder, which the catalog 'cat' does not offer"),
         ),
     ] {
         let f = world();
-        let check = CHECK.replace("# requires:", "# requires-on: [copilot]\n# requires:");
-        fs::write(f.source.join("hooks/skill-load-check.sh"), check).unwrap();
+        let judge = JUDGE.replace("# requires:", "# requires-on: [copilot]\n# requires:");
+        fs::write(f.source.join("hooks/judge.sh"), judge).unwrap();
         fs::write(
-            f.source.join("hooks/skill-load-record.sh"),
+            f.source.join("hooks/recorder.sh"),
             RECORDER.replace(
                 "# harnesses: [copilot]",
                 "# harnesses: [claude, codex, pi, copilot]",
@@ -56,10 +52,10 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
         .unwrap();
         let recorder_decl = match recorder {
             Some(settings) => {
-                format!("\n[hooks.skill-load-record]\nsource = \"cat\"\n{settings}\n")
+                format!("\n[hooks.recorder]\nsource = \"cat\"\n{settings}\n")
             }
             None => {
-                fs::remove_file(f.source.join("hooks/skill-load-record.sh")).unwrap();
+                fs::remove_file(f.source.join("hooks/recorder.sh")).unwrap();
                 String::new()
             }
         };
@@ -75,14 +71,14 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
             if missing { Incomplete } else { Complete },
             "{tools} {recorder:?}"
         );
-        let findings = findings_on(&report, "skill-load-check");
+        let findings = findings_on(&report, "judge");
         assert_eq!(
             findings
                 .iter()
                 .filter(|w| {
                     w.message.starts_with("missing required dependency:")
                         || w.message
-                            == "skill-load-check requires skill-load-record, which the catalog 'cat' does not offer"
+                            == "judge requires recorder, which the catalog 'cat' does not offer"
                 })
                 .map(|w| w.message.as_str())
                 .collect::<Vec<_>>(),
@@ -93,13 +89,13 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
         apply::execute(&f.env, &report.plan).unwrap();
         let lock = lock_of(&f);
         for (tool, file) in TOOLS {
-            let check = format!("hook:skill-load-check:{}", tool.name());
+            let judge = format!("hook:judge:{}", tool.name());
             let guard = format!("skill:commit-guards:{}", tool.name());
-            let record = format!("hook:skill-load-record:{}", tool.name());
+            let record = format!("hook:recorder:{}", tool.name());
             let selected = tools.contains(&format!("\"{}\"", tool.name()));
             let stays = selected && !(missing && tool == HarnessId::Copilot);
             assert_eq!(
-                lock.entries.contains_key(&check),
+                lock.entries.contains_key(&judge),
                 stays,
                 "{tools} {recorder:?} {tool:?}"
             );
@@ -115,23 +111,20 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
     }
 }
 
-/// Script or advisory file written for each tool. This fixture permits all
-/// tools, including the two the catalog's skill-load-check excludes.
+/// Script or advisory file written for each tool. The fixture's judge names
+/// all eight tools.
 const TOOLS: [(HarnessId, &str); 8] = [
-    (HarnessId::Claude, ".claude/hooks/skill-load-check.sh"),
-    (HarnessId::Codex, ".codex/hooks/skill-load-check.sh"),
+    (HarnessId::Claude, ".claude/hooks/judge.sh"),
+    (HarnessId::Codex, ".codex/hooks/judge.sh"),
     (
         HarnessId::Opencode,
-        ".opencode/instructions/kendex-hook-skill-load-check.md",
+        ".opencode/instructions/kendex-hook-judge.md",
     ),
-    (
-        HarnessId::Cursor,
-        ".cursor/rules/safety-skill-load-check.mdc",
-    ),
-    (HarnessId::Pi, ".pi/kendex/hooks/skill-load-check.sh"),
-    (HarnessId::Gemini, ".gemini/hooks/skill-load-check.sh"),
-    (HarnessId::Copilot, ".github/hooks/skill-load-check.sh"),
-    (HarnessId::Antigravity, ".agents/hooks/skill-load-check.sh"),
+    (HarnessId::Cursor, ".cursor/rules/safety-judge.mdc"),
+    (HarnessId::Pi, ".pi/kendex/hooks/judge.sh"),
+    (HarnessId::Gemini, ".gemini/hooks/judge.sh"),
+    (HarnessId::Copilot, ".github/hooks/judge.sh"),
+    (HarnessId::Antigravity, ".agents/hooks/judge.sh"),
 ];
 
 #[allow(clippy::unwrap_used)]
@@ -150,8 +143,8 @@ fn declare(f: &Fixture, tools: &str, extra: &str) {
 fn world() -> Fixture {
     let f = fixture("");
     fs::create_dir_all(f.source.join("hooks")).unwrap();
-    fs::write(f.source.join("hooks/skill-load-check.sh"), CHECK).unwrap();
-    fs::write(f.source.join("hooks/skill-load-record.sh"), RECORDER).unwrap();
+    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+    fs::write(f.source.join("hooks/recorder.sh"), RECORDER).unwrap();
     fs::write(f.source.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     skill(
         &f.source,
@@ -178,9 +171,9 @@ fn by(kind: ItemKind, name: &str, harness: HarnessId) -> Reason {
     }
 }
 
-/// Declaring the check alone installs its skill and that skill's own
+/// Declaring the judge alone installs its skill and that skill's own
 /// dependency on every tool. Only Copilot receives the recorder, including
-/// its reverse dependency on the check. Claude retains the check without it.
+/// its reverse dependency on the judge. Claude retains the judge without it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_needed() {
@@ -193,7 +186,7 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
         kendex_core::engine::DeclarationStatus::Complete
     );
     assert!(
-        findings_on(&report, "skill-load-check")
+        findings_on(&report, "judge")
             .iter()
             .all(|w| !w.message.starts_with("missing required dependency:")),
         "{:?}",
@@ -203,17 +196,17 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
     let lock = lock_of(&f);
     for (tool, hook_file) in TOOLS {
         assert!(f.project.join(hook_file).is_file(), "{tool:?}: {hook_file}");
-        let check = &lock.entries[&format!("hook:skill-load-check:{}", tool.name())];
-        assert!(check.enabled);
+        let judge = &lock.entries[&format!("hook:judge:{}", tool.name())];
+        assert!(judge.enabled);
         let mut reasons = BTreeSet::from([Reason::Requested]);
         if tool == HarnessId::Copilot {
-            reasons.insert(by(ItemKind::Hook, "skill-load-record", tool));
+            reasons.insert(by(ItemKind::Hook, "recorder", tool));
         }
-        assert_eq!(check.reasons, reasons, "{tool:?}");
+        assert_eq!(judge.reasons, reasons, "{tool:?}");
         let guard = &lock.entries[&format!("skill:commit-guards:{}", tool.name())];
         assert_eq!(
             guard.reasons,
-            BTreeSet::from([by(ItemKind::Hook, "skill-load-check", tool)])
+            BTreeSet::from([by(ItemKind::Hook, "judge", tool)])
         );
         let emitted = guard.emitted.as_ref().unwrap();
         assert!(!emitted.paths.is_empty());
@@ -230,7 +223,7 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
         );
         assert_eq!(
             lock.entries
-                .contains_key(&format!("hook:skill-load-record:{}", tool.name())),
+                .contains_key(&format!("hook:recorder:{}", tool.name())),
             tool == HarnessId::Copilot,
             "{tool:?}"
         );
@@ -240,16 +233,8 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
                 .contains_key(&format!("hook:commit-guards:{}", tool.name()))
         );
     }
-    assert!(
-        f.project
-            .join(".github/hooks/skill-load-record.sh")
-            .is_file()
-    );
-    assert!(
-        !f.project
-            .join(".claude/hooks/skill-load-record.sh")
-            .exists()
-    );
+    assert!(f.project.join(".github/hooks/recorder.sh").is_file());
+    assert!(!f.project.join(".claude/hooks/recorder.sh").exists());
     let manifest = manifest_of(&f);
     assert!(manifest.skills.is_empty());
     assert_eq!(
@@ -258,107 +243,8 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["skill-load-check"]
+        ["judge"]
     );
-}
-
-/// The local recorder declaration must deliver the catalog companion wherever
-/// this repository requests its judge. Retained records are not planned deliveries.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn local_skill_load_declarations_retain_all_four_judges() {
-    let checkout = test_util::checkout_root();
-    let local = manifest::load_current(&checkout.join("kendex-local.toml"))
-        .unwrap()
-        .unwrap();
-    let expected = [
-        HarnessId::Claude,
-        HarnessId::Codex,
-        HarnessId::Pi,
-        HarnessId::Copilot,
-    ];
-    let f = world();
-    fs::create_dir_all(f.project.join(".pi")).unwrap();
-    fs::write(
-        f.project.join(".pi/settings.json"),
-        r#"{"packages":["./packages/@vanillagreen/pi-hooks"]}"#,
-    )
-    .unwrap();
-    let mut declared = manifest_of(&f);
-    declared.install.harnesses = expected.to_vec();
-    declared.hooks.clear();
-    for name in ["skill-load-check", "skill-load-record"] {
-        fs::copy(
-            checkout.join(format!("hooks/{name}.sh")),
-            f.source.join(format!("hooks/{name}.sh")),
-        )
-        .unwrap();
-        let mut declaration = local.hooks[name].clone();
-        declaration.source = "cat".to_owned();
-        declared.hooks.insert(name.to_owned(), declaration);
-    }
-    fs::write(
-        f.project.join("kendex.toml"),
-        toml::to_string_pretty(&declared).unwrap(),
-    )
-    .unwrap();
-    let report = audit(&f.env, &f.scope).unwrap();
-    assert_eq!(
-        report.declaration_status,
-        kendex_core::engine::DeclarationStatus::Complete,
-        "{:?}",
-        messages(&report)
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    let lock = lock_of(&f);
-    for tool in expected {
-        for name in ["skill-load-check", "skill-load-record"] {
-            let key = format!("hook:{name}:{}", tool.name());
-            assert!(lock.entries.contains_key(&key), "{tool:?}: {name}");
-            assert!(report.installations.contains_key(&key), "{tool:?}: {name}");
-        }
-    }
-
-    // The planted local restriction reaches the current removal pass with a
-    // record of all four judges, rather than only checking a fresh install.
-    declared
-        .hooks
-        .get_mut("skill-load-record")
-        .unwrap()
-        .harnesses = Some(vec![HarnessId::Copilot]);
-    fs::write(
-        f.project.join("kendex.toml"),
-        toml::to_string_pretty(&declared).unwrap(),
-    )
-    .unwrap();
-    let report = audit(&f.env, &f.scope).unwrap();
-    assert_eq!(
-        report.declaration_status,
-        kendex_core::engine::DeclarationStatus::Complete
-    );
-    assert!(
-        findings_on(&report, "skill-load-check").is_empty(),
-        "{:?}",
-        messages(&report)
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    let lock = lock_of(&f);
-    // Without a sweep, the orphaned recorder retains its record and keeps the
-    // judge it required. The engine's installation set holds current delivery.
-    for tool in expected {
-        for name in ["skill-load-check", "skill-load-record"] {
-            let key = format!("hook:{name}:{}", tool.name());
-            assert!(
-                lock.entries.contains_key(&key),
-                "retained: {tool:?}: {name}"
-            );
-            assert_eq!(
-                report.installations.contains_key(&key),
-                name == "skill-load-check" || tool == HarnessId::Copilot,
-                "control local-restriction: {tool:?}: {name}"
-            );
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,20 +269,20 @@ const OPT_OUTS: [(ItemKind, &str, &str, Missing); 5] = [
     ),
     (
         ItemKind::Hook,
-        "skill-load-record",
-        "[suppressed]\nhook = [\"skill-load-record\"]\n",
+        "recorder",
+        "[suppressed]\nhook = [\"recorder\"]\n",
         Missing::Removed,
     ),
     (
         ItemKind::Hook,
-        "skill-load-record",
-        "[hooks.skill-load-record]\nsource = \"cat\"\nenabled = false\n",
+        "recorder",
+        "[hooks.recorder]\nsource = \"cat\"\nenabled = false\n",
         Missing::Disabled,
     ),
     (
         ItemKind::Hook,
-        "skill-load-record",
-        "[hooks.skill-load-record]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+        "recorder",
+        "[hooks.recorder]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
         Missing::OtherTools,
     ),
 ];
@@ -428,11 +314,11 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
                 kendex_core::engine::DeclarationStatus::Incomplete,
                 "{kind:?} {cause:?} refresh={refresh}"
             );
-            let findings = findings_on(&report, "skill-load-check");
+            let findings = findings_on(&report, "judge");
             let expected = match cause {
-                Missing::OtherTools => "missing required dependency: GitHub Copilot runs skill-load-check without skill-load-record, which it requires".to_owned(),
-                Missing::Removed => format!("missing required dependency: skill-load-check requires {dep}, which is kept removed"),
-                Missing::Disabled => format!("missing required dependency: skill-load-check requires {dep}, which is switched off"),
+                Missing::OtherTools => "missing required dependency: GitHub Copilot runs judge without recorder, which it requires".to_owned(),
+                Missing::Removed => format!("missing required dependency: judge requires {dep}, which is kept removed"),
+                Missing::Disabled => format!("missing required dependency: judge requires {dep}, which is switched off"),
             };
             assert!(
                 findings
@@ -443,7 +329,7 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
             );
             if cause == Missing::Removed {
                 let kind_name = kind.name();
-                assert!(findings.iter().any(|w| w.remediation.as_deref() == Some(&format!("add the {kind_name} {dep} again to restore it, or drop it from skill-load-check's dependencies"))));
+                assert!(findings.iter().any(|w| w.remediation.as_deref() == Some(&format!("add the {kind_name} {dep} again to restore it, or drop it from judge's dependencies"))));
             }
             apply::execute(&f.env, &report.plan).unwrap();
             let lock = lock_of(&f);
@@ -456,18 +342,16 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
                 );
                 assert_eq!(
                     lock.entries
-                        .contains_key(&format!("hook:skill-load-check:{}", tool.name())),
+                        .contains_key(&format!("hook:judge:{}", tool.name())),
                     stays,
                     "{extra}: {tool:?} refresh={refresh}"
                 );
             }
             assert!(
-                !f.project
-                    .join(".github/hooks/skill-load-record.sh")
-                    .exists(),
+                !f.project.join(".github/hooks/recorder.sh").exists(),
                 "{extra} refresh={refresh}"
             );
-            for name in ["skill-load-check", "skill-load-record"] {
+            for name in ["judge", "recorder"] {
                 let registry = f.project.join(format!(".github/hooks/{name}.json"));
                 if registry.exists() {
                     let value: serde_json::Value =

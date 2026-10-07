@@ -297,18 +297,21 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
     let hooks = catalog_hooks();
     let hook = hooks
         .iter()
-        .find(|source| source.name == "skill-load-check")
+        .find(|source| source.name == "lane-mail-check")
         .expect("the requiring hook");
     let catalog: Vec<HookSpec> = hooks.iter().cloned().map(HookSpec::from).collect();
     let mut undeliverable = catalog.clone();
     undeliverable
         .iter_mut()
-        .find(|spec| spec.name == "skill-load-record")
+        .find(|spec| spec.name == "lane-mail-deliver")
         .expect("the companion")
         .event = "TaskCompleted".to_owned();
 
-    // An unsupported event withholds the requirer only where the recorder
-    // applies. Each true answer means withheld, not delivered.
+    // A companion counts only where its own harnesses line applies:
+    // critical-path-deny and stop-failure-row leave out Codex, and
+    // lane-mail-deliver leaves out Gemini and Antigravity, so its
+    // unsupported event withholds the requirer on Codex and Copilot alone.
+    // Each true answer means withheld, not delivered.
     let rows = [
         (HarnessId::Claude, [false, false]),
         (HarnessId::Codex, [false, true]),
@@ -344,18 +347,18 @@ type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
 fn planted_rows() -> [PlantedRow; 10] {
     [
         // Codex and Copilot never fire TaskCompleted. The planted Copilot
-        // recorder reason leaves the Codex recorder without one, and the
-        // requirer still reaches both tools its recorder is withheld on.
+        // companion reason leaves the Codex companion without one, and the
+        // requirer still reaches both tools its companion is withheld on.
         (
-            "skill-load-record",
+            "lane-mail-deliver",
             |source| {
                 source.event = "TaskCompleted".to_owned();
                 source.description.push_str(" Not run on copilot: planted.");
             },
             &[
-                "hooks-readme: companion-withheld=skill-load-check:codex",
-                "hooks-readme: companion-withheld=skill-load-check:copilot",
-                "hooks-readme: missing-reason=skill-load-record:codex",
+                "hooks-readme: companion-withheld=lane-mail-check:codex",
+                "hooks-readme: companion-withheld=lane-mail-check:copilot",
+                "hooks-readme: missing-reason=lane-mail-deliver:codex",
             ],
         ),
         (
