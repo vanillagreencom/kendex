@@ -50,9 +50,11 @@
 #      one exclude row, plant a Linux-only queue shard and drop one from
 #      QUEUE_MACOS_SHARDS.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
-#      `--test` target, the legs are the combinations the matrix expands
-#      rather than its raw list, every test target `cargo metadata` reports
-#      for that crate is claimed by exactly one of them, and exactly one asks
+#      target and integration test name. The legs are the combinations the
+#      matrix expands rather than its raw list. Each target other than the
+#      shared integration harness is claimed once. The compiled harness's
+#      --list runs through the workflow's own test step and filters, so each
+#      integration test is claimed once, and exactly one leg asks
 #      for the crate's doc tests, which no `--test` roster can account for.
 #      Two contracts ride beside that partition: the bounded leg selects the
 #      library and binary unit tests, and the leg the seam exists for claims
@@ -61,10 +63,11 @@
 #      the `--lib --bins` requests, merge the expensive target back into the
 #      bounded leg, and delete each of the two workflow shapes read here.
 #
-# The roster is real and the suites are not: every run below happens in a
+# The shell roster is real and the suites are not: every shell run happens in a
 # sandbox holding a copy of run-all.sh and one empty file per suite name, or a
 # copy of the workflow and a `bash` that does nothing, so the real filter and
-# roster logic runs over the real names without running the battery.
+# roster logic runs over the real names without running the battery. Cargo's
+# integration harness is compiled and listed, but its tests do not run.
 set -euo pipefail
 
 # --shell-only selects the workflow's shell partition and CI selection checks
@@ -86,8 +89,10 @@ TEST_DIR="$ROOT/skills/orch/tests"
 WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d "$ROOT/tmp/orch-shard-partition.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
+TMP="$(mktemp -d "$ROOT/tmp/orch-shard-partition.XXXXXX")" || { echo "orch-shard-partition: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d "$TMP" && ! -L "$TMP" ]] || { echo "orch-shard-partition: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "orch-shard-partition: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
 FAIL=0
@@ -861,11 +866,14 @@ fi
 # counter bumped in the subshell would be discarded.
 CARGO_TARGET_MARK='cargo-targets: $flags'
 CARGO_CRATE=kendex-cli
-CARGO_LEGS='render-lint rest'
+CARGO_LEGS='render-lint rest verify-lock'
 LANE_LEG=render-lint
 LANE_TARGET=catalog_render_lint
 UNIT_LEG=rest
 UNIT_FLAGS='--lib --bins'
+INTEGRATION_TARGET=integration
+INTEGRATION_LEGS=$'rest\nverify-lock'
+CARGO_TEST_MARK='cargo test -p ${{ matrix.crate }} --locked --no-fail-fast'
 
 cli_targets() { # cli_targets ; CARGO_CRATE's test target names, one per line
   ( cd "$ROOT" && cargo metadata --format-version 1 --no-deps --locked ) |
@@ -964,6 +972,90 @@ roster_steps_of() { # roster_steps_of <workflow> <dir> ; run blocks echoing a ro
   { grep -lF "$CARGO_TARGET_MARK" "$2"/*.sh || true; } | wc -l | tr -d ' '
 }
 
+# The executable comes from Cargo's build record, not a guessed target path.
+# --list is libtest's machine-read list and applies its real substring/skip
+# rules without running the CLI's integration tests.
+integration_binary() {
+  ( cd "$ROOT" && cargo test -p "$CARGO_CRATE" --locked --no-run \
+      --test "$INTEGRATION_TARGET" --message-format=json ) > "$TMP/integration-build.jsonl" \
+      2> "$TMP/integration-build.err" || return
+  cat "$TMP/integration-build.err" >&2
+  jq -r --arg target "$INTEGRATION_TARGET" '
+    select(.reason == "compiler-artifact" and .profile.test and .target.name == $target)
+    | .executable // empty' "$TMP/integration-build.jsonl"
+}
+
+# Only Cargo's launch is replaced: its --test selection chooses whether the
+# real integration binary gets listed. The workflow still owns argument
+# forwarding. Omitting its -- or CARGO_FILTERS therefore breaks these claims.
+CARGO_SHIM="$TMP/cargo-shim"
+mkdir -p "$CARGO_SHIM"
+cat > "$CARGO_SHIM/cargo" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1-}" == test ]] || exit 2
+shift
+integration=false
+other=false
+selections=''
+doc=false
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --test)
+      if [[ "$2" == integration ]]; then integration=true; else other=true; fi
+      selections="$selections --test $2"
+      shift 2 ;;
+    --lib|--bins) other=true; selections="$selections $1"; shift ;;
+    --doc) doc=true; shift ;;
+    --) shift; break ;;
+    *) shift ;;
+  esac
+done
+[[ "$other" != true || "$#" -eq 0 ]] || exit 1
+if [[ "$doc" == true ]]; then
+  echo 'cargo-executed-doc: --doc'
+else
+  echo "cargo-executed: $selections"
+fi
+if [[ "$integration" == true ]]; then
+  "$INTEGRATION_EXE" --list "$@"
+fi
+SH
+chmod +x "$CARGO_SHIM/cargo"
+
+integration_claims() { # <workflow> ; "<integration test name> <leg>" per claim
+  local wf="$1" leg dir="$TMP/cargo-test-blocks" f block roster output
+  split_run_blocks "$wf" "$dir"
+  for f in "$dir"/*.sh; do
+    grep -qF "$CARGO_TEST_MARK" "$f" || continue
+    block="$TMP/cargo-test-step.sh"
+    sed 's/${{ matrix.crate }}/kendex-cli/g' "$f" > "$block"
+    while IFS= read -r leg; do
+      [[ -n "$leg" ]] || continue
+      roster="$(roster_of "$wf" "$leg")" || return
+      output="$(CARGO_TARGETS="$(sed -n 's/^cargo-main-targets: //p' <<< "$roster")" \
+      CARGO_DOC="$(sed -n 's/^cargo-doc: //p' <<< "$roster")" \
+      CARGO_FILTERS="$(sed -n 's/^cargo-filters: //p' <<< "$roster")" \
+      CARGO_INTEGRATION="$(sed -n 's/^cargo-integration: //p' <<< "$roster")" \
+      INTEGRATION_EXE="$INTEGRATION_EXE" PATH="$CARGO_SHIM:$PATH" "$BASH" "$block")" || return
+      printf '%s\n' "$output" > "$TMP/cargo-executed-$leg"
+      sed -n 's/: test$//p' <<< "$output" | awk -v leg="$leg" '{ print $0, leg }'
+    done < <(cargo_legs_of "$wf")
+  done
+}
+
+target_selections() { # normalized target switches, independent of invocation order
+  awk '{ for (i = 1; i <= NF; i++) {
+           if ($i == "--test") { print $i " " $(i + 1); i++ }
+           else if ($i == "--lib" || $i == "--bins") print $i
+         } }' | sort
+}
+
+integration_test_steps_of() { # <workflow> ; run blocks launching Cargo tests
+  split_run_blocks "$1" "$TMP/cargo-step-count"
+  { grep -lF "$CARGO_TEST_MARK" "$TMP/cargo-step-count"/*.sh || true; } | wc -l | tr -d ' '
+}
+
 CLI_TARGETS="$TMP/cli-targets"
 CARGO_ERR="$TMP/cargo-metadata.err"
 if ! cli_targets > "$CLI_TARGETS" 2> "$CARGO_ERR"; then
@@ -973,12 +1065,30 @@ elif [[ ! -s "$CLI_TARGETS" ]]; then
   bad "cargo metadata reported no test target for $CARGO_CRATE, so the extractor is broken, not the crate sparse"
 fi
 
+INTEGRATION_EXE="$(integration_binary)" || {
+  cat "$TMP/integration-build.err" >&2
+  bad "the integration harness did not compile, so no name partition can be judged"
+  exit 1
+}
+[[ -x "$INTEGRATION_EXE" ]] || { bad "Cargo reported no single executable integration harness"; exit 1; }
+INTEGRATION_TESTS="$TMP/integration-tests"
+"$INTEGRATION_EXE" --list > "$TMP/integration-list"
+sed -n 's/: test$//p' "$TMP/integration-list" | sort > "$INTEGRATION_TESTS"
+for module in cli verify_records lock_record; do
+  grep -q "^$module::" "$INTEGRATION_TESTS" || {
+    bad "the integration test list has no $module member, so discovery is incomplete"
+    exit 1
+  }
+done
+
 [[ "$(leg_count_of "$WORKFLOW")" -gt 0 ]] ||
   bad "no leg matrix in $WORKFLOW, so no cargo leg roster can be judged"
 check "exactly one run block echoes a cargo target roster" "1" \
   "$(roster_steps_of "$WORKFLOW" "$TMP/cargo-blocks-head")"
+check "exactly one run block launches the macOS Cargo test targets" "1" \
+  "$(integration_test_steps_of "$WORKFLOW")"
 
-# The expansion itself, pinned to the two legs the split cut. This is what
+# The expansion itself, pinned to the legs the splits cut. This is what
 # gives the checks below their teeth: an exclude reader that stopped reading
 # would put the pruned `whole` leg back, and `whole` selects every target the
 # crate has, so every check below would pass over a leg GitHub never creates.
@@ -992,12 +1102,35 @@ cut -d' ' -f1 "$LEG_CLAIMS" | sort > "$CLAIMED"
 
 check "every $CARGO_CRATE test target is claimed by one of the workflow's cargo legs" \
   "" "$(comm -23 "$CLI_TARGETS" <(sort -u "$CLAIMED"))"
-check "no $CARGO_CRATE test target is claimed by two of them" \
-  "" "$(uniq -d "$CLAIMED")"
+check "no $CARGO_CRATE target other than the shared integration harness is claimed twice" \
+  "$INTEGRATION_TARGET" "$(uniq -d "$CLAIMED")"
+check "only the two name-partitioned legs share the integration target" \
+  "$INTEGRATION_LEGS" "$(awk -v target="$INTEGRATION_TARGET" '$1 == target { print $2 }' "$LEG_CLAIMS" | sort)"
 check "the $UNIT_LEG leg selects the crate's library and binary unit tests" \
   "$UNIT_FLAGS" "$(unit_flags_of "$WORKFLOW" "$UNIT_LEG")"
 check "the $LANE_LEG leg claims $LANE_TARGET and nothing else" \
   "$LANE_TARGET" "$(lane_claims_of "$LEG_CLAIMS")"
+
+INTEGRATION_CLAIMS="$TMP/integration-claims"
+integration_claims "$WORKFLOW" | sort > "$INTEGRATION_CLAIMS"
+while IFS= read -r leg; do
+  check "the $leg test command runs every declared target and unit selection" \
+    "$(roster_of "$WORKFLOW" "$leg" | sed -n 's/^cargo-targets: //p' | target_selections)" \
+    "$(sed -n 's/^cargo-executed: //p' "$TMP/cargo-executed-$leg" | target_selections)"
+  check "the $leg test command runs its declared doc tests" \
+    "$(roster_of "$WORKFLOW" "$leg" | sed -n 's/^cargo-doc: //p')" \
+    "$(sed -n 's/^cargo-executed-doc: //p' "$TMP/cargo-executed-$leg")"
+done < <(cargo_legs_of "$WORKFLOW")
+cut -d' ' -f1 "$INTEGRATION_CLAIMS" | sort > "$TMP/integration-claimed"
+check "every integration test is claimed by one workflow leg" \
+  "" "$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-claimed"))"
+check "no integration test is claimed by two workflow legs" \
+  "" "$(uniq -d "$TMP/integration-claimed")"
+for leg in rest verify-lock; do
+  [[ -n "$(awk -v leg="$leg" '$2 == leg { print $1 }' "$INTEGRATION_CLAIMS")" ]] &&
+    ok "the $leg leg claims integration tests" || bad "the $leg leg claims no integration test"
+done
+printf 'coverage: cargo-integration tests=%s\n' "$(wc -l < "$INTEGRATION_TESTS" | tr -d ' ')"
 
 # Doc tests are the one thing a `--test` roster cannot account for. cargo runs
 # them only where nothing selects targets, and `--doc` cannot be mixed with a
@@ -1024,7 +1157,7 @@ fi
 wf_leg_twice="$TMP/wf-cargo-leg-repeated.yml"
 awk "{ sub(/$UNIT_FLAGS/, \"$UNIT_FLAGS --test $LANE_TARGET\"); print }" \
   "$WORKFLOW" > "$wf_leg_twice"
-if [[ -n "$(leg_claims "$wf_leg_twice" | cut -d' ' -f1 | sort | uniq -d)" ]]; then
+if grep -qxF "$LANE_TARGET" <<< "$(leg_claims "$wf_leg_twice" | cut -d' ' -f1 | sort | uniq -d)"; then
   ok "must-fail: a target added to a second cargo leg is named as claimed twice"
 else
   bad "must-fail: a repeated cargo target produced no duplicate, so the overlap check proves nothing"
@@ -1056,7 +1189,7 @@ check "must-fail: with $UNIT_FLAGS dropped, the $UNIT_LEG leg selects no unit te
 # on, and it holds before the mutation as well, which is the point.
 wf_lane_merged="$TMP/wf-cargo-lane-merged.yml"
 awk "{
-       sub(/leg: \[whole, $LANE_LEG, $UNIT_LEG\]/, \"leg: [whole, $UNIT_LEG]\")
+       sub(/leg: \[whole, $LANE_LEG, $UNIT_LEG, verify-lock\]/, \"leg: [whole, $UNIT_LEG, verify-lock]\")
        sub(/flags='$UNIT_FLAGS'/, \"flags='$UNIT_FLAGS --test $LANE_TARGET'\")
        print
      }" "$WORKFLOW" > "$wf_lane_merged"
@@ -1064,8 +1197,40 @@ merged="$TMP/leg-claims-lane-merged"
 leg_claims "$wf_lane_merged" | sort > "$merged"
 check "must-fail: with $LANE_TARGET merged into the $UNIT_LEG leg, the $LANE_LEG leg claims nothing" \
   "" "$(lane_claims_of "$merged")"
-check "must-fail: that merge leaves the target partition whole, so only the leg contract shows it" \
-  ":" "$(comm -23 "$CLI_TARGETS" <(cut -d' ' -f1 "$merged" | sort -u)):$(cut -d' ' -f1 "$merged" | sort | uniq -d)"
+check "must-fail: that merge retains every target and only the integration overlap" \
+  ":$INTEGRATION_TARGET" "$(comm -23 "$CLI_TARGETS" <(cut -d' ' -f1 "$merged" | sort -u)):$(cut -d' ' -f1 "$merged" | sort | uniq -d)"
+
+# Omission and overlap controls remove one side of the same name seam.
+# A third control drops forwarding in the actual test command: declarations
+# alone must not claim protection for arguments the harness never receives.
+for defect in selector skip forwarding unit-filter; do
+  mutant="$TMP/wf-cargo-filter-$defect.yml"
+  case "$defect" in
+    selector) sed "s/filters='verify_ lock_record::'/filters='lock_record::'/" "$WORKFLOW" > "$mutant" ;;
+    skip) sed 's/--skip verify_ //' "$WORKFLOW" > "$mutant" ;;
+    forwarding) sed 's/ -- \$CARGO_FILTERS//' "$WORKFLOW" > "$mutant" ;;
+    unit-filter) sed 's/\$CARGO_TARGETS ||/\$CARGO_TARGETS -- \$CARGO_FILTERS ||/' "$WORKFLOW" > "$mutant" ;;
+  esac
+  cmp -s "$WORKFLOW" "$mutant" && { bad "must-fail: the $defect mutation changed nothing"; continue; }
+  if [[ "$defect" == unit-filter ]]; then
+    if integration_claims "$mutant" > "$TMP/integration-$defect"; then
+      bad "must-fail: integration filters on unit tests are accepted"
+    else
+      ok "must-fail: integration filters on unit tests are rejected"
+    fi
+    continue
+  fi
+  integration_claims "$mutant" | cut -d' ' -f1 | sort > "$TMP/integration-$defect"
+  if [[ "$defect" == selector ]]; then
+    lost="$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-$defect"))"
+    [[ -n "$lost" ]] && ok "must-fail: a dropped selector names unclaimed integration tests" ||
+      bad "must-fail: a dropped selector leaves no unclaimed integration test"
+  else
+    repeated="$(uniq -d "$TMP/integration-$defect")"
+    [[ -n "$repeated" ]] && ok "must-fail: dropped $defect names repeated integration tests" ||
+      bad "must-fail: dropped $defect leaves no repeated integration test"
+  fi
+done
 
 # The two shapes this section reads, each deleted. Neither loss shows in a
 # claim: with no leg matrix no leg is read at all, and with no roster step no

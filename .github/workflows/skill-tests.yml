@@ -87,11 +87,10 @@ name: Skill Tests
 # `rest`, and `render-lint` is the second: a target whose cost is one
 # expensive test, so no target seam reaches inside it and it stands at
 # 801-1012s, ABOVE the ceiling, until that test is itself divided. `rest`
-# is not that case, because a seam remains inside it. `rest` landed at
-# 235-267s and has since grown past the ceiling. Nearly all of it is the one
-# `integration` harness, which no `--test` seam divides but a test-name
-# partition would. Until that split is cut, the step bound the comment above
-# its test step gives holds the leg, against a maximum not yet measured.
+# is split again by test name: `verify-lock` takes verification and lock
+# recording, and `rest` skips those same names. Both still use the one
+# `integration` binary. Their standalone macOS maxima remain to be measured;
+# the comment above the test step states the provisional bounds.
 #
 # The cargo lanes' test steps each carry a `timeout-minutes` set from the
 # figures in the comment above it or its job, with headroom, so a hang there
@@ -1700,31 +1699,36 @@ jobs:
       fail-fast: false
       matrix:
         crate: [kendex-core, kendex-cli, kendex-app]
-        # kendex-cli runs as two legs over its `--test` targets; the other two
+        # kendex-cli runs as three legs over targets and test names; the other two
         # crates run whole. The excludes prune the combinations those two
         # lists do not mean, and the `crate:` line still spells the workspace
         # member set the guard in the steps below reads.
-        leg: [whole, render-lint, rest]
+        leg: [whole, render-lint, rest, verify-lock]
         exclude:
           - crate: kendex-core
             leg: render-lint
           - crate: kendex-core
             leg: rest
+          - crate: kendex-core
+            leg: verify-lock
           - crate: kendex-app
             leg: render-lint
           - crate: kendex-app
             leg: rest
+          - crate: kendex-app
+            leg: verify-lock
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
     # Each leg reserves its compile bound plus its test bound plus 5 minutes
     # for setup and cleanup, and the ceiling below is that sum for every leg
-    # of this job, not the CLI legs alone. Compile is 20 on all four. Test is
+    # of this job, not the CLI legs alone. Compile is 20 on every leg. Test is
     # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; it is 20 on
-    # `rest`, which reserves 20 + 20 + 5 = 45; it is 12 on the `whole` legs
+    # `rest` and `verify-lock` provisionally, reserving 20 + 20 + 5 = 45 each;
+    # it is 12 on the `whole` legs
     # kendex-core and kendex-app run, so each of those two reserves
     # 20 + 12 + 5 = 37 and takes the 40 below.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || matrix.leg == 'rest' && 45 || 40 }}
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && 45 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1743,7 +1747,7 @@ jobs:
           done <<<"$lines"
       - uses: Swatinem/rust-cache@v2
         with:
-          # The leg is in the key because the two kendex-cli legs compile
+          # The leg is in the key because the kendex-cli legs compile
           # different target sets and would otherwise race one entry.
           key: ${{ matrix.crate }}-${{ matrix.leg }}
           save-if: ${{ github.event_name != 'pull_request' }}
@@ -1758,9 +1762,10 @@ jobs:
       # [[test]] target added to crates/cli/Cargo.toml and named by neither
       # leg would compile under --no-run and run nowhere while both required
       # contexts stayed green. Every test target `cargo metadata` reports for
-      # kendex-cli is named by exactly one leg below, and
+      # kendex-cli is named by exactly one leg below, except `integration`,
+      # whose tests are split by the harness's own name filters. The suite
       # tools/tests/orch-shard-partition.test.sh runs this step once per leg
-      # and reds on a target claimed by none or by two. A test FILE is not a
+      # and reds on a test claimed by none or by two. A test FILE is not a
       # target: every file under crates/cli/tests except the [[test]] targets
       # Cargo.toml declares is a module of the `integration` harness, and
       # tools/test-roster holds that roster, run by tools/guard at commit
@@ -1776,7 +1781,7 @@ jobs:
       # gets them from cargo, but `--doc` cannot be mixed with a target
       # selection, so a leg that names targets owes them a second invocation
       # or they run on Linux and nowhere here. Exactly one kendex-cli leg
-      # carries `--doc`, the cheap one; orch-shard-partition.test.sh holds
+      # carries `--doc`, rest; orch-shard-partition.test.sh holds
       # that count, since no `--test` roster can show a missing `--doc`.
       - name: cargo test targets for this leg
         env:
@@ -1784,56 +1789,74 @@ jobs:
         run: |
           set -u
           doc=''
+          filters=''
+          integration=''
           case "$LEG" in
             whole) flags='' ;;
             render-lint) flags='--test catalog_render_lint' ;;
+            verify-lock)
+              flags=''
+              integration='--test integration'
+              filters='verify_ lock_record::'
+              ;;
             rest)
               doc='--doc'
               flags='--lib --bins'
-              for t in cli_smoke integration; do
-                flags="$flags --test $t"
-              done
+              integration='--test integration'
+              filters='--skip verify_ --skip lock_record::'
+              flags="$flags --test cli_smoke"
               ;;
             *) echo "no target roster for leg $LEG"; exit 1 ;;
           esac
-          echo "cargo-targets: $flags"
+          echo "cargo-targets: $flags $integration"
+          echo "cargo-main-targets: $flags"
           echo "cargo-doc: $doc"
+          echo "cargo-filters: $filters"
+          echo "cargo-integration: $integration"
           echo "CARGO_TARGETS=$flags" >> "$GITHUB_ENV"
           echo "CARGO_DOC=$doc" >> "$GITHUB_ENV"
+          echo "CARGO_FILTERS=$filters" >> "$GITHUB_ENV"
+          echo "CARGO_INTEGRATION=$integration" >> "$GITHUB_ENV"
       # 44-210s warm across the three crates; the bound is for a cold cache.
       - name: compile
         timeout-minutes: 20
-        run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
+        run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS $CARGO_INTEGRATION
       # Measured maxima of the step this bounds, over those same runs: 534s
-      # for kendex-core whole and 81s for kendex-app whole. `rest` is
-      # re-measured over the pull request and merge group runs created
-      # 2026-10-02 to 2026-10-05, and its maximum there is censored: its
-      # successful steps peak at 720s, which is the old 12-minute bound, and
-      # five steps were killed by that bound at 720-734s, three with the
-      # `integration` harness still running. Its true maximum is above 720s
-      # and unmeasured. The median of its successful steps rose from 537s to
-      # 669s across those four days as that harness grew from 548 tests in
-      # 525s to 586 in 708s. Its bound is 20 minutes, 480s above the censored
-      # 720s and so at most 480s above the true maximum: headroom that growth
-      # erodes, so the leg is pending the split the header names.
+      # for kendex-core whole and 81s for kendex-app whole. Before its
+      # name split, rest took 854-941s over five successful merge-group runs
+      # on 2026-10-07, median 920s. `verify-lock` selects the `verify_` family
+      # and `lock_record::`; rest rejects exactly those same strings, so a
+      # new test still lands in one leg. These are libtest substring filters,
+      # not new Cargo targets: the integration binary remains one binary.
+      # Both 20-minute test bounds are provisional until this partition's
+      # macOS runs provide standalone maxima. Those runs must establish each
+      # leg inside the header's 600s ceiling before measured bounds replace
+      # them. The old combined maximum cannot supply either new maximum.
       # `render-lint` is bounded at 1012s, the maximum its test reached
       # BEFORE its comments pass was split across scopes; its post-split
       # macOS seconds come from this change's own runs, and the bound is due
       # a tightening pass once they exist. --no-fail-fast: one run reports
       # every platform-specific failure instead of one per queue attempt.
-      # Both invocations run and the step fails if either did, the same
+      # Every selected invocation runs and the step fails if any did, the same
       # reason --no-fail-fast has: one run reports everything. The doc run is
       # 0 tests and half a second today, well inside the bound above.
+      # Integration filters get their own invocation: passing them alongside
+      # --lib, --bins or cli_smoke would also filter those unrelated tests.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 20 || 12 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && 20 || 12 }}
         env:
           GH_TOKEN: ""
-          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && matrix.leg == 'rest' && github.token || '' }}
+          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && github.token || '' }}
         run: |
           set -u
           rc=0
-          cargo test -p ${{ matrix.crate }} --locked --no-fail-fast $CARGO_TARGETS || rc=$?
+          if [ -n "$CARGO_TARGETS" ] || [ -z "$CARGO_INTEGRATION" ]; then
+            cargo test -p ${{ matrix.crate }} --locked --no-fail-fast $CARGO_TARGETS || rc=$?
+          fi
+          if [ -n "$CARGO_INTEGRATION" ]; then
+            cargo test -p ${{ matrix.crate }} --locked --no-fail-fast $CARGO_INTEGRATION -- $CARGO_FILTERS || rc=$?
+          fi
           if [ -n "$CARGO_DOC" ]; then
             cargo test -p ${{ matrix.crate }} --locked "$CARGO_DOC" || rc=$?
           fi
