@@ -170,8 +170,10 @@
 #          the whole branch, with no class-base= line, where a range request
 #          hands those since its base. The causes:
 #            setting-empty       DEV_VALIDATE_CI_CONTEXT is empty, the default
-#            base-unresolved     no open pull request for the worktree's
-#                                branch names a base gh could read
+#            pr-not-open         no pull request, or its state is CLOSED or
+#                                MERGED, confirmed by pr-view-json
+#            base-unresolved     the pull request lookup, response or base
+#                                encoding failed
 #            rules-unread        a rule read failed and neither read that
 #                                answered names the context
 #            context-unrequired  both reads answered and neither names it
@@ -186,7 +188,8 @@
 # with one selection=all or selection=subset line. It receives the same class,
 # docs verdict, paths and base as validation. Only all attempts the existing
 # ci route. Unset, failed or unreported selection keeps local validation.
-# Before a pull request exists, an eligible all selection runs that selector
+# With no pull request or an older CLOSED/MERGED pull request confirmed, an
+# eligible all selection runs that selector
 # with DEV_VALIDATE_SCOPED=true: the selector executes its changed-file suites
 # and reports the usual validate: line with selection=subset. start and
 # --record carry scoped=true. A scoped full run records the branch merge base
@@ -660,15 +663,25 @@ ci_class_covered() {
 # keeps.
 ci_fallback=""
 ci_runs_validation() {
-  local context base_branch uri rules classic unread=false log="$class_scratch/ci.log"
+  local context base_branch uri rules classic pr_json pr_state unread=false log="$class_scratch/ci.log"
   context="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CI_CONTEXT "")" \
     || die unreadable-setting setting=DEV_VALIDATE_CI_CONTEXT
   if [[ -z "$context" ]]; then
     ci_fallback=setting-empty
     return 1
   fi
-  if ! base_branch="$(gh pr view --json baseRefName,state --jq 'select(.state == "OPEN") | .baseRefName' 2>>"$log")" \
-    || [[ -z "$base_branch" ]] \
+  if ! pr_json="$("$SCRIPT_DIR/pr-view-json" "$worktree" --json baseRefName,state 2>>"$log")"; then
+    ci_fallback=base-unresolved
+    return 1
+  fi
+  if ! pr_state="$(jq -er 'if .status == "no_pr" then "NO_PR" else .state | select(. == "OPEN" or . == "CLOSED" or . == "MERGED") end' <<<"$pr_json" 2>>"$log")"; then
+    ci_fallback=base-unresolved
+    return 1
+  fi
+  case "$pr_state" in
+    NO_PR|CLOSED|MERGED) ci_fallback=pr-not-open; return 1 ;;
+  esac
+  if ! base_branch="$(jq -er '.baseRefName | select(type == "string" and length > 0)' <<<"$pr_json" 2>>"$log")" \
     || ! uri="$(jq -rn --arg v "$base_branch" '$v | @uri' 2>>"$log")"; then
     ci_fallback=base-unresolved
     return 1
@@ -772,7 +785,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         if ci_runs_validation; then
           validate_mode=ci
           class_base=""
-        elif [[ "$ci_fallback" == base-unresolved ]]; then
+        elif [[ "$ci_fallback" == pr-not-open ]]; then
           # The selector owns scoped execution too; no second suite map
           # or project-specific command lives in this runner.
           scoped=true
