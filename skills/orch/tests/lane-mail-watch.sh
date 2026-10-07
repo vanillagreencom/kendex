@@ -129,7 +129,7 @@ await_announced 1
 assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
   "a watch announces every directive already unread when it starts, counting them"
 assert_eq "$(sed -n 2p "$WATCH_OUT")" \
-  "Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints." \
+  "Overseer mail landed in this lane mailbox. Run the command below and act on every envelope it prints, answers and directives alike, as its text directs." \
   "the announcement tells the woken lane to run the command under it"
 assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q' "$LANE_MAIL" "$LANE")" \
   "the command is the literal inbox read of this lane's mailbox, naming the root the watch resolved"

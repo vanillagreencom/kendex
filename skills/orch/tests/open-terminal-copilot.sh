@@ -225,7 +225,7 @@ WT="$TMP_ROOT/wt/CC-738"
 session 11111111-aaaa-4aaa-8aaa-111111111111 "$WT" 200001010000
 session 22222222-bbbb-4bbb-8bbb-222222222222 "$WT" 200001010100
 session 33333333-cccc-4ccc-8ccc-333333333333 "$TMP_ROOT/wt/CC-999" 200001010200
-RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item CC-738 as a background command. $UNATTENDED'"
+RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 first and act on every envelope it prints, answers and directives alike, as its text directs, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item CC-738 as a background command. $UNATTENDED'"
 launch relaunch --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222222 -i $RESUME_LINE" \
   "the newest session in the lane's own worktree is resumed, its continuation line re-arming the --once monitor"
@@ -317,7 +317,7 @@ assert_not_contains "$CMD" "--resume" "the switched relaunch resumes nothing"
 
 echo "=== a copilot wake resumes the lane's session in print mode, and only an idle one ==="
 launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
-assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints. $UNATTENDED" \
+assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every envelope it prints, answers and directives alike, as its text directs. $UNATTENDED" \
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
 assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills COPILOT_GITHUB_TOKEN=unset GH_TOKEN=gh-fixture" \
   "the woken copilot runs under the launch environment, COPILOT_GITHUB_TOKEN cleared and GH_TOKEN kept"

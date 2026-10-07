@@ -407,7 +407,7 @@ UNATTENDED_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
 # A Claude lane re-arms its mailbox monitor. Pi uses the pi-hooks mail wake;
 # Codex arms none, since it starts no turn for a monitor's output.
-RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
+RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every envelope it prints, answers and directives alike, as its text directs"
 REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
 # Control: a launcher whose record lands late. Its writer holds until the gate
 # opens, so the order is the same on every runner. The pass-counted spin this
@@ -600,7 +600,7 @@ printf '%s\n' "${0##*/} $*" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT
 exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
-WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
+WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every envelope it prints, answers and directives alike, as its text directs."
 for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
@@ -631,7 +631,7 @@ mkdir -p "$TMP_ROOT/wt/issue-2708"
 git -C "$TMP_ROOT/wt/issue-2708" init -q
 OT_CAPTURE="$TMP_ROOT/wake-gh.cmd" run_case wake-gh -- --wake --tracker github --repo o/r --harness pi 2708
 assert_eq "$(cat "$TMP_ROOT/wake-gh.cmd" 2>/dev/null)" \
-  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints. $UNATTENDED_TEXT" \
+  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every envelope it prints, answers and directives alike, as its text directs. $UNATTENDED_TEXT" \
   "a GitHub wake names the worktree id its mailbox is bound under, never the bare issue number"
 
 OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
