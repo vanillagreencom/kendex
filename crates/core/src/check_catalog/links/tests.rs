@@ -28,6 +28,12 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
     fs::write(skill.join("references/guide.md"), "# Guide\n").unwrap();
     fs::write(skill.join("references/Quick start.md"), "# Quick\n").unwrap();
     fs::create_dir_all(skill.join("references/notes.md")).unwrap();
+    fs::write(skill.join("references/Guide(v2).md"), "# Guide\n").unwrap();
+    fs::write(
+        skill.join("references/latin.md"),
+        b"# Latin\n\ncaf\xe9\n".as_slice(),
+    )
+    .unwrap();
     let text = match file {
         "SKILL.md" => format!("{head}{link}\n"),
         _ => format!("{link}\n"),
@@ -169,12 +175,47 @@ fn a_source_url_is_judged_as_the_file_it_names() {
             format!("See {SOURCE}/0123abcd/skills/review/tests/run.sh"),
             None,
         ),
+    ];
+    judge(rows);
+}
+
+/// What a source URL names is read the way GitHub serves it: a directory
+/// as a tree, a file's text whatever its bytes, a parenthesis as part of a
+/// name, an escape decoded once. Rows as above.
+#[test]
+fn a_source_url_target_is_read_as_github_serves_it() {
+    let dev = format!("{SOURCE}/main/skills/review/DEVELOPMENT.md");
+    let gone = "skills/review/tests/gone.sh";
+    let rows: Vec<(&str, String, Option<Broken>)> = vec![
         // A directory spelled like a markdown file is there, and has no
         // headings to judge an anchor against.
         (
             "SKILL.md",
             format!("See {SOURCE}/main/skills/review/references/notes.md#intro"),
             None,
+        ),
+        // A file whose bytes are not all UTF-8 still has its headings.
+        (
+            "SKILL.md",
+            format!("See {SOURCE}/main/skills/review/references/latin.md#latin"),
+            None,
+        ),
+        // A parenthesis in a file name stays in it, in a markdown link and
+        // in prose; one around the URL still closes it.
+        (
+            "SKILL.md",
+            format!("[g]({SOURCE}/main/skills/review/references/Guide(v2).md)"),
+            None,
+        ),
+        (
+            "SKILL.md",
+            format!("See {SOURCE}/main/skills/review/references/Guide(v2).md."),
+            None,
+        ),
+        (
+            "SKILL.md",
+            format!("(see {SOURCE}/main/{gone})"),
+            missing(gone),
         ),
         // Escapes in the path and the anchor are decoded once.
         (

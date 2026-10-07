@@ -217,7 +217,9 @@ fn broken_links(
                 // A directory has no headings, and GitHub shows it as a tree.
                 .filter(|_| sealed.is_file(&target) && is_markdown(Path::new(&path)))
             {
-                let headings = heading_anchors(&sealed.read_to_string(&target)?);
+                // Decoded as the tree read decodes the files it scores, so
+                // a stray byte elsewhere costs no heading.
+                let headings = heading_anchors(&String::from_utf8_lossy(&sealed.read(&target)?));
                 if !decoded(&anchor, '/').is_some_and(|anchor| headings.contains(&anchor)) {
                     push(line, url, Broken::NoHeading { path, anchor });
                 }
@@ -289,9 +291,7 @@ fn catalog_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Opt
     while let Some(found) = lower[from..].find(&source.blob) {
         let start = from + found;
         let rest = &text[start + source.blob.len()..];
-        let end = rest
-            .find(|ch: char| ch.is_whitespace() || "()<>[]\"'`|".contains(ch))
-            .unwrap_or(rest.len());
+        let end = url_end(rest);
         let tail = rest[..end].trim_end_matches(['.', ',', ';', ':', '!', '?']);
         from = start + source.blob.len() + end;
         if !on_github(&lower[..start]) {
@@ -311,6 +311,24 @@ fn catalog_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Opt
         ));
     }
     out
+}
+
+/// Where a URL starting `rest` ends: at whitespace, a quote, an angle or
+/// square bracket, a pipe, or a `)` that closes no `(` of its own, so a
+/// file named `Guide(v2).md` keeps its name, in a markdown link and in
+/// prose, while the parenthesis around either closes it.
+fn url_end(rest: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            ')' => return at,
+            ch if ch.is_whitespace() || "<>[]\"'`|".contains(ch) => return at,
+            _ => {}
+        }
+    }
+    rest.len()
 }
 
 /// Whether the `github.com` a match starts at is the host itself, read off
