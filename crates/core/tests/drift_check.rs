@@ -441,6 +441,7 @@ fn an_old_snapshot_is_rederived_despite_a_fresh_mirror() {
     commit(&w.upstream, "one");
     declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
     sync_and_apply(&w);
+    drift::snapshot::record(&w.env, &w.scope).unwrap();
     fs::write(
         drift::snapshot::snapshot_path(&w.env, &w.scope),
         r#"{"schema":2,"taken-at":0,"scope":"project","packages":[],"unreadable":[]}"#,
