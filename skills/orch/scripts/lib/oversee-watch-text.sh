@@ -263,11 +263,13 @@ The long pass's events, checked and reported in this order:
                              and %25 a percent sign; a code scanning
                              alert its rule; a secret its type and, where
                              GitHub checks it, its validity. Reported, then
-                             on every long pass that reads it printed again
-                             with report=repeat until a record or the alert
-                             closing clears its first-repository baseline
-                             row; a repeat ends the run only beside a first
-                             report.
+                             printed again with report=repeat on every long
+                             pass that reads alerts_triaged and the alert's
+                             own list, until a record or the alert closing
+                             clears its first-repository baseline row; a
+                             read that fails or a scanning feature turned off
+                             prints no repeat for that source. A repeat does
+                             not itself end the run.
                              ORCH_SECURITY_ALERTS=off lists nothing
   EVENT security-alerts-unread reads=<source>:<cause>[,...]
                              an alert list or the alerts_triaged record could

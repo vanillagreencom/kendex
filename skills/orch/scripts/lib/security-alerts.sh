@@ -131,10 +131,11 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 #   security-alerts-unread<TAB>fleet<TAB><the reads= value>
 # An alert whose verdict `alerts_triaged` records has no row and no line; one
 # that leaves the open list takes its row with it. An alert whose row stands is
-# printed again on every pass that reads it, `report=repeat` at its end, so an
-# overseer that loses the first line, by succession or lost context, still
-# judges it; like the unread line, a repeat rides the pass's output and ends
-# the run only beside a first report. A read that fails keeps
+# printed again, `report=repeat` at its end, on every pass that reads the
+# verdict record and the alert's own list, so an overseer that loses the first
+# line, by succession or lost context, still judges it; like the unread line,
+# a repeat rides the pass's output and does not itself end the run. A read
+# that fails keeps
 # every row of its source, so a failure never reports its alerts again nor
 # drops a pull request's mapping. The unread line goes out on every pass a
 # read fails, and ends the run only when the set of failed reads changes: a
