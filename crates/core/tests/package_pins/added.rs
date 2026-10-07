@@ -1,7 +1,3 @@
-//! Adding a package within a scope: what the request declares comes
-//! current, and every follower already installed stays at the commit its
-//! record names, the way a single-package update leaves its siblings.
-
 use kendex_core::apply;
 use kendex_core::engine::ops::{self, AddRequest};
 
