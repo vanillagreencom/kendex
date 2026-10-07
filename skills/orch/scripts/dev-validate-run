@@ -200,10 +200,11 @@
 # caller's to request. --fresh ignores the evidence and runs the command: the
 # runner cannot see a setting the command reads beyond its own text, such as
 # a workload switch, so a caller who changed one asks for a fresh run.
-# A finding line is the one ../references/artifact-checks.md § Validation
-# command output names: a line of the log, past its runner line, that starts
-# with the base name of the command's first word, a colon and a space. A log
-# that cannot be read holds one.
+# A finding line is the one
+# ../references/artifact-checks.md § Validation command output
+# names: a line of the log, past its runner line, that starts with the base
+# name of the command's first word, a colon and a space. A log that cannot be
+# read holds one.
 #
 # Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
