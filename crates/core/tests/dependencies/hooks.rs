@@ -950,31 +950,28 @@ fn edit_installed(f: &Fixture, harness: HarnessId, file: &str) {
     fs::write(&path, script).unwrap();
 }
 
-/// The edited orphan's row where removing it by name takes nothing more.
-const EDITED_REMOVE_BY_NAME: &str =
-    "no longer wanted, but its files were edited on disk — remove it by name to confirm";
-/// The edited orphan's row where another tool still installs the item.
-const EDITED_KEPT: &str = "no longer wanted, but its files were edited on disk: apply with edits discarded to confirm; removing it by name would also remove it from tools that still request, require or bundle it";
-
 /// The remedy an edited orphan's row names, done as a person reading it
 /// would, and the next apply after it.
 #[allow(clippy::unwrap_used)]
 fn follow_remedy(f: &Fixture, name: &str, detail: &str) {
-    let report = match detail {
-        EDITED_REMOVE_BY_NAME => {
-            ops::remove(&f.env, &f.scope, &[name.to_owned()], None, false).unwrap()
-        }
-        EDITED_KEPT => plan_apply(
+    // Follow the advertised CLI verb and parameter independently of advice
+    // punctuation and explanatory wording.
+    let tokens = || detail.split(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+    let action = tokens().find(|token| matches!(*token, "remove" | "apply"));
+    let discard_edits = tokens().any(|token| token == "--discard-edits");
+    let report = match action {
+        Some("remove") => ops::remove(&f.env, &f.scope, &[name.to_owned()], None, false).unwrap(),
+        Some("apply") => plan_apply(
             &f.env,
             &f.scope,
             &PlanOptions {
                 remove_orphans: true,
-                overwrite_edited: true,
+                overwrite_edited: discard_edits,
                 ..PlanOptions::default()
             },
         )
         .unwrap(),
-        other => panic!("the row names no remedy this test knows: {other}"),
+        _ => panic!("the row names no supported remedy action: {detail}"),
     };
     apply::execute(&f.env, &report.plan).unwrap();
     apply_now(f);

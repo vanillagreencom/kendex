@@ -266,7 +266,7 @@ const RETIRED_EDITED: &str = "its catalog retired it and its installed files wer
 
 /// Removing by name affects every tool that still installs the item.
 /// Applying with edits discarded takes only the unwanted copy.
-const EDITED_KEPT: &str = "no longer wanted, but its files were edited on disk: apply with edits discarded to confirm; removing it by name would also remove it from tools that still request, require or bundle it";
+const EDITED_KEPT: &str = "no longer wanted, but its files were edited on disk: apply with --discard-edits to confirm; removing it by name would also remove it from tools that still request, require or bundle it";
 
 /// The desired state covers requested and derived installations, including
 /// dependencies only the catalog knows. Old records do not say what this
