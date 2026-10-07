@@ -429,7 +429,22 @@ assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^oversee-cycle: round
   "fix=-|1|1" "a worktree settings file that does not parse records no rounds and names the file"
 printf '[env]\nORCH_STATE_DIR = ""\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" "an empty state directory setting is tmp, as workflow-state reads it"
-rm -f -- "${CASE:?}/host/w/KEN-4/kendex.settings.toml"
+# The lane's private env file outranks its settings, as workflow-state loads
+# them; this machine reads only a literal assignment from it, never runs it.
+mkdir -p "$CASE/host/clone/private-state" "$CASE/host/w/KEN-4/config"
+printf '{"cycles": 4}' > "$CASE/host/clone/private-state/workflow-state-KEN-4.json"
+printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+printf 'SECRET=x\nexport ORCH_STATE_DIR="private-state"\n' > "$CASE/host/w/KEN-4/.env.local"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=4" \
+  "a hosted lane whose private env file names its state directory is read there, over its settings"
+printf '[env]\nORCH_STATE_DIR = "lane-state"\nKENDEX_ENV_FILE = "config/priv.env"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+mv -- "$CASE/host/w/KEN-4/.env.local" "$CASE/host/w/KEN-4/config/priv.env"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=4" \
+  "the private env file the settings name as KENDEX_ENV_FILE is the one read"
+printf 'ORCH_STATE_DIR=$HOME/state\n' > "$CASE/host/w/KEN-4/config/priv.env"
+assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^oversee-cycle: rounds-unread item=KEN-4$' "$CASE/err" || true)|$(grep -c "private-env-unread path=/w/KEN-4/config/priv.env key=ORCH_STATE_DIR" "$CASE/err" || true)" \
+  "fix=-|1|1" "a private env file that sets the state directory other than literally records no rounds and names the file"
+rm -rf -- "${CASE:?}/host/w/KEN-4/kendex.settings.toml" "${CASE:?}/host/w/KEN-4/config"
 
 echo "=== a gone sandbox's rounds are read from the archive its close kept ==="
 # gone_case NAME [ARCHIVE [AT [STATE_DIR]]] — KEN-4 hosted on a host that
@@ -1059,6 +1074,22 @@ control m-kept-clone lib/lane-gitfile.sh 'key=lambda m: (m.name.startswith(root 
 GONE_MANIFEST=none GONE_WT_COPY=1 gone_case c-kept-clone
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=8" \
   "control: preferring the worktree's copy reads it over the clone's"
+control m-private-env lib/lane-gitfile.sh '  if [[ -n "$private" ]]; then' '  if false; then'
+new_case c-private-env; printf micro > "$CASE/class"; timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
+mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp" "$CASE/host/clone/private-state"
+echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
+printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
+printf '{"cycles": 4}' > "$CASE/host/clone/private-state/workflow-state-KEN-4.json"
+printf 'ORCH_STATE_DIR=private-state\n' > "$CASE/host/w/KEN-4/.env.local"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
+  "control: without the private env file read, the lane's private state directory is missed"
+control m-private-named lib/lane-gitfile.sh '        e=*) private="${line#e=}" ;;' '        e=*) ;;'
+mkdir -p "$CASE/host/w/KEN-4/config"
+mv -- "$CASE/host/w/KEN-4/.env.local" "$CASE/host/w/KEN-4/config/priv.env"
+printf '[env]\nKENDEX_ENV_FILE = "config/priv.env"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
+  "control: reading .env.local whatever KENDEX_ENV_FILE names misses the named file"
 control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then'
 gone_case c-kept
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \

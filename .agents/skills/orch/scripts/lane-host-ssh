@@ -435,9 +435,10 @@ exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
 def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree.
 
-    The item's workflow state goes with them wherever the lane's settings put
-    its state directory, as the clone's own workflow-state resolves it from the
-    worktree, or the clone once the worktree is gone. The archive's
+    The item's workflow state goes with them wherever the lane's settings and
+    private env file put its state directory, as the clone's own workflow-state
+    resolves it from the worktree, or the clone once the worktree is gone: the
+    lane's own resolution, on the lane's own host. The archive's
     `lane-host-state` member names that file's member, or is an empty line
     where the lane wrote none, so a reader takes the state the lane resolved,
     never another copy of the same name. A resolution that fails stops close,
@@ -453,7 +454,7 @@ state="" member="" from="$2"
 test -d "$from" || from="$1"
 states="$1/.agents/skills/orch/scripts/workflow-state"
 if test -x "$states"; then
-  if ! state=$(cd "$from" && "$states" --no-private-env path "$3"); then
+  if ! state=$(cd "$from" && "$states" path "$3"); then
     printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
     exit 1
   fi

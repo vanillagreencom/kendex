@@ -105,15 +105,21 @@ lane_hosted_state_path() {
 # lane_hosted_state_dir LANE_HOST_CLI ITEM ROOT SCRATCH — sets
 # LANE_HOSTED_STATE_DIR to the state directory the hosted lane at ROOT
 # resolves for itself, as workflow-state resolves it there: ORCH_STATE_DIR
-# from ROOT's kendex.settings.toml, then .kendex/settings.toml, the later
-# winning, else tmp. A hosted launch sets no ORCH_STATE_DIR, and the caller's
-# own names a directory on the caller's machine, never the lane's. Each file
-# is read as data, in a subshell, as `workflow-state --no-private-env` reads
-# another checkout's. 0 read; 2 a read failed or a file did not parse,
-# SCRATCH/state.err saying why; 4 lane-host refused a call at its cap.
+# from ROOT's kendex.settings.toml, then .kendex/settings.toml, then its
+# private env file, .env.local unless those name another as KENDEX_ENV_FILE,
+# the later winning, else tmp. A hosted launch sets no ORCH_STATE_DIR, and the
+# caller's own names a directory on the caller's machine, never the lane's.
+# Each settings file is read as data, in a subshell, as `workflow-state
+# --no-private-env` reads another checkout's. The private env file is shell
+# the lane sources and this machine never runs, so only a literal
+# `ORCH_STATE_DIR=VALUE`, `export` before it allowed, is read from it; any
+# other line naming the key leaves the directory unread. 0 read; 2 a read
+# failed or a file did not parse, SCRATCH/state.err saying why; 4 lane-host
+# refused a call at its cap.
 LANE_HOSTED_STATE_DIR=""
+LANE_PRIVATE_STATE_RE='^[[:space:]]*(export[[:space:]]+)?ORCH_STATE_DIR=("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\&<>();|]*)[[:space:]]*$'
 lane_hosted_state_dir() {
-  local file setting rc
+  local file setting line value private=.env.local rc
   LANE_HOSTED_STATE_DIR=tmp
   for file in kendex.settings.toml .kendex/settings.toml; do
     rc=0
@@ -121,15 +127,42 @@ lane_hosted_state_dir() {
     case "$rc" in 0) ;; 1) continue ;; *) return "$rc" ;; esac
     if ! setting="$(
       source "$LANE_GITFILE_LIB/kendex-env.sh" || exit 1
-      unset ORCH_STATE_DIR
+      unset ORCH_STATE_DIR KENDEX_ENV_FILE
       kendex_load_settings_file "$4/settings.toml" || exit 1
-      [[ -z "${ORCH_STATE_DIR+set}" ]] || printf '=%s' "$ORCH_STATE_DIR"
+      [[ -z "${ORCH_STATE_DIR+set}" ]] || printf 's=%s\n' "$ORCH_STATE_DIR"
+      [[ -z "${KENDEX_ENV_FILE+set}" ]] || printf 'e=%s\n' "$KENDEX_ENV_FILE"
     )" 2>"$4/state.err"; then
       printf 'settings-unread path=%s\n' "$3/$file" >>"$4/state.err"
       return 2
     fi
-    [[ -z "$setting" ]] || LANE_HOSTED_STATE_DIR="${setting#=}"
+    while IFS= read -r line; do
+      case "$line" in
+        s=*) LANE_HOSTED_STATE_DIR="${line#s=}" ;;
+        e=*) private="${line#e=}" ;;
+      esac
+    done <<<"$setting"
   done
+  private="${private:-.env.local}"
+  case "$private" in
+    /* | *:* | *\\* | .. | ../* | */../* | */..)
+      printf 'private-env-path path=%s\n' "$private" >"$4/state.err"; return 2 ;;
+  esac
+  rc=0
+  lane_host_fetch "$1" "$2" "$3/$private" "$4/private.env" "$4/state.err" || rc=$?
+  case "$rc" in 0) ;; 1) private="" ;; *) return "$rc" ;; esac
+  if [[ -n "$private" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in *ORCH_STATE_DIR*) ;; *) continue ;; esac
+      [[ ! "$line" =~ ^[[:space:]]*# ]] || continue
+      if [[ ! "$line" =~ $LANE_PRIVATE_STATE_RE ]]; then
+        printf 'private-env-unread path=%s key=ORCH_STATE_DIR\n' "$3/$private" >"$4/state.err"
+        return 2
+      fi
+      value="${BASH_REMATCH[2]}"
+      case "$value" in \"*\" | \'*\') value="${value:1:${#value}-2}" ;; esac
+      LANE_HOSTED_STATE_DIR="$value"
+    done <"$4/private.env"
+  fi
   # An empty setting is tmp, as workflow-state reads it.
   LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"
 }

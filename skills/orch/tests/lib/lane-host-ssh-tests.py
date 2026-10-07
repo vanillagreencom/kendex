@@ -1375,6 +1375,29 @@ fi
             self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
 
+    def test_close_archives_the_state_the_lane_private_env_places(self):
+        # The lane's workflow-state loads its private env file over its
+        # settings; close resolves the state the way the lane does.
+        scripts = self.source / ".agents/skills/orch/scripts"
+        for name in ("workflow-state", "git-context"):
+            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state reader")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        created = self.create()
+        self.assertEqual(created.returncode, 0, created.stderr)
+        path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
+        state_dir = (self.root / "private-state").resolve()
+        state_dir.mkdir()
+        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 5}')
+        (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\n')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
+            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 5}')
+
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
         # A clone whose workflow-state fails leaves the item's state unplaced:
         # close stops before the worktree goes, rather than archive without it.
