@@ -65,9 +65,11 @@ assert_eq "$(sed -n 's/^# SECOND_OPINION_CLAUDE_ROOM_CMD = "\(.*\)"$/\1/p' "$SKI
 # label|second account weekly usage|room command enabled|reviewer|account
 CLAUDE_ROWS='
 Claude chooses the second account after the first reaches its weekly wall|20|yes|claude|second
+Claude account metadata survives collection with another opinion|20|union|claude,my-model|second
 control: removing the room command leaves the review on the walled account|20|no|claude|first
 Claude pool exhaustion selects the next cross-model reviewer|100|yes|my-model|none
 control: ignoring a refused room check runs the walled Claude account|100|ignore-refusal|claude|first
+control: omitting the production account field rejects the selected account assertion|20|omit-account|claude|second
 '
 claude_row=0
 while IFS='|' read -r label weekly checked reviewer account; do
@@ -99,19 +101,32 @@ SH
   room_cmd="$CLAUDE_ROOM_CMD"
   [[ "$checked" != no ]] || room_cmd=""
   W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
+  [[ "$checked" != union ]] || W_ENV+=("SECOND_OPINION_COUNT=2")
   if [[ "$checked" == ignore-refusal ]]; then
     mutate_script "$SO" '  target_room "$t" || return 1' '  target_room "$t" || :'
+  elif [[ "$checked" == omit-account ]]; then
+    mutate_script "$SO" '{account: $account}' '{account: null}'
   fi
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
   assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"
-  actual_account="$(jq -r '.qa_metadata.account // "none"' "$ROW/out/out.json")"
+  actual_account="$(jq -r '.qa_metadata.attempts | map(select(.name == "claude") | .account // "none") | if length == 0 then "none" else join(",") end' "$ROW/out/out.json")"
   expected_account=none
-  [[ "$account" == none ]] || expected_account="$H/.${account}claude"
-  assert_eq "$actual_account" "$expected_account" "$label: artifact names the account the CLI used"
+  [[ "$account" == none ]] || expected_account=".${account}claude"
+  if [[ "$checked" == omit-account ]]; then
+    assert_eq "$([[ "$actual_account" != "$expected_account" ]] && printf red || printf green)" red "control: missing production account turns the selected account assertion red"
+  else
+    assert_eq "$actual_account" "$expected_account" "$label: production attempt names the selected account"
+  fi
+  cli_artifact="$ROW/out/out.json"
+  [[ "$checked" != union ]] || cli_artifact="${cli_artifact}.claude.json"
+  cli_account="$(jq -r '.qa_metadata.account // "none"' "$cli_artifact")"
+  expected_cli_account=none
+  [[ "$account" == none ]] || expected_cli_account="$H/.${account}claude"
+  assert_eq "$cli_account" "$expected_cli_account" "$label: the CLI uses the selected configuration directory"
   assert_eq "$(jq '[.blockers[]] | length > 0' "$ROW/out/out.json")" true "$label: the artifact retains findings"
   if [[ "$checked" == no ]]; then
-    assert_eq "$([[ "$actual_account" != "$H/.secondclaude" ]] && printf red || printf green)" red "control: the account-selection assertion turns red without the room command"
+    assert_eq "$([[ "$actual_account" != .secondclaude ]] && printf red || printf green)" red "control: the account-selection assertion turns red without the room command"
   elif [[ "$checked" == ignore-refusal ]]; then
     assert_eq "$([[ "$reviewer" != my-model && "$(count extra)" == 0 ]] && printf red || printf green)" red "control: ignoring the refusal turns the roster-fallback assertion red"
   elif [[ "$account" == none ]]; then

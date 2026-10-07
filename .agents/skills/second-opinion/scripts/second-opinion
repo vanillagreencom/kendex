@@ -100,7 +100,8 @@ A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on
 stderr advances to the next roster name. On a zero exit the stderr refusal
 counts only when stdout holds no usable review/audit answer. Every attempt records name, cause
 and seconds on stderr and in review/audit qa_metadata.attempts (or the failed
-record when exhausted). Forced targets never fall through.
+record when exhausted). A Claude attempt also records account when its
+CLAUDE_CONFIG_DIR is known, using the directory name only. Forced targets never fall through.
 When no eligible target remains before execution the run refuses (exit 1).
 Review mode collects up to SECOND_OPINION_COUNT opinions (default 1; a
 shortfall is stated and stamped as degraded coverage); with 2 or more,
@@ -2796,7 +2797,7 @@ REFUSAL_PATTERNS=(
 # and its answer is a first response: the primary call's and a fall-through
 # target's alike pass gate_first_response before either becomes the response.
 collect_response() {
-  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json
+  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json attempt_account assignment
   while :; do
     EXIT_CODE=0
     attempt_started=$(date +%s)
@@ -2820,9 +2821,22 @@ collect_response() {
       # A zero-exit envelope failure stays with this target: no retry on empty.
       [[ $attempt_cause == quota || -z "$RESULT_ENVELOPE_CAUSE" ]] || attempt_cause="result-$RESULT_ENVELOPE_SUBTYPE"
     fi
+    # Fleet acceptance reads the account from real attempt records. Use the
+    # launch prefix already selected, never the room check's other env values.
+    attempt_account=""
+    [[ "$TARGET_CLI" != claude ]] || attempt_account="${CLAUDE_CONFIG_DIR:-}"
+    while IFS= read -r assignment; do
+      case "$assignment" in
+        CLAUDE_CONFIG_DIR=*) attempt_account="${assignment#*=}" ;;
+      esac
+    done <<<"$TARGET_CLI_ENV"
+    attempt_account="${attempt_account%/}"
+    attempt_account="${attempt_account##*/}"
     ATTEMPTS_JSON=$(jq -cn --argjson prev "$ATTEMPTS_JSON" --arg name "$TARGET_CLI" \
       --arg cause "$attempt_cause" --argjson seconds "$attempt_seconds" \
-      '$prev + [{name: $name, cause: $cause, seconds: $seconds}]')
+      --arg account "$attempt_account" \
+      '$prev + [{name: $name, cause: $cause, seconds: $seconds}
+        + (if $account == "" then {} else {account: $account} end)]')
     echo "second-opinion: attempt name=$TARGET_CLI cause=$attempt_cause seconds=$attempt_seconds" >&2
     [[ $EXIT_CODE -ne 0 ]] || break
     # Keep the failed command's text visible before RESULT is overwritten.

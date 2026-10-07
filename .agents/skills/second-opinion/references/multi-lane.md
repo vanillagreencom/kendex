@@ -37,7 +37,7 @@ Duplicates collapse to the first of their group and carry every contributing lan
 | `summary` | Each lane's own summary, lane-labelled |
 | `qa_metadata.union` | Always `true` for a union artifact |
 | `qa_metadata.coverage` | `full` when the requested number of valid opinions stands; `degraded` for a shortfall |
-| `qa_metadata.attempts` | Each CLI invocation in execution order, including format retries, with `name`, `cause` and `seconds`; failure and rejected-response records carry `attempts` |
+| `qa_metadata.attempts` | Each CLI invocation in execution order, including format retries, with `name`, `cause` and `seconds`; a Claude attempt adds `account`, the configuration directory name, when known. Failure and rejected-response records carry `attempts`. Fleet acceptance uses the account to identify the reviewer account. |
 | `qa_metadata.requested_count` / `selected_count` | Requested opinions / attempted eligible targets |
 | `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` — or `"killed"` for a lane that died to a signal — and their exit code |
 | `qa_metadata.dedupe` | Findings in and out, per class |
