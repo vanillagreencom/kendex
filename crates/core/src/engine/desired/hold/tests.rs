@@ -752,9 +752,8 @@ fn the_records_own_reading_releases_nothing() {
     )]);
     let options = super::super::super::PlanOptions::at_record();
 
-    let (planning, pins) = planning_manifest(&manifest, &lock, &options);
-    let (mut planning, mut pins) = (planning.into_owned(), pins.unwrap());
-    release_unserved(&env, &options, &mut planning, &mut pins).unwrap();
+    let (planning, pins) = held_planning(&env, &manifest, &lock, &options).unwrap();
+    let pins = pins.unwrap();
     assert_eq!(planning.declared(ItemKind::Skill)["one"].rev, Some(gone));
     assert_eq!(pins.pins().len(), 1);
 }

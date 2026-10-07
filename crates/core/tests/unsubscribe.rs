@@ -292,95 +292,183 @@ enum Leave {
     Keep,
 }
 
-/// A member another marketplace's bundle gained only past its recorded
-/// commit leaves with the source like any other: the removal and the
-/// re-sync after a keep hold that bundle where the record placed it, which
-/// does not carry the member, so a closure read at the bundle's tip would
-/// leave it named nowhere and installed under the source that is gone.
+/// How another marketplace's bundle gained a member after the install.
+#[derive(Debug, Clone, Copy)]
+enum Gained {
+    /// A new commit on top of the recorded one: the record still places
+    /// the bundle, at a commit that does not carry the member.
+    PastTheRecord,
+    /// The recorded commit amended away and this mirror cloned again: the
+    /// record names a commit nothing here serves, so a locked write reads
+    /// the bundle at the rewritten tip, which carries the member.
+    RewrittenHistory,
+}
+
+/// What becomes of `shared` once the source has left.
+#[derive(Debug, Clone, Copy)]
+enum Shared {
+    /// Uninstalled: no entry, no file.
+    Uninstalled,
+    /// Converted to the local source and installed from there.
+    Converted,
+    /// Still installed under another source's bundle, not converted.
+    Kept,
+}
+
+/// A project whose bundle `core` from `cat` installed `shared`, beside
+/// `other`'s bundle `also`, recorded at a commit carrying `extra` alone,
+/// which then gained `shared` as `gained` says, fetched here.
+#[allow(clippy::unwrap_used)]
+fn installed_then_gained(gained: Gained) -> (tempfile::TempDir, Env, Scope) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let cat = home.join("cat");
+    skill(&cat, "shared", "s");
+    fs::write(
+        cat.join("kendex.toml"),
+        "[bundles.core]\nskills = [\"shared\"]\n",
+    )
+    .unwrap();
+    // `other` is a git catalog, so the record places its bundle at a
+    // commit; at that commit the bundle carries `extra` alone.
+    let other = home.join("other");
+    skill(&other, "extra", "e");
+    fs::write(
+        other.join("kendex.toml"),
+        "[bundles.also]\nskills = [\"extra\"]\n",
+    )
+    .unwrap();
+    test_util::git(&other, &["init", "--quiet", "-b", "main"]);
+    test_util::git(&other, &["add", "-A"]);
+    test_util::git(&other, &["commit", "--quiet", "-m", "also carries extra"]);
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n[sources.other]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
+            source_path(&cat),
+            other.display()
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project { root: project };
+    remote::sync_sources(&env, &manifest_of(&env, &scope)).unwrap();
+    apply_now(&env, &scope);
+    assert!(scope_skill(&scope, "shared").exists());
+
+    skill(&other, "shared", "s");
+    fs::write(
+        other.join("kendex.toml"),
+        "[bundles.also]\nskills = [\"extra\", \"shared\"]\n",
+    )
+    .unwrap();
+    test_util::git(&other, &["add", "-A"]);
+    match gained {
+        Gained::PastTheRecord => {
+            test_util::git(&other, &["commit", "--quiet", "-m", "also carries shared"]);
+        }
+        Gained::RewrittenHistory => {
+            test_util::git(&other, &["commit", "--quiet", "--amend", "-m", "rewritten"]);
+            test_util::git(&other, &["reflog", "expire", "--expire=now", "--all"]);
+            test_util::git(&other, &["gc", "--quiet", "--prune=now"]);
+            fs::remove_dir_all(env.source_cache_dir()).unwrap();
+        }
+    }
+    assert!(remote::fetch_all(&env, &manifest_of(&env, &scope)).is_empty());
+    (tmp, env, scope)
+}
+
+/// A member another marketplace's bundle gained leaves with the source as
+/// the removal and the re-sync after a keep read that bundle: held where the
+/// record places it, which does not carry the member, so the member leaves;
+/// read at the tip where the record's commit is gone, which carries it, so
+/// the member stays under that bundle. A closure that reads the bundle
+/// anywhere else leaves the member installed under the source that is gone,
+/// or uninstalls one the plan keeps.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_member_another_bundle_gains_past_its_record_leaves_with_the_source() {
-    for leave in [Leave::Remove, Leave::Keep] {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = rooted(&tmp);
-        let env = Env::fake(&home, FakeOs::Linux);
-        let project = home.join("dev/app");
-        fs::create_dir_all(project.join(".claude")).unwrap();
-        let cat = home.join("cat");
-        skill(&cat, "shared", "s");
-        fs::write(
-            cat.join("kendex.toml"),
-            "[bundles.core]\nskills = [\"shared\"]\n",
-        )
-        .unwrap();
-        // `other` is a git catalog, so the record places its bundle at a
-        // commit; at that commit the bundle carries `extra` alone.
-        let other = home.join("other");
-        skill(&other, "extra", "e");
-        fs::write(
-            other.join("kendex.toml"),
-            "[bundles.also]\nskills = [\"extra\"]\n",
-        )
-        .unwrap();
-        test_util::git(&other, &["init", "--quiet", "-b", "main"]);
-        test_util::git(&other, &["add", "-A"]);
-        test_util::git(&other, &["commit", "--quiet", "-m", "also carries extra"]);
-        fs::write(
-            project.join("kendex.toml"),
-            format!(
-                "schema = 6\n\n[sources.cat]\n{}\n[sources.other]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
-                source_path(&cat),
-                other.display()
-            ),
-        )
-        .unwrap();
-        let scope = Scope::Project { root: project };
-        remote::sync_sources(&env, &manifest_of(&env, &scope)).unwrap();
-        apply_now(&env, &scope);
-        assert!(scope_skill(&scope, "shared").exists(), "{leave:?}");
-
-        skill(&other, "shared", "s");
-        fs::write(
-            other.join("kendex.toml"),
-            "[bundles.also]\nskills = [\"extra\", \"shared\"]\n",
-        )
-        .unwrap();
-        test_util::git(&other, &["add", "-A"]);
-        test_util::git(&other, &["commit", "--quiet", "-m", "also carries shared"]);
-        assert!(remote::fetch_all(&env, &manifest_of(&env, &scope)).is_empty());
+fn a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle() {
+    struct Row {
+        leave: Leave,
+        gained: Gained,
+        closure: &'static [&'static str],
+        shared: Shared,
+    }
+    let rows = [
+        Row {
+            leave: Leave::Remove,
+            gained: Gained::PastTheRecord,
+            closure: &["shared"],
+            shared: Shared::Uninstalled,
+        },
+        Row {
+            leave: Leave::Keep,
+            gained: Gained::PastTheRecord,
+            closure: &["shared"],
+            shared: Shared::Converted,
+        },
+        Row {
+            leave: Leave::Remove,
+            gained: Gained::RewrittenHistory,
+            closure: &[],
+            shared: Shared::Kept,
+        },
+    ];
+    for row in rows {
+        let case = format!("{:?} {:?}", row.leave, row.gained);
+        let (_tmp, env, scope) = installed_then_gained(row.gained);
 
         let closure = detach::closure(&env, &scope, "cat", &manifest_of(&env, &scope)).unwrap();
         let names: Vec<&str> = closure.items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["shared"], "{leave:?}");
+        assert_eq!(names, row.closure, "{case}");
 
-        match leave {
+        match row.leave {
             Leave::Remove => {
                 let report = detach::remove(&env, &scope, "cat", false).unwrap();
                 apply::execute(&env, &report.plan).unwrap();
-                assert!(!scope_skill(&scope, "shared").exists(), "{leave:?}");
             }
             Leave::Keep => {
                 let plan = detach::source(&env, &scope, "cat").unwrap();
                 apply::execute(&env, &plan).unwrap();
                 let resync = detach::resync_kept(&env, &scope).unwrap();
                 apply::execute(&env, &resync.plan).unwrap();
-                assert_eq!(manifest_of(&env, &scope).skills["shared"].source, "local");
-                assert!(scope_skill(&scope, "shared").exists(), "{leave:?}");
             }
         }
         let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
-        let shared: Vec<&str> = lock
+        let recorded: Vec<&str> = lock
             .entries
             .values()
             .filter(|entry| entry.name == "shared")
             .map(|entry| entry.source.as_str())
             .collect();
-        let expected: &[&str] = match leave {
-            Leave::Remove => &[],
-            Leave::Keep => &["local"],
-        };
-        assert_eq!(shared, expected, "{leave:?}");
-        assert!(scope_skill(&scope, "extra").exists(), "{leave:?}");
+        let declared = manifest_of(&env, &scope)
+            .skills
+            .get("shared")
+            .map(|decl| decl.source.clone());
+        let installed = scope_skill(&scope, "shared").exists();
+        match row.shared {
+            Shared::Uninstalled => {
+                assert!(recorded.is_empty(), "{case}: {recorded:?}");
+                assert!(!installed, "{case}");
+                assert_eq!(declared, None, "{case}");
+            }
+            Shared::Converted => {
+                assert_eq!(recorded, ["local"], "{case}");
+                assert!(installed, "{case}");
+                assert_eq!(declared.as_deref(), Some("local"), "{case}");
+            }
+            Shared::Kept => {
+                assert!(
+                    recorded.len() == 1 && recorded[0] != "local",
+                    "{case}: {recorded:?}"
+                );
+                assert!(installed, "{case}");
+                assert_eq!(declared, None, "{case}");
+            }
+        }
+        assert!(scope_skill(&scope, "extra").exists(), "{case}");
     }
 }
 

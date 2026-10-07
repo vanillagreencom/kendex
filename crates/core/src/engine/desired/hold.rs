@@ -182,10 +182,29 @@ impl HeldPin {
     }
 }
 
-/// The manifest a plan reads from: the caller's own, or — under
-/// `update_only` — a pinned copy of it, paired with the synthetic pins to
-/// strip from any manifest the plan writes.
-pub(crate) fn planning_manifest<'a>(
+/// The manifest a plan run with `options` against `lock` reads from: the
+/// caller's own, or — under `update_only` — a pinned copy of it with each
+/// pin at a commit gone from its source released ([`release_unserved`]),
+/// paired with the synthetic pins to strip from any manifest the plan
+/// writes. The scope plan, the closure and the Pi settle each read through
+/// this one rule, so none of them holds a declaration the others read
+/// fresh.
+pub(crate) fn held_planning<'a>(
+    env: &Env,
+    manifest: &'a Manifest,
+    lock: &Lock,
+    options: &super::super::PlanOptions,
+) -> Result<(std::borrow::Cow<'a, Manifest>, Option<HeldPins>)> {
+    let (mut planning, mut pins) = planning_manifest(manifest, lock, options);
+    if let Some(pins) = pins.as_mut() {
+        release_unserved(env, options, planning.to_mut(), pins)?;
+    }
+    Ok((planning, pins))
+}
+
+/// The caller's manifest, or — under `update_only` — a pinned copy of it,
+/// paired with the synthetic pins.
+fn planning_manifest<'a>(
     manifest: &'a Manifest,
     lock: &Lock,
     options: &super::super::PlanOptions,
@@ -209,7 +228,7 @@ pub(crate) fn planning_manifest<'a>(
 /// read fresh against a stale mirror it would undo their update. Any other
 /// hold keeps every pin, so `verify --at-record` still reports what the
 /// record names.
-pub(crate) fn release_unserved(
+fn release_unserved(
     env: &Env,
     options: &super::super::PlanOptions,
     held: &mut Manifest,

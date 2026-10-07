@@ -669,11 +669,7 @@ fn desired_pass<'a>(
     let mut agent_names = crate::source::agent_names::Uses::new(declared);
     agent_names.manifest(&mut normalized)?;
     let renamed = normalized != *declared;
-    let (mut planning, mut held_pins) =
-        desired::hold::planning_manifest(&normalized, lock, options);
-    if let Some(pins) = held_pins.as_mut() {
-        desired::hold::release_unserved(env, options, planning.to_mut(), pins)?;
-    }
+    let (planning, held_pins) = desired::hold::held_planning(env, &normalized, lock, options)?;
     let mut state = desired_state(
         env,
         scope,
