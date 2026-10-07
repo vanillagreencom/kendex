@@ -271,7 +271,9 @@ not reported at all.
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check cause is delegated to
-`ci-wait <PR> 15 30 --json` (verdict "fail", reported as armed_blocked)
+`ci-wait <PR> 15 30 --json` (verdict "fail", reported as armed_blocked;
+the probe after a green-but-unconfirmed answer runs to 120 seconds, within
+the budget, so ci-wait's stale window can confirm it)
 rather than reimplemented — ci-wait owns superseded-run correlation and
 check-state semantics. Its last readable verdict (pending, or pass/none;
 an error is no reading and keeps the one before it) also names the
@@ -856,13 +858,29 @@ transient_retry() {
 # probe_pending_names the checks it named, "settled" on pass or none, and ""
 # until a probe answered readably. An error or unparseable answer is no
 # reading and leaves the last readable one standing.
+# ci-wait confirms a rollup already green when it starts only after holding
+# it unchanged for its 90-second stale window, which a 30-second probe never
+# spans: so a probe that read green-but-unconfirmed makes the next one wide
+# enough to confirm (two 15-second polls past that window), within the
+# remaining budget. No probe carries the window to the next, so without the
+# wider one a rollup that went green between probes reads pending forever.
+PROBE_BUDGET=30
+PROBE_CONFIRM_BUDGET=120
 last_probe_at=0
 probe_checks=""
 probe_pending_names=""
+probe_confirm=false
 probe_failed_check() {
-  local out verdict status reading
+  local out verdict status reading budget="$PROBE_BUDGET" remaining
+  if $probe_confirm; then
+    update_elapsed
+    remaining=$((MAX_WAIT - elapsed))
+    budget="$PROBE_CONFIRM_BUDGET"
+    [ "$remaining" -ge "$budget" ] || budget="$remaining"
+    [ "$budget" -ge "$PROBE_BUDGET" ] || budget="$PROBE_BUDGET"
+  fi
   set +e
-  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 30 --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
+  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 "$budget" --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
   status=$?
   set -e
   # The child took the lane-mail exit; this wait ends on the same route.
@@ -872,6 +890,21 @@ probe_failed_check() {
     elif .verdict == "pending" then "pending"
     elif .verdict == "pass" or .verdict == "none" then "settled"
     else "" end' 2>/dev/null <<<"$out" || true)
+  # Green but unconfirmed is ci-wait declining to confirm a rollup it saw
+  # settled from its first poll. After a confirmed pass it is that same green
+  # rollup read by a probe too short to confirm it again, so it never undoes
+  # the pass; a check running again is a pending_checks entry and does.
+  if [ "$reading" = "pending" ] && jq -e '(.pending_checks | length) == 0
+       and (.failed_checks | length) == 0 and (.passed_checks | length) > 0' \
+       >/dev/null 2>&1 <<<"$out"; then
+    if [ "$probe_checks" = "settled" ]; then
+      reading=""
+    else
+      probe_confirm=true
+    fi
+  elif [ -n "$reading" ]; then
+    probe_confirm=false
+  fi
   if [ -n "$reading" ]; then
     probe_checks="$reading"
     probe_pending_names=$(jq -c '[.pending_checks[]?.name]' 2>/dev/null <<<"$out" || printf '[]')

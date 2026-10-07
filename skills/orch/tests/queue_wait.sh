@@ -569,7 +569,9 @@ echo "=== an armed PR GitHub has not enqueued reads the PR's own check rollup ==
 # reading (the progress table above).
 table '1 1 3 --json' \
   'pending required checks await, never progress_unobservable|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending pending_names=macos progress_head_polls=0' \
-  'a rollup already green that ci-wait has not confirmed still awaits|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'a rollup already green that no probe could confirm in the budget still awaits|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'a rollup green before any probe is confirmed by a wider probe, then armed_blocked|open_armed|1 20 300 --json|STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
+  'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
   'checks seen running then green, and still no entry, is armed_blocked|open_armed,prchecks:1=running,prchecks:last=green|1 1 1 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable has_pending_checks=false' \
   'an errored probe keeps the readable answer before it|open_armed,prchecks:1=running,prchecks:2=green,prchecks:last=fail502|1 20 60 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
   'an enqueued entry keeps its progress reading|open_queued_head,checkruns:last=c1.1||STUB_PR_CHECKS_MODE=pending|rc=1 verdict=queued cause=still_progressing'
