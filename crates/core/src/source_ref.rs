@@ -320,7 +320,10 @@ fn decode_segments(reference: &str, path: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn decode_segment(reference: &str, segment: &str) -> Result<String> {
+/// One URL path segment percent-decoded once, refused where an escape is
+/// malformed, is not UTF-8, or spells a separator. The catalog check's
+/// links pass decodes the URLs it judges with it.
+pub(crate) fn decode_segment(reference: &str, segment: &str) -> Result<String> {
     let mut bytes = Vec::with_capacity(segment.len());
     let mut rest = segment.bytes();
     while let Some(byte) = rest.next() {
