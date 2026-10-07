@@ -55,6 +55,15 @@ envelope() {
 }
 connection() { sk_run -- listen --status --root "$1"; field "$OUT" connection; } # ROOT
 state_link() { sk_run -- listen --status --root "$1"; printf '%s %s' "$(field "$OUT" state)" "$(field "$OUT" connection)"; } # ROOT
+# reconnect_polled ROOT — yes once an ok status record names the latest
+# reconnect as its connection's start; a record is written only after a
+# poll's catch-up, which can land a message before it
+reconnect_polled() {
+  local at
+  at="$(jq -rs '[.[] | select(.t == "reconnect") | .at] | last // empty' "$(sk_journal "$1")")"
+  [ -n "$at" ] && jq -e --arg at "$at" '.last_poll_ok and .connection == "connected" and .connection_since == $at' \
+    "$1/tmp/slack/status.json" >/dev/null 2>&1 && echo yes
+}
 texts() { jq -r .text "$(sk_box "$1")/to-lane.jsonl" | tr '\n' ' '; } # ROOT — every text in its to-lane box
 # relay ROOT [--root ROOT]... — sk_relay_start, then a stop of the suite unless
 # the relay holds its connection, so no row reads an event path that was never
@@ -302,8 +311,7 @@ assert_eq "$(awaited opened_at_least $((OPENED + 1)))" "yes" "Slack's disconnect
 assert_eq "$(lines "$GAMMA" disconnect | sed -n '2p')" "disconnect slack-refresh_requested" "the disconnect is journaled with Slack's reason"
 TS2="$(sk_inject "$GC" U001 'after the refresh')"
 assert_eq "$(landed "$GAMMA" "$GC:$TS2")" "after the refresh" "a message after the refresh lands from its event"
-# The landing above follows the reconnect's first poll, so the record read
-# here is one the new connection wrote.
+awaited reconnect_polled "$GAMMA" >/dev/null
 assert_eq "$(state_link "$GAMMA")" "ok connected" "after the refresh the doctor row reads ok and connected"
 
 # --- a relay that cannot reconnect shows reconnecting ----------------------------------------
@@ -487,12 +495,6 @@ ROWS
 # connected within one interval, a live message lands from its event, and the
 # first poll past the second Retry-After lands the reply. `none` reconnects
 # with no limit; `control` waits out the Retry-After again.
-reconnect_polled() { # ROOT — yes once an ok record names the reconnect as its connection's start
-  local at
-  at="$(jq -r 'select(.t == "reconnect") | .at' "$(sk_journal "$1")")"
-  [ -n "$at" ] && jq -e --arg at "$at" '.last_poll_ok and .connection == "connected" and .connection_since == $at' \
-    "$1/tmp/slack/status.json" >/dev/null 2>&1 && echo yes
-}
 deliveries() { jq -s --arg d "$2" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$1")/to-lane.jsonl"; } # ROOT DELIVERY_ID
 for row in rate none control; do
   [ "$row" != control ] || sk_mutant rate-wait api.py 'if err\.code == 429 and attempt < retries:' 'if err.code == 429 and attempt < RETRIES:'
@@ -645,6 +647,7 @@ sk_ctl /_test/socket '{"disconnect": "refresh_requested"}' >/dev/null
 awaited opened_at_least $((OPENED + 1)) >/dev/null
 TS5="$(sk_inject "$GC" U001 'after the refresh, error kept')"
 landed "$GAMMA" "$GC:$TS5" >/dev/null
+awaited reconnect_polled "$GAMMA" >/dev/null
 assert_eq "$(state_link "$GAMMA")" "failing connected" "control: the connection error kept past a reconnect, the refreshed relay's row reads failing"
 sk_relay_stop
 sk_bin_reset
