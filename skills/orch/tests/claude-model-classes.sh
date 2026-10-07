@@ -13,8 +13,8 @@
 # requires exit 0, protocol model-resolution-v1 and the same decision fields.
 #
 # No claude on PATH skips the suite on a developer machine and fails it
-# under CI. No kendex skips the core contract step unless ORCH_REQUIRE_KENDEX
-# is set.
+# under CI. No kendex, or one older than this checkout's core, skips the core
+# contract rows by name unless ORCH_REQUIRE_KENDEX is set.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -97,9 +97,11 @@ root-catch@hooks/register.js@return { turnId: e.turnId, index: e.index, answer, 
 refusal-chunk@hooks/register.js@yield { kind: 'text', index: 0, text: answer };@if (false) yield { kind: 'text', index: 0, text: answer };@core failure shows its refusal and makes no model call|invalid protocol shows its refusal and makes no model call
 warning-latch@hooks/register.js@await $.env.get('KENDEX_MODEL_WARNING_EMITTED') === '1') return;@(await $.env.get('KENDEX_MODEL_WARNING_EMITTED') === '1' && false)) return;@the warning latch spans repeated child dispatch, preset=false|the warning latch spans repeated child dispatch, preset=true
 warning-line@hooks/register.js@await $.ui.log(line);@await $.ui.log(`model-resolution: rebuilt`);@a kept default leaves the declared alias and asks about the native default, no launch context
-refused-branch@hooks/register.js@if (decision?.tag === 'refused') {@if (decision?.tag === 'refused' && false) {@managed read failure starts no child
-stderr-line@hooks/register.js@${line === '' ? '' : ` stderr=${line}`}@${line === '' ? '' : ''}@core stderr failure starts no child|core failure shows its refusal and makes no model call
-diagnostics@hooks/register.js@if (!Array.isArray(decision.diagnostics)) return@if (!Array.isArray(decision.diagnostics) && false) return@refusal without a diagnostics list starts no child
+stderr-line@hooks/register.js@const stderr = line === '' ? '' : ` stderr=${line}`;@const stderr = '';@core stderr failure starts no child|core failure shows its refusal and makes no model call|managed read failure starts no child
+core-warning@hooks/register.js@${typeof warning === 'string' ? ` warning=${warning}` : ''}@@managed read failure starts no child
+warning-absent@hooks/register.js@const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);@const warning = response.warning;@a kendex without the warning field still warns once
+context-parse@hooks/register.js@throw new Error(`model-resolution: invalid=KENDEX_MODEL_CONTEXT cause=${error.message}`);@throw error;@unparseable launch context starts no child
+context-object@hooks/register.js@return { ...record(context, 'KENDEX_MODEL_CONTEXT') };@return { ...context };@a launch context that is no object starts no child
 truncated@hooks/register.js@if (result.isStdoutTruncated === true) throw@if (result.isStdoutTruncated === true && false) throw@truncated response starts no child
 protocol@hooks/register.js@if (response.protocol !== protocol) throw@if (response.protocol !== protocol && false) throw@invalid protocol starts no child|invalid protocol shows its refusal and makes no model call
 harness@hooks/register.js@if (response.harness !== 'claude') throw@if (response.harness !== 'claude' && false) throw@another harness starts no child
@@ -192,14 +194,29 @@ contract() {
   done < <(grep '^core-contract=' "$out")
 }
 
-if ! command -v kendex >/dev/null 2>&1; then
+# The fixtures carry core's `warning` field, which kendex 1.12.0 first sends.
+# A kendex that answers the plugin's own no-list context without it predates
+# this checkout's core, and the contract rows are skipped as for no kendex.
+mkdir -p "$TMP_ROOT/home"
+NO_LIST='{"protocol":"model-resolution-v1","harness":"claude","account":"native-session","host":"native-process","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"claude:mods-model-list"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}'
+core_absent='no kendex on PATH'
+if command -v kendex >/dev/null 2>&1; then
+  core_absent='the kendex on PATH sends no warning field'
+  if probe="$(cd -- "$TMP_ROOT" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
+    kendex tier-model claude --model standard --json --runtime-context-json "$NO_LIST" 2>/dev/null)" &&
+    jq -e 'has("warning")' <<<"$probe" >/dev/null 2>&1; then
+    core_absent=''
+  fi
+fi
+if [[ -n "$core_absent" ]]; then
   if [[ -n "${ORCH_REQUIRE_KENDEX:-}" ]]; then
-    fail "ORCH_REQUIRE_KENDEX is set and no kendex is on PATH for the core contract"
+    fail "ORCH_REQUIRE_KENDEX is set and $core_absent for the core contract"
   else
-    printf '  skip  no kendex on PATH; the core contract rows and their controls did not run\n'
+    for scenario in $CONTRACT_SCENARIOS contract-fixture contract-key; do
+      printf '  skip  core answers %s: %s\n' "$scenario" "$core_absent"
+    done
   fi
 else
-  mkdir -p "$TMP_ROOT/home"
   copy_plugin contract
   verdicts="$(contract "$TMP_ROOT/contract")" || { fail 'core contract scenarios printed'; verdicts=''; }
   for scenario in $CONTRACT_SCENARIOS; do

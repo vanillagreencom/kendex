@@ -66,9 +66,9 @@
 #     `guards-tools-tail`, whose orch-shard-partition suite holds every
 #     citation to the roster.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
-#     changed, the trees its scans read. `rest` and `review-gate` also run
-#     where a build input changed, because their consumer rows use kendex-cli
-#     built from the checkout. A diff that reaches no package selects no shard, and
+#     changed, the trees its scans read. `rest`, `review-gate` and `orch-rest`
+#     also run where a build input changed, because their consumer rows use
+#     kendex-cli built from the checkout. A diff that reaches no package selects no shard, and
 #     shell_shards is false exactly where the list is empty.
 #   - The platform selections (the macOS shell bit, cargo_macos,
 #     cargo_windows) are false on a diff whose every path is prose,
@@ -487,9 +487,9 @@ $path" ;;
       esac
     done <<<"$found"
   done
-  # `rest` and `review-gate` build kendex-cli for their real consumer rows,
-  # so a build input runs both.
-  [ "$build" = false ] || { want_shard rest; want_shard review-gate; }
+  # `rest`, `review-gate` and `orch-rest` build kendex-cli for their real
+  # consumer rows, so a build input runs all three.
+  [ "$build" = false ] || { want_shard rest; want_shard review-gate; want_shard orch-rest; }
   # shellcheck disable=SC2086 # the roster is a word list
   ! any "$ALL_SHARDS" || want_shard $SHARDS
   for shard in $SHARDS; do

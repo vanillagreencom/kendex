@@ -48,7 +48,15 @@ for (const row of [
   });
 }
 
-const unreadable = { code: 'agent-request-unreadable', source: 'runtime', cause: 'fixture unreadable' };
+// What `kendex tier-model claude --agent runtime --json` writes when that managed agent's installation is edited.
+const refusedCause = "managed agent 'runtime' installation is edited";
+const refused = {
+  protocol: 'model-resolution-v1', harness: 'claude', request: { tag: 'inherit' },
+  resolution: { tag: 'refused', code: 'agent-request-unreadable',
+    diagnostics: [{ code: 'agent-request-unreadable', source: 'runtime', cause: refusedCause }] },
+  warning: `model-resolution: requested=inherit selected=agent-request-unreadable causes=agent-request-unreadable source=runtime detail=${refusedCause}`,
+};
+const refusedStderr = 'Error: model-resolution: refused=agent-request-unreadable requested=inherit harness=claude\n';
 for (const row of [
   { name: 'core stderr failure', response: undefined, exitCode: 1, stderr: 'error: kendex.toml: fixture parse\nsecond line', deny: 'core-exit=1 stderr=error: kendex.toml: fixture parse' },
   { name: 'truncated response', response: spawnSelected, truncated: true, deny: 'invalid=truncated-response' },
@@ -57,13 +65,13 @@ for (const row of [
   { name: 'deferred result', response: { ...spawnSelected, resolution: { tag: 'deferred-class' } }, deny: 'invalid=runtime-result' },
   { name: 'missing selector', response: { ...spawnSelected, resolution: { tag: 'selected', selection: {} } }, deny: 'invalid=selector' },
   { name: 'unknown default path', response: { ...spawnDefault, resolution: { ...spawnDefault.resolution, path: { tag: 'bogus' } } }, deny: 'invalid=default-path' },
-  { name: 'managed read failure', exitCode: 1, deny: 'refused=agent-request-unreadable cause=fixture unreadable',
-    response: { ...spawnSelected, request: { tag: 'inherit' }, resolution: { tag: 'refused', code: 'agent-request-unreadable', diagnostics: [unreadable] } } },
-  { name: 'refusal without a diagnostics list', exitCode: 1, deny: 'refused=agent-request-unreadable invalid=diagnostics',
-    response: { ...spawnSelected, request: { tag: 'inherit' }, resolution: { tag: 'refused', code: 'agent-request-unreadable', diagnostics: unreadable } } },
+  { name: 'managed read failure', response: refused, exitCode: 1, stderr: refusedStderr,
+    deny: `core-exit=1 stderr=${refusedStderr.trim()} warning=${refused.warning}` },
+  { name: 'unparseable launch context', response: spawnSelected, variables: { KENDEX_MODEL_CONTEXT: '{"protocol":' }, deny: 'invalid=KENDEX_MODEL_CONTEXT cause=' },
+  { name: 'a launch context that is no object', response: spawnSelected, variables: { KENDEX_MODEL_CONTEXT: '[]' }, deny: 'invalid=KENDEX_MODEL_CONTEXT' },
 ]) {
   test(`${row.name} starts no child`, async ($, on) => {
-    install(on, row.response, { exitCode: row.exitCode, stderr: row.stderr, truncated: row.truncated });
+    install(on, row.response, { variables: row.variables, exitCode: row.exitCode, stderr: row.stderr, truncated: row.truncated });
     let started = 0;
     on('agent.spawn', () => { started += 1; return { model: 'opus', agentId: 'child' }; });
     const result = await $.agent.spawn({ prompt: 'fixture', subagentType: 'runtime' });
@@ -83,3 +91,13 @@ for (const row of [{ preset: {}, printed: 1 }, { preset: { KENDEX_MODEL_WARNING_
     expect(fixture.variables.get('KENDEX_MODEL_WARNING_EMITTED')).toBe('1');
   });
 }
+
+// kendex 1.7.0 through 1.11.0 answer a fallback with its diagnostics and no `warning` field.
+test('a kendex without the warning field still warns once', async ($, on) => {
+  const fixture = install(on, { ...spawnDefault, warning: undefined });
+  on('agent.spawn', ($, e) => ({ model: e.model ?? 'parent', agentId: 'child' }));
+  await $.agent.spawn({ prompt: 'fixture', subagentType: 'runtime' });
+  await $.agent.spawn({ prompt: 'fixture', subagentType: 'runtime' });
+  expect(fixture.warnings.length).toBe(1);
+  expect(fixture.warnings[0].startsWith('model-resolution: warning=absent ')).toBe(true);
+});

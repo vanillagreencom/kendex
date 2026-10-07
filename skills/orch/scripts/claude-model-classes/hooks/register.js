@@ -1,6 +1,9 @@
 // Claude Code 2.1.287 is the first version with the model rewrites and fail-closed catches used here.
 // `kendex tier-model` owns request parsing, selector equivalence, access, fallback and the warning line; no class table lives here.
+// kendex 1.7.0 is the floor for `--runtime-context-json`; 1.12.0 is the first to send the `warning` line.
 const protocol = 'model-resolution-v1';
+// kendex 1.7.0 through 1.11.0 answer a fallback with diagnostics and no `warning`; drop this when the floor reaches 1.12.0.
+const warningAbsent = 'model-resolution: warning=absent cause=kendex before 1.12.0 sends diagnostics without the warning line; upgrade kendex to read them';
 
 function record(value, name) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -16,24 +19,17 @@ function selector(value) {
   return value;
 }
 
-// Core prints a refused response on stdout and exits 1; every other failure speaks on stderr.
+// Core states its own failure: stderr's first line, and for a refused response its warning line on stdout.
 function coreFailure(result) {
-  let response;
+  let warning;
   try {
-    response = JSON.parse(result.stdout);
+    warning = JSON.parse(result.stdout)?.warning;
   } catch {
-    response = undefined;
-  }
-  const decision = response?.protocol === protocol ? response.resolution : undefined;
-  if (decision?.tag === 'refused') {
-    const code = selector(decision.code);
-    if (!Array.isArray(decision.diagnostics)) return new Error(`model-resolution: refused=${code} invalid=diagnostics`);
-    const causes = decision.diagnostics.map(d => d?.cause).filter(c => typeof c === 'string');
-    const cause = causes.length === 0 ? '' : ` cause=${causes.join(',')}`;
-    return new Error(`model-resolution: refused=${code}${cause}`);
+    warning = undefined;
   }
   const line = result.stderr.trim().split('\n')[0];
-  return new Error(`model-resolution: core-exit=${result.exitCode}${line === '' ? '' : ` stderr=${line}`}`);
+  const stderr = line === '' ? '' : ` stderr=${line}`;
+  return new Error(`model-resolution: core-exit=${result.exitCode}${stderr}${typeof warning === 'string' ? ` warning=${warning}` : ''}`);
 }
 
 // The decided record: `model` is core's selected selector, `fallback` the observed default it kept.
@@ -46,8 +42,10 @@ function readResponse(result) {
   if (response.warning !== undefined && typeof response.warning !== 'string') {
     throw new Error('model-resolution: invalid=warning');
   }
-  const decided = { model: undefined, fallback: undefined, change: response.selectorChange, warning: response.warning };
   const decision = record(response.resolution, 'resolution');
+  const diagnosed = Array.isArray(decision.diagnostics) && decision.diagnostics.length > 0;
+  const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);
+  const decided = { model: undefined, fallback: undefined, change: response.selectorChange, warning };
   switch (decision.tag) {
     case 'selected':
       decided.model = selector(record(decision.selection, 'selection').nativeSelector);
@@ -71,12 +69,22 @@ function readResponse(result) {
 async function launchContext($) {
   const transport = await $.env.get('KENDEX_MODEL_CONTEXT');
   // This identity binds unknown facts to this native process. It grants no model access.
-  return transport === undefined ? {
-    protocol, harness: 'claude', account: 'native-session', host: 'native-process',
-    providers: [], currentProvider: null,
-    models: { tag: 'unsupported', source: 'claude:mods-model-list' },
-    default: { tag: 'native-default' }, capacity: [], rejected: [],
-  } : { ...record(JSON.parse(transport), 'launch-context') };
+  if (transport === undefined) {
+    return {
+      protocol, harness: 'claude', account: 'native-session', host: 'native-process',
+      providers: [], currentProvider: null,
+      models: { tag: 'unsupported', source: 'claude:mods-model-list' },
+      default: { tag: 'native-default' }, capacity: [], rejected: [],
+    };
+  }
+  // A person may set this by hand, so a bad value names the variable rather than reading as core's output.
+  let context;
+  try {
+    context = JSON.parse(transport);
+  } catch (error) {
+    throw new Error(`model-resolution: invalid=KENDEX_MODEL_CONTEXT cause=${error.message}`);
+  }
+  return { ...record(context, 'KENDEX_MODEL_CONTEXT') };
 }
 
 // A kept default runs the root step on the session's model, so core judges that model.

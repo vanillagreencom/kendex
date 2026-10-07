@@ -1,1 +1,1 @@
-- `scripts/claude-model-classes`: Claude Code plugin (`--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`) resolving declared subagent models via `kendex tier-model`; denies every spawn without kendex 1.7.0+.
+- `scripts/claude-model-classes`: Claude Code plugin resolving subagent models, and a root `KENDEX_MODEL_REQUEST`, via `kendex tier-model`; needs kendex 1.7.0+, and 1.12.0+ for its one warning.

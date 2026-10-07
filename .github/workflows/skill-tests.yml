@@ -473,26 +473,29 @@ jobs:
     # third runs this leg in roughly a third of that time. The three shards
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
-    # The Linux `rest` and `orch-terminal` legs build kendex-cli (debug) from
-    # the checkout ahead of their suites, and a cold cargo cache — the first
-    # run after a merge, and after each rustc release — pays the whole build.
-    # Its duration on a runner is unmeasured, so those legs take the macOS
-    # ceiling until a figure is recorded here.
+    # The Linux `rest`, `orch-terminal` and `orch-rest` legs build kendex-cli
+    # (debug) from the checkout ahead of their suites, and a cold cargo cache
+    # — the first run after a merge, and after each rustc release — pays the
+    # whole build. Its duration on a runner is unmeasured, so those legs take
+    # the macOS ceiling until a figure is recorded here; `orch-rest` also
+    # installs Claude Code from npm for claude-model-classes.sh.
     # The `guards-hooks`, `guards-tools` and `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal') && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
-    # ORCH_REQUIRE_KENDEX does the same for the orch suite
+    # ORCH_REQUIRE_KENDEX does the same for two orch suites:
     # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
-    # kendex hooks-off and which the `orch-terminal` shard runs.
+    # kendex hooks-off and which the `orch-terminal` shard runs, and
+    # claude-model-classes.sh, whose core contract rows ask a real kendex
+    # tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
