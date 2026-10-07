@@ -1148,7 +1148,8 @@ configured_lane_dirs() {
 	done
 }
 
-# Dirs of harness $1 (`claude`, `codex` or `copilot`), excluded ones dropped.
+# Dirs of harness $1 (`claude`, `codex`, `copilot` or `pi`), excluded ones
+# dropped unless $2 is `all`, which keeps every dir this machine knows.
 # The ORCH_LANE_DIRS entries of that harness replace its discovery; with none,
 # it is discovered. A set CODEX_HOME joins the codex inventory either way,
 # since the codex CLI reads it wherever it points — as the ACCOUNT it names,
@@ -1199,7 +1200,7 @@ lane_dirs() {
 		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || lane_launch_home_account "$CODEX_HOME"
 		[[ "$1" != copilot || -z "${COPILOT_HOME:-}" ]] || printf '%s\n' "$COPILOT_HOME"
 	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
-		lane_excluded "$d" || printf '%s\n' "$d"
+		[[ "${2:-}" != all ]] && lane_excluded "$d" || printf '%s\n' "$d"
 	done
 }
 
@@ -2315,11 +2316,13 @@ load_lane_claims() {
 	# An alias is not unique: two of this machine's own lanes can share one
 	# (`/home/u/.foo` and `/srv/u/.foo`). A claim on one of them is that lane's
 	# by its path, and only a claim no lane here holds, another home's, is
-	# named, so a name never moves a claim between two lanes this run lists.
-	for h in claude codex copilot; do
+	# named, so a name never moves a claim between two lanes this machine
+	# knows: every harness's, Pi roots and excluded dirs included, since an
+	# exclusion added while a lane runs leaves its claim live.
+	for h in claude codex copilot pi; do
 		while IFS= read -r d; do
 			[[ -z "$d" ]] || own+="$(lane_claims_canon "$d")"$'\n'
-		done < <(lane_dirs "$h")
+		done < <(lane_dirs "$h" all)
 	done
 	# The canonical config dir is the first field and the named spelling the
 	# last, empty on a record written before claims carried it.
