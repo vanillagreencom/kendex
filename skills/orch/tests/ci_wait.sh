@@ -505,9 +505,8 @@ echo "=== the no-checks grace is the default the settings template declares ==="
 # The Customize view shows the template's value as the default, so the grace
 # ci-wait resolves for an unset, empty or non-numeric key is that value; an
 # explicit whole number, leading zero included, is taken as given in base 10.
-# The budget outlasts any of them, so the no-checks error's dispatch-grace key
-# line names the grace it resolved and elapsed_seconds the seconds it waited,
-# at an interval that divides the grace and at the production one that does
+# The budget outlasts any of them, so elapsed_seconds on the no-checks error
+# is the grace it resolved, at an interval that divides the grace and at the production one that does
 # not. The grace runs from the wait's start, and the probe's seconds count
 # against it: a 100-second first read and a 50-second probe at a 400-second
 # interval end a 600-second grace at 600, where a grace counted from the first
@@ -519,17 +518,17 @@ echo "=== the no-checks grace is the default the settings template declares ==="
 GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO_ROOT/skills/orch/kendex.settings.toml.example")
 [[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
 table '1 30 3600 --json' \
-  "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  "a grace ending on the budget's deadline is the no-checks error, not a timeout||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  "a grace ending on the budget's deadline is the no-checks error, not a timeout||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
   "a grace ending past the budget's deadline stays a pending timeout at the deadline||1 180 $((GRACE_DECLARED - 10)) --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending elapsed_seconds=$((GRACE_DECLARED - 10))" \
-  "an unset grace at the production interval waits the declared default||1 180 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
-  'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
+  "an unset grace at the production interval waits the declared default||1 180 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=90' \
+  'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90' \
   "a slow first read and probe spend the grace from the wait's start||1 400 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=100,STUB_PROBE_COST=50|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
-  "a first read that took time at the production interval and budget is the no-checks error||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=5|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  'checks that vanish start a fresh grace at the first empty answer after them|||STUB_PR_CHECKS_SEQUENCE=pending:empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=120 stderr~ci-wait:+dispatch-grace+grace=90=true'
+  "a first read that took time at the production interval and budget is the no-checks error||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=5|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  'checks that vanish start a fresh grace at the first empty answer after them|||STUB_PR_CHECKS_SEQUENCE=pending:empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=120'
 
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
