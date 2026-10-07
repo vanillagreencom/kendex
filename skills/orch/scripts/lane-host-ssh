@@ -460,10 +460,11 @@ if test -x "$states"; then
   names=(lane-host-state)
   if test -f "$state"; then
     # workflow-state joins a relative setting such as ../lane-state as given,
-    # and tar cuts a member name at its last .. component: a logical cd
-    # resolves the dots, symlinks kept, so the record names the member tar
-    # writes.
-    state="$(cd -- "${state%/*}" && pwd)/${state##*/}"
+    # and tar cuts a member name at its last .. component, so the record names
+    # the file's physical path: the one test -f found, a symlink before ..
+    # followed as the filesystem follows it, and the root directory kept.
+    dir=$(cd -P -- "$(dirname -- "$state")" && pwd -P)
+    state="${dir%/}/$(basename -- "$state")"
     member="${state#/}"
     case "$state" in
       "$1/tmp/"* | "$2/tmp/"*) ;;

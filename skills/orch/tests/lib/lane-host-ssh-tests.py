@@ -1346,6 +1346,35 @@ fi
             self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 6}')
 
+    def test_close_follows_a_symlink_before_dots_in_the_state_directory(self):
+        # tmp/link/../lane-state names the directory beside link's target, as
+        # the filesystem follows it; collapsing link/.. first names
+        # tmp/lane-state, which here holds another copy, so the record would
+        # name a file that is not the lane's state.
+        scripts = self.source / ".agents/skills/orch/scripts"
+        for name in ("workflow-state", "git-context"):
+            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "tmp/link/../lane-state"\n')
+        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        self.assertEqual(self.create().returncode, 0)
+        target = self.root / "elsewhere/inner"
+        target.mkdir(parents=True)
+        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
+        (Path(self.row["clone"]) / "tmp/link").symlink_to(target)
+        (Path(self.row["clone"]) / "tmp/lane-state").mkdir()
+        (Path(self.row["clone"]) / "tmp/lane-state/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
+        state_dir = (self.root / "elsewhere/lane-state").resolve()
+        state_dir.mkdir()
+        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 2}')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
+            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
+
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
         # A clone whose workflow-state fails leaves the item's state unplaced:
         # close stops before the worktree goes, rather than archive without it.
