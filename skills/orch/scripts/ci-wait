@@ -177,7 +177,11 @@ failures (max 1 retry).
   --required-only  classify as GitHub gates the merge: only a context the
                  base branch requires counts as pending or failed, and a
                  required context with no check yet is pending as
-                 "<context> (missing)". The required set is the github
+                 "<context> (missing)"; passed_checks, which completes the
+                 wait, holds the required checks that passed or were
+                 skipped (GitHub counts a skipped required check as
+                 satisfied), and rollup_key, which the stale window holds,
+                 keys the required checks alone. The required set is the github
                  skill's own read (lib/ci-run-correlation.sh
                  required_contexts); where it cannot be read, every check
                  counts, as without the flag
@@ -217,7 +221,8 @@ A missing replacement reaches the timeout rather than passing.
 A rollup of settled checks with at least one passed, none ever seen in
 progress, is either the prior run's leftovers or CI that finished before the
 wait started. It completes once the stale window has measured consecutive
-polls showing one unchanged rollup of every check's name and state: 90
+polls showing one unchanged rollup of every check's name and state (every
+required check's, under --required-only): 90
 seconds of wall clock, not a count of polls, which at the default interval is
 the second poll. Any other poll starts the window over, and short of it the
 deadline reports status "timeout" with verdict "pending".
@@ -237,7 +242,9 @@ JSON output (always when --json):
     "passed_checks":  [ {name,state} ... ],
     "rollup_key": <string>        # only once a rollup was read: the last
                                   # scoped rollup's canonical name/state
-                                  # set, skipped checks included — the
+                                  # set (its required checks alone under
+                                  # --required-only), skipped checks
+                                  # included — the
                                   # identity the stale window holds, so a
                                   # caller compares rollups across runs
   }
@@ -690,7 +697,8 @@ classify_checks() {
                 + [$req[] | . as $ctx | select(($names | index($ctx)) == null)
                    | {name: (. + " (missing)"), state: "EXPECTED", bucket: "pending"}]),
       failed: [.[] | select(red and required_only($req))],
-      passed: [.[] | select(bucket == "pass")]
+      passed: [.[] | select(((bucket == "pass") and required_only($req))
+                            or (($req | length) > 0 and (bucket == "skipping") and required_only($req)))]
     }
   '
 }
@@ -813,8 +821,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # prior canceled run can't be reported as a current failure.
   checks_json=$(echo "$checks_json" | scope_current_run)
   # Keyed on the scoped rollup, not the classified checks, which drop skipped
-  # entries: a check registering late as SKIPPED is a different rollup.
-  rollup_key=$(jq -cS '[.[] | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
+  # entries: a check registering late as SKIPPED is a different rollup. Under
+  # --required-only only the required checks key it, skipped ones included, so
+  # an optional check registering or settling never restarts the window.
+  rollup_key=$(jq -cS --argjson req "$REQUIRED_CONTEXTS" "$CI_RUN_JQ_DEFS"'
+    [.[] | select(required_only($req)) | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
   # gh output. By default the waiter counts EVERY red check, required or not:
