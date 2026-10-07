@@ -54,12 +54,9 @@
 #        clearing ORCH_OVERSEER_HEADROOM_PCT (lanes --help, pick): the entry names its model in the
 #        characters kendex.settings.toml.example § Fleet states, an entry
 #        naming none refusing `invalid-preference`, and unset the setting is
-#        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. The old
-#        `harness:positive-integer:effort` form is deprecated and read until
-#        the next major release. It uses the caller's model
-#        or the same-harness default preference model where the caller names no model.
-#        If neither names a model, the harness default runs. It warns once
-#        per run and names the conversion. The walk is
+#        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE.
+#        kendex.settings.toml.example § Fleet owns numeric model selection,
+#        eligibility and the deprecation warning. The walk is
 #        that file's ol_walk, and `lanes pick` names the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
 #        itself (lib/overseer-launch.sh § ol_pick_lane). An entry with no

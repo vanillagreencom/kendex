@@ -142,7 +142,7 @@
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE through lib/overseer-launch.sh's
 #        parser. kendex.settings.toml.example § Fleet owns the entry grammar
-#        and the deprecated numeric form's model fallback. The walk uses
+#        and numeric model selection and eligibility. The walk uses
 #        ol_walk and builds the chosen entry's flag words through its
 #        ol_launch_flags, the walk and assembly `oversee launch` takes.
 #        An entry naming no model in the current grammar refuses
@@ -194,10 +194,7 @@
 #        that both rows define, then writes the target row's spelling and
 #        carries no other word of the caller's, each spelled for the caller's
 #        CLI; under any other posture it is skipped before its pick, with
-#        `entry-permission-untransferable` on stderr, and the walk goes on. A
-#        deprecated numeric entry of another harness is skipped with the same
-#        line and a `model=` field: it would run the caller's model in the
-#        caller's harness's spelling, and the walk translates none.
+#        `entry-permission-untransferable` on stderr, and the walk goes on.
 #        A qualifying judgement, handed no permission words, skips an entry
 #        whose rows define no such posture, so it never chooses one a
 #        succession would skip.
