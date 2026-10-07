@@ -276,7 +276,10 @@ fi
 # its exit status is the verdict: nonzero only for a compile error or a
 # deny-by-default lint, or a run that died, which the committer can fix.
 CLIPPY_STATUS=0
-OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} "${PACKAGE_ARGS[@]}" --all-targets 2>&1) ||
+# Diagnostics are classified by the word that opens their line, which a
+# colour forced through CARGO_TERM_COLOR or `[term] color` would push behind
+# an escape; the flag outranks both.
+OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} "${PACKAGE_ARGS[@]}" --all-targets --color never 2>&1) ||
   CLIPPY_STATUS=$?
 if [ "$CLIPPY_STATUS" -ne 0 ]; then
   # Diagnostic lines are only how the failure is reported, so a run that

@@ -59,8 +59,16 @@ if [ "$1" = metadata ]; then
   fi
   exit 0
 fi
+# FAKE_COLOR=always is a colour forced through CARGO_TERM_COLOR or
+# `[term] color`: each line opens with an escape unless the call says
+# `--color never`, which outranks both.
+esc=""
+case " $* " in
+  *" --color never "*) ;;
+  *) [ "${FAKE_COLOR:-}" != always ] || esc=$(printf '\033[33m') ;;
+esac
 if [ -n "${FAKE_OUT:-}" ]; then
-  printf '%s\n' "$FAKE_OUT"
+  printf '%s\n' "$FAKE_OUT" | sed "s/^/$esc/"
 fi
 exit "${FAKE_RC:-0}"
 EOF
@@ -211,11 +219,11 @@ workspace() { jq -cs '{packages: .}'; }
 MEMBERS_META=$( { member f "$REPO"; member a "$REPO/crates/a"; member b "$REPO/crates/b"; } | workspace)
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets --color never" \
   "a change to crate b lints b alone: not the workspace, not the root member above it"
 printf 'pub fn a() { }\n' >"$REPO/crates/a/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets --color never" \
   "changes to two crates lint each once"
 fgit -C "$REPO" checkout -q -- crates
 # c depends on b and d on c, through path dependencies; e depends on a crate
@@ -232,7 +240,7 @@ DEPS_META=$( {
 mkdir -p "$REPO/crates/c" "$REPO/crates/d" "$REPO/crates/e" "$REPO/crates/g" "$REPO/vendor/b"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$DEPS_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targets --color never" \
   "a change to b also lints every member depending on it, however indirectly, and no registry or outside path namesake"
 # cargo on Windows writes native backslash separators in both path fields.
 WIN_META=$(jq -cn --arg r "$REPO" '{packages: [
@@ -242,29 +250,29 @@ WIN_META=$(jq -cn --arg r "$REPO" '{packages: [
    targets: [{kind: ["lib"], src_path: ($r + "\\crates\\c\\src\\lib.rs")}],
    dependencies: [{name: "b", source: null, path: ($r + "\\crates\\b")}]}]}')
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$WIN_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c --all-targets --color never" \
   "backslash-separated cargo paths still map files and dependencies to members"
 fgit -C "$REPO" checkout -q -- crates
 fgit -C "$REPO" mv crates/a/src/lib.rs crates/b/src/moved.rs
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets --color never" \
   "a staged move between members lints the crate it left as well as the one it joined"
 fgit -C "$REPO" reset -q --hard
 printf 'fn loose() {}\n' >"$REPO/scratch/loose.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(member a "$REPO/crates/a" | workspace)"
-assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=clippy --workspace --all-targets" \
+assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=clippy --workspace --all-targets --color never" \
   "a Rust file no member's directory holds, which any member may include by #[path], lints the whole workspace"
 # The root is a package too, so its directory holds the loose file; holding
 # it compiles nothing, and a's #[path] may be what does.
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy --workspace --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy --workspace --all-targets --color never" \
   "a Rust file outside every source root lints the whole workspace even inside a root package's directory"
 rm "$REPO/scratch/loose.rs"
 printf 'fn main() {}\n' >"$REPO/crates/b/build.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg d "$REPO/crates/b" '{packages: [{name: "b",
   manifest_path: ($d + "/Cargo.toml"), dependencies: [],
   targets: [{kind: ["lib"], src_path: ($d + "/src/lib.rs")}, {kind: ["custom-build"], src_path: ($d + "/build.rs")}]}]}')"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets --color never" \
   "a member's build script belongs to that member"
 rm "$REPO/crates/b/build.rs"
 # p and q both root their library at shared/lib.rs, and r depends on q.
@@ -278,7 +286,7 @@ run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg r "$REPO" '{packages: [
   {name: "r", manifest_path: ($r + "/crates/c/Cargo.toml"),
    dependencies: [{name: "q", source: null, path: ($r + "/crates/b")}],
    targets: [{kind: ["lib"], src_path: ($r + "/crates/c/src/lib.rs")}]}]}')"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q -p r --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q -p r --all-targets --color never" \
   "a source root two members share lints both, and the dependents of each"
 # p roots at shared/, whose module tree can reach shared/nested/helper.rs,
 # and q roots deeper, at shared/nested/. The helper is the only change.
@@ -290,7 +298,7 @@ run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg r "$REPO" '{packages: [
    targets: [{kind: ["lib"], src_path: ($r + "/shared/lib.rs")}]},
   {name: "q", manifest_path: ($r + "/crates/b/Cargo.toml"), dependencies: [],
    targets: [{kind: ["lib"], src_path: ($r + "/shared/nested/lib.rs")}]}]}')"
-assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q --all-targets" \
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q --all-targets --color never" \
   "a file under nested source roots lints the shallower root's member too, not only the deepest"
 rm -r -- "${REPO:?}/shared"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
@@ -307,6 +315,10 @@ run_hook "$REPO" FAKE_RC=0 \
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: warnings=1" \
   "a lint warning completes the task under a notice counting it"
 assert_contains "$err" "unused variable" "shows the warning itself"
+run_hook "$REPO" FAKE_RC=0 FAKE_COLOR=always \
+  FAKE_OUT="$(printf 'warning: unused variable: `x`\n --> src/added.rs:1:22')"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: warnings=1" \
+  "a colour forced on cargo still leaves the warning counted and shown"
 assert_eq "$(sed -n '/^clippy.*-D warnings/p' "$ARGS_LOG")" "" "warnings are not denied"
 run_hook "$REPO" FAKE_RC=101 \
   FAKE_OUT="$(printf 'error[E0425]: cannot find value `y`\nwarning: unused variable: `x`')"
