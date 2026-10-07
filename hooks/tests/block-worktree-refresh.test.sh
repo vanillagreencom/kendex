@@ -754,6 +754,11 @@ nor for a bare update-pi there|lone/hooks|own|2|block-worktree-refresh: missing-
 on Copilot the refusal is the same|lone-copilot/.github/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh
 a write from the main checkout passes with the gap reported|lone/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
 and outside every repository|lone/hooks|outside|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
+a plain command with a path to kendex and plain options passes the same|lone/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|/usr/local/bin/kendex refresh --scope=project -y
+a cd before kendex in the main checkout may move it into a linked worktree, so it is refused|lone/hooks|main|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|cd $WT && kendex refresh
+and so is a move an expansion spells, outside every repository|lone/hooks|outside|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|x=cd; \$x $WT; kendex refresh
+and a command substitution|lone/hooks|main|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex verify \$(cd $WT)
+and a quoted word, which the shell may join into anything|lone/hooks|main|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex re""fresh
 and on Copilot as its top-level additionalContext|lone-copilot/.github/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.additionalContext|kendex refresh
 ROWS
 # A global Pi install sits four directories under the home, and a harness root
