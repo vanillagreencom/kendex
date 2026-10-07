@@ -34,7 +34,8 @@ SH
     -) ;;
     override) W_ENV+=("SECOND_OPINION_CLAUDE_CMD=claude --custom-command"); want=--custom-command ;;
     example) cp "$SKILL_DIR/kendex.settings.toml.example" "$PROJ/kendex.settings.toml" ;;
-    project) cp "$SKILL_DIR/../../kendex.settings.toml" "$PROJ/kendex.settings.toml" ;;
+    # The command row alone: the project's room check needs fleet accounts.
+    project) { echo '[env]'; grep '^SECOND_OPINION_CLAUDE_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml" ;;
     *)
       python3 - "$SO" "$change" <<'PY'
 import pathlib, sys

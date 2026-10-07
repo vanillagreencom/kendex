@@ -272,6 +272,7 @@ stamped_by_a_run() {
   mkdir -p "$ROW/earlier"
   env PATH="$TMP_ROOT/psbin:$TMP_ROOT/bin:$PATH" TMPDIR="$ROW_TMP" STUB_COUNTER="$ROW/earlier/counter" \
     SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    SECOND_OPINION_CLAUDE_ROOM_CMD= SECOND_OPINION_CLAUDE_INLINE_DIFF= \
     STUB_RC=0 STUB_STDOUT="$(stdout_of agent-foreign)" STUB_STDERR="" STUB_SLEEP=0 \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$ROW/earlier/review.json" >/dev/null 2>&1 \
     || { echo "the earlier run did not write its artifact" >&2; exit 2; }
