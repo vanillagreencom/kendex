@@ -136,13 +136,14 @@ fn remove_scope(
     Ok(Some(applied))
 }
 
-/// Whether the plan takes anything off disk or a declaration out of
-/// kendex.toml; one that does not is not run. A declaration refresh never
-/// installed has no file to take, so dropping it is the removal. A
-/// manifest save alone counts for nothing: the planner makes one of its
-/// own (an agent alias renamed) whatever the names are.
+/// Whether the plan takes anything off disk or changes kendex.toml for
+/// the removal; one that does not is not run. A declaration refresh never
+/// installed, or a dependency already off disk, has no file to take, so
+/// the change to kendex.toml is the removal. A manifest save alone counts
+/// for nothing: the planner makes one of its own (an agent alias renamed)
+/// whatever the names are.
 fn takes_anything(report: &EngineReport) -> bool {
-    !report.dropped.is_empty()
+    report.disowned.is_some()
         || report.plan.ops.iter().any(|op| {
             matches!(
                 op.op,
@@ -151,20 +152,28 @@ fn takes_anything(report: &EngineReport) -> bool {
         })
 }
 
-/// What the removal decided: the declarations it drops from kendex.toml,
-/// then what it takes and keeps. Taking a bundle away takes some of what it
+/// What the removal decided: the declarations it drops from kendex.toml
+/// and the removals it writes down there, then what it takes and keeps. Taking a bundle away takes some of what it
 /// carried and leaves the rest, so both halves are said out loud, each with
 /// what accounts for it — otherwise the user is left guessing which members
 /// survived and why. The planner's reason for a removal reads as disowning
 /// ("the declaration does not include it"), so with the declaration kept only the kept
 /// rows carry theirs.
 fn say_split(report: &EngineReport, mode: Removal) {
-    for dropped in &report.dropped {
-        let declared = match dropped {
-            DroppedDeclaration::Item { kind, name } => format!("{} {name}", kind.name()),
-            DroppedDeclaration::Bundle { name } => format!("bundle {name}"),
-        };
-        note(&format!("dropping {declared} from kendex.toml"));
+    if let Some(disowned) = &report.disowned {
+        for dropped in &disowned.dropped {
+            let declared = match dropped {
+                DroppedDeclaration::Item { kind, name } => format!("{} {name}", kind.name()),
+                DroppedDeclaration::Bundle { name } => format!("bundle {name}"),
+            };
+            note(&format!("dropping {declared} from kendex.toml"));
+        }
+        for (kind, name) in &disowned.suppressed {
+            note(&format!(
+                "keeping {} {name} removed: [suppressed] in kendex.toml",
+                kind.name()
+            ));
+        }
     }
     for change in &report.set_changes {
         if change.direction == kendex_core::engine::SetDirection::Remove {

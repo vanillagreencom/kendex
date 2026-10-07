@@ -140,9 +140,10 @@ mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{
-    Asked, DeclarationStatus, DriftCause, DriftRow, DriftState, DroppedDeclaration, EngineReport,
-    ExcludedHook, ForkEdit, Held, HeldPin, Installation, ItemWarning, Pin, PinnedHook, PlanOptions,
-    Reach, Registrations, RetiredStanding, RowRemedy, StoodIn, StoodInRecord, Targets,
+    Asked, DeclarationStatus, Disowned, DriftCause, DriftRow, DriftState, DroppedDeclaration,
+    EngineReport, ExcludedHook, ForkEdit, Held, HeldPin, Installation, ItemWarning, Pin,
+    PinnedHook, PlanOptions, Reach, Registrations, RetiredStanding, RowRemedy, StoodIn,
+    StoodInRecord, Targets,
 };
 
 pub(super) struct PlanOwnership {
@@ -367,7 +368,7 @@ fn report(
         record: new_lock,
         held,
         asked: Asked::Declared,
-        dropped: Vec::new(),
+        disowned: None,
     };
     settled(env, scope, manifest, lock, options, &state.items, report)
 }

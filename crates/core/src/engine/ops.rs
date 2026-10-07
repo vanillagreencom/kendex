@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::apply::{Op, PlannedOp, Pre};
 
-use super::{DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
+use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, Reason, lock_path};
@@ -197,13 +197,17 @@ fn removal(
             manifest.bundles.remove(name);
             manifest.plugins.remove(name);
         }
+        // An empty table goes only where this removal emptied it: one the
+        // file already held empty is no change of the removal's.
         for kind in &kinds {
             manifest.declared_mut(*kind).remove(name);
-            if let Some(forks) = manifest.forks.get_mut(kind) {
-                forks.remove(name);
+            if let Some(forks) = manifest.forks.get_mut(kind)
+                && forks.remove(name).is_some()
+                && forks.is_empty()
+            {
+                manifest.forks.remove(kind);
             }
         }
-        manifest.forks.retain(|_, forks| !forks.is_empty());
         if kinds.contains(&ItemKind::Plugin) {
             manifest.plugins.remove(name);
         }
@@ -219,12 +223,13 @@ fn removal(
             // Taking an item away also un-takes it wherever it was chosen
             // as an optional extra: that choice is the whole reason it
             // would return.
-            for taken in manifest.optional_dependencies.values_mut() {
+            manifest.optional_dependencies.retain(|_, taken| {
+                let chose = taken.contains(name);
                 taken.retain(|chosen| chosen != name);
-            }
+                !(chose && taken.is_empty())
+            });
         }
     }
-    manifest.optional_dependencies.retain(|_, t| !t.is_empty());
     for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
         manifest.suppress(kind, &name);
     }
@@ -234,11 +239,11 @@ fn removal(
             report.notes.extend(unreadable_origins(
                 env, scope, &manifest, &lock, names, &options,
             ));
-            report.dropped = dropped(&held, &manifest, names);
-            // Where the scope has no kendex.toml, a save of the manifest
-            // as it was read would create one.
+            // A save of the manifest as it was read is no removal, and
+            // where the scope has no kendex.toml it would create one.
             if manifest != held {
                 ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
+                report.disowned = Some(disowned(&held, &manifest, names));
             }
         }
         false => report
@@ -249,9 +254,10 @@ fn removal(
     Ok(report)
 }
 
-/// The declarations of these names `held` makes and `manifest` no longer
-/// does.
-fn dropped(held: &Manifest, manifest: &Manifest, names: &[String]) -> Vec<DroppedDeclaration> {
+/// What `manifest` changes from `held` that names an item: the
+/// declarations of these names it no longer makes, and the suppressions it
+/// adds.
+fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned {
     let mut dropped = Vec::new();
     for name in names {
         if held.bundles.contains_key(name) && !manifest.bundles.contains_key(name) {
@@ -273,7 +279,16 @@ fn dropped(held: &Manifest, manifest: &Manifest, names: &[String]) -> Vec<Droppe
             }
         }
     }
-    dropped
+    let suppressed = manifest
+        .suppressed
+        .iter()
+        .flat_map(|(kind, names)| names.iter().map(|name| (*kind, name.clone())))
+        .filter(|(kind, name)| !held.is_suppressed(*kind, name))
+        .collect();
+    Disowned {
+        dropped,
+        suppressed,
+    }
 }
 
 /// Which of these names something that stays would pull straight back in,

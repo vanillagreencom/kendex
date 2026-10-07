@@ -144,6 +144,7 @@ fn each_verb_prints_its_plain_lines() {
             &["refresh", "-y", "--scope", "project"],
             &["remove", "tidy", "--no-sweep", "--scope", "project"],
             vec![
+                "dropping skill tidy from kendex.toml",
                 "removing skill tidy for Claude Code — no longer declared here",
                 "removing skill tidy for Codex — no longer declared here",
                 "changes:",
