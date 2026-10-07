@@ -1,12 +1,12 @@
 use iced::keyboard;
 use iced::widget::{
-    self, Text, button, center, center_x, checkbox, column, keyed_column, operation, row,
-    scrollable, text, text_input,
+    self, Text, button, center, center_x, checkbox, column, keyed_column,
+    operation, row, scrollable, text, text_input,
 };
 use iced::window;
 use iced::{
-    Application, Center, Element, Fill, Function, Preset, Program, Subscription, Task as Command,
-    Theme,
+    Application, Center, Element, Fill, Font, Function, Preset, Program,
+    Subscription, Task as Command, Theme,
 };
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,8 @@ pub fn main() -> iced::Result {
     application().run()
 }
 
-fn application() -> Application<impl Program<Message = Message, Theme = Theme>> {
+fn application() -> Application<impl Program<Message = Message, Theme = Theme>>
+{
     iced::application(Todos::new, Todos::update, Todos::view)
         .subscription(Todos::subscription)
         .title(Todos::title)
@@ -105,7 +106,9 @@ impl Todos {
                     }
                     Message::CreateTask => {
                         if !state.input_value.is_empty() {
-                            state.tasks.push(Task::new(state.input_value.clone()));
+                            state
+                                .tasks
+                                .push(Task::new(state.input_value.clone()));
                             state.input_value.clear();
                         }
 
@@ -123,7 +126,8 @@ impl Todos {
                     }
                     Message::TaskMessage(i, task_message) => {
                         if let Some(task) = state.tasks.get_mut(i) {
-                            let should_focus = matches!(task_message, TaskMessage::Edit);
+                            let should_focus =
+                                matches!(task_message, TaskMessage::Edit);
 
                             task.update(task_message);
 
@@ -153,9 +157,8 @@ impl Todos {
                             operation::focus_next()
                         }
                     }
-                    Message::ToggleFullscreen(mode) => {
-                        window::latest().and_then(move |window| window::set_mode(window, mode))
-                    }
+                    Message::ToggleFullscreen(mode) => window::latest()
+                        .and_then(move |window| window::set_mode(window, mode)),
                     Message::Loaded(_) => Command::none(),
                 };
 
@@ -209,7 +212,8 @@ impl Todos {
                     .align_x(Center);
 
                 let controls = view_controls(tasks, *filter);
-                let filtered_tasks = tasks.iter().filter(|task| filter.matches(task));
+                let filtered_tasks =
+                    tasks.iter().filter(|task| filter.matches(task));
 
                 let tasks: Element<_> = if filtered_tasks.count() > 0 {
                     keyed_column(
@@ -218,7 +222,11 @@ impl Todos {
                             .enumerate()
                             .filter(|(_, task)| filter.matches(task))
                             .map(|(i, task)| {
-                                (task.id, task.view(i).map(Message::TaskMessage.with(i)))
+                                (
+                                    task.id,
+                                    task.view(i)
+                                        .map(Message::TaskMessage.with(i)),
+                                )
                             }),
                     )
                     .spacing(10)
@@ -227,7 +235,9 @@ impl Todos {
                     empty_message(match filter {
                         Filter::All => "You have not created a task yet...",
                         Filter::Active => "All your tasks are done! :D",
-                        Filter::Completed => "You have not completed a task yet...",
+                        Filter::Completed => {
+                            "You have not completed a task yet..."
+                        }
                     })
                 };
 
@@ -334,7 +344,7 @@ impl Task {
                     .on_toggle(TaskMessage::Completed)
                     .width(Fill)
                     .size(17)
-                    .shaping(text::Shaping::Advanced);
+                    .text_shaping(text::Shaping::Advanced);
 
                 row![
                     checkbox,
@@ -348,18 +358,23 @@ impl Task {
                 .into()
             }
             TaskState::Editing => {
-                let text_input = text_input("Describe your task...", &self.description)
-                    .id(Self::text_input_id(i))
-                    .on_input(TaskMessage::DescriptionEdited)
-                    .on_submit(TaskMessage::FinishEdition)
-                    .padding(10);
+                let text_input =
+                    text_input("Describe your task...", &self.description)
+                        .id(Self::text_input_id(i))
+                        .on_input(TaskMessage::DescriptionEdited)
+                        .on_submit(TaskMessage::FinishEdition)
+                        .padding(10);
 
                 row![
                     text_input,
-                    button(row![delete_icon(), "Delete"].spacing(10).align_y(Center))
-                        .on_press(TaskMessage::Delete)
-                        .padding(10)
-                        .style(button::danger)
+                    button(
+                        row![delete_icon(), "Delete"]
+                            .spacing(10)
+                            .align_y(Center)
+                    )
+                    .on_press(TaskMessage::Delete)
+                    .padding(10)
+                    .style(button::danger)
                 ]
                 .spacing(20)
                 .align_y(Center)
@@ -369,7 +384,10 @@ impl Task {
     }
 }
 
-fn view_controls(tasks: &[Task], current_filter: Filter) -> Element<'_, Message> {
+fn view_controls(
+    tasks: &[Task],
+    current_filter: Filter,
+) -> Element<'_, Message> {
     let tasks_left = tasks.iter().filter(|task| !task.completed).count();
 
     let filter_button = |label, filter, current_filter| {
@@ -402,7 +420,9 @@ fn view_controls(tasks: &[Task], current_filter: Filter) -> Element<'_, Message>
     .into()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
 pub enum Filter {
     #[default]
     All,
@@ -440,7 +460,7 @@ fn empty_message(message: &str) -> Element<'_, Message> {
 
 fn icon(unicode: char) -> Text<'static> {
     text(unicode.to_string())
-        .font("Iced-Todos-Icons")
+        .font(Font::with_name("Iced-Todos-Icons"))
         .width(20)
         .align_x(Center)
         .shaping(text::Shaping::Basic)
@@ -456,7 +476,7 @@ fn delete_icon() -> Text<'static> {
 
 fn subtle(theme: &Theme) -> text::Style {
     text::Style {
-        color: Some(theme.palette().background.strongest.color),
+        color: Some(theme.extended_palette().background.strongest.color),
     }
 }
 
@@ -483,12 +503,13 @@ enum SaveError {
 #[cfg(not(target_arch = "wasm32"))]
 impl SavedState {
     fn path() -> std::path::PathBuf {
-        let mut path =
-            if let Some(project_dirs) = directories::ProjectDirs::from("rs", "Iced", "Todos") {
-                project_dirs.data_dir().into()
-            } else {
-                std::env::current_dir().unwrap_or_default()
-            };
+        let mut path = if let Some(project_dirs) =
+            directories::ProjectDirs::from("rs", "Iced", "Todos")
+        {
+            project_dirs.data_dir().into()
+        } else {
+            std::env::current_dir().unwrap_or_default()
+        };
 
         path.push("todos.json");
 
@@ -506,7 +527,8 @@ impl SavedState {
     async fn save(self) -> Result<(), SaveError> {
         use iced::time::milliseconds;
 
-        let json = serde_json::to_string_pretty(&self).map_err(|_| SaveError::Format)?;
+        let json = serde_json::to_string_pretty(&self)
+            .map_err(|_| SaveError::Format)?;
 
         let path = Self::path();
 
@@ -551,13 +573,15 @@ impl SavedState {
     async fn save(self) -> Result<(), SaveError> {
         let storage = Self::storage().ok_or(SaveError::Write)?;
 
-        let json = serde_json::to_string_pretty(&self).map_err(|_| SaveError::Format)?;
+        let json = serde_json::to_string_pretty(&self)
+            .map_err(|_| SaveError::Format)?;
 
         storage
             .set_item("state", &json)
             .map_err(|_| SaveError::Write)?;
 
-        let _ = wasmtimer::tokio::sleep(std::time::Duration::from_secs(2)).await;
+        let _ =
+            wasmtimer::tokio::sleep(std::time::Duration::from_secs(2)).await;
 
         Ok(())
     }

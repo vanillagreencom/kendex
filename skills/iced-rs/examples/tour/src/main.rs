@@ -1,7 +1,7 @@
 use iced::widget::{Button, Column, Container, Slider};
 use iced::widget::{
-    button, center_x, center_y, checkbox, column, image, radio, rich_text, row, scrollable, slider,
-    space, span, text, text_input, toggler,
+    button, center_x, center_y, checkbox, column, image, radio, rich_text, row,
+    scrollable, slider, space, span, text, text_input, toggler,
 };
 use iced::{Center, Color, Element, Fill, Font, Pixels, color};
 
@@ -147,8 +147,9 @@ impl Tour {
                     .style(button::secondary)
             }),
             space::horizontal(),
-            self.can_continue()
-                .then(|| { padded_button("Next").on_press(Message::NextPressed) })
+            self.can_continue().then(|| {
+                padded_button("Next").on_press(Message::NextPressed)
+            })
         ];
 
         let screen = match self.screen {
@@ -165,7 +166,8 @@ impl Tour {
             Screen::End => self.end(),
         };
 
-        let content: Element<_> = column![screen, controls].max_width(540).spacing(20).into();
+        let content: Element<_> =
+            column![screen, controls].max_width(540).spacing(20).into();
 
         let scrollable = scrollable(center_x(if self.debug {
             content.explain(Color::BLACK)
@@ -262,7 +264,9 @@ impl Tour {
         );
 
         let layout_section: Element<_> = match self.layout {
-            Layout::Row => row![row_radio, column_radio].spacing(self.spacing).into(),
+            Layout::Row => {
+                row![row_radio, column_radio].spacing(self.spacing).into()
+            }
             Layout::Column => column![row_radio, column_radio]
                 .spacing(self.spacing)
                 .into(),
@@ -296,7 +300,7 @@ impl Tour {
         let size_section = column![
             "You can change its size:",
             text!("This text is {size} pixels").size(size),
-            slider(3..=70, size, Message::TextSizeChanged),
+            slider(10..=70, size, Message::TextSizeChanged),
         ]
         .padding(20)
         .spacing(20);
@@ -333,7 +337,12 @@ impl Tour {
                     .iter()
                     .copied()
                     .map(|language| {
-                        radio(language, language, self.language, Message::LanguageSelected)
+                        radio(
+                            language,
+                            language,
+                            self.language,
+                            Message::LanguageSelected,
+                        )
                     })
                     .map(Element::from)
             )
@@ -391,7 +400,10 @@ impl Tour {
                 "Iced supports scrollable content. Try it out! Find the \
                  button further below.",
             )
-            .push(text("Tip: You can use the scrollbar to scroll down faster!").size(16))
+            .push(
+                text("Tip: You can use the scrollbar to scroll down faster!")
+                    .size(16),
+            )
             .push(space().height(4096))
             .push(
                 text("You are halfway there!")
@@ -539,7 +551,10 @@ impl Screen {
     }
 }
 
-fn ferris<'a>(width: u32, filter_method: image::FilterMethod) -> Container<'a, Message> {
+fn ferris<'a>(
+    width: u32,
+    filter_method: image::FilterMethod,
+) -> Container<'a, Message> {
     center_x(
         // This should go away once we unify resource loading on native
         // platforms

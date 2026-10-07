@@ -2,7 +2,7 @@
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};
-use iced::advanced::{self, Layout, Shell, Widget};
+use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::mouse;
 use iced::time::Instant;
 use iced::window;
@@ -109,7 +109,9 @@ impl State {
 
     fn start(&self) -> Instant {
         match self {
-            Self::Expanding { start, .. } | Self::Contracting { start, .. } => *start,
+            Self::Expanding { start, .. } | Self::Contracting { start, .. } => {
+                *start
+            }
         }
     }
 
@@ -122,7 +124,11 @@ impl State {
         }
     }
 
-    fn with_elapsed(&self, cycle_duration: Duration, elapsed: Duration) -> Self {
+    fn with_elapsed(
+        &self,
+        cycle_duration: Duration,
+        elapsed: Duration,
+    ) -> Self {
         let progress = elapsed.as_secs_f32() / cycle_duration.as_secs_f32();
         match self {
             Self::Expanding { start, .. } => Self::Expanding {
@@ -137,7 +143,8 @@ impl State {
     }
 }
 
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Linear<'a, Theme>
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Linear<'a, Theme>
 where
     Message: Clone + 'a,
     Theme: StyleSheet + 'a,
@@ -174,6 +181,7 @@ where
         _layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
+        _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
@@ -230,9 +238,11 @@ where
             State::Contracting { progress, .. } => renderer.fill_quad(
                 Quad {
                     bounds: Rectangle {
-                        x: bounds.x + self.easing.y_at_x(*progress) * bounds.width,
+                        x: bounds.x
+                            + self.easing.y_at_x(*progress) * bounds.width,
                         y: bounds.y,
-                        width: (1.0 - self.easing.y_at_x(*progress)) * bounds.width,
+                        width: (1.0 - self.easing.y_at_x(*progress))
+                            * bounds.width,
                         height: bounds.height,
                     },
                     ..renderer::Quad::default()
@@ -243,7 +253,8 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<Linear<'a, Theme>> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> From<Linear<'a, Theme>>
+    for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: StyleSheet + 'a,
@@ -284,7 +295,7 @@ impl StyleSheet for iced::Theme {
     type Style = ();
 
     fn appearance(&self, _style: &Self::Style) -> Appearance {
-        let palette = self.palette();
+        let palette = self.extended_palette();
 
         Appearance {
             track_color: palette.background.weak.color,

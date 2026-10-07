@@ -8,7 +8,7 @@ The example implements a custom `Subscription` in the __[`download`](src/downloa
   <img src="https://iced.rs/examples/download_progress.gif">
 </div>
 
-You can run it with `cargo run`:
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 
 ```
 cargo run --package download_progress

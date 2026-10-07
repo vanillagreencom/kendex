@@ -10,8 +10,7 @@ All the example code is located in the __[`main`]__ file.
   </a>
 </div>
 
-You can run the native version with `cargo run`:
-
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package todos
 ```

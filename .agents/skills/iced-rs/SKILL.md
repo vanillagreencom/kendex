@@ -46,7 +46,7 @@ Full list in `references/INDEX.md`; load on demand.
 | `guide-animation-debugging.md` | Symptom→cause checklist for animation/render bugs |
 | `widgets.md` | Widget catalog: every 0.14 widget, notes, canonical example |
 
-### `examples/`: every upstream Iced 0.14 example
+### `examples/`: every example of the Iced 0.14.0 release
 
 | Need | Read first |
 |---|---|
@@ -67,7 +67,11 @@ Full list in `references/INDEX.md`; load on demand.
 
 ### `iced_wgpu/` and external fallbacks
 
-Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad.rs`, `quad/solid.rs`, `quad/gradient.rs`, `triangle.rs`, `triangle/msaa.rs`, `primitive.rs`, `buffer.rs`, `shader/quad.wgsl`). Local references are pinned to 0.14.0; prefer them. For newer API surface: `ctx7 docs /websites/rs_iced_iced "<query>"`, `https://docs.rs/iced/0.14.0/iced/`, or upstream master at `https://github.com/iced-rs/iced` (may have unreleased APIs).
+Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad.rs`, `quad/solid.rs`, `quad/gradient.rs`, `triangle.rs`, `triangle/msaa.rs`, `primitive.rs`, `buffer.rs`, `settings.rs`, `shader/quad.wgsl`).
+
+Snapshot: tag `0.14.0` of `https://github.com/iced-rs/iced`, commit `3997291f318a8bc06fa522f5579836fb3feb94df`. Upstream `wgpu/` is `iced_wgpu/` and upstream `examples/` is `examples/`, each copied whole. Only the bundled READMEs differ: links out of the copy point at the tag, and run steps name the upstream workspace. This copy has no workspace `Cargo.toml` and does not build.
+
+The snapshot's signatures are the authority. For discovery beyond it, run `ctx7 docs /websites/iced_rs "<query>"`, then check each signature against `https://docs.rs/iced/0.14.0/iced/` or the tag's source, since lookups can return master APIs. Never copy code from upstream `master`.
 
 ## Breaking changes from Iced 0.13
 

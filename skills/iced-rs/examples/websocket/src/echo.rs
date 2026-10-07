@@ -17,7 +17,8 @@ pub fn connect() -> impl Sipper<Never, Event> {
             const ECHO_SERVER: &str = "ws://127.0.0.1:3030";
 
             let (mut websocket, mut input) =
-                match async_tungstenite::tokio::connect_async(ECHO_SERVER).await {
+                match async_tungstenite::tokio::connect_async(ECHO_SERVER).await
+                {
                     Ok((websocket, _)) => {
                         let (sender, receiver) = mpsc::channel(100);
 
@@ -26,7 +27,8 @@ pub fn connect() -> impl Sipper<Never, Event> {
                         (websocket.fuse(), receiver)
                     }
                     Err(_) => {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1))
+                            .await;
 
                         continue;
                     }
@@ -37,7 +39,7 @@ pub fn connect() -> impl Sipper<Never, Event> {
                     received = websocket.select_next_some() => {
                         match received {
                             Ok(tungstenite::Message::Text(message)) => {
-                                output.send(Event::MessageReceived(Message::User(message.to_string()))).await;
+                                output.send(Event::MessageReceived(Message::User(message))).await;
                             }
                             Err(_) => {
                                 output.send(Event::Disconnected).await;
@@ -47,7 +49,7 @@ pub fn connect() -> impl Sipper<Never, Event> {
                         }
                     }
                     message = input.select_next_some() => {
-                        let result = websocket.send(tungstenite::Message::Text(message.to_string().into())).await;
+                        let result = websocket.send(tungstenite::Message::Text(message.to_string())).await;
 
                         if result.is_err() {
                             output.send(Event::Disconnected).await;

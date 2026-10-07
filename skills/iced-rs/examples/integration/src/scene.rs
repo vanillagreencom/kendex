@@ -6,7 +6,10 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn new(device: &wgpu::Device, texture_format: wgpu::TextureFormat) -> Scene {
+    pub fn new(
+        device: &wgpu::Device,
+        texture_format: wgpu::TextureFormat,
+    ) -> Scene {
         let pipeline = build_pipeline(device, texture_format);
 
         Scene { pipeline }
@@ -40,7 +43,6 @@ impl Scene {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
-            multiview_mask: None,
         })
     }
 
@@ -59,11 +61,12 @@ fn build_pipeline(
         device.create_shader_module(wgpu::include_wgsl!("shader/frag.wgsl")),
     );
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[],
-        immediate_size: 0,
-    });
+    let pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            push_constant_ranges: &[],
+            bind_group_layouts: &[],
+        });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
@@ -98,7 +101,7 @@ fn build_pipeline(
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
-        multiview_mask: None,
+        multiview: None,
         cache: None,
     })
 }

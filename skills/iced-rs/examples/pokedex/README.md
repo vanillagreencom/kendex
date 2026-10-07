@@ -1,5 +1,4 @@
 # Pokédex
-
 An application that loads a random Pokédex entry using the [PokéAPI].
 
 All the example code can be found in the __[`main`](src/main.rs)__ file.
@@ -8,8 +7,7 @@ All the example code can be found in the __[`main`](src/main.rs)__ file.
   <img src="https://iced.rs/examples/pokedex.gif">
 </div>
 
-You can run it on native platforms with `cargo run`:
-
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package pokedex
 ```

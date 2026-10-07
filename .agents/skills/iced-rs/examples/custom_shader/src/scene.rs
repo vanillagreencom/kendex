@@ -176,7 +176,11 @@ fn rnd_origin() -> Vec3 {
 }
 
 impl shader::Pipeline for Pipeline {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Pipeline {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Pipeline {
         Self::new(device, queue, format)
     }
 }

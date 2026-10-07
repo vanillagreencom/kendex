@@ -1,0 +1,1 @@
+- The bundled `iced_wgpu` renderer source and the examples are now the published Iced 0.14.0 release, taken from its tag, in place of a copy that carried unreleased wgpu APIs and three examples 0.14.0 does not ship; `SKILL.md` names the tag commit and the directory mapping.

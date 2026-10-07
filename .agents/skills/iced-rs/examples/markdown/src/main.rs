@@ -5,11 +5,13 @@ use iced::clipboard;
 use iced::highlighter;
 use iced::time::{self, Instant, milliseconds};
 use iced::widget::{
-    button, center_x, container, hover, image, markdown, operation, right, row, scrollable, sensor,
-    space, text_editor, toggler,
+    button, center_x, container, hover, image, markdown, operation, right, row,
+    scrollable, sensor, space, text_editor, toggler,
 };
 use iced::window;
-use iced::{Animation, Element, Fill, Font, Function, Subscription, Task, Theme};
+use iced::{
+    Animation, Element, Fill, Font, Function, Subscription, Task, Theme,
+};
 
 use std::collections::HashMap;
 use std::io;
@@ -96,7 +98,7 @@ impl Markdown {
 
                 Task::none()
             }
-            Message::Copy(content) => clipboard::write(content).discard(),
+            Message::Copy(content) => clipboard::write(content),
             Message::LinkClicked(link) => {
                 let _ = webbrowser::open(&link);
                 Task::none()
@@ -214,7 +216,9 @@ impl Markdown {
     fn subscription(&self) -> Subscription<Message> {
         let listen_stream = match self.mode {
             Mode::Preview => Subscription::none(),
-            Mode::Stream { .. } => time::every(milliseconds(10)).map(|_| Message::NextToken),
+            Mode::Stream { .. } => {
+                time::every(milliseconds(10)).map(|_| Message::NextToken)
+            }
         };
 
         let animate = {
@@ -274,7 +278,8 @@ impl<'a> markdown::Viewer<'a, Message> for CustomViewer<'a> {
         code: &'a str,
         lines: &'a [markdown::Text],
     ) -> Element<'a, Message> {
-        let code_block = markdown::code_block(settings, lines, Message::LinkClicked);
+        let code_block =
+            markdown::code_block(settings, lines, Message::LinkClicked);
 
         let copy = button(icon::copy().size(12))
             .padding(2)
@@ -283,7 +288,8 @@ impl<'a> markdown::Viewer<'a, Message> for CustomViewer<'a> {
 
         hover(
             code_block,
-            right(container(copy).style(container::dark)).padding(settings.spacing / 2),
+            right(container(copy).style(container::dark))
+                .padding(settings.spacing / 2),
         )
     }
 }

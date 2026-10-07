@@ -25,14 +25,17 @@ impl Example {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let languages = pick_list(self.selected_language, Language::ALL, Language::to_string)
-            .on_select(Message::LanguageSelected)
-            .placeholder("Choose a language...");
+        let pick_list = pick_list(
+            &Language::ALL[..],
+            self.selected_language,
+            Message::LanguageSelected,
+        )
+        .placeholder("Choose a language...");
 
         let content = column![
             space().height(600),
             "Which is your favorite language?",
-            languages,
+            pick_list,
             space().height(600),
         ]
         .width(Fill)
@@ -56,7 +59,7 @@ pub enum Language {
 }
 
 impl Language {
-    const ALL: &[Language] = &[
+    const ALL: [Language; 7] = [
         Language::C,
         Language::Elm,
         Language::Ruby,

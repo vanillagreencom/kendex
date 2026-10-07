@@ -2,12 +2,12 @@ use iced::border;
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
-    button, canvas, center, center_y, checkbox, column, container, pick_list, pin, responsive, row,
-    rule, scrollable, space, stack, text,
+    button, canvas, center, center_y, checkbox, column, container, pick_list,
+    pin, responsive, row, rule, scrollable, space, stack, text,
 };
 use iced::{
-    Center, Element, Fill, Font, Length, Point, Rectangle, Renderer, Shrink, Subscription, Theme,
-    color,
+    Center, Element, Fill, Font, Length, Point, Rectangle, Renderer, Shrink,
+    Subscription, Theme, color,
 };
 
 pub fn main() -> iced::Result {
@@ -69,8 +69,12 @@ impl Layout {
             };
 
             match modified_key {
-                keyboard::Key::Named(key::Named::ArrowLeft) => Some(Message::Previous),
-                keyboard::Key::Named(key::Named::ArrowRight) => Some(Message::Next),
+                keyboard::Key::Named(key::Named::ArrowLeft) => {
+                    Some(Message::Previous)
+                }
+                keyboard::Key::Named(key::Named::ArrowRight) => {
+                    Some(Message::Next)
+                }
                 _ => None,
             }
         })
@@ -83,8 +87,7 @@ impl Layout {
             checkbox(self.explain)
                 .label("Explain")
                 .on_toggle(Message::ExplainToggled),
-            pick_list(self.theme.as_ref(), Theme::ALL, Theme::to_string)
-                .on_select(Message::ThemeSelected)
+            pick_list(Theme::ALL, self.theme.as_ref(), Message::ThemeSelected)
                 .placeholder("Theme"),
         ]
         .spacing(20)
@@ -96,7 +99,7 @@ impl Layout {
             self.example.view()
         })
         .style(|theme| {
-            let palette = theme.palette();
+            let palette = theme.extended_palette();
 
             container::Style::default()
                 .border(border::color(palette.background.strong.color).width(4))
@@ -179,7 +182,9 @@ impl Example {
     }
 
     fn previous(self) -> Self {
-        let Some(index) = Self::LIST.iter().position(|&example| example == self) else {
+        let Some(index) =
+            Self::LIST.iter().position(|&example| example == self)
+        else {
             return self;
         };
 
@@ -190,7 +195,9 @@ impl Example {
     }
 
     fn next(self) -> Self {
-        let Some(index) = Self::LIST.iter().position(|&example| example == self) else {
+        let Some(index) =
+            Self::LIST.iter().position(|&example| example == self)
+        else {
             return self;
         };
 
@@ -261,9 +268,10 @@ fn application<'a>() -> Element<'a, Message> {
         .align_y(Center),
     )
     .style(|theme| {
-        let palette = theme.palette();
+        let palette = theme.extended_palette();
 
-        container::Style::default().border(border::color(palette.background.strong.color).width(1))
+        container::Style::default()
+            .border(border::color(palette.background.strong.color).width(1))
     });
 
     let sidebar = center_y(
@@ -297,7 +305,9 @@ fn application<'a>() -> Element<'a, Message> {
 }
 
 fn quotes<'a>() -> Element<'a, Message> {
-    fn quote<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    fn quote<'a>(
+        content: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
         row![rule::vertical(1), content.into()]
             .spacing(10)
             .height(Shrink)
@@ -359,7 +369,8 @@ fn responsive_<'a>() -> Element<'a, Message> {
             let size = size.ratio(16.0 / 9.0);
 
             container(center(
-                text!("{:.0}x{:.0}px (16:9)", size.width, size.height).font(Font::MONOSPACE),
+                text!("{:.0}x{:.0}px (16:9)", size.width, size.height)
+                    .font(Font::MONOSPACE),
             ))
             .clip(true)
             .width(size.width)
@@ -392,7 +403,7 @@ fn square<'a>(size: impl Into<Length> + Copy) -> Element<'a, Message> {
         ) -> Vec<canvas::Geometry> {
             let mut frame = canvas::Frame::new(renderer, bounds.size());
 
-            let palette = theme.palette();
+            let palette = theme.extended_palette();
 
             frame.fill_rectangle(
                 Point::ORIGIN,

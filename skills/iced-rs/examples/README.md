@@ -1,6 +1,5 @@
 # Examples
-__Iced moves fast and the `master` branch can contain breaking changes!__ If you want to browse examples that are compatible with the latest release,
-then [switch to the `latest` branch](https://github.com/iced-rs/iced/tree/latest/examples#examples).
+These are the examples of the published Iced 0.14.0 release, copied from the `examples/` directory of its tag. They match that release; the upstream `master` branch can contain breaking changes.
 
 ## [Tour](tour)
 A simple UI tour that can run both on native platforms and the web! It showcases different widgets that can be built using Iced.
@@ -13,14 +12,14 @@ The __[`main`](tour/src/main.rs)__ file contains all the code of the example! Al
   </a>
 </div>
 
-[`iced_winit`]: https://github.com/iced-rs/iced/tree/master/winit
-[`iced_native`]: https://github.com/iced-rs/iced/tree/master/native
+[`iced_winit`]: https://github.com/iced-rs/iced/tree/0.14.0/winit
+[`iced_native`]: https://docs.rs/iced_native
 [`iced_wgpu`]: ../iced_wgpu
 [`iced_web`]: https://github.com/iced-rs/iced_web
 [`winit`]: https://github.com/rust-windowing/winit
 [`wgpu`]: https://github.com/gfx-rs/wgpu
 
-You can run the native version with `cargo run`:
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package tour
 ```
@@ -36,7 +35,7 @@ The example code is located in the __[`main`](todos/src/main.rs)__ file.
   </a>
 </div>
 
-You can run the native version with `cargo run`:
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package todos
 ```
@@ -54,7 +53,7 @@ The relevant code is located in the __[`main`](game_of_life/src/main.rs)__ file.
   <img src="https://iced.rs/examples/game_of_life.gif">
 </div>
 
-You can run it with `cargo run`:
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package game_of_life
 ```
@@ -71,7 +70,7 @@ The example code is located in the __[`main`](styling/src/main.rs)__ file.
   <img src="https://iced.rs/examples/styling.gif">
 </div>
 
-You can run it with `cargo run`:
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package styling
 ```
@@ -82,7 +81,7 @@ A bunch of simpler examples exist:
 - [`bezier_tool`](bezier_tool), a Paint-like tool for drawing Bézier curves using the `Canvas` widget.
 - [`clock`](clock), an application that uses the `Canvas` widget to draw a clock and its hands to display the current time.
 - [`color_palette`](color_palette), a color palette generator based on a user-defined root color.
-- [`counter`](counter), the classic counter example explained in the [iced repository README](https://github.com/iced-rs/iced#overview).
+- [`counter`](counter), the classic counter example explained in the [`README`](https://github.com/iced-rs/iced/blob/0.14.0/README.md).
 - [`custom_widget`](custom_widget), a demonstration of how to build a custom widget that draws a circle.
 - [`download_progress`](download_progress), a basic application that asynchronously downloads a dummy file of 100 MB and tracks the download progress.
 - [`events`](events), a log of native events displayed using a conditional `Subscription`.
@@ -98,7 +97,7 @@ A bunch of simpler examples exist:
 - [`stopwatch`](stopwatch), a watch with start/stop and reset buttons showcasing how to listen to time.
 - [`svg`](svg), an application that renders the [Ghostscript Tiger] by leveraging the `Svg` widget.
 
-All of them are packaged in their own crate and, therefore, can be run using `cargo`:
+Each is a crate of the upstream workspace, not of this copy. To run one, clone that workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package <example>
 ```

@@ -1,6 +1,8 @@
 mod echo;
 
-use iced::widget::{button, center, column, operation, row, scrollable, text, text_input};
+use iced::widget::{
+    button, center, column, operation, row, scrollable, text, text_input,
+};
 use iced::{Center, Element, Fill, Subscription, Task, color};
 
 pub fn main() -> iced::Result {
@@ -84,13 +86,20 @@ impl WebSocket {
 
     fn view(&self) -> Element<'_, Message> {
         let message_log: Element<_> = if self.messages.is_empty() {
-            center(text("Your messages will appear here...").color(color!(0x888888))).into()
+            center(
+                text("Your messages will appear here...")
+                    .color(color!(0x888888)),
+            )
+            .into()
         } else {
-            scrollable(column(self.messages.iter().map(text).map(Element::from)).spacing(10))
-                .id(MESSAGE_LOG)
-                .height(Fill)
-                .spacing(10)
-                .into()
+            scrollable(
+                column(self.messages.iter().map(text).map(Element::from))
+                    .spacing(10),
+            )
+            .id(MESSAGE_LOG)
+            .height(Fill)
+            .spacing(10)
+            .into()
         };
 
         let new_message_input = {
@@ -98,7 +107,8 @@ impl WebSocket {
                 .on_input(Message::NewMessageChanged)
                 .padding(10);
 
-            let mut button = button(text("Send").height(40).align_y(Center)).padding([0, 20]);
+            let mut button = button(text("Send").height(40).align_y(Center))
+                .padding([0, 20]);
 
             if matches!(self.state, State::Connected(_))
                 && let Some(message) = echo::Message::new(&self.new_message)

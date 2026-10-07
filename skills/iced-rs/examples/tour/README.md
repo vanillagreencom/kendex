@@ -11,15 +11,14 @@ The __[`main`]__ file contains all the code of the example! All the cross-platfo
 </div>
 
 [`main`]: src/main.rs
-[`iced_winit`]: https://docs.rs/iced_winit
+[`iced_winit`]: https://github.com/iced-rs/iced/tree/0.14.0/winit
 [`iced_native`]: https://docs.rs/iced_native
-[`iced_wgpu`]: https://docs.rs/iced_wgpu
+[`iced_wgpu`]: ../../iced_wgpu
 [`iced_web`]: https://github.com/iced-rs/iced_web
 [`winit`]: https://github.com/rust-windowing/winit
 [`wgpu`]: https://github.com/gfx-rs/wgpu-rs
 
-You can run the native version with `cargo run`:
-
+These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
 ```
 cargo run --package tour
 ```
