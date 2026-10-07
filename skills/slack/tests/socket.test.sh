@@ -519,6 +519,9 @@ for row in rate none control; do
     assert_eq "$POLLED|$LIVE_TEXT|$(state_link "$RATE")" 'yes|Live during the limit.|ok connected' \
       "$row: the poll after the reconnect records ok and connected within one interval, and a live message lands from its event"
     OFFLINE_TEXT="$(landed "$RATE" "$RC_CH:$OFFLINE")"
+    # The relay prints each delivery notice after its mailbox append.
+    awaited grep -E "^slack: delivered=ts=$LIVE id=[^ ]+ path=live\$" "$SK_TMP/relay.out" >/dev/null
+    awaited grep -E "^slack: delivered=ts=$OFFLINE id=[^ ]+ path=catch-up\$" "$SK_TMP/relay.out" >/dev/null
     assert_eq "$OFFLINE_TEXT|$(deliveries "$RATE" "$RC_CH:$OFFLINE")|$(deliveries "$RATE" "$RC_CH:$LIVE")" 'Reply while dropped.|1|1' \
       "$row: a later poll finishes the catch-up, and each message lands once"
     assert_eq "$(grep -Ec "^slack: delivered=ts=$LIVE id=[^ ]+ path=live\$" "$SK_TMP/relay.out")|$(grep -Ec "^slack: delivered=ts=$OFFLINE id=[^ ]+ path=catch-up\$" "$SK_TMP/relay.out")" \
