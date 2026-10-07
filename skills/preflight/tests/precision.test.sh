@@ -401,8 +401,16 @@ trap "
 " INT 'EXIT'; echo "armed"
 echo "$D"
 EOF
+cat >"$R/scripts/multitrap-substituted.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+trap "
+  rm -rf -- \"\${D:?}\" $(printf "%s" done)" EXIT
+echo "$D"
+EOF
 run_pf
-clean "a multiline EXIT trap is read as the EXIT trap it is, with its signal continued, quoted, or followed by a quoted command" 3
+clean "a multiline EXIT trap is read as the EXIT trap it is, with its signal continued, quoted, followed by a quoted command, or after quotes inside a substitution" 4
 
 echo "=== control: the action's own words name no signal ==="
 cat >"$R/scripts/multitrap.sh" <<'EOF'
@@ -452,8 +460,17 @@ trap '
 ' INT; exit 0
 echo "$D"
 EOF
+cat >"$R/scripts/inner-quote-trap.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+trap "
+  echo $(printf "%s" EXIT)" INT
+echo "$D"
+EOF
 run_pf
-fires "a multiline INT trap whose action says EXIT, plainly or beside a substitution, an EXIT trap in a here-document, or EXIT after the trap command ends, still leaves scratch behind" \
+fires "a multiline INT trap whose action says EXIT, plainly, beside or inside a substitution, an EXIT trap in a here-document, or EXIT after the trap command ends, still leaves scratch behind" \
+  "scripts/inner-quote-trap.sh:3: [mktemp-trap]" \
   "scripts/multitrap.sh:3: [mktemp-trap]" \
   "scripts/multisubst-trap.sh:3: [mktemp-trap]" \
   "scripts/heredoc-trap.sh:3: [mktemp-trap]" \
