@@ -363,7 +363,7 @@ OL_WALK_SOURCE_HARNESS="" OL_WALK_SOURCE_FLAGS="" OL_WALK_SOURCE_ROWS=0 OL_WALK_
 OL_CHOSEN="" OL_HARNESS="" OL_MODEL="" OL_EFFORT="" OL_PICK_MODEL="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none
 OL_WALK_SKIPS=() OL_FIELDS=()
 ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
-  local trigger="$1" exclude="$2" entry permitted_entry rc count defaults default_entry tab=$'\t'
+  local trigger="$1" exclude="$2" entry permitted_entry rc count defaults default_entry deprecated_entry tab=$'\t'
   shift 2
   OL_CHOSEN="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none OL_WALK_SKIPS=() OL_FIELDS=()
   for entry in "$@"; do
@@ -400,6 +400,18 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       fi
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
+      if [[ "$entry" == *::* ]] && (( ! OL_DEPRECATION_CONVERTED )); then
+        for deprecated_entry in ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}; do
+          [[ "$entry" == "${deprecated_entry%%:*}::${deprecated_entry##*:}" ]] || continue
+          if [[ -n "$OL_MODEL" ]]; then
+            printf 'preference-deprecated-conversion entry=%s replacement=%s:%s:%s\n' "$deprecated_entry" "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" >&2
+          else
+            printf 'preference-deprecated-conversion entry=%s harness=%s model=harness-default (the harness default model runs)\n' "$deprecated_entry" "$OL_HARNESS" >&2
+          fi
+          OL_DEPRECATION_CONVERTED=1
+          break
+        done
+      fi
       ol_entry_permitted "$permitted_entry" || continue
     fi
     rc=0
@@ -432,14 +444,6 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi
     fi
     OL_LANE_DIR="$OL_PICKED_DIR" OL_CHOSEN="$entry"
-    if [[ "$entry" == *::* ]] && (( ! OL_DEPRECATION_CONVERTED )); then
-      if [[ -n "$OL_MODEL" ]]; then
-        printf 'preference-deprecated-conversion replacement=%s:%s:%s\n' "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" >&2
-      else
-        printf 'preference-deprecated-conversion harness=%s model=harness-default (the harness default model runs)\n' "$OL_HARNESS" >&2
-      fi
-      OL_DEPRECATION_CONVERTED=1
-    fi
     return 0
   done
   return 3

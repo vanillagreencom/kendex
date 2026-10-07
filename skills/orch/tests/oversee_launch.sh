@@ -1120,12 +1120,45 @@ STUB
   assert_eq "$RC|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
     "0|1|claude|$H/.eclaude|claude-opus-5-5|high|lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
     "a numeric $verb preference uses the default preference model under $form"
-  assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(sed -n 's/^preference-deprecated-conversion replacement=//p' <<<"$OUT")|$(field "$(keyed overseer-launch "$OUT")" form)" \
-    "1|claude:claude-opus-5-5:high|$want_form" \
+  conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
+  assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$(keyed overseer-launch "$OUT")" form)" \
+    "1|claude:1:high|claude:claude-opus-5-5:high|$want_form" \
     "the numeric $verb warning names its conversion and the launch reports $form"
   tm kill-window -t "$(recorded window)"
 done
 rm -- "$BIN/eclaude"
+# The migration diagnostic pairs the original consumer entry with its own
+# conversion before an account or permission refusal can skip that entry.
+for row in \
+  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:claude-opus-5-5:high|' \
+  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:claude-opus-5-5:high|' \
+  'permission-skip|pi:1:high,claude:2:high|60|99|0|claude|pi:1:high||harness-default'; do
+  IFS='|' read -r case_name preference claude_used codex_used expected_rc selected original replacement native_model <<<"$row"
+  claude_usage "$claude_used" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  codex_usage "$codex_used"
+  LAUNCH_PREF="$preference" run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" -- launch --wait-secs 20
+  conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
+  chosen_harness=none
+  if [[ "$RC" == 0 ]]; then chosen_harness="$(recorded harness)"; fi
+  assert_eq "$RC|$chosen_harness|$(grep -c '^preference-deprecated ' <<<"$OUT")|$(grep -c '^preference-deprecated-conversion ' <<<"$OUT")|$(field "$(grep '^preference-deprecated ' <<<"$OUT")" entry)|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$conversion" model)" \
+    "$expected_rc|$selected|1|1|$original|$original|$replacement|$native_model" \
+    "$case_name keeps the original and resolved conversion paired before the skip"
+  if [[ "$RC" == 0 ]]; then tm kill-window -t "$(recorded window)"; fi
+done
+# Removing only the conversion leaves the consumer entry and account skips
+# intact but turns the association assertion red even when no account qualifies.
+CONVERSIONCTL="$(mutant_scripts conversionctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$CONVERSIONCTL/lib/overseer-launch.sh" \
+  '      if [[ "$entry" == *::* ]] && (( ! OL_DEPRECATION_CONVERTED )); then' \
+  '      if false && [[ "$entry" == *::* ]] && (( ! OL_DEPRECATION_CONVERTED )); then'
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+codex_usage 99
+LAUNCH_PREF='claude:1:high,codex:2:high' OVERSEE_BIN="$CONVERSIONCTL/oversee" \
+  run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" -- launch --wait-secs 20
+assert_eq "$RC|$(grep -c '^preference-deprecated ' <<<"$OUT")|$(grep -c '^preference-deprecated-conversion ' <<<"$OUT" || true)|$(overseers)" \
+  '3|1|0|0' "control: removing conversion defeats the all-walled association assertion"
+codex_usage 20
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 # Removing the overseer-only fill preserves the matched text but loses the
@@ -1151,8 +1184,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 # A numeric Copilot entry has no same-harness default preference. It still
 # launches with effort and permission words and reports the harness default.
 LAUNCH_PREF=copilot:1:high run_oversee ORCH_LANE_DIRS="$H/.1copilot" -- launch --wait-secs 20
-assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(grep -cx -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot")|$(grep -cxF -- --model "$TMP_ROOT/argv.copilot" || true)|$(grep -c '^preference-deprecated-conversion harness=copilot model=harness-default ' <<<"$OUT")" \
-  "0|copilot|$H/.1copilot|none|high|3|0|1" \
+conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(grep -cx -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot")|$(grep -cxF -- --model "$TMP_ROOT/argv.copilot" || true)|$(field "$conversion" entry)|$(field "$conversion" harness)|$(field "$conversion" model)" \
+  "0|copilot|$H/.1copilot|none|high|3|0|copilot:1:high|copilot|harness-default" \
   "a numeric Copilot preference launches and reports that the harness default model runs"
 tm kill-window -t "$(recorded window)"
 # With no default preference model, effort still needs flag writing and
