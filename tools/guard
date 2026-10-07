@@ -1288,28 +1288,67 @@ skill_files() { # DIR
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_CODE, its lines that are no `#` comment,
+# SCAN_READ_CODE, those lines filtered to document reads for scripts/libs,
 # SCAN_NAMES, each `/<name>` that code spells, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f code names lines sourced
+  local role f code read_code names lines sourced
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
   SCAN_CODE=()
+  SCAN_READ_CODE=()
   SCAN_NAMES=()
   SCAN_SOURCED=()
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
     code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
+    read_code=$code
+    case "$role" in
+      script | lib)
+        # Read commands and the path assignments they use share one checked
+        # extraction. A failed process cannot publish a valid empty scan.
+        read_code=$(awk '
+          {
+            lines[NR] = $0
+            if ($0 ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find|for)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
+              keep[NR] = 1
+              rest = $0
+              while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
+                name = substr(rest, RSTART, RLENGTH)
+                sub(/^\$\{?/, "", name)
+                read_names[name] = 1
+                rest = substr(rest, RSTART + RLENGTH)
+              }
+            }
+            rest = $0
+            while (match(rest, /(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[./])/)) {
+              name = substr(rest, RSTART, RLENGTH)
+              sub(/^[;&|({[:space:]]*/, "", name)
+              sub(/=.*/, "", name)
+              assignment_names[++assignments] = name
+              assignment_lines[assignments] = NR
+              rest = substr(rest, RSTART + RLENGTH)
+            }
+          }
+          END {
+            for (i = 1; i <= assignments; i++)
+              if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
+            for (i = 1; i <= NR; i++) if (keep[i]) print lines[i]
+          }
+        ' <<<"$code") || return 2
+        ;;
+    esac
     names=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$code") || [ $? -eq 1 ] || return 2
     lines=$(grep -E '(^|[;&|({[:space:]])(source|\.)[[:space:]]' <<<"$code") || [ $? -eq 1 ] || return 2
     sourced=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$lines") || [ $? -eq 1 ] || return 2
     SCAN_PATH+=("$f")
     SCAN_ROLE+=("$role")
     SCAN_CODE+=("$code")
+    SCAN_READ_CODE+=("$read_code")
     SCAN_NAMES+=($'\n'"$names"$'\n')
     SCAN_SOURCED+=($'\n'"$sourced"$'\n')
   done <<<"$(skill_files "$1")"
@@ -1335,7 +1374,7 @@ scan_load() { # DIR
 # A comment, printed brief or API path reads nothing, nor does a find from
 # any other start or a walk in another language.
 doc_readers() { # REL
-  local rel="$1" i code dir token reads assignments assignment name
+  local rel="$1" i code dir token
   token="(^|[^[:alnum:]._/-])$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
@@ -1344,22 +1383,7 @@ doc_readers() { # REL
     *) dir='\$\{?[A-Z_]*SKILL[A-Z_]*\}?"?/[^[:alnum:]._-]' ;;
   esac
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-    code=${SCAN_CODE[i]}
-    case "${SCAN_ROLE[i]}" in
-      script | lib)
-        reads=$(grep -E '(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find|for)[[:space:]]|/[^[:space:]]*["}]*[[:space:]]*/?\*' <<<"$code") || [ $? -eq 1 ] || return 2
-        assignments=$(grep -E '(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[./])' <<<"$code") || [ $? -eq 1 ] || return 2
-        code=$reads
-        while IFS= read -r assignment; do
-          [ -n "$assignment" ] || continue
-          name=$(sed -nE 's/(^|.*[;&|({[:space:]])([[:alpha:]_][[:alnum:]_]*)=["'\'']?(\$|[./]).*/\2/p' <<<"$assignment") || return 2
-          if grep -qE "\\\$\\{?$name(\\}|[^[:alnum:]_]|\$)" <<<"$reads"; then
-            code="$code
-$assignment"
-          fi
-        done <<<"$assignments"
-        ;;
-    esac
+    code=${SCAN_READ_CODE[i]}
     if grep -qF -e "/$rel" <<<"$code" ||
       grep -qE -e "$token" <<<"$code" ||
       grep -qE -e "$dir" <<<"$code" ||

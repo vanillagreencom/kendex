@@ -718,8 +718,8 @@ MAP_CONTROLS=(
   "control: without cat as a read command the workflow script reader stands down~append~skills/mapped/workflows/flow.md~s/(cat|grep|sed|awk|head|tail|read|find|for)/(grep|sed|awk|head|tail|read|find|for)/~catalogscan flowdir flowread walker"
   'control: without quoted directory paths the find and assigned directory readers stand down~append~skills/doc-readers/workflows/flow.md~s/|\[\\"'"'"'\](.*$/"/~'
   'control: without quoted directory paths the array and find readers stand down~append~skills/doc-readers/references/guide.md~s/|\[\\"'"'"'\](.*$/"/~'
-  'control: without path assignments the sed readers stand down~append~skills/doc-readers/schemas/review-finding-prompt.md~/^        assignments=/s/grep -E .*/printf "") || return 2/~quoted-find'
-  'control: without variable reads unread and printed assignments select their suites~append~skills/doc-readers/schemas/review-finding-prompt.md~/^          if grep -qE .*<<<"\$reads"; then$/s/.*/          if true; then/~assigned-lib assigned-script printed-path quoted-find unused'
+  'control: without path assignments the sed readers stand down~append~skills/doc-readers/schemas/review-finding-prompt.md~s/assignment_names\[++assignments\] = name/assignment_names[++assignments] = "NEVER"/~quoted-find'
+  'control: without variable reads unread and printed assignments select their suites~append~skills/doc-readers/schemas/review-finding-prompt.md~s/if (read_names\[assignment_names\[i\]\])/if (1)/~assigned-lib assigned-script printed-path quoted-find unused'
   'control: with any directory mention counted the API suite joins~append~skills/mapped/workflows/flow.md~s#^      dir=.*#      dir="/${rel%%/*}(/?\\$|/[^[:alnum:]._-]|[^/[:alnum:]._-])"#~api catalogscan flowdir flowread readflow walker'
   "control: with a test module matching a script only on a source line the suite using it stands down~append~skills/mapped/scripts/driven~s/^          suite | helper | test-module) ;;$/          suite | helper) ;;/~helped wrap"
   "control: without the runner arm a deleted runner runs nothing~delete~skills/mapped/tests/run-all.sh~/^    \*:tests\/run-all.sh) return 1 ;;$/d~"
@@ -838,6 +838,86 @@ for row in "${UNREAD_ROWS[@]}"; do
   back_to_mapped
 done
 rm -f -- "${R:?}/fake-bin/grep"
+
+# second-opinion reads assigned schema paths with sed. Its extraction must
+# finish before the tree can be reused for another changed document.
+ln -s "$REAL_AWK" "$R/fake-bin/real-awk"
+cat >"$R/fake-bin/awk" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  *read_names*)
+    printf 'extract\n' >>"$0.log"
+    if [ -f "$0.fail" ]; then
+      # Partial output from a failed dependency is still unreadable.
+      printf 'sed "$schema_file"\n'
+      exit 2
+    fi
+    ;;
+esac
+exec "${0%/*}/real-awk" "$@"
+SH
+chmod +x "$R/fake-bin/awk"
+READ_LOG="$R/fake-bin/awk.log"
+DOC_ALL="$(printf '%s\n' "$D"/tests/*.sh | sed 's#.*/##; s/\.sh$//' | sort | tr '\n' ' ' | sed 's/ $//')"
+SCHEMA_PATH=skills/doc-readers/schemas/review-finding-prompt.md
+READ_ROWS=(
+  "one document|$SCHEMA_PATH|assigned-lib assigned-script quoted-find"
+  "repeated document queries|$SCHEMA_PATH skills/doc-readers/workflows/flow.md|assigned-dir assigned-lib assigned-script quoted-find"
+  "another tree before the document|hooks/README.md $SCHEMA_PATH|assigned-lib assigned-script beta.test.sh quoted-find"
+)
+single_extractions=""
+for row in "${READ_ROWS[@]}"; do
+  IFS='|' read -r label paths want <<<"$row"
+  : >"$READ_LOG"
+  map_row append "$paths" none
+  extractions="$(wc -l <"$READ_LOG" | tr -d ' ')"
+  [ "$RC" -eq 0 ] && [ "$(started)" = "$want" ] \
+    && ok "checked read metadata selects readers for $label" \
+    || bad "checked read metadata selects readers for $label" "$VERDICT out=$OUT"
+  case "$label" in
+    'one document') single_extractions=$extractions ;;
+    'repeated document queries')
+      [ "$extractions" -gt 0 ] && [ "$extractions" = "$single_extractions" ] \
+        && ok "another document reuses the completed extraction" \
+        || bad "another document reuses the completed extraction" "single=$single_extractions repeated=$extractions"
+      ;;
+  esac
+done
+# Breaking the tree reset must redden the cross-tree reader assertion.
+if mutant_guard '/^  SCAN_READ_CODE=()$/d'; then
+  map_row append "hooks/README.md $SCHEMA_PATH" none "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$(started)" != 'assigned-lib assigned-script beta.test.sh quoted-find' ] \
+    && ok "control: retained read metadata fails the next tree's reader assertion" \
+    || bad "control: retained read metadata fails the next tree's reader assertion" "$VERDICT out=$OUT"
+else
+  bad "control: the read metadata reset could not be removed"
+fi
+# Reloading for every document breaks the extraction reuse assertion.
+if mutant_guard 's/\[ "${SCAN_DIR-}" = "$dir" \] || scan_load/scan_load/'; then
+  : >"$READ_LOG"
+  map_row append "$SCHEMA_PATH skills/doc-readers/workflows/flow.md" none "$MUTANT_TOOLS/guard"
+  extractions="$(wc -l <"$READ_LOG" | tr -d ' ')"
+  [ "$RC" -eq 0 ] && [ "$extractions" -gt "$single_extractions" ] \
+    && ok "control: repeated extraction fails the reuse assertion" \
+    || bad "control: repeated extraction fails the reuse assertion" "single=$single_extractions repeated=$extractions $VERDICT"
+else
+  bad "control: extraction reuse could not be removed"
+fi
+touch "$R/fake-bin/awk.fail"
+map_row append "$SCHEMA_PATH" "$(note_for unreadable "$SCHEMA_PATH")"
+[ "$VERDICT" = "rc=0 started=$DOC_ALL note=$(note_for unreadable "$SCHEMA_PATH")" ] \
+  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
+  && ok "a failed reader extraction runs the whole tree" \
+  || bad "a failed reader extraction runs the whole tree" "$VERDICT out=$OUT"
+if mutant_guard '/<<<"\$code") || return 2$/s/|| return 2/|| true/'; then
+  map_row append "$SCHEMA_PATH" none "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$(started)" != "$DOC_ALL" ] \
+    && ok "control: ignoring the extraction failure skips the whole-tree fallback" \
+    || bad "control: ignoring the extraction failure skips the whole-tree fallback" "$VERDICT out=$OUT"
+else
+  bad "control: reader extraction failure could not be ignored"
+fi
+rm -f -- "${R:?}/fake-bin/awk" "$R/fake-bin/real-awk" "$READ_LOG" "$R/fake-bin/awk.fail"
 back_to_base
 
 echo "=== a range with no usable base is refused before anything runs ==="
