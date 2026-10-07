@@ -14,7 +14,19 @@ test("control: task diagnostics ignore the lost working task", async () => {
 });
 
 test("parent aborted event is stopped in the persisted task result", () => assertStoppedEvent());
-test("extension stall selector keeps the running task and drops the stopped one", () => assertStallSelector());
+for (const hasUI of [true, false]) test(`extension stall watchdog keeps the running task and marks it needs_completion at its deadline hasUI=${hasUI}`, () => assertStallSelector(undefined, hasUI));
+test("control: a headless parent never starts the stall watchdog", async () => {
+	const start = "\t\tidleStallWatchdog.start();\n";
+	const mutant = await importRuntimeCopy("index.ts", `${start}\t\tif (!ctx.hasUI) {`, "\t\tif (!ctx.hasUI) {", [
+		{ before: "\t\tcompletionPoller = setInterval(", after: `${start}\t\tcompletionPoller = setInterval(` },
+	]) as typeof import("../extensions/subagent/index.js");
+	await assert.rejects(() => assertStallSelector(mutant.default, false), (error: unknown) => {
+		assert.ok(error instanceof assert.AssertionError);
+		// assert.ok on the captured tick: the watchdog was constructed but never started.
+		assert.deepEqual([error.operator, error.actual], ["==", undefined]);
+		return true;
+	});
+});
 test("control: extension stall selector includes a stopped task", async () => {
 	const mutant = await importRuntimeCopy("index.ts", "isTaskActive(record.status)", "true || isTaskActive(record.status)") as typeof import("../extensions/subagent/index.js");
 	// Bound to the selector's answer, so a fixture failure cannot pass as the caught mutant.

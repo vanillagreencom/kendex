@@ -1461,6 +1461,11 @@ export default function (pi: ExtensionAPI) {
 			// Dashboard is best-effort; registry lookup may fail before first pane task.
 		}
 		syncDashboard(ctx);
+		// The idle-stall watchdog runs in the parent session, headless or not,
+		// and polls active tasks for post-compaction stalls.
+		currentRuntimeRoot = runtimeRoot;
+		flushRuntimeDiagnostics();
+		idleStallWatchdog.start();
 		if (!ctx.hasUI) {
 			usageTranscriptVersionsByTask.clear();
 			summaryBackfillVersionsByTask.clear();
@@ -1497,12 +1502,6 @@ export default function (pi: ExtensionAPI) {
 		};
 		poll();
 		completionPoller = setInterval(poll, Math.max(500, Math.floor(settingNumber("completionPollMs", 2000, ctx.cwd))));
-
-		// The idle-stall watchdog runs in the parent
-		// session and polls active tasks for post-compaction stalls.
-		currentRuntimeRoot = runtimeRoot;
-		flushRuntimeDiagnostics();
-		idleStallWatchdog.start();
 	});
 
 	// The rate-limit watchdog uses message_end so it can

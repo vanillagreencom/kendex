@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- A parent running without a UI (print or RPC mode) now runs the idle-stall watchdog for its pane agents. A pane agent that stalls after auto-compaction is marked `needs_completion`, so `get_subagent_result` stops waiting on it instead of running to its timeout.
+
 ### 3.4.0
 
 - Both child launch forms resolve model classes through kendex with the active Pi model registry. Unknown model facts preserve the native parent or default model.

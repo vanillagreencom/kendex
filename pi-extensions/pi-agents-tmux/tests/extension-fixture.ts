@@ -186,24 +186,48 @@ export async function assertStoppedEvent(extension?: ExtensionFactory) {
 	}, (pi) => { emit = pi.events.emit.bind(pi.events); factory(pi); });
 }
 
-/** The extension's stall selector reads its own registry and keeps the active task alone. A UI session: a headless one never hands the selector a runtime root. */
-export async function assertStallSelector(extension?: ExtensionFactory) {
-	let listActiveTasks: idleWatchdog.IdleStallWatchdogDeps["listActiveTasks"] | undefined;
+/**
+ * The extension's stall selector reads its own registry and keeps the active task alone,
+ * and the started watchdog marks a stale idle pane task needs_completion at its deadline.
+ * Driven through the injected clock and the captured interval tick; the bridge idle probe is stubbed idle.
+ */
+export async function assertStallSelector(extension?: ExtensionFactory, hasUI = true) {
+	let deps: idleWatchdog.IdleStallWatchdogDeps | undefined;
+	let watchdog: idleWatchdog.IdleStallWatchdog | undefined;
+	let tick: (() => void) | undefined;
+	const lastActivity = Date.parse("2026-10-01T00:00:00Z");
+	let clock = lastActivity;
 	// The factory hands its selector to the watchdog it constructs.
 	const create = idleWatchdog.createIdleStallWatchdog;
-	const construction = spyOn(idleWatchdog, "createIdleStallWatchdog").mockImplementation((deps) => {
-		listActiveTasks = deps.listActiveTasks;
-		return create(deps);
+	const construction = spyOn(idleWatchdog, "createIdleStallWatchdog").mockImplementation((real) => {
+		deps = real;
+		watchdog = create({ ...real, now: () => clock, isPaneIdle: async () => true, setInterval: (handler) => { tick = handler; return handler; }, clearInterval: () => { tick = undefined; } });
+		return watchdog;
 	});
 	try {
 		await withExtensionTools(async (_tools, ctx) => {
-			assert.ok(listActiveTasks, "extension must construct the stall watchdog");
-			const row = (taskId: string, status: "running" | "stopped") => ({ agent: "scout", taskId, task: "map files", status, createdAt: "2026-10-01T00:00:00Z" });
-			await tasks.writeTaskRegistry(runtimeDirForContext(ctx), { running: row("running", "running"), stopped: row("stopped", "stopped") });
+			assert.ok(deps && watchdog, "extension must construct the stall watchdog");
+			const root = runtimeDirForContext(ctx);
+			const row = (taskId: string, status: "running" | "stopped") => ({ agent: "scout", taskId, task: "map files", status, paneId: "%7", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" });
+			await tasks.writeTaskRegistry(root, { running: row("running", "running"), stopped: row("stopped", "stopped") });
 			// The running row proves the selector read this registry, so a read that
 			// found nothing cannot stand in for one that filtered the stopped task.
-			assert.deepEqual((await listActiveTasks()).map((record) => record.taskId), ["running"]);
-		}, extension, true);
+			assert.deepEqual((await deps.listActiveTasks()).map((record) => record.taskId), ["running"]);
+			assert.ok(tick, "session_start must start the stall watchdog");
+			const pass = async () => {
+				tick!();
+				return watchdog!.checkAll();
+			};
+			clock = lastActivity + deps.thresholdMs - 1;
+			assert.deepEqual(await pass(), [{ taskId: "running", fired: false, skipped: "not-stale" }]);
+			assert.equal((await tasks.readTaskRegistry(root)).running?.status, "running");
+			clock = lastActivity + deps.thresholdMs;
+			assert.deepEqual(await pass(), [{ taskId: "running", fired: true }]);
+			const stalled = (await tasks.readTaskRegistry(root)).running;
+			assert.equal(stalled?.status, "needs_completion");
+			// The completion poller parses this outbox; its reason is the machine-read stall key.
+			assert.equal(JSON.parse(readFileSync(stalled!.outboxFile!, "utf8")).reason, idleWatchdog.STALL_WATCHDOG_REASON);
+		}, extension, hasUI);
 	} finally {
 		construction.mockRestore();
 	}
