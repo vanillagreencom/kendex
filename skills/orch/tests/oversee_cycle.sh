@@ -440,13 +440,15 @@ echo "=== a gone sandbox's rounds are read from the archive its close kept ==="
 # names that state's member, as close records it, or GONE_MANIFEST where set:
 # `none` for an archive close wrote before it recorded one, empty for a lane
 # that wrote no state. GONE_STALE puts an older copy of the state, 9 fix
-# rounds, in the clone's tmp beside it.
+# rounds, in the clone's tmp beside it, and GONE_WT_COPY another, 8, in the
+# worktree's tmp.
 gone_case() {
   local archive manifest=() dir="${4:-tmp}"
   new_case "$1"; printf micro > "$CASE/class"; timeline 1200
   archive="${2:-$CASE/kept.tgz}"
   mkdir -p "$CASE/archive/clone/$dir" "$CASE/archive/clone/tmp" "$CASE/archive/w/KEN-4/tmp" "${archive%/*}"
   [[ -z "${GONE_STALE:-}" ]] || printf '{"cycles": 9}' > "$CASE/archive/clone/tmp/workflow-state-KEN-4.json"
+  [[ -z "${GONE_WT_COPY:-}" ]] || printf '{"cycles": 8}' > "$CASE/archive/w/KEN-4/tmp/workflow-state-KEN-4.json"
   printf '{"cycles": 5}' > "$CASE/archive/clone/$dir/workflow-state-KEN-4.json"
   printf '{}' > "$CASE/archive/w/KEN-4/tmp/dev-return-KEN-4-1.json"
   if [[ "${GONE_MANIFEST-}" != none ]]; then
@@ -463,15 +465,21 @@ assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" "a gone sandbox's fix c
 gone_case gone-custom "" 10 lane-state
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
   "a gone sandbox whose settings named its state directory reads the state its close archived there"
-GONE_STALE=1 gone_case gone-moved "" 10 lane-state
+GONE_STALE=1 gone_case gone-moved "" 10 zz-state
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
   "an archive holding an older copy of the state in tmp reads the member its close recorded"
-GONE_STALE=1 GONE_MANIFEST='' gone_case gone-unwritten "" 10 lane-state
+GONE_STALE=1 GONE_MANIFEST='' gone_case gone-unwritten "" 10 zz-state
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
   "an archive whose close recorded no state reads none, whatever copies it holds"
 GONE_MANIFEST=none gone_case gone-unrecorded
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
   "an archive written before close recorded the member reads the clone's tmp copy"
+GONE_MANIFEST=none GONE_WT_COPY=1 gone_case gone-unrecorded-both
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
+  "an archive written before close recorded the member reads the clone's copy before the worktree's"
+gone_case gone-non-ascii "" 10 café-state
+assert_eq "$(field fix "$(LC_ALL=C record KEN-4 micro)")" "fix=5" \
+  "a recorded member whose name the locale cannot print is read as written"
 GONE_MANIFEST=clone/elsewhere/workflow-state-KEN-4.json gone_case gone-misnamed
 assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^archive-member-missing ' "$CASE/err" || true)" \
   "fix=-|1" "an archive naming a member it does not hold is unread, the member named"
@@ -1021,10 +1029,20 @@ control m-kept-spaced oversee-cycle '(?<p>/.*[^\\s])\\s*$' '(?<p>/\\S+)'
 gone_case c-kept-spaced "$TMP_ROOT/case-c-kept-spaced/my fleet/kept.tgz"
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
   "control: a path cut at its first space names no archive"
-control m-kept-member lib/lane-gitfile.sh 'if grep -qx lane-host-state <<<"$members"; then' 'if false; then'
-GONE_STALE=1 gone_case c-kept-member "" 10 lane-state
+control m-kept-member lib/lane-gitfile.sh 'if [[ -f "$dir/lane-host-state" ]]; then' 'if false; then'
+GONE_STALE=1 gone_case c-kept-member "" 10 zz-state
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=9" \
-  "control: matched by name alone, the older tmp copy is read"
+  "control: matched by name alone, the older tmp copy, first in byte order, is read"
+control m-kept-listed lib/lane-gitfile.sh '*) [[ ! -f "$dir/$member" ]] || found="$dir/$member" ;;' \
+  '*) ! tar -tzf "$2" | grep -qxF -- "$member" || found="$dir/$member" ;;'
+gone_case c-kept-listed "" 10 café-state
+assert_eq "$(field fix "$(LC_ALL=C record KEN-4 micro)")" "fix=-" \
+  "control: matched against tar -t's listing, a name the locale escapes is missed"
+control m-kept-clone lib/lane-gitfile.sh '[[ -z "$found" || "$found" == "$dir/${4#/}/"* ]] || continue' \
+  '[[ -z "$found" || "$found" != "$dir/${4#/}/"* ]] || continue'
+GONE_MANIFEST=none GONE_WT_COPY=1 gone_case c-kept-clone
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=8" \
+  "control: preferring the worktree's copy reads it over the clone's"
 control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then'
 gone_case c-kept
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \

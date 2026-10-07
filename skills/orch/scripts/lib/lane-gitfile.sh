@@ -134,31 +134,41 @@ lane_hosted_state_dir() {
   LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"
 }
 
-# lane_archived_state ITEM ARCHIVE SCRATCH — sets LANE_ITEM_STATE to the
+# lane_archived_state ITEM ARCHIVE SCRATCH ROOT — sets LANE_ITEM_STATE to the
 # item's workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
 # of the clone's and the worktree's tmp, empty where it holds none. Its
 # `lane-host-state` member names the state file's member, the one the lane
 # resolved, or is an empty line where the lane wrote none, so no other copy of
 # the same name is read. An archive with no such member, written before close
-# recorded it, holds the two tmp trees alone, and its first member of that
-# name, the clone's, is read. 0 read; 2 the archive did not read, or names a
-# member it does not hold, SCRATCH/state.err saying why.
+# recorded it, holds the two tmp trees alone, and its copy outside the
+# worktree at ROOT, the clone's, is read before the worktree's, the first in
+# byte order where several are. The archive is
+# unpacked under SCRATCH and its members read as files there, never from
+# `tar -t`, which escapes a name the locale cannot print. 0 read; 2 the
+# archive did not read, or names a member it does not hold, SCRATCH/state.err
+# saying why.
 lane_archived_state() {
-  local members member
+  local dir="$3/archive" member="" found=""
   LANE_ITEM_STATE=""
   [[ -f "$2" ]] || { printf 'archive-missing path=%s\n' "$2" >"$3/state.err"; return 2; }
-  members="$(tar -tzf "$2" 2>"$3/state.err")" || return 2
-  if grep -qx lane-host-state <<<"$members"; then
-    member="$(tar -xzOf "$2" lane-host-state 2>"$3/state.err")" || return 2
+  mkdir -p -- "$dir" && tar -xzf "$2" -C "$dir" 2>"$3/state.err" || return 2
+  if [[ -f "$dir/lane-host-state" ]]; then
+    IFS= read -r member <"$dir/lane-host-state" || [[ -n "$member" ]] || return 0
     [[ -n "$member" ]] || return 0
-    grep -qxF -- "$member" <<<"$members" \
+    case "/$member/" in
+      */../*) ;;
+      *) [[ ! -f "$dir/$member" ]] || found="$dir/$member" ;;
+    esac
+    [[ -n "$found" ]] \
       || { printf 'archive-member-missing path=%s member=%s\n' "$2" "$member" >"$3/state.err"; return 2; }
   else
-    member="$(awk -v f="workflow-state-$1.json" '{ n = split($0, p, "/") } !seen && p[n] == f { print; seen = 1 }' <<<"$members")"
-    [[ -n "$member" ]] || return 0
+    while IFS= read -r member; do
+      [[ -z "$found" || "$found" == "$dir/${4#/}/"* ]] || continue
+      found="$member"
+    done < <(find "$dir" -type f -name "workflow-state-$1.json" 2>"$3/state.err" | LC_ALL=C sort)
+    [[ -n "$found" ]] || return 0
   fi
-  LANE_ITEM_STATE="$(tar -xzOf "$2" "$member" 2>"$3/state.err" | jq -c . 2>>"$3/state.err")" \
-    || { LANE_ITEM_STATE=""; return 2; }
+  LANE_ITEM_STATE="$(jq -c . -- "$found" 2>"$3/state.err")" || { LANE_ITEM_STATE=""; return 2; }
 }
 
 # lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE]
@@ -200,7 +210,7 @@ lane_item_state() {
   [[ "$files" != none ]] || return 0
   ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" || rc=$?
   [[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"
-  lane_archived_state "$4" "$8" "$7"
+  lane_archived_state "$4" "$8" "$7" "$6"
 }
 
 # lane_hosted_item_state LANE_HOST_CLI ITEM ROOT SCRATCH — lane_item_state's
