@@ -497,9 +497,9 @@ export const commands = {
 	 */
 	marketplaceUnsubscribePreview: (scope: Scope, source: string) => typedError<UnsubscribePreview, string>(__TAURI_INVOKE("marketplace_unsubscribe_preview", { scope, source })),
 	/**
-	 *  Unsubscribe, removing or keeping the packages. `keep` converts each
-	 *  installation to a local fork; otherwise they are uninstalled, and
-	 *  `discard_edits` takes hand edits along instead of refusing.
+	 *  Unsubscribe, removing or keeping the packages that would leave. `keep`
+	 *  converts them to local forks; otherwise they are uninstalled, and
+	 *  `discard_edits` takes their hand edits along instead of refusing.
 	 */
 	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
