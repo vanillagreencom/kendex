@@ -183,6 +183,9 @@ OVERSEER_RECORD="$TMP_ROOT/work/tmp/lane-mail/overseer/context.json"
 # record_caller SCREEN PANE — the reading screen_reading names for SCREEN,
 # recorded for PANE through the library's own writer, and its figure left in
 # CALLER_CONTEXT_FILE as the --context argument; neither where it names none.
+# The argument is written before the record: the record naming its pane is the
+# barrier in-pane starts the script on, so a record written first lets the run
+# start with no --context and report context-unmeasured reason=context-unread.
 CALLER_CONTEXT_FILE="$TMP_ROOT/caller.context"
 record_caller() { # SCREEN PANE
   local reading harness tokens window model
@@ -192,8 +195,8 @@ record_caller() { # SCREEN PANE
   [[ -n "$reading" ]] || return 0
   read -r harness tokens window model <<<"$reading"
   [[ "$window" != - ]] || window=""
-  lane_context_record "${OVERSEER_RECORD%/*}" "$harness" "$tokens" "$window" "$model" s1 "$SERVER_PID $2"
   printf '%s:%s\n' "$tokens" "$window" > "$CALLER_CONTEXT_FILE"
+  lane_context_record "${OVERSEER_RECORD%/*}" "$harness" "$tokens" "$window" "$model" s1 "$SERVER_PID $2"
 }
 
 # new_caller SCREEN [MARKER] [COMMAND] — every window past index 0 closed, then
@@ -438,6 +441,33 @@ fleet_state() {
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
+
+# record_order RECORDER — whether the --context argument was present at the
+# instant RECORDER wrote the caller's record: the order in-pane relies on to
+# hand the success row below its measured reading.
+record_order() { # RECORDER
+  (
+    eval "real_$(declare -f lane_context_record)"
+    lane_context_record() {
+      if [[ -s "$CALLER_CONTEXT_FILE" ]]; then echo context-present; else echo context-absent; fi
+      real_lane_context_record "$@"
+    }
+    "$1" "$MARK" %probe
+  )
+}
+# The must-fail control: record_caller with the argument written after the
+# record, the order that let the success row read context-unread.
+record_first="$(declare -f record_caller | awk '
+  /> "\$CALLER_CONTEXT_FILE"/ { held = $0; moved++; next }
+  { print }
+  /lane_context_record "/ { print held; placed++ }
+  END { if (moved != 1 || placed != 1) exit 1 }' \
+  | sed '1s/^record_caller /record_caller_record_first /')" \
+  || { echo "fixture: record_caller has no argument write to move after its record" >&2; exit 1; }
+eval "$record_first"
+assert_eq "$(record_order record_caller)|$(record_order record_caller_record_first)" \
+  "context-present|context-absent" \
+  "the caller's --context argument exists before the record in-pane starts on, and the record-first order is seen"
 
 # The caller at index 3 over a gap, renumber-windows off: the successor must
 # start at the base index while its caller closes.
