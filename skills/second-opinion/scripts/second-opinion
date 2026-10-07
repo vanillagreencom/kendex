@@ -1040,30 +1040,57 @@ target_cmd() {
 }
 
 # A target with a command is available when its program word is an executable
-# file on PATH: the first word, or past a leading env, its options and its
-# VAR=value assignments, the word env runs, so `env VAR=value copilot ...` is
-# judged on copilot, not env. The command's argv is exec'd as it stands, never
-# by a shell, so a builtin such as exec is no program. An env override may
-# point it away from the target's own name. A command with no program word
-# after its assignments has nothing to run.
+# file where the command will look for it: the first word, or past a leading
+# env, its options and its VAR=value assignments, the word env runs, so
+# `env VAR=value copilot ...` is judged on copilot, not env. The command runs
+# from --cwd, and env's PATH=, -i, -u PATH and -C DIR change the PATH searched
+# and the directory a relative name resolves from, as env applies them before
+# it execs; a PATH env clears is the system default. The argv is exec'd as it
+# stands, never by a shell, so a builtin such as exec is no program. An env
+# override may point it away from the target's own name. A command with no
+# program word after its assignments has nothing to run.
 target_available() {
-  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*='
+  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$CWD" entry rest
   cmd="$(target_cmd "$1")"
   # shellcheck disable=SC2086
   set -- $cmd
   if [[ "${1:-}" == env ]]; then
     shift
     while [[ $# -gt 0 ]]; do
+      entry=""
       case "$1" in
         --) shift; break ;;
-        -u|-C|--unset|--chdir) shift; [[ $# -gt 0 ]] && shift ;;
-        -[iv0]*|-u?*|-C?*|-|--ignore-environment|--null|--debug|--unset=*|--chdir=*) shift ;;
-        *) [[ "$1" =~ $assignment ]] || break; shift ;;
+        -u|--unset) [[ "${2:-}" != PATH ]] || path=/bin:/usr/bin; shift ;;
+        -C|--chdir) entry="${2:-}"; shift ;;
+        -uPATH|--unset=PATH|-i|-|--ignore-environment) path=/bin:/usr/bin ;;
+        -u?*|--unset=*|-v|-0|--null|--debug) ;;
+        -C?*) entry="${1#-C}" ;;
+        --chdir=*) entry="${1#--chdir=}" ;;
+        *) break ;;
       esac
+      [[ $# -gt 0 ]] && shift
+      [[ -z "$entry" || "$entry" == /* ]] || entry="$dir/$entry"
+      dir="${entry:-$dir}"
     done
-    while [[ "${1:-}" =~ $assignment ]]; do shift; done
+    while [[ "${1:-}" =~ $assignment ]]; do
+      [[ "$1" != PATH=* ]] || path="${1#PATH=}"
+      shift
+    done
   fi
-  [[ $# -gt 0 ]] && type -P -- "$1" >/dev/null 2>&1
+  [[ $# -gt 0 ]] || return 1
+  if [[ "$1" == */* ]]; then
+    entry="$1"
+    [[ "$entry" == /* ]] || entry="$dir/$entry"
+    [[ -f "$entry" && -x "$entry" ]]
+    return
+  fi
+  rest="$path:"
+  while [[ -n "$rest" ]]; do
+    entry="${rest%%:*}"; rest="${rest#*:}"
+    [[ "$entry" == /* ]] || entry="$dir/${entry:-.}"
+    [[ -f "$entry/$1" && -x "$entry/$1" ]] && return 0
+  done
+  return 1
 }
 
 # Whether the account a target spends has room, by its
