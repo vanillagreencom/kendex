@@ -1,0 +1,1 @@
+- The organization-standard report accepts the pinned kendex Copilot workflow after migration and retains native Copilot rule support.

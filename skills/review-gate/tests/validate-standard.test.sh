@@ -313,6 +313,30 @@ an organization secret of a standard name not shared with this repository~~organ
 organization secrets unreadable~organization-actions-secrets~~~standard-secrets-outside=unreadable:organization
 ROWS
 
+# The owner migration replaces the native request rule. Identity departures
+# must fail the review row and must not satisfy the shared source requirement.
+MIGRATED_RULE='.[3] |= (.type = "workflows" | .parameters = {"workflows": [{"repository_id": 1190866154, "path": ".github/workflows/request-copilot-review.yml", "ref": "refs/heads/main", "sha": "0123456789abcdef0123456789abcdef01234567"}]})'
+MIGRATED_FAILURE='advisory:standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent'
+while IFS='~' read -r name edit overrides; do
+  [ -n "$name" ] || continue
+  drift_case "$name" '' rules.json "$MIGRATED_RULE | $edit" "$overrides"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
+done <<ROWS
+the migrated organization standard~.~
+a workflow in a different repository~.[3].parameters.workflows[0].repository_id = 7~$MIGRATED_FAILURE
+a repository id with the wrong type~.[3].parameters.workflows[0].repository_id = "1190866154"~$MIGRATED_FAILURE
+a different workflow path~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$MIGRATED_FAILURE
+a different workflow ref~.[3].parameters.workflows[0].ref = "refs/heads/release"~$MIGRATED_FAILURE
+an unpinned workflow~del(.[3].parameters.workflows[0].sha)~$MIGRATED_FAILURE
+a short workflow pin~.[3].parameters.workflows[0].sha = "0123456"~$MIGRATED_FAILURE
+a non-hex workflow pin~.[3].parameters.workflows[0].sha = "g123456789abcdef0123456789abcdef01234567"~$MIGRATED_FAILURE
+a non-string workflow pin~.[3].parameters.workflows[0].sha = 7~$MIGRATED_FAILURE
+a missing workflow declaration~.[3].parameters.workflows = []~$MIGRATED_FAILURE
+a workflow on the wrong rule type~.[3].type = "required_deployments"~$MIGRATED_FAILURE
+a workflow from a repository ruleset~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:copilot_code_review^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+the pinned workflow beside an unrelated workflow~.[3].parameters.workflows += [{"repository_id": 7, "path": ".github/workflows/build.yml"}]~
+ROWS
+
 # One drifted element that answers two rows: without the environment there
 # is no secret to ask for, and the secrets row says why rather than passing.
 echo "=== the environment's absence answers both of its rows ==="
@@ -635,6 +659,30 @@ a threshold that takes 0 passes a rule requiring no approval~"" \| \*\[!0-9\]\* 
 an unchecked dismissal passes stale approvals kept on push~\[ "\$stale" = true \]; then~s/\[ "\$stale" = true \]; then/[ "$stale" = true ] || true; then/~full~.[2].parameters.dismiss_stale_reviews_on_push = false~advisory check=standard-stale-dismissal value=false
 ROWS
 [ "$controls" -gt 0 ] || bad "the rule-control table ran no row" ""
+
+# Each identity condition gets a failing control in the disposable script
+# copy. The two consumers also get controls that sever their shared check.
+while IFS='~' read -r name match mutation fixture overrides; do
+  [ -n "$name" ] || continue
+  file_edit "$SKILL" scripts/validate-standard.sh 1 "$match" "$mutation"
+  drift_case "$name" '' rules.json "$MIGRATED_RULE | $fixture" "$overrides"
+  if [ "$RC" -le 1 ] && [ "$CASE_MATCH" = false ]; then
+    ok "control: $name"
+  else
+    bad "control: $name (rc=$RC)" "$CASE_DIFF"
+  fi
+  cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+done <<ROWS
+workflow rule type~^      \.type == "workflows"$~s/\.type == "workflows"/.type == "workflows" or true/~.[3].type = "required_deployments"~$MIGRATED_FAILURE
+workflow source~^      and \.ruleset_source_type == "Organization"$~s/and \.ruleset_source_type == "Organization"/and (.ruleset_source_type == "Organization" or true)/~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:copilot_code_review^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+workflow repository~^        \.repository_id == 1190866154$~s/\.repository_id == 1190866154/(.repository_id == 1190866154 or true)/~.[3].parameters.workflows[0].repository_id = 7~$MIGRATED_FAILURE
+workflow path~^        and \.path ==~s/and \.path == "[^"]*"/and (.path == ".github\/workflows\/request-copilot-review.yml" or true)/~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$MIGRATED_FAILURE
+workflow ref~^        and \.ref ==~s/and \.ref == "[^"]*"/and (.ref == "refs\/heads\/main" or true)/~.[3].parameters.workflows[0].ref = "refs/heads/release"~$MIGRATED_FAILURE
+workflow pin~then test\(~s/{40}/{1,40}/~.[3].parameters.workflows[0].sha = "0123456"~$MIGRATED_FAILURE
+workflow pin type~if type == "string" then test~s/else false end/else true end/~.[3].parameters.workflows[0].sha = 7~$MIGRATED_FAILURE
+workflow source accounting~if kendex_copilot_workflow then~s/if kendex_copilot_workflow then/if false then/~.~
+workflow review accounting~any\(\.\[\]; \.type == "copilot_code_review" or kendex_copilot_workflow\)~s/or kendex_copilot_workflow/or false/~.~
+ROWS
 
 # The contexts key's scope guard: a copy that resolves it in the
 # environment scope refuses the environment-only run the unreadable

@@ -74,8 +74,8 @@ standard.json carried before 1.3.0, and the run prints one
 review-gate-warning=standard-setting-unset line to stderr, VALUE the unset
 keys. A key set empty still refuses.
 
-  standard-ruleset-source           pull_request, copilot_code_review,
-                                    deletion and non_fast_forward each come
+  standard-ruleset-source           pull_request, deletion and
+                                    non_fast_forward each come
                                     from an organization ruleset, and every
                                     effective default-branch rule comes from
                                     one, except required_status_checks and
@@ -85,7 +85,9 @@ keys. A key set empty still refuses.
                                     each departure, SOURCE:ID:TYPE for a rule from
                                     a source its type may not use and
                                     missing:TYPE for a type no organization
-                                    ruleset holds, or none for no rule
+                                    ruleset holds, or none for no rule.
+                                    copilot_code_review may instead be the
+                                    pinned kendex review workflow below
   standard-merge-queue              the default branch requires the merge queue
   standard-required-contexts        the required contexts are exactly the
                                     REVIEW_GATE_STANDARD_CONTEXTS list, and
@@ -104,7 +106,12 @@ keys. A key set empty still refuses.
                                     VALUE is true, false or absent
   standard-conversation-resolution  a pull-request rule requires every review
                                     thread resolved
-  standard-copilot-review           a rule requests a Copilot review
+  standard-copilot-review           a native rule requests a Copilot review,
+                                    or an organization workflows rule pins
+                                    vanillagreencom/kendex (repository
+                                    1190866154), path
+                                    .github/workflows/request-copilot-review.yml,
+                                    ref refs/heads/main and a full commit SHA
   standard-bypass-actors            every bypass actor of a ruleset behind
                                     those rules is one the standard admits
                                     there: on a ruleset whose rules are
@@ -288,22 +295,35 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   jq -e 'all(.[]; type == "object" and (.type | type) == "string")' >/dev/null 2>&1 <<<"$RULES"; then
   # RULES already parsed as an array of rule objects, so a failed query
   # here is this script's own fault.
-  rules() { jq -r "$1" <<<"$RULES" || die rules-query "$1" "jq could not evaluate a query over the parsed rules"; }
+  # The owner migration in references/automatic-review.md replaces the
+  # native request rule with this pinned workflow. Both report rows use
+  # the same identity check; an unrelated required workflow cannot replace it.
+  rules() {
+    jq -r 'def kendex_copilot_workflow:
+      .type == "workflows"
+      and .ruleset_source_type == "Organization"
+      and any(.parameters.workflows[]?;
+        .repository_id == 1190866154
+        and .path == ".github/workflows/request-copilot-review.yml"
+        and .ref == "refs/heads/main"
+        and (.sha | if type == "string" then test("^[0-9a-f]{40}$") else false end));
+      '"$1" <<<"$RULES" || die rules-query "$1" "jq could not evaluate a query over the parsed rules"
+  }
 
   # The organization ruleset holds the review, deletion and force-push rules
   # every repository shares. A repository keeps its own required checks and
   # merge queue in its own rulesets and nowhere else, an organization ruleset
   # included. Any other source for a rule is a departure, and so is a shared
   # rule no organization ruleset holds.
-  SOURCE_FORM="pull_request, copilot_code_review, deletion and non_fast_forward from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset"
+  SOURCE_FORM="pull_request, copilot_code_review or the pinned kendex review workflow, deletion and non_fast_forward from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset"
   departures="$(rules 'if length == 0 then "none" else (
     [.[] | select(if .type == "required_status_checks" or .type == "merge_queue" then .ruleset_source_type != "Repository" else .ruleset_source_type != "Organization" end) | "\(.ruleset_source_type):\(.ruleset_id):\(.type)"]
-    + (["pull_request", "copilot_code_review", "deletion", "non_fast_forward"] - [.[] | select(.ruleset_source_type == "Organization") | .type] | map("missing:\(.)"))
+    + (["pull_request", "copilot_code_review", "deletion", "non_fast_forward"] - [.[] | select(.ruleset_source_type == "Organization") | if kendex_copilot_workflow then "copilot_code_review" else .type end] | map("missing:\(.)"))
     | unique | join(",")) end')"
   case "$departures" in
     "") ok standard-ruleset-source "$(rules '[.[].ruleset_source_type] | unique | join(",")')" "$BRANCH takes its shared rules from an organization ruleset, and only its required checks and merge queue from a repository ruleset" ;;
     none) advise standard-ruleset-source none "no ruleset applies to $BRANCH" "$SOURCE_FORM" ;;
-    *) advise standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset only, which holds nothing else" "$SOURCE_FORM" ;;
+    *) advise standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: $SOURCE_FORM" "$SOURCE_FORM" ;;
   esac
 
   if [ "$(rules 'any(.[]; .type == "merge_queue")')" = true ]; then
@@ -351,10 +371,10 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
     bad standard-conversation-resolution false "no pull-request rule on $BRANCH requires review threads resolved"
   fi
 
-  if [ "$(rules 'any(.[]; .type == "copilot_code_review")')" = true ]; then
+  if [ "$(rules 'any(.[]; .type == "copilot_code_review" or kendex_copilot_workflow)')" = true ]; then
     ok standard-copilot-review present "$BRANCH requests a Copilot review"
   else
-    bad standard-copilot-review absent "no rule on $BRANCH requests a Copilot review"
+    bad standard-copilot-review absent "no native rule or pinned kendex review workflow on $BRANCH requests a Copilot review"
   fi
 
   # GitHub returns bypass_actors only to a caller with write access to the
