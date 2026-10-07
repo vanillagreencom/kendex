@@ -116,3 +116,7 @@ self=$BASH_ARGV0
 printf '%s' "${BASH_ARGV0}"
 echo "$BASH_XTRACEFD"
 echo "${BASH_XTRACEFD}"
+  local extra="${4:-{\}}"
+jq -n --argjson extra "${EXTRA-{\}}"
+opts="--json ${4:={\"a\":1\}}"
+echo "${4:+{\}}"

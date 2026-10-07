@@ -109,6 +109,17 @@ PATTERN="$PATTERN"'|\$\{@\}'
 # its control.
 BASH4_VARS='BASHPID|EPOCHSECONDS|EPOCHREALTIME|SRANDOM|BASH_ARGV0|BASH_XTRACEFD'
 PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}'
+# An escaped closing brace in the word of a `${name:-word}`-family expansion
+# inside double quotes. Bash 4+ drops the backslash, so `"${4:-{\}}"`
+# defaults to `{}`; Bash 3.2.57 keeps it and defaults to `{\}`, which jq
+# reads as no JSON at all. Linux passes it and only the macOS leg fails.
+# Assign the default outside the expansion instead — `v='{}'` and then
+# `[ $# -lt 4 ] || v="$4"` — or put it in a variable: `"${4:-$empty}"`.
+# Matched from a `"` with no other `"` before the `${`, so a line carrying a
+# closed string ahead of an unquoted expansion is an accepted over-flag.
+# The report names each hit again under its own key, with the 3.2 reading.
+BRACE_DEFAULT='"[^"]*\$\{[^}"]*[-=?+][^}]*\\\}'
+PATTERN="$PATTERN|$BRACE_DEFAULT"
 # --- pattern set: end --------------------------------------------------
 #
 # WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
@@ -190,6 +201,9 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "that file could not be read, so it was never classified as shell or not." ;;
     constructs)
       echo "Bash 4+ constructs in shell that must run under Bash 3.2; every hit follows." ;;
+    escaped-brace-default)
+      echo "a double-quoted brace default holds an escaped brace: Bash 3.2 keeps the backslash, so \"\${4:-{\\}}\" defaults to {\\} there and to {} under Bash 4+."
+      echo "Assign the default outside the expansion (v='{}'; [ \$# -lt 4 ] || v=\"\$4\"), or name it in a variable (\"\${4:-\$empty}\")." ;;
     clean)
       printf '%s shell file(s) across %s director(ies), and no Bash 4+ construct in any of them.\n' "$2" "$3" ;;
     *)
@@ -357,6 +371,7 @@ if [ "$MODE" = files ]; then
 fi
 
 violations=""
+brace_defaults=""
 violation_count=0
 count=0
 for f in $files; do
@@ -380,6 +395,11 @@ for f in $files; do
       violations="$violations$f:$hit
 "
       violation_count=$((violation_count + 1))
+      # The hit's text past grep's `N:` prefix is the source line itself.
+      if grep -qE -- "$BRACE_DEFAULT" <<<"${hit#*:}"; then
+        brace_defaults="$brace_defaults$f:${hit%%:*}
+"
+      fi
     done <<EOF
 $hits
 EOF
@@ -389,6 +409,11 @@ done
 if [ -n "$violations" ]; then
   say constructs "$violation_count"
   printf '%s' "$violations" >&2
+  while IFS= read -r site; do
+    [ -z "$site" ] || say escaped-brace-default "$site"
+  done <<EOF
+$brace_defaults
+EOF
   exit 1
 fi
 note clean "$count" "$scanned"

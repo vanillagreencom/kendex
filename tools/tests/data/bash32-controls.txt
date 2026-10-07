@@ -63,3 +63,5 @@ echo "$BASH_ARGV"
 echo "${BASH_ARGV[0]}"
 echo "$BASH_SUBSHELL"
 BASH_XTRACEFD=3
+  local extra="${4:-null}"
+extra="${4:-$empty}"

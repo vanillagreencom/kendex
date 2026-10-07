@@ -663,4 +663,24 @@ EOF
   fi
 fi
 
+# --- 8. an escaped-brace default is named under its own key ---------------
+# The generic hit list does not say why a brace default fails only on 3.2, so
+# each such hit is named again as `escaped-brace-default=FILE:LINE`, the keyed
+# line this suite and an agent reading the guard's refusal act on. A plain
+# default on the line above must not be named.
+brace_dir="$TMP/brace-default"
+mkdir -p "$brace_dir" || bad "could not stage the brace-default directory"
+printf '%s\n' '#!/usr/bin/env bash' 'a="${4:-null}"' 'b="${4:-{\}}"' >"$brace_dir/owed.sh"
+status=0
+out="$("$LINT" "$brace_dir" 2>&1)" || status=$?
+if [ "$status" -ne 1 ]; then
+  bad "the scan over an escaped-brace default exited $status, not 1" "$out"
+elif ! grep -Fqx -- "bash32-lint: escaped-brace-default=$brace_dir/owed.sh:3" <<<"$out"; then
+  bad "the escaped-brace default was not named with its file and line" "$out"
+elif grep -Fq -- "escaped-brace-default=$brace_dir/owed.sh:2" <<<"$out"; then
+  bad "a default with no escaped brace was named as one" "$out"
+else
+  ok "an escaped-brace default is named with its file and line, and a plain one is not"
+fi
+
 verdict
