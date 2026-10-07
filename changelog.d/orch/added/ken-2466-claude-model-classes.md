@@ -1,1 +1,1 @@
-- `scripts/claude-model-classes`: Claude Code plugin resolving subagent models, and a root `KENDEX_MODEL_REQUEST`, via `kendex tier-model`; needs kendex 1.7.0+, and 1.12.0+ for its one warning.
+- `scripts/claude-model-classes`: Claude Code plugin resolving subagent models, and a root `KENDEX_MODEL_REQUEST`, via `kendex tier-model`; needs kendex 1.7.0+, and a release after 1.11.0 to warn.

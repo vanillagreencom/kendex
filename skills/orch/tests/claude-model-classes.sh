@@ -194,7 +194,7 @@ contract() {
   done < <(grep '^core-contract=' "$out")
 }
 
-# The fixtures carry core's `warning` field, which kendex 1.12.0 first sends.
+# The fixtures carry core's `warning` field, which kendex first sends in the first release after 1.11.0.
 # A kendex that answers the plugin's own no-list context without it predates
 # this checkout's core, and the contract rows are skipped as for no kendex.
 mkdir -p "$TMP_ROOT/home"

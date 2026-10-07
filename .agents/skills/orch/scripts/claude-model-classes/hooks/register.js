@@ -1,9 +1,9 @@
 // Claude Code 2.1.287 is the first version with the model rewrites and fail-closed catches used here.
 // `kendex tier-model` owns request parsing, selector equivalence, access, fallback and the warning line; no class table lives here.
-// kendex 1.7.0 is the floor for `--runtime-context-json`; 1.12.0 is the first to send the `warning` line.
+// kendex 1.7.0 is the floor for `--runtime-context-json`; the first kendex release after 1.11.0 is the first to send the `warning` line.
 const protocol = 'model-resolution-v1';
-// kendex 1.7.0 through 1.11.0 answer a fallback with diagnostics and no `warning`; drop this when the floor reaches 1.12.0.
-const warningAbsent = 'model-resolution: warning=absent cause=kendex before 1.12.0 sends diagnostics without the warning line; upgrade kendex to read them';
+// kendex 1.7.0 through 1.11.0 answer a fallback with diagnostics and no `warning`; drop this when the floor passes 1.11.0.
+const warningAbsent = 'model-resolution: warning=absent cause=kendex 1.11.0 or older sends diagnostics without the warning line; upgrade kendex to read them';
 
 function record(value, name) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
