@@ -117,6 +117,17 @@ unpad() { local v="${1//_/ }"; printf '%s' "${v//TAB/$'\t'}"; }
 # them. `mixed` is 33c's shape: .env.local supplies the value while the
 # settings file only mentions the key, commented under [env] and under a table
 # the loader never reads.
+# A target's command behind PREFIX, for a NAME=<lane stub | missing | none>.
+prefixed_cmd() {
+  local prog
+  case "${2##*=}" in
+    missing) prog=" $ROW/no-such-cli" ;;
+    none) prog="" ;;
+    *) prog=" $ROW/bin/lane-${2##*=}" ;;
+  esac
+  W_ENV+=("$(so_var "$2" CMD)=$1$prog")
+}
+
 project_file() {
   case "$1" in
     settings:*) printf '[env]\nSECOND_OPINION_CURRENT_MODEL = "%s"\n' "${1#settings:}" >"$PROJ/kendex.settings.toml" ;;
@@ -149,11 +160,12 @@ word() {
     # a target's command: cmd:<name>=<lane stub | missing>
     cmd:*=missing) W_ENV+=("$(so_var "${1#cmd:}" CMD)=$ROW/no-such-cli") ;;
     cmd:*) W_ENV+=("$(so_var "${1#cmd:}" CMD)=$ROW/bin/lane-${1##*=}") ;;
-    # the same behind an env prefix: cmd-env:<name>=<lane stub | missing | none>,
-    # none being the prefix with no program word after it
-    cmd-env:*=missing) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1 $ROW/no-such-cli") ;;
-    cmd-env:*=none) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1") ;;
-    cmd-env:*) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1 $ROW/bin/lane-${1##*=}") ;;
+    # the same behind a launch prefix, cmd-<prefix>:<name>=<lane stub | missing |
+    # none>, none being the prefix with no program word after it: env and its
+    # assignment, env with an option ahead of it, or exec ahead of env
+    cmd-env:*) prefixed_cmd "env SO_TEST_PREFIX=1" "${1#cmd-env:}" ;;
+    cmd-envopt:*) prefixed_cmd "env -u SO_TEST_UNSET SO_TEST_PREFIX=1" "${1#cmd-envopt:}" ;;
+    cmd-exec:*) prefixed_cmd "exec env SO_TEST_PREFIX=1" "${1#cmd-exec:}" ;;
     # a target's declared identity: model:<name>=<id>
     model:*) W_ENV+=("$(so_var "${1#model:}" MODEL)=$(unpad "${1##*=}")") ;;
     # a target's room check: room:<name>=<kind> runs a stub judging its

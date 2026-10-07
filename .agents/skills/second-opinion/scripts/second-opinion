@@ -1039,22 +1039,31 @@ target_cmd() {
   esac
 }
 
-# A target with a command is available when its program word resolves: the
-# first word past a leading exec, and past a leading env and its VAR=value
-# assignments, so `env VAR=value copilot ...` is judged on copilot, not env. An
-# env override may point it away from the target's own name. A command with no
-# program word after its assignments has nothing to run.
+# A target with a command is available when its program word is an executable
+# file on PATH: the first word, or past a leading env, its options and its
+# VAR=value assignments, the word env runs, so `env VAR=value copilot ...` is
+# judged on copilot, not env. The command's argv is exec'd as it stands, never
+# by a shell, so a builtin such as exec is no program. An env override may
+# point it away from the target's own name. A command with no program word
+# after its assignments has nothing to run.
 target_available() {
   local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*='
   cmd="$(target_cmd "$1")"
   # shellcheck disable=SC2086
   set -- $cmd
-  [[ "${1:-}" != exec ]] || shift
   if [[ "${1:-}" == env ]]; then
     shift
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --) shift; break ;;
+        -u|-C|--unset|--chdir) shift; [[ $# -gt 0 ]] && shift ;;
+        -[iv0]*|-u?*|-C?*|-|--ignore-environment|--null|--debug|--unset=*|--chdir=*) shift ;;
+        *) [[ "$1" =~ $assignment ]] || break; shift ;;
+      esac
+    done
     while [[ "${1:-}" =~ $assignment ]]; do shift; done
   fi
-  [[ $# -gt 0 ]] && command -v "$1" >/dev/null 2>&1
+  [[ $# -gt 0 ]] && type -P -- "$1" >/dev/null 2>&1
 }
 
 # Whether the account a target spends has room, by its
