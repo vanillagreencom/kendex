@@ -281,15 +281,21 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
 # the base's. Where neither descends from the other, as after a merge from the
 # base, the default branch's is taken, so the branch's own commits are judged
 # again rather than the base's. The default branch is git's record of the
-# remote's HEAD, held only where those refs describe this push. With no
+# remote's HEAD, held only where those refs describe this push. A clone or
+# fetch that never recorded it (`git remote set-head` writes it) leaves the
+# newest commit those refs already hold, local_boundary's answer, in its
+# place: a commit already on the remote is no commit this push makes. With no
 # answer the caller keeps the remote head for these lanes too: wider, never
 # narrower.
 history_boundary() { # VAR REMOTE-OID — VAR gets the boundary; 1 when there is none
   local __v="$1" default="" pushed="" base=""
   tracking_describes_push || return 1
-  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
   pushed="$(git merge-base "$2" HEAD 2>/dev/null)" || return 1
-  base="$(git merge-base "$default" HEAD 2>/dev/null)" || return 1
+  if default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)"; then
+    base="$(git merge-base "$default" HEAD 2>/dev/null)" || return 1
+  else
+    local_boundary base HEAD || return 1
+  fi
   git merge-base --is-ancestor "$base" "$pushed" 2>/dev/null || pushed="$base"
   eval "$__v=\$pushed"
 }

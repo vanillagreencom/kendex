@@ -401,11 +401,16 @@ echo "=== a configured version bump matches its release's entries ==="
 # app's version file (app-package rows); one elsewhere is a package (package-).
 BREAK='- **Breaking:** Rename the mode setting; replace mode with profile.'
 ADD='- Add a profile setting.'
+# The label as the Pi package records write it, colon outside the bold.
+BREAK_PI='- **Breaking**: Rename the mode setting; replace mode with profile.'
 for row in \
   "major-unnamed|app.json|1.9.0|2.0.0|||||major-breaking" \
   "major-named|app.json|1.9.0|2.0.0|$BREAK||||0" \
   "major-empty-callout|app.json|1.9.0|2.0.0|- **Breaking:**   ||||major-breaking" \
   "major-inline-mention|app.json|1.9.0|2.0.0|- Read **Breaking:** in the guide.||||major-breaking" \
+  "major-colon-after|app.json|1.9.0|2.0.0|$BREAK_PI||||0" \
+  "major-colon-after-empty|app.json|1.9.0|2.0.0|- **Breaking**:   ||||major-breaking" \
+  "package-colon-after|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK_PI\n||0" \
   "patch|app.json|1.9.0|1.9.1|||||0" \
   "minor|app.json|1.9.0|1.10.0|||||0" \
   "minor-breaking|app.json|1.9.0|1.10.0|\n$BREAK||||minor-breaking" \
@@ -475,6 +480,13 @@ for row in \
   esac
   assert_eq "$label" "rc=$expected $report" "$(run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' "$args")"
 done
+# The must-fail control: a grammar reading only the colon-inside spelling
+# refuses the package record's major written the other way.
+gg_mutant colon_inside lib/changelog-grammar.sh '(:\*\*|\*\*:)' ':\*\*'
+R="$TMP/version-package-colon-after"
+assert_eq 'control: reading only **Breaking:** refuses the **Breaking**: major' \
+  "rc=1 ${ERR}major-breaking=packages/a/package.json:1.9.0:2.0.0;$(summary 1 0)" \
+  "$(CE="${colon_inside%/lib/*}/changelog-entries" run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' '')"
 
 # The released record's Breaking entries, copied from CHANGELOG.md with one
 # unmarked Added entry each: the entry query reports every marked item of the

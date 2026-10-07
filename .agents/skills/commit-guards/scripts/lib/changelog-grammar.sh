@@ -247,17 +247,19 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 #
 # entry_query=1 is the version check's read instead: one "KIND<TAB>line" row
 # per release entry it judges, in file order. KIND is breaking for an item
-# opening with a named call-out, and added for an item under the release's
-# `### Added` heading, a heading only a level-2 record carries. With
-# release_alone=1, a record holding the new version's own section answers
-# with that section alone, after a "released<TAB>heading" row: those are the
-# entries the release publishes, and pending ones wait for the next release.
+# opening with a named call-out, `**Breaking:**` or `**Breaking**:`, the
+# spelling the Pi package records write, and added for an item under the
+# release's `### Added` heading, a heading only a level-2 record carries.
+# With release_alone=1, a record holding the new version's own section
+# answers with that section alone, after a "released<TAB>heading" row:
+# those are the entries the release publishes, and pending ones wait for
+# the next release.
 # With whole_entry=1 the input is one fragment, whose entry_section names its
 # directory. packages_part, GG_PACKAGES_PART, names the part whose entries
 # are no release entry of the record's own version.
 GG_UNRELEASED_AWK='
 BEGIN { if (!release_level) release_level = 2 }
-function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
+function named_breaking(l) { return l ~ /^- \*\*Breaking(:\*\*|\*\*:)[ \t]+[^ \t]/ }
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
   i = lead(l)
