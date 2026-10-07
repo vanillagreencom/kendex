@@ -109,8 +109,8 @@ ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:hig
 # one-time claude.ai setups of that account on kendex, the cloud environment's
 # setup script and repository access; `lanes --help` § pick states what an
 # entry attests. The saved setup line is fail-open: it ends with
-# `|| echo kendex-install-failed`, so a cloud lane checks that kendex is on
-# PATH before relying on it.
+# `|| echo kendex-install-failed`, so a cloud session can start without
+# kendex on PATH.
 ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex"
 
 # Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
