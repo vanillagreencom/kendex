@@ -213,7 +213,14 @@ fn broken_links(
         let Some(source) = source else {
             continue;
         };
-        for (line, url, ref_and_path, anchor) in catalog_urls(text, source) {
+        let urls = match is_markdown(Path::new(at.as_str())) {
+            true => markdown_urls(text, source),
+            false => catalog_urls(text, source, false)
+                .into_iter()
+                .map(|(start, url, tail, anchor)| (line_at(text, start), url, tail, anchor))
+                .collect(),
+        };
+        for (line, url, ref_and_path, anchor) in urls {
             let Some(written) = source.path(&ref_and_path) else {
                 continue;
             };
@@ -293,9 +300,54 @@ fn dropped_entry(from: &Path, target: &str) -> Option<&'static str> {
     NOT_RENDERED.into_iter().find(|entry| entry == top)
 }
 
-/// Each URL in `text` into this catalog's own source: its 1-based line, the
+/// Each URL into this catalog's own source in a markdown file: its 1-based
+/// line, as [`catalog_urls`] gives the rest. A link's or image's
+/// destination is read as the parser reads it, escapes undone and every
+/// character to its end its own; prose, code and HTML outside a link are
+/// read as plain text. A link's own label is not read again.
+fn markdown_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut in_link = 0usize;
+    for (event, span) in Parser::new_ext(text, crate::render::blocks::EXTENSIONS).into_offset_iter()
+    {
+        let line = line_at(text, span.start);
+        match event {
+            Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                in_link += 1;
+                out.extend(
+                    catalog_urls(&dest_url, source, true)
+                        .into_iter()
+                        .map(|(_, url, tail, anchor)| (line, url, tail, anchor)),
+                );
+            }
+            Event::End(TagEnd::Link | TagEnd::Image) => in_link = in_link.saturating_sub(1),
+            Event::Text(part) | Event::Code(part) | Event::Html(part) | Event::InlineHtml(part)
+                if in_link == 0 =>
+            {
+                out.extend(catalog_urls(&part, source, false).into_iter().map(
+                    |(start, url, tail, anchor)| {
+                        let below = part[..start].bytes().filter(|byte| *byte == b'\n').count();
+                        let below = u32::try_from(below).unwrap_or(u32::MAX);
+                        (line.saturating_add(below), url, tail, anchor)
+                    },
+                ));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Each URL in `text` into this catalog's own source: its byte offset, the
 /// URL as written, its `<ref>/<path>` and its anchor, both still encoded.
-fn catalog_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Option<String>)> {
+/// A `destination` is one whole URL already parsed out of markdown, which
+/// runs to its end; in plain text a URL ends where [`url_end`] says, less
+/// the sentence punctuation after it.
+fn catalog_urls(
+    text: &str,
+    source: &SourceUrl,
+    destination: bool,
+) -> Vec<(usize, String, String, Option<String>)> {
     // ASCII lowercasing keeps every byte offset, so a match in `lower`
     // slices `text` at the same place.
     let lower = text.to_ascii_lowercase();
@@ -304,8 +356,16 @@ fn catalog_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Opt
     while let Some(found) = lower[from..].find(&source.blob) {
         let start = from + found;
         let rest = &text[start + source.blob.len()..];
-        let end = url_end(rest);
-        let tail = rest[..end].trim_end_matches(['.', ',', ';', ':', '!', '?']);
+        let (end, tail) = match destination {
+            true => (rest.len(), rest),
+            false => {
+                let end = url_end(rest);
+                (
+                    end,
+                    rest[..end].trim_end_matches(['.', ',', ';', ':', '!', '?']),
+                )
+            }
+        };
         from = start + source.blob.len() + end;
         if !on_github(&lower[..start]) {
             continue;
@@ -316,12 +376,7 @@ fn catalog_urls(text: &str, source: &SourceUrl) -> Vec<(u32, String, String, Opt
         };
         let tail = tail.split('?').next().unwrap_or_default();
         let written = &text[start..start + source.blob.len() + tail.len()];
-        out.push((
-            line_at(text, start),
-            written.to_owned(),
-            tail.to_owned(),
-            anchor,
-        ));
+        out.push((start, written.to_owned(), tail.to_owned(), anchor));
     }
     out
 }

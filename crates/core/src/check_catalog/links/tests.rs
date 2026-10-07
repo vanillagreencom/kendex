@@ -29,6 +29,7 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
     fs::write(skill.join("references/Quick start.md"), "# Quick\n").unwrap();
     fs::create_dir_all(skill.join("references/notes.md")).unwrap();
     fs::write(skill.join("references/Guide(v2).md"), "# Guide\n").unwrap();
+    fs::write(skill.join("references/file!"), "kept\n").unwrap();
     fs::write(
         skill.join("references/latin.md"),
         b"# Latin\n\ncaf\xe9\n".as_slice(),
@@ -215,6 +216,23 @@ fn a_source_url_target_is_read_as_github_serves_it() {
         (
             "SKILL.md",
             format!("(see {SOURCE}/main/{gone})"),
+            missing(gone),
+        ),
+        // A markdown destination is read as parsed: its escapes undone and
+        // its last character its own; a label repeating it is not read again.
+        (
+            "SKILL.md",
+            format!(r"[g]({SOURCE}/main/skills/review/references/Guide\(v2\).md)"),
+            None,
+        ),
+        (
+            "SKILL.md",
+            format!("[f]({SOURCE}/main/skills/review/references/file!)"),
+            None,
+        ),
+        (
+            "SKILL.md",
+            format!("[{SOURCE}/main/{gone}]({SOURCE}/main/{gone})"),
             missing(gone),
         ),
         // Escapes in the path and the anchor are decoded once.
