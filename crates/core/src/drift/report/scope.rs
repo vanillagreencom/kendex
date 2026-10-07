@@ -1035,7 +1035,10 @@ impl ScopeCheck<'_> {
     /// refresh this check starts, which settles most of these: a cached
     /// copy missing a commit is the usual one. That refresh fetches only
     /// the enabled sources this manifest declares, so a note on any other
-    /// mirror has no retry coming and stays could-not-check.
+    /// mirror has no retry coming and stays could-not-check. A recorded
+    /// fetch error means the last retry failed: a failure keeps the old
+    /// fetch time, so the stamp still reads as due, but nothing has settled
+    /// and the person is told. A success clears the error.
     fn unreadable_line(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -1054,7 +1057,8 @@ impl ScopeCheck<'_> {
             })
         };
         let settles = fetched
-            && stamp_for(self.env, &note.repo).is_some_and(|stamp| stamp.is_stale(self.now));
+            && stamp_for(self.env, &note.repo)
+                .is_some_and(|stamp| stamp.is_stale(self.now) && stamp.last_error.is_none());
         Line {
             class: match settles {
                 true => Class::Settling,

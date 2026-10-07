@@ -163,28 +163,29 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
 /// settling, the check is clean, and the refresh it relies on is wanted.
 /// Rows: the same note after a fetch that just ran; a source declared
 /// under another spelling of the same mirror, which that refresh fetches;
-/// and a disabled source, which it never fetches, so the note stays
-/// could-not-check.
+/// a disabled source, which it never fetches, so the note stays
+/// could-not-check; and a due fetch whose retry already failed, which
+/// settled nothing.
 #[test]
 fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
     let due = 2 * stamps::TTL.as_secs();
-    for (fetched_ago, declared, enabled, class, status) in [
-        (due, "owner/repo", true, Class::Settling, CheckStatus::Clean),
-        (0, "owner/repo", true, Class::Unknown, CheckStatus::Unknown),
+    let (settling, unknown) = (
+        (Class::Settling, CheckStatus::Clean),
+        (Class::Unknown, CheckStatus::Unknown),
+    );
+    // (fetched ago, declared spelling, enabled, retry failed, expected)
+    for (fetched_ago, declared, enabled, retry_failed, (class, status)) in [
+        (due, "owner/repo", true, false, settling),
+        (0, "owner/repo", true, false, unknown),
         (
             due,
             "https://github.com/owner/repo.git",
             true,
-            Class::Settling,
-            CheckStatus::Clean,
-        ),
-        (
-            due,
-            "owner/repo",
             false,
-            Class::Unknown,
-            CheckStatus::Unknown,
+            settling,
         ),
+        (due, "owner/repo", false, false, unknown),
+        (due, "owner/repo", true, true, unknown),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
@@ -226,6 +227,15 @@ fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
             crate::clock::unix_now() - fetched_ago,
         )
         .unwrap();
+        if retry_failed {
+            stamps::record_failure(
+                &env,
+                &key,
+                "could not resolve host",
+                crate::clock::unix_now(),
+            )
+            .unwrap();
+        }
 
         let report = check(
             &env,
@@ -233,8 +243,9 @@ fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
             crate::drift::copies::CheckMode::Settle,
         );
         let line = &report.sections[0].lines[0];
-        assert_eq!(line.class, class, "{declared} enabled={enabled}");
-        assert_eq!(report.status, status, "{declared} enabled={enabled}");
+        let row = format!("{declared} enabled={enabled} retry_failed={retry_failed}");
+        assert_eq!(line.class, class, "{row}");
+        assert_eq!(report.status, status, "{row}");
         assert_eq!(
             line.detail.as_deref(),
             Some("git log failed: fatal: bad object f7db7e89")
