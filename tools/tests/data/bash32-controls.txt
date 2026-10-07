@@ -66,3 +66,4 @@ BASH_XTRACEFD=3
   local extra="${4:-null}"
 extra="${4:-$empty}"
 value="${missing:-${y}}"
+value="${values[${index}]:-null}"
