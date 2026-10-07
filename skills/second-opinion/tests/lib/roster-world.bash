@@ -131,7 +131,8 @@ prefixed_cmd() {
 # A target's command whose env prefix decides where its program resolves:
 # PATH= naming the private directory or one without the program, -i or -u PATH
 # leaving the system default, or -C into the directory holding a relative
-# program or away from it.
+# program or away from it, or the last of two -C naming the directory; or an
+# option outside those the check reads.
 lookup_cmd() {
   local name="${1%%=*}" cmd
   case "${1##*=}" in
@@ -141,6 +142,9 @@ lookup_cmd() {
     unset-path) cmd="env -u PATH lane-$name" ;;
     chdir-private) cmd="env -C $ROW/private ./so-private-$name" ;;
     chdir-away) cmd="env -C $ROW/bin ./so-private-$name" ;;
+    chdir-last) cmd="env -C $ROW/private -C . ./so-private-$name" ;;
+    bsd-path) cmd="env -P $ROW/private so-private-$name" ;;
+    signal) cmd="env --default-signal=PIPE lane-$name" ;;
     *) echo "UNKNOWN-LOOKUP: $1" >&2; exit 2 ;;
   esac
   W_ENV+=("$(so_var "$name" CMD)=$cmd")

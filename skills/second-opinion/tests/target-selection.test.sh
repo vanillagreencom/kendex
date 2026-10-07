@@ -69,6 +69,9 @@ env -i leaves the system default PATH, which lacks the program|cmd-lookup:codex=
 env -u PATH likewise|cmd-lookup:codex=unset-path|review|0|<out>|nocli:codex:CODEX single:claude:review:none written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 env -C resolves a relative program from its directory: detect takes it, not running it, as BSD env has no -C|cmd-lookup:codex=chdir-private|detect|0|codex|-|$NONE
 env -C into a directory without the relative program makes it unavailable|cmd-lookup:codex=chdir-away|detect|0|claude|nocli:codex:CODEX|$NONE
+the last env -C names the directory, from --cwd, not chained onto an earlier one|cmd-lookup:codex=chdir-last|detect|0|claude|nocli:codex:CODEX|$NONE
+an env option the check does not read, BSD -P, judges the command on env itself rather than on the option|cmd-lookup:codex=bsd-path|detect|0|codex|-|$NONE
+a GNU signal option likewise|cmd-lookup:codex=signal|detect|0|codex|-|$NONE
 an all-unavailable roster names availability, not identity, as its cause|cmd:claude=missing cmd:codex=missing|review|1|-|nocli:codex:CODEX nocli:claude:CLAUDE refused:none:2 availability|$NONE
 copilot with no declared model has no identity and is skipped, whatever its command: a different harness is not a different model|models:copilot+codex cmd:copilot=extra|review|0|<out>|target-undeclared:copilot:COPILOT single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
 control: copilot declared on an OpenAI model is taken from a Claude session|current:claude models:copilot+claude cmd:copilot=extra model:copilot=gpt-5.5|review|0|<out>|single:copilot:review:claude written|calls=claude:0,codex:0,extra:1 art=external-copilot/$OWN files=out

@@ -1045,33 +1045,36 @@ target_cmd() {
 # `env VAR=value copilot ...` is judged on copilot, not env. The command runs
 # from --cwd, and env's PATH=, -i, -u PATH and -C DIR change the PATH searched
 # and the directory a relative name resolves from, as env applies them before
-# it execs; a PATH env clears is the system default. The argv is exec'd as it
-# stands, never by a shell, so a builtin such as exec is no program. An env
-# override may point it away from the target's own name. A command with no
-# program word after its assignments has nothing to run.
+# it execs; a PATH env clears is the system default, and the last -C names the
+# directory, from --cwd. An env option outside those, such as BSD's -P or
+# GNU's -S, -a or signal options, is not modelled: the command is then judged
+# on env itself, as it was before env prefixes were read, and the runtime
+# reports a missing program. The argv is exec'd as it stands, never by a
+# shell, so a builtin such as exec is no program. An env override may point it
+# away from the target's own name. A command with no program word after its
+# assignments has nothing to run.
 target_available() {
-  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$CWD" entry rest
+  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$CWD" chdir="" entry rest
   cmd="$(target_cmd "$1")"
   # shellcheck disable=SC2086
   set -- $cmd
   if [[ "${1:-}" == env ]]; then
     shift
     while [[ $# -gt 0 ]]; do
-      entry=""
       case "$1" in
         --) shift; break ;;
         -u|--unset) [[ "${2:-}" != PATH ]] || path=/bin:/usr/bin; shift ;;
-        -C|--chdir) entry="${2:-}"; shift ;;
+        -C|--chdir) chdir="${2:-}"; shift ;;
         -uPATH|--unset=PATH|-i|-|--ignore-environment) path=/bin:/usr/bin ;;
         -u?*|--unset=*|-v|-0|--null|--debug) ;;
-        -C?*) entry="${1#-C}" ;;
-        --chdir=*) entry="${1#--chdir=}" ;;
+        -C?*) chdir="${1#-C}" ;;
+        --chdir=*) chdir="${1#--chdir=}" ;;
+        -*) type -P env >/dev/null 2>&1; return ;;
         *) break ;;
       esac
       [[ $# -gt 0 ]] && shift
-      [[ -z "$entry" || "$entry" == /* ]] || entry="$dir/$entry"
-      dir="${entry:-$dir}"
     done
+    if [[ "$chdir" == /* ]]; then dir="$chdir"; elif [[ -n "$chdir" ]]; then dir="$dir/$chdir"; fi
     while [[ "${1:-}" =~ $assignment ]]; do
       [[ "$1" != PATH=* ]] || path="${1#PATH=}"
       shift
