@@ -831,12 +831,14 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
       fi
       exit 1
     fi
-    if [ "$no_checks_left" -le "$POLL_INTERVAL" ]; then
-      [ $((elapsed + no_checks_left)) -le "$MAX_WAIT" ] && no_checks_due=true
-      poll_sleep "$no_checks_left"
-    else
-      poll_sleep "$POLL_INTERVAL"
-    fi
+    # The nap stops at the grace's end or the budget's deadline, whichever
+    # comes first; only a nap that reaches the grace's end makes the closing
+    # poll due.
+    no_checks_nap="$POLL_INTERVAL"
+    [ "$no_checks_left" -lt "$no_checks_nap" ] && no_checks_nap="$no_checks_left"
+    [ $((MAX_WAIT - elapsed)) -lt "$no_checks_nap" ] && no_checks_nap=$((MAX_WAIT - elapsed))
+    [ "$no_checks_nap" -eq "$no_checks_left" ] && no_checks_due=true
+    [ "$no_checks_nap" -gt 0 ] && poll_sleep "$no_checks_nap"
     continue
   fi
 
