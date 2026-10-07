@@ -62,7 +62,7 @@
 # Every function returns 0 for the answer its name promises and 1 for a
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
-# line of its own, save ol_preference_entries' deprecation warning, because
+# line of its own, save the preference deprecation warning and conversion, because
 # the caller owns its own refusal prefix and words: ol_checkout_notice and
 # ol_fleet_log_notice print theirs through the caller's `message`. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
@@ -125,6 +125,7 @@ ol_preference() {
 # `effort` is the level as that harness spells it, on pi its thinking level.
 # Consumer settings can still name a positive account number. Those entries
 # become harness::effort, which ol_entry_model resolves on the caller's model.
+# An overseer walk without that model uses the same-harness default entry.
 # OL_DEPRECATED_ENTRIES keeps their original spelling for the refresh report.
 # One stderr warning per process names the first deprecated entry.
 # OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
@@ -135,6 +136,7 @@ OL_BAD_ENTRY=""
 OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
 OL_DEPRECATION_WARNED=0
+OL_DEPRECATION_CONVERTED=0
 ol_preference_entries() { # VALUE
   local rest="$1" entry LC_ALL=C status=0
   OL_ENTRIES=()
@@ -361,7 +363,7 @@ OL_WALK_SOURCE_HARNESS="" OL_WALK_SOURCE_FLAGS="" OL_WALK_SOURCE_ROWS=0 OL_WALK_
 OL_CHOSEN="" OL_HARNESS="" OL_MODEL="" OL_EFFORT="" OL_PICK_MODEL="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none
 OL_WALK_SKIPS=() OL_FIELDS=()
 ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
-  local trigger="$1" exclude="$2" entry rc count tab=$'\t'
+  local trigger="$1" exclude="$2" entry rc count defaults default_entry tab=$'\t'
   shift 2
   OL_CHOSEN="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none OL_WALK_SKIPS=() OL_FIELDS=()
   for entry in "$@"; do
@@ -384,6 +386,15 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       fi
     else
       ol_entry_model "$entry"
+      if [[ -z "$OL_ENTRY_MODEL" ]]; then
+        defaults="$OL_DEFAULT_PREFERENCE,"
+        while [[ -n "$defaults" ]]; do
+          default_entry="${defaults%%,*}" defaults="${defaults#*,}"
+          [[ "${default_entry%%:*}" == "$OL_ENTRY_HARNESS" ]] || continue
+          OL_ENTRY_MODEL="${default_entry#*:}" OL_ENTRY_MODEL="${OL_ENTRY_MODEL%%:*}"
+          break
+        done
+      fi
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
       ol_entry_permitted "$entry" || continue
@@ -418,6 +429,14 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi
     fi
     OL_LANE_DIR="$OL_PICKED_DIR" OL_CHOSEN="$entry"
+    if [[ "$entry" == *::* ]] && (( ! OL_DEPRECATION_CONVERTED )); then
+      if [[ -n "$OL_MODEL" ]]; then
+        printf 'preference-deprecated-conversion replacement=%s:%s:%s\n' "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" >&2
+      else
+        printf 'preference-deprecated-conversion harness=%s model=harness-default (the harness default model runs)\n' "$OL_HARNESS" >&2
+      fi
+      OL_DEPRECATION_CONVERTED=1
+    fi
     return 0
   done
   return 3
@@ -471,7 +490,7 @@ ol_entry_permitted() { # ENTRY
 # then SOURCE's words FLAG... as HARNESS may take them, the predecessor's
 # harness and flags, both empty on a first launch. An entry with neither
 # MODEL nor EFFORT keeps every predecessor word. A numeric first-launch
-# entry names EFFORT alone. One of the same harness strips
+# entry without a same-harness default names EFFORT alone. One of the same harness strips
 # the predecessor's model and effort and keeps its permission words exactly.
 # One of another harness, a first launch among them, writes HARNESS's
 # full-bypass permission words and keeps no predecessor word at all: its
