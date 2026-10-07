@@ -264,23 +264,20 @@ const RETIRED_GONE: &str = "its catalog retired it and its installed files are g
 /// naming it takes them.
 const RETIRED_EDITED: &str = "its catalog retired it and its installed files were edited on disk — remove it by name to take them";
 
-/// [`EDITED`] for an orphan something that stays derives: removing it by
-/// name would keep it removed on every tool, from what still requires it
-/// too, so the remedy is applying with edits discarded, which takes the
-/// held copy and writes nothing down.
-const EDITED_DERIVED: &str = "no longer wanted, but its files were edited on disk — apply with edits discarded to confirm; removing it by name would also keep it from every tool where something still requires or bundles it";
+/// Removing by name affects every tool that still installs the item.
+/// Applying with edits discarded takes only the unwanted copy.
+const EDITED_KEPT: &str = "no longer wanted, but its files were edited on disk: apply with edits discarded to confirm; removing it by name would also remove it from tools that still request, require or bundle it";
 
-/// The conflict a held orphan leaves: [`EDITED_DERIVED`] where this plan
-/// derives an item of its kind and name on some tool, [`EDITED`]
-/// otherwise. The plan's own reasons are what its apply records and what
-/// the removal's catalog reading finds again, so an edge only the catalog
-/// knows counts, and one recorded from something going does not.
+/// The desired state covers requested and derived installations, including
+/// dependencies only the catalog knows. Old records do not say what this
+/// plan still installs.
 fn edited(state: &desired::DesiredState, entry: &LockEntry) -> &'static str {
-    let derived = state.items.iter().any(|item| {
-        item.kind == entry.kind && item.name == entry.name && derived_at_all(&item.reasons)
-    });
-    match derived {
-        true => EDITED_DERIVED,
+    let kept = state
+        .items
+        .iter()
+        .any(|item| item.kind == entry.kind && item.name == entry.name);
+    match kept {
+        true => EDITED_KEPT,
         false => EDITED,
     }
 }

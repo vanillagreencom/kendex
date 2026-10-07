@@ -1,0 +1,1 @@
+- Edited hook removal advice preserves copies still requested on other coding tools.
