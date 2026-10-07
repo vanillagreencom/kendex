@@ -1310,13 +1310,31 @@ fi
         self.assertEqual(self.create().returncode, 0)
         state_dir.mkdir()
         (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 4}')
+        # An older copy in the clone's tmp, from before the settings moved it.
+        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
+        (Path(self.row["clone"]) / "tmp/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
             member = str(state_dir / "workflow-state-TEST-1.json").lstrip("/")
-            self.assertIn(member, saved.getnames())
+            self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
+
+    def test_close_stops_when_the_state_directory_does_not_resolve(self):
+        # A clone whose workflow-state fails leaves the item's state unplaced:
+        # close stops before the worktree goes, rather than archive without it.
+        scripts = self.source / ".agents/skills/orch/scripts"
+        self.executable(scripts / "workflow-state", "#!/usr/bin/env bash\necho 'workflow-state: settings broken' >&2\nexit 1\n")
+        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "broken state")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        created = self.create()
+        self.assertEqual(created.returncode, 0, created.stderr)
+        path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertNotEqual(closed.returncode, 0, closed.stderr)
+        self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1", closed.stderr)
+        self.assertEqual((closed.stdout, path.is_dir()), (b"", True))
 
     def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)

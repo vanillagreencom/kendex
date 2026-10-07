@@ -136,15 +136,27 @@ lane_hosted_state_dir() {
 
 # lane_archived_state ITEM ARCHIVE SCRATCH — sets LANE_ITEM_STATE to the
 # item's workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
-# of the clone's and the worktree's tmp, empty where it holds none. 0 read;
-# 2 the archive did not read, SCRATCH/state.err saying why.
+# of the clone's and the worktree's tmp, empty where it holds none. Its
+# `lane-host-state` member names the state file's member, the one the lane
+# resolved, or is an empty line where the lane wrote none, so no other copy of
+# the same name is read. An archive with no such member, written before close
+# recorded it, holds the two tmp trees alone, and its first member of that
+# name, the clone's, is read. 0 read; 2 the archive did not read, or names a
+# member it does not hold, SCRATCH/state.err saying why.
 lane_archived_state() {
-  local member
+  local members member
   LANE_ITEM_STATE=""
   [[ -f "$2" ]] || { printf 'archive-missing path=%s\n' "$2" >"$3/state.err"; return 2; }
-  member="$(tar -tzf "$2" 2>"$3/state.err" \
-    | awk -v f="workflow-state-$1.json" '{ n = split($0, p, "/") } !seen && p[n] == f { print; seen = 1 }')" || return 2
-  [[ -n "$member" ]] || return 0
+  members="$(tar -tzf "$2" 2>"$3/state.err")" || return 2
+  if grep -qx lane-host-state <<<"$members"; then
+    member="$(tar -xzOf "$2" lane-host-state 2>"$3/state.err")" || return 2
+    [[ -n "$member" ]] || return 0
+    grep -qxF -- "$member" <<<"$members" \
+      || { printf 'archive-member-missing path=%s member=%s\n' "$2" "$member" >"$3/state.err"; return 2; }
+  else
+    member="$(awk -v f="workflow-state-$1.json" '{ n = split($0, p, "/") } !seen && p[n] == f { print; seen = 1 }' <<<"$members")"
+    [[ -n "$member" ]] || return 0
+  fi
   LANE_ITEM_STATE="$(tar -xzOf "$2" "$member" 2>"$3/state.err" | jq -c . 2>>"$3/state.err")" \
     || { LANE_ITEM_STATE=""; return 2; }
 }

@@ -437,25 +437,40 @@ def archive_tmp(row, item, worktree_path):
 
     The item's workflow state goes with them wherever the lane's settings put
     its state directory, as the clone's own workflow-state resolves it from the
-    worktree, or the clone once the worktree is gone: oversee-cycle reads a
-    closed lane's rounds from this archive."""
-    data = remote(row, '''paths=()
+    worktree, or the clone once the worktree is gone. The archive's
+    `lane-host-state` member names that file's member, or is an empty line
+    where the lane wrote none, so a reader takes the state the lane resolved,
+    never another copy of the same name. A resolution that fails stops close,
+    the sandbox and its state kept: an archive without the state loses it."""
+    data = remote(row, '''paths=() names=()
 for base in "$1" "$2"; do
   candidate="$base/tmp"
   if test -e "$candidate" || test -L "$candidate"; then
     paths+=("${candidate#/}")
   fi
 done
-state="" from="$2"
+state="" member="" from="$2"
 test -d "$from" || from="$1"
 states="$1/.agents/skills/orch/scripts/workflow-state"
-if test -x "$states"; then state=$(cd "$from" && "$states" --no-private-env path "$3" 2>/dev/null) || state=""; fi
-case "$state" in
-  "" | "$1/tmp/"* | "$2/tmp/"*) ;;
-  /*) if test -f "$state"; then paths+=("${state#/}"); fi ;;
-esac
+if test -x "$states"; then
+  if ! state=$(cd "$from" && "$states" --no-private-env path "$3"); then
+    printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
+    exit 1
+  fi
+  names=(lane-host-state)
+  if test -f "$state"; then
+    member="${state#/}"
+    case "$state" in
+      "$1/tmp/"* | "$2/tmp/"*) ;;
+      *) paths+=("$member") ;;
+    esac
+  fi
+fi
 if test "${#paths[@]}" -eq 0; then exit 0; fi
-exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path, item).stdout
+manifest=$(mktemp -d)
+trap 'rm -rf -- "${manifest:?}"' EXIT
+printf '%s\\n' "$member" > "$manifest/lane-host-state"
+tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / -- "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return
     fleet = Path(os.environ.get("FLEET_DIR") or str(Path.home() / ".fleet")).expanduser()
@@ -656,9 +671,11 @@ exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
 Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories, and the item's workflow state where the lane's
-settings place it outside them, under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
+settings place it outside them, with a lane-host-state member naming that
+state's member, under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
-close. An already removed worktree's tmp cannot be recovered. No remaining tmp
+close, as does a state directory the clone's workflow-state cannot resolve,
+reported as state-unresolved. An already removed worktree's tmp cannot be recovered. No remaining tmp
 means no archive and no kept line. Archives contain paths relative to / and
 follow symlinks, so linked records remain in the archive after their target is gone.
 close --merged, the caller's word that the item's pull request merged, is
