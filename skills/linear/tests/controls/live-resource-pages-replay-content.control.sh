@@ -8,8 +8,8 @@ control_replace scripts/lib/pages.sh 1 \
 # The last page alone is returned as the collection.
 control_expect 'comments-list: every recorded row is read'
 control_replace scripts/lib/pages.sh 1 \
-    '        .[1] as $nodes | .[0] | setpath($key + ["nodes"]; $nodes)'\'' <<<"$result"$'\''\n'\''"$all") || return 1' \
-    '        .[0]'\'' <<<"$result"$'\''\n'\''"$all") || return 1'
+    '        input as $result | [inputs[]] as $nodes | $result |' \
+    '        input as $result | [inputs[]] as $nodes | $result | getpath($key + ["nodes"]) as $nodes | $result |'
 # A read leaves a local store behind.
 control_expect 'comments-list: no local store is written'
 control_append scripts/lib/common.sh \
@@ -18,5 +18,5 @@ control_append scripts/lib/common.sh \
 # holds, one the status keeps, is lost.
 control_expect 'session-status: every recorded row is read'
 control_replace scripts/lib/pages.sh 1 \
-    '        all=$(jq -cs '\''.[0] + .[1]'\'' <<<"$all"$'\''\n'\''"$nodes") || return 1' \
-    '        all=$(jq -cs '\''if .[0] == [] then .[1] else .[0] end'\'' <<<"$all"$'\''\n'\''"$nodes") || return 1'
+    '        printf '\''%s\n'\'' "$nodes" >>"$spool/nodes" || return 1' \
+    '        [[ -s "$spool/nodes" ]] || printf '\''%s\n'\'' "$nodes" >>"$spool/nodes" || return 1'

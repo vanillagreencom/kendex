@@ -1,0 +1,1 @@
+- A `--max` list no longer holds every page in the shell: the pager spools each page to a temporary file and merges them in one `jq` read, so a large backlog stays bounded by `jq`. `SKILL.md` routes a text search through `issues list --search`, never a `--max` list filtered locally.

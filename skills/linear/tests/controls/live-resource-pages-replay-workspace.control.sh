@@ -8,8 +8,8 @@ control_replace scripts/lib/pages.sh 1 \
 # The last page alone is returned as the collection.
 control_expect 'labels-list: every recorded row is read'
 control_replace scripts/lib/pages.sh 1 \
-    '        .[1] as $nodes | .[0] | setpath($key + ["nodes"]; $nodes)'\'' <<<"$result"$'\''\n'\''"$all") || return 1' \
-    '        .[0]'\'' <<<"$result"$'\''\n'\''"$all") || return 1'
+    '        input as $result | [inputs[]] as $nodes | $result |' \
+    '        input as $result | [inputs[]] as $nodes | $result | getpath($key + ["nodes"]) as $nodes | $result |'
 # A read leaves a local store behind.
 control_expect 'labels-list: no local store is written'
 control_append scripts/lib/common.sh \

@@ -458,6 +458,7 @@ __assert_on_exit() {
 # Exercise pages.sh with synthetic GraphQL replies and an explicit child env.
 # The dependency selects replies by owner and cursor. Child continuation
 # replies carry only selected fields. The suite supplies independent counts.
+# PAGES_LARGEST names a file that collects the subject's longest variables.
 pages_case() {
 	local name="$1" mode="$2" limit=0 budget line hits=0 child_mode=bundle
 	[[ "$name" != bounded ]] || limit=1
@@ -557,6 +558,25 @@ pages_step() {
     fi
 }
 fixture_data=$(cat -- "$fixture") || exit 1
+# With a tenth argument, every command the pager runs first records the
+# longest variable it can see, the fixture's own copy aside.
+if [[ -n "${10:-}" ]]; then
+    largest_file="${10}" largest_seen=0
+    largest_variable() {
+        local largest_name largest_value
+        for largest_name in $(compgen -v); do
+            case "$largest_name" in fixture_data|largest_*) continue ;; esac
+            largest_value="${!largest_name-}"
+            if [[ ${#largest_value} -gt $largest_seen ]]; then
+                largest_seen=${#largest_value}
+                printf '%s %s\n' "$largest_seen" "$largest_name" >>"$largest_file"
+            fi
+        done
+        return 0
+    }
+    set -o functrace
+    trap largest_variable DEBUG
+fi
 LINEAR_CHILD_DEPTH=2
 LINEAR_ISSUE_CHILD_MODE="$9"
 source "$8"
@@ -599,6 +619,7 @@ SUBJECT
 	PAGE_OUT=$(env -i PATH="$PATH" HOME="$PAGE_ROOT" bash "$PAGE_ROOT/subject" \
 		"$PAGE_ROOT/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
 		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" "$SKILL_DIR/scripts/lib/formatters.sh" "$child_mode" \
+		${PAGES_LARGEST:+"$PAGES_LARGEST"} \
 		2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
 	assert_file_lacks "$name: page walk budget" "$PAGE_ROOT/error" 'fixture: page-budget='
 }

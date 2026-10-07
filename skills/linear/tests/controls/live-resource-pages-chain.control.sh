@@ -15,9 +15,9 @@ control_replace scripts/lib/pages.sh 1 \
 control_expect 'repeated-cursor: page walk budget'
 control_expect 'repeated-cursor: cause'
 control_replace scripts/lib/pages.sh 1 \
-    '        next=$(jq -rs '\''.[1] as $cursor | .[0] | index($cursor) != null'\'' <<<"$seen"$'\''\n'\''"$cursor") || return 1' \
-    '        next=$(jq -rs '\''false'\'' <<<"$seen"$'\''\n'\''"$cursor") || return 1'
+    '        next=$(jq -rs --argjson cursor "$cursor" '\''index($cursor) != null'\'' "$spool/seen") || return 1' \
+    '        next=$(jq -rs '\''false'\'' "$spool/seen") || return 1'
 control_expect 'later-page: empty stdout'
 control_replace scripts/lib/pages.sh 1 \
     '            result=$(graphql_request "$query" "$variables") || return 1' \
-    '            result=$(graphql_request "$query" "$variables") || { printf '\''%s\n'\'' "$all"; return 1; }'
+    '            result=$(graphql_request "$query" "$variables") || { cat -- "$spool/nodes"; return 1; }'

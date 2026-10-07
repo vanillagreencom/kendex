@@ -42,8 +42,8 @@ control_replace scripts/lib/pages.sh 1 \
 # A last page trimmed to the bound reads as the end of the collection.
 control_expect 'labels list --limit 300: a trimmed last page still notices'
 control_replace scripts/lib/pages.sh 1 \
-    '        result=$(jq -c --argjson key "$key" '\''setpath($key + ["pageInfo", "hasNextPage"]; true)'\'' <<<"$result") || return 1' \
-    '        :'
+    '            setpath($key + ["pageInfo", "hasNextPage"]; true) |' \
+    '            . |'
 # An unknown --type reads every cycle.
 control_expect 'cycles list --type past: refused before any request'
 control_replace scripts/commands/cycles.sh 1 \

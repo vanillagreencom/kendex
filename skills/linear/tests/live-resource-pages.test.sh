@@ -24,6 +24,16 @@ single|pages|(.issues.nodes | length == 1) and (.issues.nodes[0].description | l
 cumulative|pages|(.issues.nodes | length == 4) and ([.issues.nodes[].description | length] == [60000,60000,60000,60000])
 ROWS
 
+# A --max read spools its pages: the merge is the one an independent jq makes
+# of the fixture, and no variable the pager's shell sees outgrows one page.
+PAGES_LARGEST="$PAGE_ROOT/largest" pages_case cumulative pages
+assert_eq 'spooled: completes' "$PAGE_RC" 0
+assert_eq 'spooled: merged result' "$PAGE_OUT" "$(jq -c '. as $f | .replies[-1].response |
+    .issues.nodes = [($f.initial, $f.replies[].response) | .issues.nodes[]]' "$PAGE_ROOT/fixture.json")"
+page_size=$(jq '[.initial, .replies[].response | tojson | length] | max' "$PAGE_ROOT/fixture.json")
+largest=$(sort -n "$PAGE_ROOT/largest" | tail -n 1)
+assert 'spooled: no variable past one page' test "${largest%% *}" -le "$page_size"
+
 pages_case bounded pages
 assert_eq 'bounded: completes' "$PAGE_RC" 0
 assert_jq 'bounded: preserves open metadata' "$PAGE_OUT" '(.issues.nodes | length == 1) and .issues.pageInfo.hasNextPage == true'
