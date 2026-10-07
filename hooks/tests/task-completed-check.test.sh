@@ -208,6 +208,20 @@ run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" \
   "changes to two crates lint each once"
 fgit -C "$REPO" checkout -q -- crates
+# c depends on b and d on c, through path dependencies; e depends on a crate
+# from a registry that shares b's name, which is not b.
+DEPS_META=$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml","dependencies":[]},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml","dependencies":[]},{"name":"c","manifest_path":"%s/crates/c/Cargo.toml","dependencies":[{"name":"b","source":null}]},{"name":"d","manifest_path":"%s/crates/d/Cargo.toml","dependencies":[{"name":"c","source":null,"kind":"dev"}]},{"name":"e","manifest_path":"%s/crates/e/Cargo.toml","dependencies":[{"name":"b","source":"registry+https://github.com/rust-lang/crates.io-index"}]}]}' "$REPO" "$REPO" "$REPO" "$REPO" "$REPO")
+mkdir -p "$REPO/crates/c" "$REPO/crates/d" "$REPO/crates/e"
+printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$DEPS_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targets" \
+  "a change to b also lints every member depending on it, however indirectly, and no registry namesake"
+fgit -C "$REPO" checkout -q -- crates
+fgit -C "$REPO" mv crates/a/src/lib.rs crates/b/src/moved.rs
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" \
+  "a staged move between members lints the crate it left as well as the one it joined"
+fgit -C "$REPO" reset -q --hard
 printf 'fn loose() {}\n' >"$REPO/scratch/loose.rs"
 run_hook "$REPO" FAKE_RC=0 \
   FAKE_METADATA="$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"}]}' "$REPO")"
