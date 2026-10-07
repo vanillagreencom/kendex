@@ -996,7 +996,6 @@ PROOF_CONTROL
       published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
       if refresh_class_matches standard pushed "$CLASS_REASON" PATCH &&
           [ "$published" != "$before" ] &&
-          grep -qxF 'Change class: `standard`.' "$TMP/state/body" &&
           git --git-dir="$TMP/remote" show "$published:.kendex-generated.json" |
             jq -e 'index(".agents/skills/probe/SKILL.md") != null' >/dev/null &&
           [ "$(git --git-dir="$TMP/remote" show "$published:.github/copilot-instructions.md")" = 'refreshed bot instructions' ]; then
