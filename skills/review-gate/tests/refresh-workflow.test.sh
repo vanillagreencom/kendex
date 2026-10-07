@@ -133,17 +133,24 @@ bin_dir.mkdir(parents=True)
 shim = bin_dir / 'gh'
 shim.write_text('#!/usr/bin/env bash\nset -euo pipefail\n[ "$1" = api ] || exit 90\nshift\n'
                 'if [ "$1" = --method ]; then printf \'%s %s\\n\' "$2" "$3" >>"$WRITES"; exit 0; fi\n'
-                'printf \'%s\\n\' "$1" >>"$READS"\n[ "$2" = --jq ] || exit 91\njq -r "$3" "$RUNS"\n')
+                'printf \'%s\\n\' "$1" >>"$READS"\n[ "$2" = --jq ] || exit 91\n'
+                'case "$1" in */actions/runs/*) jq -r "$3" "$RUNS.${1##*/}" ;; *) jq -r "$3" "$RUNS" ;; esac\n')
 shim.chmod(0o755)
 now = datetime.now(timezone.utc)
 def ago(minutes): return (now - timedelta(minutes=minutes)).strftime('%Y-%m-%dT%H:%M:%SZ')
 # The real list honours ?status=waiting; the fixture does not, so the
-# in-progress row proves the body's own status filter.
-(root / 'runs.json').write_text(json.dumps({'workflow_runs': [
+# in-progress row proves the body's own status filter. Run 104 leaves
+# waiting between the list and the re-read before its cancel.
+runs = [
     {'id': 101, 'status': 'waiting', 'updated_at': ago(31)},
     {'id': 102, 'status': 'waiting', 'updated_at': ago(10)},
     {'id': 103, 'status': 'in_progress', 'updated_at': ago(90)},
-]}))
+    {'id': 104, 'status': 'waiting', 'updated_at': ago(40)},
+]
+(root / 'runs.json').write_text(json.dumps({'workflow_runs': runs}))
+for listed in runs:
+    reread = dict(listed, status='in_progress') if listed['id'] == 104 else listed
+    (root / f"runs.json.{listed['id']}").write_text(json.dumps(reread))
 
 def run(script):
     for name in ('writes', 'reads'): (root / name).write_text('')
@@ -157,20 +164,29 @@ def run(script):
 def cancels(*ids): return [f'POST repos/acme/widgets/actions/runs/{i}/force-cancel' for i in ids]
 writes, out = run(body)
 assert writes == cancels(101), writes
-assert out == ['refresh-released=101'], out
-assert (root / 'reads').read_text().splitlines() == ['repos/acme/widgets/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100']
+assert out == ['refresh-released=101', 'refresh-release-skipped=104 status=in_progress'], out
+assert (root / 'reads').read_text().splitlines() == [
+    'repos/acme/widgets/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100',
+    'repos/acme/widgets/actions/runs/101', 'repos/acme/widgets/actions/runs/104']
 # Must-fail controls: without the release the stuck run stays; without the
-# bound or the status filter a young waiting or an in-progress run is cancelled.
+# bound a young waiting run is cancelled; without the list's status filter an
+# in-progress run reaches the re-read; without the re-read a run that left
+# waiting is cancelled.
+skipped = ['refresh-release-skipped=104 status=in_progress']
 for name, old, new, expected in (
-    ('release', 'gh api --method POST', ': gh api --method POST', cancels()),
-    ('bound', ' and now - (.updated_at | fromdateiso8601) > 1800', '', cancels(101, 102)),
-    ('status', 'select(.status == "waiting" and ', 'select(', cancels(101, 103)),
+    ('release', 'gh api --method POST', ': gh api --method POST', (cancels(), out)),
+    ('bound', ' and now - (.updated_at | fromdateiso8601) > 1800', '',
+     (cancels(101, 102), ['refresh-released=101', 'refresh-released=102'] + skipped)),
+    ('status', 'select(.status == "waiting" and ', 'select(',
+     (cancels(101), ['refresh-released=101', 'refresh-release-skipped=103 status=in_progress'] + skipped)),
+    ('re-read', 'if [ "$status" != waiting ]; then', 'if false; then',
+     (cancels(101, 104), ['refresh-released=101', 'refresh-released=104'])),
 ):
     assert body.count(old) == 1, name
-    mutant, _ = run(body.replace(old, new))
+    mutant = run(body.replace(old, new))
     assert mutant == expected, (name, mutant)
 PY
-then ok 'release job force-cancels only a run waiting past the bound before the grouped refresh; release, bound, status and group controls'; else bad 'stuck-waiting release'; fi
+then ok 'release job force-cancels only a run waiting past the bound before the grouped refresh and skips one that left waiting before the cancel; release, bound, status, re-read and group controls'; else bad 'stuck-waiting release'; fi
 if python3 - "$SKILL_DIR/templates/review-gate-writer.yml" "$TMP" <<'PY'
 from pathlib import Path
 import os

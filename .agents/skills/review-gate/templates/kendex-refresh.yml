@@ -39,6 +39,14 @@ jobs:
           stuck="$(gh api "repos/$GH_REPO/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100" \
             --jq '.workflow_runs[] | select(.status == "waiting" and now - (.updated_at | fromdateiso8601) > 1800) | .id')"
           for run in $stuck; do
+            # GitHub has no cancel conditioned on a run's status, and no
+            # reviewer exists to reject the gate, so re-read the run just
+            # before the cancel and skip one that has left waiting.
+            status="$(gh api "repos/$GH_REPO/actions/runs/$run" --jq .status)"
+            if [ "$status" != waiting ]; then
+              printf 'refresh-release-skipped=%s status=%s\n' "$run" "$status"
+              continue
+            fi
             gh api --method POST "repos/$GH_REPO/actions/runs/$run/force-cancel" >/dev/null
             printf 'refresh-released=%s\n' "$run"
           done
