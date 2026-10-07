@@ -9,6 +9,9 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+
 jobs:
   # The default marketplace holds itself to the strictest reading: everyone
   # who installs from it inherits whatever its safety pass still finds.
@@ -39,12 +42,13 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: System dependencies for the keychain store
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

@@ -28,6 +28,9 @@ on:
 permissions:
   contents: write
 
+env:
+  APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+
 # Hold the whole main run through publication: a pending matrix target can
 # otherwise be replaced even when another target of that run is building.
 # Tag runs get unique workflow groups and retain their job-level groups.
@@ -73,8 +76,8 @@ jobs:
       - name: Linux webview dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update
+          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libxdo-dev xdg-utils libarchive-tools
         shell: bash
       - run: npm ci --prefix ui

@@ -27,6 +27,9 @@ on:
 permissions:
   contents: read
 
+env:
+  APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+
 # A newer push to main supersedes a run still judging an older head: the
 # record it would open is stale before it lands. A run cancelled mid-way can
 # leave the rolling pull request disarmed or dequeued, or its branch pushed
@@ -97,7 +100,7 @@ jobs:
         with:
           key: lock-record
       - name: System dependencies for the keychain store
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
 
       # The judge is this tree's kendex, not a release: a change to the code
       # that hashes, renders or records is one of the changes that moves the
