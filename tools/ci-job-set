@@ -35,8 +35,14 @@
 #                  `docs_only` and `changed_path` lines are this script's
 #                  own inputs as that run had them, so what that run ran is
 #                  this selection over them, and a lane it ran stands down
-#                  here. A record whose lines this selection refuses stands
+#                  on a pull request. Groups ignore this tree proof.
+#                  A record whose lines this selection refuses stands
 #                  nothing down and says why on a `proof=ignored` line.
+#   PATCH_ID       this diff's stable git patch-id, computed by the action
+#   MACOS_PROOF_RECORD  a successful pull-request run's opt-in macOS record,
+#                  with matching patch_id and macos_patch=true. Only this
+#                  proof can stand macOS lanes down on a merge group.
+#                  Tree proof never stands group Linux or Windows lanes down.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
@@ -82,15 +88,17 @@
 #     verdict and paths. With --event-parity the
 #     script derives the selection at both events and refuses
 #     `event-parity` where they differ.
-#   - A proof stands down the selections its record covers. The run's
+#   - Tree proof stands down the selections its record covers on a pull
+#     request. A merge group accepts only matching macOS patch proof and
+#     never stands Linux or Windows lanes down. The run's
 #     selection is re-derived from its record with the rules above, at its
 #     event; each covered lane stands down here. A shell runner stands down
 #     where that record selected it over every shard this diff selects.
 #     A lane or shard outside that record keeps its current selection.
 #     bot_instructions is never covered: its changelog step judges the
 #     range from this event's base, and a record names no base.
-#     queue_macos_shards reads the macOS shell bit before any proof: no
-#     pull request runs the queue's macOS legs, so no proof covers them.
+#     queue_macos_shards reads the macOS bit after matching patch proof
+#     on merge groups, and the selected macOS bit on pull requests.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -135,8 +143,8 @@
 #   ui                  the vitest, tsc and biome lane.
 #   queue_macos_shards  the selected members of QUEUE_MACOS_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
-#                       shell bit is false. A merge group runs these on
-#                       macOS; no pull request does.
+#                       shell bit is false or group patch proof covers it.
+#                       Pull requests and groups run these on macOS.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -579,6 +587,8 @@ select_row() { # CLASS DOCS PATHS EVENT
 # A refused record stands nothing down and says why.
 was=""
 record="${PROOF_RECORD:-}"
+# A queue group must re-test every integrated-tree lane.
+[ "$EVENT" != merge_group ] || record=""
 if [ -n "$record" ]; then
   record_line() { printf '%s\n' "$record" | sed -n "s/^$1=//p"; }
   r_event="$(record_line event)"
@@ -601,6 +611,18 @@ if [ -n "$record" ]; then
   fi
 fi
 
+# Only the successful-run lookup's macOS record can waive queue portability.
+# An absent, duplicate or mismatched identity leaves every macOS lane selected.
+patch_record="${MACOS_PROOF_RECORD:-}"
+patch_was=""
+if [ "$EVENT" = merge_group ] && [ -n "$patch_record" ] && [ -n "${PATCH_ID:-}" ]; then
+  patch_line() { printf '%s\n' "$patch_record" | sed -n "s/^$1=//p"; }
+  if [ "$(patch_line patch_id)" = "$PATCH_ID" ] && [ "$(patch_line macos_patch)" = true ] &&
+    [ "$(patch_line event)" = pull_request ]; then
+    patch_was="$(select_row "$(patch_line change_class)" "$(patch_line docs_only)" "$(patch_line changed_path)" pull_request)" || patch_was=""
+  fi
+fi
+
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$EVENT")" || exit 2
 
 # Event parity: pull requests and merge groups receive equal lane, shard and
@@ -617,6 +639,8 @@ if [ "$parity" = true ]; then
       "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
   done
 fi
+
+[ -z "$patch_was" ] || was="$patch_was"
 
 # A proof clears the lane selections its source row covers. Shell runner
 # bits also require that source row to include every current shard.
@@ -638,6 +662,9 @@ for lane in $LEGS $JOBS; do
   ran=false
   [ -z "$was" ] || ran="$(sel_get "$was" "$lane")"
   case "$lane" in linux | macos) [ "$covered" = true ] || ran=false ;; esac
+  if [ "$EVENT" = merge_group ]; then
+    case "$lane" in macos | cargo_macos) ;; *) ran=false ;; esac
+  fi
   # The changelog step's verdict reads the base, which the record lacks.
   case "$lane" in bot_instructions) ran=false ;; esac
   if [ "$value:$ran" = true:true ]; then
@@ -656,12 +683,16 @@ done
 shell=false
 [ -z "$legs" ] || shell=true
 
-# The queue's macOS legs, off the selection before the proof above.
+# The PR and queue macOS legs; matching patch proof can clear only the group.
 queue=""
 if [ "$(sel_get "$now" macos)" = true ]; then
   for shard in $QUEUE_MACOS_SHARDS; do
     case "$now_shards" in *"\"$shard\""*) queue="${queue:+$queue,}\"$shard\"" ;; esac
   done
+fi
+
+if [ "$EVENT" = merge_group ] && [ -n "$patch_was" ]; then
+  case "$legs" in *macos-latest*) ;; *) queue="" ;; esac
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job

@@ -1,0 +1,1 @@
+- Merge groups reuse passing macOS tests for an unchanged pull request patch. Ubuntu tests still check the integrated tree. macOS tests run again after merge to detect failures from combined changes.

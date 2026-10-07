@@ -32,6 +32,9 @@
 #          the `:event-uniform` mark. Any other value, empty included, says
 #          it does not. Only it lets a run that reads no declaration record
 #          covers=all.
+#   MACOS_PATCH_PROOF  true when this workflow runs selected macOS jobs on
+#          pull requests; publishes patch_id and macos_proof_record separately
+#          from tree proof so no integrated-tree lane can skip on a patch.
 #   GH_TOKEN  the job token, which `proof` reads workflow runs with
 # Environment, from the runner:
 #   GITHUB_OUTPUT  the step output file every writer appends to
@@ -464,6 +467,15 @@ proof_run="$(proof_line run)"
 proof_tree="$(proof_line tree)"
 proof_workflow="$(proof_line workflow)"
 proof_record="$(proof_line record)"
+patch_id="$(proof_line patch_id)"
+macos_contract="$(proof_line macos_contract)"
+macos_proof_record=""
+if [ "$(proof_line kind)" = macos-patch ]; then
+  [ "$proof_reuse" != true ] || macos_proof_record="$proof_record"
+  # Patch portability never authorizes a tree lane to skip integration.
+  proof_reuse=false
+  proof_record=""
+fi
 case "$proof_reuse" in
   true | false) [ -n "$proof_reason" ] ;;
   *) false ;;
@@ -549,6 +561,11 @@ done
 # Every lane_verdicts line starts `lane_`, and every record line is
 # `key=value` with a fixed key, so neither can spell its delimiter.
 {
+  if [ "${MACOS_PATCH_PROOF:-}" = true ]; then
+    printf 'patch_id=%s\nmacos_proof_record<<__change_class_macos_record_end__\n' "$patch_id"
+    [ -z "$macos_proof_record" ] || cat -- "$macos_proof_record"
+    printf '__change_class_macos_record_end__\n'
+  fi
   printf 'proof_reuse=%s\nproof_reason=%s\nproof_run=%s\nproof_tree=%s\n' \
     "$proof_reuse" "$proof_reason" "$proof_run" "$proof_tree"
   printf 'proof_record<<__change_class_proof_record_end__\n'
@@ -599,6 +616,9 @@ if [ -n "$record_dir" ]; then
   {
     printf 'tree=%s\nworkflow=%s\nevent=%s\nchange_class=%s\ndocs_only=%s\n' \
       "$proof_tree" "$proof_workflow" "$EVENT" "$class" "${docs#docs_only=}"
+    if [ "${MACOS_PATCH_PROOF:-}" = true ] && [ -n "$patch_id" ]; then
+      printf 'patch_id=%s\nmacos_patch=true\nmacos_contract=%s\n' "$patch_id" "$macos_contract"
+    fi
     case "$covers" in
       carried)
         printf 'covers=lanes\n%s\n' "$record_lanes" ;;

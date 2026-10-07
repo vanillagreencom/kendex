@@ -57,6 +57,12 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 `tools/setup`, once per clone, arms the commit-guards hooks. The chain and its order are `skills/commit-guards/DEVELOPMENT.md` § The pre-commit chain; its last lane is `tools/guard`, named by `COMMIT_GUARDS_PRE_COMMIT_LOCAL` in `kendex.settings.toml`. Read `tools/guard`: it is the list of repo-specific rules, and every rule a shipped package already judges is left to that package. Commit checks compile the changed Rust crates and check changed UI code; they do not run the test suites or documentation builds. The commit-msg hook holds every commit-message rule.
 
+## CI
+
+Pull requests run the selected macOS cargo tests and shell shards. A merge group can reuse that macOS result when a successful pull-request run of the same workflow recorded the same stable patch id. The id comes from the diff against the endpoints' merge base. A missing record, changed patch, changed workflow or job selector, or unreadable proof runs the selected macOS tests again. Ubuntu lanes always test the integrated tree. Required check names stay unchanged.
+
+Patch proof can miss a macOS failure that requires independently passing patches to combine. The push to main runs macOS cargo tests and the full macOS shell roster to report that failure after merge. Check that run when a merge group reused macOS proof. Linux and Windows cargo jobs on main compile without running tests.
+
 ## The self-install
 
 This repository is a kendex project as well as the default catalog. `kendex.toml` is what the catalog publishes; `kendex-local.toml` is the manifest this checkout installs from, so the published file stays the definition. Every skill, agent and hook the repository uses is a render under `.agents/skills/`, `.claude/`, `.codex/` and `.pi/`, and a change to a source lands its render in the same commit; the rule is `skills/AGENTS.md`.

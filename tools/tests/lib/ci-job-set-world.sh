@@ -31,7 +31,9 @@ ROOT="$(git rev-parse --show-toplevel)"
 JOB_SET="$ROOT/tools/ci-job-set"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d "$ROOT/tmp/ci-job-set-world.XXXXXX")"
+TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
@@ -52,6 +54,7 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   : >"$out"
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
     EVENT="${SELECT_EVENT-pull_request}" PROOF_RECORD="${SELECT_PROOF:-}" \
+    PATCH_ID="${SELECT_PATCH_ID:-}" MACOS_PROOF_RECORD="${SELECT_MACOS_PROOF:-}" \
     GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
@@ -131,10 +134,14 @@ UI_ROW="$(measured none true true false '[]' '[]')"
 ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
 ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" '["orch-terminal","orch-oversee-succeed"]')"
 # Two proof selections over this tree: a merge group of an orch code diff
-# whose proof is a pull request run over orch's prose alone, which ran the
-# Linux legs of the same shards and no platform lane, and one of a lane-source
-# diff whose pull request ran over the same paths.
+# whose tree proof is a pull request run over orch's prose alone, and one
+# of a .github prose diff whose pull request ran over the same paths.
+# Groups ignore both tree proofs and retain their integrated lanes.
 # tools/tests/ci-class-job-set.test.sh holds each to what the selection must
 # be.
 ORCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request micro false skills/orch/SKILL.md | tr ',' '\n')" selection micro false skills/orch/scripts/lanes)"
 SOURCE_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request micro false .github/AGENTS.md skills/orch/scripts/lanes | tr ',' '\n')" selection micro false "$(printf '%s\n' .github/AGENTS.md skills/orch/scripts/lanes)")"
+
+PATCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
+patch_id=p1
+macos_patch=true" selection micro false skills/orch/scripts/lanes)"

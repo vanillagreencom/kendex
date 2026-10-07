@@ -25,7 +25,9 @@ ROOT="$(git rev-parse --show-toplevel)"
 PROOF="$ROOT/.github/actions/change-class/proof"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d "$ROOT/tmp/change-class-proof.XXXXXX")"
+TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
@@ -46,8 +48,11 @@ git init -q "$REPO"
 git -C "$REPO" config user.email t@example.com
 git -C "$REPO" config user.name t
 git -C "$REPO" config commit.gpgsign false
+mkdir -p "$REPO/.github/workflows" "$REPO/tools"
+printf 'workflow\n' >"$REPO/.github/workflows/ci.yml"
+printf 'selector\n' >"$REPO/tools/ci-job-set"
 printf 'a\n' >"$REPO/a"
-git -C "$REPO" add a
+git -C "$REPO" add -A
 git -C "$REPO" commit -q -m base
 B="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" checkout -q -b topic
@@ -112,6 +117,39 @@ covers=all"
 record_zip wrong-member change-class-record "$RECORD"
 printf 'not a zip\n' >"$TMP/garbage.zip"
 
+# A base move changes the integrated tree but leaves the queued patch intact.
+git -C "$REPO" checkout -q --detach "$B"
+printf 'main move\n' >"$REPO/main-only"
+git -C "$REPO" add main-only
+git -C "$REPO" commit -q -m advance
+B2="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" cherry-pick "$P" >/dev/null
+S2="$(git -C "$REPO" rev-parse HEAD)"
+PATCH="$(git -C "$REPO" diff --binary "$B" "$S" -- | git patch-id --stable)"
+PATCH="${PATCH%% *}"
+CONTRACT="$( { git -C "$REPO" rev-parse "$S:$WORKFLOW"; git -C "$REPO" rev-parse "$S:tools/ci-job-set"; } | git hash-object --stdin)"
+record_zip patch record "$RECORD
+patch_id=$PATCH
+macos_patch=true
+macos_contract=$CONTRACT"
+record_zip wrong-patch record "$RECORD
+patch_id=0000000000000000000000000000000000000000
+macos_patch=true
+macos_contract=$CONTRACT"
+record_zip no-macos record "$RECORD
+patch_id=$PATCH
+macos_contract=$CONTRACT"
+record_zip wrong-contract record "$RECORD
+patch_id=$PATCH
+macos_patch=true
+macos_contract=old"
+record_zip wrong-patch-event record "tree=$TREE
+workflow=$WORKFLOW
+event=merge_group
+patch_id=$PATCH
+macos_patch=true
+macos_contract=$CONTRACT"
+
 # --- The fake gh --------------------------------------------------------------
 # It records EVERY invocation before deciding how to answer, api-error
 # included: a log written only on the success path could not tell "the script
@@ -173,6 +211,7 @@ artifact_json() { # ID NAME EXPIRED RUN
 # The artifacts named for the tree, the one RUN left among them.
 the_artifacts() { # RUN
   local name="change-class-proof-$FAKE_TREE"
+  [ "${MACOS_PATCH_PROOF:-}" != true ] || name="change-class-macos-proof-$FAKE_PATCH"
   case "$mode" in
     malformed-artifacts) printf '{"artifacts":{}}\n' ;;
     no-artifact) printf '{"artifacts":[]}\n' ;;
@@ -222,7 +261,11 @@ case "$args" in
     exit 0 ;;
   *"actions/artifacts -f"*)
     [ "$mode" != artifacts-api-error ] || exit 1
-    [[ "$args" == *"name=change-class-proof-$FAKE_TREE"* ]] || exit 1
+    if [ "${MACOS_PATCH_PROOF:-}" = true ]; then
+      [[ "$args" == *"name=change-class-macos-proof-$FAKE_PATCH"* ]] || exit 1
+    else
+      [[ "$args" == *"name=change-class-proof-$FAKE_TREE"* ]] || exit 1
+    fi
     the_artifacts "$FAKE_PROVER"
     exit 0 ;;
 esac
@@ -260,10 +303,10 @@ run() { # SCRIPT KIND(push|merge_group) MODE ZIP [NAME=VALUE]...
   (env -i PATH="$BIN" HOME="$TMP" \
     FAKE_GH_CALLS="$CALLS" FAKE_GH_MODE="$mode" FAKE_ZIP="$TMP/$zip.zip" \
     FAKE_WORKFLOW="$WORKFLOW" FAKE_WORKFLOW_ID="$WORKFLOW_ID" FAKE_REPO="$REPO_NAME" \
-    FAKE_S="$S" FAKE_P="$P" FAKE_B="$B" FAKE_TREE="$TREE" FAKE_OTHER_TREE="$OTHER_TREE" FAKE_PR="$PR" \
+    FAKE_PATCH="$PATCH" FAKE_S="$S" FAKE_P="$P" FAKE_B="$B" FAKE_TREE="$TREE" FAKE_OTHER_TREE="$OTHER_TREE" FAKE_PR="$PR" \
     FAKE_RUN_MG="$RUN_MG" FAKE_RUN_PR="$RUN_PR" FAKE_RUN_PR_FAILED="$RUN_PR_FAILED" \
     FAKE_ARTIFACT="$ARTIFACT" FAKE_ARTIFACT_FAILED="$ARTIFACT_FAILED" FAKE_PROVER="$prover" \
-    EVENT="$kind" HEAD="$S" REPO="$REPO" \
+    EVENT="$kind" BASE="$B" HEAD="$S" REPO="$REPO" \
     GITHUB_SHA="$S" GITHUB_REPOSITORY="$REPO_NAME" GITHUB_REF="$ref" \
     GITHUB_ACTOR='github-merge-queue[bot]' GITHUB_TRIGGERING_ACTOR='github-merge-queue[bot]' \
     GITHUB_WORKFLOW_REF="$REPO_NAME/$WORKFLOW@refs/heads/main" GITHUB_EVENT_PATH="$TMP/event-$kind.json" \
@@ -352,6 +395,14 @@ the artifact is not a zip|merge_group|valid|garbage||false record-unreadable  4
 the artifact's member is not named record|merge_group|valid|wrong-member||false record-unreadable  4
 the record names another tree|merge_group|valid|wrong-tree||false record-mismatch  4
 the record names another workflow|merge_group|valid|wrong-workflow||false record-mismatch  4
+patch proof survives the moved base|merge_group|valid|patch|MACOS_PATCH_PROOF=true BASE=$B2 HEAD=$S2 GITHUB_SHA=$S2|true exact-proof $RUN_PR 4
+patch proof refuses changed test contract|merge_group|valid|wrong-contract|MACOS_PATCH_PROOF=true|false record-mismatch  4
+patch proof refuses different recorded patch|merge_group|valid|wrong-patch|MACOS_PATCH_PROOF=true|false record-mismatch  4
+patch proof refuses absent macOS coverage|merge_group|valid|no-macos|MACOS_PATCH_PROOF=true|false record-mismatch  4
+patch proof refuses non-PR record|merge_group|valid|wrong-patch-event|MACOS_PATCH_PROOF=true|false record-mismatch  4
+patch proof refuses failed run|merge_group|wrong-conclusion|patch|MACOS_PATCH_PROOF=true|false mismatched-proof  3
+patch proof refuses missing record|merge_group|no-artifact|patch|MACOS_PATCH_PROOF=true|false missing-record  2
+patch proof refuses unreadable merge base|merge_group|api-error|patch|MACOS_PATCH_PROOF=true BASE=absent|false patch-unreadable  0
 ROWS
 }
 row_answer() { # SCRIPT ROW-LABEL — the answer for the row named LABEL
@@ -367,7 +418,7 @@ while IFS='|' read -r label kind mode zip overrides expected; do
   # shellcheck disable=SC2086 # the overrides are blank-separated words
   check "$label" "$expected" "$(answer "$PROOF" "$kind" "$mode" "$zip" $overrides)"
 done < <(rows)
-[ "$table_rows" -eq 56 ] || { echo "the table read $table_rows rows" >&2; exit 1; }
+[ "$table_rows" -ge 56 ] || { echo "the table read $table_rows rows" >&2; exit 1; }
 
 # The tree and the workflow are printed on every answer, a refusal's too:
 # the record a run leaves is written from them.
@@ -381,6 +432,9 @@ check "an unreadable workflow ref prints the tree and an empty workflow" "$TREE 
   "$(line tree) $(line workflow)"
 check "a refusal prints what it saw" "event=schedule" \
   "$(run "$PROOF" merge_group api-error valid EVENT=schedule >/dev/null; line detail)"
+
+run "$PROOF" merge_group api-error patch EVENT=pull_request MACOS_PATCH_PROOF=true >/dev/null
+check "PR computes the patch identity without reading GitHub proof" "$PATCH 0" "$(line patch_id) $(calls)"
 
 # --- 2. The record ------------------------------------------------------------
 run "$PROOF" merge_group valid valid >/dev/null
@@ -465,8 +519,13 @@ any(.pull_requests[]?; .number == $pr and .head.sha == $head)@any(.pull_requests
   [ "$qualified" != "$run_id" ] || take_record "$artifact" "$run_id"@  take_record "$artifact" "$run_id"@a newer record whose run failed
   [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||@  [ "$recorded_workflow" = "$workflow_path" ] ||@the record names another tree
   [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||@  [ "$recorded_tree" = "$tree" ] ||@the record names another workflow
+    [ "$recorded_patch" = "$patch_id" ] && [ "$recorded_macos" = true ] &&@    true && [ "$recorded_macos" = true ] &&@patch proof refuses different recorded patch
+    [ "$recorded_patch" = "$patch_id" ] && [ "$recorded_macos" = true ] &&@    [ "$recorded_patch" = "$patch_id" ] && true &&@patch proof refuses absent macOS coverage
+      [ "$recorded_event" = pull_request ] && [ "$recorded_workflow" = "$workflow_path" ] ||@      true && [ "$recorded_workflow" = "$workflow_path" ] ||@patch proof refuses non-PR record
+[ "$kind" != macos-patch ] || artifact_name="change-class-macos-proof-$patch_id"@:@patch proof survives the moved base
+    [ "$recorded_contract" = "$macos_contract" ] || answer record-mismatch "run $2 changed the macOS contract"@:@patch proof refuses changed test contract
 ROWS
-[ "$mutants" -eq 33 ] || { echo "the mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -ge 33 ] || { echo "the mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

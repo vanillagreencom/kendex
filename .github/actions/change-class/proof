@@ -2,6 +2,11 @@
 # proof — whether a passing run of this workflow already tested the tree this
 # run is about to test, and the record that run left of what it covered.
 #
+# MACOS_PATCH_PROOF=true computes patch_id over BASE and HEAD at their
+# merge base. A merge group then reads change-class-macos-proof-<patch_id>
+# from a successful pull_request run. Its record must name the same patch,
+# workflow and macos_patch=true. Tree proof remains the default contract.
+#
 # Two events can reuse a proof, and each names the run that proved it:
 #   push         to the default branch, by the merge queue and nothing else:
 #                the merge_group run whose head sha is the pushed sha. The
@@ -50,6 +55,9 @@
 #             where GITHUB_WORKFLOW_REF or GITHUB_REPOSITORY does not read
 #             as one. tree and workflow are printed on every answer: the
 #             record a run leaves needs both even where no proof is looked up.
+#   patch_id  stable patch identity on opt-in pull requests and groups
+#   kind      tree|macos-patch, which separates patch proof from tree proof
+#   macos_contract  workflow and selector blob digest for opt-in proof
 #   reuse     true|false
 #   reason    `exact-proof` where reuse is true; otherwise one refusal key,
 #             distinct per rule, so a reader never collapses them to a bit:
@@ -60,7 +68,8 @@
 #             runs-api-error, malformed-runs, missing-proof,
 #             ambiguous-proof, mismatched-proof, artifacts-api-error,
 #             malformed-artifacts, missing-record, expired-record,
-#             record-download-error, record-unreadable, record-mismatch
+#             record-download-error, record-unreadable, record-mismatch,
+#             patch-unreadable
 #   detail    what the refusal saw, for the log
 #   run       the proving run's id where reuse is true
 #   record    the path of the downloaded record where reuse is true
@@ -79,10 +88,14 @@ WORK="$1"
 
 tree=""
 workflow=""
+patch_id=""
+macos_contract=""
+kind=tree
 answer() { # REASON DETAIL [RUN RECORD]
   printf 'tree=%s\nworkflow=%s\nreuse=%s\nreason=%s\ndetail=%s\nrun=%s\nrecord=%s\n' \
     "$tree" "$workflow" "$([ "$1" = exact-proof ] && echo true || echo false)" \
     "$1" "$2" "${3:-}" "${4:-}"
+  printf 'patch_id=%s\nkind=%s\nmacos_contract=%s\n' "$patch_id" "$kind" "$macos_contract"
   exit 0
 }
 
@@ -102,6 +115,28 @@ path_re='^\.github/workflows/[^/@]+$'
   answer invalid-input "repository=$repo workflow=$workflow_path"
 workflow="$workflow_path"
 workflow_file="${workflow_path##*/}"
+
+# The opt-in workflow runs its macOS selection on pull requests. Its
+# portability record follows the patch while Linux tests the integrated tree.
+if [ "${MACOS_PATCH_PROOF:-}" = true ]; then
+  case "${EVENT:?}" in
+    pull_request | merge_group)
+      contract_blobs="$(git -C "$REPO" rev-parse --verify "$GITHUB_SHA:$workflow" &&
+        git -C "$REPO" rev-parse --verify "$GITHUB_SHA:tools/ci-job-set")" ||
+        answer patch-unreadable "the macOS workflow or selector is absent"
+      macos_contract="$(printf '%s\n' "$contract_blobs" | git hash-object --stdin)" ||
+        answer patch-unreadable "the macOS contract could not be hashed"
+      patch_base="$(git -C "$REPO" merge-base "${BASE:-}" "${HEAD:-}" 2>/dev/null)" ||
+        answer patch-unreadable "the diff endpoints have no readable merge base"
+      patch_line="$(git -C "$REPO" diff --binary --no-ext-diff "$patch_base" "$HEAD" -- | git patch-id --stable)" ||
+        answer patch-unreadable "git patch-id could not read the diff"
+      patch_id="${patch_line%% *}"
+      [[ "$patch_id" =~ ^[0-9a-f]{40}$ ]] ||
+        answer patch-unreadable "git patch-id returned no single patch"
+      [ "$EVENT" != merge_group ] || kind=macos-patch
+      ;;
+  esac
+fi
 
 # Eligibility, from the event alone, before any API call.
 case "${EVENT:?}" in
@@ -192,12 +227,26 @@ take_record() { # ARTIFACT RUN
     answer record-unreadable "artifact $1 of run $2 holds no readable record"
   recorded_tree="$(sed -n 's/^tree=//p' "$WORK/record")" || recorded_tree=""
   recorded_workflow="$(sed -n 's/^workflow=//p' "$WORK/record")" || recorded_workflow=""
+  if [ "$kind" = macos-patch ]; then
+    if ! recorded_contract="$(sed -n 's/^macos_contract=//p' "$WORK/record")" ||
+      ! recorded_patch="$(sed -n 's/^patch_id=//p' "$WORK/record")" ||
+      ! recorded_macos="$(sed -n 's/^macos_patch=//p' "$WORK/record")" ||
+      ! recorded_event="$(sed -n 's/^event=//p' "$WORK/record")"; then
+      answer record-unreadable "artifact $1 of run $2 holds no readable macOS proof fields"
+    fi
+    [ "$recorded_contract" = "$macos_contract" ] || answer record-mismatch "run $2 changed the macOS contract"
+    [ "$recorded_patch" = "$patch_id" ] && [ "$recorded_macos" = true ] &&
+      [ "$recorded_event" = pull_request ] && [ "$recorded_workflow" = "$workflow_path" ] ||
+      answer record-mismatch "run $2 recorded patch=$recorded_patch macos=$recorded_macos event=$recorded_event workflow=$recorded_workflow"
+  else
   [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||
     answer record-mismatch "run $2 recorded tree=$recorded_tree workflow=$recorded_workflow"
+  fi
   answer exact-proof "run=$2 event=$want_event artifact=$1" "$2" "$WORK/record"
 }
 
 artifact_name="change-class-proof-$tree"
+[ "$kind" != macos-patch ] || artifact_name="change-class-macos-proof-$patch_id"
 
 # A push reuses one run: the queue made one group for the sha it pushed, and
 # two say the sha was tested under two states this script cannot tell apart.

@@ -18,17 +18,14 @@ name: Skill Tests
 # a `trivial` one changing a path tools/rust-reads names, runs that job, the
 # shell shards its packages select and each other lane as `tools/ci-job-set`
 # selects it; the invariant comment there is the one statement of what each
-# lane runs. A merge group whose tree its pull request's passing run
-# already tested reuses that run's proof: the action reads the record that
-# run left, `tools/ci-job-set` re-derives what it ran from it and stands
-# those lanes down but bot-instructions, whose changelog step judges the
-# group's own base, so such a group runs nothing else the pull request did. The
-# pull request selects every lane, shard and runner the merge group selects
-# for the same paths, and the `changes` job's call
-# of `tools/ci-job-set --event-parity` refuses a selection that differs by
-# event; so the pull request's required
-# checks hold the whole merge-group job set but the queue's macOS legs, and
-# an admin merge lands only on a green run of that set, without those legs.
+# lane runs. Pull requests run the selected macOS cargo and shell tests.
+# A merge group reuses their proof only from a successful pull-request run
+# of this workflow whose record carries the same stable patch id. The id
+# measures the diff from the endpoints' merge base. A changed patch, workflow
+# or job selector, missing record or failed lookup runs the macOS legs. Ubuntu lanes always test the
+# integrated tree, even when its tree equals the pull request's tree.
+# `tools/ci-job-set --event-parity` holds the Ubuntu selection equal across
+# events before applying proof. The required checks retain their names.
 # The aggregators
 # still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
@@ -36,13 +33,13 @@ name: Skill Tests
 # excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
-# so its cargo lanes run only the compile steps: each cargo lane builds its targets with
-# `--no-run` and saves the compile cache under the merged lockfile, and every
-# cargo test step is conditioned off. Whatever else does NOT run on every event
-# carries its own `if:` saying why. macOS skill suites run the full roster on
-# main pushes, and a merge group runs the queue's three macOS shards where its
-# selection names them; no pull request runs one. They test Bash 3.2 and BSD
-# tools without delaying a pull request's required checks.
+# so its Linux and Windows cargo lanes run only the compile steps and save
+# the compile cache under the merged lockfile. macOS cargo tests and the full
+# macOS shell roster run on main. Patch proof can miss a macOS failure that
+# requires independently passing patches to combine; the main-push run
+# reports that failure after merge. Whatever else does NOT run on every event
+# carries its own `if:` saying why. Selected macOS shell shards test Bash 3.2
+# and BSD tools on pull requests and merge groups.
 # GitHub enforces approval and thread
 # resolution independently of CI job selection.
 #
@@ -103,13 +100,11 @@ name: Skill Tests
 # the list of legs held to 30 minutes, every macOS leg among them; every
 # other leg takes 15. The per-shard figures behind each budget are in the
 # comment above it.
-# Every pull request pays its selected Linux shards, and the merge queue stands them down where the proof
-# above holds, so the slowest of them is charged once per merge there. It is
-# charged twice where the group runs them again: a base that moved or an
-# entry queued ahead gives the group a tree no pull request run tested, and
-# a passing run the lookup cannot find, a record it cannot read or match, or
-# a record tools/ci-job-set refuses stands nothing down. Each queue macOS leg
-# its `queue_macos_shards` list names costs its macOS step time per entry.
+# Every pull request and merge group runs its selected Linux shards. The
+# selected macOS legs run again in the group only where patch proof is
+# unavailable or does not cover them. A passing run the lookup cannot find,
+# a record it cannot read or match, or a record tools/ci-job-set refuses
+# stands no macOS leg down.
 
 "on":
   pull_request:
@@ -292,14 +287,15 @@ jobs:
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}
+          macos-patch-proof: 'true'
       # The class becomes a job set here and nowhere else. Each lane's `if:`
       # below reads one of these lines rather than re-deriving the selection
       # from the class and the paths, so there is one place to read what a
       # class runs and one place to change it. It runs in the workspace root,
       # the pull request's tree, whose crates/ tools/rust-reads reads. The
-      # proof record is the passing run that already tested this tree, where
-      # the action found one; the script stands down what that run ran.
-      # --event-parity refuses a selection that differs by event, once per
+      # macOS record belongs to a passing PR run of the same patch. The
+      # script keeps Ubuntu lanes and stands down only covered macOS legs.
+      # --event-parity refuses an Ubuntu selection that differs by event, once per
       # run here rather than on every call the suites make.
       - id: select
         env:
@@ -308,6 +304,8 @@ jobs:
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
           EVENT: ${{ env.EVENT }}
           PROOF_RECORD: ${{ steps.classify.outputs.proof_record }}
+          PATCH_ID: ${{ steps.classify.outputs.patch_id }}
+          MACOS_PROOF_RECORD: ${{ steps.classify.outputs.macos_proof_record }}
         run: tools/ci-job-set --event-parity
 
   # This repository is the package's source, so the candidate's own checker
@@ -1444,7 +1442,6 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
-  # macOS queues and slower process launches do not hold required PR checks.
   # On main pushes changes is skipped, so the shared matrix expression uses
   # its full-roster fallback. The suite steps and budgets have one owner.
   skill-suites-macos:
@@ -1470,17 +1467,18 @@ jobs:
     env: *skill-suite-env
     steps: *skill-suite-steps
 
-  # THE QUEUE'S macOS LEGS: a merge group runs on macOS the shards the
+  # THE PATCH'S macOS LEGS: pull requests and merge groups run the shards the
   # changes job's `queue_macos_shards` list names; tools/ci-job-set's header
   # states when it is empty. Every other macOS-capable shard runs on main
   # pushes only. Where the classifier published nothing the list below,
-  # ci-job-set's QUEUE_MACOS_SHARDS, runs; no pull request runs a leg. CI
+  # ci-job-set's QUEUE_MACOS_SHARDS, runs. A matching PR proof can clear the
+  # group's list. CI
   # holds this job to the same list, so a failed or cancelled leg ejects the
   # entry and an unselected one does not.
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1622,7 +1620,8 @@ jobs:
   # package is sharded again, by `--test` target, for the reasons the roster
   # step in that job gives. Every lane compiles in a step of its own
   # (`--no-run`) so a compile failure reads as one, and on the push to main
-  # that step is the whole job (see the header). The aggregators after the
+  # that step is the whole Linux and Windows job. macOS also runs tests to
+  # catch failures from combined patches after proof reuse. The aggregators after the
   # shards carry the per-repository ruleset's required contexts, `Cargo
   # (workspace tests)` and `macOS cargo (workspace tests)`: frozen names, for
   # the reason the Skill suites aggregator gives, and retired with it.
@@ -1881,7 +1880,6 @@ jobs:
       # Integration filters get their own invocation: passing them alongside
       # --lib, --bins or cli_smoke would also filter those unrelated tests.
       - name: test
-        if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 11 || matrix.leg == 'verify-lock' && 10 || 12 }}
         env:
           GH_TOKEN: ""
@@ -2088,8 +2086,8 @@ jobs:
   #
   # tools/ci-aggregate accepts a skipped lane only where the changes job
   # selected it `false`, on pull_request and merge_group alike, so a merge
-  # group runs the class job set its pull request ran, plus the queue's
-  # macOS legs its `queue_macos_shards` list names. The two diff checks
+  # group runs the Ubuntu job set its pull request ran, and the macOS legs
+  # its patch proof did not cover. The two diff checks
   # read a pull request's base and run on no other event: each is held to
   # the event condition it runs under, spelled as its own `if:` spells it.
   ci:
@@ -2106,7 +2104,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
-          MACOS_QUEUE: ${{ github.event_name == 'merge_group' && needs.changes.outputs.queue_macos_shards != '[]' }}
+          MACOS_QUEUE: ${{ github.event_name != 'push' && needs.changes.outputs.queue_macos_shards != '[]' }}
           UI: ${{ needs.changes.outputs.ui }}
           BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
           CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}

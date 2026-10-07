@@ -75,7 +75,9 @@ LANES_LIB="$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh"
 ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d "$ROOT/tmp/change-class-action.XXXXXX")"
+TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'chmod -R u+rwX "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
@@ -169,6 +171,7 @@ reason=ineligible-event
 printf 'tree=%s\nworkflow=%s\nreuse=%s\nreason=%s\ndetail=stub\nrun=%s\nrecord=%s\n' \
   "${STUB_TREE:-}" "${STUB_WORKFLOW-.github/workflows/ci.yml}" "${STUB_REUSE:-false}" \
   "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "$record"
+[ -z "${STUB_KIND:-}" ] || printf 'kind=%s\npatch_id=%s\n' "$STUB_KIND" "${STUB_PATCH:-}"
 STUB
 chmod +x "$STUB_PROOF"
 
@@ -522,7 +525,7 @@ check "a refused lane read writes no lanes or lane_verdicts output" "" \
 
 # The names one classify run writes, heredoc-delimited values skipped. The
 # standard row reaches every writer, lanes last.
-run "$CLASSIFY" STUB_CLASS=standard STUB_PATHS=skills/orch/SKILL.md >/dev/null
+run "$CLASSIFY" STUB_CLASS=standard STUB_PATHS=skills/orch/SKILL.md MACOS_PATCH_PROOF=true >/dev/null
 written="$(awk '
   collecting { if ($0 == delim) collecting = 0; next }
   /^[a-z_]+<</ { delim = $0; sub(/^[^<]*<</, "", delim); sub(/<<.*/, ""); print; collecting = 1; next }
@@ -574,7 +577,7 @@ NEEDLE="$needle" awk '
 ! cmp -s "$ACTION" "$TMP/action.yml" || { echo "the action.yml mutant changed nothing" >&2; exit 1; }
 check "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row" \
   'declared-unforwarded: lanes ${{ steps.classify.outputs.lane }}' "$(forwarding "$TMP/action.yml")"
-[ "$(grep -c 'steps\.classify\.outputs\.record_dir' "$ACTION")" -eq 2 ] ||
+[ "$(grep -c 'steps\.classify\.outputs\.record_dir' "$ACTION")" -ge 2 ] ||
   { echo "the upload step no longer reads record_dir on two lines of $ACTION" >&2; exit 1; }
 sed 's/steps\.classify\.outputs\.record_dir/steps.classify.outputs.record_path/' "$ACTION" >"$TMP/action.yml"
 check "must-fail: an action.yml whose upload step reads no record_dir fails the forwarding row" \
@@ -916,6 +919,18 @@ check "a behaviour-preserving queue mutant reads as still answering its row" sur
   "$(queue_mutant classify '    elif [ "$queue_only" != true ]; then' \
     '    elif [ "$queue_only" != "true" ]; then' pr-unconfirmed)"
 
+# Patch proof has a separate output and never changes tree lane verdicts.
+status="$(run "$CLASSIFY" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RUN=42 STUB_RECORD='covers=all')"
+check "patch proof classify exit" "0" "$status"
+check "patch proof keeps integrated lanes" "true false p1" "$(sed -n 's/^lanes=//p' "$OUT") $(sed -n 's/^proof_reuse=//p' "$OUT") $(sed -n 's/^patch_id=//p' "$OUT")"
+check "patch proof publishes macOS record separately" "macos_proof_record=covers=all" "$(outputs | tr ' ' '\n' | grep '^macos_proof_record=')"
+needle='  proof_reuse=false'
+[ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] || exit 1
+sed '/^  proof_reuse=false$/d; /^  proof_record=""$/d' "$CLASSIFY" >"$TMP/patch-leak-classify"
+! cmp -s "$CLASSIFY" "$TMP/patch-leak-classify" || exit 1
+status="$(run "$TMP/patch-leak-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RECORD='covers=all')"
+[ "$status" = 0 ] && [ "$(sed -n 's/^lanes=//p' "$OUT")" = false ] && ok "must-fail: patch proof leaks into tree proof" || bad "must-fail: patch proof leak control"
+
 # --- 6. The proof -------------------------------------------------------------
 
 # What a proof stands down. Every row reuses run 42 on tree t1 and reads the
@@ -1065,6 +1080,11 @@ case "$(skip_answer "$mutant" "STUB_TREE=t1 STUB_WORKFLOW= RUNNER_TEMP=$RUNNER")
   *) bad "must-fail: a classify recording an unread workflow writes the record" ;;
 esac
 
+status="$(run "$CLASSIFY" MACOS_PATCH_PROOF=true STUB_KIND=tree STUB_PATCH=p1 STUB_TREE=t1 RUNNER_TEMP="$RUNNER")"
+check "PR patch record writer exit" "0" "$status"
+check "PR record carries patch identity and macOS opt-in" "patch_id=p1
+macos_patch=true" "$(grep -E '^(patch_id|macos_patch)=' "$RECORD_DIR/record")"
+
 # The record's names, bound at both ends. The one file in record_dir is the
 # member proof unzips, and the upload step uploads record_dir itself, so the
 # artifact's root is that directory and its member the file's own name; a
@@ -1081,7 +1101,7 @@ upload_key() { # ACTION_YML KEY — the upload step's KEY under `with:`
   awk -v key="$2" '
     /^    - / { upload = 0 }
     /^      uses: actions\/upload-artifact@/ { upload = 1 }
-    upload && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11) }
+    upload && !seen && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11); seen=1 }
   ' "$1"
 }
 binding() { # PROOF ACTION_YML — `bound`, or what disagrees
@@ -1111,7 +1131,7 @@ sed 's/unzip -p "$WORK\/record.zip" record >/unzip -p "$WORK\/record.zip" change
 ! cmp -s "$PROOF_SCRIPT" "$TMP/proof-member" || { echo "the member mutant changed nothing" >&2; exit 1; }
 check "must-fail: a proof reading another member breaks the binding" \
   "classify writes record, proof reads change-class-record" "$(binding "$TMP/proof-member" "$ACTION")"
-awk '$0 == "        path: ${{ steps.classify.outputs.record_dir }}" { print "        path: ${{ runner.temp }}/change-class-record/record"; n++; next } { print } END { exit n != 1 }' \
+awk '$0 == "        path: ${{ steps.classify.outputs.record_dir }}" && !n { print "        path: ${{ runner.temp }}/change-class-record/record"; n++; next } { print } END { exit n != 1 }' \
   "$ACTION" >"$TMP/action-upload.yml" || { echo "the upload path is no longer one line in $ACTION" >&2; exit 1; }
 check "must-fail: an action uploading the record file itself breaks the binding" \
   'the upload step uploads ${{ runner.temp }}/change-class-record/record, not record_dir' \

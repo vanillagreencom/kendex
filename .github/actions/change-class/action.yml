@@ -84,6 +84,14 @@ inputs:
       lane and this input is not read.
     required: false
     default: ''
+  macos-patch-proof:
+    description: >-
+      true for a workflow that runs selected macOS tests on pull requests
+      and consumes macos_proof_record to reuse only those tests in a merge
+      group. Ubuntu tests must still run against the integrated tree.
+      Unset preserves the generic tree-proof contract.
+    required: false
+    default: ''
 
 outputs:
   change_class:
@@ -152,6 +160,16 @@ outputs:
       ran, and its covers and lane lines, which this action applies to
       lanes and lane_verdicts.
     value: ${{ steps.classify.outputs.proof_record }}
+  patch_id:
+    description: The stable diff id from the endpoints' merge base, empty when unavailable.
+    value: ${{ steps.classify.outputs.patch_id }}
+  macos_proof_record:
+    description: >-
+      The record of a successful pull-request run of this workflow with
+      macos-patch-proof enabled, the same patch_id and unchanged workflow
+      and job selector. Empty when no record qualifies. It authorizes only
+      covered macOS tests, never Ubuntu tests.
+    value: ${{ steps.classify.outputs.macos_proof_record }}
   lane_verdicts:
     description: >-
       One lane_<name>=true|false line per lane the declaration names, decided
@@ -190,6 +208,7 @@ runs:
         REPO: ${{ inputs.repo }}
         LANES_FROM: ${{ inputs.lanes-from }}
         COVERS_ALL_LANES: ${{ inputs.covers-all-lanes }}
+        MACOS_PATCH_PROOF: ${{ inputs.macos-patch-proof }}
         GH_TOKEN: ${{ github.token }}
       run: |
         "$GITHUB_ACTION_PATH/classify"
@@ -208,6 +227,16 @@ runs:
       continue-on-error: true
       with:
         name: change-class-proof-${{ steps.classify.outputs.proof_tree }}
+        path: ${{ steps.classify.outputs.record_dir }}
+        retention-days: 30
+        overwrite: true
+        if-no-files-found: error
+    - name: the pull request's macOS patch proof
+      if: inputs.macos-patch-proof == 'true' && inputs.event == 'pull_request' && steps.classify.outputs.record_dir != '' && steps.classify.outputs.patch_id != ''
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}
         path: ${{ steps.classify.outputs.record_dir }}
         retention-days: 30
         overwrite: true

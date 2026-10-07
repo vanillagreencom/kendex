@@ -203,6 +203,18 @@ check "this tree's selection passes the --event-parity call unchanged" \
   "$(selection micro false skills/orch/scripts/lanes)" \
   "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/lanes)"
 
+# Ubuntu event divergence must fail even beside valid portability proof.
+sed 's/^  row="\$class"$/  row="$class"; linux_integration=true; [ "$event" != merge_group ] || linux_integration=false/; s/cargo_linux=true/cargo_linux=$linux_integration/g' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/parity/tools/ci-job-set" || exit 1
+for event in pull_request merge_group; do
+  other=merge_group
+  [ "$event" != merge_group ] || other=pull_request
+  check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
+patch_id=p1
+macos_patch=true" selection micro false skills/orch/scripts/lanes)"
+done
+
 # Each declared lane source runs every lane and each declared build name is a
 # build input; both lists are read from the scripts and pinned here.
 lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
@@ -276,6 +288,7 @@ check "a row that forgets a lane is refused" \
 # is tools/tests/rust-reads.test.sh's.
 READ_WORLD="$TMP/read-world"
 mkdir -p "$READ_WORLD/crates/demo/src"
+git init -q "$READ_WORLD"
 printf '[package]\nname = "demo"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
 cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
 const A: &str = include_str!("../../../docs/a.md");
@@ -526,8 +539,8 @@ PRICE_QUEUE='["guards-tools"]'
 PRICE_GROUP="$(measured both false true false "$PRICE_SHARDS" "$PRICE_QUEUE")"
 PRICE_NONE="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
 PRICE_PLATFORM="shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
-proof_selection() { # RECORD CLASS DOCS PATHS — the merge-group selection under RECORD, in the fixture world
-  SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PROOF="$(printf '%s' "$1" | tr ',' '\n')" \
+proof_selection() { # RECORD CLASS DOCS PATHS — the pull-request selection under tree RECORD, in the fixture world
+  SELECT_IN="$SEL_WORLD" SELECT_EVENT=pull_request SELECT_PROOF="$(printf '%s' "$1" | tr ',' '\n')" \
     selection "$2" "$3" "$(printf '%s\n' $4)"
 }
 # LABEL|RECORD|CLASS|DOCS|PATHS|EXPECTED
@@ -585,12 +598,54 @@ CONTROLS
 # group of an orch code diff whose proof is a pull request run over orch's
 # prose, and one of a lane-source diff whose pull request ran the same paths.
 ORCH_GROUP="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
-check "a merge group of an orch code diff with a proof over orch's prose runs the verify job and the platform lanes, over the shards the group selects" \
-  "shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$(field shards <<<"$ORCH_GROUP") queue_macos_shards=$QUEUE_ALL" \
-  "$ORCH_PROOF_ROW"
-check "a merge group of a lane-source diff with its pull request's proof runs nothing but the verify job and the queue's macOS legs" \
-  "shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$ROSTER queue_macos_shards=$QUEUE_ALL" \
-  "$SOURCE_PROOF_ROW"
+check "a group tree proof leaves the integrated orch selection running" "$ORCH_GROUP" "$ORCH_PROOF_ROW"
+check "a group tree proof leaves its selected lanes running" "$(measured both false true false "$ROSTER" "$QUEUE_ALL")" "$SOURCE_PROOF_ROW"
+
+# Patch proof waives portability only. The expected Linux and Windows
+# values come from the unproven row, not from the record's selection.
+patch_record="$(record pull_request micro false "$PRICE" | tr ',' '\n')
+patch_id=p1
+macos_patch=true"
+patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]')"
+patch_expected="${patch_expected/cargo_macos=true/cargo_macos=false}"
+patch_cases() {
+  cat <<ROWS
+same-patch|p1|$patch_expected
+changed-patch|p2|$PRICE_GROUP
+missing-patch||$PRICE_GROUP
+ROWS
+}
+while IFS='|' read -r label patch expected; do
+  check "macOS patch proof: $label" "$expected" \
+    "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID="$patch" SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
+done < <(patch_cases)
+check "no macOS record retains portability despite matching tree proof" "$PRICE_GROUP" \
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
+check "proof over fewer shards retains macOS shell shards" "${PRICE_GROUP/cargo_macos=true/cargo_macos=false}" \
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/preflight/scripts/preflight | tr ',' '\n')
+patch_id=p1
+macos_patch=true" selection micro false "$PRICE")"
+
+# Reintroduce tree-only reuse in a disposable copy. The same-tree queue
+# case must then lose its integrated Linux lanes, which fails the row above.
+sed '/^\[ "\$EVENT" != merge_group \] || record=""$/d; /^  if \[ "\$EVENT" = merge_group \]; then$/,/^  fi$/d' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || { echo "tree reuse control changed nothing" >&2; exit 1; }
+chmod +x "$TMP/rule/tools/ci-job-set"
+got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
+[ "$got" != "$PRICE_GROUP" ] && ok "must-fail: tree-only reuse skips queue integration" || bad "must-fail: tree-only reuse still retains queue integration"
+# Each new guard has a disposable control: accepting a changed identity,
+# applying patch reuse to Linux, and retaining an already proven macOS queue.
+while IFS='@' read -r needle replacement patch expected; do
+  [ "$(grep -cF -- "$needle" "$JOB_SET")" -eq 1 ] || { echo "patch control needle is not unique" >&2; exit 1; }
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '{ i=index($0,ENVIRON["NEEDLE"]); if(i) $0=substr($0,1,i-1) ENVIRON["REPLACEMENT"] substr($0,i+length(ENVIRON["NEEDLE"])); print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID="$patch" SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
+  [ "$got" != "$expected" ] && ok "must-fail: patch rule $needle" || bad "must-fail: patch rule $needle"
+done <<ROWS
+[ "\$(patch_line patch_id)" = "\$PATCH_ID" ]@true@p2@$PRICE_GROUP
+case "\$lane" in macos | cargo_macos) ;; *) ran=false ;; esac@case "\$lane" in macos | cargo_macos | linux | cargo_linux) ;; *) ran=false ;; esac@p1@$patch_expected
+case "\$legs" in *macos-latest*) ;; *) queue="" ;; esac@:@p1@$patch_expected
+ROWS
 
 # --- 1c. The queue's macOS legs ---------------------------------------------
 # queue_macos_shards per row; the lane-source row above holds it over a
@@ -625,8 +680,7 @@ while IFS='|' read -r event world class paths expected; do
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
 # EDIT@PATHS@WRONG: a copy with that rule removed answers the row over PATHS,
-# or the lane-source proof row for source-proof, with WRONG; a refusal is a
-# broken copy, never a reddened row.
+# with WRONG; a refusal is a broken copy, never a reddened row.
 while IFS='@' read -r edit paths wrong; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
@@ -635,14 +689,9 @@ while IFS='@' read -r edit paths wrong; do
     bad "control: the edit changed $changed lines of a ci-job-set copy, not one: $edit"
     continue
   fi
-  if [ "$paths" = source-proof ]; then
-    got="$(SELECT_PROOF="$(record pull_request micro false .github/AGENTS.md skills/orch/scripts/lanes | tr ',' '\n')" \
-      queue_of merge_group tree micro ".github/AGENTS.md skills/orch/scripts/lanes" "$TMP/rule/tools/ci-job-set")"
-  else
-    line="$(queue_table | grep -m1 -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
-    IFS='|' read -r event world class _ _ <<<"$line"
-    got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
-  fi
+  line="$(queue_table | grep -m1 -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
+  IFS='|' read -r event world class _ _ <<<"$line"
+  got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
   case "$got" in
     exit=*) bad "control: $edit broke the ci-job-set copy over $paths ($got)" ;;
     *) check "control: $edit answers the queue row over $paths" "$wrong" "$got" ;;
@@ -651,7 +700,6 @@ done <<'CONTROLS'
 s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md@["orch-terminal","orch-oversee-succeed","guards-tools"]
 /queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x@["orch-terminal","orch-oversee-succeed","guards-tools"]
 /queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "$now_shards" in *"\\"$shard"*)/@.claude/hooks/lane-mail-check@["guards-tools"]
-s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if case "$legs" in *macos*) true ;; *) false ;; esac; then/@source-proof@[]
 CONTROLS
 
 # --- 1d. The queue route ---------------------------------------------------
