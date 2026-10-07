@@ -818,6 +818,9 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
   printf '%s\n' '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}' > "$state/disk/pi/packages/@vanillagreen/pi-hooks/package.json"
   printf 'export const f = { context_window: 1 };\n' > "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
   record="$state/workflow-state-oversee.json"
+  if [[ "$name" == codex-cat* ]]; then
+    jq -n '{lanes:[{item:"KEN-3241",harness:"codex",account:"previous",model:"previous-model",effort:"low",status:"stopped"}]}' >"$record"
+  fi
   env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane"$'\t'"remote-prefix=exec bash -lc"$'\t'"pi-root=/pi;$HARNESS_UP"
   if [[ "$harness" == codex ]]; then env_list+=';flags=-m gpt-6-astra -c model_reasoning_effort=high'
   else env_list+=";ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"; fi
@@ -825,11 +828,20 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
   first_starts="$(typed "clear; ssh 'lane.example'")"; first_starts="${first_starts:-0}"
   assert_eq "rc=$RC step=$(jq -r '.lanes[0].prepare.step' "$record") failed=$(awk '$2 == "summary" { for (i=3;i<=NF;i++) if ($i ~ /^failed=/) print $i }' <<<"$OUT")" \
     "rc=0 step=$step failed=failed=0" "dispatcher busy during $name retains the accepted preparation"
+  if [[ "$name" == codex-cat* ]]; then
+    assert_eq "$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$record")" \
+      "$H/.eclaude:gpt-6-astra:high" 'the started selection replaces the previous launch identity'
+    env_list="${env_list/flags=-m gpt-6-astra -c model_reasoning_effort=high/flags=-m gpt-6.1-sol -c model_reasoning_effort=medium}"
+  fi
   rm -f "$state/home/.cache/orch/lane-host-slots/short/slot.$$"
   run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane work --repo o/r --relaunch KEN-3241
   retry_starts="$(typed "clear; ssh 'lane.example'")"; retry_starts="${retry_starts:-0}"
   RECOVERY_RESULT="rc=$RC creates=$(grep -c '^create ' "$state/calls") starts=$((first_starts + retry_starts)) status=$(jq -r '.lanes[0].status' "$record") pending=$(jq 'has("prepare")' <<<"$(jq '.lanes[0]' "$record")")"
   [[ "${6:-}" == control ]] || assert_eq "$RECOVERY_RESULT" "rc=0 creates=1 starts=1 status=running pending=false" "retry after $name starts one harness in the accepted sandbox"
+  if [[ "$name" == codex-cat ]]; then
+    assert_eq "$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$record")" \
+      "$H/.eclaude:gpt-6-astra:high" 'a record-only retry keeps the started model and effort despite new invocation flags'
+  fi
 }
 while IFS='|' read -r name harness verb path step; do
   recovery_case "$name" "$harness" "$verb" "$path" "$step"
@@ -846,6 +858,13 @@ orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-step/orch"
 mutate_file "$OPEN_TERMINAL" '        host_pending_step=selection' '        host_pending_step=marker'
 recovery_case selection-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json marker control
 assert_eq "$RECOVERY_RESULT" "rc=0 creates=1 starts=2 status=running pending=false" "control: losing the post-start step launches a second harness"
+OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
+OPEN_TERMINAL="$(mutant_scripts ctl-selection-identity/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-identity/orch"
+mutate_file "$OPEN_TERMINAL" '    LAUNCH_PREPARE="$host_pending_record"' '    LAUNCH_PREPARE=""'
+recovery_case codex-cat-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection control
+assert_eq "$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$TMP_ROOT/recovery-codex-cat-control/workflow-state-oversee.json")" \
+  "$H/.eclaude:gpt-6.1-sol:medium" 'control: losing the saved identity records retry flags for the already-started harness'
 OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 
 lane_suite_end

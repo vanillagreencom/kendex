@@ -1338,9 +1338,9 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # what a relaunch can change (a lane moved to another account, host or window)
 # and keeps launched_at, the fleet start the watch is given as --since, and
 # over_cap, the exception its launch was admitted on. A relaunch that records
-# the lane preparing or stopped has not taken, so it also keeps harness, model,
-# account and session_id as the last launch that took wrote them: the next
-# relaunch's route is judged on them. A wake
+# the lane preparing before start or stopped has not taken, so it also keeps
+# harness, model, account and session_id as the last launch that took wrote
+# them: the next relaunch's route is judged on them. A wake
 # rewrites the session it resumed and nothing else, and an item no entry names
 # is refused with status 2, since a lane this launcher never launched has no
 # record to rewrite. A launch created the state on the first item, before its
@@ -1403,7 +1403,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
        + (if $pick == null then {} else {pick: ($pick | {account: .config_dir, binding_bucket, claims,
            burn_pct_per_lane_hour, session_burn_pct_per_lane_hour, session_charge_hours,
            binding_projected_headroom_pct, session_projected_headroom_pct, projected_headroom_pct, selection_score})} end)
-       + (if $prepare == null then {} else {prepare: $prepare} end)
+       + (if $prepare.step == "selection" then
+           {harness: $prepare.harness, account: ($prepare.account | sub("^[^=]*="; "")), model: $prepare.model, effort: $prepare.effort}
+         else {} end)
+       + (if $prepare == null or ($prepare.step == "selection" and $status == "running") then {} else {prepare: $prepare} end)
        + {launch: (if $pane == "" then null else {pane: $pane, server: $server, pid: $harness_pid, start: $harness_start}
          | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}
        + (if $wake == null then {} else {wake: $wake} end)')" || return 1
@@ -1412,10 +1415,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
-       | if .status == "running" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id) end else . end) as $patch
+       | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
-         | if $rec.status == "running" then del(.preference_entry, .pick) else . end end) + $patch else . end))), report: "rewritten"}
+         | if $rec.status == "running" or $rec.prepare.step == "selection" then del(.preference_entry, .pick) else . end end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
@@ -2894,10 +2897,14 @@ host_launch_pending() { # STEP
   local pending
   pending="$(jq -cn --arg line "$host_line" --arg host "$LANE_HOST" --arg step "$1" --arg since "$launched_at" \
     --arg account "$LANE_ENV" --arg harness "$HARNESS" --argjson relaunch "$RELAUNCH" \
+    --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" \
     --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg session "$LAUNCH_SESSION" \
     '{status: "preparing", host: $host, line: $line, step: $step, since: $since,
       account: $account, harness: $harness, relaunch: $relaunch}
-      + (if $step == "selection" then {pane: $pane, server: $server, session: $session} else {} end)')" || return 1
+      + (if $step == "selection" then {pane: $pane, server: $server, session: $session, model: $model, effort: $effort} else {} end)')" || return 1
+  # A selection retry already names a started harness. New invocation flags
+  # cannot change its identity while it finishes the same record.
+  [[ "$1" != selection || "$host_pending_step" != selection || -z "${host_pending_record:-}" ]] || pending="$host_pending_record"
   if [[ "$FLEET" == true ]]; then
     LAUNCH_PREPARE="$pending"
     lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" preparing
@@ -2909,7 +2916,7 @@ host_launch_pending() { # STEP
 
 host_launch_resume() {
   local key="$wt_id" query='.host_launch' pending
-  host_pending_step="" host_line="" host_pending_since="" host_pending_pane="" host_pending_server="" host_pending_session=""
+  host_pending_step="" host_line="" host_pending_since="" host_pending_pane="" host_pending_server="" host_pending_session="" host_pending_record=""
   if [[ "$FLEET" == true ]]; then
     key=oversee
     query='[.lanes[]? | objects | select(.item == "'"$wt_id"'" and .status == "preparing") | .prepare] | first'
@@ -2928,6 +2935,7 @@ host_launch_resume() {
   host_pending_pane="$(jq -r '.pane // empty' <<<"$pending")" || return 1
   host_pending_server="$(jq -r '.server // empty' <<<"$pending")" || return 1
   host_pending_session="$(jq -r '.session // empty' <<<"$pending")" || return 1
+  [[ "$host_pending_step" != selection ]] || host_pending_record="$pending"
 }
 
 host_launch_ready() {
@@ -3638,6 +3646,7 @@ for raw in "${ITEMS[@]}"; do
     launched_at="$host_pending_since"
     LAUNCH_PANE="$host_pending_pane" LAUNCH_SERVER="$host_pending_server"
     [[ -z "$host_pending_session" ]] || LAUNCH_SESSION="$host_pending_session"
+    LAUNCH_PREPARE="$host_pending_record"
   fi
   # Judged before any record write: a preparing record already names this
   # launch's harness, and the switch is read against the one before it.

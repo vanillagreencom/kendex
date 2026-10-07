@@ -222,11 +222,16 @@ cat >"$SCRIPTS/lanes" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$LANE_CLOSE_LANES_CALLS"
 printf '%s\n' "${ORCH_LANE_HOST-unset}" >>"$LANE_CLOSE_LANES_CALLS.host"
-case "${LANE_CLOSE_LANES_STATUS:-0}" in
+status="${LANE_CLOSE_LANES_STATUS:-0}"
+if [[ -n "${LANE_CLOSE_WALLED_ACCOUNT:-}" ]]; then
+  status=0
+  [[ "$3" != "$LANE_CLOSE_WALLED_ACCOUNT" ]] || status=3
+fi
+case "$status" in
   0) printf 'CLAUDE_CONFIG_DIR=%s\n' "$3" ;;
   3) printf 'lanes: pick-lane-walled %s wall=100\n' "$3" >&2 ;;
 esac
-exit "${LANE_CLOSE_LANES_STATUS:-0}"
+exit "$status"
 EOF
 chmod +x "$SCRIPTS/lanes"
 
@@ -1490,18 +1495,20 @@ for name in ("lane_record_write", "host_launch_pending"):
     parts.append(text[start:end])
 pathlib.Path(sys.argv[2]).write_text("\n".join(parts))
 PY
-selection_state() (
+selection_state() ( # [WRITERS] [STEP]
   WORKFLOW_STATE="$SCRIPTS/workflow-state"
   LANE_HOST=/host LANE_ENV=CODEX_HOME=/lane HARNESS=codex RELAUNCH=false
-  FLEET=true RECORD_MODE=launch wt_id=KEN-1 title=KEN-1 remote_path="$MAIL_ROOT"
+  FLEET=true RECORD_MODE="${SELECTION_RECORD_MODE:-launch}" wt_id=KEN-1 title=KEN-1 remote_path="$MAIL_ROOT"
+  [[ "$RECORD_MODE" != relaunch ]] || RELAUNCH=true
   LAUNCH_SESSION=kendex LAUNCH_PANE=%7 LAUNCH_SERVER=999 LAUNCH_HARNESS_ID=""
   LAUNCH_HARNESS=codex LAUNCH_MODEL=model LAUNCH_EFFORT=medium TERMINAL_MODE=tmux
   TRACKER=linear REPO=owner/repo CONNECTED_REPO="" PREFERENCE_ENTRY="" CAP_PASSED=""
   LAUNCH_TIER_RECORD='{}' HOST_KIND=ssh
   launched_at=2026-09-20T00:00:00Z
   host_line=$'ssh-target=host\tpath=/srv/worktree\tremote-prefix=cd /srv/worktree'
-  source "$SELECTION_WRITERS"
-  LANE_CLOSE_STATE="$STATE" LANE_CLOSE_STATE_CALLS="$STATE_CALLS" host_launch_pending selection
+  host_pending_step="" host_pending_record=""
+  source "${1:-$SELECTION_WRITERS}"
+  LANE_CLOSE_STATE="$STATE" LANE_CLOSE_STATE_CALLS="$STATE_CALLS" host_launch_pending "${2:-selection}"
 )
 selection_close() { # SCRIPT CASE [OPTIONS...]
   local script="$1" kind="$2"
@@ -1551,6 +1558,53 @@ MUTANT="$(mutant selection-stop '  stop_harness
   [[ "$STOP_SKIPPED"')"
 selection_close "$MUTANT" idle --keep-sandbox
 assert_eq "$SELECTION_GOT" 'rc=0 stop=0 close=0 kill=1 status=stopped' 'control: the kept selection must stop its hosted harness'
+
+# A Codex relaunch can move accounts before the post-start selection read.
+# Its old account has room; the account running the harness is still walled.
+for step in marker selection; do
+  write_state stopped codex /host linear owner/repo
+  jq '.lanes[0] += {account:"/previous",model:"previous-model",effort:"low"}' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+  SELECTION_RECORD_MODE=relaunch selection_state "$SELECTION_WRITERS" "$step"
+  identity="$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$STATE")"
+  case "$step" in
+    marker) expected=/previous:previous-model:low ;;
+    selection) expected=/lane:model:medium ;;
+  esac
+  assert_eq "$identity" "$expected" "a relaunch $step records the identity of the harness that has started"
+done
+for options in full keep; do
+  selection_args=()
+  [[ "$options" != keep ]] || selection_args=(--keep-sandbox)
+  write_panes codex
+  printf '%s\n' 'Usage limit reached. Increase your limits to continue.' '› run' >"$SCREEN"
+  LANE_CLOSE_WALLED_ACCOUNT=/lane run_close "$SCRIPT" ${selection_args[@]+"${selection_args[@]}"}
+  assert_eq "rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 stop=0 close=0 kill=0 status=preparing' "a walled started selection refuses $options close on a terminal item"
+  assert_eq "$(grep -c '^lane-close: lane-live item=KEN-1 state=walled pane=%7 account=walled' <<<"$ERR" || true)" 1 \
+    'the limit wall is judged on the started account'
+done
+SELECTION_STALE_WRITERS="$TMP_ROOT/selection-stale-writers.sh"
+python3 - "$SELECTION_WRITERS" "$SELECTION_STALE_WRITERS" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+old = 'if .status == "running" or .prepare.step == "selection" then . else del('
+if text.count(old) != 1:
+    raise SystemExit(f"identity control match count={text.count(old)}")
+changed = text.replace(old, 'if .status == "running" then . else del(')
+if changed == text:
+    raise SystemExit("identity control did not change the writer")
+pathlib.Path(sys.argv[2]).write_text(changed)
+PY
+write_state stopped codex /host linear owner/repo
+jq '.lanes[0] += {account:"/previous",model:"previous-model",effort:"low"}' "$STATE" >"$STATE.next"
+mv -- "$STATE.next" "$STATE"
+SELECTION_RECORD_MODE=relaunch selection_state "$SELECTION_STALE_WRITERS"
+write_panes codex
+printf '%s\n' 'Usage limit reached. Increase your limits to continue.' '› run' >"$SCREEN"
+LANE_CLOSE_WALLED_ACCOUNT=/lane run_close "$SCRIPT" --keep-sandbox
+assert_eq "rc=$RC stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 stop=1 kill=1 status=stopped' 'control: preserving the previous identity opens the limit-wall close guard'
 
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
