@@ -1011,7 +1011,7 @@ setup_worktree_links() {
       symlink_into_worktree "$path" "$wt" || return 1
       # npm ci follows this directory link while clearing the old install.
       if [[ "${path##*/}" == node_modules && -L "$wt/$path" && -d "$wt/$path" ]]; then
-        worktree_message dependencies-linked "$wt/$path" "Warning: '$path' links to the main checkout's dependencies. Do not run npm ci in '$wt/${path%node_modules}': it empties '$PROJECT_ROOT/$path' and breaks main and every other linked worktree. Run installs in main. For a private install here, npm install removes the link and installs locally, leaving main intact." >&2
+        worktree_message dependencies-linked "$wt/$path" "Warning: '$path' links to the main checkout's dependencies. Do not run npm ci in '$wt/${path%node_modules}': it empties '$PROJECT_ROOT/$path' and breaks main and every other linked worktree. Prefer installing in main and keeping the link. For a private install here, npm install removes the link and installs locally, leaving main intact. To keep that private install, remove '$path' from WORKTREE_SYMLINKS. Otherwise setup restores the link and removes the private install." >&2
       fi
     elif warn_missing_symlink_source "$wt" "$path"; then
       [[ "$path" == node_modules ]] && root_nm_warned=1

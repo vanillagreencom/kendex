@@ -130,7 +130,9 @@ Dependencies:
   whose node_modules is linked: it empties main's node_modules before replacing
   the link with a private install. Main and every other linked worktree lose
   their dependencies. npm install there removes the link and installs locally,
-  leaving main intact. Prefer installing in main and keeping the link.
+  leaving main intact. To keep a private install, remove its node_modules path
+  from WORKTREE_SYMLINKS. Otherwise setup restores the link and removes the
+  private install. Prefer installing in main and keeping the link.
   Limitation: linked node_modules
   resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
   a worktree's checks see main's copy of sibling packages.
