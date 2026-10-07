@@ -114,6 +114,8 @@ What do you want to work on? Reply with issue ids or describe it, or answer trac
 
 ## Status report
 
+At each report, apply [§ Handoff](#handoff)'s hold check before counting ready items. Count items whose hold was dropped as ready, then apply `oversee.md` § 2 Select Work.
+
 ```text
 Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
 Escapes: [MERGED PULL REQUESTS A REVERT OR A BUG ISSUE'S REGRESSED-BY LINE NAMED WITHIN 14 DAYS: THIS WEEK, LAST WEEK, THE WEEK THE REVIEW CAP FELL TO 1]
@@ -204,6 +206,8 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 - Explicit confirmation stays only for a destructive or irreversible step (a delete, a force-push, a revoke, an offboard) and for money (a payment, a purchase, new spending). On a call, the step waits for the caller's on-screen Approve or a one-time read-back code the server verifies, either bound to the exact operation id and the caller; act only on the host worker's approval record that names both and that provenance. For such a step the overseer reads `approved_by`, `approval` and `turn` from the directive's first line; `turn` is the Live function call id of the `approve_by_code` read-back call, null when `approval` is `on-screen`; a directive missing any of the three, or a `voice-read-back` whose `turn` is null, approves nothing. In Slack, the step waits for a typed yes to a message that names the step. A transcription alone, a code the server did not verify and a yes to anything else confirm no such step. A correction voids an earlier confirmation; the corrected step needs a new one.
 
 ## Handoff
+
+Every hold in the handoff, the report's Next row or lane state names its items and an open owner ask id or a blocking pull request or tracker item. At each start, read the named ask from `lane-mail pending --item overseer --to owner` and the named blocker from GitHub or the live tracker. Drop a hold with no id, a resolved or absent ask, or a merged or Done blocker. Count its items as ready, then apply `oversee.md` § 2 Select Work.
 
 ```text
 Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
