@@ -500,8 +500,10 @@ read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_PATH, ARG_APPLY, A
         ;;
     esac
     # `--project-path=VALUE` names a target whatever its value holds, as
-    # the spelling with the value in the next word does.
-    case "$value:$word" in
+    # the spelling with the value in the next word does, and whatever quotes
+    # the shell takes off it; a value it settles only when it runs leaves
+    # the path unproven below.
+    case "$value:${word//[\"\']/}" in
       :--project-path=*)
         [ -n "$unsure" ] || ARG_TARGET=1
         ARG_PATH=""

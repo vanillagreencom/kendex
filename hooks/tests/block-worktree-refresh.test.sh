@@ -524,6 +524,8 @@ a single-quoted target spelled with an equals sign is still a target|payload|own
 and double-quoted|payload|own|2|block-worktree-refresh: shared=apply|kendex apply "--project-path=$MAIN"
 and on updates --apply|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply '--project-path=$MAIN'
 a quoted target naming the worktree's own project passes|payload|own|0|-|kendex refresh "--project-path=$OWN"
+a double-quoted target the shell expands is a target, and unproven|payload|own|2|block-worktree-refresh: unproven=apply|MAIN=$MAIN; kendex apply "--project-path=\$MAIN"
+and on updates --apply|payload|own|2|block-worktree-refresh: unproven=updates|MAIN=$MAIN; kendex updates --apply "--project-path=\$MAIN"
 a relative target is resolved from the working directory|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path ../main
 an absolute target after a cd is still read from the words|payload|own|2|block-worktree-refresh: shared=refresh|cd $OWN && kendex refresh --project-path $MAIN
 a relative target after a cd resolves against a directory the words do not establish|payload|own|2|block-worktree-refresh: unproven=refresh|cd $OWN && kendex refresh --project-path .
