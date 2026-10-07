@@ -41,3 +41,13 @@ control_expect 'an unknown reference refuses the read'
 control_replace scripts/lib/common.sh 1 \
     '            missing=$(jq -c --arg ref "$ref" '"'"'. + [$ref]'"'"' <<<"$missing") || return 1' \
     '            :'
+
+control_expect "get with --bundle: bulk-get accepts the hint"
+control_replace scripts/commands/issues.sh 1 \
+    '        echo "Hint: Use '"'"'bulk-get'"'"' for multiple issues: linear.sh issues bulk-get ${issue_id}" >&2' \
+    '        echo "Hint: Use '"'"'bulk-get'"'"' for multiple issues: linear.sh issues bulk-get ${issue_id} ${extra_args[*]}" >&2'
+
+control_expect "get with --bundle: bundle command uses the supported option"
+control_replace scripts/commands/issues.sh 1 \
+    '            echo "Hint: Read the bundle: linear.sh issues get ${issue_id} --with-bundle" >&2' \
+    '            echo "Hint: Read the bundle: linear.sh issues get ${issue_id} --bundle" >&2'

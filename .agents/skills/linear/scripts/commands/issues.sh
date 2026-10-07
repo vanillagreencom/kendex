@@ -805,7 +805,10 @@ get_issue() {
     # Warn about extra arguments (common mistake: use bulk-get for multiple)
     if [ ${#extra_args[@]} -gt 0 ]; then
         echo "Warning: 'get' accepts only one issue. Ignored: ${extra_args[*]}" >&2
-        echo "Hint: Use 'bulk-get' for multiple issues: linear.sh issues bulk-get ${issue_id} ${extra_args[*]}" >&2
+        echo "Hint: Use 'bulk-get' for multiple issues: linear.sh issues bulk-get ${issue_id}" >&2
+        if [[ " ${extra_args[*]} " == *" --bundle "* ]]; then
+            echo "Hint: Read the bundle: linear.sh issues get ${issue_id} --with-bundle" >&2
+        fi
     fi
 
     local query
