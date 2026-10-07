@@ -65,4 +65,4 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Doctor row
 
-`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `connection=connected|reconnecting|disconnected` and `connection_since=`; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
+`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `connection=connected|reconnecting|disconnected|unknown` and `connection_since=`, `unknown` since `last_poll` for a record an older relay wrote without the connection fields; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
