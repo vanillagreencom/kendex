@@ -4634,7 +4634,12 @@ export type RowRemedy =
  *  Only removing the item by name takes it: its files were edited on
  *  disk, which refresh's sweep holds.
  */
-"remove-edited";
+"remove-edited" | 
+/**
+ *  A kept retired item whose installed files are gone: refresh with
+ *  `--prune` takes its record, or removing it by name does.
+ */
+"prune-or-remove";
 
 export type SafetyScore = {
 	score: number,

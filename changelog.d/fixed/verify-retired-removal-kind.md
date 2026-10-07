@@ -1,1 +1,1 @@
-- `kendex verify` on a kept retired item whose installed files are gone or edited now names the item's kind, and `--global` for a personal-setup item, in the removal it suggests, so following it no longer also removes a live item of another kind with the same name.
+- `kendex verify` on a kept retired item whose installed files are gone or edited now names the item's kind, and `--global` for a personal-setup item, in the removal it suggests, as it does for a left-over item, so following it no longer also removes a live item of another kind with the same name.

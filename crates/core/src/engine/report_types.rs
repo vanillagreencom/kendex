@@ -164,6 +164,9 @@ pub enum RowRemedy {
     /// Only removing the item by name takes it: its files were edited on
     /// disk, which refresh's sweep holds.
     RemoveEdited,
+    /// A kept retired item whose installed files are gone: refresh with
+    /// `--prune` takes its record, or removing it by name does.
+    PruneOrRemove,
 }
 
 /// Where a plan leaves an item its catalog retired, read off what the

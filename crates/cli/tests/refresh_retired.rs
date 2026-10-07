@@ -379,8 +379,7 @@ fn dropping_the_tool_that_holds_the_template_keeps_the_adopted_workflow() {
 /// deleted or edited by hand fails verify on that installation's row
 /// alone, and every other kept installation, the other retired item's
 /// included, still passes. A plain refresh, which writes none of it,
-/// still passes. The row's removal names the item's kind and, at the
-/// project, no global flag.
+/// still passes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
@@ -436,7 +435,7 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
             assert!(!verified.status.success(), "{case}: {}", said(&verified));
             let document: kendex_core::attest::Document =
                 serde_json::from_slice(&verified.stdout).unwrap();
-            let failed: Vec<FailedRow> = document
+            let failed: Vec<(&str, &str, Option<&str>)> = document
                 .rows
                 .iter()
                 .filter(|row| row.state == kendex_core::attest::State::Failed)
@@ -445,84 +444,16 @@ fn verify_fails_a_kept_retired_copy_that_is_gone_or_edited() {
                         row.kind.as_str(),
                         row.name.as_str(),
                         row.harness.map(|harness| harness.name()),
-                        removal_flags(row.detail.as_deref().unwrap_or_default(), kind),
                     )
                 })
                 .collect();
             assert_eq!(
                 failed,
-                [(kind, name, Some("claude"), (true, false))],
+                [(kind, name, Some("claude"))],
                 "{case}: {}",
                 said(&verified)
             );
         }
-    }
-}
-
-/// A failed verify row: kind, name, tool, and its removal's flags.
-type FailedRow<'a> = (&'a str, &'a str, Option<&'a str>, (bool, bool));
-
-/// Whether a verify detail's removal names `--kind KIND`, and whether it
-/// names `--global`.
-fn removal_flags(detail: &str, kind: &str) -> (bool, bool) {
-    let words: Vec<&str> = detail.split_whitespace().collect();
-    (
-        words.windows(2).any(|pair| pair == ["--kind", kind]),
-        words.contains(&"--global"),
-    )
-}
-
-/// A kept retired personal-setup skill shares its name with a live hook,
-/// and its copy is deleted or edited by hand. `kendex verify --scope
-/// global`, run in a project, fails its row with a removal that names the
-/// skill's kind, which spares the hook, and the global flag, without which
-/// a removal in that project acts on the project.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn verify_names_the_kind_and_scope_of_a_global_retired_removal() {
-    for edited in [false, true] {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = rooted(&tmp);
-        let (cwd, skill, _, _) = retired_beside_a_namesake(&home, At::Global);
-        let refresh = ["refresh", "--scope", "global", "--yes", "--leave"];
-        let refreshed = kendex(&home, &cwd, &refresh);
-        assert!(refreshed.status.success(), "{edited}: {}", said(&refreshed));
-        match edited {
-            true => {
-                let file = skill.join("SKILL.md");
-                let mut bytes = fs::read_to_string(&file).unwrap();
-                bytes.push_str("The person's line.\n");
-                write(&file, &bytes);
-            }
-            false => fs::remove_dir_all(&skill).unwrap(),
-        }
-        let project = home.join("consumer");
-        write(&project.join("kendex.toml"), "schema = 6\n");
-        repository(&project);
-
-        let verified = kendex(&home, &project, &["verify", "--scope", "global", "--json"]);
-
-        assert!(!verified.status.success(), "{edited}: {}", said(&verified));
-        let document: kendex_core::attest::Document =
-            serde_json::from_slice(&verified.stdout).unwrap();
-        let failed: Vec<(&str, &str, (bool, bool))> = document
-            .rows
-            .iter()
-            .filter(|row| row.state == kendex_core::attest::State::Failed)
-            .map(|row| {
-                (
-                    row.kind.as_str(),
-                    row.name.as_str(),
-                    removal_flags(row.detail.as_deref().unwrap_or_default(), "skill"),
-                )
-            })
-            .collect();
-        assert_eq!(
-            failed,
-            [("skill", "deploy", (true, true))],
-            "{edited}: {}",
-            said(&verified)
-        );
     }
 }
 

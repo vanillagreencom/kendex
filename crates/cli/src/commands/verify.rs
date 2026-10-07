@@ -1296,6 +1296,10 @@ fn drift_problem(
                         RowRemedy::Remove => {
                             format!("{}; or {removal}", row.detail)
                         }
+                        RowRemedy::PruneOrRemove => format!(
+                            "{} — refresh with --prune takes the record, or {removal}",
+                            row.detail
+                        ),
                         RowRemedy::RemoveEdited => format!(
                             "{}; its files were edited, which refresh holds — {removal}",
                             row.detail

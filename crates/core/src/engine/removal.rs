@@ -911,26 +911,39 @@ fn pi_state(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<PackageState>
 /// keeps, raises against its record, or `None` where every recorded file is there with the bytes the
 /// record names. A file counts as there under its switched-off name too.
 pub(super) fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<DriftRow> {
-    let detail = retired_copy_detail(env, scope, entry)?;
-    Some(row(
-        scope,
-        entry,
-        DriftState::Conflict,
-        detail,
-        Some(super::DriftCause::Retired),
-    ))
+    let (detail, remedy) = retired_copy_detail(env, scope, entry)?;
+    Some(DriftRow {
+        remedy,
+        ..row(
+            scope,
+            entry,
+            DriftState::Conflict,
+            detail,
+            Some(super::DriftCause::Retired),
+        )
+    })
 }
 
-/// What [`retired_copy`] says, where it says anything.
-fn retired_copy_detail(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<String> {
+/// What [`retired_copy`] says, where it says anything, and the removal
+/// that settles it. Files gone leave a prune nothing to hold, so it takes
+/// the record; edited ones it holds as it holds any orphan's, so only
+/// naming the item takes them.
+fn retired_copy_detail(
+    env: &Env,
+    scope: &Scope,
+    entry: &LockEntry,
+) -> Option<(String, Option<super::RowRemedy>)> {
     let gone = match entry.kind {
         ItemKind::PiExtension => match pi_state(env, scope, entry) {
             Ok(PackageState::Current { .. }) => return None,
             Ok(PackageState::Missing) => true,
             Ok(PackageState::Different) => false,
             Err(unread) => {
-                return Some(format!(
-                    "its catalog retired it and its installed package could not be compared: {unread}"
+                return Some((
+                    format!(
+                        "its catalog retired it and its installed package could not be compared: {unread}"
+                    ),
+                    None,
                 ));
             }
         },
@@ -947,27 +960,14 @@ fn retired_copy_detail(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<St
             gone
         }
     };
-    // The kind rides along, as on verify's left-over row: a bare name also
-    // removes a live item of another kind that shares it, and a
-    // personal-setup copy is out of reach of a removal at the project.
-    let global = match scope {
-        Scope::Global => " and --global",
-        _ => "",
-    };
-    let removal = format!(
-        "remove {} with --kind {}{global}",
-        entry.name,
-        entry.kind.name()
-    );
-    // Files gone leave a prune nothing to hold, so it takes the record;
-    // edited ones it holds as it holds any orphan's, so only the removal
-    // takes them.
     Some(match gone {
-        true => format!(
-            "its catalog retired it and its installed files are gone — refresh with --prune takes the record, or {removal}"
+        true => (
+            "its catalog retired it and its installed files are gone".to_owned(),
+            Some(super::RowRemedy::PruneOrRemove),
         ),
-        false => format!(
-            "its catalog retired it and its installed files were edited on disk — {removal} to take them"
+        false => (
+            "its catalog retired it".to_owned(),
+            Some(super::RowRemedy::RemoveEdited),
         ),
     })
 }

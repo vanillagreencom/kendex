@@ -1237,8 +1237,11 @@ enum ByHand {
 /// copy deleted or edited by hand on one tool is a conflict on that tool's
 /// installation alone, its cause the retirement a refresh never fails on,
 /// the plan `kendex verify` reads failing that row,
-/// and an untouched copy raises none. A prune then takes the record of a
-/// copy that is gone and holds an edited one.
+/// and an untouched copy raises none. The row carries the removal that
+/// settles it, which verify renders with the item's kind and scope: a
+/// prune or a removal by name for a copy that is gone, only the removal
+/// for an edited one. A prune then takes the record of a copy that is gone
+/// and holds an edited one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
@@ -1270,17 +1273,19 @@ fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
 
             let report = audit(&f.env, &f.scope).unwrap();
 
-            let conflicted: Vec<(HarnessId, Option<DriftCause>)> = report
+            let conflicted: Vec<(HarnessId, Option<DriftCause>, Option<RowRemedy>)> = report
                 .drift
                 .iter()
                 .filter(|row| {
                     row.kind == kind && row.name == name && row.state == DriftState::Conflict
                 })
-                .map(|row| (row.harness, row.cause))
+                .map(|row| (row.harness, row.cause, row.remedy))
                 .collect();
+            let retired = Some(DriftCause::Retired);
             let changed = match by_hand {
                 ByHand::Untouched => vec![],
-                ByHand::Deleted | ByHand::Edited => vec![(harness, Some(DriftCause::Retired))],
+                ByHand::Deleted => vec![(harness, retired, Some(RowRemedy::PruneOrRemove))],
+                ByHand::Edited => vec![(harness, retired, Some(RowRemedy::RemoveEdited))],
             };
             assert_eq!(conflicted, changed, "{case}");
 
