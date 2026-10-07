@@ -101,11 +101,11 @@ check "must-fail: a changes job calling tools/ci-job-set without --event-parity 
   "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
 
 # Only the action's accepted macOS record reaches the coverage selector.
-selection_proof_input() { # WORKFLOW — the select step's proof expression
-  awk '
+selection_proof_input() { # WORKFLOW [KEY] — the select step's input expression
+  awk -v key="${2:-MACOS_PROOF_RECORD}:" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "changes:"); in_select = 0 }
     in_job && /^      - / { in_select = ($0 == "      - id: select") }
-    in_select && /^          MACOS_PROOF_RECORD:/ { sub(/^          MACOS_PROOF_RECORD: */, ""); print }
+    in_select && $1 == key { sub(/^ +[^:]+: */, ""); print }
   ' "$1"
 }
 check "the select step forwards accepted macOS proof" \
@@ -113,6 +113,23 @@ check "the select step forwards accepted macOS proof" \
 plant "$WORKFLOW" '          MACOS_PROOF_RECORD: ${{ steps.classify.outputs.macos_proof_record }}' "          MACOS_PROOF_RECORD: ''" "$TMP/empty-macos-proof.yml" changes
 check "must-fail: empty macOS proof input breaks forwarding" "''" \
   "$(selection_proof_input "$TMP/empty-macos-proof.yml")"
+check "the selector writes coverage in the action's record directory" \
+  '${{ steps.classify.outputs.record_dir }}' "$(selection_proof_input "$WORKFLOW" MACOS_RECORD_DIR)"
+plant "$WORKFLOW" '          MACOS_RECORD_DIR: ${{ steps.classify.outputs.record_dir }}' "          MACOS_RECORD_DIR: ''" "$TMP/empty-macos-record.yml" changes
+check "must-fail: missing record directory loses actual PR coverage" "''" \
+  "$(selection_proof_input "$TMP/empty-macos-record.yml" MACOS_RECORD_DIR)"
+patch_upload_order() { # WORKFLOW — sequence of the selector and patch upload
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "changes:"); patch = 0 }
+    in_job && /run: tools\/ci-job-set/ { print "select" }
+    in_job && /^      - / { patch = ($0 == "      - name: the pull request\047s macOS patch proof") }
+    patch && /uses: actions\/upload-artifact@/ { print "upload" }
+  ' "$1"
+}
+check "patch upload follows actual PR selection" 'select
+upload' "$(patch_upload_order "$WORKFLOW")"
+plant "$WORKFLOW" '        uses: actions/upload-artifact@v4' '        uses: actions/download-artifact@v4' "$TMP/no-patch-upload.yml" changes
+check "must-fail: no patch upload loses recorded coverage" select "$(patch_upload_order "$TMP/no-patch-upload.yml")"
 
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW KEY [JOB]

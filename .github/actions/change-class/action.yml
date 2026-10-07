@@ -89,6 +89,8 @@ inputs:
       true for a workflow that runs selected macOS tests on pull requests
       and consumes macos_proof_record to reuse only those tests in a merge
       group. Ubuntu tests must still run against the integrated tree.
+      The caller records its actual selection in record_dir and uploads
+      change-class-macos-proof-<patch_id> after selection.
       Unset preserves the generic tree-proof contract.
     required: false
     default: ''
@@ -161,7 +163,7 @@ outputs:
       lanes and lane_verdicts.
     value: ${{ steps.classify.outputs.proof_record }}
   patch_id:
-    description: The stable diff id from the endpoints' merge base, empty when unavailable.
+    description: The whitespace-preserving diff id from the endpoints' merge base, empty when unavailable.
     value: ${{ steps.classify.outputs.patch_id }}
   macos_proof_record:
     description: >-
@@ -170,6 +172,11 @@ outputs:
       and job selector. Empty when no record qualifies. It authorizes only
       covered macOS tests, never Ubuntu tests.
     value: ${{ steps.classify.outputs.macos_proof_record }}
+  record_dir:
+    description: >-
+      The directory holding this run's record. An opt-in macOS workflow
+      records its actual selection here before uploading its patch artifact.
+    value: ${{ steps.classify.outputs.record_dir }}
   lane_verdicts:
     description: >-
       One lane_<name>=true|false line per lane the declaration names, decided
@@ -227,16 +234,6 @@ runs:
       continue-on-error: true
       with:
         name: change-class-proof-${{ steps.classify.outputs.proof_tree }}
-        path: ${{ steps.classify.outputs.record_dir }}
-        retention-days: 30
-        overwrite: true
-        if-no-files-found: error
-    - name: the pull request's macOS patch proof
-      if: inputs.macos-patch-proof == 'true' && inputs.event == 'pull_request' && steps.classify.outputs.record_dir != '' && steps.classify.outputs.patch_id != ''
-      uses: actions/upload-artifact@v4
-      continue-on-error: true
-      with:
-        name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}
         path: ${{ steps.classify.outputs.record_dir }}
         retention-days: 30
         overwrite: true

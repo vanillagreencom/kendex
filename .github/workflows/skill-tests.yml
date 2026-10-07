@@ -20,7 +20,7 @@ name: Skill Tests
 # selects it; the invariant comment there is the one statement of what each
 # lane runs. Pull requests run the selected macOS cargo and shell tests.
 # A merge group reuses their proof only from a successful pull-request run
-# of this workflow whose record carries the same stable patch id. The id
+# of this workflow whose record carries the same whitespace-preserving patch id. The id
 # measures the diff from the endpoints' merge base. A changed patch, workflow
 # or job selector, missing record or failed lookup runs the macOS legs. Ubuntu lanes always test the
 # integrated tree, even when its tree equals the pull request's tree.
@@ -305,7 +305,18 @@ jobs:
           EVENT: ${{ env.EVENT }}
           PROOF_RECORD: ${{ steps.classify.outputs.proof_record }}
           MACOS_PROOF_RECORD: ${{ steps.classify.outputs.macos_proof_record }}
+          MACOS_RECORD_DIR: ${{ steps.classify.outputs.record_dir }}
         run: tools/ci-job-set --event-parity
+      - name: the pull request's macOS patch proof
+        if: env.EVENT == 'pull_request' && steps.classify.outputs.record_dir != '' && steps.classify.outputs.patch_id != ''
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}
+          path: ${{ steps.classify.outputs.record_dir }}
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: error
 
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation

@@ -59,7 +59,7 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 ## CI
 
-Pull requests run the selected macOS cargo tests and shell shards. A merge group can reuse that macOS result when a successful pull-request run of the same workflow recorded the same stable patch id. The id comes from the diff against the endpoints' merge base. A missing record, changed patch, changed workflow or job selector, or unreadable proof runs the selected macOS tests again. Ubuntu lanes always test the integrated tree. Required check names stay unchanged.
+Pull requests run the selected macOS cargo tests and shell shards. A merge group can reuse the macOS selection that a successful pull-request run of the same workflow recorded with the same whitespace-preserving patch id. The id comes from the diff against the endpoints' merge base. A missing record, changed patch, changed workflow or job selector, unreadable proof, or new macOS selection runs the uncovered macOS tests again. Ubuntu lanes always test the integrated tree. Required check names stay unchanged.
 
 Patch proof can miss a macOS failure that requires independently passing patches to combine. The push to main runs macOS cargo tests and the full macOS shell roster to report that failure after merge. Check that run when a merge group reused macOS proof. Linux and Windows cargo jobs on main compile without running tests.
 

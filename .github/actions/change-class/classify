@@ -474,6 +474,8 @@ if [ "$(proof_line kind)" = macos-patch ]; then
   [ "$proof_reuse" != true ] || macos_proof_record="$proof_record"
   # Patch portability never authorizes a tree lane to skip integration.
   proof_reuse=false
+  [ "$proof_reason" != exact-proof ] || proof_reason=patch-only-proof
+  proof_run=""
   proof_record=""
 fi
 case "$proof_reuse" in

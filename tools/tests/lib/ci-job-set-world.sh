@@ -31,7 +31,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 JOB_SET="$ROOT/tools/ci-job-set"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+TMP="$(mktemp -d "$ROOT/tmp/ci-world.XXXXXX")" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -55,6 +55,7 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
     EVENT="${SELECT_EVENT-pull_request}" PROOF_RECORD="${SELECT_PROOF:-}" \
     MACOS_PROOF_RECORD="${SELECT_MACOS_PROOF:-}" \
+    MACOS_RECORD_DIR="${SELECT_MACOS_RECORD_DIR:-}" \
     GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
@@ -91,6 +92,16 @@ record() { # EVENT CLASS DOCS PATH... — a proving run's record, its lines join
   printf 'tree=t1,workflow=.github/workflows/skill-tests.yml,event=%s,change_class=%s,docs_only=%s,covers=all' \
     "$event" "$class" "$docs"
   for path in "$@"; do printf ',changed_path=%s' "$path"; done
+}
+
+# The real selector writes the PR coverage before the workflow uploads it.
+macos_record() { # CLASS DOCS PATHS — actual PR coverage fields
+  local dir
+  dir="$(mktemp -d "$TMP/macos-record.XXXXXX")" || return 1
+  : >"$dir/record"
+  SELECT_EVENT=pull_request SELECT_PROOF= SELECT_MACOS_PROOF= SELECT_MACOS_RECORD_DIR="$dir" \
+    selection "$1" "$2" "$3" >/dev/null
+  cat "$dir/record"
 }
 
 # The whole shard roster, in the matrix's order.
@@ -144,4 +155,5 @@ SOURCE_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request
 
 PATCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
 patch_id=p1
-macos_patch=true" selection micro false skills/orch/scripts/lanes)"
+macos_patch=true
+$(macos_record micro false skills/orch/scripts/lanes)" selection micro false skills/orch/scripts/lanes)"

@@ -75,7 +75,7 @@ LANES_LIB="$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh"
 ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+TMP="$(mktemp -d "$ROOT/tmp/action-suite.XXXXXX")" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'chmod -R u+rwX "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}"' EXIT
@@ -580,8 +580,8 @@ check "must-fail: an action.yml whose lanes value is misspelled fails the forwar
 [ "$(grep -c 'steps\.classify\.outputs\.record_dir' "$ACTION")" -ge 2 ] ||
   { echo "the upload step no longer reads record_dir on two lines of $ACTION" >&2; exit 1; }
 sed 's/steps\.classify\.outputs\.record_dir/steps.classify.outputs.record_path/' "$ACTION" >"$TMP/action.yml"
-check "must-fail: an action.yml whose upload step reads no record_dir fails the forwarding row" \
-  'written-unread: record_dir' "$(forwarding "$TMP/action.yml")"
+check "must-fail: a misspelled record directory output fails forwarding" \
+  'declared-unforwarded: record_dir ${{ steps.classify.outputs.record_path }}' "$(forwarding "$TMP/action.yml")"
 
 # The inputs, the other way: `NAME: ${{ inputs.<input> }}` per entry of
 # ACTION_YML's `inputs:` block, NAME upper-cased with `-` as `_`, sorted.
@@ -924,6 +924,19 @@ status="$(run "$CLASSIFY" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=tr
 check "patch proof classify exit" "0" "$status"
 check "patch proof keeps integrated lanes" "true false p1" "$(sed -n 's/^lanes=//p' "$OUT") $(sed -n 's/^proof_reuse=//p' "$OUT") $(sed -n 's/^patch_id=//p' "$OUT")"
 check "patch proof publishes macOS record separately" "macos_proof_record=covers=all" "$(outputs | tr ' ' '\n' | grep '^macos_proof_record=')"
+check "patch-only proof clears generic metadata" "patch-only-proof " \
+  "$(sed -n 's/^proof_reason=//p' "$OUT") $(sed -n 's/^proof_run=//p' "$OUT")"
+for field in proof_reason proof_run; do
+  case "$field" in
+    proof_reason) edit='/^  \[ "\$proof_reason" != exact-proof \] || proof_reason=patch-only-proof$/d' ;;
+    proof_run) edit='/^  proof_run=""$/d' ;;
+  esac
+  sed "$edit" "$CLASSIFY" >"$TMP/patch-metadata-classify"
+  ! cmp -s "$CLASSIFY" "$TMP/patch-metadata-classify" || exit 1
+  status="$(run "$TMP/patch-metadata-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_RUN=42 STUB_RECORD='covers=all')"
+  [ "$status" = 0 ] && [ "$(sed -n 's/^proof_reason=//p' "$OUT") $(sed -n 's/^proof_run=//p' "$OUT")" != 'patch-only-proof ' ] &&
+    ok "must-fail: stale generic $field" || bad "must-fail: stale generic $field"
+done
 needle='  proof_reuse=false'
 [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] || exit 1
 sed '/^  proof_reuse=false$/d; /^  proof_record=""$/d' "$CLASSIFY" >"$TMP/patch-leak-classify"
@@ -1096,16 +1109,16 @@ proof_member() { # PROOF — the member its unzip reads
 proof_prefix() { # PROOF IDENTITY — the artifact name before its identity
   sed -n "s/^.*artifact_name=\"\(.*\)\$$2\"\$/\1/p" "$1"
 }
-upload_key() { # ACTION_YML KEY [UPLOAD] — the upload step's KEY under `with:`
+upload_key() { # YAML KEY — the proof upload step's KEY under `with:`
   awk -v key="$2" -v wanted="${3:-1}" '
-    /^    - / { upload = 0 }
-    /^      uses: actions\/upload-artifact@/ { upload = (++n == wanted) }
-    upload && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11) }
+    /^  [A-Za-z0-9_-]+:/ { upload = 0 }
+    /^ +[-] / { upload = 0 }
+    /^ +uses: actions\/upload-artifact@/ { upload = (++n == wanted) }
+    upload && $1 == key ":" { sub(/^ +[^:]+: */, ""); print }
   ' "$1"
 }
 binding() { # PROOF ACTION_YML [IDENTITY] — `bound`, or what disagrees
   local member written prefix name identity="${3:-tree}" upload=1
-  [ "$identity" != patch_id ] || upload=2
   member="$(proof_member "$1")"
   prefix="$(proof_prefix "$1" "$identity")"
   [ -n "$member" ] && [ -n "$prefix" ] ||
@@ -1126,22 +1139,22 @@ binding() { # PROOF ACTION_YML [IDENTITY] — `bound`, or what disagrees
   fi
 }
 PROOF_SCRIPT="$ROOT/.github/actions/change-class/proof"
+PATCH_WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
 check "the record classify writes is the member and artifact proof reads, as the action uploads it" \
   bound "$(binding "$PROOF_SCRIPT" "$ACTION")"
 check "the macOS upload matches its proof reader identity and record directory" \
-  bound "$(binding "$PROOF_SCRIPT" "$ACTION" patch_id)"
+  bound "$(binding "$PROOF_SCRIPT" "$PATCH_WORKFLOW" patch_id)"
 while IFS='@' read -r needle replacement; do
   NEEDLE="$needle" REPLACEMENT="$replacement" awk '
-    /^      uses: actions\/upload-artifact@/ { upload++ }
-    upload == 2 && $0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; n++; next }
+    $0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; n++; next }
     { print } END { exit n != 1 }
-  ' "$ACTION" >"$TMP/macos-upload.yml" || exit 1
-  ! cmp -s "$ACTION" "$TMP/macos-upload.yml" || exit 1
+  ' "$PATCH_WORKFLOW" >"$TMP/macos-upload.yml" || exit 1
+  ! cmp -s "$PATCH_WORKFLOW" "$TMP/macos-upload.yml" || exit 1
   [ "$(binding "$PROOF_SCRIPT" "$TMP/macos-upload.yml" patch_id)" != bound ] &&
     ok "must-fail: macOS upload $needle" || bad "must-fail: macOS upload $needle"
 done <<'ROWS'
-        name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}@        name: change-class-macos-record-${{ steps.classify.outputs.patch_id }}
-        path: ${{ steps.classify.outputs.record_dir }}@        path: ${{ runner.temp }}/change-class-record/record
+          name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}@          name: change-class-macos-record-${{ steps.classify.outputs.patch_id }}
+          path: ${{ steps.classify.outputs.record_dir }}@          path: ${{ runner.temp }}/change-class-record/record
 ROWS
 sed 's/unzip -p "$WORK\/record.zip" record >/unzip -p "$WORK\/record.zip" change-class-record >/' \
   "$PROOF_SCRIPT" >"$TMP/proof-member"

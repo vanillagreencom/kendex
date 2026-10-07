@@ -605,17 +605,32 @@ check "a group tree proof leaves its selected lanes running" "$(measured both fa
 # values come from the unproven row, not from the record's selection.
 patch_record="$(record pull_request micro false "$PRICE" | tr ',' '\n')
 patch_id=p1
-macos_patch=true"
+macos_patch=true
+$(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
 patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]')"
 patch_expected="${patch_expected/cargo_macos=true/cargo_macos=false}"
+check "PR selector records its actual macOS lanes and queue shards" 'macos_selected=true
+cargo_macos_selected=true
+macos_shards=["guards-tools"]' "$(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
+for field in macos_selected cargo_macos_selected macos_shards; do
+  needle='macos_selected=%s\ncargo_macos_selected=%s\nmacos_shards=[%s]'
+  replacement="${needle/$field=/omitted_field=}"
+  [ "$(grep -cF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '{ i=index($0,ENVIRON["NEEDLE"]); if(i) $0=substr($0,1,i-1) ENVIRON["REPLACEMENT"] substr($0,i+length(ENVIRON["NEEDLE"])); print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
+  [ "$(printf '%s\n' "$got" | sed -n "s/^$field=//p")" = '' ] &&
+    ok "must-fail: PR recorder omits $field" || bad "must-fail: PR recorder omits $field"
+done
 check "accepted macOS record waives covered portability" "$patch_expected" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
 check "no macOS record retains portability despite matching tree proof" "$PRICE_GROUP" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
-check "proof over fewer shards retains macOS shell shards" "${PRICE_GROUP/cargo_macos=true/cargo_macos=false}" \
+check "different Ubuntu shards still reuse the covered macOS shard" "$patch_expected" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false skills/preflight/scripts/preflight | tr ',' '\n')
 patch_id=p1
-macos_patch=true" selection micro false "$PRICE")"
+macos_patch=true
+$(SELECT_IN="$SEL_WORLD" macos_record micro false skills/preflight/scripts/preflight)" selection micro false "$PRICE")"
 
 # sed can print the complete coverage field before it reports a read failure.
 # Each field must retain portability on that status, even with usable text.
@@ -638,10 +653,36 @@ while IFS='@' read -r field needle replacement; do
   got="$(REAL_SED="$REAL_SED" FAILED_FIELD="$field" PATH="$TMP/field-reader:$PATH" SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
   [ "$got" = "$patch_expected" ] && ok "must-fail: unchecked $field read waives macOS" || bad "must-fail: unchecked $field read control"
 done <<'ROWS'
-change_class@! r_class="$(patch_line change_class)"@{ r_class="$(patch_line change_class)"; false; }
-docs_only@! r_docs="$(patch_line docs_only)"@{ r_docs="$(patch_line docs_only)"; false; }
-changed_path@! r_paths="$(patch_line changed_path)"@{ r_paths="$(patch_line changed_path)"; false; }
+macos_selected@! r_macos="$(patch_line macos_selected)"@{ r_macos="$(patch_line macos_selected)"; false; }
+cargo_macos_selected@! r_cargo="$(patch_line cargo_macos_selected)"@{ r_cargo="$(patch_line cargo_macos_selected)"; false; }
+macos_shards@! r_shards="$(patch_line macos_shards)"@{ r_shards="$(patch_line macos_shards)"; false; }
 ROWS
+
+check "old patch records with no selection retain portability" "$PRICE_GROUP" \
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false "$PRICE" | tr ',' '\n')" selection micro false "$PRICE")"
+
+# The base adds a reader after a PR ran no shell shard. Recorded coverage
+# must retain that new macOS shard even though the patch stays unchanged.
+ADVANCED_WORLD="$TMP/advanced-world"
+cp -R "$SEL_WORLD" "$ADVANCED_WORLD"
+advanced_path=ui/src/proof-fixture.ts
+prior_record="$(record pull_request micro false "$advanced_path" | tr ',' '\n')
+$(SELECT_IN="$ADVANCED_WORLD" macos_record micro false "$advanced_path")"
+check "the PR actually selected no macOS shell shard" 'macos_shards=[]' \
+  "$(printf '%s\n' "$prior_record" | grep '^macos_shards=')"
+printf 'read ui/src/proof-fixture.ts\n' >"$ADVANCED_WORLD/tools/tests/base-reader.test.sh"
+git -C "$ADVANCED_WORLD" add tools/tests/base-reader.test.sh
+advanced_expected="$(measured both true true false '["guards-tools","guards-tools-tail"]' '["guards-tools"]')"
+advanced_expected="${advanced_expected/cargo_macos=true/cargo_macos=false}"
+check "new base reader retains its untested macOS shard" "$advanced_expected" \
+  "$(SELECT_IN="$ADVANCED_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$prior_record" selection micro false "$advanced_path")"
+needle='          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$r_shards"'
+[ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+replacement='          patch_was="$(select_row "$(patch_line change_class)" "$(patch_line docs_only)" "$(patch_line changed_path)" pull_request)"'
+NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$ADVANCED_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$prior_record" selection micro false "$advanced_path")"
+[ "$got" != "$advanced_expected" ] && ok "must-fail: rebuilding prior coverage invents macOS proof" || bad "must-fail: rebuilt prior coverage control"
 
 # Reintroduce tree-only reuse in a disposable copy. The same-tree queue
 # case must then lose its integrated Linux lanes, which fails the row above.
@@ -658,7 +699,7 @@ while IFS='@' read -r needle replacement expected; do
   got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
   [ "$got" != "$expected" ] && ok "must-fail: patch rule $needle" || bad "must-fail: patch rule $needle"
 done <<ROWS
-case "\$lane" in macos | cargo_macos) ;; *) ran=false ;; esac@case "\$lane" in macos | cargo_macos | linux | cargo_linux) ;; *) ran=false ;; esac@$patch_expected
+case "\$lane" in macos | cargo_macos) ;; *) ran=false ;; esac@case "\$lane" in macos | cargo_macos) ;; linux | cargo_linux) ran=true ;; *) ran=false ;; esac@$patch_expected
 case "\$legs" in *macos-latest*) ;; *) queue="" ;; esac@:@$patch_expected
 ROWS
 

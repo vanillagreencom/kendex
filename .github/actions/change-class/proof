@@ -55,7 +55,7 @@
 #             where GITHUB_WORKFLOW_REF or GITHUB_REPOSITORY does not read
 #             as one. tree and workflow are printed on every answer: the
 #             record a run leaves needs both even where no proof is looked up.
-#   patch_id  stable patch identity on opt-in pull requests and groups
+#   patch_id  whitespace-preserving patch identity on opt-in requests and groups
 #   kind      tree|macos-patch, which separates patch proof from tree proof
 #   macos_contract  workflow and selector blob digest for opt-in proof
 #   reuse     true|false
@@ -128,7 +128,7 @@ if [ "${MACOS_PATCH_PROOF:-}" = true ]; then
         answer patch-unreadable "the macOS contract could not be hashed"
       patch_base="$(git -C "$REPO" merge-base "${BASE:-}" "${HEAD:-}" 2>/dev/null)" ||
         answer patch-unreadable "the diff endpoints have no readable merge base"
-      patch_line="$(git -C "$REPO" diff --binary --no-ext-diff "$patch_base" "$HEAD" -- | git patch-id --stable)" ||
+      patch_line="$(git -C "$REPO" diff --binary --no-ext-diff "$patch_base" "$HEAD" -- | git patch-id --verbatim)" ||
         answer patch-unreadable "git patch-id could not read the diff"
       patch_id="${patch_line%% *}"
       [[ "$patch_id" =~ ^[0-9a-f]{40}$ ]] ||

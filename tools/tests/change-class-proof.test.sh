@@ -25,7 +25,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 PROOF="$ROOT/.github/actions/change-class/proof"
 
 mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+TMP="$(mktemp -d "$ROOT/tmp/proof-suite.XXXXXX")" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -56,7 +56,7 @@ git -C "$REPO" add -A
 git -C "$REPO" commit -q -m base
 B="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" checkout -q -b topic
-printf 'b\n' >"$REPO/b"
+printf 'value="a b"\n' >"$REPO/b"
 git -C "$REPO" add b
 git -C "$REPO" commit -q -m topic
 P="$(git -C "$REPO" rev-parse HEAD)"
@@ -125,7 +125,7 @@ git -C "$REPO" commit -q -m advance
 B2="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" cherry-pick "$P" >/dev/null
 S2="$(git -C "$REPO" rev-parse HEAD)"
-PATCH="$(git -C "$REPO" diff --binary "$B" "$S" -- | git patch-id --stable)"
+PATCH="$(git -C "$REPO" diff --binary "$B" "$S" -- | git patch-id --verbatim)"
 PATCH="${PATCH%% *}"
 CONTRACT="$( { git -C "$REPO" rev-parse "$S:$WORKFLOW"; git -C "$REPO" rev-parse "$S:tools/ci-job-set"; } | git hash-object --stdin)"
 record_zip patch record "$RECORD
@@ -149,6 +149,15 @@ event=merge_group
 patch_id=$PATCH
 macos_patch=true
 macos_contract=$CONTRACT"
+
+# A contributor can change program behavior with whitespace in a literal.
+git -C "$REPO" checkout -q --detach "$B"
+printf 'value="a  b"\n' >"$REPO/b"
+git -C "$REPO" add b
+git -C "$REPO" commit -q -m whitespace
+S_SPACE="$(git -C "$REPO" rev-parse HEAD)"
+SPACE_PATCH="$(git -C "$REPO" diff --binary "$B" "$S_SPACE" -- | git patch-id --verbatim)"
+SPACE_PATCH="${SPACE_PATCH%% *}"
 
 # --- The fake gh --------------------------------------------------------------
 # It records EVERY invocation before deciding how to answer, api-error
@@ -403,6 +412,7 @@ patch proof refuses non-PR record|merge_group|valid|wrong-patch-event|MACOS_PATC
 patch proof refuses failed run|merge_group|wrong-conclusion|patch|MACOS_PATCH_PROOF=true|false mismatched-proof  3
 patch proof refuses missing record|merge_group|no-artifact|patch|MACOS_PATCH_PROOF=true|false missing-record  2
 patch proof refuses unreadable merge base|merge_group|api-error|patch|MACOS_PATCH_PROOF=true BASE=absent|false patch-unreadable  0
+patch proof refuses semantic whitespace revision|merge_group|valid|patch|MACOS_PATCH_PROOF=true HEAD=$S_SPACE GITHUB_SHA=$S_SPACE FAKE_PATCH=$SPACE_PATCH|false record-mismatch  4
 ROWS
 }
 row_answer() { # SCRIPT ROW-LABEL — the answer for the row named LABEL
@@ -435,6 +445,19 @@ check "a refusal prints what it saw" "event=schedule" \
 
 run "$PROOF" merge_group api-error patch EVENT=pull_request MACOS_PATCH_PROOF=true >/dev/null
 check "PR computes the patch identity without reading GitHub proof" "$PATCH 0" "$(line patch_id) $(calls)"
+
+# The old identity accepts different literal contents as the same patch.
+STABLE_PATCH="$(git -C "$REPO" diff --binary "$B" "$S" -- | git patch-id --stable)"
+STABLE_PATCH="${STABLE_PATCH%% *}"
+record_zip stable-patch record "$RECORD
+patch_id=$STABLE_PATCH
+macos_patch=true
+macos_contract=$CONTRACT"
+[ "$(grep -cF -- 'git patch-id --verbatim)' "$PROOF")" -eq 1 ] || exit 1
+sed 's/git patch-id --verbatim)/git patch-id --stable)/' "$PROOF" >"$TMP/whitespace-proof"
+! cmp -s "$PROOF" "$TMP/whitespace-proof" || exit 1
+check "must-fail: whitespace-stripping identity accepts different program text" "true exact-proof $RUN_PR 4" \
+  "$(answer "$TMP/whitespace-proof" merge_group valid stable-patch MACOS_PATCH_PROOF=true HEAD="$S_SPACE" GITHUB_SHA="$S_SPACE" FAKE_PATCH="$STABLE_PATCH")"
 
 # --- 2. The record ------------------------------------------------------------
 run "$PROOF" merge_group valid valid >/dev/null
