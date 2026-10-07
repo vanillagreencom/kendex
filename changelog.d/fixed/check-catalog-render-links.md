@@ -1,0 +1,1 @@
+- `kendex check --catalog` reports, as an advisory, a link in a file the render ships that points at a skill's top-level `tests/`, `evals/` or `DEVELOPMENT.md`, which no install receives, and a link to the catalog's own GitHub source whose file is gone or whose `#heading` anchor names no heading.

@@ -30,7 +30,9 @@ use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
 
+mod links;
 mod settings;
+pub use links::LINKS_PASS;
 pub use settings::SETTINGS_PASS;
 
 /// The versioned envelope `check --catalog --json` and `marketplace mine
@@ -246,6 +248,7 @@ pub fn check_with(
     // would not. A path source installs by its declared provenance
     // instead (`Publisher::of`).
     let publisher = Publisher::of_checkout(sealed.root());
+    let source = links::SourceUrl::of_checkout(sealed.root());
     let catalog = config
         .findings()
         .map(|finding| CheckFinding {
@@ -295,9 +298,14 @@ pub fn check_with(
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
-                Some(path) => report
-                    .items
-                    .push(check_item(sealed, kind, &name, &path, publisher)?),
+                Some(path) => report.items.push(check_item(
+                    sealed,
+                    kind,
+                    &name,
+                    &path,
+                    publisher,
+                    source.as_ref(),
+                )?),
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
@@ -321,13 +329,15 @@ pub fn check_with(
 /// Both passes over one item at its catalog path — the unit the indexer
 /// scores packages with. `publisher` is whose repository the catalog is,
 /// which [`check_with`] establishes once from the checkout's `origin`
-/// remote for every item it checks.
-pub fn check_item(
+/// remote for every item it checks, with the source URL its links pass
+/// judges.
+fn check_item(
     sealed: &SealedSource,
     kind: ItemKind,
     name: &str,
     path: &Path,
     publisher: Publisher,
+    source: Option<&links::SourceUrl>,
 ) -> Result<CheckedItem> {
     let input = audit_input(sealed, kind, name, path, publisher)?;
     let mut structural = structural(kind, name, &input.location, &input.content);
@@ -339,6 +349,14 @@ pub fn check_item(
         path,
     )?);
     structural.extend(tracked_outputs(sealed, kind, name, &input)?);
+    structural.extend(links::findings(
+        sealed,
+        source,
+        kind,
+        name,
+        &input.location,
+        &input.content,
+    )?);
     let file = input.location.clone();
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.

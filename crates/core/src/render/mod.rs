@@ -1,5 +1,5 @@
 pub mod agent;
-mod blocks;
+pub(crate) mod blocks;
 pub mod command;
 pub mod permission;
 pub mod skill;

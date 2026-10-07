@@ -53,7 +53,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 /// wants the same options for the opposite reason, and the audit's test is
 /// the stricter one, so this list is settled by the audit alone — an option
 /// the rewrite would want is still refused if it can quiet a switch.
-const EXTENSIONS: Options = Options::ENABLE_TABLES;
+pub(crate) const EXTENSIONS: Options = Options::ENABLE_TABLES;
 
 /// A document's code, line by line. Both vectors carry one entry per line
 /// `str::lines` yields, in its order, so a caller zips either against the

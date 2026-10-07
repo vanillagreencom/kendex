@@ -171,7 +171,7 @@ kendex reports one of these per project, and a package that declares an effect w
 kendex marketplace check
 ```
 
-Validates every package the way installing validates it: names a harness's loader would refuse, skill trees that disagree with themselves, and settings templates outside the grammar fail it. The safety rules an install runs print their findings and the package's score and fail nothing; the score is advisory wherever it is shown. The scaffolded workflow runs the check on every push and pull request.
+Validates every package the way installing validates it: names a harness's loader would refuse, skill trees that disagree with themselves, and settings templates outside the grammar fail it. So does a link in a shipped file to a skill's top-level `tests/`, `evals/` or `DEVELOPMENT.md`, which no install receives, and a link to the catalog's own GitHub source (`blob/<ref>/<path>`) whose file or `#heading` is gone; other remote links are not read. The safety rules an install runs print their findings and the package's score and fail nothing; the score is advisory wherever it is shown. The scaffolded workflow runs the check on every push and pull request.
 
 ## Publishing
 
