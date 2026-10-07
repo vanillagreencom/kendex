@@ -507,6 +507,19 @@ stream_read() {
 gone_case gone-stream
 assert_eq "$(stream_read "$TEST_DIR/../scripts/lib")" "5 left=state.err " \
   "the kept= archive is read as a stream, nothing of it written to disk"
+# hardlink_case NAME: an archive whose recorded member tar wrote as a hard
+# link to the same file archived first under the clone's tmp, as close writes
+# it where the clone's path reaches its state through a symlink.
+hardlink_case() {
+  gone_case "$1" "" 10 zz-state
+  rm -f -- "${CASE:?}/archive/clone/zz-state/workflow-state-KEN-4.json"
+  printf '{"cycles": 5}' > "$CASE/archive/clone/tmp/state-copy.json"
+  ln -- "$CASE/archive/clone/tmp/state-copy.json" "$CASE/archive/clone/zz-state/workflow-state-KEN-4.json"
+  tar -czf "$CASE/kept.tgz" -C "$CASE/archive" lane-host-state clone/tmp/state-copy.json clone/zz-state/workflow-state-KEN-4.json
+}
+hardlink_case gone-hardlink
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
+  "a recorded member tar wrote as a hard link reads the file it names"
 GONE_MANIFEST=clone/elsewhere/workflow-state-KEN-4.json gone_case gone-misnamed
 assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^archive-member-missing ' "$CASE/err" || true)" \
   "fix=-|1" "an archive naming a member it does not hold is unread, the member named"
@@ -1090,6 +1103,10 @@ mv -- "$CASE/host/w/KEN-4/.env.local" "$CASE/host/w/KEN-4/config/priv.env"
 printf '[env]\nKENDEX_ENV_FILE = "config/priv.env"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
   "control: reading .env.local whatever KENDEX_ENV_FILE names misses the named file"
+control m-kept-hardlink lib/lane-gitfile.sh 'readable = lambda m: m.isfile() or m.islnk()' 'readable = lambda m: m.isfile()'
+hardlink_case c-kept-hardlink
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
+  "control: taking regular files alone, a hard-link entry reads as missing"
 control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then'
 gone_case c-kept
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \

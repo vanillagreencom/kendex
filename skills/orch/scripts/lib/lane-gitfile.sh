@@ -183,6 +183,10 @@ lane_hosted_state_dir() {
 LANE_ARCHIVE_READER='
 import os, sys, tarfile
 path, item, root = sys.argv[1:]
+# A file tar archived twice, through a symlinked tmp or a clone path whose
+# physical spelling differs, is a hard-link entry the second time, read as
+# the file it names.
+readable = lambda m: m.isfile() or m.islnk()
 try:
     with tarfile.open(path, "r:gz") as tar:
         members = {m.name: m for m in tar.getmembers()}
@@ -192,12 +196,12 @@ try:
                 sys.exit(0)
             name = raw.decode(tar.encoding, "surrogateescape")
             found = members.get(name)
-            if found is None or not found.isfile():
+            if found is None or not readable(found):
                 print(f"archive-member-missing path={path} member={name}", file=sys.stderr)
                 sys.exit(2)
         else:
             files = sorted((m for m in members.values()
-                            if m.isfile() and os.path.basename(m.name) == f"workflow-state-{item}.json"),
+                            if readable(m) and os.path.basename(m.name) == f"workflow-state-{item}.json"),
                            key=lambda m: (m.name.startswith(root + "/"), m.name))
             if not files:
                 sys.exit(0)
