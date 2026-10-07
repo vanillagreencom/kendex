@@ -1750,6 +1750,13 @@ plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE] [START_LINE]
   local dir="$1/tmp/dev-validate-$2"
   mkdir -p "$dir"
   printf 'validate-mode=%s\ntimeout-secs=%s\nhead=\n' "$3" "$5" > "$dir/start"
+  # A range run validated from the project's HEAD, the base the rows' range
+  # and ci requests name; a full run from none.
+  case "$3:${7:-}" in
+    *validate-base=*) ;;
+    range:*) printf 'validate-base=%s\n' "$(git -C "$1" rev-parse HEAD)" >> "$dir/start" ;;
+    *) printf 'validate-base=\n' >> "$dir/start" ;;
+  esac
   case "${7:-}" in
     class=*) ;;
     *) printf 'class=micro\n' >> "$dir/start" ;;
@@ -1799,12 +1806,13 @@ BOUND_ROWS=(
   "a full request over every path a bound-ended full run read ends at once with no verdict|docs/a.md|full|docs/a.md|20|||--|full|$NV||$PLANTED"
   "a full request short of a path that run read keeps its local run|docs/b.md|full|docs/a.md|20|||--|full|$OK|full|"
   "a ci request that falls back to range ends at once after a range run's bound|docs/a.md|range|docs/a.md|20|||--validate-mode ci --base HEAD|range|$NV||$PLANTED"
-  "a full request after only a range run's bound, another command, keeps its local run|docs/a.md|range|docs/a.md|20|||--|full|$OK|full|"
+  "a full request after only a range run's bound, another command, keeps its local run|docs/a.md|range|docs/a.md|20||validate-base=|--|full|$OK|full|"
   "a bound-ended run whose log holds a finding line is no evidence|docs/a.md|full|docs/a.md|20|echo: suite=tests/a.sh||--|full|$OK|full|"
   "a bound-ended run under a lower bound is no evidence|docs/a.md|full|docs/a.md|10|||--|full|$OK|full|"
   "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
   "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
   "a bound-ended run that recorded no finding prefix is no evidence|docs/a.md|full|docs/a.md|20||no-finding-prefix|--|full|$OK|full|"
+  "a ci request that falls back to range keeps its local run after a range run from another base|docs/a.md|range|docs/a.md|20||validate-base=0000000000000000000000000000000000000000|--validate-mode ci --base HEAD|range|$OK|range|"
   "a bound-ended run handed another class is no evidence|docs/a.md|full|docs/a.md|20||class=standard|--|full|$OK|full|"
   "a bound-ended run handed another docs verdict is no evidence|docs/a.md|full|docs/a.md|20||docs-only=true|--|full|$OK|full|"
 )
@@ -1851,6 +1859,8 @@ bound_control '--fresh unread' ' && "$fresh" == false' '' \
   'a fresh request runs its command whatever the evidence'
 bound_control 'a missing finding prefix read as none' '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1' \
   'a bound-ended run that recorded no finding prefix is no evidence'
+bound_control 'no base rule' $'    [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue\n' '' \
+  'a ci request that falls back to range keeps its local run after a range run from another base'
 bound_control 'no class rule' $'    [[ "$(start_field "$start_file" class)" == "$5" ]] || continue\n' '' \
   'a bound-ended run handed another class is no evidence'
 bound_control 'no docs rule' $'    [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue\n' '' \

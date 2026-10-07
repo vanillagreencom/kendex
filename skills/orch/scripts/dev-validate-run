@@ -186,7 +186,8 @@
 #   - it ran the exact command text this run would run, so a changed
 #     DEV_VALIDATE_CMD or DEV_VALIDATE_RANGE_CMD is new work;
 #   - it handed its command the class and docs verdict this run hands it,
-#     which a command may select its lanes by;
+#     which a command may select its lanes by, and the same DEV_VALIDATE_BASE,
+#     its validate-base= line, which a range command validates from;
 #   - its log holds no finding line;
 #   - its bound was at least this one's;
 #   - this run reads every changed path it read.
@@ -414,12 +415,12 @@ run_has_finding() { # RUN_DIR
 }
 
 # The newest earlier full or range run of the worktree that says a run of CMD
-# over PATHS_FILE under TIMEOUT_SECS, handed CLASS and DOCS_ONLY, would end at
-# the bound, as --help states it, in BOUND_RUN_DIR and its sentinel's exit in BOUND_RUN_EXIT; both empty
+# over PATHS_FILE under TIMEOUT_SECS, handed CLASS, DOCS_ONLY and BASE, would
+# end at the bound, as --help states it, in BOUND_RUN_DIR and its sentinel's exit in BOUND_RUN_EXIT; both empty
 # where there is none.
 BOUND_RUN_DIR=""
 BOUND_RUN_EXIT=""
-find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE
   local start_file dir secs line rc guard_exit ran
   BOUND_RUN_DIR="" BOUND_RUN_EXIT=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
@@ -434,6 +435,7 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY
     ran="$(cat "$dir/cmd" 2>/dev/null)" && [[ "$ran" == "$4" ]] || continue
     [[ "$(start_field "$start_file" class)" == "$5" ]] || continue
     [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue
+    [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue
     line="$(cat "$dir/exit" 2>/dev/null)" || continue
     [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
     guard_exit="${BASH_REMATCH[1]}"
@@ -751,7 +753,7 @@ if [[ "$mode" == start ]]; then
   # than this one reads answers it: --help states which run counts.
   bound_ended=false
   if [[ "$validate_mode" != ci && "$fresh" == false && -z "$class_fallback" ]]; then
-    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only"
+    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only" "$base_sha"
     [[ -z "$BOUND_RUN_DIR" ]] || bound_ended=true
   fi
 
