@@ -137,11 +137,28 @@ fi
 [ "$SETTLE" -ne 0 ] ||
   notice settle-disabled value "$SETTLE" "copies are not mtime-separated; verdicts assume BUILD shares no cache"
 
+# The workspace stays outside the copied worktree and its common Git directory,
+# whatever TMPDIR says. A reviewer's own mktemp in a lane resolves under the
+# worktree's tmp/, where a copy a killed run leaves rides the lane's park
+# archive; /tmp takes the run instead.
+physical_dir() { # physical spelling of $2, read relative to $1
+  (cd -- "$1" 2>/dev/null && cd -- "$2" 2>/dev/null && pwd -P)
+}
+TEMP_BASE="${TMPDIR:-/tmp}"
+temp_physical=$(physical_dir . "$TEMP_BASE") || temp_physical=""
+owned_top=$(git -C "$WORKTREE" rev-parse --show-toplevel 2>/dev/null) || owned_top="."
+owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."
+for owned in "$owned_top" "$owned_git"; do
+  [ -n "$temp_physical" ] || break
+  owned=$(physical_dir "$WORKTREE" "$owned") || continue
+  case "$temp_physical/" in "${owned%/}"/*) TEMP_BASE=/tmp ;; esac
+done
+
 root_result=""
 root_status=0
-root_result=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX" 2>&1) || root_status=$?
+root_result=$(mktemp -d "$TEMP_BASE/mutation-stability.XXXXXX" 2>&1) || root_status=$?
 if [ "$root_status" -ne 0 ]; then
-  message error temp-create-failed path "${TMPDIR:-/tmp}" "could not create the mutation workspace"
+  message error temp-create-failed path "$TEMP_BASE" "could not create the mutation workspace"
   [ -z "$root_result" ] || printf '%s\n' "$root_result" >&2
   exit 2
 fi

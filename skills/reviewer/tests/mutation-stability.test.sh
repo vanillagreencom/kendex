@@ -424,6 +424,111 @@ a failing child still reddens that pin	loud	rc=2;matches-quiet-pin=no
 ROWS
 assert_table_executed "runner transcript" "$transcript_rows"
 
+# plant_variant NAME FROM TO — a copy of the script with the one line FROM
+# replaced by TO, beside its own group-leader lib; prints the copy's path.
+plant_variant() {
+  variant_tree="$TMP/variant-$1"
+  mkdir -p "$variant_tree/reviewer/scripts" "$variant_tree/github/scripts/lib"
+  cp "$SCRIPT_DIR/../../github/scripts/lib/group-leader.sh" "$variant_tree/github/scripts/lib/group-leader.sh"
+  variant="$variant_tree/reviewer/scripts/mutation-stability"
+  awk -v from="$2" -v to="$3" '$0 == from { print to; next } { print }' "$MS" > "$variant"
+  chmod +x "$variant"
+  planted=$(grep -cxF -- "$3" "$variant") || planted=0
+  if [ "$planted" != 1 ] || cmp -s "$MS" "$variant" || ! bash -n "$variant"; then
+    fail "$1 control" "planted $planted lines, wanted exactly 1 in valid shell"
+  else
+    pass "$1 control plants exactly one line"
+  fi
+}
+
+# The control keeps TMPDIR wherever the caller put it: the unchanged script.
+plant_variant inside-tmpdir '  case "$temp_physical/" in "${owned%/}"/*) TEMP_BASE=/tmp ;; esac' '  :'
+MS_INSIDE="$variant"
+REPO_PHYSICAL=$(cd "$REPO" && pwd -P) || exit 2
+WHERE_LOG="$TMP/workspace-where"
+
+echo "=== workspace placement table ==="
+placement_rows=0
+while IFS=$'\t' read -r name script tmpdir outcome expected; do
+  case "$script" in fixed) script="$MS" ;; control) script="$MS_INSIDE" ;; esac
+  case "$tmpdir" in worktree) tmpdir="$REPO/tmp" ;; gitdir) tmpdir="$REPO/.git/ms-tmp" ;; esac
+  case "$outcome" in pass) build='true' ;; fail) build='false' ;; esac
+  mkdir -p "$tmpdir"
+  : > "$WHERE_LOG"
+  rc=0
+  out=$(TMPDIR="$tmpdir" "$script" --worktree "$REPO" --sha "$SHA_BASE" --test 'bash check.sh' \
+    --build "pwd -P >> \"$WHERE_LOG\"; $build" --mutate "$KILL_MUTATION" --stability 1 --threads 2 2>&1) || rc=$?
+  inside=absent
+  while IFS= read -r where; do
+    case "$where/" in "$REPO_PHYSICAL"/*) inside=yes ;; *) [ "$inside" = yes ] || inside=no ;; esac
+  done < "$WHERE_LOG"
+  left=$(find "$REPO" -name 'mutation-stability.*' -prune -print | wc -l | tr -d ' ')
+  find "$REPO" -name 'mutation-stability.*' -prune -exec rm -rf {} +
+  assert_row "workspace placement" "$name" "rc=$rc;inside=$inside;left=$left" "$expected"
+  placement_rows=$((placement_rows + 1))
+done <<'ROWS'
+TMPDIR in the worktree, passing run	fixed	worktree	pass	rc=0;inside=no;left=0
+TMPDIR in the worktree, failing run	fixed	worktree	fail	rc=2;inside=no;left=0
+TMPDIR in the common Git directory	fixed	gitdir	pass	rc=0;inside=no;left=0
+control: TMPDIR honoured inside the worktree	control	worktree	pass	rc=0;inside=yes;left=0
+ROWS
+assert_table_executed "workspace placement" "$placement_rows"
+rm -rf "$REPO/tmp" "$REPO/.git/ms-tmp"
+
+# A git on PATH whose archive leaves the copy open for a second after its
+# bytes are out, so a signal lands while tar is still writing the workspace.
+SLOW_GIT_BIN="$TMP/slow-git"
+STOP_MARKER="$TMP/copy-started"
+mkdir -p "$SLOW_GIT_BIN"
+cat > "$SLOW_GIT_BIN/git" <<CASE
+#!/bin/sh
+case " \$* " in
+  *" archive "*) "$(command -v git)" "\$@"; status=\$?; : > "$STOP_MARKER"; sleep 1; exit \$status ;;
+esac
+exec "$(command -v git)" "\$@"
+CASE
+chmod +x "$SLOW_GIT_BIN/git"
+
+# The EXIT trap is the whole cleanup: bash runs it on a TERM it was not told to
+# catch as well. The KILL row is the control that the leftover count can see a
+# copy the trap never removed.
+observe_stop() { # observe_stop SIGNAL
+  stop_tmp="$TMP/stop-$1"
+  mkdir -p "$stop_tmp"
+  rm -f "$STOP_MARKER"
+  PATH="$SLOW_GIT_BIN:$PATH" TMPDIR="$stop_tmp" "$MS" --worktree "$REPO" --sha "$SHA_BASE" \
+    --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 >/dev/null 2>&1 &
+  stop_pid=$!
+  attempts=0
+  while [ ! -e "$STOP_MARKER" ] && [ "$attempts" -lt 200 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  copying=no
+  [ ! -e "$STOP_MARKER" ] || copying=yes
+  kill -s "$1" "$stop_pid" 2>/dev/null || :
+  rc=0
+  out=""
+  { wait "$stop_pid"; } 2>/dev/null || rc=$?
+  # A killed run leaves the slow archive and tar writing its copy for up to
+  # the stub's second; count once they are done.
+  sleep 1.2
+  left=$(find "$stop_tmp" -name 'mutation-stability.*' -prune -print | wc -l | tr -d ' ')
+  actual="rc=$rc;copying=$copying;left=$left"
+}
+
+echo "=== stop signal table ==="
+stop_rows=0
+while IFS=$'\t' read -r name signal expected; do
+  observe_stop "$signal"
+  assert_row "stop signal" "$name" "$actual" "$expected"
+  stop_rows=$((stop_rows + 1))
+done <<'ROWS'
+SIGTERM mid-copy removes the workspace	TERM	rc=143;copying=yes;left=0
+control: SIGKILL mid-copy skips the trap	KILL	rc=137;copying=yes;left=1
+ROWS
+assert_table_executed "stop signal" "$stop_rows"
+
 unset MUTATION_STABILITY_SETTLE
 export CACHE="$TMP/build-cache"
 
