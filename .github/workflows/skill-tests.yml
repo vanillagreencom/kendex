@@ -85,13 +85,15 @@ name: Skill Tests
 # pooled rest, and the orch shard comment gives the figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
 # `rest`, and `render-lint` is the second: a target whose cost is one
-# expensive test, so no target seam reaches inside it and it stands at
-# 801-1012s, ABOVE the ceiling, until that test is itself divided. `rest`
+# expensive test, so no target seam reaches inside it. After its comments
+# pass split across scopes, its macOS test step measured 277s in run
+# 37597618670. `rest`
 # is split again by test name: `verify-lock` takes verification, lock
 # recording and toggles that preserve locked records. `rest` skips those
 # same names. Both still use the one
-# `integration` binary. Their standalone macOS maxima remain to be measured;
-# the comment above the test step states the provisional bounds.
+# `integration` binary. Run 37597618670 measured their macOS test steps at
+# 484s and 475s respectively, each with one successful sample, inside the
+# 600s ceiling. The comment above the test step derives each bound.
 #
 # The cargo lanes' test steps each carry a `timeout-minutes` set from the
 # figures in the comment above it or its job, with headroom, so a hang there
@@ -1728,12 +1730,14 @@ jobs:
     # Each leg reserves its compile bound plus its test bound plus 5 minutes
     # for setup and cleanup, and the ceiling below is that sum for every leg
     # of this job, not the CLI legs alone. Compile is 20 on every leg. Test is
-    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; it is 20 on
-    # `rest` and `verify-lock` provisionally, reserving 20 + 20 + 5 = 45 each;
+    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; the measured
+    # test bounds below give `rest` 20 + 11 + 5 = 36 and `verify-lock`
+    # 20 + 10 + 5 = 35. Rest's allowance also covers the name partition check,
+    # which took 25s in run 37597618670;
     # it is 12 on the `whole` legs
     # kendex-core and kendex-app run, so each of those two reserves
     # 20 + 12 + 5 = 37 and takes the 40 below.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && 45 || 40 }}
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || matrix.leg == 'rest' && 36 || matrix.leg == 'verify-lock' && 35 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1834,20 +1838,19 @@ jobs:
       # Measured maxima of the step this bounds, over those same runs: 534s
       # for kendex-core whole and 81s for kendex-app whole. Before its
       # name split, rest took 854-941s over five successful merge-group runs
-      # on 2026-10-07, median 920s. The first name split measured rest at
-      # 766s and verify-lock at 343s, with toggle_locked finishing alone in
-      # rest. `verify-lock` selects the `verify_` family, `lock_record::`
+      # on 2026-10-07, median 920s. Run 37597618670 at fa5acb8c measured this
+      # partition's test steps at 484s for rest and 475s for verify-lock.
+      # Each maximum has one successful sample. `verify-lock` selects the
+      # `verify_` family, `lock_record::`
       # and `toggle_locked::`; rest rejects exactly those same strings, so a
       # new test still lands in one leg. These are libtest substring filters,
       # not new Cargo targets: the integration binary remains one binary.
-      # Both 20-minute test bounds are provisional until this rebalanced partition's
-      # macOS runs provide standalone maxima. Those runs must establish each
-      # leg inside the header's 600s ceiling before measured bounds replace
-      # them. The old combined maximum cannot supply either new maximum.
-      # `render-lint` is bounded at 1012s, the maximum its test reached
-      # BEFORE its comments pass was split across scopes; its post-split
-      # macOS seconds come from this change's own runs, and the bound is due
-      # a tightening pass once they exist. --no-fail-fast: one run reports
+      # Both measured steps sit inside the header's 600s ceiling. Each bound
+      # adds 25% to its own maximum and rounds up to whole minutes:
+      # rest ceil(484 * 1.25 / 60) = 11; verify-lock ceil(475 * 1.25 / 60) = 10.
+      # `render-lint` measured 277s in that run after its comments pass split
+      # across scopes; its 25-minute bound retains the earlier 1012s maximum.
+      # --no-fail-fast: one run reports
       # every platform-specific failure instead of one per queue attempt.
       # Every selected invocation runs and the step fails if any did, the same
       # reason --no-fail-fast has: one run reports everything. The doc run is
@@ -1856,7 +1859,7 @@ jobs:
       # --lib, --bins or cli_smoke would also filter those unrelated tests.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && 20 || 12 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 11 || matrix.leg == 'verify-lock' && 10 || 12 }}
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && github.token || '' }}
