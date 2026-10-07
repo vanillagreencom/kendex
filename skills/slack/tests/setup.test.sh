@@ -87,7 +87,49 @@ assert_eq "$RC=$(printf '%s' "$ERR1" | sed 's/refused=C[0-9]*/refused=CID/')" \
   "an invite Slack refuses is refused with the channel, the owners and the remedy"
 assert_eq "$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "absent" "no binding is written after a refused invite"
 
+# --- the private env file alone ------------------------------------------------
+# No SLACK_BOT_TOKEN or SLACK_OWNERS in the process environment: run from the
+# root, as the installed unit does, so the launcher loads that root's file.
+sk_run_private() { # ROOT ARGS...
+  local root="$1"
+  shift
+  RC=0
+  OUT="$(cd "$root" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C SLACK_API_URL="$SK_URL" \
+    "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
+  ERR="$(cat "$SK_TMP/err")"
+  ERR1="$(sed -n '1p' "$SK_TMP/err")"
+}
+LAMBDA="$(sk_new_root lambda)"
+sk_run_private "$LAMBDA" setup --root "$LAMBDA"
+assert_eq "$RC=$(printf '%s\n' "$ERR" | sed -n '1,2p' | tr '\n' ' ')" \
+  "2=slack: setting-missing=SLACK_BOT_TOKEN slack: setting-missing=SLACK_OWNERS " \
+  "with neither the process environment nor a private env file, setup is refused setting-missing"
+printf 'SLACK_BOT_TOKEN=%s\nSLACK_OWNERS=%s\n' "$SK_TOKEN" "$OWNERS" > "$LAMBDA/.env.local"
+sk_run_private "$LAMBDA" setup --root "$LAMBDA"
+assert_eq "$RC=$(jq -r '.owners | join(",")' "$LAMBDA/tmp/slack/binding.json")" "0=$OWNERS" \
+  "the private env file alone carries the token and the owners to the relay"
+
 # --- controls, one mutant per rule ---------------------------------------------
+sk_copy unexported
+if ! python3 - "$SK_BIN" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+new = text.replace("set -a\n", "", 1)
+if text.count("set -a\n") != 1 or new == text:
+    sys.exit(1)
+open(path, "w").write(new)
+PY
+then
+  printf 'mutant unexported: pattern did not match exactly once\n' >&2
+  exit 1
+fi
+rm -rf -- "${LAMBDA:?}/tmp/slack"
+sk_run_private "$LAMBDA" setup --root "$LAMBDA"
+assert_eq "$RC=$ERR1" "2=slack: setting-missing=SLACK_BOT_TOKEN" \
+  "control: the load unexported, the private env file's token never reaches the relay"
+sk_bin_reset
+
 sk_mutant owner relay.py 'err\.error == "users_not_found"' 'err.error == "never_this"'
 sk_run SLACK_OWNERS="nobody@example.test" -- setup --root "$ROOT"
 assert_eq "${ERR1%%=*}" "slack: slack-api-failed" "control: the mapping removed, the unknown owner is a bare API failure"

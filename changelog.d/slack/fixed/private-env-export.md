@@ -1,0 +1,1 @@
+- The relay reads `SLACK_BOT_TOKEN`, `SLACK_OWNERS` and every other setting the private env file carries: `slack setup`, `slack listen` and the installed unit no longer refuse `setting-missing` while the key sits in `.env.local`.
