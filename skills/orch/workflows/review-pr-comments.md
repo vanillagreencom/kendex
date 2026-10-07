@@ -247,7 +247,7 @@ Decide whether this fix round may add protected files. [`../schemas/dev-round.md
 When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
 
 ```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments [--adds "[REPO_RELATIVE_PATHS]"]
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open true [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
 A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A nonzero exit names a usage or environment failure. Report it and stop.

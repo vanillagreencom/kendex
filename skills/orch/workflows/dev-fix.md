@@ -77,7 +77,15 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
 
    A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
-4. **Stamp the round**, as separate tool calls immediately before delegating, the round-start prune between the two stamps, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+4. Read the pull request state before stamping the round:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json state
+   ```
+
+   Set `[PR_OPEN]` to `true` when `state` is `OPEN`, and `false` for `status=no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation. The record's `pr_open` rule in [dev-round.md](../schemas/dev-round.md) owns the validation mode.
+
+   **Stamp the round**, as separate tool calls immediately before delegating, the round-start prune between the two stamps, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
@@ -104,7 +112,7 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
    When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] [--adds "[REPO_RELATIVE_PATHS]"]
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
    A nonzero exit names a usage or environment failure. Report it and stop.
@@ -112,7 +120,7 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
    When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --cut
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --cut
    ```
 
    A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.

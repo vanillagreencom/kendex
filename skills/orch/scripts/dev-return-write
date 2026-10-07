@@ -249,10 +249,10 @@ with a floor of 1. The orchestrator verifies and persists the first accepted one
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass", "no-verdict" or begins
 with "FAILING:".
---validate-note carries a qualified result the enumeration cannot express (the
-test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
-worth recording); it never relaxes --validate. Outside that named ceiling a
-failing validation ends the round and is never re-run into a pass.
+--validate-note carries a qualified result the enumeration cannot express.
+dev-implement.md section 5 owns the permitted correction and rerun routes and
+the notes they require. The note never relaxes --validate, which records the
+final run's verdict.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full,
 range or ci, and a --validate pass needs a run that passed, no-verdict a run the

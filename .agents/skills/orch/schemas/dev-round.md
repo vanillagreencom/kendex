@@ -24,6 +24,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
   "adds": ["tools/refresh-fixture"],
   "cut": false,
   "source": "pr-comments",
+  "pr_open": true,
   "items": [
     { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
   ]
@@ -39,7 +40,8 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `delegated_at` | Yes | captured from the clock | Epoch second the round's first `dev-round-write` invocation started. An identical retry keeps it: identity compares every other field |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
-| `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent. `dev-artifact-check` accepts a receipt's `ci` validation mode only where it is `pr-comments` |
+| `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent |
+| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation. Defaults to `false`; readers treat an absent field as `false` and refuse a non-boolean value. A fix round requests `ci` only when this is `true`, regardless of `source`; otherwise it requests `range`. The runner may fall back to local validation. `dev-artifact-check` accepts a `ci` receipt only when this is `true` |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.

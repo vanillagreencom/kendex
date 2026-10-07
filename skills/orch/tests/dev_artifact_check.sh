@@ -411,15 +411,15 @@ assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 
 echo "=== a fix receipt carries the mode its round runs ==="
 # A fix round runs range, or full where the project sets no range command;
 # a receipt recording the other mode names a run that is not the round's. A
-# ci run is the round's only where its record names the pr-comments source.
+# ci run is the round's only where its record names an open pull request.
 # `label^project's range command^recorded mode^round record^expect`, over one
 # receipt the writer produced from the round's own range run and one record
-# the round writer produced with --source pr-comments.
+# the round writer produced with --source pr-review and --pr-open true.
 MW="$(new_repo modes issue-50 seed 1000000)"
-round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --source pr-comments --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --source pr-review --pr-open true --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 MODE_RECORD="$MW/tmp/dev-round-issue-50-1-1.json"
 MODE_RECORD_WRITTEN="$(cat "$MODE_RECORD")"
-assert_eq "$(jq -r '.source' <<<"$MODE_RECORD_WRITTEN")" "pr-comments" "the round writer records the source it is given"
+assert_eq "$(jq -r '[.source, .pr_open] | tojson' <<<"$MODE_RECORD_WRITTEN")" '["pr-review",true]' "the round writer records the source and open PR independently"
 "$WRITE" --worktree "$MW" --kind fix --issue issue-50 --round-id 1-1 --branch b --commit "$(git -C "$MW" rev-parse HEAD)" \
   --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-mw-1-1" "$MW" issue-50 1-1 range)" --item 1 Applied done >/dev/null
 MODE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1.json"
@@ -441,8 +441,12 @@ MODE_ROWS=(
   "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^.^rc=1 reason=mode_mismatch"
   "a ci run, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
   "a ci run is valid where the round runs full^^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run on a round whose record names another source is refused^tools/guard --range x^.validate_mode=\"ci\"^.source=\"internal-review\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
-  "a ci run on a round whose record names no source is refused^^.validate_mode=\"ci\"^.source=null^rc=1 verdict=retry reason=mode_mismatch"
+  "a ci run on an open PR is valid with another source^tools/guard --range x^.validate_mode=\"ci\"^.source=\"conversation\"^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci run on a round with no open PR is refused^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=false^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
+  "a ci run on a legacy round with no PR state is refused^^.validate_mode=\"ci\"^del(.pr_open)^rc=1 verdict=retry reason=mode_mismatch"
+  "the comments source alone permits no ci receipt^tools/guard --range x^.validate_mode=\"ci\"^.source=\"pr-comments\" | .pr_open=false^rc=1 verdict=retry reason=mode_mismatch"
+  "a range fallback on an open PR remains valid^tools/guard --range x^.^.^rc=0 verdict=accept reason=valid validate_mode=range"
+  "an invalid PR state fails record validation^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=\"true\"^rc=2"
 )
 for row in "${MODE_ROWS[@]}"; do
   IFS='^' read -r label range_cmd filter record_filter expect <<<"$row"
@@ -451,8 +455,8 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
 # Controls, one per rule of the ci exception: a gate that judges a ci run
-# against the round's own mode refuses the pr-comments round, and one that
-# reads no source accepts a round of another.
+# against the round's own mode refuses the open-PR round, and one that
+# reads no PR state accepts a round with no open PR.
 ci_mode_control() { # NAME LABEL ANCHOR REPLACEMENT RECORD_FILTER EXPECT
   local check
   mode_row "tools/guard --range x" ".validate_mode=\"ci\"" "$5"
@@ -464,10 +468,12 @@ ci_mode_control() { # NAME LABEL ANCHOR REPLACEMENT RECORD_FILTER EXPECT
   ERR="$TMP_ROOT/$1.err"
   assert_eq "$(observe "$6")" "$6" "control: $2" "$ERR"
 }
-ci_mode_control ci-mode "without the ci exception a pr-comments ci run is a mode mismatch" \
+ci_mode_control ci-mode "without the ci exception an open PR's review ci run is a mode mismatch" \
   '      ci) if' '      no-ci) if' "." "rc=1 reason=mode_mismatch"
-ci_mode_control ci-source "with the source unread a ci run on another source's round is valid" \
-  "'.source == \"pr-comments\"'" "'true'" '.source="internal-review"' "rc=0 reason=valid validate_mode=ci"
+ci_mode_control ci-pr "with the PR state unread a ci run on a round with no open PR is valid" \
+  "'.pr_open == true'" "'true'" '.pr_open=false' "rc=0 reason=valid validate_mode=ci"
+ci_mode_control ci-pr-type "with the PR state type unchecked a string reaches the mode gate" \
+  'and ((has("pr_open") | not) or ((.pr_open | type) == "boolean"))' '' '.pr_open="true"' "rc=1 reason=mode_mismatch"
 # The mode is read from the resolver's stdout alone: what the project env
 # prints on stderr does not unresolve it.
 mode_row "tools/guard --range x" "."

@@ -131,7 +131,7 @@ printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 li
   > "$WT/.cache/tracker-fixture/issues.json"
 printf '.cache/\n' >> "$(git -C "$WT" rev-parse --path-format=absolute --git-path info/exclude)"
 ADDS_PATHS="tools/future-helper.sh skills/x/scripts/future-check"
-run_workflow_round_command() { # WORKFLOW ROUND
+run_workflow_round_command() { # WORKFLOW ROUND [PR_OPEN]
   local block line
   block="$(fenced_block_with "$1" "dev-round-write --worktree")"
   line="$(awk '/dev-round-write --worktree/ { print; exit }' <<<"$block")"
@@ -141,15 +141,14 @@ run_workflow_round_command() { # WORKFLOW ROUND
   line="${line//\[ISSUE_ID\]/issue-826}"
   line="${line//\[DEV_ROUND_ID\]/$2}"
   line="${line//\[SOURCE\]/pr-review}"
+  line="${line//\[PR_OPEN\]/${3:-true}}"
   line="${line/\[--adds/--adds}"
   line="${line/\[REPO_RELATIVE_PATHS\]/$ADDS_PATHS}"
   line="${line/\"]/\"}"
   "$STATE" --state-dir "$WT/tmp" set issue-826 dev_round_id "$2" >/dev/null
   env ORCH_STATE_DIR="$WT/tmp" bash -c "$line"
 }
-# The source dev-artifact-check reads: the delegation's own Source: for
-# dev-fix, filled here as pr-review, and pr-comments for review-pr-comments,
-# whose rounds alone may leave validation to the pull request CI.
+# The executable commands bind the PR state independently of the source.
 rid=40
 for row in dev-fix:pr-review review-pr-comments:pr-comments; do
   workflow="${row%%:*}"
@@ -159,8 +158,14 @@ for row in dev-fix:pr-review review-pr-comments:pr-comments; do
     "$workflow: the live command executes and binds its Adds path list"
   assert_eq "$(jq -r '.source' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "${row#*:}" \
     "$workflow: the live command records the round's source"
+  assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "true" \
+    "$workflow: the live command records the open PR"
   rid=$((rid + 1))
 done
+printf '%s' '[{"n":1,"text":"pre-PR review","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-43-43.json"
+run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/dev-fix.md" 43-43 false >/dev/null
+assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-43-43.json")" "false" \
+  "the live command records a review with no open PR"
 INERT="$TMP_ROOT/inert-workflow.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$INERT"
 sed -i.bak '/dev-round-write --worktree/ s|^[[:space:]]*\.agents|true # .agents|' "$INERT"

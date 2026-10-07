@@ -132,6 +132,8 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 
 `git branch --show-current` must report `[BRANCH_NAME]` — the parent's branch when bundled.
 
+Record `git -C [WORKTREE_PATH] rev-parse HEAD` as `[ROUND_BASE]` before implementation. A fix round uses its delegated record's `base_sha` instead.
+
 ### 4.2 Implement
 
 Implement per your domain expertise and run quality gates before completion.
@@ -178,7 +180,9 @@ A start `dev-validate-run` refuses as `run-live`, with exit 2 and the line `dev-
 
 For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load. Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
 
-Any other validation failure ends the round. Record the failing result in the artifact and return it without another validation run.
+A `dev-validate-run` verdict of `validate=FAILING` permits one correction inside this round only when the run log names the cause and every failing check names files, all added or changed in `git -C [WORKTREE_PATH] diff --cached --name-only --diff-filter=AM [ROUND_BASE]`. Name the first failing check and cause in `--validate-note`. Apply one correction, stage it, and run the same validation command once more on the final contents. Record that single rerun and its verdict in the same note. Then proceed to the artifact with that verdict. This permission applies before the artifact is written and needs no recovery round.
+
+A failure outside that diff, a failure after the single rerun, or an infrastructure result (`no-verdict`, `state=timeout` or `state=lost`) permits no further validation run. The existing `no-verdict` scoped-suite route above still applies. Any other validation failure ends the round. Record the failing result in the artifact and return it without another validation run.
 
 Run no proof, rerun, receipt, isolation step, or approval step outside this list. If an agent believes the list misses a rule, it records the proposal once under `### Proposed Rules` in the completion summary and in the matching return line. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
 

@@ -79,7 +79,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 ## `validate` and its note
 
-`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express — the test-only validation-ceiling re-run that the dev skill's `dev-implement.md` § 5 names, or a flake worth recording — and it never relaxes `--validate`. Outside that named ceiling a failing validation ends the round; it is never re-run into a pass:
+`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express. The dev skill's `dev-implement.md` § 5 owns the permitted correction and rerun routes and the notes they require. The note never relaxes `--validate`, which records the final run's verdict:
 
 ```bash
 --validate "FAILING: cargo test" --validate-note "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load"

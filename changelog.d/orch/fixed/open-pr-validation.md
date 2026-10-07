@@ -1,0 +1,1 @@
+- Fix round records carry the pull request state so CI receipts work for every open pull request review source.

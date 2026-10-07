@@ -155,8 +155,8 @@ skills/orch/schemas/dev-round.md § Protected additions.
 A kind fix receipt checked against its round record also carries the mode a
 fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
 range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
-the pull request CI validates, on a round whose record names the source
-pr-comments (dev-round-write --source). Any other recorded mode is
+the pull request CI validates, on a round whose record carries pr_open=true
+(dev-round-write --pr-open). Any other recorded mode is
 reason=mode_mismatch; a null mode, a failing round that started no run, is
 not judged. A resolution that cannot be read exits 2.
 
@@ -722,11 +722,11 @@ validate_artifact() {
     else
       message mode-unresolved >&2; return 2
     fi
-    # A ci run leaves the round to its pull request's CI, which only a round
-    # on that pull request's comments has, as the orchestrator's record says.
+    # The orchestrator stamps the PR state before delegation. Source alone
+    # cannot tell whether a review round has pull request CI.
     local mode_ok=false
     case "$recorded_mode" in
-      ci) if jq -e '.source == "pr-comments"' "$round_record" >/dev/null 2>&1; then mode_ok=true; fi ;;
+      ci) if jq -e '.pr_open == true' "$round_record" >/dev/null 2>&1; then mode_ok=true; fi ;;
       "$round_mode") mode_ok=true ;;
     esac
     if [[ "$mode_ok" == false ]]; then
@@ -939,6 +939,7 @@ elif [[ "${1:-}" == --* ]]; then
             and (split("/") | all(. != "" and . != "." and . != "..")))
       and ((.adds | length) == (.adds | unique | length))
       and ((.cut? | type) as $t | $t == "null" or $t == "boolean")
+      and ((has("pr_open") | not) or ((.pr_open | type) == "boolean"))
       and ((.items? | type) == "array") and ((.items | length) > 0)
       and all(.items[];
             (type == "object")

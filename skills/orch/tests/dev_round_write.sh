@@ -152,6 +152,9 @@ jq --argjson at "$FIRST_AT" '.delegated_at = $at' "$FIRST" > "$FIRST.next"
 mv "$FIRST.next" "$FIRST"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 .delegated_at=$FIRST_AT")" "rc=0 .delegated_at=$FIRST_AT" "a later identical retry is idempotent and keeps the first invocation's delegation time" "$ERR"
+run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --pr-open true --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
+OUT="$FIRST"
+assert_eq "$(observe "rc=2 .pr_open=false")" "rc=2 .pr_open=false" "a changed PR state cannot rewrite the immutable round" "$ERR"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 3 replacement "$OK_REACH"
 OUT="$FIRST"
 assert_eq "$(observe "rc=2 [.items[].n]|tojson=[1,2]")" "rc=2 [.items[].n]|tojson=[1,2]" "a different set under the same round id is refused and the original stands" "$ERR"
@@ -246,8 +249,18 @@ table \
   "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--issue=true" \
   "a path-unsafe --source|--worktree $WT --issue i --round-id 1-1 --source pr/comments --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-id+arg1=--source+arg2=pr/comments=true" \
   "a duplicate --source: no silent last-wins|--worktree $WT --issue i --round-id 1-1 --source a --source b --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--source=true" \
+  "a non-boolean PR state|--worktree $WT --issue i --round-id 1-1 --pr-open OPEN --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-pr-open+value=OPEN=true" \
+  "a JSON number is no PR state|--worktree $WT --issue i --round-id 1-1 --pr-open 42 --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-pr-open+value=42=true" \
+  "a duplicate PR state|--worktree $WT --issue i --round-id 1-1 --pr-open true --pr-open false --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--pr-open=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
+PR_MUTANT="$(mutant_scripts pr-state-mutant dev-round-write)/dev-round-write" || exit 1
+mutate_file "$PR_MUTANT" '[[ "$pr_open" == true || "$pr_open" == false ]] || die invalid-pr-open' ':'
+set +e
+growth_round_write "$STATE" "$PR_MUTANT" --worktree "$WT" --issue i --round-id 65-65 --pr-open 42 --item 1 text "$OK_REACH" >/dev/null 2>"$TMP_ROOT/pr-state.err"; pr_rc=$?
+set -e
+assert_eq "$pr_rc $(jq -r '.pr_open' "$WT/tmp/dev-round-i-65-65.json")" "0 42" \
+  "control: without the PR-state guard a JSON number is recorded as the PR state"
 run_write -h
 assert_eq "$(observe "rc=0")" "rc=0" "-h prints usage and exits 0" "$ERR"
 

@@ -20,7 +20,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-#     [--adds "PATH [PATH...]"] [--cut] [--source NAME]
+#     [--adds "PATH [PATH...]"] [--cut] [--source NAME] [--pr-open true|false]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -61,6 +61,7 @@
 #     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "cut": false,                          // required, true for a declared cut
 #     "source": "pr-comments",             // the round's Source:, or null
+#     "pr_open": true,                       // pull request open at delegation
 #     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
@@ -97,6 +98,10 @@ message() {
     invalid-id)
       printf 'dev-round-write: invalid-id arg1=%s arg2=%s\n' "$1" "$2"
       printf '%s\n' "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+      ;;
+    invalid-pr-open)
+      printf 'dev-round-write: invalid-pr-open value=%s\n' "$pr_open"
+      printf '%s\n' "--pr-open requires true or false"
       ;;
     missing-reach)
       printf 'dev-round-write: missing-reach n=%s\n' "$n"
@@ -203,7 +208,7 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-    [--adds "PATH [PATH...]"] [--cut] [--source NAME]
+    [--adds "PATH [PATH...]"] [--cut] [--source NAME] [--pr-open true|false]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints that path. One --item per delegated review
@@ -238,8 +243,9 @@ second the round's first dev-round-write invocation started as delegated_at
 worktree with no resolvable HEAD is rejected.
 --cut records a reviewer or orchestrator choice to cut work back to the
 Done-when. The item set, reach and protected additions still apply.
---source records the delegation's Source: value, used by dev-artifact-check
-to identify pr-comments rounds that may leave validation to pull request CI.
+--source records the delegation's Source: value.
+--pr-open records whether the pull request is open at delegation, default false.
+dev-artifact-check uses it to accept receipts that leave validation to CI.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -250,7 +256,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--source|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--source|--pr-open|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -319,6 +325,8 @@ items_file_given=false
 adds_given=false
 source_given=false
 source_name=""
+pr_open=false
+pr_open_given=false
 
 while (( $# > 0 )); do
   case "$1" in
@@ -329,6 +337,7 @@ while (( $# > 0 )); do
     --adds) need "$1" $# "${2:-}"; no_dup "$1" "$adds_given"; adds_given=true; adds="$2"; shift 2 ;;
     --cut) cut=true; shift ;;
     --source) need "$1" $# "${2:-}"; no_dup "$1" "$source_given"; source_given=true; source_name="$2"; shift 2 ;;
+    --pr-open) need "$1" $# "${2:-}"; no_dup "$1" "$pr_open_given"; pr_open_given=true; pr_open="$2"; shift 2 ;;
     --item)
       # Consumes exactly 3 args: N TEXT REACH.
       if (( $# < 4 )); then
@@ -366,6 +375,7 @@ done
 [[ -d "$worktree" ]] || die not-directory "$@"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
+[[ "$pr_open" == true || "$pr_open" == false ]] || die invalid-pr-open
 source_json=null
 if [[ "$source_given" == true ]]; then
   check_id_token --source "$source_name"
@@ -471,6 +481,7 @@ jq -n \
   --argjson adds "$adds_json" \
   --argjson cut "$cut" \
   --argjson source "$source_json" \
+  --argjson pr_open "$pr_open" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
@@ -481,6 +492,7 @@ jq -n \
      adds: $adds,
      cut: $cut,
      source: $source,
+     pr_open: $pr_open,
      items: $items
    }' > "$tmp"
 
