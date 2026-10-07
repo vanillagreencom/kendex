@@ -253,20 +253,19 @@ pub fn render_plain(report: &CheckReport, verbosity: Verbosity) -> String {
     if page.sections.is_empty() {
         return String::new();
     }
-    // The overflow line spends one of the section's own slots.
-    let room = match verbosity {
-        Verbosity::Default => 1,
-        Verbosity::Verbose => SECTION_ITEMS - 1,
-    };
     let mut lines: Vec<String> = Vec::new();
     for (at, section) in page.sections.iter().enumerate() {
         if at > 0 {
             lines.push(String::new());
         }
         lines.push(format!("{}: {}", section.title, section.items.len()));
-        let shown_count = match section.items.len() > room + 1 {
-            true => room,
-            false => section.items.len(),
+        // By default one example and the count of the rest; verbose lists
+        // up to the section budget, the overflow line spending one of its
+        // slots.
+        let shown_count = match verbosity {
+            Verbosity::Default => section.items.len().min(1),
+            Verbosity::Verbose if section.items.len() > SECTION_ITEMS => SECTION_ITEMS - 1,
+            Verbosity::Verbose => section.items.len(),
         };
         for item in &section.items[..shown_count] {
             lines.push(format!("  {}", item.line()));

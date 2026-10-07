@@ -358,7 +358,7 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
         render_plain(&report, Verbosity::Default),
-        "source comparison needed: 2\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  skill 'also-moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n(package evaluation: moments ago)\n2 items need attention.\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
+        "source comparison needed: 2\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  … 1 more — see: kendex check\n(package evaluation: moments ago)\n2 items need attention.\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
     );
 }
 

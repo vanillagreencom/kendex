@@ -339,9 +339,19 @@ fn a_check_left_waiting_on_the_refresh_never_claims_all_clear() {
         snapshot_age_secs: None,
         ..clean()
     };
-    let quiet = screen(&plain(), &waiting, "here", Verbosity::Default);
-    assert!(quiet.report.is_empty(), "{:?}", quiet.report);
-    assert!(quiet.verdict.is_empty(), "{:?}", quiet.verdict);
+    // Silent by default in both renderings: no header, report or verdict.
+    for style in [plain(), rich(100)] {
+        let quiet = screen(&style, &waiting, "here", Verbosity::Default);
+        assert!(quiet.head.is_empty(), "{:?}", quiet.head);
+        assert!(quiet.report.is_empty(), "{:?}", quiet.report);
+        assert!(quiet.verdict.is_empty(), "{:?}", quiet.verdict);
+    }
+    assert!(
+        !screen(&rich(100), &waiting, "here", Verbosity::Verbose)
+            .head
+            .is_empty(),
+        "verbose draws the run it reports"
+    );
     let verbose = screen(&plain(), &waiting, "here", Verbosity::Verbose);
     assert_eq!(
         verbose.report,

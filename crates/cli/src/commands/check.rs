@@ -134,10 +134,17 @@ fn screen(style: &Style, checked: &CheckReport, target: &str, verbosity: Verbosi
     if let Some(next) = &page.next {
         report.extend(style.note(&spans(next)));
     }
+    let verdict = verdict(checked, &page, verbosity);
+    // A check with nothing to draw and no verdict to close on is silent:
+    // a header over nothing would be a line about nothing.
+    let head = match report.is_empty() && verdict.is_none() {
+        true => Vec::new(),
+        false => style.header("check", target),
+    };
     Screen {
-        head: style.header("check", target),
+        head,
         report,
-        verdict: verdict(checked, &page, verbosity)
+        verdict: verdict
             .map(|(status, text)| style.summary(status, &text))
             .unwrap_or_default(),
     }
