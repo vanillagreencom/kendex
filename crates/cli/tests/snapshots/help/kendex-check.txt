@@ -26,3 +26,6 @@ Options:
 
   -h, --help
           Print help
+
+Fleet's lane lock migration reads lock-version-refused found=N expected=M
+path=PATH on stderr. A record with no version uses found=none.

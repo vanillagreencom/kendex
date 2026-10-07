@@ -47,7 +47,7 @@ pub fn run(
                 kendex_core::error::CoreError::LockCorrupt { .. }
                     | kendex_core::error::CoreError::LegacyProjectLock { .. }
             ) {
-                ui::component_refusal(error);
+                ui::stderr(&[ui::escaped(&error.to_string())]);
             }
         });
         fold_commit_hooks(env, &mut checked, &scopes);

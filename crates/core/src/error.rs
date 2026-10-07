@@ -109,15 +109,12 @@ pub enum CoreError {
     LegacyManifest { path: PathBuf, message: String },
 
     #[error(
-        "{}: this lock file could not be read; move it aside and install fresh. Keep it: it is the only record naming a pi hooks.json or hooks/ beside a scope root, so move those aside as well\n{message}",
-        crate::names::shown(&path.display().to_string())
+        "{message}; {path}: this lock file could not be read; move it aside and install fresh. Keep it: it is the only record naming a pi hooks.json or hooks/ beside a scope root, so move those aside as well"
     )]
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
-        "{}: this project lock is a version 10 record; move it to {}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well{}",
-        crate::names::shown(&path.display().to_string()),
-        crate::names::shown(&aside.display().to_string()),
+        "{}; {path}: this project lock is a version 10 record; move it to {aside}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
         lock_version_refused(path, Some(10))
     )]
     LegacyProjectLock { path: PathBuf, aside: PathBuf },
@@ -765,9 +762,9 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 /// Fleet's lane lock migration reads this line instead of the English refusal.
 pub(crate) fn lock_version_refused(path: &std::path::Path, found: Option<i64>) -> String {
     format!(
-        "\nlock-version-refused found={} expected={} path={}",
+        "lock-version-refused found={} expected={} path={}",
         found.map_or_else(|| "none".to_owned(), |version| version.to_string()),
         crate::lock::LOCK_VERSION,
-        crate::names::shown(&path.display().to_string())
+        path.display()
     )
 }
