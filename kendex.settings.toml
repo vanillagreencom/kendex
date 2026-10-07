@@ -105,6 +105,10 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 # The kendex owner program uses the Copilot pool before the native Codex harness.
 ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:high"
 
+# Accounts a cloud-session pick may hand a kendex lane: each approved the
+# kendex repository card once on the control VM (owner acceptance 2026-10-07).
+ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex"
+
 # Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
 # slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
