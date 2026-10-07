@@ -43,6 +43,10 @@ case "$query" in
   printf '%s' '{"data":{"issue":{"id":"issue-uuid","identifier":"CC-720","title":"t","description":null,"state":{"name":"In Review","type":"started"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-720","branchName":"cc-720","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"parent":null,"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
+  if [[ "$scenario" == "update-fail" ]]; then
+    printf '%s' '{"errors":[{"message":"update rejected"}]}___HTTP_CODE___200'
+    exit 0
+  fi
   printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"issue-uuid","identifier":"CC-720","title":"t","description":null,"state":{"name":"Done","type":"completed"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-720","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *)
@@ -150,3 +154,19 @@ assert_not "plain complete posts no comment" \
 assert "plain complete transitions to Done" \
   jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.stateId == "state-done")' "$plain_payload" >/dev/null
 
+for spelling in split equals; do
+  format_args=(--format ids)
+  [ "$spelling" != equals ] || format_args=(--format=ids)
+  run_status format_rc run_complete ok "$plain_payload" CC-720 --summary-file "$summary_file" "${format_args[@]}" >"$TMP_ROOT/format.out" 2>"$TMP_ROOT/format.err"
+  assert_eq "complete ids $spelling succeeds" "$format_rc" 0
+  assert_eq "complete ids $spelling prints only the identifier" "$(cat "$TMP_ROOT/format.out")" CC-720
+  run_status format_rc run_complete update-fail "$plain_payload" CC-720 --summary-file "$summary_file" "${format_args[@]}" >"$TMP_ROOT/format.out" 2>"$TMP_ROOT/format.err"
+  assert_ne "partial complete ids $spelling fails" "$format_rc" 0
+  assert_jq "partial complete ids $spelling reports the failure on stderr" "$(tail -n 1 "$TMP_ROOT/format.err")" 'has("error")'
+  assert "partial complete ids $spelling posted the summary before the failed update" jq -s -e '[.[] | select(.query | test("commentCreate|issueUpdate")) | .query | contains("commentCreate")] == [true, false]' "$plain_payload"
+  format_args=(--format bogus)
+  [ "$spelling" != equals ] || format_args=(--format=bogus)
+  run_status format_rc run_complete ok "$plain_payload" CC-720 --summary-file "$summary_file" "${format_args[@]}" >"$TMP_ROOT/format.out" 2>"$TMP_ROOT/format.err"
+  assert_ne "complete invalid format $spelling fails" "$format_rc" 0
+  assert_not "complete invalid format $spelling sends no request" test -s "$plain_payload"
+done

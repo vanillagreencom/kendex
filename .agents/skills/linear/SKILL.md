@@ -128,10 +128,11 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `labels list --max --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. `issues update --labels` and `issues activate --agent` resolve names live against the issue's own team and workspace labels. An unresolved name refuses before mutation and names the team and label. `--clear-labels` is the only way to empty the set.
 
-- `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`).
+- `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`). Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier.
 - `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed issue read, users lookup or update fails the activation with no line (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively; a user id is sent as given.
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
 - `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
+- `issues complete` posts an optional summary before setting "Done". Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier. A failed state update after a posted summary exits nonzero and reports on stderr in either format.
 
 ## validate-completion
 

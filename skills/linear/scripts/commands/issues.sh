@@ -199,12 +199,14 @@ Relation Options (add-relation):
   --peer-rule-violation remove-relation: the tpm-audit structural repair
 
 Activate Options:
+  --format <fmt>       Output format: ids (identifier only); default is JSON.
   --agent <name>        Apply the exclusive agent:<name> issue label together
                         with the "In Progress" transition (replaces any existing
                         agent:* label, preserves other labels). Fails without
                         changing state when the label does not exist.
 
 Complete Options:
+  --format <fmt>        Output format: ids (identifier only); default is JSON.
   --summary <text>       Post a completion summary comment, then set "Done"
   --summary-file <path>  Read the summary from a file (preferred for markdown)
   --done-when-met <all|N[,N...]>
@@ -2731,8 +2733,20 @@ activate_issue() {
     shift
 
     local agent=""
+    local output_format=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --format)
+            linear_require_option_value "$@" || return 1
+            output_format="$2"
+            linear_require_format "$output_format" ids || return 1
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#*=}"
+            linear_require_format "$output_format" ids || return 1
+            shift
+            ;;
         --agent)
             if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
                 agent="$2"
@@ -2819,6 +2833,10 @@ activate_issue() {
     fi
 
     printf '%s\n' "$assignee_line" >&2
+    if [ "$output_format" = "ids" ]; then
+        echo "$update_result" | jq -r '.identifier // empty'
+        return 0
+    fi
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
     jq -cn --arg identifier "$identifier" --arg agent "$agent" --arg assignee "$assignee_state" \
@@ -3032,8 +3050,20 @@ complete_issue() {
     local summary=""
     local summary_file=""
     local done_when_met=""
+    local output_format=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --format)
+            linear_require_option_value "$@" || return 1
+            output_format="$2"
+            linear_require_format "$output_format" ids || return 1
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#*=}"
+            linear_require_format "$output_format" ids || return 1
+            shift
+            ;;
         --done-when-met)
             if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
                 done_when_met="$2"
@@ -3193,6 +3223,10 @@ complete_issue() {
         return 1
     fi
 
+    if [ "$output_format" = "ids" ]; then
+        echo "$update_result" | jq -r '.identifier // empty'
+        return 0
+    fi
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
     jq -cn --arg identifier "$identifier" --arg summary "$summary" --arg checked "$done_when_checked" \

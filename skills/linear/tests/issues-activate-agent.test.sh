@@ -111,6 +111,20 @@ assert "plain activate sends the state change without labelIds" \
     and .variables.input.stateId == "state-in-progress"
     and (.variables.input | has("labelIds") | not))' "$plain_payload"
 
+for spelling in split equals; do
+  format_args=(--format ids)
+  [ "$spelling" != equals ] || format_args=(--format=ids)
+  run_status format_rc run_activate "$plain_payload" CC-760 --agent rust "${format_args[@]}" >"$TMP_ROOT/format.out" 2>"$TMP_ROOT/format.err"
+  assert_eq "activate ids $spelling succeeds" "$format_rc" 0
+  assert_eq "activate ids $spelling prints only the identifier" "$(cat "$TMP_ROOT/format.out")" CC-760
+  assert_file_contains "activate ids $spelling keeps the assignee diagnostic" "$TMP_ROOT/format.err" "assignee-skipped cause=unset"
+  format_args=(--format bogus)
+  [ "$spelling" != equals ] || format_args=(--format=bogus)
+  run_status format_rc run_activate "$plain_payload" CC-760 "${format_args[@]}" >"$TMP_ROOT/format.out" 2>"$TMP_ROOT/format.err"
+  assert_ne "activate invalid format $spelling fails" "$format_rc" 0
+  assert_not "activate invalid format $spelling sends no request" test -s "$plain_payload"
+done
+
 install_label_team_fixture "$TMP_ROOT"
 run_status live_rc run_label_team_request "$TMP_ROOT" live "" activate KEN-2413 --agent runtime
 assert_eq "recorded activation succeeds across the configured team boundary" "$live_rc" 0
