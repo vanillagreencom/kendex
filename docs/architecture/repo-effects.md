@@ -8,7 +8,7 @@ A package may declare, in its `SKILL.md` frontmatter, an effect on files in the 
 
 ## Why
 
-A package is catalog content, and catalog content runs nothing until a person on this machine said so. One licence per checkout, in a place a clone does not carry, is what makes "set up here" a local decision that a pull request cannot make for the next clone. The refresh run's render needs no person because it licenses no person's machine: the runner's checkout is created and discarded per run, only the default branch reaches the kendex environment under [D003](../decisions/D003-one-merge-path.md), the package renders only where that checkout's manifest declares `[bot-instructions]`, and the render runs with no credential. Leaving the grammar to the package keeps kendex from carrying a second copy of each package's rules that drifts from the first.
+A package is catalog content, and kendex runs no catalog code until a person on this machine said so. One licence per checkout, in a place a clone does not carry, keeps "set up here" a local decision for kendex and local clones. A repository's committed cloud-session hook follows [D022](../decisions/D022-cloud-session-hook-arming.md). The refresh run's render needs no person because it licenses no person's machine: the runner's checkout is created and discarded per run, only the default branch reaches the kendex environment under [D003](../decisions/D003-one-merge-path.md), the package renders only where that checkout's manifest declares `[bot-instructions]`, and the render runs with no credential. Leaving the grammar to the package keeps kendex from carrying a second copy of each package's rules that drifts from the first.
 
 ## Rules
 
@@ -18,7 +18,7 @@ A package is catalog content, and catalog content runs nothing until a person on
 - Do render bot-instructions in a consumer refresh run, `skills/review-gate/scripts/refresh-consumer.sh`, through `kendex bot-instructions-render` after staging the refresh, under `env -i` with no credential; the verb locates the installed copy wherever the install put it, writes no record, and relays the package's answer, so an unconfigured or absent package is a skip line the run prints. `skills/review-gate/tests/refresh-consumer.test.sh` and `crates/cli/tests/bot_instructions_render.rs` hold it.
 - Do splice an owned `AGENTS.md` region with the byte bounds the package's parser supplies, so every other byte of the file stays as the person left it.
 - Do keep the arming record per work tree: a linked work tree whose main checkout armed the package names that checkout in its skip line and is offered the setup in one step.
-- Never run package code from a session hook or a check that could reach a repository the person has not armed, and never read the record from a clone.
+- Never run package code from a session hook or a check that could reach a repository the person has not armed, except a SessionStart hook may run the commit-guards installer when `CLAUDE_CODE_REMOTE=true` and its project registration is committed in `HEAD:.claude/settings.json`, per [D022](../decisions/D022-cloud-session-hook-arming.md). A global install grants no repository consent. This exception licenses no kendex package run or local clone. Never read the record from a clone.
 
 ## The canonical example
 
@@ -26,7 +26,7 @@ A package is catalog content, and catalog content runs nothing until a person on
 
 ## Revisit when
 
-A harness or git itself gains a per-clone consent record kendex could read instead of writing its own, or a package needs to run at a moment no arming record and no one-run invocation can license, such as a clone's first checkout.
+A harness or git itself gains a per-clone consent record kendex could read instead of writing its own, or another package needs to run at a moment no arming record and no one-run invocation can license. The fresh cloud clone condition is met for the committed SessionStart hook under [D022](../decisions/D022-cloud-session-hook-arming.md).
 
 ## Not governed
 

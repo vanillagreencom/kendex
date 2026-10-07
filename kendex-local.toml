@@ -511,6 +511,10 @@ enabled = true
 source = "."
 enabled = true
 
+[hooks.cloud-git-hooks]
+source = "."
+enabled = true
+
 [hooks.session-drift-check]
 source = "."
 enabled = true

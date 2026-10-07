@@ -839,6 +839,7 @@
   ".claude/hooks/block-repo-copy.sh",
   ".claude/hooks/block-unsafe-rm.sh",
   ".claude/hooks/block-worktree-refresh.sh",
+  ".claude/hooks/cloud-git-hooks.sh",
   ".claude/hooks/command-safety.sh",
   ".claude/hooks/critical-path-deny.sh",
   ".claude/hooks/dev-stop-check.sh",

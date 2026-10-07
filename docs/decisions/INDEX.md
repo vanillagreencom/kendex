@@ -19,6 +19,7 @@
 | 2026-10-02 | D019 | KEN-2490 | An overseer's succession walks the stated preference, whatever harness the caller runs on | The preference is the owner's model order; lanes pick is the one judge of account room | The owner puts harness continuity above the ladder, or Copilot changes session.usage_info | Active | [Full](D019-copilot-overseer-succession.md) |
 | 2026-10-02 | D020 | KEN-2589 | Lane hosts are host kinds declaring capabilities; lanes pick spends the allowance expiring first | A managed cloud offers no SSH or file verbs; an expiring grant is lost whole | A cloud offers file access or a session stop, or an allowance both expires and refills | Active | [Full](D020-lane-host-kinds.md) |
 | 2026-10-01 | D021 | [KEN-2466](https://linear.app/vanillagreen/issue/KEN-2466) | Default to standard; justify top per item; resolve classes in core | Shared policy prevents size promotion; unknown facts keep native default | Remaining loaders gain callbacks, Claude changes mods or owner changes policy | Active | [Full](D021-runtime-model-classes.md) |
+| 2026-10-07 | D022 | [KEN-3229](https://linear.app/vanillagreen/issue/KEN-3229) | A committed opt-in SessionStart hook arms commit-guards only in Claude Code cloud | Git hooks are absent in fresh clones; cached setup cannot arm each session | Claude offers per-session setup with consent, changes its remote flag, or another harness needs the exception | Active | [Full](D022-cloud-session-hook-arming.md) |
 
 ---
 
