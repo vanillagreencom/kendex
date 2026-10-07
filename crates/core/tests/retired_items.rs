@@ -1300,6 +1300,65 @@ fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
     }
 }
 
+/// A kept retired skill installed by link records its shared tree and
+/// the tool's link to it, and the link is deleted by hand. With nothing
+/// else touched a prune takes the record, and the row names the prune or
+/// the removal; with the shared tree edited a prune holds it, so the row
+/// names the removal alone, never the prune that would leave the conflict
+/// standing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_retired_copy_partly_gone_names_the_remedy_a_prune_honours() {
+    let (kind, name, harness) = (ItemKind::Skill, "deploy", HarnessId::Claude);
+    for (edited, remedy) in [
+        (false, RowRemedy::PruneOrRemove),
+        (true, RowRemedy::RemoveEdited),
+    ] {
+        let f = installed(kind, name);
+        let manifest = f.project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        let linked = declared.replace("method = \"copy\"", "method = \"symlink\"");
+        assert_ne!(linked, declared, "the fixture installs by copy");
+        fs::write(&manifest, linked).unwrap();
+        let relinked = audit(&f.env, &f.scope).unwrap();
+        apply::execute(&f.env, &relinked.plan).unwrap();
+        let link = f.project.join(".claude/skills").join(name);
+        let shared = f.project.join(".agents/skills").join(name);
+        assert!(link.is_symlink(), "the fixture links {}", link.display());
+        assert!(shared.is_dir(), "the fixture shares {}", shared.display());
+        f.retire(kind, name, "");
+        fs::remove_file(&link).unwrap();
+        if edited {
+            let file = shared.join("SKILL.md");
+            let mut bytes = fs::read_to_string(&file).unwrap();
+            bytes.push_str("The person's line.\n");
+            fs::write(&file, bytes).unwrap();
+        }
+
+        let report = audit(&f.env, &f.scope).unwrap();
+        let pruned = plan_apply(&f.env, &f.scope, &prune_options()).unwrap();
+
+        let remedies: Vec<Option<RowRemedy>> = report
+            .drift
+            .iter()
+            .filter(|row| {
+                row.kind == kind
+                    && row.name == name
+                    && row.harness == harness
+                    && row.cause == Some(DriftCause::Retired)
+            })
+            .map(|row| row.remedy)
+            .collect();
+        assert_eq!(remedies, [Some(remedy)], "edited={edited}");
+        let key = lock::entry_key(kind, name, harness);
+        assert_eq!(
+            pruned.record.entries.contains_key(&key),
+            edited,
+            "edited={edited}: the prune's hold"
+        );
+    }
+}
+
 /// A retired judge kept as recorded that requires a live boss, both
 /// declared: refreshes that keep the judge carry its recorded requirement
 /// onto boss's record, so when a later refresh withholds boss for a
