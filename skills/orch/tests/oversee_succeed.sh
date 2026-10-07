@@ -2599,10 +2599,12 @@ if [ -f "$TMP_ROOT/selects-late" ]; then
   other="\$(cat "$TMP_ROOT/selects-late")"
   # \$TMP_ROOT/late-gate holds it on the picked account until the row releases
   # it, so a row places the handover at an event in the caller's run rather
-  # than at a time; this wrapper writes its pid and pane there for the release.
+  # than at a time. The child carrying the picked account publishes this
+  # wrapper's pid and its pane there, so a published gate proves the pane
+  # stands on that account.
   if [ -f "$TMP_ROOT/late-gate" ]; then
-    printf '%s %s\n' "\$\$" "\$TMUX_PANE" > "$TMP_ROOT/late-gate"
-    CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'until [ -f "\$1" ]; do "$STUB_REAL_SLEEP" 0.05; done' _ "$TMP_ROOT/late-release"
+    CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'printf "%s %s\n" "\$2" "\$TMUX_PANE" > "\$3.tmp" && mv -f "\$3.tmp" "\$3"
+      until [ -f "\$1" ]; do "$STUB_REAL_SLEEP" 0.05; done' _ "$TMP_ROOT/late-release" "\$\$" "$TMP_ROOT/late-gate"
   else
     CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'sleep 3'
   fi
@@ -2831,11 +2833,12 @@ rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 # close a window on.
 #
 # The virtual clock makes the early read's settle spend the whole budget, and
-# the handover is placed by event: the running-turn wait's single probe, a
-# capture of the successor's pane, releases it through a tmux shim that returns
-# once the exec has landed and the pane shows the running turn, or after 200
-# looks, which fails the row. So the early read sees the picked account and
-# the deciding read the other, on any runner's pace.
+# a tmux shim places both reads by event. It holds the early read until the
+# wrapper has published that it stands on the picked account, and the
+# running-turn wait's single probe, a capture of the successor's pane,
+# releases the handover and returns once the exec has landed and the pane
+# shows the running turn. So the early read sees the picked account and the
+# deciding read the other, on any runner's pace.
 #
 # lastsecond_run ROW [SUCCEED_BIN] — that run, the shim on PATH for it alone.
 lastsecond_run() {
@@ -2844,12 +2847,23 @@ lastsecond_run() {
   : > "$TMP_ROOT/late-gate"
   cat > "$BIN/tmux" <<SHIM
 #!/bin/sh
+# Every wait stops at 200 looks, which fails the row. The caller's own pane
+# passes straight through.
 gate="\$(cat "$TMP_ROOT/late-gate" 2>/dev/null)"
+n=0
 case " \$* " in
+  *" $CALLER_PANE "*) ;;
+  *" display-message "*" #{pane_pid} "*)
+    # An account read's first call: held until the wrapper has published its
+    # pid and pane, so the early read finds it standing on the picked account.
+    until [ -n "\$gate" ]; do
+      n=\$((n + 1)); [ "\$n" -lt 200 ] || break
+      sleep 0.05
+      gate="\$(cat "$TMP_ROOT/late-gate" 2>/dev/null)"
+    done ;;
   *" capture-pane "*" \${gate#* } "*)
     if [ -n "\$gate" ] && [ ! -f "$TMP_ROOT/late-release" ]; then
       : > "$TMP_ROOT/late-release"
-      n=0
       until [ "\$(cat "/proc/\${gate%% *}/comm" 2>/dev/null)" = sleep ] &&
         "$REAL_TMUX" "\$@" | grep -q 'esc to interrupt'; do
         n=\$((n + 1)); [ "\$n" -lt 200 ] || break
