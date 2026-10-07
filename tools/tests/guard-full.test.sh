@@ -857,14 +857,14 @@ for row in "${LANE_ROWS[@]}"; do
   IFS='|' read -r class docs paths want <<<"$row"
   run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
-  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
 done
 [ "$(grep -cF "printf 'validate: " "$GUARD")" -eq 1 ] || { echo 'lane control: reporting edit has no unique match' >&2; exit 1; }
 lane_guard "/^printf 'validate: /s/^/: # /"
 run_lanes '' '' $CODE ui/app.ts
-[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=all' ] \
+[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=subset' ] \
   && ok "control: without the final report the lane assertion turns red" \
   || bad "control: without the final report the lane assertion turns red" "$OUT"
 lane_guard
