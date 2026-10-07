@@ -280,9 +280,12 @@ restack_hook_words() {
 # the same way, and the hook finds that script from a root it computes at run
 # time. A script is a tracked executable or a tracked file named for an
 # interpreter (.sh, .bash, .py, .js, .mjs, .cjs, .awk); any other file a hook
-# names is data it reads. On a line that is not a comment, each `$VAR/<rest>`
-# or `${VAR}/<rest>` word names <rest> at the repository root and against the
-# naming file's directory, and a script at either is held. A root that names
+# names is data it reads. On a line that is not a comment, each `$VAR/<rest>`,
+# `${VAR}/<rest>` or `$1/<rest>` word names <rest> at the repository root and
+# against the naming file's directory, and a script at either is held. A
+# variable inside <rest> takes each literal path the file assigns it
+# (`GUARD=worktree/scripts/worktree-session-guard`); one the file assigns no
+# such path leaves the word naming nothing. A root that names
 # neither, a skills tree the hook finds by searching, resolves as a climbing
 # directive does: to every script ending in <rest> with its leading `../`
 # dropped, and for a one-segment <rest> to the tracked executables among them
@@ -322,10 +325,32 @@ restack_hook_libraries() {
       printf '%s\n' "$target"
       queue="$queue"$'\n'"$target"
     done <<<"$directives"
-    named="$(awk '/^[[:space:]]*#/ { next }
-      { while (match($0, /[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?\/[A-Za-z0-9._\/-]+/)) {
-          word = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
-          sub(/^[^\/]*\//, "", word); print word } }' <<<"$body")" || return 1
+    named="$(awk '
+      function expand(w,   at, name, n, i, part) {
+        at = index(w, "$")
+        if (at == 0) { if (w != "") print w; return }
+        if (!match(substr(w, at), /^[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?/)) return
+        name = substr(w, at, RLENGTH); gsub(/[${}]/, "", name)
+        n = split(val[name], part, SUBSEP)
+        for (i = 2; i <= n; i++) expand(substr(w, 1, at - 1) part[i] substr(w, at + RLENGTH))
+      }
+      { line[NR] = $0 }
+      match($0, /^[[:space:]]*((export|readonly|local|declare)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=/) {
+        name = substr($0, RSTART, RLENGTH - 1); sub(/^.*[[:space:]]/, "", name)
+        v = substr($0, RSTART + RLENGTH)
+        if (v ~ /^["\047][A-Za-z0-9._\/-]+["\047]$/) v = substr(v, 2, length(v) - 2)
+        if (v ~ /^[A-Za-z0-9._-]*\/[A-Za-z0-9._\/-]*$/) val[name] = val[name] SUBSEP v
+      }
+      END {
+        for (l = 1; l <= NR; l++) {
+          $0 = line[l]
+          if ($0 ~ /^[[:space:]]*#/) continue
+          while (match($0, /[$][{]?([A-Za-z_][A-Za-z0-9_]*|[0-9])[}]?\/([A-Za-z0-9._\/-]|[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?)+/)) {
+            word = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
+            sub(/^[^\/]*\//, "", word); expand(word)
+          }
+        }
+      }' <<<"$body")" || return 1
     [[ -n "$named" ]] || continue
     dir=""
     [[ "$script" != */* ]] || dir="${script%/*}"

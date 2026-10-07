@@ -82,7 +82,10 @@ EXTRA=.agents/skills/guard/scripts/lib/extra.sh
 # that exists only in another tree, as lane-mail-check.sh runs
 # $SCRIPTS/workflow-state. RUN executes HELPER against its own directory, as
 # lane-mail runs $SCRIPT_DIR/../../worktree/scripts/worktree; DECOY ends in
-# the same path in another tree. It names NOTE, tracked executable, only
+# the same path in another tree. It runs ASSEMBLED through a variable it
+# assigns a literal path, as worktree-session-claim.sh runs
+# "$AT/skills/$GUARD", and POS under a positional root, as lane-mail-check.sh
+# runs "$1/lib/lane-context.sh". It names NOTE, tracked executable, only
 # in a comment.
 RUN=.agents/skills/guard/scripts/run
 NOTE=.agents/skills/guard/scripts/note
@@ -93,6 +96,8 @@ SOLO=.agents/skills/guard/scripts/solo
 ONE=.agents/skills/other/one.sh
 HELPER=.agents/skills/guard/tool/helper
 DECOY=.agents/skills/decoy/tool/helper
+ASSEMBLED=.agents/skills/guard/scripts/assembled
+POS=.agents/skills/guard/scripts/lib/pos.sh
 
 # A hook sourcing a library the way a shipped hook does: under set -e, so a
 # library that fails to parse fails the hook, with a directive naming the
@@ -133,12 +138,12 @@ JSON
   write_hook "$MAIN/$OTHER" base
   write_hook "$MAIN/$EXTRA" base
   mkdir -p "$MAIN/${CODEX_HOOK%/*}"
-  printf '#!/usr/bin/env bash\nset -euo pipefail\n# Not run: $ROOT/%s\nROOT="$(pwd)"\nSCRIPTS="$ROOT/%s"\n"$ROOT/%s" >/dev/null\nbash "${ROOT}/%s" >/dev/null\ncat "${ROOT}/%s" >/dev/null\nbash "$SCRIPTS/lib/%s" >/dev/null\n"$SCRIPTS/%s" >/dev/null\nbash "$SCRIPTS/%s" >/dev/null 2>&1 || true\necho base\n' \
-    "$NOTE" "${SOLO%/*}" "$RUN" "$TOOL" "$DATA" "${STEP##*/}" "${SOLO##*/}" "${ONE##*/}" >"$MAIN/$CODEX_HOOK"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n# Not run: $ROOT/%s\nROOT="$(pwd)"\nSCRIPTS="$ROOT/%s"\n"$ROOT/%s" >/dev/null\nbash "${ROOT}/%s" >/dev/null\ncat "${ROOT}/%s" >/dev/null\nbash "$SCRIPTS/lib/%s" >/dev/null\n"$SCRIPTS/%s" >/dev/null\nbash "$SCRIPTS/%s" >/dev/null 2>&1 || true\nPART=%s\n"$ROOT/.agents/skills/$PART" >/dev/null\nbash -c '"'"'bash "$1/lib/%s"'"'"' _ "$SCRIPTS" >/dev/null\necho base\n' \
+    "$NOTE" "${SOLO%/*}" "$RUN" "$TOOL" "$DATA" "${STEP##*/}" "${SOLO##*/}" "${ONE##*/}" "${ASSEMBLED#.agents/skills/}" "${POS##*/}" >"$MAIN/$CODEX_HOOK"
   mkdir -p "${MAIN:?}/${RUN%/*}"
   printf '#!/usr/bin/env bash\nset -euo pipefail\nHERE="$(cd "$(dirname "$0")" && pwd)"\n"$HERE/../tool/%s" >/dev/null\necho base\n' "${HELPER##*/}" >"$MAIN/$RUN"
-  for path in "$NOTE" "$DATA" "$TOOL" "$STEP" "$SOLO" "$ONE" "$HELPER" "$DECOY"; do write_hook "$MAIN/$path" base; done
-  chmod +x "$MAIN/$RUN" "$MAIN/$NOTE" "$MAIN/$SOLO" "$MAIN/$HELPER" "$MAIN/$DECOY"
+  for path in "$NOTE" "$DATA" "$TOOL" "$STEP" "$SOLO" "$ONE" "$HELPER" "$DECOY" "$ASSEMBLED" "$POS"; do write_hook "$MAIN/$path" base; done
+  chmod +x "$MAIN/$RUN" "$MAIN/$NOTE" "$MAIN/$SOLO" "$MAIN/$HELPER" "$MAIN/$DECOY" "$MAIN/$ASSEMBLED"
   write_hook "$MAIN/$SOURCE_HOOK" base
   write_hook "$MAIN/$CURSOR_HOOK" base
   printf 'orig\n' >"$MAIN/file.txt"
@@ -194,6 +199,10 @@ step() {
     solo) make_pair; edit wt "$SOLO"; edit main "$SOLO" ;;
     one) make_pair; edit wt "$ONE"; edit main "$ONE" ;;
     # The script RUN executes against its directory and its namesake conflict.
+    # A script the Codex hook runs through an assigned path, and one under a
+    # positional root, conflict.
+    assembled) make_pair; edit wt "$ASSEMBLED"; edit main "$ASSEMBLED" ;;
+    pos) make_pair; edit wt "$POS"; edit main "$POS" ;;
     helper) make_pair; edit wt "$HELPER" "$DECOY"; edit main "$HELPER" "$DECOY" ;;
     # A file named like a sourced library, in a directory nothing sources from.
     other) make_pair; edit wt "$OTHER"; edit main "$OTHER" ;;
@@ -454,6 +463,8 @@ a library a hook runs from a directory found by searching is held|step|create to
 an executable a hook runs by bare name from a directory found by searching is held|solo|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOLO paused=yes parses=ok,ok runs=ok,ok saved=$SOLO.restack-conflict markers=$SOLO.restack-conflict body=base,base ordinary=-
 a non-executable script elsewhere sharing a bare name a hook runs keeps its markers|one|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$ONE body=base,base ordinary=$ONE
 a script an executed script runs against its own directory is held and its namesake elsewhere keeps its markers|helper|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $HELPER paused=yes parses=ok,ok runs=ok,ok saved=$HELPER.restack-conflict markers=$DECOY,$HELPER.restack-conflict body=base,base ordinary=$DECOY
+a script a hook runs through a variable it assigns a literal path is held|assembled|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $ASSEMBLED paused=yes parses=ok,ok runs=ok,ok saved=$ASSEMBLED.restack-conflict markers=$ASSEMBLED.restack-conflict body=base,base ordinary=-
+a script a hook runs under a positional root is held|pos|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $POS paused=yes parses=ok,ok runs=ok,ok saved=$POS.restack-conflict markers=$POS.restack-conflict body=base,base ordinary=-
 an executable a declared hook names only in a comment keeps its markers|note|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$NOTE body=base,base ordinary=$NOTE
 "
 
@@ -510,7 +521,9 @@ with the multi-segment suffix limited to executables a non-executable library ke
 with a bare name matched against every script a non-executable namesake elsewhere is held@scripts/lib/restack-state.sh@&& (multi || p in exe)) print p@1@&& 1) print p@one@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $ONE paused=yes parses=ok,ok runs=ok,ok saved=$ONE.restack-conflict markers=$ONE.restack-conflict body=base,base ordinary=-
 without resolving against the naming file's directory both namesakes are held@scripts/lib/restack-state.sh@r = norm(dir == \"\" ? w : dir \"/\" w)@1@r = w@helper@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $DECOY $HELPER paused=yes parses=ok,ok runs=ok,ok saved=$DECOY.restack-conflict,$HELPER.restack-conflict markers=$DECOY.restack-conflict,$HELPER.restack-conflict body=base,base ordinary=-
 with the suffix fallback run beside a direct match both namesakes are held@scripts/lib/restack-state.sh@if (hit) continue@1@hit = hit@helper@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $DECOY $HELPER paused=yes parses=ok,ok runs=ok,ok saved=$DECOY.restack-conflict,$HELPER.restack-conflict markers=$DECOY.restack-conflict,$HELPER.restack-conflict body=base,base ordinary=-
-with comments read as invocations an executable named only in a comment is held@scripts/lib/restack-state.sh@/^[[:space:]]*#/ { next }@1@0 { next }@note@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $NOTE paused=yes parses=ok,ok runs=ok,ok saved=$NOTE.restack-conflict markers=$NOTE.restack-conflict body=base,base ordinary=-
+without the assigned paths a script a hook runs through a variable keeps its markers and the hook fails@scripts/lib/restack-state.sh@val[name] = val[name] SUBSEP v@1@v = v@assembled@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$ASSEMBLED body=base,base ordinary=$ASSEMBLED
+without positional roots a script a hook runs under one keeps its markers and the hook fails@scripts/lib/restack-state.sh@[A-Za-z0-9_]*|[0-9])[}]?@1@[A-Za-z0-9_]*)[}]?@pos@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$POS body=base,base ordinary=$POS
+with comments read as invocations an executable named only in a comment is held@scripts/lib/restack-state.sh@if (\$0 ~ /^[[:space:]]*#/) continue@1@if (0) continue@note@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $NOTE paused=yes parses=ok,ok runs=ok,ok saved=$NOTE.restack-conflict markers=$NOTE.restack-conflict body=base,base ordinary=-
 "
 m=0
 while IFS='@' read -r label target text count replacement fixture command want; do
