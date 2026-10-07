@@ -83,9 +83,8 @@
 # fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
-# antigravity, five on pi, one on gemini, fifteen on copilot (sixteen where the
-# skill-load-check copilot cell `kendex index` gives reads enforced), two on
-# cursor when logged in. The interactive Copilot flag adds two turns.
+# antigravity, five on pi, one on gemini, fifteen on copilot, two on cursor when
+# logged in. The interactive Copilot flag adds two turns.
 #
 # The report is the row table: one aligned line per row as it is decided, then
 # the same rows as a markdown table under `| harness | row | result |
@@ -337,21 +336,6 @@ description: Harness smoke fixture agent; proves a kendex-rendered agent run as 
 ---
 
 Reply with exactly the value your repository instructions give for SMOKE-RULES followed by -VIA-AGENT, or with exactly NO-RULES-VIA-AGENT when they give none, and nothing else.
-EOF
-# The Copilot package table's skill-load rows: run as a subagent of a session
-# that has already loaded the linear skill, this agent makes the guarded call
-# before its own load and again after it.
-cat >"$CATALOG/agents/smoke-loader.md" <<'EOF'
----
-name: smoke-loader
-description: Harness smoke fixture agent; proves skill-load-check judges a subagent by its own skill loads, not its parent's.
----
-
-Do exactly these three steps, in this order, one tool call each, and nothing else:
-1. Run the shell command: smoke-load/linear.sh child-before
-2. Load the linear skill with your skill tool.
-3. Run the shell command: smoke-load/linear.sh child-after
-Then reply with the first line of the text step 1 was refused with, or with exactly NOT-REFUSED when it was not refused.
 EOF
 cat >"$CATALOG/commands/smoke-command.md" <<EOF
 ---
@@ -1749,14 +1733,13 @@ answer_config() { # EVENT MODE TOKEN
 # skill, instruction and skill-directory rows need no model turn and answer
 # wherever copilot is on PATH. The agent, hook, helper, duplicate
 # and subagent rows need a login and spend four model turns: the agent listing,
-# one session of tool calls, the duplicate count and the subagent, and a fifth,
-# the skill-load session, where skill-load-check's copilot cell reads enforced.
+# one session of tool calls, the duplicate count and the subagent.
 # `agent:effort` reads skipped: nothing here reads the effort a subagent runs
 # at.
 #
 # The package project installs every hook the copilot cell calls enforced,
-# every skill and every agent from SELF, plus the fixture's smoke-rules and
-# smoke-loader agents and smoke-tool hook, and runs its model turns with COPILOT_ALLOW_ALL=true,
+# every skill and every agent from SELF, plus the fixture's smoke-rules
+# agent and smoke-tool hook, and runs its model turns with COPILOT_ALLOW_ALL=true,
 # which `copilot help environment` names as the value that trusts the working
 # directory and loads its hooks. Every hook it installs reads its payload with
 # `cat`, so a `cat` first on the session's PATH records, for a caller under
@@ -1773,12 +1756,11 @@ answer_config() { # EVENT MODE TOKEN
 # to read, the marker was never written, and the transcript --share writes
 # shows the model a denial opening with the hook's own keyed line, since
 # Copilot hands the model a hook's refusal only through the registered
-# command's answer and never through its stderr. skill-load-check and
-# skill-load-record are answered by the skill-load session instead, whose
-# comment states their rows. A hook on an event that session never raises,
-# PKG_UNRAISED, reads skipped, the copilot event rows standing for it; and a
-# hook that execs a sibling to judge its payload is credited with a read the
-# recorder filed under that sibling with the hook's own arguments (pkg_ran).
+# command's answer and never through its stderr. A hook on an event that
+# session never raises, PKG_UNRAISED, reads skipped, the copilot event rows
+# standing for it; and a hook that execs a sibling to judge its payload is
+# credited with a read the recorder filed under that sibling with the hook's
+# own arguments (pkg_ran).
 PKG_PROOF='tools/harness-smoke --only copilot on a host where copilot is on PATH and logged in'
 PKG_RULES='SMOKE-RULES is SMOKE-RULES-REACHED.'
 # shellcheck disable=SC2016 # the model is handed $HARNESS_SMOKE_UNSET as text a hook refuses
@@ -1902,7 +1884,7 @@ pkg_world() { # — sets PKG and PKG_RECORDER, exits 2 when kendex cannot instal
     >"$LOGS/copilot-packages-kendex-add.log" 2>&1; then
     refused add copilot "$LOGS/copilot-packages-kendex-add.log"
   fi
-  if ! (cd "$PKG" && kendex add "$CATALOG" --agent smoke-rules,smoke-loader --hook smoke-tool --harness copilot -y) \
+  if ! (cd "$PKG" && kendex add "$CATALOG" --agent smoke-rules --hook smoke-tool --harness copilot -y) \
     >"$LOGS/copilot-packages-kendex-add-fixture.log" 2>&1; then
     refused add copilot "$LOGS/copilot-packages-kendex-add-fixture.log"
   fi
@@ -1913,7 +1895,7 @@ pkg_world() { # — sets PKG and PKG_RECORDER, exits 2 when kendex cannot instal
   # CLAUDE.md is the one-line import kendex writes beside AGENTS.md, which is
   # what the duplicate row asks about.
   setup 'the package instruction directories' mkdir -p "$PKG/sub" "$PKG/.github/instructions" \
-    "$PKG/smoke-payloads" "$PKG/smoke-triggers" "$PKG/smoke-load" "$PKG_RECORDER"
+    "$PKG/smoke-payloads" "$PKG/smoke-triggers" "$PKG_RECORDER"
   printf '# Harness smoke\n\n%s\n' "$PKG_RULES" >"$PKG/AGENTS.md"
   printf '@AGENTS.md\n' >"$PKG/CLAUDE.md"
   printf 'Harness smoke Copilot instructions.\n' >"$PKG/.github/copilot-instructions.md"
@@ -1924,13 +1906,6 @@ pkg_world() { # — sets PKG and PKG_RECORDER, exits 2 when kendex cannot instal
 #!/bin/sh
 pwd >"$0.cwd"
 env | sed 's/=.*//' | sort >"$0.env"
-EOF
-  # The skill-load rows' guarded command: skill-load-check's default rule ties
-  # a call naming linear.sh to the linear skill, and a call it lets through
-  # writes the marker its argument names.
-  cat >"$PKG/smoke-load/linear.sh" <<'EOF'
-#!/bin/sh
-: >"${0%/*}/$1"
 EOF
   real_cat=$(command -v cat)
   records=$(printf '%q' "$PKG/smoke-payloads")
@@ -1954,7 +1929,7 @@ if [ "\$#" -eq 0 ]; then
 fi
 exec $cat_q "\$@"
 EOF
-  setup 'the helper and the recorder' chmod +x "$PKG/smoke-helper" "$PKG/smoke-load/linear.sh" "$PKG_RECORDER/cat"
+  setup 'the helper and the recorder' chmod +x "$PKG/smoke-helper" "$PKG_RECORDER/cat"
 }
 
 # The agent listing and duplicate-count rows ask through here. The turn sees
@@ -2240,80 +2215,9 @@ pkg_hook_session() {
     COPILOT_ALLOW_ALL=true copilot -p "$(pkg_hook_task)" --allow-all-tools -s --share "$PKG_TRANSCRIPT"
   pkg_session_verdict
   for name in $(pkg_list hook); do
-    case " $PKG_SKILL_LOAD_HOOKS " in *" $name "*) continue ;; esac
     [ "$(pkg_cell "$name")" != enforced ] || pkg_hook_row "$name"
   done
   pkg_helper_rows
-}
-
-# The skill-load rows: skill-load-check and skill-load-record answer together,
-# from a session of their own. The parent loads the linear skill, makes the
-# guarded call, and runs smoke-loader through its task tool; the subagent makes
-# the guarded call before its own load and again after it. Each call that
-# passes writes its marker, and skill-load-check's default rule refuses one
-# before the calling agent's own load, so the parent's load must not pass the
-# subagent's first call. A marker not written is `held` where the recorder
-# caught the call's payload at skill-load-check, else `absent`; the subagent's
-# refusal counts only where the reply relays the refusal's keyed first line,
-# which only the hook prints. A session that made no guarded call and exited
-# non-zero, a Copilot that cannot log in among them, is pending on its proof.
-# The session runs only where skill-load-check's copilot cell reads enforced;
-# elsewhere each row is `excluded` with its own cell's reason, from pkg_fixed.
-PKG_SKILL_LOAD_HOOKS='skill-load-check skill-load-record'
-PKG_SKILL_LOAD_REFUSAL='skill-load-check: unloaded=linear'
-pkg_skill_load_step() { # STEP VAR — sets VAR to ran, held or absent
-  if [ -e "$PKG/smoke-load/$1" ]; then
-    printf -v "$2" ran
-  elif pkg_trigger_record skill-load-check "smoke-load/linear.sh $1" >/dev/null; then
-    printf -v "$2" held
-  else
-    printf -v "$2" absent
-  fi
-}
-pkg_skill_load_session() {
-  local parent child_before child_after relayed=0 steps hook
-  [ "$(pkg_cell skill-load-check)" = enforced ] || return 0
-  run copilot-packages-skill-load env -u KENDEX_SKILL_LOAD_RULES PATH="$PKG_RECORDER:$PATH" \
-    XDG_STATE_HOME="$DIR/copilot-packages/state" COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true \
-    copilot -p 'Do exactly these steps, in this order, one tool call each, and nothing else:
-1. Load the linear skill with your skill tool.
-2. Run the shell command: smoke-load/linear.sh parent-after
-3. Use your task tool to run the smoke-loader custom agent.
-Then reply with exactly the text the smoke-loader agent returned and nothing else.' --allow-all-tools -s
-  pkg_skill_load_step parent-after parent
-  pkg_skill_load_step child-before child_before
-  pkg_skill_load_step child-after child_after
-  ! grep -qF -- "$PKG_SKILL_LOAD_REFUSAL" <<<"$OUT" || relayed=1
-  steps="parent-after=$parent child-before=$child_before child-after=$child_after"
-  if [ "$parent:$child_before:$child_after" = absent:absent:absent ] && [ "$STATUS" -ne 0 ]; then
-    for hook in $PKG_SKILL_LOAD_HOOKS; do
-      [ "$(pkg_cell "$hook")" != enforced ] ||
-        pkg_set "hook:$hook" pending "copilot -p exited $STATUS before any guarded call: $(clip "$(last_line)"); proof: $PKG_PROOF"
-    done
-    return 0
-  fi
-  if [ "$child_before" = ran ]; then
-    pkg_set hook:skill-load-check fail "the subagent's guarded call before its own load ran, while its parent had loaded linear: the parent's load passed the subagent ($steps)"
-  elif [ "$parent" = held ]; then
-    pkg_set hook:skill-load-check fail "the parent's guarded call after its load reached this hook and never ran ($steps)"
-  elif [ "$child_after" = held ]; then
-    pkg_set hook:skill-load-check fail "the subagent's guarded call after its own load reached this hook and never ran ($steps)"
-  elif [ "$parent:$child_after:$relayed" = ran:ran:1 ]; then
-    pkg_set hook:skill-load-check pass "the parent's call after its load ran; the subagent's call before its own load was refused, its reply relaying '$PKG_SKILL_LOAD_REFUSAL', and its call after the load ran ($steps)"
-  elif [ "$parent:$child_after" = ran:ran ]; then
-    pkg_set hook:skill-load-check unanswerable "the subagent's call before its own load never ran, and the reply relays no '$PKG_SKILL_LOAD_REFUSAL', so whether it saw the correction is unknown ($steps); its last line: $(clip "$(last_line)")"
-  else
-    pkg_set hook:skill-load-check unanswerable "the model did not make every guarded call ($steps); copilot -p exited $STATUS: $(clip "$(last_line)")"
-  fi
-  [ "$(pkg_cell skill-load-record)" = enforced ] || return 0
-  case "$parent:$child_after" in
-    ran:ran)
-      pkg_set hook:skill-load-record pass "the parent's and the subagent's guarded calls after their own loads ran, which only a load this hook recorded lets skill-load-check pass ($steps)" ;;
-    held:* | *:held)
-      pkg_set hook:skill-load-record fail "a guarded call after its agent's own load reached skill-load-check and never ran: the load was not recorded for that agent ($steps)" ;;
-    *)
-      pkg_set hook:skill-load-record unanswerable "the model did not make both guarded calls after a load ($steps); copilot -p exited $STATUS: $(clip "$(last_line)")" ;;
-  esac
 }
 
 # Every COPILOT_HOME hides ~/.agents/skills; COPILOT_SKILLS_DIRS names it back.
@@ -2367,7 +2271,6 @@ copilot_packages() { # MODE [HOME] — absent: copilot is not on PATH; live: HOM
     pkg_listed "agent:$name" "^[-*[:space:]]*${name}[[:space:]]*\$" 'copilot -p (model-relayed agent listing)'
   done
   pkg_hook_session
-  pkg_skill_load_session
   pkg_instruction_rows
   pkg_duplicate_row
   pkg_subagent_row

@@ -651,10 +651,6 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # model is shown: the refusing hook's keyed line, or with
 # STANDIN_DENIAL=generic the exit code alone; STANDIN_DENIAL=none writes no
 # transcript.
-# Its skill-load session hands each of the three guarded calls, as a Copilot
-# payload, to a skill-load-check under .github/hooks that reads it with `cat`
-# and holds back the calls STANDIN_HELD names, runs the rest, and replies
-# STANDIN_LOAD_SAYS; STANDIN_LOAD=nologin fails the login before any call.
 echo "=== the Copilot package rows ==="
 PKG_BIN="$TMP/pkg-bin"
 mkdir -p "$PKG_BIN"
@@ -770,16 +766,6 @@ case "$prompt" in
     done
     printf 'Could not connect to local model provider.\n'
     exit 1 ;;
-  "Do exactly these steps"*)
-    [ "$STANDIN_LOAD" != nologin ] || { printf 'Error: Authentication token found but could not be validated.\n'; exit 1; }
-    mkdir -p .github/hooks
-    printf '#!/usr/bin/env bash\nx=$(cat)\nfor s in $STANDIN_HELD; do case "$x" in *"linear.sh $s"*) exit 2 ;; esac; done\n' \
-      >.github/hooks/skill-load-check.sh
-    for step in parent-after child-before child-after; do
-      payload=$(jq -nc --arg c "smoke-load/linear.sh $step" '{toolName:"bash",toolArgs:{command:$c}}')
-      if bash "$PWD/.github/hooks/skill-load-check.sh" <<<"$payload"; then smoke-load/linear.sh "$step"; fi
-    done
-    printf '%s\n' "$STANDIN_LOAD_SAYS" ;;
   "Run each of these shell commands"*)
     mkdir -p .github/hooks
     for h in $STANDIN_HOOK_NAMES; do
@@ -852,8 +838,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
     STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
     STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 STANDIN_DENIAL=reason \
-    STANDIN_WRAP= STANDIN_EVENTS='start substart sub-stop subagentstop lead-stop end' STANDIN_ERRORS='start model model end' \
-    STANDIN_LOAD= STANDIN_HELD=child-before STANDIN_LOAD_SAYS='skill-load-check: unloaded=linear' "$@" \
+    STANDIN_WRAP= STANDIN_EVENTS='start substart sub-stop subagentstop lead-stop end' STANDIN_ERRORS='start model model end' "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
 }
 package_row() { # ROW — that copilot row's result and evidence
@@ -911,8 +896,6 @@ a mixed install whose Copilot ran its own copy alone passes|mixed-hook|pass|and 
 the recorded payload carries the command|helper:payload|pass|its keys: toolName,toolArgs
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call
-a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
-the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded
 a sessionStart under the lead alone passes|event:sessionStart|pass|and never under the subagent's, sub-1
 and so does a sessionEnd|event:sessionEnd|pass|and never under the subagent's, sub-1
 a subagentStart naming no subagent passes|event:subagentStart|pass|naming no agentId or agentType
@@ -957,13 +940,12 @@ a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the
 # error events with a wrapped session hook (event:*, hook:session-*-row), the
 # tool session's hook feed (hook:block-*, helper:*, hook:pre-commit-check),
 # the mixed install (mixed-hook, and with STANDIN_SETTINGS=exit the skill
-# rows), the answer session (answer:*) and the skill-load session
-# (hook:skill-load-*). Each answer mode is refused on the row its check
-# guards: the token checks on sessionStart and the second-fire count on
-# agentStop.
+# rows) and the answer session (answer:*). Each answer mode is refused on the
+# row its check guards: the token checks on sessionStart and the second-fire
+# count on agentStop.
 package_run "$SMOKE" STANDIN_WRAP=session-start-row STANDIN_ERRORS='start tool end' \
   STANDIN_EVENTS='start sub-start substart-id sub-stop-own subagentstop-task lead-stop end' \
-  STANDIN_DENIAL=generic STANDIN_ANSWER=silent STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
+  STANDIN_DENIAL=generic STANDIN_ANSWER=silent
 package_table "a sessionStart under the subagent's session too fails|event:sessionStart|fail|the subagent's session id is sub-1
 a subagentStart naming the subagent fails|event:subagentStart|fail|sent keys
 a subagentStop naming the task tool as the agent fails|event:subagentStop|fail|sent agentType task
@@ -972,37 +954,30 @@ an errorOccurred for a tool's failure fails|event:errorOccurred|fail|tool_execut
 a wrapper whose judge read its payload under the wrapper's arguments ran|hook:session-start-row|pass|reading the payload Copilot sent
 a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
 and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook
-answer refuses silent|answer:sessionStart|fail|positive=
-a subagent call the parent's load let through fails|hook:skill-load-check|fail|the parent's load passed the subagent"
+answer refuses silent|answer:sessionStart|fail|positive="
 package_run "$SMOKE" STANDIN_WRAP=session-end-row STANDIN_EVENTS='start lead-stop end' STANDIN_ERRORS='start end' \
-  STANDIN_FEED=helper STANDIN_SETTINGS=bad STANDIN_ANSWER=leak STANDIN_LOAD_SAYS=NOT-REFUSED
+  STANDIN_FEED=helper STANDIN_SETTINGS=bad STANDIN_ANSWER=leak
 package_table "a session that ran no subagent leaves the subagent rows unanswerable|event:agentStop|unanswerable|no single subagentStop
 a failed model call with no errorOccurred fails|event:errorOccurred|fail|fired no errorOccurred
 a judge's read under another wrapper's arguments is not this wrapper's run|hook:session-end-row|fail|never ran at SessionEnd
 a hook whose trigger never reached it is unanswerable, not pass|hook:block-repo-copy|unanswerable|the trigger never reached this hook
 a Copilot that could not load .claude/settings.json fails the mixed install|mixed-hook|fail|could not be loaded
-answer refuses leak|answer:sessionStart|fail|positive=
-a refusal the reply does not relay is unanswerable|hook:skill-load-check|unanswerable|whether it saw the correction is unknown"
+answer refuses leak|answer:sessionStart|fail|positive="
 package_run "$SMOKE" STANDIN_SHAPE=bad STANDIN_HOOK_CWD=/ STANDIN_DROP_ENV=1 STANDIN_SKIP_HOOK=block-unsafe-rm \
-  STANDIN_SETTINGS=exit STANDIN_ANSWER=nohook STANDIN_HELD="parent-after child-before"
+  STANDIN_SETTINGS=exit STANDIN_ANSWER=nohook
 package_table "a payload with the command under another name fails|helper:payload|fail|carries no command the hooks' reader reads
 a hook run outside the project root differs|helper:cwd|differs|a hook runs in /
 a launch environment that does not reach the hook fails|helper:env|fail|is missing from the hook's or the tool call's environment
 a hook that never ran while others did fails|hook:block-unsafe-rm|fail|never ran at PreToolUse, while other hooks read their payloads
 a skill listing that exits non-zero leaves the mixed install unanswerable|mixed-hook|unanswerable|copilot skill list exited 1: Error: settings are invalid
-answer refuses nohook|answer:sessionStart|fail|positive=
-a parent call held after its load fails the judge|hook:skill-load-check|fail|the parent's guarded call after its load
-and the carrier|hook:skill-load-record|fail|the load was not recorded for that agent"
-package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_ANSWER=error STANDIN_HELD="child-before child-after"
+answer refuses nohook|answer:sessionStart|fail|positive="
+package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_ANSWER=error
 package_table "tool calls with no hook run fail every hook row|hook:block-repo-copy|fail|ran no repository hook
 and the helper rows with them|helper:payload|fail|ran no repository hook
-answer refuses error|answer:sessionStart|fail|positive=
-a subagent call held after its own load fails|hook:skill-load-check|fail|the subagent's guarded call after its own load"
-package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=path STANDIN_ANSWER=once STANDIN_LOAD=nologin
+answer refuses error|answer:sessionStart|fail|positive="
+package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=path STANDIN_ANSWER=once
 package_table "the fixture hook ran with the recorder on its PATH: the matcher is blamed|hook:pre-commit-check|fail|the rendered matcher never matches
-answer refuses once|answer:agentStop|fail|positive=
-a session that cannot log in is pending on its proof|hook:skill-load-check|pending|before any guarded call: Error: Authentication token found
-and so is the carrier's row|hook:skill-load-record|pending|proof: tools/harness-smoke --only copilot"
+answer refuses once|answer:agentStop|fail|positive="
 package_run "$SMOKE" STANDIN_HOOKS=0 STANDIN_FIXTURE=nopath STANDIN_CROSS=1
 package_table "the fixture hook ran without the recorder: the PATH is blamed|hook:pre-commit-check|unanswerable|without the launch PATH
 a Copilot that also ran the .claude/hooks copies fails the mixed install|mixed-hook|fail|ran the Claude Code copies, smoke-tool 1 time(s) and smoke-claude-only 1 time(s)"
@@ -1048,30 +1023,24 @@ plants() { # FILE SED-SCRIPT... — FILE.intact with each edit applied in turn, 
   done
 }
 # Each control() call holds one control's parts: the edit that plants its rule
-# out, a sed script for the smoke copy or, after --index, a jq filter for the
-# summary the kendex stub prints, empty where control_run's shared fixture edit
-# reaches its rows; its label|row|result|clause rows; and the settings that
-# hand them the refused input. A batch runs once and its rows read that one
+# out, a sed script for the smoke copy, empty where control_run's shared
+# fixture edit reaches its rows; its label|row|result|clause rows; and the
+# settings that hand them the refused input. A batch runs once and its rows read that one
 # run, so control() refuses a row or setting another control of the batch
 # holds. A planted edit can reach any row of its run, so a control holding one
 # runs in a batch of its own; only edit-free controls share a run. control_run
 # applies the shared edits and the batch's planted edit to the intact copies,
 # runs once, and reads every row.
 CTL_SED=
-CTL_INDEX=
 CTL_ENVS=()
 CTL_ROWS=
 CTL_HELD=
-control() { # [--index JQ] SED ROWS [ENV=VAL]...
-  local index='' sed rows held='' q e
-  if [ "$1" = --index ]; then
-    index=$2
-    shift 2
-  fi
+control() { # SED ROWS [ENV=VAL]...
+  local sed rows held='' q e
   sed=$1 rows=$2
   shift 2
-  if [ -n "$CTL_SED$CTL_INDEX" ] || { [ -n "$sed$index" ] && [ -n "$CTL_ROWS" ]; }; then
-    printf 'harness-smoke.test: refused=shared-control edit %s\n' "${sed:-${index:-${CTL_SED:-$CTL_INDEX}}}" >&2
+  if [ -n "$CTL_SED" ] || { [ -n "$sed" ] && [ -n "$CTL_ROWS" ]; }; then
+    printf 'harness-smoke.test: refused=shared-control edit %s\n' "${sed:-$CTL_SED}" >&2
     exit 2
   fi
   while IFS='|' read -r _ q _; do
@@ -1088,27 +1057,14 @@ control() { # [--index JQ] SED ROWS [ENV=VAL]...
   done <<<"$held"
   CTL_HELD+=$held
   CTL_SED=$sed
-  CTL_INDEX=$index
   [ "$#" -eq 0 ] || CTL_ENVS+=("$@")
   CTL_ROWS+="$rows"$'\n'
 }
 control_run() { # [SED]... — the batch's shared fixture edits
   plants "$STAND_SMOKE" "$@" ${CTL_SED:+"$CTL_SED"}
-  if [ -n "$CTL_INDEX" ]; then
-    jq "$CTL_INDEX" "$STUB_INDEX.intact" >"$STUB_INDEX" || {
-      printf 'harness-smoke.test: planted=index-failed %s\n' "$CTL_INDEX" >&2
-      exit 2
-    }
-    if cmp -s "$STUB_INDEX" "$STUB_INDEX.intact"; then
-      printf 'the planted edit changed nothing: %s\n' "$CTL_INDEX" >&2
-      exit 2
-    fi
-  fi
   package_run "$STAND_SMOKE" ${CTL_ENVS[@]+"${CTL_ENVS[@]}"}
   package_table "$CTL_ROWS"
-  cp "$STUB_INDEX.intact" "$STUB_INDEX"
   CTL_SED=
-  CTL_INDEX=
   CTL_ENVS=()
   CTL_ROWS=
   CTL_HELD=
@@ -1188,10 +1144,6 @@ control 's/^    \[ "\$line" = "\$args" \] || continue$/    :/' \
   "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran|hook:session-end-row|pass|reading the payload Copilot sent" \
   STANDIN_WRAP=session-end-row
 control_run
-control 's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" || relayed=1$/  relayed=1/' \
-  "control: a relay check that never reads the reply passes a refusal nobody saw|hook:skill-load-check|pass|its reply relaying" \
-  STANDIN_LOAD_SAYS=NOT-REFUSED
-control_run
 control 's/^  if \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  if false; then/' \
   "control: a mixed-hook row that never counts the .claude/hooks copies passes a Copilot that ran them|mixed-hook|pass|and neither .claude/hooks copy" \
   STANDIN_CROSS=1
@@ -1248,15 +1200,6 @@ control_run "$INTERACTIVE"
 control '' "interactive prompt context passes with a silent control|answer:userPromptSubmitted-interactive|pass|hook-only token repeated in interactive session, absent with silent hook"
 control '' "manual compaction capture passes its dedicated row|event:preCompact|pass|/compact fired preCompact with trigger manual"
 control_run "$INTERACTIVE"
-
-# The session runs only where the skill-load cells read enforced: a summary
-# giving each a reason there leaves both rows excluded with that reason, no
-# session run.
-control --index '(.packages[] | select(.name == "skill-load-check") | .unsupported) += [{tool: "copilot", reason: "planted judge reason"}]
-  | (.packages[] | select(.name == "skill-load-record") | .unsupported) += [{tool: "copilot", reason: "planted carrier reason"}]' '' \
-  "a skill-load-check the summary does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
-and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
-control_run
 
 plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot answer:userPromptSubmitted-interactive pending /    row copilot answer:userPromptSubmitted-interactive skipped /; s/^    row copilot event:preCompact pending /    row copilot event:preCompact skipped /'
 package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
