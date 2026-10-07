@@ -170,6 +170,9 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 # Short provider calls have their own per-home cap, so a held create cannot
 # stop mailbox reads. Verb placement is in schemas/lane-host.md.
 ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
+
+# Seconds a short provider call at the ORCH_LANE_HOST_SHORT_MAX_CALLS cap
+# waits for a slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
 # Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
