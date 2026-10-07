@@ -87,8 +87,9 @@ name: Skill Tests
 # `rest`, and `render-lint` is the second: a target whose cost is one
 # expensive test, so no target seam reaches inside it and it stands at
 # 801-1012s, ABOVE the ceiling, until that test is itself divided. `rest`
-# is split again by test name: `verify-lock` takes verification and lock
-# recording, and `rest` skips those same names. Both still use the one
+# is split again by test name: `verify-lock` takes verification, lock
+# recording and toggles that preserve locked records. `rest` skips those
+# same names. Both still use the one
 # `integration` binary. Their standalone macOS maxima remain to be measured;
 # the comment above the test step states the provisional bounds.
 #
@@ -1801,13 +1802,13 @@ jobs:
             verify-lock)
               flags=''
               integration='--test integration'
-              filters='verify_ lock_record::'
+              filters='verify_ lock_record:: toggle_locked::'
               ;;
             rest)
               doc='--doc'
               flags='--lib --bins'
               integration='--test integration'
-              filters='--skip verify_ --skip lock_record::'
+              filters='--skip verify_ --skip lock_record:: --skip toggle_locked::'
               flags="$flags --test cli_smoke"
               ;;
             *) echo "no target roster for leg $LEG"; exit 1 ;;
@@ -1833,11 +1834,13 @@ jobs:
       # Measured maxima of the step this bounds, over those same runs: 534s
       # for kendex-core whole and 81s for kendex-app whole. Before its
       # name split, rest took 854-941s over five successful merge-group runs
-      # on 2026-10-07, median 920s. `verify-lock` selects the `verify_` family
-      # and `lock_record::`; rest rejects exactly those same strings, so a
+      # on 2026-10-07, median 920s. The first name split measured rest at
+      # 766s and verify-lock at 343s, with toggle_locked finishing alone in
+      # rest. `verify-lock` selects the `verify_` family, `lock_record::`
+      # and `toggle_locked::`; rest rejects exactly those same strings, so a
       # new test still lands in one leg. These are libtest substring filters,
       # not new Cargo targets: the integration binary remains one binary.
-      # Both 20-minute test bounds are provisional until this partition's
+      # Both 20-minute test bounds are provisional until this rebalanced partition's
       # macOS runs provide standalone maxima. Those runs must establish each
       # leg inside the header's 600s ceiling before measured bounds replace
       # them. The old combined maximum cannot supply either new maximum.

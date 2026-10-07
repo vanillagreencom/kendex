@@ -1181,7 +1181,7 @@ INTEGRATION_EXE="$(integration_binary)" || {
 INTEGRATION_TESTS="$TMP/integration-tests"
 "$INTEGRATION_EXE" --list > "$TMP/integration-list"
 sed -n 's/: test$//p' "$TMP/integration-list" | sort > "$INTEGRATION_TESTS"
-for module in cli verify_records lock_record; do
+for module in cli verify_records lock_record toggle_locked; do
   grep -q "^$module::" "$INTEGRATION_TESTS" || {
     bad "the integration test list has no $module member, so discovery is incomplete"
     exit 1
@@ -1221,7 +1221,7 @@ check "the $LANE_LEG leg claims $LANE_TARGET and nothing else" \
 INTEGRATION_CLAIMS="$TMP/integration-claims"
 integration_claims "$WORKFLOW" | sort > "$INTEGRATION_CLAIMS"
 # Named tests keep a valid but incomplete --list extractor from proving only
-# a module prefix. They also exercise both selector families and rest.
+# a module prefix. They also exercise each selector family and rest.
 while IFS='|' read -r name leg; do
   if grep -qxF "$name $leg" "$INTEGRATION_CLAIMS"; then
     ok "the named integration test $name belongs to $leg"
@@ -1233,6 +1233,9 @@ cli::list_sees_global_and_current_project_scopes|rest
 cli::verify_names_an_installation_that_cannot_act|verify-lock
 lock_record::two_branches_on_one_package_merge_in_sequence_and_main_records_after_each|verify-lock
 TESTS
+check "every locked-record toggle test belongs to verify-lock" \
+  "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" \
+  "$(awk '$1 ~ /^toggle_locked::/ && $2 == "verify-lock" { print $1 }' "$INTEGRATION_CLAIMS")"
 while IFS= read -r leg; do
   check "the $leg test command runs every declared target and unit selection" \
     "$(roster_of "$WORKFLOW" "$leg" declarations | sed -n 's/^cargo-targets: //p' | target_selections)" \
@@ -1323,11 +1326,13 @@ check "must-fail: that merge retains every target and only the integration overl
 # Omission and overlap controls remove one side of the same name seam.
 # A third control drops forwarding in the actual test command: declarations
 # alone must not claim protection for arguments the harness never receives.
-for defect in selector skip forwarding export unit-filter; do
+for defect in selector skip toggle-selector toggle-skip forwarding export unit-filter; do
   mutant="$TMP/wf-cargo-filter-$defect.yml"
   case "$defect" in
-    selector) sed "s/filters='verify_ lock_record::'/filters='lock_record::'/" "$WORKFLOW" > "$mutant" ;;
+    selector) sed "s/filters='verify_ lock_record:: toggle_locked::'/filters='lock_record:: toggle_locked::'/" "$WORKFLOW" > "$mutant" ;;
     skip) sed 's/--skip verify_ //' "$WORKFLOW" > "$mutant" ;;
+    toggle-selector) sed "s/filters='verify_ lock_record:: toggle_locked::'/filters='verify_ lock_record::'/" "$WORKFLOW" > "$mutant" ;;
+    toggle-skip) sed 's/ --skip toggle_locked:://' "$WORKFLOW" > "$mutant" ;;
     forwarding) sed 's/ -- \$CARGO_FILTERS//' "$WORKFLOW" > "$mutant" ;;
     export) sed 's/echo "CARGO_FILTERS=\$filters"/echo "CARGO_FILTERS="/' "$WORKFLOW" > "$mutant" ;;
     unit-filter) sed 's/\$CARGO_TARGETS ||/\$CARGO_TARGETS -- \$CARGO_FILTERS ||/' "$WORKFLOW" > "$mutant" ;;
@@ -1347,14 +1352,24 @@ for defect in selector skip forwarding export unit-filter; do
     continue
   fi
   integration_claims "$mutant" | cut -d' ' -f1 | sort > "$TMP/integration-$defect"
-  if [[ "$defect" == selector ]]; then
+  if [[ "$defect" == selector || "$defect" == toggle-selector ]]; then
     lost="$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-$defect"))"
-    [[ -n "$lost" ]] && ok "must-fail: a dropped selector names unclaimed integration tests" ||
-      bad "must-fail: a dropped selector leaves no unclaimed integration test"
+    if [[ "$defect" == toggle-selector ]]; then
+      check "must-fail: a dropped toggle selector leaves every toggle test unclaimed" \
+        "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" "$lost"
+    else
+      [[ -n "$lost" ]] && ok "must-fail: a dropped selector names unclaimed integration tests" ||
+        bad "must-fail: a dropped selector leaves no unclaimed integration test"
+    fi
   else
     repeated="$(uniq -d "$TMP/integration-$defect")"
-    [[ -n "$repeated" ]] && ok "must-fail: dropped $defect names repeated integration tests" ||
-      bad "must-fail: dropped $defect leaves no repeated integration test"
+    if [[ "$defect" == toggle-skip ]]; then
+      check "must-fail: a dropped toggle skip repeats every toggle test" \
+        "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" "$repeated"
+    else
+      [[ -n "$repeated" ]] && ok "must-fail: dropped $defect names repeated integration tests" ||
+        bad "must-fail: dropped $defect leaves no repeated integration test"
+    fi
   fi
 done
 
