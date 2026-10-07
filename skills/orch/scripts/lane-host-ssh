@@ -259,8 +259,15 @@ def worktree_exists(row, item):
 
 
 def create_flags(row, item, reuse_requested):
-    """Ask the installed worktree owner whether reuse has a target."""
-    return ["--reuse"] if reuse_requested and worktree_exists(row, item) else []
+    """Reuse a standing tree or open the item branch a cloud lane pushed."""
+    if not reuse_requested:
+        return []
+    if worktree_exists(row, item):
+        return ["--reuse"]
+    branch = item.lower()
+    existing = remote(row, 'git -C "$1" ls-remote --exit-code --heads origin "$2"',
+                      row["clone"], "refs/heads/" + branch, accept=(2,))
+    return ["--base", branch] if existing.returncode == 0 else []
 
 
 def require_render(row):
@@ -637,7 +644,8 @@ The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields, and pi-root, the row's account directory, for a Pi lane. Existing
 ownership exits 75; --reuse and --relaunch pass --reuse to the worktree
-command when the target exists; a missing target uses plain create.
+command when the target exists. Without a target, an origin item branch uses
+--base; no origin item branch uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
 Every create's remote-prefix records the launch identity of the shell that
