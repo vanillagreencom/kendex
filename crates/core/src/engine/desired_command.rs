@@ -92,6 +92,7 @@ fn native_file(
             harness: Some(harness),
             message: finding.message.clone(),
             remediation: Some(finding.remediation.clone()),
+            detail: None,
         });
     }
     let file = dir.join(command_file(harness, ctx.name));
@@ -153,6 +154,7 @@ fn as_skill(
             harness: Some(harness),
             message: finding.message.clone(),
             remediation: Some(finding.remediation.clone()),
+            detail: None,
         });
     }
     // The generated tree lands in a directory other tools read as well —
@@ -197,6 +199,7 @@ fn as_skill(
                 "drop {} from this command's harnesses if they must not see it",
                 harness.display_name()
             )),
+            detail: None,
         });
     }
     let artifact = Artifact::Tree {
@@ -232,6 +235,7 @@ fn emitted_name(ctx: &ItemCtx, state: &mut DesiredState, harness: HarnessId) -> 
                     "run it as {name} on {}, or rename one of the two",
                     harness.display_name()
                 )),
+                detail: None,
             });
             Some(name)
         }

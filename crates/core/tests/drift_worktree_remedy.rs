@@ -173,7 +173,7 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
         "a worktree with no manifest of its own points at the checkout that has one"
     );
     assert!(
-        report::render_plain(&checked).contains(
+        report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose).contains(
             "fix: kendex remove --kind agent gh (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"
         ),
         "an absent manifest retains the explicit elsewhere marker"
@@ -242,6 +242,7 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
                 class: report::Class::Drift,
                 text: "'gh' does not match its source".to_owned().into(),
                 remedy: Some(report::Remedy::Apply { global: false }),
+                detail: None,
             },
             report::Line {
                 class: report::Class::Drift,
@@ -251,11 +252,12 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
                     name: "gh".to_owned(),
                     global: false,
                 }),
+                detail: None,
             },
         ],
     }];
 
-    let text = report::render_plain(&checked);
+    let text = report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert!(text.contains("fix: kendex apply\n"), "{text}");
     assert!(
         text.contains("fix: kendex remove --kind skill gh\n"),
@@ -290,7 +292,7 @@ fn record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declare
         checked.sections
     );
 
-    let text = report::render_plain(&checked);
+    let text = report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert!(text.contains("see: kendex apply --plan\n"), "{text}");
 }
 
@@ -428,9 +430,10 @@ fn a_project_below_the_worktree_root_that_declares_is_its_own() {
                 name: "gh".to_owned(),
                 global: false,
             }),
+            detail: None,
         }],
     }];
-    let text = report::render_plain(&checked);
+    let text = report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert!(
         text.contains("fix: kendex remove --kind skill gh\n"),
         "{text}"

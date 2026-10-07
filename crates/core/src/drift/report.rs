@@ -56,7 +56,10 @@ impl CheckStatus {
 
 /// What a line is: a fact about drift, a package whose verdict is not in
 /// yet, or an admission that something could not be checked. The first
-/// two are answers and exit 1; the last is the absence of one and exits 2.
+/// two are answers and exit 1; the third is the absence of one and exits 2.
+/// The last is a could-not-check the check's own background refresh
+/// settles: nothing for a person to do, so it exits 0 and only
+/// `--verbose` and `--json` carry it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum Class {
@@ -65,6 +68,10 @@ pub enum Class {
     /// run yet. The next background refresh settles it.
     Unevaluated,
     Unknown,
+    /// Could not be checked, for a reason the background refresh this
+    /// check starts clears: the source's cached copy is due a fetch, after
+    /// which the comparison is derived again.
+    Settling,
 }
 
 impl Class {
@@ -74,6 +81,7 @@ impl Class {
         match self {
             Class::Drift | Class::Unevaluated => CheckStatus::Drift,
             Class::Unknown => CheckStatus::Unknown,
+            Class::Settling => CheckStatus::Clean,
         }
     }
 }
@@ -398,6 +406,11 @@ pub struct Line {
     pub text: Sentence,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remedy: Option<Remedy>,
+    /// The technical cause behind `text`, verbatim: a failed git command
+    /// and what it printed. `--verbose` and `--json` carry it; the default
+    /// text says only what it means to a person.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -661,6 +674,7 @@ fn drift(text: impl Into<Sentence>, remedy: Option<Remedy>) -> Line {
         class: Class::Drift,
         text: text.into(),
         remedy,
+        detail: None,
     }
 }
 
@@ -669,6 +683,7 @@ fn unevaluated(text: impl Into<Sentence>, remedy: Remedy) -> Line {
         class: Class::Unevaluated,
         text: text.into(),
         remedy: Some(remedy),
+        detail: None,
     }
 }
 
@@ -677,6 +692,7 @@ fn unknown(text: impl Into<Sentence>) -> Line {
         class: Class::Unknown,
         text: text.into(),
         remedy: None,
+        detail: None,
     }
 }
 
@@ -899,7 +915,7 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::{Page, PageFix, PageItem, PageSection, page, render_plain};
+pub use render::{Page, PageFix, PageItem, PageSection, Verbosity, page, render_plain};
 use scope::check_scope;
 pub use sentence::{Sentence, Span};
 pub use text::{Text, fold};

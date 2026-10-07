@@ -151,8 +151,9 @@ impl Eval<'_> {
                 kind: ItemKind::PiExtension,
                 name: name.clone(),
                 harness: Some(HarnessId::Pi),
-                message: format!("carrier package could not be compared: {error}"),
+                message: "kendex could not compare the installed Pi package with its source".into(),
                 remediation: None,
+                detail: Some(error.to_string()),
             }),
         }
     }
@@ -175,13 +176,15 @@ impl Eval<'_> {
         let name = &planned.name;
         let decl = &planned.decl;
         let pinned = hold_owner.is_some();
-        let warn = |message: String, remediation: Option<String>| ItemWarning {
-            kind,
-            name: name.clone(),
-            harness: None,
-            message,
-            remediation,
-        };
+        let warn =
+            |message: String, remediation: Option<String>, detail: Option<String>| ItemWarning {
+                kind,
+                name: name.clone(),
+                harness: None,
+                message,
+                remediation,
+                detail,
+            };
         match error {
             CoreError::ItemRevUnsupported { .. } => {
                 let files_missing = self.files_missing(kind, name);
@@ -203,6 +206,7 @@ impl Eval<'_> {
                     decl.source
                 ),
                 Some("refresh sources to evaluate it".into()),
+                None,
             )),
             // The tip does not carry the package: a fact with its own
             // remedy — and a mute on it still mutes, or the report would
@@ -250,9 +254,11 @@ impl Eval<'_> {
                     no_per_package_update: super::no_per_package_update(kind),
                 });
             }
-            _ => report
-                .warnings
-                .push(warn(format!("could not be evaluated: {error}"), None)),
+            _ => report.warnings.push(warn(
+                "kendex could not check this package for updates".into(),
+                None,
+                Some(error.to_string()),
+            )),
         }
     }
 
@@ -271,23 +277,34 @@ impl Eval<'_> {
         let kind = planned.kind;
         let name = &planned.name;
         let pinned = hold_owner.is_some();
-        let warn = |report: &mut UpdatesReport, message: String| {
+        // What failed is a git read of the source's cached copy; a fetch
+        // usually repairs it, so the message names no step to take and the
+        // command and its output go to the detail.
+        let warn = |report: &mut UpdatesReport, message: &str, error: &CoreError| {
             report.warnings.push(ItemWarning {
                 kind,
                 name: name.clone(),
                 harness: None,
-                message,
+                message: message.to_owned(),
                 remediation: None,
+                detail: Some(error.to_string()),
             });
         };
-        let newest =
-            match history::latest_subtree_commit(&package.mirror, &package.tip, &package.subtree) {
-                Ok(row) => row,
-                Err(error) => {
-                    warn(report, format!("history could not be read: {error}"));
-                    None
-                }
-            };
+        let newest = match history::latest_subtree_commit(
+            &package.mirror,
+            &package.tip,
+            &package.subtree,
+        ) {
+            Ok(row) => row,
+            Err(error) => {
+                warn(
+                    report,
+                    "kendex could not read the version history of its source; the next source refresh tries again",
+                    &error,
+                );
+                None
+            }
+        };
         let latest = newest
             .as_ref()
             .map(|row| version_ref(&row.commit, Some(row)));
@@ -306,7 +323,8 @@ impl Eval<'_> {
                 Err(error) => {
                     warn(
                         report,
-                        format!("installed version could not be read: {error}"),
+                        "kendex could not find the installed version in its source; the next source refresh tries again",
+                        &error,
                     );
                     None
                 }

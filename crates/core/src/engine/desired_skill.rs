@@ -480,6 +480,7 @@ fn render_variant(
             harness: Some(harness),
             message: finding.message,
             remediation: Some(finding.remediation),
+            detail: None,
         });
     }
     if !enabled {

@@ -26,6 +26,10 @@ pub(crate) struct CheckArgs {
     /// Print a short report, or nothing when all checks pass
     #[arg(short = 'q', long)]
     quiet: bool,
+    /// Also show items a background refresh checks again, and the
+    /// technical cause of each item
+    #[arg(short = 'v', long, conflicts_with = "catalog")]
+    verbose: bool,
     /// Leave the project's install record as it is, and report what it
     /// lacks
     #[arg(long, conflicts_with = "catalog")]
@@ -44,6 +48,7 @@ pub(crate) fn check(env: &Env, args: CheckArgs) -> Result<ExitCode, Box<dyn std:
         scope,
         json,
         quiet,
+        verbose,
         report_only,
         catalog,
         strict,
@@ -58,7 +63,11 @@ pub(crate) fn check(env: &Env, args: CheckArgs) -> Result<ExitCode, Box<dyn std:
                 true => kendex_core::drift::copies::CheckMode::ReportOnly,
                 false => kendex_core::drift::copies::CheckMode::Settle,
             };
-            commands::check::run(env, filter, json, quiet, mode)
+            let verbosity = match verbose {
+                true => kendex_core::drift::report::Verbosity::Verbose,
+                false => kendex_core::drift::report::Verbosity::Default,
+            };
+            commands::check::run(env, filter, json, quiet, verbosity, mode)
         }
     }
 }

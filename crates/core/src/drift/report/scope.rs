@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use super::text::shown;
+use super::text::{shown, verbatim};
 use super::*;
 use crate::lock::{InstallRef, LockEntry, Reason};
 use crate::model::HarnessId;
@@ -1023,10 +1023,20 @@ impl ScopeCheck<'_> {
                     ));
                 }
             } else {
-                sections.unknown.push(unknown(format!(
-                    "{prefix}{kind} {name}: {}",
-                    shown(&note.message)
-                )));
+                // A fetch that is due re-derives the comparison in the
+                // background refresh this check starts, which settles most
+                // of these: a cached copy missing a commit is the usual one.
+                let settles =
+                    stamp_for(self.env, &note.repo).is_some_and(|stamp| stamp.is_stale(self.now));
+                sections.unknown.push(Line {
+                    class: match settles {
+                        true => Class::Settling,
+                        false => Class::Unknown,
+                    },
+                    text: format!("{prefix}{kind} '{name}': {}", shown(&note.message)).into(),
+                    remedy: None,
+                    detail: note.detail.as_deref().map(verbatim),
+                });
             }
         }
     }
@@ -1107,16 +1117,14 @@ impl ScopeCheck<'_> {
                 continue;
             };
             if let Some(since) = stamp.failing_since(self.now) {
-                sections.unknown.push(unknown(format!(
-                    "{prefix}source {} unreachable since {}{}",
-                    shown(repo),
-                    crate::clock::iso_from_unix(since),
-                    stamp
-                        .last_error
-                        .as_deref()
-                        .map(|error| format!(" ({})", shown(error)))
-                        .unwrap_or_default()
-                )));
+                sections.unknown.push(Line {
+                    detail: stamp.last_error.as_deref().map(verbatim),
+                    ..unknown(format!(
+                        "{prefix}source {} unreachable since {}",
+                        shown(repo),
+                        crate::clock::iso_from_unix(since),
+                    ))
+                });
             }
         }
     }

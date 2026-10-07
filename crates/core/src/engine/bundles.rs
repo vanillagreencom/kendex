@@ -258,6 +258,7 @@ fn installable(
                     "add {} to that catalog, or drop it from the bundle {name}",
                     member.name
                 )),
+                detail: None,
             });
             continue;
         }
@@ -406,6 +407,7 @@ fn disagreement(
             "declare the {} {name} in kendex.toml to say how it should install",
             kind.name()
         )),
+        detail: None,
     })
 }
 

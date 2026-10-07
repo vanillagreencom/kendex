@@ -53,11 +53,14 @@ fn world() -> World {
 }
 
 fn check_text(world: &World) -> String {
-    drift::report::render_plain(&drift::report::check(
-        &world.env,
-        std::slice::from_ref(&world.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ))
+    drift::report::render_plain(
+        &drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    )
 }
 
 #[allow(clippy::unwrap_used)]
@@ -107,7 +110,8 @@ fn assert_unreadable_parent_is_unknown(world: &World, parent: &Path) {
         std::slice::from_ref(&world.scope),
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert_eq!(
@@ -115,7 +119,11 @@ fn assert_unreadable_parent_is_unknown(world: &World, parent: &Path) {
         drift::report::CheckStatus::Unknown,
         "{text}"
     );
-    assert!(text.contains("could not check:\n"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("could not check: ")),
+        "{text}"
+    );
     assert!(
         !text.contains("harness links that are not rendered"),
         "{text}"

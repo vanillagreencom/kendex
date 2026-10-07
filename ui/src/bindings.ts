@@ -2909,6 +2909,12 @@ export type ItemWarning_Deserialize = {
 	harness: HarnessId | null,
 	message: string,
 	remediation: string | null,
+	/**
+	 *  The technical cause, verbatim: the failed command and what it
+	 *  printed. `message` says what it means to a person; this is for
+	 *  `--verbose` and `--json`.
+	 */
+	detail?: string | null,
 };
 
 /**
@@ -2921,6 +2927,12 @@ export type ItemWarning_Serialize = {
 	harness?: HarnessId | null,
 	message: string,
 	remediation?: string | null,
+	/**
+	 *  The technical cause, verbatim: the failed command and what it
+	 *  printed. `message` says what it means to a person; this is for
+	 *  `--verbose` and `--json`.
+	 */
+	detail?: string | null,
 };
 
 /**

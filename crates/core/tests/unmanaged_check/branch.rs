@@ -47,11 +47,10 @@ fn a_branch_that_cannot_be_read_records_nothing() {
     );
 
     let check = || {
-        drift::report::render_plain(&drift::report::check(
-            &w.env,
-            std::slice::from_ref(&w.scope),
-            CheckMode::Settle,
-        ))
+        drift::report::render_plain(
+            &drift::report::check(&w.env, std::slice::from_ref(&w.scope), CheckMode::Settle),
+            kendex_core::drift::report::Verbosity::Verbose,
+        )
     };
     let text = check();
     assert!(!lock_path.exists(), "the record was written: {text}");

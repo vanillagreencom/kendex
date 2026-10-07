@@ -337,6 +337,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
                     "use an event {} supports, or remove it from this hook's harnesses",
                     harness.display_name(),
                 )),
+                detail: None,
             });
         }
     }

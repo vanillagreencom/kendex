@@ -27,6 +27,7 @@ fn warning(
         harness: Some(HarnessId::Copilot),
         message,
         remediation,
+        detail: None,
     }
 }
 
@@ -47,6 +48,7 @@ pub(super) fn hook(
         harness: Some(HarnessId::Copilot),
         message,
         remediation,
+        detail: None,
     };
     let Some(registered) = crate::harness::copilot::hook_for(hook) else {
         state.refused.push(super::targets::unsupported_hook_event(
@@ -138,6 +140,7 @@ pub(super) fn switched_off_by(
             record_key = crate::names::shown(key),
         ),
         remediation: Some(format!("take {name} out of `{key}` in {}", path.display())),
+        detail: None,
     });
 }
 

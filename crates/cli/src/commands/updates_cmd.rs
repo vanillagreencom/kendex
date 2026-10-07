@@ -7,7 +7,7 @@ use kendex_core::package::updates::UpdatesReport;
 use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Status, Style};
+use crate::ui::{self, Span, Status, Style};
 
 #[derive(Subcommand)]
 pub enum UpdatesCommand {
@@ -43,6 +43,9 @@ pub struct UpdatesArgs {
     /// Skip confirmation prompts
     #[arg(short = 'y', long, global = true)]
     yes: bool,
+    /// Show the technical cause under each warning
+    #[arg(short = 'v', long)]
+    verbose: bool,
     // Read by the listing, written by --apply. The help clap prints is the
     // flag's own, on `flags::ProjectTargetFlag`; a doc comment here would
     // reach no output.
@@ -77,6 +80,7 @@ fn run_with(
         apply,
 
         yes,
+        verbose,
         target,
         ..
     } = args;
@@ -124,7 +128,7 @@ fn run_with(
     let report = evaluate(env, &scope)?;
     let style = ui::style();
     ui::stderr(&style.header("updates", &scope.label()));
-    ui::stderr(&screen(&style, &report));
+    ui::stderr(&screen(&style, &report, verbose));
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.
     if let Err(error) = kendex_core::drift::snapshot::record_with(env, &scope, &report) {
@@ -133,7 +137,12 @@ fn run_with(
     Ok(())
 }
 
-fn screen(style: &Style, report: &kendex_core::package::updates::UpdatesReport) -> Vec<String> {
+/// `verbose` adds each warning's technical cause under it.
+fn screen(
+    style: &Style,
+    report: &kendex_core::package::updates::UpdatesReport,
+    verbose: bool,
+) -> Vec<String> {
     let mut lines = Vec::new();
     let mut shown = 0;
     for row in &report.rows {
@@ -197,6 +206,9 @@ fn screen(style: &Style, report: &kendex_core::package::updates::UpdatesReport) 
             warning.name,
             warning.message
         )));
+        if let Some(detail) = warning.detail.as_deref().filter(|_| verbose) {
+            lines.extend(style.detail(None, &[Span::Verbatim(detail)]));
+        }
     }
     if shown == 0 && report.warnings.is_empty() {
         lines.extend(style.summary(Status::Done, "everything is on its latest version"));

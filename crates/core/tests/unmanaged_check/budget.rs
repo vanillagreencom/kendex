@@ -109,7 +109,8 @@ fn nothing_is_read_past_the_deadline_the_memo_included() {
         Duration::ZERO,
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Unknown,
@@ -172,7 +173,8 @@ fn one_check_over_two_scopes_reports_the_pass_owed_once() {
         Duration::ZERO,
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert_eq!(
         text.matches("inside the 0 s the session hook allows")
             .count(),
@@ -187,7 +189,8 @@ fn one_check_over_two_scopes_reports_the_pass_owed_once() {
         Duration::from_secs(60),
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert_eq!(
         text.matches("unmanaged copy of skill 'deploy' for Claude Code")
             .count(),

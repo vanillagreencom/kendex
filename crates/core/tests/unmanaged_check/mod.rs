@@ -103,11 +103,14 @@ fn write_at(path: PathBuf, body: &str) -> PathBuf {
 }
 
 fn report(w: &World) -> String {
-    drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ))
+    drift::report::render_plain(
+        &drift::report::check(
+            &w.env,
+            std::slice::from_ref(&w.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    )
 }
 
 /// A copy that is not the render is stale — the section an agent reads
@@ -127,7 +130,7 @@ fn a_copy_that_differs_is_stale_and_the_take_over_is_its_fix() {
 
     let text = report(&w);
     let trash = kendex_core::paths::slashed(&w.env.trash_dir());
-    assert!(text.starts_with("stale:\n"), "{text}");
+    assert!(text.starts_with("stale: 1\n"), "{text}");
     assert!(
         text.contains(
             "unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat'"
@@ -441,14 +444,19 @@ fn a_position_that_will_not_read_is_could_not_check() {
         std::slice::from_ref(&w.scope),
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     restore();
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Unknown,
         "{text}"
     );
-    assert!(text.contains("could not check:\n"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("could not check: ")),
+        "{text}"
+    );
     assert!(
         text.contains("skill 'deploy' for Claude Code: ") && text.contains("cannot be compared"),
         "the plan's own reason is the line: {text}"

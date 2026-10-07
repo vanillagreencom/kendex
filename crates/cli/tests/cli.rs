@@ -383,7 +383,7 @@ fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
     assert_eq!(quiet.status.code(), Some(1), "{quiet:?}");
     assert_eq!(
         String::from_utf8_lossy(&quiet.stdout),
-        "source comparison needed:\n  packages have not been compared with their sources — fix: kendex updates\n"
+        "source comparison needed: 1\n  packages have not been compared with their sources — fix: kendex updates\n1 item needs attention.\n"
     );
     assert_eq!(String::from_utf8_lossy(&quiet.stderr).trim(), "");
 

@@ -107,7 +107,7 @@ fn a_clean_scope_is_silent_and_exit_zero() {
     );
     assert_eq!(report.status, CheckStatus::Clean);
     assert_eq!(report.status.exit_code(), 0);
-    assert_eq!(render_plain(&report), "");
+    assert_eq!(render_plain(&report, Verbosity::Verbose), "");
 }
 
 /// A stale session hook names the supported reinstall command and a safe
@@ -198,7 +198,7 @@ fn held_only_and_ignored_only_drift_stays_silent() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.status, CheckStatus::Clean, "{report:?}");
-    assert_eq!(render_plain(&report), "");
+    assert_eq!(render_plain(&report, Verbosity::Verbose), "");
 }
 
 /// Every section as its title and lines, each line as its class and
@@ -292,7 +292,7 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
     }
     // Drift before suggestions: the stale section renders before the age
     // line.
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     let stale_at = text.find("stale:").unwrap();
     let age_at = text.find("(package evaluation:").unwrap();
     assert!(stale_at < age_at, "{text}");
@@ -357,8 +357,8 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
-        render_plain(&report),
-        "source comparison needed:\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  skill 'also-moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n(package evaluation: moments ago)\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
+        render_plain(&report, Verbosity::Default),
+        "source comparison needed: 2\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  skill 'also-moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n(package evaluation: moments ago)\n2 items need attention.\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
     );
 }
 
@@ -378,7 +378,7 @@ fn an_unreadable_snapshot_is_could_not_check_not_unevaluated() {
     );
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(text.contains("could not check:"), "{text}");
     assert!(text.contains("drift snapshot unreadable:"), "{text}");
     assert!(!text.contains("source comparison needed"), "{text}");
@@ -399,7 +399,7 @@ fn could_not_check_outranks_unevaluated() {
     );
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(text.contains("source comparison needed:"), "{text}");
     assert!(text.contains("could not check:"), "{text}");
 }
@@ -419,8 +419,8 @@ fn a_scope_with_remotes_and_no_snapshot_is_unevaluated() {
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
-        render_plain(&report),
-        "source comparison needed:\n  packages have not been compared with their sources — fix: kendex updates\n"
+        render_plain(&report, Verbosity::Default),
+        "source comparison needed: 1\n  packages have not been compared with their sources — fix: kendex updates\n1 item needs attention.\n"
     );
 }
 
@@ -446,7 +446,7 @@ fn snapshot_age_is_rendered() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.snapshot_age_secs.map(|age| age / 3600), Some(3));
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(text.contains("(package evaluation: 3h ago)"));
     assert!(text.ends_with(
         "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.\n"
@@ -471,7 +471,7 @@ fn missing_skill_reference_stays_a_failure() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.status, CheckStatus::Drift);
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(
         text.contains("references skill 'ghost'") && text.contains("kendex add --skill ghost"),
         "{text}"
@@ -494,7 +494,7 @@ fn corrupt_manifest_and_lock_are_could_not_check() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.status, CheckStatus::Unknown);
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(text.contains("could not check:"), "{text}");
     assert!(text.contains("manifest:"), "{text}");
     assert!(text.contains("lock:"), "{text}");
@@ -889,7 +889,7 @@ fn unreadable_manifest_does_not_guess_that_recorded_packages_need_cleanup() {
         std::slice::from_ref(&scope),
         crate::drift::copies::CheckMode::Settle,
     );
-    let text = render_plain(&unreadable);
+    let text = render_plain(&unreadable, Verbosity::Verbose);
     assert!(text.contains("manifest:"), "{text}");
     assert!(!text.contains("record cleanup needed"), "{text}");
     assert!(!text.contains("kendex apply"), "{text}");
@@ -1113,7 +1113,7 @@ fn a_copy_of_a_package_declared_at_both_scopes_is_named_once() {
 /// Every item line of the complete report, as the explicit check's plain
 /// rendering shows each one.
 fn item_lines(report: &CheckReport) -> String {
-    page(report)
+    page(report, Verbosity::Verbose)
         .sections
         .iter()
         .flat_map(|section| &section.items)

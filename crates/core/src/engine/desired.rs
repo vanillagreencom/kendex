@@ -1052,6 +1052,7 @@ fn retired(
         harness: None,
         message,
         remediation: None,
+        detail: None,
     })
 }
 

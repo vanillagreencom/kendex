@@ -1,5 +1,5 @@
 use kendex_core::drift::report::{
-    CheckReport, CheckStatus, Class, Line, Remedy, Section, Sentence, page, render_plain,
+    CheckReport, CheckStatus, Class, Line, Remedy, Section, Sentence, Verbosity, page, render_plain,
 };
 
 use super::{screen, verdict};
@@ -10,6 +10,7 @@ fn line(class: Class, text: &str, remedy: Option<Remedy>) -> Line {
         class,
         text: text.to_owned().into(),
         remedy,
+        detail: None,
     }
 }
 
@@ -109,7 +110,12 @@ fn many(count: usize) -> CheckReport {
 /// under it, the age and the next step as footnotes, and the verdict.
 #[test]
 fn the_check_draws_every_kind_of_row_rich() {
-    let drawn = screen(&rich(100), &every_kind(), "/home/me/dev/app");
+    let drawn = screen(
+        &rich(100),
+        &every_kind(),
+        "/home/me/dev/app",
+        Verbosity::Default,
+    );
     assert_eq!(
         tagged(&drawn.head),
         ["<1;34>kendex check</>  <90>/home/me/dev/app</>"]
@@ -157,7 +163,7 @@ fn the_check_draws_every_kind_of_row_rich() {
 /// than leaving `--scope project --yes` to read as a second command.
 #[test]
 fn a_narrow_terminal_keeps_the_next_steps_command_whole() {
-    let drawn = screen(&rich(40), &every_kind(), "here");
+    let drawn = screen(&rich(40), &every_kind(), "here", Verbosity::Default);
     let at = drawn
         .report
         .iter()
@@ -193,13 +199,14 @@ fn a_command_in_an_item_is_never_broken() {
                 class: Class::Drift,
                 text: text.clone(),
                 remedy: None,
+                detail: None,
             }],
         )],
         snapshot_age_secs: None,
         project_target: None,
         deep_pass_owed: false,
     };
-    let rows = tagged(&screen(&rich(80), &report, "here").report);
+    let rows = tagged(&screen(&rich(80), &report, "here", Verbosity::Default).report);
     assert_eq!(
         rows,
         [
@@ -211,7 +218,7 @@ fn a_command_in_an_item_is_never_broken() {
         ]
     );
     assert_eq!(
-        screen(&plain(), &report, "here").report,
+        screen(&plain(), &report, "here", Verbosity::Default).report,
         ["stale:".to_owned(), format!("  {text}")]
     );
 }
@@ -220,7 +227,12 @@ fn a_command_in_an_item_is_never_broken() {
 /// verdict as the lines a script has always read.
 #[test]
 fn the_check_draws_every_kind_of_row_plain() {
-    let drawn = screen(&plain(), &every_kind(), "/home/me/dev/app");
+    let drawn = screen(
+        &plain(),
+        &every_kind(),
+        "/home/me/dev/app",
+        Verbosity::Default,
+    );
     assert!(drawn.head.is_empty(), "{:?}", drawn.head);
     assert_eq!(
         drawn.report,
@@ -252,7 +264,7 @@ fn the_check_draws_every_kind_of_row_plain() {
 /// shown, and closes on the all-clear.
 #[test]
 fn a_clean_check_draws_only_the_all_clear() {
-    let rich_run = screen(&rich(100), &clean(), "global");
+    let rich_run = screen(&rich(100), &clean(), "global", Verbosity::Default);
     assert!(rich_run.report.is_empty(), "{:?}", rich_run.report);
     assert_eq!(
         tagged(&rich_run.verdict),
@@ -261,7 +273,7 @@ fn a_clean_check_draws_only_the_all_clear() {
             "<32>✓</> <1>all clear — every install matches its source</>"
         ]
     );
-    let plain_run = screen(&plain(), &clean(), "global");
+    let plain_run = screen(&plain(), &clean(), "global", Verbosity::Default);
     assert!(plain_run.report.is_empty(), "{:?}", plain_run.report);
     assert_eq!(
         plain_run.verdict,
@@ -273,7 +285,7 @@ fn a_clean_check_draws_only_the_all_clear() {
 /// decision, not a failure.
 #[test]
 fn a_drift_check_closes_on_a_decision() {
-    let drawn = screen(&rich(100), &many(2), "here");
+    let drawn = screen(&rich(100), &many(2), "here", Verbosity::Default);
     assert_eq!(
         tagged(&drawn.verdict),
         [
@@ -293,14 +305,14 @@ fn the_verdict_counts_the_rows_it_closes() {
         (every_kind(), "7 items need attention — see the lines above"),
     ];
     for (report, want) in rows {
-        assert_eq!(verdict(&page(&report)), want);
+        assert_eq!(verdict(&page(&report, Verbosity::Verbose)), want);
     }
     let mut remedied = many(2);
     for line in &mut remedied.sections[0].lines {
         line.remedy = Some(Remedy::Apply { global: false });
     }
     assert_eq!(
-        verdict(&page(&remedied)),
+        verdict(&page(&remedied, Verbosity::Verbose)),
         "2 items need attention — each line above says what to run"
     );
 }
@@ -310,11 +322,13 @@ fn the_verdict_counts_the_rows_it_closes() {
 #[test]
 fn an_explicit_check_draws_every_item_while_the_session_hook_stays_bounded() {
     let report = many(12);
-    let hook = render_plain(&report);
+    let hook = render_plain(&report, Verbosity::Verbose);
     assert!(hook.contains("see: kendex check"), "{hook}");
     assert!(!hook.contains("item-11"), "{hook}");
 
-    let explicit = screen(&plain(), &report, "here").report.join("\n");
+    let explicit = screen(&plain(), &report, "here", Verbosity::Default)
+        .report
+        .join("\n");
     assert!(explicit.contains("item-11"), "{explicit}");
     assert!(!explicit.contains("more — see:"), "{explicit}");
 }

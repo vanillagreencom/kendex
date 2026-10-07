@@ -80,7 +80,7 @@ fn an_old_fetch_failure_becomes_a_line_dated_from_first_failure() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.status, CheckStatus::Unknown);
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(
         text.contains(&format!(
             "source owner/repo unreachable since {}",
@@ -128,6 +128,7 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
                     kind: crate::model::ItemKind::Skill,
                     name: "gh".into(),
                     message: "history could not be read".into(),
+                    detail: None,
                     repo: repo.into(),
                     refs_state: evaluated.map(str::to_owned),
                 }],
@@ -154,5 +155,73 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
             wants_background_refresh(&env, std::slice::from_ref(&scope), &report),
             changed
         );
+    }
+}
+
+/// A could-not-check whose source is due a fetch is settled by the
+/// background refresh the check starts for that fetch: the line is
+/// settling, the check is clean, and the refresh it relies on is wanted.
+/// The same note after a fetch that just ran is could-not-check.
+#[test]
+fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
+    for (fetched_ago, class, status) in [
+        (
+            2 * stamps::TTL.as_secs(),
+            Class::Settling,
+            CheckStatus::Clean,
+        ),
+        (0, Class::Unknown, CheckStatus::Unknown),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let scope = project_scope(tmp.path());
+        write_manifest(&env, &scope, &manifest_with_remote());
+        crate::drift::snapshot::store(
+            &env,
+            &scope,
+            &ScopeSnapshot {
+                schema: SNAPSHOT_SCHEMA,
+                taken_at: crate::clock::unix_now(),
+                scope: scope.canonical().label(),
+                packages: vec![],
+                unreadable: vec![UnreadableSnapshot {
+                    kind: crate::model::ItemKind::Skill,
+                    name: "gh".into(),
+                    message: "its version history could not be read".into(),
+                    detail: Some("git log failed: fatal: bad object f7db7e89".into()),
+                    repo: "owner/repo".into(),
+                    refs_state: Some("refs".into()),
+                }],
+            },
+        )
+        .unwrap();
+        let key = crate::remote::cache_key(&env, "owner/repo");
+        stamps::record_success(
+            &env,
+            &key,
+            Some("refs".into()),
+            crate::clock::unix_now() - fetched_ago,
+        )
+        .unwrap();
+
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
+        let line = &report.sections[0].lines[0];
+        assert_eq!(line.class, class);
+        assert_eq!(report.status, status);
+        assert_eq!(
+            line.detail.as_deref(),
+            Some("git log failed: fatal: bad object f7db7e89")
+        );
+        if class == Class::Settling {
+            assert!(wants_background_refresh(
+                &env,
+                std::slice::from_ref(&scope),
+                &report
+            ));
+        }
     }
 }

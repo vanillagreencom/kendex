@@ -12,6 +12,17 @@ use super::*;
 /// the hook is not something a report can know.
 const NOT_FROM_HERE: &str = "(the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)";
 
+/// How much of a report a reader asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    /// What a person must act on or know: no line the background refresh
+    /// settles, no technical detail, and in the session report a count and
+    /// one example per section.
+    Default,
+    /// Every line, each with its technical detail.
+    Verbose,
+}
+
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
 fn age_word(secs: u64) -> String {
     match secs {
@@ -95,6 +106,8 @@ pub struct PageItem {
     pub class: Class,
     pub text: Sentence,
     pub fix: Option<PageFix>,
+    /// The line's technical cause, under [`Verbosity::Verbose`] only.
+    pub detail: Option<String>,
 }
 
 /// The remedy an item offers, as a reader acts on it.
@@ -149,16 +162,11 @@ impl PageItem {
     }
 }
 
-/// Empty when clean: no section, and no age or next step to go with none.
-pub fn page(report: &CheckReport) -> Page {
-    if report.is_clean() {
-        return Page {
-            sections: Vec::new(),
-            age: None,
-            next: None,
-        };
-    }
-    let sections = report
+/// Empty when nothing is left to show: no section, and no age or next step
+/// to go with none.
+pub fn page(report: &CheckReport, verbosity: Verbosity) -> Page {
+    let verbose = verbosity == Verbosity::Verbose;
+    let sections: Vec<PageSection> = report
         .sections
         .iter()
         .map(|section| PageSection {
@@ -166,6 +174,7 @@ pub fn page(report: &CheckReport) -> Page {
             items: section
                 .lines
                 .iter()
+                .filter(|line| verbose || line.class != Class::Settling)
                 .map(|line| PageItem {
                     class: line.class,
                     text: line.text.clone(),
@@ -175,10 +184,19 @@ pub fn page(report: &CheckReport) -> Page {
                             fix,
                         })
                     }),
+                    detail: line.detail.clone().filter(|_| verbose),
                 })
                 .collect(),
         })
+        .filter(|section| !section.items.is_empty())
         .collect();
+    if sections.is_empty() {
+        return Page {
+            sections,
+            age: None,
+            next: None,
+        };
+    }
     Page {
         sections,
         age: report
@@ -188,35 +206,83 @@ pub fn page(report: &CheckReport) -> Page {
     }
 }
 
+/// One line saying how the check ended, over the items the page shows.
+fn outcome(page: &Page) -> String {
+    let items = || page.sections.iter().flat_map(|section| &section.items);
+    let count = |class: &[Class]| items().filter(|item| class.contains(&item.class)).count();
+    let items_word = |n: usize| match n {
+        1 => "1 item".to_owned(),
+        n => format!("{n} items"),
+    };
+    let attention = count(&[Class::Drift, Class::Unevaluated]);
+    let unknown = count(&[Class::Unknown]);
+    let settling = count(&[Class::Settling]);
+    let mut said = Vec::new();
+    if attention > 0 {
+        let verb = match attention {
+            1 => "needs",
+            _ => "need",
+        };
+        said.push(format!("{} {verb} attention", items_word(attention)));
+    }
+    if unknown > 0 {
+        said.push(format!("kendex could not check {}", items_word(unknown)));
+    }
+    if settling > 0 {
+        said.push(format!(
+            "the background refresh checks {} again",
+            items_word(settling)
+        ));
+    }
+    let said = said.join("; ");
+    let mut said = said.chars();
+    match said.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), said.as_str()),
+        None => String::new(),
+    }
+}
+
 /// The bounded plain-text rendering for the session-start hook. Empty when
-/// clean. Every budget counts its own overflow line, and no line is cut
-/// mid-way: command arguments remain complete.
-pub fn render_plain(report: &CheckReport) -> String {
-    if report.is_clean() {
+/// nothing is left to show. By default each section is its title with the
+/// item count, one example and how many more there are, then one outcome
+/// line and the next step; [`Verbosity::Verbose`] lists every item with its
+/// technical detail. Every budget counts its own overflow line, and no line
+/// is cut mid-way: command arguments remain complete.
+pub fn render_plain(report: &CheckReport, verbosity: Verbosity) -> String {
+    let page = page(report, verbosity);
+    if page.sections.is_empty() {
         return String::new();
     }
-    let page = page(report);
+    // The overflow line spends one of the section's own slots.
+    let room = match verbosity {
+        Verbosity::Default => 1,
+        Verbosity::Verbose => SECTION_ITEMS - 1,
+    };
     let mut lines: Vec<String> = Vec::new();
-    for section in &page.sections {
-        lines.push(format!("{}:", section.title));
-        let over = section.items.len() > SECTION_ITEMS;
-        // The overflow line spends one of the section's own slots.
-        let shown_count = match over {
-            true => SECTION_ITEMS - 1,
+    for (at, section) in page.sections.iter().enumerate() {
+        if at > 0 {
+            lines.push(String::new());
+        }
+        lines.push(format!("{}: {}", section.title, section.items.len()));
+        let shown_count = match section.items.len() > room + 1 {
+            true => room,
             false => section.items.len(),
         };
         for item in &section.items[..shown_count] {
             lines.push(format!("  {}", item.line()));
+            lines.extend(item.detail.iter().map(|detail| format!("    {detail}")));
         }
-        if over {
+        if shown_count < section.items.len() {
             lines.push(format!(
                 "  … {} more — see: kendex check",
                 section.items.len() - shown_count
             ));
         }
     }
-    lines.extend(page.age);
-    let action = page.next.map(|next| next.to_string());
+    lines.extend(page.age.clone());
+    let tail: Vec<String> = std::iter::once(outcome(&page))
+        .chain(page.next.map(|next| next.to_string()))
+        .collect();
 
     // Whole-report budgets, overflow line counted inside them: drop whole
     // lines from the end until the truncation line itself fits.
@@ -237,15 +303,10 @@ pub fn render_plain(report: &CheckReport) -> String {
             );
             out.push(&note);
         }
-        if let Some(action) = action.as_deref() {
-            out.push(action);
-        }
+        out.extend(tail.iter().map(String::as_str));
         let text = out.join("\n");
         if out.len() <= REPORT_LINES && text.len() <= REPORT_BYTES {
-            return match text.is_empty() {
-                true => text,
-                false => text + "\n",
-            };
+            return text + "\n";
         }
         if kept == 0 {
             return String::new();

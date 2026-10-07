@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use kendex_core::drift::report::{
-    self, CheckReport, CheckStatus, Class, Page, PageSection, Sentence,
+    self, CheckReport, CheckStatus, Class, Page, PageSection, Sentence, Verbosity,
 };
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -22,7 +22,8 @@ use commit_hooks::fold_commit_hooks;
 /// is still owed, so the next session reads fresh verdicts. An explicit
 /// check draws every line from the design system's components. `--quiet`
 /// prints the bounded session report and nothing when clean. `--json`
-/// prints the machine shape. `mode` is whether that deep read may write a
+/// prints the machine shape. `--verbose` adds the lines the background
+/// refresh settles and each line's technical cause. `mode` is whether that deep read may write a
 /// project's committed install record: `--report-only`, which the session
 /// hook passes, never does.
 pub fn run(
@@ -30,6 +31,7 @@ pub fn run(
     filter: ScopeFilter,
     json: bool,
     quiet: bool,
+    verbosity: Verbosity,
     mode: kendex_core::drift::copies::CheckMode,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes(env, filter)?;
@@ -74,11 +76,11 @@ pub fn run(
         // one line beside it. It is agent-facing text with its own budgets,
         // not a rendering of the components.
         (Channel::Human(_), true) => {
-            for line in report::render_plain(&checked).lines() {
+            for line in report::render_plain(&checked, verbosity).lines() {
                 out(line);
             }
         }
-        (Channel::Human(style), false) => draw(&style, &checked, &scopes),
+        (Channel::Human(style), false) => draw(&style, &checked, &scopes, verbosity),
     }
 
     Ok(ExitCode::from(checked.status.exit_code()))
@@ -87,9 +89,9 @@ pub fn run(
 /// The explicit check, drawn: the report is agent- and composition-facing,
 /// so it goes to stdout; the header and the verdict are about the run, and
 /// go to stderr.
-fn draw(style: &Style, checked: &CheckReport, scopes: &[Scope]) {
+fn draw(style: &Style, checked: &CheckReport, scopes: &[Scope], verbosity: Verbosity) {
     let target: Vec<String> = scopes.iter().map(Scope::label).collect();
-    let screen = screen(style, checked, &target.join(", "));
+    let screen = screen(style, checked, &target.join(", "), verbosity);
     ui::stderr(&screen.head);
     ui::stdout(&screen.report);
     ui::stderr(&screen.verdict);
@@ -105,8 +107,8 @@ struct Screen {
 /// The explicit check from the components: a header naming what was
 /// checked, one section per kind of finding with a row per item, the
 /// evaluation age and the next step, and the verdict.
-fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
-    let page = report::page(checked);
+fn screen(style: &Style, checked: &CheckReport, target: &str, verbosity: Verbosity) -> Screen {
+    let page = report::page(checked, verbosity);
     let mut report = Vec::new();
     for section in &page.sections {
         report.extend(style.section(&section.title, section.items.len(), section_status(section)));
@@ -121,6 +123,9 @@ fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
                     remark: fix.remark(),
                 });
             report.extend(style.row(status(item.class), &spans(&item.text), value));
+            if let Some(detail) = &item.detail {
+                report.extend(style.detail(None, &[Span::Verbatim(detail)]));
+            }
         }
     }
     if let Some(age) = &page.age {
@@ -146,7 +151,7 @@ fn spans(sentence: &Sentence) -> Vec<Span<'_>> {
 fn status(class: Class) -> Status {
     match class {
         Class::Drift => Status::Decision,
-        Class::Unevaluated => Status::Notice,
+        Class::Unevaluated | Class::Settling => Status::Notice,
         Class::Unknown => Status::Failed,
     }
 }
@@ -175,12 +180,15 @@ fn outcome(status: CheckStatus) -> Status {
 }
 
 /// How the run ended, describing the complete report above it. The pointer
-/// to those lines is named only where every counted line has a remedy.
+/// to those lines is named only where every counted line has a remedy. A
+/// line the background refresh settles asks nothing of the reader, so it
+/// is not counted.
 fn verdict(page: &Page) -> String {
     let items: Vec<_> = page
         .sections
         .iter()
         .flat_map(|section| &section.items)
+        .filter(|item| item.class != Class::Settling)
         .collect();
     if items.is_empty() {
         return "all clear — every install matches its source".to_owned();

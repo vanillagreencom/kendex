@@ -375,6 +375,7 @@ impl Expansion {
                 remediation: Some(
                     "pin the items that bring it in to the same revision, or unpin them".into(),
                 ),
+                detail: None,
             });
         }
     }

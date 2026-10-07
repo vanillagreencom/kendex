@@ -15,6 +15,10 @@ Options:
   -q, --quiet
           Print a short report, or nothing when all checks pass
 
+  -v, --verbose
+          Also show items a background refresh checks again, and the technical
+          cause of each item
+
       --report-only
           Leave the project's install record as it is, and report what it lacks
 

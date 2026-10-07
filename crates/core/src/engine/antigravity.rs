@@ -40,6 +40,7 @@ pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Opt
                 "write the matcher as plain tool names separated by `|`, or check it against Antigravity's names (`run_command`, `view_file`, `write_to_file`)"
                     .to_owned(),
             ),
+            detail: None,
         });
     }
     Some(registered.hook)

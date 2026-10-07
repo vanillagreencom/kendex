@@ -14,11 +14,10 @@ use kendex_core::engine::audit;
 use super::world;
 
 fn report(w: &super::World, mode: CheckMode) -> String {
-    drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        mode,
-    ))
+    drift::report::render_plain(
+        &drift::report::check(&w.env, std::slice::from_ref(&w.scope), mode),
+        kendex_core::drift::report::Verbosity::Verbose,
+    )
 }
 
 /// A clone carrying renders and no record, in a project outside Git,
@@ -45,7 +44,7 @@ fn a_report_only_check_names_every_missing_row_and_records_none() {
 
     let text = report(&w, CheckMode::ReportOnly);
     assert!(!lock_path.exists(), "the record was written: {text}");
-    assert!(text.starts_with("not in the install record:\n"), "{text}");
+    assert!(text.starts_with("not in the install record: 5\n"), "{text}");
     for (kind, name, path) in [
         ("skill", "deploy", ".claude/skills/deploy"),
         ("agent", "scout", ".claude/agents/scout.md"),

@@ -221,6 +221,11 @@ pub struct ItemWarning {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
+    /// The technical cause, verbatim: the failed command and what it
+    /// printed. `message` says what it means to a person; this is for
+    /// `--verbose` and `--json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Whether the pass could account for the full declared installation set.

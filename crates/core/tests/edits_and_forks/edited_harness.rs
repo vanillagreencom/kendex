@@ -269,11 +269,15 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
     assert!(row.latest.is_none(), "{row:?}");
     assert!(row.can_discard, "{row:?}");
     assert!(!row.can_take_latest, "no newest to move to");
+    // The person reads what failed; the git command and what it printed
+    // are the warning's detail.
     assert!(
-        report
-            .warnings
-            .iter()
-            .any(|warning| warning.message.contains("history could not be read")),
+        report.warnings.iter().any(|warning| warning.name == "gh"
+            && warning
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("git log"))
+            && !warning.message.contains("git")),
         "{:?}",
         report.warnings
     );

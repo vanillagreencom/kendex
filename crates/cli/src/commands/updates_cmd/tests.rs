@@ -67,6 +67,7 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             harness: None,
             message: "unreadable source".into(),
             remediation: None,
+            detail: None,
         }],
         unreadable: vec![],
         last_fetched: None,
@@ -81,6 +82,7 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             global: true,
             scope: None,
             yes: false,
+            verbose: false,
             target: Default::default(),
             _commit: Default::default(),
         },
@@ -144,12 +146,13 @@ fn inspection_updates_snapshots() {
             harness: None,
             message: "its source is unreadable".into(),
             remediation: None,
+            detail: None,
         }],
         unreadable: vec![],
         last_fetched: None,
     };
     assert_eq!(
-        screen(&plain(), &report),
+        screen(&plain(), &report, false),
         [
             "global  skill tidy  v1 -> v2",
             "global  skill held  v1 -> v2  [held, ignored]",
@@ -158,7 +161,7 @@ fn inspection_updates_snapshots() {
         ]
     );
     assert_eq!(
-        tagged(&screen(&rich(80), &report)),
+        tagged(&screen(&rich(80), &report, false)),
         [
             "  <1>skill tidy</>  <90>v1</> <34>→</> v2  <90>[global]</>",
             "  <1>skill held</>  <90>v1</> <34>→</> v2  <90>[global]</>",
@@ -179,7 +182,7 @@ fn inspection_updates_snapshots() {
         ..report
     };
     assert_eq!(
-        screen(&plain(), &warned),
+        screen(&plain(), &warned, false),
         ["warning: skill tidy: its source is unreadable"]
     );
     let clean = UpdatesReport {
@@ -187,11 +190,11 @@ fn inspection_updates_snapshots() {
         ..warned
     };
     assert_eq!(
-        screen(&plain(), &clean),
+        screen(&plain(), &clean, false),
         ["everything is on its latest version"]
     );
     assert_eq!(
-        tagged(&screen(&rich(80), &clean)),
+        tagged(&screen(&rich(80), &clean, false)),
         ["", "<32>✓</> <1>everything is on its latest version</>"]
     );
 }
@@ -211,14 +214,44 @@ fn inspection_updates_wraps_scope_and_notes() {
         unreadable: vec![],
         last_fetched: None,
     };
-    let lines = screen(&rich(80), &report);
+    let lines = screen(&rich(80), &report, false);
     assert!(
         lines.iter().all(|line| visible_width(line) <= 80),
         "{lines:?}"
     );
     assert!(
-        screen(&plain(), &report)
+        screen(&plain(), &report, false)
             .iter()
             .any(|line| visible_width(line) > 80)
+    );
+}
+
+/// A warning says what failed in words; the git command and what it
+/// printed are drawn under it only with `--verbose`.
+#[test]
+fn a_warning_keeps_its_technical_cause_for_verbose() {
+    let report = UpdatesReport {
+        rows: vec![],
+        warnings: vec![ItemWarning {
+            kind: ItemKind::Skill,
+            name: "tidy".into(),
+            harness: None,
+            message: "its version history could not be read".into(),
+            remediation: None,
+            detail: Some("git log f7db7e89 failed: fatal: bad object f7db7e89".into()),
+        }],
+        unreadable: vec![],
+        last_fetched: None,
+    };
+    assert_eq!(
+        screen(&plain(), &report, false),
+        ["warning: skill tidy: its version history could not be read"]
+    );
+    assert_eq!(
+        screen(&plain(), &report, true),
+        [
+            "warning: skill tidy: its version history could not be read",
+            "    git log f7db7e89 failed: fatal: bad object f7db7e89",
+        ]
     );
 }

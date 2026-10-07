@@ -257,6 +257,7 @@ pub struct Ran {
 }
 
 mod design;
+mod drift_copy;
 mod plain;
 mod pretty;
 mod snapshots;

@@ -39,6 +39,9 @@ pub struct UnreadableSnapshot {
     pub kind: ItemKind,
     pub name: String,
     pub message: String,
+    /// The warning's technical cause, for `check --verbose` and `--json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     pub repo: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs_state: Option<String>,
@@ -207,6 +210,7 @@ pub fn record_with(
                 kind: warning.kind,
                 name: warning.name.clone(),
                 message: warning.message.clone(),
+                detail: warning.detail.clone(),
                 refs_state: evaluated_refs(env, &repo, &mut refs_by_repo),
                 repo,
             }

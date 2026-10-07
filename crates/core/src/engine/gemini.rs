@@ -44,6 +44,7 @@ fn overridden_named(env: &Env, name: &str, kind: ItemKind, key: &str) -> Option<
             "ask whoever manages {} to make room for it, or install this at a scope that file leaves alone",
             system_settings_file(env).display()
         )),
+        detail: None,
     })
 }
 
@@ -66,6 +67,7 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState) {
                 "turn `experimental.enableAgents` on in Gemini's settings, or drop Gemini from this agent's harnesses"
                     .to_owned(),
             ),
+            detail: None,
         });
     }
     state
@@ -112,6 +114,7 @@ pub(super) fn hook(
                 "write the matcher as plain tool names separated by `|`, or check it against Gemini's names (`run_shell_command`, `read_file`, `write_file`)"
                     .to_owned(),
             ),
+            detail: None,
         });
     }
     state
@@ -137,6 +140,7 @@ fn switched_off_machine_wide(ctx: &ItemCtx) -> Option<ItemWarning> {
             "switch it back on for the whole machine, in {}",
             mcp_enablement_file(ctx.env).display()
         )),
+        detail: None,
     })
 }
 
@@ -158,6 +162,7 @@ fn gated_out(ctx: &ItemCtx) -> Option<ItemWarning> {
             "take it out of `mcp.excluded`, or add it to `mcp.allowed`, in {}",
             path.display()
         )),
+        detail: None,
     })
 }
 

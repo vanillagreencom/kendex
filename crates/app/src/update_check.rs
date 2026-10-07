@@ -56,6 +56,7 @@ pub fn overview(env: &Env, scopes: &[Scope]) -> updates::UpdatesReport {
                 harness: None,
                 message: format!("drift snapshot not derived: {error}"),
                 remediation: None,
+                detail: None,
             });
         }
         reports.push(report);

@@ -38,7 +38,8 @@ fn the_same_state_is_judged_once_and_read_after() {
         std::slice::from_ref(&w.scope),
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert!(
         text.contains(": 7 files differ from"),
         "the verdict is read, not measured again: {text}"
@@ -83,7 +84,8 @@ fn a_pass_past_the_budget_is_given_up_and_finished_in_the_background() {
         Duration::ZERO,
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Unknown,
@@ -145,7 +147,8 @@ fn a_record_that_will_not_write_is_could_not_check() {
         std::slice::from_ref(&w.scope),
         kendex_core::drift::copies::CheckMode::Settle,
     );
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     restore();
     assert_eq!(
         checked.status,

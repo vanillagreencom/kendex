@@ -22,21 +22,32 @@ fn section_budget_counts_its_overflow_line_inside_itself() {
         .collect();
     snapshot_with(&env, &scope, packages);
 
-    let text = render_plain(&check(
+    let report = check(
         &env,
         std::slice::from_ref(&scope),
         crate::drift::copies::CheckMode::Settle,
-    ));
-    let section_lines: Vec<&str> = text
-        .lines()
-        .skip_while(|line| *line != "stale:")
-        .skip(1)
-        .take_while(|line| line.starts_with("  "))
-        .collect();
-    assert_eq!(section_lines.len(), SECTION_ITEMS, "{text}");
+    );
+    let section_lines = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip_while(|line| *line != "stale: 14")
+            .skip(1)
+            .take_while(|line| line.starts_with("  "))
+            .map(str::to_owned)
+            .collect()
+    };
+    let text = render_plain(&report, Verbosity::Verbose);
+    let verbose = section_lines(&text);
+    assert_eq!(verbose.len(), SECTION_ITEMS, "{text}");
+    assert_eq!(verbose.last().unwrap(), "  … 5 more — see: kendex check");
+    // The session report names one example and counts the rest.
+    let text = render_plain(&report, Verbosity::Default);
     assert_eq!(
-        *section_lines.last().unwrap(),
-        "  … 5 more — see: kendex check"
+        section_lines(&text),
+        [
+            "  skill 'pkg-00' has a newer version on its source — fix: kendex refresh",
+            "  … 13 more — see: kendex check",
+        ],
+        "{text}"
     );
 }
 
@@ -65,18 +76,22 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
     }
     snapshot_with(&env, &scope, packages);
 
-    let text = render_plain(&check(
-        &env,
-        std::slice::from_ref(&scope),
-        crate::drift::copies::CheckMode::Settle,
-    ));
+    let text = render_plain(
+        &check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        ),
+        Verbosity::Verbose,
+    );
     let lines: Vec<&str> = text.lines().collect();
     assert!(lines.len() <= REPORT_LINES, "{} lines", lines.len());
     assert!(text.len() <= REPORT_BYTES, "{} bytes", text.len());
     assert!(
-        lines[lines.len() - 2].starts_with("… report truncated ("),
+        lines[lines.len() - 3].starts_with("… report truncated ("),
         "{text}"
     );
+    assert_eq!(lines[lines.len() - 2], "42 items need attention.", "{text}");
     assert!(lines.last().unwrap().starts_with("Next: "), "{text}");
     // No line was cut mid-way: every remedy that rendered is complete.
     for line in &lines {
@@ -238,22 +253,26 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
                 class: Class::Drift,
                 text: "'orch' does not match its source".to_owned().into(),
                 remedy: Some(Remedy::Apply { global: false }),
+                detail: None,
             }],
         }],
         project_target: Some(ProjectTarget::MainCheckout(target.clone())),
         ..check_report()
     };
 
-    let text = render_plain(&report);
+    let text = render_plain(&report, Verbosity::Verbose);
     assert!(text.contains("'orch' does not match its source"), "{text}");
     assert!(!text.contains("fix:"), "{text}");
     assert!(!text.contains('\u{fffd}'), "{text}");
     // The worktree's own project never reaches the command, so its
     // spelling cannot cost the row its fix.
-    let own = render_plain(&CheckReport {
-        project_target: Some(ProjectTarget::Worktree(target.clone())),
-        ..report.clone()
-    });
+    let own = render_plain(
+        &CheckReport {
+            project_target: Some(ProjectTarget::Worktree(target.clone())),
+            ..report.clone()
+        },
+        Verbosity::Verbose,
+    );
     assert!(own.contains("— fix: kendex apply\n"), "{own}");
     let json = serde_json::to_string(&report).expect("the full report remains serializable");
     assert!(json.contains("'orch' does not match its source"), "{json}");
@@ -308,6 +327,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
         class: Class::Drift,
         text: text.to_owned().into(),
         remedy: Some(remedy),
+        detail: None,
     };
     let report = |target: ProjectTarget| CheckReport {
         status: CheckStatus::Drift,
@@ -357,7 +377,10 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
         "kendex add --skill gh",
     ];
 
-    let text = render_plain(&report(ProjectTarget::MainCheckout("/w/app".into())));
+    let text = render_plain(
+        &report(ProjectTarget::MainCheckout("/w/app".into())),
+        Verbosity::Verbose,
+    );
     assert!(
         text.contains("— fix: kendex refresh --project-path '/w/app' (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"),
         "{text}"
@@ -372,7 +395,10 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
     }
     assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/app' --yes from the main checkout, as its refresh owner, for project packages.\n"));
 
-    let text = render_plain(&report(ProjectTarget::Worktree("/w/lane".into())));
+    let text = render_plain(
+        &report(ProjectTarget::Worktree("/w/lane".into())),
+        Verbosity::Verbose,
+    );
     assert!(text.contains("— fix: kendex refresh\n"), "{text}");
     assert!(!text.contains("/w/lane"), "{text}");
     for command in commands {
@@ -477,7 +503,7 @@ fn a_manifest_this_build_cannot_read_reads_as_could_not_check() {
         crate::drift::copies::CheckMode::Settle,
     );
     assert_eq!(report.status, CheckStatus::Unknown);
-    let said = render_plain(&report);
+    let said = render_plain(&report, Verbosity::Verbose);
     assert!(said.contains("no schema"), "{said}");
     assert!(said.contains("install fresh"), "{said}");
 }
@@ -504,7 +530,7 @@ fn a_line_kendex_composed_is_named_in_full() {
         Text::Own(text.into()),
     );
 
-    let rendered = render_plain(&report);
+    let rendered = render_plain(&report, Verbosity::Verbose);
     assert!(
         rendered.contains(&format!("{deep}/commit-msg")),
         "the second file lost its name:\n{rendered}"

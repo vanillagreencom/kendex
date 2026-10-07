@@ -87,6 +87,7 @@ fn loadable(
             harness: Some(harness),
             message: warning.message.clone(),
             remediation: warning.remediation.clone(),
+            detail: None,
         });
     }
     for finding in findings.iter().filter(|finding| !finding.is_breakage()) {
@@ -96,6 +97,7 @@ fn loadable(
             harness: Some(harness),
             message: finding.message.clone(),
             remediation: Some(finding.remediation.clone()),
+            detail: None,
         });
     }
     true
@@ -129,6 +131,7 @@ pub(super) fn desired_agent(
             harness: None,
             message: warning.clone(),
             remediation: None,
+            detail: None,
         });
     }
     let skills =

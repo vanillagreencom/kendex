@@ -70,6 +70,7 @@ pub(super) fn advisory_notice(
         harness: Some(harness),
         message,
         remediation: Some(remediation),
+        detail: None,
     })
 }
 

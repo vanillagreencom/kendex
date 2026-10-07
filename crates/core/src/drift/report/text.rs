@@ -60,6 +60,7 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
             Text::Relayed { producer, line } => relayed(&producer, &line).into(),
         },
         remedy: None,
+        detail: None,
     };
     match report
         .sections
@@ -114,6 +115,13 @@ fn relayed(producer: &str, line: &str) -> String {
         )),
         false => printable(line),
     }
+}
+
+/// A technical detail as `--verbose` and `--json` show it: another
+/// program's words, scrubbed and whole, and replaced past
+/// [`RELAYED_CHARS`] for the same reason [`relayed`] is.
+pub(super) fn verbatim(raw: &str) -> String {
+    relayed("the failed command", raw)
 }
 
 /// The same scrubbing with no cut: control characters become spaces so

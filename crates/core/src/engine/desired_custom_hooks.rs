@@ -66,6 +66,7 @@ pub(super) fn desired_custom_hooks(
                             "set agents = \"all\" to make it run for everything, or keep it as instructions"
                                 .to_owned(),
                         ),
+                        detail: None,
                     });
                     continue;
                 }

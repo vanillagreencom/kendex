@@ -31,6 +31,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         harness: Some(HarnessId::Claude),
         message: "missing description".into(),
         remediation: Some("add a description".into()),
+        detail: None,
     });
     let empty = EngineReport::observed(Plan::landed(Scope::Global, vec![]).expect("empty plan"));
     let cases = [
@@ -81,6 +82,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         harness: None,
         message: keyed.into(),
         remediation: None,
+        detail: None,
     }];
     assert_eq!(warning_lines(&plain(), &retired), [keyed]);
     assert_eq!(tagged(&warning_lines(&rich(120), &retired)), [keyed]);

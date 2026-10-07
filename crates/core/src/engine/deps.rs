@@ -1545,6 +1545,7 @@ fn warn(kind: ItemKind, name: &str, message: String, remediation: String) -> Ite
         harness: None,
         message,
         remediation: Some(remediation),
+        detail: None,
     }
 }
 

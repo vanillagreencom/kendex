@@ -4,6 +4,16 @@ The design system a converted verb draws with, in `src/ui/`. `ui::channel(json)`
 
 One output is not drawn with the components: `check --quiet`, the session hook's bounded report, which is agent-facing text core spells (`report::render_plain`) and `ui::out` prints.
 
+## Person-facing copy
+
+Every message kendex shows a person follows three rules. Judge each new or changed message, in the CLI, a hook or a Pi extension, by them.
+
+1. Judge the message by what the person must do. An error the person must fix is one line that says what is wrong, then the one command or step that fixes it. A state the person only needs to know is one short notice line. Anything else is silent by default and shows only under `--verbose` or `--json`: a transient state, a condition kendex repairs itself, or a check that could not run for a reason that will clear.
+2. Write the default text in ASD-STE100 Simplified Technical English for a person who is not an engineer. The default text has no git command, commit hash, file path or exit code; `--verbose` and `--json` carry them, verbatim. Put a blank line between blocks. For many items of one kind, give the count and one example, never every row.
+3. End with one outcome line and the next step.
+
+The session report applies them. `report::render_plain` gives each section as its title with the item count, one example and `… N more`, then the evaluation age, one outcome line and `Next:`. A report line keeps its technical cause in `Line::detail`. A could-not-check that the check's own background refresh settles is `Class::Settling`: it exits 0 and prints nothing by default. `check --verbose` draws every item with its detail, the settling ones included, and `check --json` carries both. An update warning keeps its cause in `ItemWarning::detail`, which `updates --verbose` draws under the warning. `tests/presentation/drift_copy.rs` pins the default text of the 2026-09-29 report.
+
 | Rendering | When | Draws |
 |---|---|---|
 | Rich | a terminal on both streams, or `KENDEX_UI=pretty`, unless `NO_COLOR` or `TERM=dumb` is set or a Windows console refuses escape sequences | colour, glyphs, a blank line before each section, callout and summary, lines wrapped at the terminal width up to 100 columns (`COLUMNS` pins it) |

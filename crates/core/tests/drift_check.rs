@@ -526,7 +526,8 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
         kendex_core::drift::copies::CheckMode::Settle,
     );
     assert_eq!(checked.status, drift::report::CheckStatus::Drift);
-    let text = drift::report::render_plain(&checked);
+    let text =
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose);
     assert!(text.contains("'gh' has a newer version"), "{text}");
     assert!(text.contains("fix: kendex refresh"), "{text}");
 
@@ -547,7 +548,10 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
         drift::report::CheckStatus::Clean,
         "{checked:?}"
     );
-    assert_eq!(drift::report::render_plain(&checked), "");
+    assert_eq!(
+        drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose),
+        ""
+    );
 }
 
 #[test]
@@ -617,11 +621,14 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     )
     .unwrap();
 
-    let text = drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ));
+    let text = drift::report::render_plain(
+        &drift::report::check(
+            &w.env,
+            std::slice::from_ref(&w.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    );
     assert!(
         text.contains(&format!(
             "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{}",
@@ -636,11 +643,14 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     assert!(!lock_path.exists(), "a copy that differs is not recorded");
 
     fs::write(&rendered, &current).unwrap();
-    let text = drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ));
+    let text = drift::report::render_plain(
+        &drift::report::check(
+            &w.env,
+            std::slice::from_ref(&w.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    );
     assert_eq!(
         text, "",
         "the copy the render matches is recorded without a word, and the snapshot the last deep pass derived stands"
@@ -689,11 +699,14 @@ fn a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves() {
     let held = kendex_core::lock::load(&lock_path).unwrap();
     assert_eq!(held.sources["cat"].commit, first);
 
-    let text = drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ));
+    let text = drift::report::render_plain(
+        &drift::report::check(
+            &w.env,
+            std::slice::from_ref(&w.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    );
     assert!(
         !text.contains("'other'") && !text.contains("'gh'"),
         "{text}"
@@ -751,11 +764,14 @@ fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
     )
     .unwrap();
 
-    let text = drift::report::render_plain(&drift::report::check(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        kendex_core::drift::copies::CheckMode::Settle,
-    ));
+    let text = drift::report::render_plain(
+        &drift::report::check(
+            &w.env,
+            std::slice::from_ref(&w.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
+        ),
+        kendex_core::drift::report::Verbosity::Verbose,
+    );
     assert!(
         text.contains(&format!(
             "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{}",

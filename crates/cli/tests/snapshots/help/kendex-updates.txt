@@ -24,6 +24,9 @@ Options:
   -y, --yes
           Skip confirmation prompts
 
+  -v, --verbose
+          Show the technical cause under each warning
+
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
           was typed in
