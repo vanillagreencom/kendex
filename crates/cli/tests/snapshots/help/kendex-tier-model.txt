@@ -28,8 +28,8 @@ Options:
           account
 
       --json
-          Tagged model-resolution-v1 response; diagnostics belong to the
-          caller's latch
+          Tagged model-resolution-v1 response; the caller prints its warning
+          once
 
   -h, --help
           Print help
