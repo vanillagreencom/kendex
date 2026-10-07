@@ -592,13 +592,14 @@ fi
 # Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
 # Scope to the current run first so a rerun never targets a superseded/canceled
-# run.
+# run, and, under --required-only, to a required context, so the retry never
+# re-runs optional CI the classification does not count.
 get_failed_run_id() {
   local pr="$1"
   gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
     scope_current_run | \
-    jq -r "$CI_RUN_JQ_DEFS"'
-      .[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .link
+    jq -r --argjson req "$REQUIRED_CONTEXTS" "$CI_RUN_JQ_DEFS"'
+      .[] | select(red and required_only($req)) | .link
     ' | \
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
@@ -725,6 +726,9 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Handle no checks / empty response (only reached when gh succeeded)
   if [ -z "$checks_json" ] || [ "$checks_json" = "[]" ] || [ "$checks_json" = "null" ]; then
     no_checks_count=$((no_checks_count + 1))
+    # Under --required-only an empty rollup still names what GitHub waits
+    # on: every required context, pending as missing.
+    last_check_classes=$(classify_checks <<<'[]')
     # One-time probe: a repo with no active workflows AND no required checks
     # on the PR's base branch has no CI to wait for — report that as its own
     # terminal state instead of burning the dispatch grace and exiting 1.

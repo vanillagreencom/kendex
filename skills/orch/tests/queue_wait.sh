@@ -177,7 +177,10 @@ case "${1:-}" in
     # network timeout is re-run once.
     _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
     [[ "${2:-}" == "view" ]] && { echo "network timeout"; exit 0; }
-    [[ "${2:-}" == "rerun" ]] && exit 0
+    if [[ "${2:-}" == "rerun" ]]; then
+      printf '%s\n' "${3:-}" >> "$STUB_SEQ_DIR/reruns.log"
+      exit 0
+    fi
     ;;
   repo)
     if [[ "${2:-}" == "view" ]]; then
@@ -384,6 +387,8 @@ stage() {
       prchecks:failed_run) write_fixture prchecks "$n" '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/123/job/4"}]' 1 ;;
       prchecks:optional_red) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"FAILURE","bucket":"fail"}]' 1 ;;
       prchecks:optional_running) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
+      prchecks:none) write_fixture prchecks "$n" '[]' ;;
+      prchecks:both_red) write_fixture prchecks "$n" '[{"name":"lint","state":"FAILURE","bucket":"fail","workflow":"aaa-wf","link":"https://github.com/owner/repo/actions/runs/111/job/1"},{"name":"build","state":"FAILURE","bucket":"fail","workflow":"zzz-wf","link":"https://github.com/owner/repo/actions/runs/222/job/2"}]' 1 ;;
       prchecks:green_skipped) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"SKIPPED","bucket":"skipping"}]' ;;
       prchecks:green_more) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"linux","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
@@ -440,6 +445,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   mutations         the GraphQL mutations issued, in order: `disable`,
 #                     `dequeue`, or `none`
 #   mutation_ids      the ids those mutations named, or `none`
+#   reruns            run ids `gh run rerun` received, or none
 #   thread_reads      reviewThreads reads the stub served
 #   checkruns_read    whether any check-runs read reached the stub
 #   guard_warned      the guard's consecutive-failure warning on stderr
@@ -470,6 +476,7 @@ observe() {
         value="$(grep -o 'PR_[A-Za-z0-9]*\|MQE_[A-Za-z0-9]*' "$SEQ_DIR/mutations.log" 2>/dev/null | sort -u | paste -sd, - || true)"
         [[ -n "$value" ]] || value=none
         ;;
+      reruns) value="$(paste -sd, - <"$SEQ_DIR/reruns.log" 2>/dev/null || true)"; [[ -n "$value" ]] || value=none ;;
       thread_reads) value="$(cat "$SEQ_DIR/threads.count" 2>/dev/null || echo 0)" ;;
       checkruns_read) value="$([[ -f "$SEQ_DIR/checkruns.count" ]] && echo true || echo false)" ;;
       guard_warned) value="$(grep -qF 'queue-wait: guard-blind failures=3 pr=1' "$ERR" && echo true || echo false)" ;;
@@ -601,6 +608,8 @@ table '1 1 20 --json' \
   'an optional check failing beside green required ones is never check_failed|open_armed,prchecks:last=optional_red|1 1 20 --json|STUB_REQUIRED=build|rc=1 verdict=armed_awaiting_checks cause=checks_pending' \
   'an optional check still running beside green required ones awaits nothing|open_armed,prchecks:last=optional_running|1 20 300 --json|STUB_REQUIRED=build|rc=1 verdict=armed_blocked cause=not_mergeable' \
   'a required context with no check yet is pending as missing|open_armed,prchecks:last=green|1 20 300 --json|STUB_REQUIRED=macos linux|rc=1 verdict=armed_awaiting_checks cause=checks_pending pending_names=linux+(missing)' \
+  'no check registered yet names every required context as missing|open_armed,prchecks:last=none|1 1 20 --json|STUB_REQUIRED=build|rc=1 verdict=armed_awaiting_checks cause=checks_pending pending_names=build+(missing)' \
+  'a transient retry re-runs the required failure, never the optional one|open_armed,prchecks:1=both_red,prchecks:2=both_red,prchecks:last=fail502|1 1 40 --json|STUB_REQUIRED=build|reruns=222' \
   'a probe fits inside the budget with a poll after it, which reads the merge|state:1=open,state:last=merged,queue:last=armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=0 verdict=merged polls=2' \
   'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
