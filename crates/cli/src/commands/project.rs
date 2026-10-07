@@ -259,30 +259,41 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
 /// writing the project a command was typed in is what every release
 /// before `--project-path` did, and it never touched the registry. Nor is
 /// a linked git worktree, which [`register_target`] never lists.
+///
+/// Whether a root is a linked worktree is settled here, once, and the
+/// [`Registering`] returned is what [`register_target`] spends after the
+/// write. A git that cannot answer refuses the run here, before anything
+/// is written, rather than reading as a main checkout and listing a
+/// worktree nobody classified.
 pub fn target_registrable(
     env: &Env,
     target: &crate::flags::ProjectTargetFlag,
     scopes: &[Scope],
-) -> CliResult {
+) -> Result<Registering, Box<dyn std::error::Error>> {
     if target.path().is_none() {
-        return Ok(());
+        return Ok(Registering::Nothing);
     }
+    let mut worktrees = Vec::new();
     for scope in scopes {
-        if let Scope::Project { root } = scope
-            && !linked_worktree(root)?
-        {
-            registrable(env, root, target.throwaway)?;
+        let Scope::Project { root } = scope else {
+            continue;
+        };
+        match kendex_core::guard::Repo::probe(root)? {
+            Some(repo) if repo.is_linked() => worktrees.push(root.clone()),
+            _ => registrable(env, root, target.throwaway)?,
         }
     }
-    Ok(())
+    Ok(Registering::Named { worktrees })
 }
 
-/// Whether `root` sits in a linked git worktree: a checkout whose own git
-/// directory is not the repository's common one. A git that cannot answer
-/// is an error, not a main checkout, since the answer decides what lands
-/// on the projects list.
-fn linked_worktree(root: &std::path::Path) -> Result<bool, CoreError> {
-    Ok(kendex_core::guard::Repo::probe(root)?.is_some_and(|repo| repo.is_linked()))
+/// What a run puts on the projects list after its write, settled before
+/// it by [`target_registrable`].
+pub enum Registering {
+    /// No `--project-path`, or a run that writes nothing: no registration.
+    Nothing,
+    /// A named project, registered unless its root is one of these linked
+    /// git worktrees.
+    Named { worktrees: Vec<PathBuf> },
 }
 
 /// The project a `--project-path` named, on the projects list now that the
@@ -309,30 +320,17 @@ fn linked_worktree(root: &std::path::Path) -> Result<bool, CoreError> {
 /// one listed names it to `project add`, the explicit door, which lists
 /// any folder it is given.
 ///
-/// Called by `refresh`, `apply` and `updates --apply` after the write, and
-/// only where the destination was named: a walked-up project is the one
-/// the command was typed in, which those verbs have never registered.
-pub fn register_target(
-    env: &Env,
-    target: &crate::flags::ProjectTargetFlag,
-    scope: &Scope,
-) -> CliResult {
-    if target.path().is_none() {
-        return Ok(());
-    }
-    let Scope::Project { root } = scope else {
+/// Called by `refresh`, `apply` and `updates --apply` after the write, with
+/// the [`Registering`] their preflight settled, and registers only where
+/// the destination was named: a walked-up project is the one the command
+/// was typed in, which those verbs have never registered.
+pub fn register_target(env: &Env, registering: &Registering, scope: &Scope) -> CliResult {
+    let Registering::Named { worktrees } = registering else {
         return Ok(());
     };
-    // The same two facts `register_destination` keeps apart when the
-    // registry refuses: the packages landed, and only the listing failed.
-    let linked = linked_worktree(root).map_err(|error| {
-        Lines(format!(
-            "the packages are installed in {}, and git could not say whether it is a linked worktree, which goes on no projects list: {}",
-            escaped(&root.display().to_string()),
-            escaped(&error.to_string()),
-        ))
-    })?;
-    if linked {
+    if let Scope::Project { root } = scope
+        && worktrees.contains(root)
+    {
         out(&format!(
             "worktree-not-listed={}: a linked git worktree is not added to your projects",
             root.display()

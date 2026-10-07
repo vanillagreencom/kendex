@@ -75,9 +75,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // The refusal that registration carries, asked before the first
     // write. A plan never reaches a write, so it is asked nothing;
     // `project::register_target` owns the rule itself.
-    if !args.plan {
-        super::project::target_registrable(env, &args.target, &scopes)?;
-    }
+    let registering = match args.plan {
+        true => super::project::Registering::Nothing,
+        false => super::project::target_registrable(env, &args.target, &scopes)?,
+    };
     // Held at the record: apply has no copy of the manifest before the
     // edit to diff against, and needs none. A deleted table is an orphan
     // and goes; a table with a `rev` of its own reads that revision, and
@@ -188,7 +189,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         // packages on disk in a folder the app would never show.
         // `add::write_and_close` closes on the same pair, and says the
         // registry's refusal beside the failure it did not cause.
-        let listed = super::project::register_target(env, &args.target, &scope);
+        let listed = super::project::register_target(env, &registering, &scope);
         match walked {
             Ok(()) => listed?,
             Err(error) => {

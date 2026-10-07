@@ -233,14 +233,14 @@ fn declares(env: &Env, scope: &kendex_core::model::Scope) -> bool {
 /// the packages are on disk and the message says so.
 fn register_written(
     env: &Env,
-    target: &crate::flags::ProjectTargetFlag,
+    registering: &super::project::Registering,
     scope: &kendex_core::model::Scope,
     failures: &mut Vec<String>,
 ) {
     if !declares(env, scope) {
         return;
     }
-    if let Err(error) = super::project::register_target(env, target, scope) {
+    if let Err(error) = super::project::register_target(env, registering, scope) {
         failures.push(error.to_string());
     }
 }
@@ -333,13 +333,13 @@ fn prepare_scopes(
     yes: bool,
     catalog: Catalog,
     takes: Takes,
-) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<PreparedScope>, super::project::Registering), Box<dyn std::error::Error>> {
     let scopes = resolve_scopes_at(env, filter, target.path())?;
     super::header("refresh", &scopes);
     // The refusal that registration carries, asked before the first write
     // so a run never installs into a folder it would then decline to
     // register. `project::register_target` owns the rule itself.
-    super::project::target_registrable(env, target, &scopes)?;
+    let registering = super::project::target_registrable(env, target, &scopes)?;
     let prepared: Vec<_> = scopes
         .into_iter()
         .map(|scope| prepare_scope(env, scope, catalog, takes))
@@ -350,7 +350,7 @@ fn prepare_scopes(
         print_refusal_context(env, &prepared, verbose);
         return Err(error);
     }
-    Ok(prepared)
+    Ok((prepared, registering))
 }
 
 /// Print everything the read-only preparation can establish before a
@@ -525,7 +525,8 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let prepared = prepare_scopes(env, filter, target, verbose, yes, catalog, takes)?;
+    let (prepared, registering) =
+        prepare_scopes(env, filter, target, verbose, yes, catalog, takes)?;
 
     for prepared in prepared {
         let scope = prepared.scope;
@@ -572,7 +573,7 @@ pub fn run(
                 // folder would be the one lasting effect of a run that
                 // failed.
                 if !failed {
-                    register_written(env, target, &scope, &mut failures);
+                    register_written(env, &registering, &scope, &mut failures);
                 }
                 continue;
             }
@@ -601,7 +602,7 @@ pub fn run(
                 // and `commands::repo_effects` says why the record of an
                 // earlier yes does not change that.
                 super::repo_effects::say_lapsed(env, &scope, &[]);
-                register_written(env, target, &scope, &mut failures);
+                register_written(env, &registering, &scope, &mut failures);
                 closing.push(Closing {
                     scope: scope.clone(),
                     count: written.count,
