@@ -444,41 +444,57 @@ plant_variant() {
 # The control keeps TMPDIR wherever the caller put it: the unchanged script.
 plant_variant inside-tmpdir '  case "$temp_physical/" in "${owned%/}"/*) TEMP_BASE=/tmp ;; esac' '  :'
 MS_INSIDE="$variant"
+# This control keeps only the top-level check, which a linked worktree's
+# common Git directory lies outside.
+plant_variant common-dir-check 'owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."' 'owned_git="."'
+MS_TOP_ONLY="$variant"
+LINKED="$TMP/linked"
+git -C "$REPO" worktree add -q --detach "$LINKED" "$SHA_BASE"
 REPO_PHYSICAL=$(cd "$REPO" && pwd -P) || exit 2
+LINKED_PHYSICAL=$(cd "$LINKED" && pwd -P) || exit 2
 WHERE_LOG="$TMP/workspace-where"
 
 echo "=== workspace placement table ==="
 placement_rows=0
-while IFS=$'\t' read -r name script tmpdir outcome expected; do
-  case "$script" in fixed) script="$MS" ;; control) script="$MS_INSIDE" ;; esac
+while IFS=$'\t' read -r name script worktree tmpdir outcome expected; do
+  case "$script" in fixed) script="$MS" ;; control) script="$MS_INSIDE" ;; top-only) script="$MS_TOP_ONLY" ;; esac
+  case "$worktree" in main) worktree="$REPO" ;; linked) worktree="$LINKED" ;; esac
   case "$tmpdir" in worktree) tmpdir="$REPO/tmp" ;; gitdir) tmpdir="$REPO/.git/ms-tmp" ;; esac
   case "$outcome" in pass) build='true' ;; fail) build='false' ;; esac
   mkdir -p "$tmpdir"
   : > "$WHERE_LOG"
   rc=0
-  out=$(TMPDIR="$tmpdir" "$script" --worktree "$REPO" --sha "$SHA_BASE" --test 'bash check.sh' \
+  out=$(TMPDIR="$tmpdir" "$script" --worktree "$worktree" --sha "$SHA_BASE" --test 'bash check.sh' \
     --build "pwd -P >> \"$WHERE_LOG\"; $build" --mutate "$KILL_MUTATION" --stability 1 --threads 2 2>&1) || rc=$?
   inside=absent
   while IFS= read -r where; do
-    case "$where/" in "$REPO_PHYSICAL"/*) inside=yes ;; *) [ "$inside" = yes ] || inside=no ;; esac
+    case "$where/" in
+      "$REPO_PHYSICAL"/* | "$LINKED_PHYSICAL"/*) inside=yes ;;
+      *) [ "$inside" = yes ] || inside=no ;;
+    esac
   done < "$WHERE_LOG"
-  left=$(find "$REPO" -name 'mutation-stability.*' -prune -print | wc -l | tr -d ' ')
-  find "$REPO" -name 'mutation-stability.*' -prune -exec rm -rf {} +
+  left=$(find "$REPO" "$LINKED" -name 'mutation-stability.*' -prune -print | wc -l | tr -d ' ')
+  find "$REPO" "$LINKED" -name 'mutation-stability.*' -prune -exec rm -rf {} +
   assert_row "workspace placement" "$name" "rc=$rc;inside=$inside;left=$left" "$expected"
   placement_rows=$((placement_rows + 1))
 done <<'ROWS'
-TMPDIR in the worktree, passing run	fixed	worktree	pass	rc=0;inside=no;left=0
-TMPDIR in the worktree, failing run	fixed	worktree	fail	rc=2;inside=no;left=0
-TMPDIR in the common Git directory	fixed	gitdir	pass	rc=0;inside=no;left=0
-control: TMPDIR honoured inside the worktree	control	worktree	pass	rc=0;inside=yes;left=0
+TMPDIR in the worktree, passing run	fixed	main	worktree	pass	rc=0;inside=no;left=0
+TMPDIR in the worktree, failing run	fixed	main	worktree	fail	rc=2;inside=no;left=0
+TMPDIR in the common Git directory	fixed	main	gitdir	pass	rc=0;inside=no;left=0
+TMPDIR in a linked worktree's common Git directory	fixed	linked	gitdir	pass	rc=0;inside=no;left=0
+control: TMPDIR honoured inside the worktree	control	main	worktree	pass	rc=0;inside=yes;left=0
+control: top-level check alone misses the common Git directory	top-only	linked	gitdir	pass	rc=0;inside=yes;left=0
 ROWS
 assert_table_executed "workspace placement" "$placement_rows"
+git -C "$REPO" worktree remove --force "$LINKED"
 rm -rf "$REPO/tmp" "$REPO/.git/ms-tmp"
 
 # A git on PATH whose archive leaves the copy open for a second after its
-# bytes are out, so a signal lands while tar is still writing the workspace.
+# bytes are out, so a signal lands while tar is still writing the workspace,
+# and a tar that acknowledges when it, the copy's last writer, has exited.
 SLOW_GIT_BIN="$TMP/slow-git"
 STOP_MARKER="$TMP/copy-started"
+COPY_DONE="$TMP/copy-done"
 mkdir -p "$SLOW_GIT_BIN"
 cat > "$SLOW_GIT_BIN/git" <<CASE
 #!/bin/sh
@@ -487,7 +503,14 @@ case " \$* " in
 esac
 exec "$(command -v git)" "\$@"
 CASE
-chmod +x "$SLOW_GIT_BIN/git"
+cat > "$SLOW_GIT_BIN/tar" <<CASE
+#!/bin/sh
+status=0
+"$(command -v tar)" "\$@" || status=\$?
+: > "$COPY_DONE"
+exit \$status
+CASE
+chmod +x "$SLOW_GIT_BIN/git" "$SLOW_GIT_BIN/tar"
 
 # The script's TERM handler exits 143, after the copy in flight ends, and that
 # exit runs the cleanup trap. The KILL row is the control that the leftover
@@ -495,7 +518,7 @@ chmod +x "$SLOW_GIT_BIN/git"
 observe_stop() { # observe_stop SIGNAL
   stop_tmp="$TMP/stop-$1"
   mkdir -p "$stop_tmp"
-  rm -f "$STOP_MARKER"
+  rm -f "$STOP_MARKER" "$COPY_DONE"
   PATH="$SLOW_GIT_BIN:$PATH" TMPDIR="$stop_tmp" "$MS" --worktree "$REPO" --sha "$SHA_BASE" \
     --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 >/dev/null 2>&1 &
   stop_pid=$!
@@ -510,11 +533,17 @@ observe_stop() { # observe_stop SIGNAL
   rc=0
   out=""
   { wait "$stop_pid"; } 2>/dev/null || rc=$?
-  # A killed run leaves the slow archive and tar writing its copy for up to
-  # the stub's second; count once they are done.
-  sleep 1.2
+  # A killed run leaves the archive and tar writing its copy; count once tar
+  # has acknowledged its exit.
+  attempts=0
+  while [ ! -e "$COPY_DONE" ] && [ "$attempts" -lt 200 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  settled=no
+  [ ! -e "$COPY_DONE" ] || settled=yes
   left=$(find "$stop_tmp" -name 'mutation-stability.*' -prune -print | wc -l | tr -d ' ')
-  actual="rc=$rc;copying=$copying;left=$left"
+  actual="rc=$rc;copying=$copying;settled=$settled;left=$left"
 }
 
 echo "=== stop signal table ==="
@@ -524,8 +553,8 @@ while IFS=$'\t' read -r name signal expected; do
   assert_row "stop signal" "$name" "$actual" "$expected"
   stop_rows=$((stop_rows + 1))
 done <<'ROWS'
-SIGTERM mid-copy removes the workspace	TERM	rc=143;copying=yes;left=0
-control: SIGKILL mid-copy skips the trap	KILL	rc=137;copying=yes;left=1
+SIGTERM mid-copy removes the workspace	TERM	rc=143;copying=yes;settled=yes;left=0
+control: SIGKILL mid-copy skips the trap	KILL	rc=137;copying=yes;settled=yes;left=1
 ROWS
 assert_table_executed "stop signal" "$stop_rows"
 
