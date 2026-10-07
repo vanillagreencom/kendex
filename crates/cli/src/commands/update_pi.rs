@@ -53,7 +53,7 @@ struct ScopePlan {
     label: String,
     root: PathBuf,
     rows: Vec<Row>,
-    notes: Vec<String>,
+    notes: Vec<(String, String)>,
     /// Second copies of declared packages Pi loads from an `extensions/`
     /// directory, this root's or the other root Pi loads with it in this
     /// session, and the roots or names that would not read. Reported,
@@ -96,6 +96,9 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
             say(&format!(
                 "{pending} package(s) can be updated — run without --check to update them"
             ));
+        }
+        if plans.iter().any(|plan| !plan.notes.is_empty()) {
+            return Err("Pi packages not evaluated".into());
         }
         return Ok(());
     }
@@ -301,10 +304,11 @@ fn settleable(
 }
 
 fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
-    matches!(
-        manifest::load(&manifest::manifest_path(env, scope)),
-        Ok(ManifestFile::Current(manifest)) if !manifest.pi_extensions.is_empty()
-    )
+    match manifest::load(&manifest::manifest_path(env, scope)) {
+        Ok(ManifestFile::Current(manifest)) => !manifest.pi_extensions.is_empty(),
+        Ok(ManifestFile::Absent) => false,
+        Err(_) => true,
+    }
 }
 
 /// `other_roots` is every root the install guard checks against
@@ -361,7 +365,7 @@ fn plan_scope(
                 },
             ),
             Err(error) => {
-                notes.push(format!("{name}: unreadable — {error}"));
+                notes.push((name.clone(), error.to_string()));
                 continue;
             }
         };
@@ -411,7 +415,7 @@ fn plan_scope(
 fn declared_sources(
     env: &Env,
     scope: &Scope,
-    notes: &mut Vec<String>,
+    notes: &mut Vec<(String, String)>,
 ) -> (Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>) {
     let mut found = BTreeMap::new();
     let path = manifest::manifest_path(env, scope);
@@ -419,7 +423,7 @@ fn declared_sources(
         Ok(ManifestFile::Current(manifest)) => manifest,
         Ok(_) => return (Vec::new(), found),
         Err(error) => {
-            notes.push(error.to_string());
+            notes.push(("manifest".to_owned(), error.to_string()));
             return (Vec::new(), found);
         }
     };
@@ -430,7 +434,7 @@ fn declared_sources(
             }
             // Nothing installs a retired package again.
             Ok(pi_ext::Resolved::Retired { .. }) => {}
-            Err(error) => notes.push(format!("{name}: {error}")),
+            Err(error) => notes.push((name.clone(), error.to_string())),
         }
     }
     (manifest.pi_extensions.keys().cloned().collect(), found)
@@ -485,8 +489,11 @@ fn print_plan(plan: &ScopePlan) {
             describe(row)
         ));
     }
-    for note in &plan.notes {
-        say(&format!("  ! {}", note));
+    for (name, reason) in &plan.notes {
+        say(&format!(
+            "  ! not-evaluated={name} scope={} : {reason}",
+            plan.label
+        ));
     }
     for error in &plan.shadows.errors {
         say(&format!("  ! could not check for a second copy — {error}"));
@@ -536,6 +543,23 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
+        failures.extend(
+            plan.notes
+                .iter()
+                .map(|(name, _)| format!("{name} ({}): not evaluated", plan.label)),
+        );
+        // No resolved declaration can complete a record here. In particular,
+        // an unreadable manifest must not stop updates in the other scopes.
+        if !plan.notes.is_empty()
+            && !plan.rows.iter().any(|row| {
+                matches!(
+                    row.status,
+                    Status::Current | Status::Stale { .. } | Status::Missing { .. }
+                )
+            })
+        {
+            continue;
+        }
         let installed = install_rows(env, plan, &PlanOptions::current())?;
         updated += installed.count;
         failures.extend(

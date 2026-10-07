@@ -369,7 +369,10 @@ fn fixture_declared_at_both_scopes() -> (tempfile::TempDir, std::path::PathBuf, 
     let (tmp, home, project) = fixture();
     write(
         &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            test_util::source_path(&project.join("catalog"))
+        ),
     );
     (tmp, home, project)
 }
@@ -446,7 +449,7 @@ fn a_package_whose_source_is_gone_still_has_its_second_copy_named() {
         &project,
         &["update-pi", "--scope", "project", "--check"],
     );
-    assert!(preview.status.success(), "{}", said(&preview));
+    assert_eq!(preview.status.code(), Some(1), "{}", said(&preview));
     assert!(
         said(&preview).contains("pi-shadow-package=pi-widgets"),
         "{}",

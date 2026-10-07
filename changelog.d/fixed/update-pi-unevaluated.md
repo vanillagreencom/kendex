@@ -1,0 +1,1 @@
+- Pi package updates report unresolved sources and unreadable manifests as not evaluated, update other packages, and exit with an error.

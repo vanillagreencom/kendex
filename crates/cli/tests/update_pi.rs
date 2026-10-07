@@ -851,22 +851,98 @@ fn a_settle_is_blocked_by_an_earlier_named_copy_and_runs_over_the_declared_one()
     }
 }
 
+/// Scripts use the exit status and the not-evaluated fields to identify
+/// declarations that could not be compared, even when other updates land.
 #[test]
-fn a_package_no_source_declares_is_reported_not_updated() {
-    let tmp = fixture();
-    let project = tmp.path().join("dev/app");
-    fs::remove_dir_all(project.join("catalog/pi-extensions/pi-widgets")).unwrap();
+fn unresolved_packages_fail_after_other_packages_update() {
+    for source_path in ["missing-catalog", "catalog"] {
+        let tmp = fixture();
+        let project = tmp.path().join("dev/app");
+        let manifest = project.join("kendex.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str(&format!(
+            "\n[sources.unavailable]\npath = \"{source_path}\"\n\n[pi-extensions.pi-unavailable]\nsource = \"unavailable\"\n\n[pi-extensions.pi-unavailable-too]\nsource = \"unavailable\"\n"
+        ));
+        write(&manifest, &text);
 
-    let output = kendex(tmp.path(), &project, &["update-pi"]);
+        for check in [true, false, false] {
+            let args: &[&str] = if check {
+                &["update-pi", "--scope", "project", "--check"]
+            } else {
+                &["update-pi", "--scope", "project"]
+            };
+            let output = kendex(tmp.path(), &project, args);
+            assert_eq!(output.status.code(), Some(1), "{source_path}");
+            let notes = String::from_utf8_lossy(&output.stderr);
+            for name in ["pi-unavailable", "pi-unavailable-too"] {
+                let fields = format!(
+                    "not-evaluated={name} scope={}",
+                    project.canonicalize().unwrap().display()
+                );
+                assert_eq!(notes.matches(&fields).count(), 1, "{source_path}");
+            }
+            assert_eq!(
+                fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+                if check {
+                    "export const version = 1;\n"
+                } else {
+                    "export const version = 2;\n"
+                }
+            );
+        }
+    }
+}
 
-    assert!(output.status.success());
-    let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        plan.contains("nothing this place lists supplies it"),
-        "{plan}"
-    );
-    let notes = String::from_utf8_lossy(&output.stderr);
-    assert!(notes.contains("no longer ships pi-extensions"), "{notes}");
+#[test]
+fn unreadable_manifests_fail_after_the_other_scope_updates() {
+    for (global, has_pi_root) in [(true, false), (true, true), (false, false), (false, true)] {
+        let tmp = fixture();
+        let project = tmp.path().join("dev/app");
+        let env = kendex_core::env::Env::host_rooted(tmp.path());
+        let (manifest, pi_root, installed, label) = if global {
+            (
+                env.global_manifest_file(),
+                tmp.path().join(".pi/agent"),
+                project.join(".pi/packages/pi-widgets/index.js"),
+                "global".to_owned(),
+            )
+        } else {
+            write(
+                &env.global_manifest_file(),
+                &format!(
+                    "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                    test_util::source_path(&project.join("catalog"))
+                ),
+            );
+            fs::remove_dir_all(project.join(".pi")).unwrap();
+            (
+                project.join("kendex.toml"),
+                project.join(".pi"),
+                tmp.path().join(".pi/agent/packages/pi-widgets/index.js"),
+                project.canonicalize().unwrap().display().to_string(),
+            )
+        };
+        if has_pi_root {
+            fs::create_dir_all(&pi_root).unwrap();
+        }
+        write(&manifest, "schema = [\n");
+
+        let output = kendex(tmp.path(), &project, &["update-pi"]);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            fs::read_to_string(installed).unwrap(),
+            "export const version = 2;\n"
+        );
+        let notes = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            notes
+                .matches(&format!("not-evaluated=manifest scope={label}"))
+                .count(),
+            1
+        );
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), "schema = [\n");
+    }
 }
 
 /// The kendex catalog shelves scoped packages under short directories —
