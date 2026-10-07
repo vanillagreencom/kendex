@@ -190,8 +190,8 @@ while IFS= read -r pr; do
       || fail fetch "$PR_NUMBER" 'Could not fetch the pull request base and head.'
   fi
   # Only this exact answer proves render equality. A branch name or title
-  # cannot authorize answers. The classifier is the trusted default-branch
-  # copy, and it runs without the repository credential.
+  # cannot authorize answers. The classifier comes from the trusted release
+  # checkout, and it runs without the repository credential.
   if ! class="$(env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$CLASSIFIER" \
     --event pull_request --base "$PR_BASE_SHA" --head "$HEAD_SHA" --repo "$ROOT" 2>"$class_log")"; then
     cat -- "$class_log" >&2

@@ -2,7 +2,9 @@
 # Holds .github/workflows/refresh-consumer.yml, the shared workflow each
 # consumer's caller runs: its job and token boundaries, the rule that every
 # step body runs its scripts from the kendex checkout, and its install step's
-# actual shell body against a recorded tag list and installer. What
+# actual shell body against a recorded tag list and installer. Both refresh
+# step bodies run recording executables to check their path, working
+# directory and failure status. What
 # refresh-consumer.sh itself sources is refresh-consumer.test.sh's.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,8 +23,8 @@ bad() {
   return 0
 }
 
-if python3 - "$WORKFLOW" <<'PY'
-import copy, json, re, sys
+if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
+import copy, json, pathlib, re, subprocess, sys
 # Read the literal job keys, step inputs and run bodies. Full YAML syntax
 # belongs to preflight; this contract uses only block mappings.
 text = open(sys.argv[1]).read()
@@ -50,6 +52,19 @@ for block in re.split(r'^      - ', text, flags=re.M)[1:]:
 job['steps'] = steps
 assert len(steps) >= 6, 'step parser found too few steps'
 
+workspace = pathlib.Path(sys.argv[2]) / 'workspace'
+consumer_dir = workspace / 'consumer'
+release_dir = workspace / 'kendex' / 'refresh'
+consumer_dir.mkdir(parents=True)
+release_dir.mkdir(parents=True)
+record = workspace / 'executions'
+for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
+    executable = release_dir / script
+    executable.write_text('#!' + sys.argv[3] + '\nset -euo pipefail\n'
+                          'printf "%s|%s\\n" "$0" "$PWD" >>"$RECORD"\n'
+                          'exit "$SCRIPT_EXIT"\n')
+    executable.chmod(0o755)
+
 def check(job):
     steps = job['steps']
     assert job['environment'] == 'kendex'
@@ -70,6 +85,17 @@ def check(job):
         assert len(users) == 1
         assert users[0]['working-directory'] == 'consumer'
         assert f'exec "$GITHUB_WORKSPACE/kendex/refresh/{script}"' in users[0]['run']
+        # Execute the workflow's own body from the consumer checkout. The
+        # record identifies the release executable, so a commented call or
+        # execution of a consumer copy cannot satisfy the contract.
+        for status in (0, 47):
+            record.write_text('')
+            result = subprocess.run([sys.argv[3], '-c', users[0]['run']], cwd=consumer_dir,
+                                    env={'PATH': '/usr/bin:/bin', 'GITHUB_WORKSPACE': str(workspace),
+                                         'RECORD': str(record), 'SCRIPT_EXIT': str(status)},
+                                    capture_output=True, text=True, timeout=10)
+            assert record.read_text() == f'{release_dir / script}|{consumer_dir}\n', (script, status, 'execution')
+            assert result.returncode == status, (script, status, 'failure propagation', result.returncode)
     install = next(s for s in runs if './install.sh' in s['run'])
     assert install['working-directory'] == 'kendex'
     assert install['env'] == {'GH_TOKEN': '""', 'WORKFLOW_REF': '${{ job.workflow_ref }}', 'WORKFLOW_SHA': '${{ job.workflow_sha }}'}
@@ -91,7 +117,10 @@ def check(job):
     assert not any('steps.token.outputs.token' in json.dumps(s) for s in steps[:steps.index(repository)])
 
 check(job)
-for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token'):
+for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
+    print(f'  executed: {script} from release checkout with consumer cwd; status=0,47')
+for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
+                 'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -103,12 +132,23 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     elif mutation == 'repository': next(s for s in steps if s.get('id') == 'issues-token')['with']['repositories'] = 'kendex,consumer'
     elif mutation == 'early-token':
         token = next(s for s in steps if s.get('id') == 'token'); steps.remove(token); steps.insert(0, token)
+    elif mutation.endswith(('-disabled-exec', '-masked-failure')):
+        script = 'refresh-consumer.sh' if mutation.startswith('consumer-') else 'refresh-reviews.sh'
+        step = next(s for s in steps if script in s.get('run', ''))
+        call = f'exec "$GITHUB_WORKSPACE/kendex/refresh/{script}"'
+        assert step['run'].count(call) == 1, mutation
+        replacement = ': # ' + call if mutation.endswith('-disabled-exec') else call[5:] + ' || true # ' + call
+        step['run'] = step['run'].replace(call, replacement)
     assert json.dumps(j) != json.dumps(job), mutation
     try: check(j)
-    except AssertionError: pass
+    except AssertionError as error:
+        if mutation.endswith(('-disabled-exec', '-masked-failure')):
+            expected = 'execution' if mutation.endswith('-disabled-exec') else 'failure propagation'
+            assert error.args[0][2] == expected, (mutation, error)
+            print('  control rejected: ' + mutation)
     else: raise AssertionError('must-fail control missed ' + mutation)
 PY
-then ok 'step bodies run their scripts from the kendex checkout under the job and token boundaries; mutation controls'
+then ok 'step bodies execute release scripts in the consumer cwd and propagate failure under the job and token boundaries; mutation controls'
 else bad 'shared workflow structure'; fi
 
 # A caller on a branch other than its default gets no secret: the one job,
