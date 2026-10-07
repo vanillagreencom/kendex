@@ -3,7 +3,7 @@
 # name: task-completed-check
 # event: TaskCompleted
 # matcher:
-# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them, however indirectly, through a path dependency whose directory is that member's, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file no member's directory holds lints the whole workspace, since any member may compile it in through `#[path]` or `include!`. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
+# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them, however indirectly, through a path dependency whose directory is that member's, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file belongs to a member when it lies under the directory of one of that member's target root files, or is its build script; any other changed Rust file, a root package's own directory included, lints the whole workspace, since any member may compile it in through `#[path]` or `include!`. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
 # summary: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 # safety: Refuses on a clippy that exits nonzero and on a `cargo metadata` read that fails, both a defect in the change. A host that cannot run the check is not the committer's to fix and is never read as a pass: a git that cannot list the changed set, or a missing cargo or jq, completes the task with one `git=<subcommand>` or `missing-tools=<list>` notice saying the change was not checked. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal and notice opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
@@ -146,11 +146,14 @@ if [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
   fi
 fi
 
-# The workspace, read once: `M\t<name>\t<directory>` per member and
-# `D\t<name>\t<directory>` per path dependency it declares, a dependency with
-# no source being a path dependency, the only kind a member can be. Only
-# stdout is JSON: a read that succeeds may still warn on stderr, so stderr is
-# captured apart and replayed under the key only when the read fails.
+# The workspace, read once, one row per fact:
+#   P <name> <directory>  a member's package directory
+#   S <name> <directory>  the directory holding one of its targets' root file
+#   F <name> <file>       its build script, a lone file at the package root
+#   D <name> <directory>  a path dependency it declares; a dependency with no
+#                         source is one, the only kind a member can be
+# Only stdout is JSON: a read that succeeds may still warn on stderr, so stderr
+# is captured apart and replayed under the key only when the read fails.
 # On Windows cargo writes native `C:\...` paths, and `@tsv` would double each
 # backslash into a path no `cd` resolves, so separators become `/` first, a
 # form the Windows bash ports `cd` into as well.
@@ -160,9 +163,11 @@ fi
 WORKSPACE=$(
   {
     cause=$( { cargo metadata ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --no-deps --format-version 1 |
-      jq -r 'def slashed: gsub("\\\\"; "/");
+      jq -r 'def slashed: gsub("\\\\"; "/"); def parent: sub("/[^/]*$"; "");
         .packages[] | .name as $n |
-        (["M", $n, (.manifest_path | slashed | sub("/[^/]*$"; ""))] | @tsv),
+        (["P", $n, (.manifest_path | slashed | parent)] | @tsv),
+        ((.targets // [])[] | (.src_path | slashed) as $src |
+          if (.kind | index("custom-build")) then ["F", $n, $src] else ["S", $n, ($src | parent)] end | @tsv),
         ((.dependencies // [])[] | select(.source == null and .path != null) | ["D", $n, (.path | slashed)] | @tsv)' >&3; } 2>&1) || {
       printf '%s\n' "$cause"
       exit 1
@@ -170,19 +175,33 @@ WORKSPACE=$(
   } 3>&1
 ) || refuse metadata failed "$WORKSPACE"
 
-# Directories are compared physically, since cargo and git may spell the same
-# one through different links. A member is `<name>\t<directory>`; an edge is
-# `<dependent>\t<member it depends on>`, kept only where the dependency's
-# directory is a member's, so a path crate outside the workspace that shares
-# a member's name is no edge.
+# Paths are compared physically, since cargo and git may spell the same one
+# through different links. A source root is `<name>\t<path>\t<S|F>`; an edge
+# is `<dependent>\t<member it depends on>`, kept only where the dependency's
+# directory is a member's package directory, so a path crate outside the
+# workspace that shares a member's name is no edge.
 REPO_REAL=$(cd "$REPO_ROOT" && pwd -P)
 TAB=$(printf '\t')
-OWNED=""
-while IFS="$TAB" read -r kind name dir; do
-  [ "$kind" = M ] || continue
-  real=$(cd "$dir" 2>/dev/null && pwd -P) || continue
-  OWNED="$OWNED$name$TAB$real
+PACKAGES=""
+ROOTS=""
+while IFS="$TAB" read -r kind name path; do
+  case "$kind" in
+    P | S)
+      real=$(cd "$path" 2>/dev/null && pwd -P) || continue
+      ;;
+    F)
+      real=$(cd "${path%/*}" 2>/dev/null && pwd -P) || continue
+      real="$real/${path##*/}"
+      ;;
+    *) continue ;;
+  esac
+  if [ "$kind" = P ]; then
+    PACKAGES="$PACKAGES$name$TAB$real
 "
+  else
+    ROOTS="$ROOTS$name$TAB$real$TAB$kind
+"
+  fi
 done <<<"$WORKSPACE"
 EDGES=""
 while IFS="$TAB" read -r kind name dir; do
@@ -191,27 +210,35 @@ while IFS="$TAB" read -r kind name dir; do
   while IFS="$TAB" read -r member member_real; do
     [ "$member_real" != "$real" ] || EDGES="$EDGES$name$TAB$member
 "
-  done <<<"$OWNED"
+  done <<<"$PACKAGES"
 done <<<"$WORKSPACE"
 
-# Each changed Rust file belongs to the member whose directory is its longest
-# prefix. A file no member's directory holds can still be compiled into any
-# of them through `#[path]` or `include!`, and which ones only a build knows,
-# so such a file lints the whole workspace. The selected members are
-# space-delimited with a space at each end so a lookup is one pattern match.
+# A member compiles the module tree under its targets' root files, so a
+# changed Rust file belongs to the member whose source root is its longest
+# prefix, or whose build script it is. A package directory alone proves
+# nothing: a workspace root that is also a package holds every path in the
+# repository. Any other file can be compiled into any member through
+# `#[path]` or `include!`, and which ones only a build knows, so it lints the
+# whole workspace. The selected members are space-delimited with a space at
+# each end so a lookup is one pattern match.
 SELECTED=" "
 WHOLE=""
 while IFS= read -r path; do
   abs="$REPO_REAL/$path"
   best=""
   best_len=0
-  while IFS="$TAB" read -r name real; do
+  while IFS="$TAB" read -r name real kind; do
     [ -n "$real" ] || continue
-    if [ "${abs#"$real"/}" != "$abs" ] && [ "${#real}" -gt "$best_len" ]; then
+    if [ "$kind" = F ]; then
+      [ "$abs" = "$real" ] || continue
+    elif [ "${abs#"$real"/}" = "$abs" ]; then
+      continue
+    fi
+    if [ "${#real}" -gt "$best_len" ]; then
       best=$name
       best_len=${#real}
     fi
-  done <<<"$OWNED"
+  done <<<"$ROOTS"
   if [ -z "$best" ]; then
     WHOLE=1
   else

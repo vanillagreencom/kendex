@@ -54,7 +54,8 @@ if [ "$1" = metadata ]; then
   if [ -n "${FAKE_METADATA:-}" ]; then
     printf '%s\n' "$FAKE_METADATA"
   else
-    printf '{"packages":[{"name":"f","manifest_path":"%s/Cargo.toml"}]}\n' "$(git rev-parse --show-toplevel)"
+    root=$(git rev-parse --show-toplevel)
+    printf '{"packages":[{"name":"f","manifest_path":"%s/Cargo.toml","targets":[{"kind":["bin"],"src_path":"%s/src/main.rs"}]}]}\n' "$root" "$root"
   fi
   exit 0
 fi
@@ -198,7 +199,16 @@ printf 'pub fn a() {}\n' >"$REPO/crates/a/src/lib.rs"
 printf 'pub fn b() {}\n' >"$REPO/crates/b/src/lib.rs"
 fgit -C "$REPO" add -A
 fgit -C "$REPO" commit -q -m members
-MEMBERS_META=$(printf '{"packages":[{"name":"f","manifest_path":"%s/Cargo.toml"},{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml"}]}' "$REPO" "$REPO" "$REPO")
+# One fake workspace member: NAME, its package directory, and its dependencies
+# as JSON; its one target is a library rooted at src/lib.rs. `workspace` wraps
+# the members it reads as `cargo metadata` prints them.
+member() {
+  jq -cn --arg n "$1" --arg d "$2" --argjson deps "${3:-[]}" \
+    '{name: $n, manifest_path: ($d + "/Cargo.toml"), dependencies: $deps,
+      targets: [{kind: ["lib"], src_path: ($d + "/src/lib.rs")}]}'
+}
+workspace() { jq -cs '{packages: .}'; }
+MEMBERS_META=$( { member f "$REPO"; member a "$REPO/crates/a"; member b "$REPO/crates/b"; } | workspace)
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
@@ -211,7 +221,14 @@ fgit -C "$REPO" checkout -q -- crates
 # c depends on b and d on c, through path dependencies; e depends on a crate
 # from a registry that shares b's name, and g on a path crate outside the
 # workspace that shares it, neither of which is b.
-DEPS_META=$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml","dependencies":[]},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml","dependencies":[]},{"name":"c","manifest_path":"%s/crates/c/Cargo.toml","dependencies":[{"name":"b","source":null,"path":"%s/crates/b"}]},{"name":"d","manifest_path":"%s/crates/d/Cargo.toml","dependencies":[{"name":"c","source":null,"kind":"dev","path":"%s/crates/c"}]},{"name":"e","manifest_path":"%s/crates/e/Cargo.toml","dependencies":[{"name":"b","source":"registry+https://github.com/rust-lang/crates.io-index"}]},{"name":"g","manifest_path":"%s/crates/g/Cargo.toml","dependencies":[{"name":"b","source":null,"path":"%s/vendor/b"}]}]}' "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO")
+DEPS_META=$( {
+  member a "$REPO/crates/a"
+  member b "$REPO/crates/b"
+  member c "$REPO/crates/c" "[{\"name\":\"b\",\"source\":null,\"path\":\"$REPO/crates/b\"}]"
+  member d "$REPO/crates/d" "[{\"name\":\"c\",\"source\":null,\"kind\":\"dev\",\"path\":\"$REPO/crates/c\"}]"
+  member e "$REPO/crates/e" '[{"name":"b","source":"registry+https://github.com/rust-lang/crates.io-index"}]'
+  member g "$REPO/crates/g" "[{\"name\":\"b\",\"source\":null,\"path\":\"$REPO/vendor/b\"}]"
+} | workspace)
 mkdir -p "$REPO/crates/c" "$REPO/crates/d" "$REPO/crates/e" "$REPO/crates/g" "$REPO/vendor/b"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$DEPS_META"
@@ -219,8 +236,10 @@ assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targ
   "a change to b also lints every member depending on it, however indirectly, and no registry or outside path namesake"
 # cargo on Windows writes native backslash separators in both path fields.
 WIN_META=$(jq -cn --arg r "$REPO" '{packages: [
-  {name: "b", manifest_path: ($r + "\\crates\\b\\Cargo.toml"), dependencies: []},
+  {name: "b", manifest_path: ($r + "\\crates\\b\\Cargo.toml"), dependencies: [],
+   targets: [{kind: ["lib"], src_path: ($r + "\\crates\\b\\src\\lib.rs")}]},
   {name: "c", manifest_path: ($r + "\\crates\\c\\Cargo.toml"),
+   targets: [{kind: ["lib"], src_path: ($r + "\\crates\\c\\src\\lib.rs")}],
    dependencies: [{name: "b", source: null, path: ($r + "\\crates\\b")}]}]}')
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$WIN_META"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c --all-targets" \
@@ -232,10 +251,23 @@ assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" 
   "a staged move between members lints the crate it left as well as the one it joined"
 fgit -C "$REPO" reset -q --hard
 printf 'fn loose() {}\n' >"$REPO/scratch/loose.rs"
-run_hook "$REPO" FAKE_RC=0 \
-  FAKE_METADATA="$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"}]}' "$REPO")"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(member a "$REPO/crates/a" | workspace)"
 assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=clippy --workspace --all-targets" \
   "a Rust file no member's directory holds, which any member may include by #[path], lints the whole workspace"
+# The root is a package too, so its directory holds the loose file; holding
+# it compiles nothing, and a's #[path] may be what does.
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy --workspace --all-targets" \
+  "a Rust file outside every source root lints the whole workspace even inside a root package's directory"
+rm "$REPO/scratch/loose.rs"
+printf 'fn main() {}\n' >"$REPO/crates/b/build.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg d "$REPO/crates/b" '{packages: [{name: "b",
+  manifest_path: ($d + "/Cargo.toml"), dependencies: [],
+  targets: [{kind: ["lib"], src_path: ($d + "/src/lib.rs")}, {kind: ["custom-build"], src_path: ($d + "/build.rs")}]}]}')"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
+  "a member's build script belongs to that member"
+rm "$REPO/crates/b/build.rs"
+printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA_RC=101
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: metadata=failed" \
   "a manifest cargo cannot read refuses"
