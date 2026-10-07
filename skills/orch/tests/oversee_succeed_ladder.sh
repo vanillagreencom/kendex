@@ -459,7 +459,7 @@ assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(lau
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
 SKIPCTL="$(mutant_scripts skipctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$SKIPCTL/lib/overseer-launch.sh" '      ol_entry_permitted "$entry" || continue' '      :'
+mutate_file "$SKIPCTL/lib/overseer-launch.sh" '      ol_entry_permitted "$permitted_entry" || continue' '      : ol_entry_permitted "$permitted_entry" || continue'
 new_caller codex
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$SKIPCTL/oversee-succeed" run_succeed skipctl unset
 assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
@@ -478,13 +478,15 @@ COPILOT_LINE=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot
   --max-autopilot-continues 5 --context long_context --no-auto-update)
 CLAUDE_COMPACT="$(launch_choice_compaction_off claude)"
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
-# copilot_ladder ROW walled|check [SUCCEED_BIN] — the Copilot caller, its
+# copilot_ladder ROW walled|check [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE] — the Copilot caller, its
 # launch record naming its account, run as the wall recovery under its whole
 # line, or as --check-marks, handed no flags, against the same preference.
-copilot_ladder() { # ROW walled|check [SUCCEED_BIN]
+copilot_ladder() { # ROW walled|check [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE]
   local -a mode_args=(--walled-pane)
   local no_wait=""
   new_caller copilot ""
+  # The shipped Copilot usage hook records an empty model.
+  lane_context_record "$MAILBOX_DIR" copilot 100000 800000 "" "" "$SERVER_PID $CALLER_PANE"
   jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
     --arg account "$H/.1copilot" \
     '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server,
@@ -492,6 +494,10 @@ copilot_ladder() { # ROW walled|check [SUCCEED_BIN]
       home: $account, model: "", effort: "", cwd: null, launch_line: "recorded"}}' \
     > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   CALLER_FLAGS=("${COPILOT_LINE[@]}")
+  case "${4:-caller}" in
+    empty) CALLER_FLAGS=("${COPILOT_LINE[@]:2}") ;;
+    restricted) CALLER_FLAGS=(--allow-all-tools) ;;
+  esac
   if [[ "$2" == check ]]; then
     CALLER_FLAGS=() mode_args=(--check-marks) no_wait=1
   else
@@ -499,7 +505,7 @@ copilot_ladder() { # ROW walled|check [SUCCEED_BIN]
   fi
   CALLER_LANE="COPILOT_HOME=$H/.1copilot" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot:$H/.2copilot" \
     SUCCEED_BIN="${3:-}" NO_WAIT="$no_wait" \
-    run_succeed "$1" 'claude:1:high,claude:claude-opus-5-5:high' "${mode_args[@]}" --harness copilot
+    run_succeed "$1" "${5:-claude:1:high,claude:claude-opus-5-5:high}" "${mode_args[@]}" --harness copilot
   CALLER_FLAGS=("$BYPASS")
 }
 # claude_argv — the claude successor's recorded lane and argv, `;`-joined.
@@ -524,26 +530,56 @@ mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$1" == *::* ]]; then' '  
 copilot_ladder numctl walled "$NUMCTL/oversee-succeed"
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)" "0|none|$H/.eclaude claude-opus-5.5" \
   "control: a walk admitting the numeric entry hands claude the Copilot model spelling"
+
+# A walled Copilot account with no recorded, observed or flagged model must
+# reach the numeric target's available account. A caller-spelled model still
+# cannot cross harnesses, and resolving a model does not transfer permissions.
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":0}}}' > "$FIXTURE_DIR/.1copilot.json"
+cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
+for row in 'empty|0|none' 'caller|3|model' 'restricted|3|permission'; do
+  IFS='|' read -r source expected_rc skip_kind <<<"$row"
+  copilot_ladder "numeric-target-$source" walled "" "$source" 'claude:1:high'
+  assert_eq "$RC" "$expected_rc" "numeric target resolution retains the $source eligibility rule"
+  if [[ "$skip_kind" == none ]]; then
+    assert_eq "$(keyed entry-permission-untransferable)|$(claude_argv)" \
+      "none|$CLAUDE_SUCCESSOR;$BRIEF;" \
+      "a model-less walled Copilot caller reaches the numeric Claude target with its model and effort"
+  else
+    assert_eq "$(launched claude)|$(keyed no-lane-qualifies | awk '{print $2}')" "none|no-lane-qualifies" \
+      "a numeric target cannot bypass the $skip_kind rule"
+    assert_contains "$OUT" 'oversee-succeed: entry-permission-untransferable ' "the numeric target records its eligibility refusal"
+  fi
+done
+TARGETCTL="$(mutant_scripts targetctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$TARGETCTL/lib/overseer-launch.sh" \
+  '[[ -z "$OL_ENTRY_MODEL" ]] || permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
+  ': [[ -z "$OL_ENTRY_MODEL" ]] || permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
+copilot_ladder targetctl walled "$TARGETCTL/oversee-succeed" empty 'claude:1:high'
+assert_eq "$RC|$(launched claude)" "3|none" \
+  "control: treating the target default as caller-derived loses the available Claude successor"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 # The judgement oversee-watch and the turn-end hook ask, --check-marks, walks
 # the same preference to learn whether a qualifying mark has a successor: the
 # other Copilot account has more room than the caller's, and two accounts
-# above the trigger are at the setting. It skips the numeric entry in
-# silence, as it skips every entry it cannot judge permission words for, and
-# the claude entry the succession took settles the mark.
+# above the trigger are at the setting. With no caller model, the numeric
+# Claude entry resolves the target model and settles the mark.
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":950}}}' > "$FIXTURE_DIR/.2copilot.json"
 SUCCESSOR_ACCOUNTS=2 copilot_ladder copilotcheck check
 assert_eq "$RC|$(keyed mark-reached)|$(keyed entry-permission-untransferable)" \
   "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=90|none" \
-  "the check judgement of a Copilot caller skips the numeric entry silently and takes the claude entry"
-# Its control: a check that reports the numeric skip prints the line the
-# succession's own walk prints, on every watch pass. With no caller model in
-# the check, the numeric entry takes the default preference model.
+  "the check judgement of a model-less Copilot caller resolves the numeric Claude entry"
+# A target with no transferable permission posture stays a silent skip in
+# check mode. Pi's launch row supplies that independent permission refusal.
+SUCCESSOR_ACCOUNTS=2 copilot_ladder quietcheck check "" empty 'pi:openai/gpt-5:high,claude:1:high'
+assert_eq "$RC|$(keyed entry-permission-untransferable)" "0|none" \
+  "the check judgement keeps an untransferable permission skip silent"
 QUIETCTL="$(mutant_scripts quietctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$QUIETCTL/lib/overseer-launch.sh" '    (( OL_WALK_SOURCE_ROWS )) \' '    false \'
-SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed"
+mutate_file "$QUIETCTL/lib/overseer-launch.sh" \
+  $'\n  (( OL_WALK_SOURCE_ROWS )) \\' $'\n  (( OL_WALK_SOURCE_ROWS )) && false \\'
+SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed" empty 'pi:openai/gpt-5:high,claude:1:high'
 assert_eq "$RC|$(keyed entry-permission-untransferable)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5-5" \
-  "control: a check that does not keep the numeric skip silent prints it"
+  "0|oversee-succeed: entry-permission-untransferable entry=pi:openai/gpt-5:high source=copilot target=pi" \
+  "control: a check that does not keep the permission skip silent prints it"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
 # The ladder's first rung: the first claude seat with Opus room takes an Opus

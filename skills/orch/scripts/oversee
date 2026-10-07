@@ -57,7 +57,7 @@
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. The old
 #        `harness:positive-integer:effort` form is deprecated and read until
 #        the next major release. It uses the caller's model
-#        or the same-harness default preference model where no caller exists.
+#        or the same-harness default preference model where the caller names no model.
 #        If neither names a model, the harness default runs. It warns once
 #        per run and names the conversion. The walk is
 #        that file's ol_walk, and `lanes pick` names the lane, judged on the bucket that

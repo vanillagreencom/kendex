@@ -363,7 +363,7 @@ OL_WALK_SOURCE_HARNESS="" OL_WALK_SOURCE_FLAGS="" OL_WALK_SOURCE_ROWS=0 OL_WALK_
 OL_CHOSEN="" OL_HARNESS="" OL_MODEL="" OL_EFFORT="" OL_PICK_MODEL="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none
 OL_WALK_SKIPS=() OL_FIELDS=()
 ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
-  local trigger="$1" exclude="$2" entry rc count defaults default_entry tab=$'\t'
+  local trigger="$1" exclude="$2" entry permitted_entry rc count defaults default_entry tab=$'\t'
   shift 2
   OL_CHOSEN="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none OL_WALK_SKIPS=() OL_FIELDS=()
   for entry in "$@"; do
@@ -386,18 +386,21 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       fi
     else
       ol_entry_model "$entry"
+      permitted_entry="$entry"
       if [[ -z "$OL_ENTRY_MODEL" ]]; then
         defaults="$OL_DEFAULT_PREFERENCE,"
         while [[ "$entry" == *::* && -n "$defaults" ]]; do
           default_entry="${defaults%%,*}" defaults="${defaults#*,}"
           [[ "${default_entry%%:*}" == "$OL_ENTRY_HARNESS" ]] || continue
           OL_ENTRY_MODEL="${default_entry#*:}" OL_ENTRY_MODEL="${OL_ENTRY_MODEL%%:*}"
+          # This model belongs to the target harness, not the caller's harness.
+          [[ -z "$OL_ENTRY_MODEL" ]] || permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"
           break
         done
       fi
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
-      ol_entry_permitted "$entry" || continue
+      ol_entry_permitted "$permitted_entry" || continue
     fi
     rc=0
     ol_pick_lane "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "$exclude" || rc=$?
