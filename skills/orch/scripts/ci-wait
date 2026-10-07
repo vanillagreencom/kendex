@@ -161,6 +161,7 @@ REPO_REJECTED=""
 print_usage() {
   cat <<'USAGE'
 Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json] [--item ID]
+               [--required-only]
 
 Wait for CI checks to complete on a PR. Every exit path but 5 emits a final
 result on stdout — a "CI passed"/"CI failed"/"CI timeout"/"CI error" line,
@@ -173,13 +174,20 @@ failures (max 1 retry).
   max_wait       total budget in seconds (default 600)
   --json         emit the machine-readable result object on stdout
   --item ID      the lane whose new mail exits 5; no mail check without it
+  --required-only  classify as GitHub gates the merge: only a context the
+                 base branch requires counts as pending or failed, and a
+                 required context with no check yet is pending as
+                 "<context> (missing)". The required set is the github
+                 skill's own read (lib/ci-run-correlation.sh
+                 required_contexts); where it cannot be read, every check
+                 counts, as without the flag
 
 Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with
            status "complete"
   fail     a settled current-head failure — current-run failures are
            terminal. EVERY red check counts, whether or not the base branch
-           requires its context; only the github pr-merge readiness check
+           requires its context, unless --required-only; only the github pr-merge readiness check
            applies that filter, in --check, in an immediate merge and under
            --auto alike, so a red optional check fails this wait while that
            gate reports it as a ci_optional_failed warning
@@ -283,12 +291,14 @@ USAGE
 
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
+REQUIRED_ONLY=false
 ITEM=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
+    --required-only) REQUIRED_ONLY=true; shift ;;
     --item)
       [[ -n "${2:-}" ]] || { ci_message missing-item >&2; exit 2; }
       ITEM="$2"
@@ -573,6 +583,12 @@ fi
 # shellcheck source=../../github/scripts/lib/ci-run-correlation.sh
 source "$CI_RUN_CORRELATION_LIB"
 
+# The contexts classify_checks counts as blocking; [] counts every check.
+REQUIRED_CONTEXTS='[]'
+if $REQUIRED_ONLY; then
+  REQUIRED_CONTEXTS=$(required_contexts "$PR_NUM" "$REPO") || REQUIRED_CONTEXTS='[]'
+fi
+
 # Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
 # Scope to the current run first so a rerun never targets a superseded/canceled
@@ -665,10 +681,13 @@ superseding_run_state() {
 }
 
 classify_checks() {
-  jq -c "$CI_RUN_JQ_DEFS"'
-    {
-      pending: [.[] | select(bucket == "pending")],
-      failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))],
+  jq -c --argjson req "$REQUIRED_CONTEXTS" "$CI_RUN_JQ_DEFS"'
+    map(.name) as $names
+    | {
+      pending: ([.[] | select((bucket == "pending") and required_only($req))]
+                + [$req[] | . as $ctx | select(($names | index($ctx)) == null)
+                   | {name: (. + " (missing)"), state: "EXPECTED", bucket: "pending"}]),
+      failed: [.[] | select(red and required_only($req))],
       passed: [.[] | select(bucket == "pass")]
     }
   '

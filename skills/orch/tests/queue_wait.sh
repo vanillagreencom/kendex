@@ -153,6 +153,19 @@ case "${1:-}" in
       echo '{"workflow_runs":[]}'
       exit 0
     fi
+    # The base branch's required contexts (github required_contexts), named
+    # by STUB_REQUIRED as a space-separated list; unset, the reads fail and every check
+    # counts.
+    if [[ -n "${STUB_REQUIRED:-}" && "${2:-}" == repos/*/rules/branches/* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      tr ' ' '\n' <<<"$STUB_REQUIRED" | sed 's/^/ctx:/'
+      exit 0
+    fi
+    if [[ -n "${STUB_REQUIRED:-}" && "${2:-}" == repos/*/branches/* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      echo '{"protection":{"required_status_checks":{"contexts":[]}}}'
+      exit 0
+    fi
     # queue-wait's progress read of the merge-queue head commit.
     if [[ "${2:-}" == repos/*/commits/*/check-runs* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
@@ -369,6 +382,8 @@ stage() {
       prchecks:running) write_fixture prchecks "$n" '[{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:green) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"}]' ;;
       prchecks:failed_run) write_fixture prchecks "$n" '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/123/job/4"}]' 1 ;;
+      prchecks:optional_red) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"FAILURE","bucket":"fail"}]' 1 ;;
+      prchecks:optional_running) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:green_skipped) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"SKIPPED","bucket":"skipping"}]' ;;
       prchecks:green_more) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"linux","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
@@ -431,7 +446,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   checkrun_warned   the progress read's consecutive-failure warning
 #   mail              the count on a `queue-wait: mail=` stdout line
 #   stderr_line       stderr's first line, spaces encoded as +
-#   pending_names     the result's pending_checks, comma-joined
+#   pending_names     the result's pending_checks, comma-joined, spaces as +
 observe() {
   local got="" token name value
   for token in $1; do
@@ -444,7 +459,7 @@ observe() {
       text_verdict) value="$(sed -n '1s/^queue-wait: result status=[^ ]* verdict=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       text_repo) value="$(sed -n '1s/^queue-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       stderr_line) value="$(sed -n '1p' "$ERR")"; value="${value// /+}" ;;
-      pending_names) value="$(json '.pending_checks | join(",")')" ;;
+      pending_names) value="$(json '.pending_checks | join(",")')"; value="${value// /+}" ;;
       mail) value="$(sed -n '1s/^queue-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       help_record) value="${OUT%%$'\n'*}"; value="${value// /+}" ;;
       mutations)
@@ -583,6 +598,9 @@ table '1 1 20 --json' \
   'a rollup green before any probe is confirmed by a wider probe, then armed_blocked|open_armed|1 20 300 --json|STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
   'a changed green rollup after a confirmed pass is unconfirmed again and awaits|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:4=green,prchecks:5=green,prchecks:6=green,prchecks:7=green,prchecks:8=green,prchecks:9=green,prchecks:10=green,prchecks:last=green_more|1 20 300 --json||rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
   'a skipped check registering after a confirmed pass is a changed rollup and awaits|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:4=green,prchecks:5=green,prchecks:6=green,prchecks:7=green,prchecks:8=green,prchecks:9=green,prchecks:10=green,prchecks:last=green_skipped|1 20 300 --json||rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'an optional check failing beside green required ones is never check_failed|open_armed,prchecks:last=optional_red|1 1 20 --json|STUB_REQUIRED=build|rc=1 verdict=armed_awaiting_checks cause=checks_pending' \
+  'an optional check still running beside green required ones awaits nothing|open_armed,prchecks:last=optional_running|1 20 300 --json|STUB_REQUIRED=build|rc=1 verdict=armed_blocked cause=not_mergeable' \
+  'a required context with no check yet is pending as missing|open_armed,prchecks:last=green|1 20 300 --json|STUB_REQUIRED=macos linux|rc=1 verdict=armed_awaiting_checks cause=checks_pending pending_names=linux+(missing)' \
   'a probe fits inside the budget with a poll after it, which reads the merge|state:1=open,state:last=merged,queue:last=armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=0 verdict=merged polls=2' \
   'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \

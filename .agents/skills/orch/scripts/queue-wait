@@ -271,7 +271,8 @@ not reported at all.
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check cause is delegated to
-`ci-wait <PR> 15 30 --json` (a complete "fail" result, reported as
+`ci-wait <PR> 15 30 --json --required-only`, which counts only the checks
+GitHub gates the merge on (a complete "fail" result, reported as
 armed_blocked; an error result is no reading whatever verdict it carries;
 the probe after a green-but-unconfirmed answer runs to 120 seconds so
 ci-wait's stale window can confirm it, and a later unconfirmed answer keeps
@@ -901,7 +902,7 @@ probe_failed_check() {
   fi
   [ "$gap" -ge 1 ] && [ "$budget" -ge "$gap" ] || return 1
   set +e
-  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" "$gap" "$budget" --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
+  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" "$gap" "$budget" --json --required-only ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
   status=$?
   set -e
   # The child took the lane-mail exit; this wait ends on the same route.

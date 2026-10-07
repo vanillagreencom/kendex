@@ -224,6 +224,73 @@ classify_checks_rollup() {
     }'
 }
 
+# The base branch's required status-check contexts as a JSON array, read from
+# its ruleset and classic-protection endpoints. GitHub merges a PR whose
+# non-required checks are red, so these names are what the CI gate may block
+# on. Any answer that is not positive evidence of the whole required set
+# prints `[]`, which counts every check — a branch whose protection cannot be
+# read must never merge over a red one.
+#
+# An empty classic list counts only when the branch answer actually carried a
+# `protection` object. GitHub omits that key from the branch payload for a
+# caller without push access, and a missing key parses cleanly and exits 0, so
+# reading it as "nothing required" would narrow the set to the ruleset
+# contexts alone under a read-only token.
+#
+# The ruleset read also refuses on a rule type it cannot account for. Only
+# `required_status_checks` names its contexts; the types listed in the filter
+# below gate the ref, its commits, its files or its reviews and put nothing in
+# the check rollup. `pull_request` is the review gate among them: it demands a
+# REVIEW and, where set, resolved threads, which GitHub enforces itself and
+# never reports as a check on the head. `copilot_code_review`
+# only requests a review and gates no merge at all. Every other type — `workflows`, `code_scanning`,
+# `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
+# merge on a check result whose context the rule never names, so naming a
+# required set beside one would drop that check's red to a warning. An
+# unrecognized type therefore turns the narrowing OFF rather than merging over
+# a check the read cannot see. Rule types: docs.github.com/en/rest/repos/rules
+RULESET_CONTEXTS_JQ='
+  [
+    "branch_name_pattern", "commit_author_email_pattern",
+    "commit_message_pattern", "committer_email_pattern",
+    "copilot_code_review", "creation",
+    "deletion", "file_extension_restriction", "file_path_restriction",
+    "max_file_path_length", "max_file_size", "merge_queue",
+    "non_fast_forward", "pull_request", "required_deployments",
+    "required_linear_history", "required_signatures",
+    "required_status_checks", "tag_name_pattern", "update"
+  ] as $accounted
+  | .[]
+  | (.type // "") as $type
+  | (select(($accounted | index($type)) == null) | "unnameable:" + $type)
+  , (select($type == "required_status_checks")
+     | .parameters.required_status_checks[]?
+     | "ctx:" + (.context // ""))'
+# Both reads yield one line per rule: `ctx:<context>` for a context a ruleset
+# or classic protection names, `unnameable:<type>` for a ruleset rule gating
+# on a check it does not name. A failed read or an unnameable rule prints `[]`.
+# Arg 2, when given, is the owner/name the PR lives in; without it gh resolves
+# the repository from the working directory, as pr-merge relies on.
+required_contexts() {
+    local pr_num="$1" repo="${2:-}" base="" rules="" classic="" branch_json=""
+    local path="{owner}/{repo}" repo_arg=()
+    if [ -n "$repo" ]; then
+        path="$repo"
+        repo_arg=(--repo "$repo")
+    fi
+    if ! base=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
+        || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
+        || ! rules=$(gh api "repos/$path/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null) \
+        || ! branch_json=$(gh api "repos/$path/branches/$base" 2>/dev/null) \
+        || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
+        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null) \
+        || grep -q '^unnameable:' <<<"$rules"; then
+        echo '[]'
+        return 0
+    fi
+    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
+}
+
 # The `head-run: <ids>` line for a --check JSON (stdin): the run ids the CI
 # classification was scoped to, "none" when no run-correlated checks exist.
 CHECK_HEAD_RUN_LINE_JQ='"head-run: " + (.head_runs // [] | if length == 0 then "none" else map(tostring) | join(",") end)'
