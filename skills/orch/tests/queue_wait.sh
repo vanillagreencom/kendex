@@ -361,6 +361,7 @@ stage() {
       dequeue:am_errs_on_200) write_fixture dequeue "$n" "$am_errs_on_200" ;;
       prchecks:running) write_fixture prchecks "$n" '[{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:green) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"}]' ;;
+      prchecks:green_more) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"linux","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
       checkruns:c*.*)
         [[ "$name" =~ ^c([0-9]+)\.([0-9]+)$ ]] || { echo "stage: unknown fixture $item" >&2; exit 1; }
@@ -567,17 +568,20 @@ echo "=== an armed PR GitHub has not enqueued reads the PR's own check rollup ==
 # out with no recovery cycle; a failed check, or every check green with still
 # no entry, is armed_blocked. progress_unobservable stays the enqueued-entry
 # reading (the progress table above).
-table '1 1 3 --json' \
+table '1 1 20 --json' \
   'pending required checks await, never progress_unobservable|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending pending_names=macos progress_head_polls=0' \
   'a rollup already green that no probe could confirm in the budget still awaits|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
   'a rollup green before any probe is confirmed by a wider probe, then armed_blocked|open_armed|1 20 300 --json|STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
+  'a changed green rollup after a confirmed pass is unconfirmed again and awaits|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:4=green,prchecks:5=green,prchecks:6=green,prchecks:7=green,prchecks:8=green,prchecks:9=green,prchecks:10=green,prchecks:last=green_more|1 20 300 --json||rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'a probe fits inside the budget with a poll after it, which reads the merge|state:1=open,state:last=merged,queue:last=armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=0 verdict=merged polls=2' \
+  'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
-  'checks seen running then green, and still no entry, is armed_blocked|open_armed,prchecks:1=running,prchecks:last=green|1 1 1 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable has_pending_checks=false' \
-  'an errored probe keeps the readable answer before it|open_armed,prchecks:1=running,prchecks:2=green,prchecks:last=fail502|1 20 60 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
+  'checks seen running then green, and still no entry, is armed_blocked|open_armed,prchecks:1=running,prchecks:last=green|1 1 40 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable has_pending_checks=false' \
+  'an errored probe keeps the readable answer before it|open_armed,prchecks:1=running,prchecks:2=green,prchecks:last=fail502|1 20 120 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
   'an enqueued entry keeps its progress reading|open_queued_head,checkruns:last=c1.1||STUB_PR_CHECKS_MODE=pending|rc=1 verdict=queued cause=still_progressing'
 
 echo "=== text mode names the armed verdicts on stdout ==="
-table '1 1 3' \
+table '1 1 20' \
   'armed_awaiting_checks|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 text_verdict=armed_awaiting_checks' \
   'armed_blocked|open_armed||STUB_PR_CHECKS_MODE=failure|rc=1 text_verdict=armed_blocked'
 

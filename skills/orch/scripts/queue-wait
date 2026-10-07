@@ -272,8 +272,11 @@ not reported at all.
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check cause is delegated to
 `ci-wait <PR> 15 30 --json` (verdict "fail", reported as armed_blocked;
-the probe after a green-but-unconfirmed answer runs to 120 seconds, within
-the budget, so ci-wait's stale window can confirm it)
+the probe after a green-but-unconfirmed answer runs to 120 seconds so
+ci-wait's stale window can confirm it, and a later unconfirmed answer keeps
+that pass only for the same check names and states). A probe runs only
+where its budget and one more poll interval fit before max_wait, so the
+deadline verdict always rests on a queue read taken after the last probe
 rather than reimplemented — ci-wait owns superseded-run correlation and
 check-state semantics. Its last readable verdict (pending, or pass/none;
 an error is no reading and keeps the one before it) also names the
@@ -869,18 +872,34 @@ PROBE_CONFIRM_BUDGET=120
 last_probe_at=0
 probe_checks=""
 probe_pending_names=""
+probe_pass_key=""
 probe_confirm=false
+# The rollup a ci-wait answer names, as the names and states it reports: the
+# identity a confirmed pass is held to. Nonzero when the answer is unreadable.
+probe_rollup_key() {
+  jq -cS '[.passed_checks[]? | {name, state}] | sort_by(.name, .state)' 2>/dev/null <<<"$1"
+}
+# Returns 0 only on ci-wait's fail verdict. A probe reads the rollup after this
+# poll read the queue, so it runs only where its whole run — its budget plus
+# the one poll interval ci-wait can sleep past it — and one more queue poll
+# interval fit before the deadline: the deadline verdict then always
+# rests on a queue read taken after the last probe, and the probe never
+# outlasts max_wait. Where they do not fit it is skipped, and the last
+# reading stands.
 probe_failed_check() {
-  local out verdict status reading budget="$PROBE_BUDGET" remaining
-  if $probe_confirm; then
-    update_elapsed
-    remaining=$((MAX_WAIT - elapsed))
-    budget="$PROBE_CONFIRM_BUDGET"
-    [ "$remaining" -ge "$budget" ] || budget="$remaining"
-    [ "$budget" -ge "$PROBE_BUDGET" ] || budget="$PROBE_BUDGET"
+  local out verdict status reading want="$PROBE_BUDGET" budget gap=15 avail key
+  $probe_confirm && want="$PROBE_CONFIRM_BUDGET"
+  update_elapsed
+  avail=$((MAX_WAIT - elapsed - POLL_INTERVAL - 1))
+  budget="$want"
+  if [ $((want + gap)) -gt "$avail" ]; then
+    gap=$((avail / 2))
+    [ "$gap" -le 15 ] || gap=15
+    budget=$((avail - gap))
   fi
+  [ "$gap" -ge 1 ] && [ "$budget" -ge "$gap" ] || return 1
   set +e
-  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 "$budget" --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
+  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" "$gap" "$budget" --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
   status=$?
   set -e
   # The child took the lane-mail exit; this wait ends on the same route.
@@ -890,14 +909,20 @@ probe_failed_check() {
     elif .verdict == "pending" then "pending"
     elif .verdict == "pass" or .verdict == "none" then "settled"
     else "" end' 2>/dev/null <<<"$out" || true)
+  key=""
+  # An answer whose rollup cannot be keyed is no reading.
+  if [ -n "$reading" ] && ! key="$(probe_rollup_key "$out")"; then
+    reading=""
+  fi
   # Green but unconfirmed is ci-wait declining to confirm a rollup it saw
-  # settled from its first poll. After a confirmed pass it is that same green
-  # rollup read by a probe too short to confirm it again, so it never undoes
-  # the pass; a check running again is a pending_checks entry and does.
+  # settled from its first poll. The same rollup a probe already confirmed
+  # (the same names and states) read by a probe too short to confirm it
+  # again keeps that pass; a changed rollup is unconfirmed again and is read
+  # pending, with the next probe wide enough to confirm it.
   if [ "$reading" = "pending" ] && jq -e '(.pending_checks | length) == 0
        and (.failed_checks | length) == 0 and (.passed_checks | length) > 0' \
        >/dev/null 2>&1 <<<"$out"; then
-    if [ "$probe_checks" = "settled" ]; then
+    if [ "$probe_checks" = "settled" ] && [ "$key" = "$probe_pass_key" ]; then
       reading=""
     else
       probe_confirm=true
@@ -907,6 +932,8 @@ probe_failed_check() {
   fi
   if [ -n "$reading" ]; then
     probe_checks="$reading"
+    probe_pass_key=""
+    [ "$reading" != "settled" ] || probe_pass_key="$key"
     probe_pending_names=$(jq -c '[.pending_checks[]?.name]' 2>/dev/null <<<"$out" || printf '[]')
   fi
   [[ "$verdict" == "fail" ]]
