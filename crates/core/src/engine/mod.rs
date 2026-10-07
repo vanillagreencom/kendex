@@ -221,7 +221,7 @@ fn plan_scope_with_lock_base(
         &mut written,
     )?;
 
-    let (mut scope_notes, instruction_shims) = plan_scope_files(
+    let (mut scope_notes, planned_shims) = plan_scope_files(
         env,
         scope,
         &manifest,
@@ -261,8 +261,16 @@ fn plan_scope_with_lock_base(
     let installations = installations(env, scope, &manifest, &state)?;
     let wanted = wanted(&manifest, &state);
     plan_lock_write(env, scope, declared, lock_base, &new_lock, &mut ops)?;
-    let generated =
-        generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
+    let generated = generated_paths::plan(
+        scope,
+        &state,
+        &planned_shims.standings,
+        &planned_shims.retained,
+        &drift,
+        &trees,
+        &mut ops,
+    )?;
+    let instruction_shims = planned_shims.standings;
 
     let planned = Planned {
         drift,
@@ -510,7 +518,7 @@ fn plan_scope_files(
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
-) -> Result<(Vec<String>, Vec<instruction_shims::ShimStanding>)> {
+) -> Result<(Vec<String>, instruction_shims::PlannedShims)> {
     // The order between the project files is not this caller's to choose,
     // so one entry point plans all three: `settings_write.rs` says why.
     let (scope_notes, settings_drift) = plan_project_files(scope, state, options, ops)?;

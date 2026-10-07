@@ -170,6 +170,62 @@ fn record_claude_shims(f: &Fixture, paths: &[&str]) {
     .unwrap();
 }
 
+#[allow(clippy::unwrap_used)]
+fn remove_and_restore_agents(f: &Fixture, paths: &[&str]) {
+    run_git(
+        &f.project,
+        &["rm", "--", "AGENTS.md", "crates/core/AGENTS.md"],
+    );
+    let unresolved = apply_now(f);
+    assert!(touched(f, &unresolved).is_empty());
+    assert!(unresolved.drift.is_empty());
+    for path in paths {
+        let position = f.project.join(path);
+        assert_eq!(shim_bytes(&position), CLAUDE_SHIM);
+        assert!(
+            unresolved
+                .generated
+                .inventory(&f.project)
+                .contains(&position)
+        );
+        assert!(!unresolved.generated.owned(&f.project).contains(&position));
+    }
+    assert!(plan(f).plan.is_empty());
+    assert_eq!(
+        shim_bytes(&f.project.join(".hidden/CLAUDE.md")),
+        CLAUDE_SHIM
+    );
+    assert_eq!(
+        shim_bytes(&f.project.join("untracked/CLAUDE.md")),
+        CLAUDE_SHIM
+    );
+    assert!(
+        unresolved
+            .generated
+            .inventory(&f.project)
+            .contains(&f.project.join("untracked/CLAUDE.md"))
+    );
+    for path in [".hidden/CLAUDE.md", "absent/CLAUDE.md"] {
+        assert!(
+            !unresolved
+                .generated
+                .inventory(&f.project)
+                .contains(&f.project.join(path))
+        );
+    }
+    run_git(
+        &f.project,
+        &[
+            "restore",
+            "--staged",
+            "--worktree",
+            "--",
+            "AGENTS.md",
+            "crates/core/AGENTS.md",
+        ],
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn recorded_claude_shims_retire_with_claude_still_declared() {
@@ -182,8 +238,25 @@ fn recorded_claude_shims_retire_with_claude_still_declared() {
         for path in paths {
             fs::write(f.project.join(path), CLAUDE_SHIM).unwrap();
         }
-        record_claude_shims(&f, &paths);
+        fs::create_dir_all(f.project.join(".hidden")).unwrap();
+        fs::write(f.project.join(".hidden/AGENTS.md"), "# payload\n").unwrap();
+        fs::write(f.project.join(".hidden/CLAUDE.md"), CLAUDE_SHIM).unwrap();
         commit(&f.project);
+        fs::create_dir_all(f.project.join("untracked")).unwrap();
+        fs::write(f.project.join("untracked/AGENTS.md"), "# untracked\n").unwrap();
+        fs::write(f.project.join("untracked/CLAUDE.md"), CLAUDE_SHIM).unwrap();
+        record_claude_shims(
+            &f,
+            &[
+                paths[0],
+                paths[1],
+                ".hidden/CLAUDE.md",
+                "untracked/CLAUDE.md",
+                "absent/CLAUDE.md",
+            ],
+        );
+
+        remove_and_restore_agents(&f, &paths);
 
         let report = plan(&f);
         let trashed: Vec<_> = report
@@ -216,6 +289,14 @@ fn recorded_claude_shims_retire_with_claude_still_declared() {
         for path in paths {
             assert!(!f.project.join(path).exists());
         }
+        assert_eq!(
+            shim_bytes(&f.project.join(".hidden/CLAUDE.md")),
+            CLAUDE_SHIM
+        );
+        assert_eq!(
+            shim_bytes(&f.project.join("untracked/CLAUDE.md")),
+            CLAUDE_SHIM
+        );
         let trash = kendex_core::trash::list(&f.env).unwrap();
         let bytes: Vec<_> = trash
             .iter()
@@ -227,6 +308,34 @@ fn recorded_claude_shims_retire_with_claude_still_declared() {
         assert!(again.drift.is_empty());
         assert!(again.instruction_shims.is_empty());
     }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_recorded_claude_read_error_keeps_proof_until_repaired() {
+    let f = fixture("\"claude\"", true);
+    let path = f.project.join("CLAUDE.md");
+    record_claude_shims(&f, &["CLAUDE.md"]);
+    // A directory at the former file position makes read fail even for
+    // a privileged test runner, unlike mode bits denying read permission.
+    fs::create_dir(&path).unwrap();
+    let report = apply_now(&f);
+    assert!(touched(&f, &report).is_empty());
+    assert!(report.drift.iter().any(|row| row.name == "CLAUDE.md"
+        && row.harness == HarnessId::Claude
+        && row.state == DriftState::Conflict));
+    assert!(report.generated.inventory(&f.project).contains(&path));
+    assert!(!report.generated.owned(&f.project).contains(&path));
+    assert!(path.is_dir());
+    assert!(plan(&f).plan.is_empty());
+
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, CLAUDE_SHIM).unwrap();
+    let report = apply_now(&f);
+    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
+    assert!(!path.exists());
+    assert!(!report.generated.inventory(&f.project).contains(&path));
+    assert!(plan(&f).plan.is_empty());
 }
 
 #[test]

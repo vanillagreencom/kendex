@@ -21,7 +21,7 @@ use crate::model::{HarnessId, Scope};
 /// a repository git will not read is not a project with one file in it.
 /// Whether any directory on the relative path is a dot directory, the
 /// shape every harness keeps its render tree under.
-fn under_dot_directory(relative: &Path) -> bool {
+pub(super) fn under_dot_directory(relative: &Path) -> bool {
     relative
         .parent()
         .map(|dir| {

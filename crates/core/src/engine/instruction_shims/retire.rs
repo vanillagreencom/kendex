@@ -12,9 +12,11 @@
 //! an apply with its harness still listed.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::observe::{agents_files, gemini_retirement, relative_name, uncomparable};
+use super::observe::{
+    agents_files, gemini_retirement, relative_name, uncomparable, under_dot_directory,
+};
 use super::{
     AGENTS_FILE, CLAUDE_SHIM, CLAUDE_SHIM_FILE, GEMINI_KEY, keyed_position, recorded_shims,
 };
@@ -41,17 +43,16 @@ pub(super) fn retire(
     shims: &mut BTreeSet<KeyedShim>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
-) -> Result<Vec<DriftRow>> {
+) -> Result<(Vec<DriftRow>, BTreeSet<PathBuf>)> {
     let Scope::Project { root } = scope else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), BTreeSet::new()));
     };
     // An inventory that will not parse lists nothing; the attestation
     // reports it.
     let listed = crate::fs::read_if_exists(&root.join(INVENTORY))?
         .and_then(|text| inventory_paths(text.as_bytes()).ok())
         .unwrap_or_default();
-    let mut drift = Vec::new();
-    drift.extend(claude(scope, root, &listed, ops)?);
+    let (mut drift, retained) = claude(scope, root, &listed, ops)?;
     let shim = KeyedShim::GeminiContextFile;
     let path = keyed_position(env, scope, shim);
     let recorded = recorded_shims(env, scope, root, shims, || Ok(listed.clone()))?.contains(&shim);
@@ -70,7 +71,7 @@ pub(super) fn retire(
             }
         }
     }
-    Ok(drift)
+    Ok((drift, retained))
 }
 
 /// What one keyed shim's retirement comes to.
@@ -94,12 +95,23 @@ fn claude(
     root: &Path,
     listed: &BTreeSet<String>,
     ops: &mut Vec<PlannedOp>,
-) -> Result<Vec<DriftRow>> {
+) -> Result<(Vec<DriftRow>, BTreeSet<PathBuf>)> {
     let mut drift = Vec::new();
-    for agents in agents_files(root)? {
-        let path = agents.parent().unwrap_or(root).join(CLAUDE_SHIM_FILE);
-        let name = relative_name(root, &path);
-        if !listed.contains(&name) || path.is_symlink() {
+    let mut retained = BTreeSet::new();
+    let discovered: BTreeSet<_> = agents_files(root)?
+        .into_iter()
+        .map(|agents| agents.parent().unwrap_or(root).join(CLAUDE_SHIM_FILE))
+        .collect();
+    for name in listed {
+        let relative = Path::new(name);
+        if relative.is_absolute()
+            || relative.file_name() != Some(std::ffi::OsStr::new(CLAUDE_SHIM_FILE))
+            || under_dot_directory(relative)
+        {
+            continue;
+        }
+        let path = root.join(relative);
+        if path.is_symlink() {
             continue;
         }
         match std::fs::read(&path) {
@@ -107,15 +119,24 @@ fn claude(
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                drift.push(row(
-                    scope,
-                    name.clone(),
-                    HarnessId::Claude,
-                    DriftState::Conflict,
-                    uncomparable(&name, &crate::error::CoreError::io(&path, error)),
-                ));
+                retained.insert(path.clone());
+                if discovered.contains(&path) {
+                    drift.push(row(
+                        scope,
+                        name.clone(),
+                        HarnessId::Claude,
+                        DriftState::Conflict,
+                        uncomparable(name, &crate::error::CoreError::io(&path, error)),
+                    ));
+                }
                 continue;
             }
+        }
+        // Removing a tracked AGENTS.md must not erase the proof a later
+        // restored file needs. Inventory evidence alone authorizes no trash.
+        if !discovered.contains(&path) {
+            retained.insert(path);
+            continue;
         }
         ops.push(trash(
             Description::around(
@@ -126,7 +147,7 @@ fn claude(
         )?);
         drift.push(row(
             scope,
-            name,
+            name.clone(),
             HarnessId::Claude,
             DriftState::Orphaned,
             format!(
@@ -134,7 +155,7 @@ fn claude(
             ),
         ));
     }
-    Ok(drift)
+    Ok((drift, retained))
 }
 
 /// The Gemini settings file at `path`, where the record says an earlier

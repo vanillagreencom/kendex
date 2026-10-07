@@ -69,6 +69,11 @@ pub struct ShimStanding {
     pub state: ShimState,
 }
 
+pub(super) struct PlannedShims {
+    pub standings: Vec<ShimStanding>,
+    pub retained: BTreeSet<PathBuf>,
+}
+
 impl ShimStanding {
     /// Whether this standing fails a verify.
     pub fn failing(&self) -> bool {
@@ -231,9 +236,9 @@ pub(super) fn plan_instruction_shims(
     shims: &mut BTreeSet<KeyedShim>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut super::config_edits::ConfigEditPlan,
-) -> Result<(Vec<ShimStanding>, Vec<DriftRow>)> {
+) -> Result<(PlannedShims, Vec<DriftRow>)> {
     let standings = observe(env, scope, harnesses)?;
-    let mut drift = retire::retire(env, scope, harnesses, shims, ops, config_edits)?;
+    let (mut drift, retained) = retire::retire(env, scope, harnesses, shims, ops, config_edits)?;
     shims.extend(
         standings
             .iter()
@@ -267,7 +272,13 @@ pub(super) fn plan_instruction_shims(
             }
         }
     }
-    Ok((standings, drift))
+    Ok((
+        PlannedShims {
+            standings,
+            retained,
+        },
+        drift,
+    ))
 }
 
 fn gemini_label() -> String {

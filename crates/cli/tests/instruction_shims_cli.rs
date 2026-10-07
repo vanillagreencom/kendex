@@ -123,6 +123,21 @@ fn apply_retires_recorded_claude_files_and_keeps_personal_files() {
             let inventory = project.join(".kendex-generated.json");
             fs::write(inventory, "[\"CLAUDE.md\"]\n").unwrap();
         }
+        if retired {
+            git(&project, &["rm", "--", "AGENTS.md"]);
+            let output = kendex(&home, &project, &["apply", "--yes"]);
+            assert!(output.status.success(), "{}", said(&output));
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+            let inventory: Vec<String> = serde_json::from_str(
+                &fs::read_to_string(project.join(".kendex-generated.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(inventory.iter().any(|entry| entry == "CLAUDE.md"));
+            git(
+                &project,
+                &["restore", "--staged", "--worktree", "--", "AGENTS.md"],
+            );
+        }
         let output = kendex(&home, &project, &["apply", "--yes", "--replace-unmanaged"]);
         assert!(output.status.success(), "{}", said(&output));
         assert_eq!(path.exists(), !retired);
