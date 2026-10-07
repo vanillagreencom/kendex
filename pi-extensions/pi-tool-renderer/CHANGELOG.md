@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`.
+- With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`. With `renderMutationTools` on, `edit` and `write` keep their entries and guidelines too.
 
 ### 2.0.10
 
