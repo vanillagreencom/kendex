@@ -208,6 +208,49 @@ fn catalog_of(home: &Path, name: &str, skills: &[&str]) -> std::path::PathBuf {
     catalog
 }
 
+/// catalog-release-check consumes the bundle names in this JSON envelope.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_catalog_json_names_plain_and_plugin_registry_bundles() {
+    for (file, contents, expected) in [
+        ("kendex.toml", "is_source_catalog = true\n", vec![]),
+        (
+            "kendex.toml",
+            "is_source_catalog = true\n[bundles.team]\nskills = [\"review\"]\n[bundles.extra]\nskills = [\"plan\"]\n",
+            vec!["extra", "team"],
+        ),
+        (
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"catalog","plugins":[{"name":"team","source":"./plugins/team"},{"name":"extra","source":"./plugins/extra"}]}"#,
+            vec!["extra", "team"],
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = catalog_of(&home, "catalog", &["review", "plan"]);
+        catalog_of(&home, "catalog/plugins/team", &["review"]);
+        catalog_of(&home, "catalog/plugins/extra", &["plan"]);
+        let path = catalog.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+        let output = kendex(
+            &home,
+            &home,
+            &["check", "--catalog", catalog.to_str().unwrap(), "--json"],
+        );
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let mut bundles: Vec<_> = report["bundles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|name| name.as_str().unwrap())
+            .collect();
+        bundles.sort_unstable();
+        assert_eq!(bundles, expected, "{file}");
+    }
+}
+
 /// Every `key=value` the checker's report lines carry, in order, after its
 /// exit status; the version and the engine's diagnostic are left out.
 fn outcome(output: &Output) -> String {
@@ -220,6 +263,28 @@ fn outcome(output: &Output) -> String {
         .filter(|field| field.contains('=') && !field.starts_with("version="))
         .collect::<Vec<_>>();
     format!("exit={:?} {}", output.status.code(), fields.join(" "))
+}
+
+#[allow(clippy::unwrap_used)]
+fn release_check(
+    home: &Path,
+    binary: &Path,
+    script: &Path,
+    catalog: &Path,
+    prior: &Path,
+) -> Output {
+    Command::new("python3")
+        .arg(script)
+        .arg(binary)
+        .arg(catalog)
+        .arg("--prior")
+        .arg(prior)
+        .env_clear()
+        .envs(test_util::fixture_env(home))
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("RUNNER_TEMP", home)
+        .output()
+        .unwrap()
 }
 
 /// The upgrade leg installs the prior catalog with each of its packages
@@ -240,11 +305,12 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
     let original = std::fs::read_to_string(&tool).unwrap();
     let dropped_passes = "exit=Some(0) result=pass legs=fresh,upgrade";
-    for (name, shipped, candidate, expected, controls) in [
+    for (name, shipped, candidate, bundles, expected, controls) in [
         (
             "settles",
             &["review", "plan"][..],
             &["review", "plan", "audit"][..],
+            (None, None),
             "exit=Some(0) result=pass legs=fresh,upgrade",
             &[][..],
         ),
@@ -252,6 +318,7 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
             "drops",
             &["review", "plan"][..],
             &["review"][..],
+            (None, None),
             "exit=Some(1) leg=upgrade remedy=keep-package",
             &[
                 (
@@ -270,31 +337,56 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
             "prior refused",
             &["review", "Bad_Name"][..],
             &["review"][..],
+            (None, None),
             "exit=Some(0) upgrade=skip cause=prior-uninstallable result=pass legs=fresh",
             &[(
-                "refused = settle(upgrade, [[\"check\", \"--catalog\", str(prior)]], [])",
-                "refused = None",
+                "if prior_check.returncode != 0:",
+                "if False and prior_check.returncode != 0:",
                 "exit=Some(1) leg=upgrade remedy=keep-package",
             )][..],
+        ),
+        (
+            "renamed bundle",
+            &["review", "plan"][..],
+            &["review", "plan"][..],
+            (Some("team"), Some("renamed")),
+            "exit=Some(1) leg=upgrade remedy=keep-package",
+            &[(
+                "install(source, bundles)",
+                "install(source)",
+                dropped_passes,
+            )][..],
+        ),
+        (
+            "keeps bundles",
+            &["review", "plan"][..],
+            &["review", "plan"][..],
+            (Some("team"), Some("team")),
+            dropped_passes,
+            &[][..],
         ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let prior = catalog_of(&home, "prior", shipped);
         let catalog = catalog_of(&home, "candidate", candidate);
+        for (path, bundle) in [(&prior, bundles.0), (&catalog, bundles.1)] {
+            if let Some(bundle) = bundle {
+                std::fs::write(
+                    path.join("kendex.toml"),
+                    format!("is_source_catalog = true\n[bundles.{bundle}]\nskills = [\"review\"]\n[bundles.extra]\nskills = [\"plan\"]\n"),
+                )
+                .unwrap();
+            }
+        }
         let run = |script: &Path| {
-            Command::new("python3")
-                .arg(script)
-                .arg(env!("CARGO_BIN_EXE_kendex"))
-                .arg(&catalog)
-                .arg("--prior")
-                .arg(&prior)
-                .env_clear()
-                .envs(test_util::fixture_env(&home))
-                .env("PATH", std::env::var("PATH").unwrap_or_default())
-                .env("RUNNER_TEMP", &home)
-                .output()
-                .unwrap()
+            release_check(
+                &home,
+                Path::new(env!("CARGO_BIN_EXE_kendex")),
+                script,
+                &catalog,
+                &prior,
+            )
         };
         let output = run(&tool);
         assert_eq!(outcome(&output), expected, "{name}: {output:?}");
@@ -307,6 +399,72 @@ fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
             let control = run(&path);
             assert_eq!(outcome(&control), *reached, "{name} {target}: {control:?}");
         }
+    }
+}
+
+/// v1.11.0 has no bundle field. This fixture removes only that field from
+/// the built CLI's JSON while its installs and refreshes still run for real.
+#[allow(clippy::unwrap_used)]
+fn engine_without_bundle_names(home: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = home.join("old-engine");
+    let binary = serde_json::to_string(env!("CARGO_BIN_EXE_kendex")).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "#!/usr/bin/env python3\nimport json, os, subprocess, sys\nresult = subprocess.run([{binary}, *sys.argv[1:]], env=dict(os.environ), capture_output=True)\nstdout = result.stdout\nif sys.argv[1:2] == ['check'] and '--json' in sys.argv:\n    report = json.loads(stdout)\n    del report['bundles']\n    stdout = json.dumps(report).encode()\nsys.stdout.buffer.write(stdout)\nsys.stderr.buffer.write(result.stderr)\nsys.exit(result.returncode)\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The missing-field path keeps package validation and emits one notice
+/// consumed by catalog CI. Suppressing that notice must fail its assertion.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_old_engine_keeps_package_upgrade_checks_and_reports_bundle_coverage_unavailable() {
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
+    let original = std::fs::read_to_string(&tool).unwrap();
+    let notice = "bundles=unavailable cause=engine-missing-bundles";
+    for (candidate, expected) in [
+        (&["review", "plan"][..], "result=pass legs=fresh,upgrade"),
+        (&["review"][..], "leg=upgrade remedy=keep-package"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let prior = catalog_of(&home, "prior", &["review", "plan"]);
+        let catalog = catalog_of(&home, "candidate", candidate);
+        let binary = engine_without_bundle_names(&home);
+        let run = |script: &Path| release_check(&home, &binary, script, &catalog, &prior);
+        let output = run(&tool);
+        let exit = if candidate.contains(&"plan") { 0 } else { 1 };
+        assert_eq!(
+            outcome(&output),
+            format!("exit=Some({exit}) {notice} {expected}"),
+            "{output:?}"
+        );
+        let has_notice = |output: &Output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| line.ends_with(notice))
+                .count()
+                == 1
+        };
+        assert!(has_notice(&output), "{output:?}");
+        let target = format!(
+            "                    print(f\"catalog-release: version={{json.dumps(version)}} {notice}\")"
+        );
+        assert_eq!(original.matches(&target).count(), 1);
+        let mutant = original.replace(&target, "                    pass");
+        assert_ne!(mutant, original);
+        let path = home.join("mutant-check");
+        std::fs::write(&path, mutant).unwrap();
+        let control = run(&path);
+        assert_eq!(control.status.code(), Some(exit), "{control:?}");
+        assert!(!has_notice(&control), "{control:?}");
+        assert_eq!(outcome(&control), format!("exit=Some({exit}) {expected}"));
     }
 }
 

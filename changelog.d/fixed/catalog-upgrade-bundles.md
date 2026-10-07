@@ -1,0 +1,1 @@
+- Catalog checks expose bundle names for upgrade checks that detect removed or renamed bundles.

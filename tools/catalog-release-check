@@ -3,14 +3,16 @@
 
 Usage: catalog-release-check BINARY CATALOG [--allow-advisories] [--prior PRIOR]
 The fresh leg installs CATALOG into a new project. With --prior, the upgrade
-leg installs PRIOR with every package it ships declared, then refreshes that
-project to CATALOG through the same declared source, as a consumer's refresh
+leg installs PRIOR with every package and each bundle the engine reports declared, then
+refreshes that project to CATALOG through the same declared source, as a consumer's refresh
 does after a catalog merge. A PRIOR the engine's own catalog check refuses
 skips the upgrade leg.
 Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
 catalog-release: remedy=KEY on failure, catalog-release: version=JSON
 result=pass legs=NAMES on success, and catalog-release: upgrade=skip
 cause=prior-uninstallable feature=JSON before a pass on the fresh leg alone.
+An engine without bundle names reports bundles=unavailable
+cause=engine-missing-bundles and keeps the package upgrade checks.
 The feature value is the engine's diagnostic, not a second feature classifier.
 Core owns declared-hook delivery and catalog validation rules.
 """
@@ -29,7 +31,7 @@ VERIFY = ["verify", "--scope", "project"]
 # is stated in full here.
 REMEDIES = {
     "fresh": ("release-engine", "Release an engine that supports this catalog before merging it. See the kendex app-deploy skill § Catalog compatibility."),
-    "upgrade": ("keep-package", "The refresh from the base commit's catalog failed above. Where a package that catalog shipped is gone or renamed here, every existing install that declares it fails the same way: keep the package, a stub is enough, until a released kendex retires it."),
+    "upgrade": ("keep-package", "The refresh from the base commit's catalog failed above. Where a package or bundle that catalog shipped is gone or renamed here, every existing install that declares it fails the same way: keep the package or bundle, a stub is enough, until a released kendex retires it."),
 }
 
 
@@ -50,9 +52,10 @@ def arguments(argv):
     return binary, catalog, strict, prior
 
 
-def install(source):
+def install(source, bundles=()):
     return ["add", str(source), "--all", "--all-harnesses",
-            "--copy", "--yes", "--throwaway", "--leave"]
+            "--copy", "--yes", "--throwaway", "--leave",
+            *[flag for name in bundles for flag in ("--bundle", name)]]
 
 
 def leg(binary, place, ceilings):
@@ -128,17 +131,26 @@ def main():
             # The engine's catalog check answers whether it accepts the base.
             # A base it refuses is no install this leg can model, and failing
             # on one would hold back the change that repairs it.
-            refused = settle(upgrade, [["check", "--catalog", str(prior)]], [])
-            if refused is not None:
+            prior_check = upgrade(["check", "--catalog", str(prior), "--json"])
+            if prior_check.returncode != 0:
+                refused = "\n".join(filter(None, (prior_check.stderr.strip(), prior_check.stdout.strip())))
                 print(f"catalog-release: upgrade=skip cause=prior-uninstallable feature={json.dumps(refused)}")
             else:
+                prior_report = json.loads(prior_check.stdout)
+                if "bundles" in prior_report:
+                    bundles = prior_report["bundles"]
+                else:
+                    # Released v1.11.0 omits bundle names. Remove this path
+                    # when the minimum released engine reports them.
+                    bundles = ()
+                    print(f"catalog-release: version={json.dumps(version)} bundles=unavailable cause=engine-missing-bundles")
                 # The manifest records the source by this path, so the refresh
                 # reaches the candidate through the one declaration, as a
                 # consumer's subscription does across a catalog merge.
                 source = root / "upgrade" / "catalog"
                 source.symlink_to(prior, target_is_directory=True)
                 diagnostics = []
-                diagnostic = settle(upgrade, [install(source)], diagnostics)
+                diagnostic = settle(upgrade, [install(source, bundles)], diagnostics)
                 if diagnostic is None:
                     source.unlink()
                     source.symlink_to(catalog, target_is_directory=True)

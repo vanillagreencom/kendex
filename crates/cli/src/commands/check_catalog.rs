@@ -23,7 +23,14 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
     let report = kendex_core::check_catalog::check(&sealed, &display)?;
     let failing = report.failing(strict);
     match json {
-        true => machine(&report, failing == 0)?,
+        true => {
+            let config = kendex_core::source::source_config(&sealed, &display)?;
+            machine(
+                &report,
+                failing == 0,
+                &kendex_core::source::bundles::names(&config),
+            )?;
+        }
         false => lines(&report),
     }
     match failing {
@@ -36,7 +43,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
 
 /// The machine envelope. serde_json preserves insertion order, so the
 /// written order here is the field order a consumer sees.
-fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
+fn machine(report: &CatalogCheck, ok: bool, bundles: &[String]) -> CliResult {
     let tally = report.tally();
     answer(&serde_json::to_string_pretty(&serde_json::json!({
         "schema": CHECK_SCHEMA,
@@ -44,6 +51,7 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
         "breakage": tally.breakage,
         "safety_findings": tally.findings,
         "ok": ok,
+        "bundles": bundles,
     }))?);
     Ok(())
 }
