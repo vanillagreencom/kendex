@@ -754,10 +754,23 @@ has_exit_trap() { # FILE
   # the action, a substitution's included, names no signal.
   local n='' signals=''
   while IFS= read -r n; do
+    line_is_code "$1" "$n" || continue
     signals="$(trap_signals "$1" "$n")" || continue
     grep -Eq -- '(^|[[:space:]])(EXIT|0)([[:space:]]|;|$)' <<<"$signals" && return 0
   done < <(LC_ALL=C awk '!/^[[:space:]]*#/ && /(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]]/ { print NR }' "$1" 2>/dev/null)
   return 1
+}
+# Whether the shell reads LINE as code: the lines above it leave no quote or
+# here-document open, where the same text is data another command receives.
+line_is_code() { # FILE LINE
+  local prefix='' diagnostic=''
+  [ "$2" -gt 1 ] || return 0
+  prefix="$(sed -n "1,$(($2 - 1))p" <"$1")" || return 1
+  diagnostic="$(LC_ALL=C bash -n <<<"$prefix" 2>&1)" || :
+  case "$diagnostic" in
+    *'unexpected EOF while looking for matching '* | *'here-document at line '*' delimited by end-of-file'*) return 1 ;;
+  esac
+  return 0
 }
 # The signal operands of the trap command opening on LINE whose quoted action
 # spans lines: the text after the last quote on the line Bash's parser closes

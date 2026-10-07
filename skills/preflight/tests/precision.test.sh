@@ -404,10 +404,22 @@ trap "
 " INT
 echo "$D"
 EOF
+cat >"$R/scripts/heredoc-trap.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+cat >"$D/child.sh" <<'CHILD'
+trap '
+  echo cleanup
+' EXIT
+CHILD
+echo "$D"
+EOF
 run_pf
-fires "a multiline INT trap whose action says EXIT, plainly or beside a substitution, still leaves scratch behind" \
+fires "a multiline INT trap whose action says EXIT, plainly or beside a substitution, or an EXIT trap in a here-document, still leaves scratch behind" \
   "scripts/multitrap.sh:3: [mktemp-trap]" \
-  "scripts/multisubst-trap.sh:3: [mktemp-trap]"
+  "scripts/multisubst-trap.sh:3: [mktemp-trap]" \
+  "scripts/heredoc-trap.sh:3: [mktemp-trap]"
 
 echo "=== a temp-path literal is a finding only in a creation call's hands ==="
 seed tmppath
