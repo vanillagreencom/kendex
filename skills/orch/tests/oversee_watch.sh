@@ -188,7 +188,11 @@ for mode in opening replacement; do
   err="$TMP_ROOT/refresh-$mode.err"
   out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
   assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "refresh $mode wakes without an owning lane" "$err"
-  [[ "$mode" != replacement ]] || assert_contains "$out" "bbbb0000" "the replacement refresh head is news" "$err"
+  if [[ "$mode" == opening ]]; then
+    assert_contains "$out" "aaaa0000" "the opening refresh head wakes immediately" "$err"
+  else
+    assert_contains "$out" "bbbb0000" "the replacement refresh head is news" "$err"
+  fi
 done
 
 REFRESH_SCRIPTS="$(mutant_scripts refresh-opening-mutant/orch lib/pr-watch-pass.sh)" || exit 1
