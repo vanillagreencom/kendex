@@ -21,6 +21,7 @@
   "scripts": {
     "test": "bun test ./tests ./extensions/subagent/__tests__",
     "bench:popup": "bun ./tests/popup-layout.bench.ts",
+    "bench:spawn": "bun ./tests/spawn.bench.ts",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
   },
