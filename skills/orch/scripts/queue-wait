@@ -208,9 +208,11 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               or out of it and unarmed at the last poll, an ejection or
               disarm short of its confirmation count (cause
               exit_unconfirmed, unconfirmed_verdict naming which).
-              Reported as status "timeout": the merge stays armed and fires
-              on its own, so this is NOT a failure of the merge — and never
-              a success either. Carries cause still_progressing, stalled or
+              Reported as status "timeout". With an entry the merge stays
+              armed and fires on its own, so this is NOT a failure of the
+              merge — and never a success either; exit_unconfirmed is no
+              live arm, and nothing fires. Carries cause still_progressing,
+              stalled or
               progress_unobservable (the entry exists and its head could
               not be read), and unconfirmed_verdict when the last poll held
               a candidate that never reached the confirmation count. Never
