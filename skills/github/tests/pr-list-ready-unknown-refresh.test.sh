@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tests for pr-list-ready's refresh of PRs whose mergeable state reads
 # UNKNOWN. The refreshed PRs, each carrying its statusCheckRollup, grow with
-# the open-PR count; handed to jq as one argument they pass Linux's
-# per-argument limit (128 KiB) and the listing fails with "Argument list too
-# long". The fixture refreshes 60 PRs with a 4 KiB rollup each.
+# the open-PR count; handed to jq as one argument they fail the listing with
+# "Argument list too long". The fixture refreshes 60 PRs of about 26 KiB
+# each: one PR stays under Linux's per-argument limit (128 KiB) and all of
+# them pass macOS's whole-argv limit (1 MiB), so the control fails on both.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,8 +35,8 @@ GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 gh_stub_answer api-user tester
 
 PR_COUNT=60
-# 40 passing CheckRuns with 80-character names: about 4 KiB of rollup per PR.
-rollup="$(jq -nc '[range(40) | {__typename: "CheckRun", status: "COMPLETED",
+# 160 passing CheckRuns with 80-character names: about 26 KiB per PR.
+rollup="$(jq -nc '[range(160) | {__typename: "CheckRun", status: "COMPLETED",
   conclusion: "SUCCESS", name: ("check-\(.)-" + ("x" * 72))}]')"
 mk_pr() { # number mergeable
   jq -nc --argjson n "$1" --arg m "$2" --argjson rollup "$rollup" \

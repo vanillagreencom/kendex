@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Tests for pr-cross-check over many PRs. The PR file lists, their overlaps
 # and the issues built from them grow with the PR count; handed to jq as
-# arguments they pass Linux's per-argument limit (128 KiB) and the check
-# fails with "Argument list too long". The fixture checks 60 PRs of 80 files
-# each, every PR sharing 40 files with its successor.
+# arguments they fail the check with "Argument list too long". The fixture
+# checks 60 PRs of 500 files each, every PR sharing 250 files with its
+# successor: one PR's files stay under Linux's per-argument limit (128 KiB)
+# and each grown list passes macOS's whole-argv limit (1 MiB), so every
+# control fails on both.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,12 +35,12 @@ assert_eq() {
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
 PR_COUNT=60
-# PR n touches file sets n-1 and n: 40 paths of about 80 characters each.
+# PR n touches file sets n-1 and n: 250 paths of about 90 characters each.
 pr_args=()
 for n in $(seq 1 "$PR_COUNT"); do
   pr_args+=("$n")
   gh_stub_answer "pr-view:view $n --json" "$(jq -nc --argjson n "$n" '
-    def set($k): [range(40) | {path: ("src/set-\($k)/file-\(.)-" + ("x" * 60) + ".rs")}];
+    def set($k): [range(250) | {path: ("src/set-\($k)/file-\(.)-" + ("x" * 60) + ".rs")}];
     {number: $n, headRefName: "b\($n)", baseRefName: "main",
      mergeable: "MERGEABLE", files: (set($n - 1) + set($n))}')"
 done
@@ -58,7 +60,7 @@ run() {
 
 # PR 1 and PR 60 overlap one neighbour each, the rest two: the ends go first.
 want="$(seq -s, 1 "$PR_COUNT")
-$((40 * (PR_COUNT - 1)))
+$((250 * (PR_COUNT - 1)))
 1,$PR_COUNT,$(seq -s, 2 $((PR_COUNT - 1)))"
 
 echo "=== 60 PRs with large, overlapping file lists ==="
