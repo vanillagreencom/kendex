@@ -538,7 +538,7 @@
 #                      reached is the verb failing, reported as
 #                      `host-accounts-unreadable`. A bounded call waits for a
 #                      lane-host slot for less than the bound, so a full
-#                      ORCH_LANE_HOST_MAX_CALLS cap reads as `lane-host-busy`
+#                      ORCH_LANE_HOST_SHORT_MAX_CALLS cap reads as `lane-host-busy`
 #                      rather than as the bound. Where neither spelling is
 #                      installed, a CACHED read runs unbounded and the cache
 #                      holds its cost to one call per TTL, while a `--no-cache`

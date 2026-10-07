@@ -81,7 +81,7 @@ lane_host_slot_try() { # DIR CAP
   return "$rc"
 }
 
-# Take a slot for VERB, waiting up to ORCH_LANE_HOST_BUSY_WAIT_SECS for one to
+# Take a slot for VERB, waiting up to the selected pool's wait setting for one to
 # free. A refusal prints its keyed line and returns LANE_HOST_BUSY_EXIT; a
 # setting or slot failure returns 2. The caller releases with
 # lane_host_slot_release, from its EXIT trap.

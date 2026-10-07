@@ -142,7 +142,9 @@ cap_count() { # ITEM KEY
 # Returns 0 with the item's reservation written and the lock released when
 # this item may launch, and 1 having released it when it may not, its refusal
 # printed. A relaunch of a held record replaces its lane, so it is inside the
-# cap: a parked lane's resume takes back the slot its record kept. --over-cap admits the launch past the cap and names it in CAP_PASSED;
+# cap: a parked lane's resume takes back the slot its record kept. A saved
+# foreground preparation continues in its held slot after its identity is
+# checked by host_launch_resume. --over-cap admits the launch past the cap and names it in CAP_PASSED;
 # --wait-slot counts again every WAIT_SLOT_POLL_SECS until the cap has room,
 # printing slot-waiting whenever the count it waits on changes, and judges the
 # lane again before the count that admits it.
@@ -152,7 +154,7 @@ cap_gate() { # ITEM KEY WINDOW
   while :; do
     cap_take "$item" || return 1
     cap_count "$item" "$key" || { cap_release; return 1; }
-    if [[ "$RELAUNCH" == true && "$CAP_ITEM_HELD" == held ]] || (( CAP_RUNNING + CAP_INFLIGHT < FLEET_CAP )); then
+    if [[ ( "$RELAUNCH" == true || -n "$host_line" ) && "$CAP_ITEM_HELD" == held ]] || (( CAP_RUNNING + CAP_INFLIGHT < FLEET_CAP )); then
       [[ "$stale" == true ]] || { cap_reserve "$item" "$3"; return; }
       cap_release
       lane_rejudge "$item" || return 1
