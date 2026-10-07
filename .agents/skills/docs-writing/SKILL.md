@@ -11,7 +11,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.10"
+  version: "3.0.11"
 tags: [docs]
 ---
 
@@ -58,12 +58,12 @@ This is the default repository layout. A rewrite moves what it finds onto it. A 
 | Path | Reader | Holds | Required |
 |---|---|---|---|
 | `README.md` | a person choosing or using it | the sections § `README.md` orders | yes |
-| `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and one "Read when" line per principle doc | yes |
+| `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and task routes to principle docs, directly or through named nested instructions | yes |
 | `CLAUDE.md` | Claude Code | one import line, written by kendex | yes, written by kendex |
 | `DEVELOPMENT.md` | a maintainer | build, run, test and debug: only what the tooling does not show | where needed |
 | `LICENSE` | a person | the licence | yes |
 | `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
-| `<dir>/AGENTS.md`, with its `<dir>/CLAUDE.md` import line | an agent working in that folder | the folder's commands, its do and never rules, and the principle doc that governs it | where a folder has its own rules |
+| `<dir>/AGENTS.md`, with its `<dir>/CLAUDE.md` import line | an agent working in that folder | the folder's commands, rules no linked principle doc owns, and task triggers for the principle docs that govern it | where a folder has its own rules |
 | `docs/architecture/<name>.md` | an agent about to do the work the doc governs | one principle: the approach, why, the rules, one code example | where a principle exists |
 | `docs/decisions/INDEX.md` and `<DECISION_ID>-<slug>.md` (names and locations follow decider) | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
 | `docs/images/` | a reader of a README or doc | the screenshots and images those files show | when used |
@@ -120,7 +120,7 @@ The harness shim. kendex writes it, and its whole content is one import line.
 
 ### `docs/architecture/<name>.md`
 
-Optional. Read by an agent about to do the work the doc governs. A doc exists for one reader's task and the harmful mistake it prevents: name the work an agent does with the doc open, and what that agent breaks without it. A subsystem name alone is no reason for a file, and the rules one reader uses for one task are one doc, whatever folders they cross. No file count, size or line limit holds. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` lists the docs with their triggers, and every retained doc has a trigger line there or in a nested `AGENTS.md`. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
+Optional. Read by an agent about to do the work the doc governs. A doc exists for one reader's task and the harmful mistake it prevents: name the work an agent does with the doc open, and what that agent breaks without it. A subsystem name alone is no reason for a file, and the rules one reader uses for one task are one doc, whatever folders they cross. No file count, size or line limit holds. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` gives task triggers or routes to named nested instructions, and every retained doc has a trigger line at the root or in those nested instructions. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
 
 The contrast, a journal paragraph against the principle it should be:
 
@@ -133,7 +133,7 @@ Three lines that read as rules and are not:
 | Rule | Not a rule |
 |---|---|
 | A pointer to the enforcing check: "Never name a plugin id in the core; `scripts/check-plugin-boundary.py` refuses it." | Test-case narration: "Enforced by `test_attribution.py::two_speakers_one_microphone`, whose control removes the second speaker, and by `::no_transcript` for an empty recording." The reader learns which tests exist, not what the code must never do, and every test name goes stale at the next rename. |
-| A contract: "One judge, `manifest.py::validate`, decides every manifest; a key it does not list refuses the manifest." | A field inventory: a table of every manifest key with its type, whether it is required and what it means. The judge's source and the reference doc hold it, and the table is wrong the day a key changes. |
+| A contract: "One judge, `manifest.py::validate`, decides every manifest; a key it does not list refuses the manifest." | A field inventory: a table of every manifest key with its type, whether it is required and what it means. The judge's declaration owns the shape and defaults; the reference links to it and explains semantics. A hand-copied table is wrong the day a key changes. |
 | A high-level rule: "A release is built once; every stage deploys that one artifact and never rebuilds." | A call sequence: "`make release` runs `scripts/bundle.sh`, which writes `dist/app.tar`; `deploy staging` uploads it, restarts the service and runs `smoke.sh`; `deploy prod` repeats the steps." The reader is walked through the scripts and still does not know what a change to them must preserve. |
 
 Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), [examples/architecture-design-system.md](examples/architecture-design-system.md).
@@ -178,7 +178,7 @@ The `changelog-entries` lane owns the shape, and its release-version rule, the c
 
 - Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
 - A constraint without an enforcer names review, an operator step, or the gap.
-- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures the files a harness loads every turn, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
+- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
 
 ## Plans and research
 

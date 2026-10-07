@@ -2,8 +2,7 @@
 
 The shared components every screen builds from. Before changing a component, read `docs/architecture/design-system.md`.
 
-- Preview a component in every state with `npm run gallery`; `npm test -- gallery` fails a component missing a light, dark or reduced-motion render.
-- Never export a component only one screen uses; keep it in that screen's file.
+- Preview a component with `npm run gallery`; test its renders with `npm test -- gallery`.
 
 ---
 
@@ -15,4 +14,4 @@ The shared components every screen builds from. Before changing a component, rea
 > | `Button` sm | 24 | 8 | 4 | 0 |
 > | `TextField` | 32 | 12 | 8 | 0 |
 
-The values duplicate the token file and are wrong the day it changes; the folder's rule is where the values live, not what they are.
+The values duplicate the token file and are wrong the day it changes; the folder's reading trigger leads to the principle doc that owns the token rule.

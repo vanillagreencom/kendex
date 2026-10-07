@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.1.4"
+  version: "2.1.5"
 tags: [planning]
 ---
 

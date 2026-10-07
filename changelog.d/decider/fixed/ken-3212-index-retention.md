@@ -1,0 +1,1 @@
+- Keep withdrawn decision links in the index template while reserving pointer-only entries for removed records.

@@ -3,9 +3,6 @@
 One directory per plugin, each with `manifest.json`, its QML or Python entry and `tests/`. Before changing a plugin, read `docs/architecture/plugins.md`.
 
 - Run one plugin's tests with `uv run pytest shell/plugins/<name>`.
-- A plugin imports from `shell/hosts/` and its own directory only; `scripts/check-plugin-boundary.py` refuses an import of another plugin or of the core.
-- Declare every host the plugin needs in `manifest.json`; an undeclared host is absent at run time.
-- Never read the compositor directly; the `compositor` host owns that link.
 
 ---
 
