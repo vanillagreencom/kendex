@@ -77,19 +77,27 @@ mkdir -p "$WT_EMPTY/tmp"
 WT_REMOVED="$TMP_ROOT/wt.removed"
 
 # --- The transcripts ---------------------------------------------------------
-claude_call() { # WORKTREE-ARGUMENT — a Bash call that outlasted its timeout
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":".agents/skills/orch/scripts/dev-validate-run --worktree %s","timeout":600000}}]}}\n' "$1"
+# A shell command as each harness records it, encoded by jq as the harness
+# encodes it: Claude Code's Bash tool_use input in its JSON line, and Codex's
+# exec_command arguments, a JSON string of their own inside the rollout's.
+recorded() { # HARNESS COMMAND
+  case "$1" in
+    claude) jq -cn --arg c "$2" \
+      '{type: "assistant", message: {content: [{type: "tool_use", name: "Bash", input: {command: $c, timeout: 600000}}]}}' ;;
+    codex) jq -cn --arg c "$2" --arg w "$RUN_DIR" \
+      '{type: "response_item", payload: {type: "function_call", name: "exec_command", arguments: ({cmd: $c, workdir: $w} | tojson)}}' ;;
+  esac
+}
+claude_call() { # WORKTREE — a Bash call that outlasted its timeout
+  recorded claude ".agents/skills/orch/scripts/dev-validate-run --worktree $1"
   printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"Command did not complete within its 600s timeout and was moved to the background (ID: b1). Output is being written to: %s/task.output. You will be notified when it completes."}]}}\n' "$TMP_ROOT"
 }
-codex_call() { # WORKTREE WORKTREE-ARGUMENT — an exec_command call in a rollout
-  printf '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\".agents/skills/orch/scripts/dev-validate-run --validate-mode range --base abc123 --worktree %s\\",\\"workdir\\":\\"%s\\"}"}}\n' "${2:-$1}" "$1"
+codex_call() { # WORKTREE — an exec_command call in a rollout
+  recorded codex ".agents/skills/orch/scripts/dev-validate-run --validate-mode range --base abc123 --worktree $1"
 }
-claude_wait() { # RUN-DIR [RUN-DIR-ARGUMENT] — the --wait call a hold names
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":".agents/skills/orch/scripts/dev-validate-run --wait --run-dir %s","timeout":600000}}]}}\n' "${2:-$1}"
+claude_wait() { # RUN-DIR — the --wait call a hold names
+  recorded claude ".agents/skills/orch/scripts/dev-validate-run --wait --run-dir $1"
   printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"state=running elapsed-secs=540 cap-secs=3660 run-dir=%s"}]}}\n' "$1"
-}
-codex_wait() { # RUN-DIR-ARGUMENT
-  printf '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\".agents/skills/orch/scripts/dev-validate-run --wait --run-dir %s\\"}"}}\n' "$1"
 }
 claude_hold() { # RUN-DIR — a stop this hook held, its text naming the --wait call
   printf '{"type":"user","message":{"role":"user","content":"Stop hook feedback:\\n[bash .claude/hooks/dev-stop-check.sh]: dev-stop-check: running=%s\\nthe validation run you started is still going.\\n%s/.claude/skills/orch/scripts/dev-validate-run --wait --run-dir %s\\nthen finish the round from the verdict it prints.\\n"},"isMeta":true}\n' "$1" "$TMP_ROOT" "$1"
@@ -102,17 +110,8 @@ transcript() { # NAME CONTENT
 }
 transcript live-claude "$(claude_call "$WT_LIVE")"
 transcript live-codex "$(codex_call "$WT_LIVE")"
-# A double quote is escaped once in Claude Code's JSON and twice in the
-# arguments string a Codex rollout nests in its own.
-transcript live-claude-double "$(claude_call '\"'"$WT_LIVE"'\"')"
-transcript live-claude-single "$(claude_call "'$WT_LIVE'")"
-transcript live-codex-double "$(codex_call "$WT_LIVE" '\\\"'"$WT_LIVE"'\\\"')"
 transcript held "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE")"
 transcript held-waited "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE")"
-transcript held-waited-single "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE" "'$RUN_LIVE'")"
-transcript held-waited-double "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE" '\"'"$RUN_LIVE"'\"')"
-transcript codex-held-waited-single "$(codex_call "$WT_LIVE"; codex_hold "$RUN_LIVE"; codex_wait "'$RUN_LIVE'")"
-transcript codex-held-waited-double "$(codex_call "$WT_LIVE"; codex_hold "$RUN_LIVE"; codex_wait '\\\"'"$RUN_LIVE"'\\\"')"
 # A rerun: the first run was held and waited for, and the second, started
 # after a fix, has never been held.
 transcript rerun "$(claude_call "$WT_LIVE"; claude_hold "$WT_LIVE/tmp/dev-validate-first"
@@ -272,19 +271,12 @@ stop_rows() {
   done <<ROWS
 a live run named by a Claude Code call that outlasted its timeout is refused|orch|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a live run named by a Codex exec_command call is refused|orch|-|agent:live-codex|2|dev-stop-check: running=$RUN_LIVE|wait
-a double-quoted worktree in a Claude Code call is read|orch|-|agent:live-claude-double|2|dev-stop-check: running=$RUN_LIVE|wait
-a single-quoted worktree in a Claude Code call is read|orch|-|agent:live-claude-single|2|dev-stop-check: running=$RUN_LIVE|wait
-a double-quoted worktree in a Codex exec_command call is read|orch|-|agent:live-codex-double|2|dev-stop-check: running=$RUN_LIVE|wait
 a live run is found past a newer worktree whose run has finished|orch|-|agent:live-then-done|2|dev-stop-check: running=$RUN_LIVE|wait
 a payload without agent_transcript_path reads transcript_path|orch|-|bare:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 the parent's transcript is not the subagent's|orch|-|parent:live-claude|0|-|-
 a continued stop with no wait since the hold lets the live run go|orch|-|active:held|0|dev-stop-check: abandoned=$RUN_LIVE|-
 a continued stop on a run this hook never held is held|orch|-|active:rerun|2|dev-stop-check: running=$RUN_LIVE|wait
 a continued stop after a wait since the hold is held again|orch|-|active:held-waited|2|dev-stop-check: running=$RUN_LIVE|wait
-a single-quoted run dir in a Claude Code wait is read|orch|-|active:held-waited-single|2|dev-stop-check: running=$RUN_LIVE|wait
-a double-quoted run dir in a Claude Code wait is read|orch|-|active:held-waited-double|2|dev-stop-check: running=$RUN_LIVE|wait
-a single-quoted run dir in a Codex wait is read|orch|-|active:codex-held-waited-single|2|dev-stop-check: running=$RUN_LIVE|wait
-a double-quoted run dir in a Codex wait is read|orch|-|active:codex-held-waited-double|2|dev-stop-check: running=$RUN_LIVE|wait
 a wait before the last hold does not hold again|orch|-|active:waited-held|0|dev-stop-check: abandoned=$RUN_LIVE|-
 a continued stop with no run going passes|orch|-|active:done|0|-|-
 a run with its verdict passes|orch|-|agent:done|0|-|-
@@ -306,8 +298,119 @@ every missing tool is named|orch|none|agent:live-claude|0|dev-stop-check: missin
 ROWS
 }
 
+# --- How a recorded command is read ------------------------------------------
+# One table over every quoting form and every shell operator, for the two
+# commands the hook reads: the start naming the worktree, judged on a first
+# stop, and the --wait naming the run, judged on a continued stop after a hold.
+# A form quotes every word it can, the command's own included, so a quoted
+# word between dev-validate-run and the flag is read too; each harness encodes
+# the command as it records it, a double quote escaped once by Claude Code and
+# twice by Codex.
+FORMS="bare
+single
+double"
+quoted() { # FORM WORD
+  case "$1" in
+    bare) printf '%s' "$2" ;;
+    single) printf "'%s'" "$2" ;;
+    double) printf '"%s"' "$2" ;;
+  esac
+}
+# An operator: the text before the command, the text after the path, the
+# text between two words of the command, `-` where no valid command puts it
+# there (a parenthesis there opens only a `$(...)`, whose output the shell
+# hands on as words), and whether the shell splits the command there. Each
+# text is decoded by `printf %b`. Around the command, the path is read;
+# between, it is read only where the words stay one command, and where the
+# flag is another command's word the path is not read, the row's must-fail
+# input.
+OPERATORS="semicolon@true;@;echo rc=\$?@;echo@splits
+background@true&@&wait@&echo@splits
+and@cd /tmp&&@&&git status@&&echo@splits
+pipe@true|@|tail -5@|echo@splits
+or@false||@||true@||echo@splits
+subshell@(@)@-@splits
+newline@true\n@\necho done@\necho@splits
+redirection@2>err @>log 2>&1@ 2>&1@joins
+redirection-all@&>err @&>log@ &>log@joins"
+# The rows, one per subject, harness, form, operator and position, as
+# `subject|harness|form|operator|position|label|transcript|payload kind|rc|first`.
+FORM_CASES="$TMP_ROOT/form-cases"
+: >"$FORM_CASES"
+form_case() { # SUBJECT HARNESS FORM OPERATOR POSITION COMMAND
+  local name="form.$1.$2.$3.$4.$5" kind=agent rc_want=2 first_want="dev-stop-check: running=$RUN_LIVE"
+  case "$1" in
+    worktree) transcript "$name" "$(recorded "$2" "$6")" ;;
+    wait)
+      kind=active
+      transcript "$name" "$(recorded "$2" ".agents/skills/orch/scripts/dev-validate-run --worktree $WT_LIVE"
+        "$2_hold" "$RUN_LIVE"; recorded "$2" "$6")"
+      ;;
+  esac
+  case "$1/$5" in
+    worktree/between) rc_want=0 first_want=- ;;
+    wait/between) rc_want=0 first_want="dev-stop-check: abandoned=$RUN_LIVE" ;;
+  esac
+  printf '%s|%s|%s|%s|%s|form: the %s path, %s, %s, %s %s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" \
+    "$1" "$2" "$3" "$4" "$5" "$name" "$kind" "$rc_want" "$first_want" >>"$FORM_CASES"
+}
+COMMAND_WORD=.agents/skills/orch/scripts/dev-validate-run
+while IFS= read -r form; do
+  for harness in claude codex; do
+    while IFS='@' read -r operator before after between split; do
+      printf -v before '%b' "$before"
+      printf -v after '%b' "$after"
+      printf -v between '%b' "$between"
+      command=$(quoted "$form" "$COMMAND_WORD")
+      form_case worktree "$harness" "$form" "$operator" around \
+        "$before$command --validate-mode $(quoted "$form" range) --worktree $(quoted "$form" "$WT_LIVE")$after"
+      form_case wait "$harness" "$form" "$operator" around \
+        "$before$command --wait --budget $(quoted "$form" 60) --run-dir $(quoted "$form" "$RUN_LIVE")$after"
+      [ "$between" != - ] || continue
+      position=between
+      [ "$split" = splits ] || position=within
+      form_case worktree "$harness" "$form" "$operator" "$position" \
+        "$command --validate-mode $(quoted "$form" range)$between --worktree $(quoted "$form" "$WT_LIVE")"
+      form_case wait "$harness" "$form" "$operator" "$position" \
+        "$command --wait --budget $(quoted "$form" 60)$between --run-dir $(quoted "$form" "$RUN_LIVE")"
+    done <<OPS
+$OPERATORS
+OPS
+  done
+done <<EOF
+$FORMS
+EOF
+
+# What the rows an awk condition over the fields picks give for EXPRESSION.
+form_select() { # CONDITION EXPRESSION
+  awk -F'|' '{ subject = $1; harness = $2; form = $3; operator = $4; position = $5 }
+    '"$1"' { print '"$2"' }' "$FORM_CASES"
+}
+form_rows() { # [CONDITION]
+  local label name kind rc_want first_want
+  while IFS='|' read -r label name kind rc_want first_want; do
+    run_hook orch "$(payload_of "$kind:$name")"
+    assert_eq "rc=$rc first=$(first_line)" "rc=$rc_want first=$first_want" "$label"
+  done <<ROWS
+$(form_select "${1:-1}" '$6 "|" $7 "|" $8 "|" $9 "|" $10')
+ROWS
+}
+# A control whose planted copy must turn red every row CONDITION picks.
+form_control() { # NAME ANCHOR INSERT CONDITION
+  local labels=() label rows="form_control_rows_${1//-/_}"
+  while IFS= read -r label; do
+    [ -z "$label" ] || labels[${#labels[@]}]=$label
+  done <<LABELS
+$(form_select "$4" '$6')
+LABELS
+  [ "${#labels[@]}" -gt 0 ] || { echo "dev-stop-check: control=$1 rows=none" >&2; exit 1; }
+  eval "$rows() { form_rows '$4'; }"
+  skill_load_control "$1" "$HOOK" "$2" "$3" HOOK "$rows" "${labels[@]}"
+}
+
 echo "=== dev-stop-check ==="
 stop_rows
+form_rows
 
 # --- Must-fail controls, one per rule ----------------------------------------
 skill_load_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_rows \
@@ -323,16 +426,6 @@ skill_load_control wait-since-hold "$HOOK" 'notice transcript unread "$WAITED"' 
   'WAITED=$((HELD + 1))' HOOK stop_rows 'a wait before the last hold does not hold again'
 skill_load_control unread-continued "$HOOK" 'notice() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || refuse "$@"' \
   HOOK stop_rows 'a reader that cannot answer on a continued stop is reported, not held'
-# The one transcript reader takes no quote before a path.
-skill_load_control quoted-path "$HOOK" '"$TRANSCRIPT" 2>&1) || rc=$?' \
-  'rc=0; found=$(grep -noE -- "$1/[^\"'"'"'[:space:]\\\\]+" "$TRANSCRIPT" 2>&1) || rc=$?' \
-  HOOK stop_rows 'a double-quoted worktree in a Claude Code call is read' \
-  'a single-quoted worktree in a Claude Code call is read' \
-  'a double-quoted worktree in a Codex exec_command call is read' \
-  'a single-quoted run dir in a Claude Code wait is read' \
-  'a double-quoted run dir in a Claude Code wait is read' \
-  'a single-quoted run dir in a Codex wait is read' \
-  'a double-quoted run dir in a Codex wait is read'
 skill_load_control shared-tree "$HOOK" 'for candidate in "$AT/skills/$SCRIPT" "$AT/.agents/skills/$SCRIPT"; do' \
   '[ "$candidate" != "$AT/.agents/skills/$SCRIPT" ] || continue' HOOK stop_rows \
   'a reader in the shared tree beside the hook is found'
@@ -349,16 +442,26 @@ skill_load_control removed "$HOOK" 'while IFS= read -r WORKTREE; do' \
 skill_load_control subagent-transcript "$HOOK" 'refuse payload invalid-json' \
   'FIELDS=$(printf '"'"'%s'"'"' "$INPUT" | jq -r '"'"'["transcript_path", .transcript_path, "false"] | @tsv'"'"')' \
   HOOK stop_rows 'the parent'"'"'s transcript is not the subagent'"'"'s'
-# The one transcript reader runs a path on past a backslash.
-skill_load_control escaped-arguments "$HOOK" '"$TRANSCRIPT" 2>&1) || rc=$?' \
-  'rc=0; found=$(grep -noE -- "$1(\\\\*\"|'"'"')?/[^\"'"'"'[:space:]]+" "$TRANSCRIPT" 2>&1) || rc=$?' \
-  HOOK stop_rows 'a live run named by a Codex exec_command call is refused'
 skill_load_control unread "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || exit 0' \
   HOOK stop_rows 'a reader that cannot answer is refused with its words'
 skill_load_control payload "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != payload ] || exit 0' \
   HOOK stop_rows 'a payload that is not JSON is refused'
 skill_load_control reported-gaps "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'exit 0' HOOK stop_rows \
   'no reader beside the hook is reported, not held' 'a missing jq is reported, not held'
+
+# The reader's rules over the form table: a bare path ends at a metacharacter,
+# the flag must stand in the same command, a redirection does not end that
+# command, a quoted word is read whole, and a double quote is read at every
+# escape depth.
+form_control word-end 'PATH_RE="/[^[:space:]\"'"'"'\\\\&;|()<>]+"' \
+  'PATH_RE="/[^[:space:]\"'"'"'\\\\]+"' 'form == "bare" && position == "around" && operator != "newline"'
+form_control one-command 'WORDS_RE="([^\"'"'"'\\\\&;|]|$REDIRECT_RE|${DQUOTE}[^\"\\\\]*$DQUOTE|${SQUOTE}[^'"'"'\\\\]*$SQUOTE)*"' \
+  "WORDS_RE='.*'" 'position == "between"'
+form_control redirection "REDIRECT_RE='&>|[<>]&'" 'REDIRECT_RE=unredirected' 'position == "within"'
+form_control quoted-words 'SQUOTE="'"'"'"' 'DQUOTE=unquoted SQUOTE=unquoted' \
+  'form != "bare" && position == "around"'
+form_control escape-depth "DQUOTE='\\\\+\"'" "DQUOTE='\\\\\"'" \
+  'form == "double" && harness == "codex" && position == "around"'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
