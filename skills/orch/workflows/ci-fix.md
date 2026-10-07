@@ -176,8 +176,14 @@ A passing or unconfigured CI result clears the head-bound standalone budget:
 
 **Linear only** — post the short status to the tracker:
 
+Write the status body with the harness file-write tool to `tmp/ci-fix-status-[STATE_KEY].md` and bind that path as `[BODY_FILE]`:
+
+```markdown
+CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]
+```
+
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
+.agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body-file [BODY_FILE]
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).

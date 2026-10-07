@@ -348,13 +348,21 @@ A `Tracked:` reply names the issue it filed, and a decline is a decline — say 
 
 `[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out.
 
+Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_ID].md` and bind that path as `[BODY_FILE]`.
+
 ```bash
-.agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
+.agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" --body-file [BODY_FILE] --pr "[PR_NUMBER]"
+```
+
+```bash
 .agents/skills/github/scripts/github.sh resolve-thread "[THREAD_ID]"
+```
+
+```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
-Inline `--body` only for plain strings; a reply containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
+PR-level comments and human-only threads stay deferred to § 7.
 
 This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Do **not** wait for bots to re-review — check once for comments that arrived while fixes were being applied, then loop or exit.
 
@@ -388,7 +396,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 Reply bodies are § 6.3's table, which is where the `questions[]` § 5 routes here are answered — the Question row, the finding's own `draft_response`. A question is not a finding, so it takes no disposition and its answer is never a `Declined:`. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
 
-Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
+Write every reply body with the harness file-write tool to `tmp/pr-reply-[SOURCE_ID].md` and bind that path as `[BODY_FILE]`. Use `post-reply --body-file [BODY_FILE]` for threads and `post-comment --body-file [BODY_FILE]` for PR-level comments. Number lists `1.` `2.` `3.`, never `#N`.
 
 **Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise: tag the bot with the reason and a re-review request, dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread. Tag a human reviewer the same way, but never dismiss their review.
 

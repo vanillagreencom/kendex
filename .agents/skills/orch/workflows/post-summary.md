@@ -73,9 +73,15 @@ Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is no
 
 Read `.blocks`. Post a handoff comment to a downstream issue only when its description references files this PR touched, a decision it should know about was created, or an API or interface it depends on changed. Simply being unblocked earns nothing.
 
+Write the handoff body with the harness file-write tool to `tmp/handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` and bind that path as `[BODY_FILE]`:
+
+```markdown
+Handoff from [ISSUE_ID]:
+- [RELEVANT_CONTEXT]
+```
+
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:
-- [RELEVANT_CONTEXT]"
+.agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [BODY_FILE]
 ```
 
 ## 3. Return

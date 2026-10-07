@@ -45,8 +45,10 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind. The preview also derives a priority (1–4, from the plan's ordering; 3 when it states none) and an estimate (1–5 points per PR unit) for every item. `[BODY]` follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), whose `Reached by:` line names what the plan says arrives at the work. Create in dependency order and attach each item's blocking relations immediately after its own create — never all creates first.
 
+Write `[BODY]` with the harness file-write tool to `tmp/plan-issue-[ITEM].md` and bind that path as `[BODY_FILE]`.
+
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --priority [PRIORITY] --estimate [ESTIMATE] --format=ids
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[LABELS]" --priority [PRIORITY] --estimate [ESTIMATE] --format=ids
 ```
 
 ```bash
@@ -55,8 +57,10 @@ Build and validate the complete label set against the live inventory and the pro
 
 **GitHub** — per accepted item; dependencies are body links (`Blocked by: #N` / `Blocks: #N`) unless the repo has a configured relation tool:
 
+Write `[BODY]` with the harness file-write tool to `tmp/plan-issue-[ITEM].md` and bind that path as `[BODY_FILE]`.
+
 ```bash
-gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body "[BODY]" --label "[LABELS]"
+gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body-file [BODY_FILE] --label "[LABELS]"
 ```
 
 ## 5. Return
