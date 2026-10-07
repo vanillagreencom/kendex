@@ -78,8 +78,8 @@ alone in a code span is not a citation; one holding '<path>::<phrase>', the
 path spelled with a '/' from path characters, is one, and fails unless that
 path names a tracked file holding the phrase byte for byte. Decision IDs are
 judged only where DECISIONS_DIR is tracked: an ID names a tracked document
-there or a row of its INDEX.md, and one carrying '§ Heading' is judged
-against that document's headings too.
+there. An INDEX.md row reserves its ID only within that row. An ID carrying
+'§ Heading' is judged against the document's headings too.
 
 A source file is read for the same '<path>.md § Heading' citation in its
 COMMENT TEXT, and a TOML file in its string literals as well, resolved as the

@@ -2,8 +2,8 @@
 # Pins for scripts/md-refs, the judge of what a document cites: a relative
 # link lands on a tracked path and a heading it has; a code-span citation
 # names a tracked file and a heading it has; a link followed by § starts with
-# a heading of its target; a decision ID names a tracked decision file or an
-# INDEX row, judged only where the decisions directory is tracked; the same
+# a heading of its target; a decision ID names a tracked decision file or
+# reserves its own INDEX row, judged only where the decisions directory is tracked; the same
 # section citation is
 # judged in a source file's comment text and a TOML file's string literals;
 # fenced code is never read; the scopes and the path list are md-format's.
@@ -67,6 +67,8 @@ repo() { # NAME
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
 }
 put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
 commit() { git -C "$R" commit -qm "$1"; }
@@ -85,7 +87,7 @@ world_dec() { world_refs "$1"; put docs/decisions/D001-first.md '# D001\n\n## Co
 world_adr() { world_dec "$1"; put docs/decisions/ADR-0007-x.md '# ADR-0007\n'; }
 # The decider's removal rule: D002's row stays after its document is gone,
 # its Link cell the backticked filename; D003 has neither a row nor a document.
-index_rows() { printf '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |\n|------|----|----------|----------|-----------|--------------|--------|------|\n| 2026-01-01 | D001 | — | First | Reason | Never | Active | [Full](D001-first.md) |\n| 2026-01-02 | D002 | — | Gone | Reason at `src/x.rs` | Never | Removed | %s |\n' "$1"; } # D002-LINK-CELL
+index_rows() { printf '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |\n|------|----|----------|----------|-----------|--------------|--------|------|\n| 2026-01-01 | D001 | — | First | Reason | Never | Active | [Full](D001-first.md) |\n| 2026-01-02 | %s | — | Gone | Reason at `src/x.rs` | Never | %s | %s |\n' "${2:-D002}" "${3:-Removed}" "$1"; } # LINK [ID STATUS]
 world_row() { world_dec "$1"; put docs/decisions/INDEX.md "$(index_rows '`D002-gone.md`')"; }
 world_install() { repo "$1"; put guide.md '# Guide\n\n## Install\n'; }
 world_numbered() { repo "$1"; put guide.md '# Guide\n\n## 1. Install\n\n### 1.1.1 Choose a path\n'; }
@@ -209,8 +211,8 @@ cite_rows \
   "a cited ID with a tracked file passes, in prose and in a code span, and the verdict names the directory|dec||Decided in D001; see \`D001 § Context\`.\n|rc=0 $(clean 2 3 0 "$DEC_YES")" \
   "an ID citing a heading its decision does not have fails, the heading read to the end of the line|dec||See \`D001 § Rationale\`.\n|rc=1 $(dead AGENTS.md 1 "$(noprefix 'D001 § Rationale`.' docs/decisions/D001-first.md 'Rationale`.')");$(failed 1 1 3 0 "$DEC_YES")" \
   "a cited ID with no tracked file fails|dec||Decided in D042.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D042)");$(failed 1 1 3 0 "$DEC_YES")" \
-  "a removed record's ID passes on its INDEX row alone|row||Decided in D002.\n|rc=0 $(clean 1 3 0 "$DEC_YES")" \
-  "a heading citation of a removed record fails, the row naming no document|row||See \`D002 § Context\`.\n|rc=1 $(dead AGENTS.md 1 "decision-markdown=D002 § Context\`.:docs/decisions/D002-*.md");$(failed 1 1 3 0 "$DEC_YES")" \
+  "a removed record's ID fails outside its INDEX row|row||Decided in D002.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D002)");$(failed 1 1 3 0 "$DEC_YES")" \
+  "a heading citation of a removed record fails without its document|row||See \`D002 § Context\`.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D002)");$(failed 1 1 3 0 "$DEC_YES")" \
   "an ID with neither a row nor a document still fails|row||Decided in D003.\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D003)");$(failed 1 1 3 0 "$DEC_YES")" \
   "a shorter digit run, a glued letter and a colour are not IDs|dec||D42, MD001, D001x, #001 and 3D001 are not decisions.\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
   "an ID in fenced code is not read|dec||\`\`\`\nD042\n\`\`\`\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
@@ -257,19 +259,6 @@ done <<'CASES'
 escaped opener|    if (escapes % 2) { p = start + RLENGTH; continue }|s/if (escapes % 2)/if (0)/|\\[D016](https://example.com/D016)\n
 raw HTML block|  if (grammar != "text" && block_kind != "X") s = mask_links(s, 1)|s/ \&\& block_kind != "X"//|<div>[D016](https://example.com/D016)</div>\n
 CASES
-
-# The row loader is the one site that reserves an ID with no document.
-world_row removed-row
-put AGENTS.md 'Decided in D002.\n'
-assert_eq "a removed record's row reserves its ID in a world of its own" "rc=0 $(clean 1 3 0 "$DEC_YES")" "$(run '' --all)"
-ROW_LINE='    decisions[id] = 1'
-assert_eq "the INDEX-row control has one edit site" 1 "$(grep -Fxc "$ROW_LINE" "$SKILL_DIR/scripts/lib/md-refs.awk")"
-sed '/^    decisions\[id\] = 1$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$TMP/md-refs-mutant/scripts/lib/md-refs.awk"
-cmp -s "$SKILL_DIR/scripts/lib/md-refs.awk" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk" && exit 2
-MDR="$TMP/md-refs-mutant/scripts/md-refs"
-assert_eq "control: without the row loader the same ID fails decision-missing" \
-  "rc=1 $(dead AGENTS.md 1 "$(nodecision D002)");$(failed 1 1 3 0 "$DEC_YES")" "$(run '' --all)"
-MDR="$SKILL_DIR/scripts/md-refs"
 
 echo "=== a link followed by a section name resolves the heading prefix ==="
 cite_rows \
@@ -360,6 +349,52 @@ fx_index_linked() { fx_index_scoped index-linked; put docs/decisions/INDEX.md "$
 run_rows \
   "a removed row's backticked filename passes with INDEX.md in scope|fx_index_scoped index-scoped|COMMIT_GUARDS_MD_REFS_PATHS=docs/*.md|--all|rc=0 $(clean 5 4 0 "$DEC_YES")" \
   "control: the linked form of a documentless row fails link-target there|fx_index_linked|COMMIT_GUARDS_MD_REFS_PATHS=docs/*.md|--all|rc=1 $(dead docs/decisions/INDEX.md 4 "$(untracked '](D002-gone.md)' docs/decisions/D002-gone.md)");$(failed 1 6 4 0 "$DEC_YES")"
+
+echo "=== reserved IDs stay within their own INDEX row ==="
+# Consolidation emits a bare or GitHub-linked ID and a relative new-home link.
+reserved_world() { # NAME ID LINK CALLER [INDEX-TAIL]
+  world_dec "$1"
+  put docs/decisions/INDEX.md "$(index_rows "$3" "$2" Reserved)"'\n'"${5:-}"
+  put AGENTS.md "$4"
+}
+RESERVED_ENV='COMMIT_GUARDS_MD_REFS_PATHS=*.md'
+HOME_LINK='[Rule](../architecture/overview.md#the-one-idea)'
+REMOTE_ID='[D002](https://github.com/example/project/blob/main/docs/architecture/overview.md#the-one-idea)'
+while IFS='|' read -r label id link caller tail expect; do
+  ROW=$((ROW + 1))
+  reserved_world "reserved-$ROW" "$id" "$link" "$caller" "$tail"
+  assert_eq "$label" "$expect" "$(run "$RESERVED_ENV" '--all --strict')"
+done <<CASES
+a bare reserved ID with a valid new home passes|D002|$HOME_LINK|Clean.\n||rc=0 $(clean 5 6 0 "$DEC_YES")
+a GitHub-linked reserved ID with a valid new home passes|$REMOTE_ID|$HOME_LINK|Clean.\n||rc=0 $(clean 4 6 0 "$DEC_YES")
+a direct link to the new home passes|D002|$HOME_LINK|[Rule](docs/architecture/overview.md#the-one-idea)\n||rc=0 $(clean 6 6 0 "$DEC_YES")
+a bare reserved ID in another file fails|D002|$HOME_LINK|Clean.\nClean.\nClean.\nD002\n||rc=1 $(dead AGENTS.md 4 "$(nodecision D002)");$(failed 1 6 6 0 "$DEC_YES")
+a bare reserved ID elsewhere in the INDEX fails|D002|$HOME_LINK|Clean.\n|See D002.\n|rc=1 $(dead docs/decisions/INDEX.md 5 "$(nodecision D002)");$(failed 1 6 6 0 "$DEC_YES")
+a GitHub-linked reserved row does not authorize a bare ID elsewhere|$REMOTE_ID|$HOME_LINK|D002\n||rc=1 $(dead AGENTS.md 1 "$(nodecision D002)");$(failed 1 5 6 0 "$DEC_YES")
+a reserved row still checks its new-home target|D002|[Rule](../architecture/missing.md#the-one-idea)|Clean.\n||rc=1 $(dead docs/decisions/INDEX.md 4 "$(untracked '](../architecture/missing.md#the-one-idea)' docs/architecture/missing.md)");$(failed 1 5 6 0 "$DEC_YES")
+a reserved row still checks its new-home anchor|D002|[Rule](../architecture/overview.md#missing)|Clean.\n||rc=1 $(dead docs/decisions/INDEX.md 4 "$(noslug '](../architecture/overview.md#missing)' docs/architecture/overview.md missing)");$(failed 1 5 6 0 "$DEC_YES")
+a different ID in a reserved row still fails|D002|[D003](../architecture/overview.md#the-one-idea)|Clean.\n||rc=1 $(dead docs/decisions/INDEX.md 4 "$(nodecision D003)");$(failed 1 6 6 0 "$DEC_YES")
+CASES
+
+reserved_world reserved-controls D002 "$HOME_LINK" 'Clean.\nClean.\nClean.\nD002\n' 'See D002.\n'
+RESERVATION_LINE='    if (src_path == dec_dir "/INDEX.md" && f[5] == "" && ((line_no SUBSEP f[4]) in reserved_rows)) next'
+for boundary in source line; do
+  case "$boundary" in
+    source) replacement='    if (f[5] == "" && ((line_no SUBSEP f[4]) in reserved_rows)) next'
+      expected="rc=1 $(dead docs/decisions/INDEX.md 5 "$(nodecision D002)");$(failed 1 7 6 0 "$DEC_YES")" ;;
+    line) replacement='    if (src_path == dec_dir "/INDEX.md" && f[5] == "" && ((4 SUBSEP f[4]) in reserved_rows)) next'
+      expected="rc=1 $(dead AGENTS.md 4 "$(nodecision D002)");$(failed 1 7 6 0 "$DEC_YES")" ;;
+  esac
+  gg_mutant MUTANT_AWK lib/md-refs.awk "$RESERVATION_LINE" "$replacement"
+  MDR="${MUTANT_AWK%/lib/md-refs.awk}/md-refs"
+  assert_eq "control: removing the $boundary boundary permits its planted bare reference" "$expected" "$(run "$RESERVED_ENV" '--all --strict')"
+done
+reserved_world reserved-loader-control D002 "$HOME_LINK" 'Clean.\n'
+gg_mutant MUTANT_AWK lib/md-refs.awk '    reserved_rows[row SUBSEP id] = 1' '    reserved_rows[0 SUBSEP id] = 1'
+MDR="${MUTANT_AWK%/lib/md-refs.awk}/md-refs"
+assert_eq "control: breaking the reservation loader rejects the valid row" \
+  "rc=1 $(dead docs/decisions/INDEX.md 4 "$(nodecision D002)");$(failed 1 5 6 0 "$DEC_YES")" "$(run "$RESERVED_ENV" '--all --strict')"
+MDR="$SKILL_DIR/scripts/md-refs"
 
 echo "=== citations in comment text and in TOML strings ==="
 SH='#!/usr/bin/env bash\n'

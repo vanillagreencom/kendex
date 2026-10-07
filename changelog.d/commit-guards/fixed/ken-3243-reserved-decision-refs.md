@@ -1,0 +1,1 @@
+- Reserved decision IDs pass only in their own index row. References elsewhere must link to the rule's current home or name a tracked decision record.
