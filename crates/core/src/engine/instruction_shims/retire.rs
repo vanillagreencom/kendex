@@ -1,5 +1,6 @@
-//! Taking the shims back from a project that no longer installs to their
-//! harness. What proves a shim is kendex's is a record that an earlier pass
+//! Taking obsolete Claude shims back from every project, and Gemini's
+//! shim from a project that no longer installs to Gemini. What proves a
+//! shim is kendex's is a record that an earlier pass
 //! kept it, and what the position holds: the exact bytes, or the exact
 //! value the shim's edit wrote. Either alone is something a person writes
 //! by hand, and stays. The record of a whole-file shim is the inventory on
@@ -27,8 +28,8 @@ use crate::error::Result;
 use crate::lock::KeyedShim;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Plan the retirement of every shim whose harness `harnesses` no longer
-/// names, with a row for each: orphaned where it goes, a conflict where
+/// Plan the retirement of every Claude shim and a Gemini shim whose
+/// harness `harnesses` no longer names, with a row for each: orphaned where it goes, a conflict where
 /// the file it sits in cannot be read. `shims` is the keyed shims the
 /// record holds, and loses each one this pass settles; one whose file
 /// refused the retirement stays, or joins it where only the inventory
@@ -50,9 +51,7 @@ pub(super) fn retire(
         .and_then(|text| inventory_paths(text.as_bytes()).ok())
         .unwrap_or_default();
     let mut drift = Vec::new();
-    if !harnesses.contains(&HarnessId::Claude) {
-        drift.extend(claude(scope, root, &listed, ops)?);
-    }
+    drift.extend(claude(scope, root, &listed, ops)?);
     let shim = KeyedShim::GeminiContextFile;
     let path = keyed_position(env, scope, shim);
     let recorded = recorded_shims(env, scope, root, shims, || Ok(listed.clone()))?.contains(&shim);
@@ -121,7 +120,7 @@ fn claude(
         ops.push(trash(
             Description::around(
                 "Move the Claude Code shim ",
-                " to the trash — this project no longer installs to Claude Code",
+                " to the trash; Claude Code reads AGENTS.md itself",
             ),
             path,
         )?);
@@ -131,7 +130,7 @@ fn claude(
             HarnessId::Claude,
             DriftState::Orphaned,
             format!(
-                "the {CLAUDE_SHIM_FILE} shim serves Claude Code, which this project no longer installs to"
+                "the {CLAUDE_SHIM_FILE} shim is retired because Claude Code reads {AGENTS_FILE} itself"
             ),
         ));
     }

@@ -1,0 +1,1 @@
+- Remove generated CLAUDE.md imports now that Claude Code reads AGENTS.md itself. Older sessions can keep a personal CLAUDE.md import.

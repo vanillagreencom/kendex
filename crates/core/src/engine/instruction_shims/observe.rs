@@ -4,7 +4,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use super::{AGENTS_FILE, CLAUDE_SHIM, CLAUDE_SHIM_FILE, OLD_LINK, ShimStanding, ShimState};
+use super::{AGENTS_FILE, OLD_LINK, ShimStanding, ShimState};
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -98,31 +98,6 @@ fn regular_file(path: &Path) -> Result<bool> {
 pub(super) fn relative_name(root: &Path, path: &Path) -> String {
     let relative = path.strip_prefix(root).unwrap_or(path);
     crate::paths::slashed(relative)
-}
-
-pub(super) fn claude_standing(root: &Path, agents_file: &Path) -> Result<ShimStanding> {
-    let path = agents_file.parent().unwrap_or(root).join(CLAUDE_SHIM_FILE);
-    let name = relative_name(root, &path);
-    let state = match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ShimState::Missing,
-        Err(error) => ShimState::Refused(uncomparable(&name, &CoreError::io(&path, error))),
-        Ok(meta) if meta.is_symlink() => ShimState::Symlinked,
-        Ok(meta) if !meta.is_file() => ShimState::Refused(format!(
-            "{} is not a regular file — move it aside, then apply again",
-            crate::names::shown(&name)
-        )),
-        Ok(_) => match std::fs::read(&path) {
-            Ok(bytes) if bytes == CLAUDE_SHIM.as_bytes() => ShimState::InSync,
-            Ok(_) => ShimState::Foreign,
-            Err(error) => ShimState::Refused(uncomparable(&name, &CoreError::io(&path, error))),
-        },
-    };
-    Ok(ShimStanding {
-        path,
-        name,
-        harness: HarnessId::Claude,
-        state,
-    })
 }
 
 /// A shim kendex cannot read is reported uncompared (invariant 12), never

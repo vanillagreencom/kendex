@@ -1,6 +1,5 @@
-//! The instruction shims on the CLI: `verify` prints one row per shim and
-//! fails on one out of sync, `apply --plan` previews the write in plain
-//! words, and `apply` writes it.
+//! Claude needs no generated instruction file. Apply retires recorded
+//! former shims and keeps personal files. Gemini still verifies its key.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -76,101 +75,71 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn verify_names_the_shim_and_apply_writes_it() {
+fn apply_and_verify_need_no_claude_instruction_file() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = project(&tmp);
+    let nested = project.join("crates/core");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("AGENTS.md"), "# core\n").unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "nested"]);
 
-    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-    let text = said(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(text.contains("✗ shim CLAUDE.md [claude]"), "{text}");
-    assert!(text.contains("not written yet"), "{text}");
-    assert!(
-        text.contains("nothing installed; 2 other rows failed"),
-        "the closing line counts the failed shim and inventory: {text}"
-    );
-
-    let output = kendex(&home, &project, &["apply", "--plan"]);
-    let text = said(&output);
-    assert!(output.status.success(), "{text}");
-    let shim = project.join("CLAUDE.md").display().to_string();
-    assert!(
-        text.lines().any(|line| line
-            == format!("  - Write the Claude Code shim {shim} (one line, `@AGENTS.md`)")),
-        "{text}"
-    );
-    let rich = Command::new(env!("CARGO_BIN_EXE_kendex"))
-        .args(["apply", "--plan"])
-        .current_dir(&project)
-        .env_clear()
-        .envs(test_util::fixture_env(&home))
-        .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("KENDEX_UI", "pretty")
-        .env("COLUMNS", "80")
-        .env("LANG", "C.UTF-8")
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .output()
-        .unwrap();
-    let text = said(&rich);
-    assert!(rich.status.success(), "{text}");
-    assert!(
-        console::strip_ansi_codes(&text)
-            .lines()
-            .any(|line| line.contains(&shim)),
-        "the plan split the shim path: {text}"
-    );
-    assert!(!project.join("CLAUDE.md").exists());
-
-    let output = kendex(&home, &project, &["apply", "--yes"]);
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(
-        fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
-        "@AGENTS.md\n"
-    );
-
-    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-    let text = said(&output);
-    assert!(output.status.success(), "{text}");
-    assert!(text.contains("✓ shim CLAUDE.md [claude]"), "{text}");
+    for args in [
+        vec!["apply", "--plan"],
+        vec!["apply", "--yes"],
+        vec!["verify", "--scope", "project"],
+    ] {
+        let output = kendex(&home, &project, &args);
+        assert!(output.status.success(), "{}", said(&output));
+        assert!(!said(&output).contains("CLAUDE.md"));
+        assert!(!project.join("CLAUDE.md").exists());
+        assert!(!nested.join("CLAUDE.md").exists());
+    }
 }
 
-/// A hand-written file is a conflict on both verbs, and `apply --plan`
-/// names the flag that takes it over.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_foreign_shim_fails_verify_and_blocks_apply() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = project(&tmp);
-    fs::write(project.join("CLAUDE.md"), "# mine\n").unwrap();
-
-    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-    let text = said(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(
-        text.contains("✗ shim CLAUDE.md [claude]: CLAUDE.md is not the shim"),
-        "{text}"
-    );
-
-    let output = kendex(&home, &project, &["apply", "--plan"]);
-    let text = said(&output);
-    assert!(
-        text.contains("  skill CLAUDE.md for Claude Code: CLAUDE.md is not the shim"),
-        "{text}"
-    );
-    assert!(text.contains("--replace-unmanaged"), "{text}");
-    assert_eq!(
-        fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
-        "# mine\n"
-    );
-
-    let output = kendex(&home, &project, &["apply", "--yes", "--replace-unmanaged"]);
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(
-        fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
-        "@AGENTS.md\n"
-    );
+fn apply_retires_recorded_claude_files_and_keeps_personal_files() {
+    for (bytes, listed, linked, retired) in [
+        ("@AGENTS.md\n", true, false, true),
+        ("@AGENTS.md\n# mine\n", true, false, false),
+        ("@AGENTS.md\n", true, true, false),
+        ("@AGENTS.md\n", false, false, false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let output = kendex(&home, &project, &["apply", "--yes"]);
+        assert!(output.status.success(), "{}", said(&output));
+        let path = project.join("CLAUDE.md");
+        if linked {
+            fs::write(project.join("personal.md"), bytes).unwrap();
+            std::os::unix::fs::symlink("personal.md", &path).unwrap();
+        } else {
+            fs::write(&path, bytes).unwrap();
+        }
+        if listed {
+            let inventory = project.join(".kendex-generated.json");
+            fs::write(inventory, "[\"CLAUDE.md\"]\n").unwrap();
+        }
+        let output = kendex(&home, &project, &["apply", "--yes", "--replace-unmanaged"]);
+        assert!(output.status.success(), "{}", said(&output));
+        assert_eq!(path.exists(), !retired);
+        if !retired {
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+            assert_eq!(path.is_symlink(), linked);
+            assert!(!said(&output).contains("CLAUDE.md"));
+        }
+        for args in [
+            vec!["apply", "--plan"],
+            vec!["verify", "--scope", "project"],
+        ] {
+            let output = kendex(&home, &project, &args);
+            assert!(output.status.success(), "{}", said(&output));
+            assert!(!said(&output).contains("CLAUDE.md"));
+        }
+    }
 }
 
 /// A record laid out as kendex writes it but without the Gemini shim, as a

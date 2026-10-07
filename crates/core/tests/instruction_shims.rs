@@ -1,7 +1,5 @@
-//! The shims that make a project's `AGENTS.md` files reachable: a
-//! `CLAUDE.md` importing each tracked one for Claude Code, and Gemini's
-//! settings naming `AGENTS.md`. Planned like any other scope write, bound
-//! to what the plan read, and never over bytes kendex did not write.
+//! Claude reads AGENTS.md natively. Its recorded former shims retire,
+//! while personal files stay untouched. Gemini keeps its settings shim.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -16,8 +14,7 @@ use kendex_core::engine::{
     observe_instruction_shims, plan_apply,
 };
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::error::CoreError;
-use kendex_core::model::{HarnessId, ItemKind, Scope};
+use kendex_core::model::{HarnessId, Scope};
 use kendex_core::process::Hardened;
 
 struct Fixture {
@@ -106,15 +103,6 @@ fn apply_now(f: &Fixture) -> EngineReport {
     report
 }
 
-#[allow(clippy::unwrap_used)]
-fn take_over(f: &Fixture) -> EngineReport {
-    let options = PlanOptions {
-        replace_unmanaged: true,
-        ..PlanOptions::current()
-    };
-    plan_apply(&f.env, &f.scope, &options).unwrap()
-}
-
 /// The paths every op in the plan touches, relative to the project.
 fn touched(f: &Fixture, report: &EngineReport) -> Vec<String> {
     report
@@ -155,39 +143,7 @@ fn shim_bytes(path: &Path) -> String {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_root_shim_is_written_once_and_verifies_clean_after() {
-    let f = fixture("\"claude\"", true);
-    let report = plan(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
-    assert!(
-        report
-            .drift
-            .iter()
-            .any(|row| row.name == "CLAUDE.md" && row.state == DriftState::Missing),
-        "{:?}",
-        report.drift
-    );
-    let line = report.plan.ops[0].line();
-    assert!(
-        line.contains("CLAUDE.md") && line.contains("@AGENTS.md"),
-        "{line}"
-    );
-
-    apply::execute(&f.env, &report.plan).unwrap();
-    assert_eq!(shim_bytes(&f.project.join("CLAUDE.md")), CLAUDE_SHIM);
-
-    let again = plan(&f);
-    assert!(again.plan.is_empty(), "{:?}", touched(&f, &again));
-    assert!(again.drift.is_empty(), "{:?}", again.drift);
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [("CLAUDE.md".to_owned(), ShimState::InSync)]
-    );
-    assert!(again.instruction_shims.iter().all(|shim| !shim.failing()));
-}
-
-#[test]
-fn a_nested_tracked_agents_file_gets_its_own_shim() {
+fn claude_declared_plans_no_root_or_nested_instruction_shim() {
     let f = fixture("\"claude\"", true);
     let nested = f.project.join("crates/core");
     fs::create_dir_all(&nested).unwrap();
@@ -195,215 +151,166 @@ fn a_nested_tracked_agents_file_gets_its_own_shim() {
     commit(&f.project);
 
     let report = apply_now(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md", "crates/core/CLAUDE.md"]);
-    assert_eq!(shim_bytes(&nested.join("CLAUDE.md")), CLAUDE_SHIM);
-    assert!(plan(&f).plan.is_empty());
-}
-
-/// A render tree is a harness's, and an `AGENTS.md` inside a rendered
-/// skill is that skill's content: tracked or not, it gets no shim.
-#[test]
-fn an_agents_file_inside_a_render_tree_gets_no_shim() {
-    let f = fixture("\"claude\"", true);
-    let rendered = f.project.join(".agents/skills/vendored");
-    fs::create_dir_all(&rendered).unwrap();
-    fs::write(rendered.join("AGENTS.md"), "# a skill's own file\n").unwrap();
-    commit(&f.project);
-
-    let report = apply_now(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
-    assert!(!rendered.join("CLAUDE.md").exists());
-    assert!(plan(&f).plan.is_empty());
-}
-
-/// A directory git does not track is never walked: the nested file is
-/// ignored, and only the root one is served.
-#[test]
-fn an_untracked_nested_agents_file_is_ignored() {
-    let f = fixture("\"claude\"", true);
-    let nested = f.project.join("ui");
-    fs::create_dir_all(&nested).unwrap();
-    fs::write(nested.join("AGENTS.md"), "# ui\n").unwrap();
-
-    let report = plan(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [("CLAUDE.md".to_owned(), ShimState::Missing)]
-    );
-}
-
-/// Outside a repository nothing can be tracked, so the root file alone is
-/// considered — and only where it is a regular file.
-#[test]
-fn a_project_outside_any_repository_serves_its_root_file_only() {
-    let f = fixture("\"claude\"", false);
-    let nested = f.project.join("ui");
-    fs::create_dir_all(&nested).unwrap();
-    fs::write(nested.join("AGENTS.md"), "# ui\n").unwrap();
-
-    let report = apply_now(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
+    assert!(touched(&f, &report).is_empty());
+    assert!(report.instruction_shims.is_empty());
+    assert!(report.drift.is_empty());
+    assert!(!f.project.join("CLAUDE.md").exists());
     assert!(!nested.join("CLAUDE.md").exists());
-
-    fs::remove_file(f.project.join("AGENTS.md")).unwrap();
-    std::os::unix::fs::symlink("ui/AGENTS.md", f.project.join("AGENTS.md")).unwrap();
-    assert_eq!(standings(&f, &[HarnessId::Claude]), []);
+    assert!(standings(&f, &[HarnessId::Claude]).is_empty());
+    assert!(plan(&f).plan.is_empty());
 }
 
-/// Other bytes at the shim's position are the person's: a conflict naming
-/// both exits, no write, and the take-over trashes them bound to the
-/// bytes the plan read before the shim lands.
+/// Seed the inventory an earlier kendex build wrote.
+#[allow(clippy::unwrap_used)]
+fn record_claude_shims(f: &Fixture, paths: &[&str]) {
+    fs::write(
+        f.project.join(".kendex-generated.json"),
+        serde_json::to_string(paths).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hand_written_claude_file_is_a_conflict_the_take_over_settles() {
-    let f = fixture("\"claude\"", true);
-    let shim = f.project.join("CLAUDE.md");
-    fs::write(&shim, "# hand-written\n").unwrap();
+fn recorded_claude_shims_retire_with_claude_still_declared() {
+    for harnesses in ["\"claude\"", "\"codex\""] {
+        let f = fixture(harnesses, true);
+        let nested = f.project.join("crates/core");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("AGENTS.md"), "# core\n").unwrap();
+        let paths = ["CLAUDE.md", "crates/core/CLAUDE.md"];
+        for path in paths {
+            fs::write(f.project.join(path), CLAUDE_SHIM).unwrap();
+        }
+        record_claude_shims(&f, &paths);
+        commit(&f.project);
 
-    let report = plan(&f);
-    assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
-    let row = report
-        .drift
-        .iter()
-        .find(|row| row.name == "CLAUDE.md")
-        .unwrap();
-    assert_eq!(row.state, DriftState::Conflict);
-    assert_eq!(row.kind, ItemKind::Skill);
-    assert_eq!(row.harness, HarnessId::Claude);
-    assert!(
-        row.detail.contains("not the shim")
-            && row.detail.contains("move its content into AGENTS.md")
-            && row.detail.contains("--replace-unmanaged"),
-        "{}",
-        row.detail
-    );
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [("CLAUDE.md".to_owned(), ShimState::Foreign)]
-    );
-
-    let taken = take_over(&f);
-    assert_eq!(touched(&f, &taken), ["CLAUDE.md", "CLAUDE.md"]);
-    assert!(matches!(taken.plan.ops[0].op, Op::Trash { .. }));
-    let row = taken
-        .drift
-        .iter()
-        .find(|row| row.name == "CLAUDE.md")
-        .unwrap();
-    assert_eq!(row.state, DriftState::Missing);
-
-    // The bytes moved between plan and apply: the trash binds to what the
-    // plan read, so the apply refuses rather than trashing an edit nobody
-    // looked at (invariant 7).
-    fs::write(&shim, "# edited since\n").unwrap();
-    let error = apply::execute(&f.env, &taken.plan).unwrap_err();
-    assert!(
-        matches!(&error, CoreError::RolledBack { cause, .. }
-            if matches!(**cause, CoreError::PlanStale { .. })),
-        "{error:?}"
-    );
-    assert_eq!(shim_bytes(&shim), "# edited since\n");
-
-    let taken = take_over(&f);
-    apply::execute(&f.env, &taken.plan).unwrap();
-    assert_eq!(shim_bytes(&shim), CLAUDE_SHIM);
-    let trashed: Vec<PathBuf> = fs::read_dir(f.env.trash_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    assert_eq!(trashed.len(), 1, "{trashed:?}");
-    assert_eq!(shim_bytes(&trashed[0]), "# edited since\n");
-}
-
-/// A link at the shim's position is never a clobber target, take-over or
-/// not (invariant 6).
-#[test]
-fn a_symlinked_shim_is_a_conflict_the_take_over_leaves_alone() {
-    let f = fixture("\"claude\"", true);
-    let shim = f.project.join("CLAUDE.md");
-    std::os::unix::fs::symlink("AGENTS.md", &shim).unwrap();
-
-    for report in [plan(&f), take_over(&f)] {
-        assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
-        let row = report
+        let report = plan(&f);
+        let trashed: Vec<_> = report
+            .plan
+            .ops
+            .iter()
+            .filter_map(|planned| {
+                if let Op::Trash { path, .. } = &planned.op {
+                    Some(path.strip_prefix(&f.project).unwrap().to_str().unwrap())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(trashed, paths);
+        let rows: Vec<_> = report
             .drift
             .iter()
-            .find(|row| row.name == "CLAUDE.md")
-            .unwrap();
-        assert_eq!(row.state, DriftState::Conflict);
-        assert!(row.detail.contains("is a link"), "{}", row.detail);
+            .filter(|row| row.harness == HarnessId::Claude)
+            .map(|row| (row.name.as_str(), row.state))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (paths[0], DriftState::Orphaned),
+                (paths[1], DriftState::Orphaned)
+            ]
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        for path in paths {
+            assert!(!f.project.join(path).exists());
+        }
+        let trash = kendex_core::trash::list(&f.env).unwrap();
+        let bytes: Vec<_> = trash
+            .iter()
+            .map(|entry| shim_bytes(&f.env.trash_dir().join(&entry.name)))
+            .collect();
+        assert_eq!(bytes, [CLAUDE_SHIM, CLAUDE_SHIM]);
+        let again = plan(&f);
+        assert!(again.plan.is_empty());
+        assert!(again.drift.is_empty());
+        assert!(again.instruction_shims.is_empty());
     }
-    assert!(shim.is_symlink());
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [("CLAUDE.md".to_owned(), ShimState::Symlinked)]
-    );
 }
 
-/// The old convention is retired by the plan that writes the root shim;
-/// any other `.claude/CLAUDE.md` is the person's and goes unmentioned.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_old_claude_link_is_retired_and_any_other_file_there_is_left_alone() {
-    let f = fixture("\"claude\"", true);
-    let claude = f.project.join(".claude");
-    fs::create_dir_all(&claude).unwrap();
-    let old = claude.join("CLAUDE.md");
-    std::os::unix::fs::symlink("../AGENTS.md", &old).unwrap();
-
-    let report = plan(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md", ".claude/CLAUDE.md"]);
-    assert!(matches!(report.plan.ops[1].op, Op::Trash { .. }));
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [
-            ("CLAUDE.md".to_owned(), ShimState::Missing),
-            (".claude/CLAUDE.md".to_owned(), ShimState::OldLink)
-        ]
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    assert!(!old.exists() && !old.is_symlink());
-    assert_eq!(shim_bytes(&f.project.join("CLAUDE.md")), CLAUDE_SHIM);
-    assert!(f.project.join("AGENTS.md").is_file());
-
-    // A plain file there, and a link elsewhere: neither is the retired
-    // convention, so neither is planned nor reported. The link was all
-    // `.claude` held, so its folder went with it.
-    assert!(!old.parent().unwrap().exists());
-    fs::create_dir_all(old.parent().unwrap()).unwrap();
-    fs::write(&old, "# my own\n").unwrap();
-    let report = plan(&f);
-    assert!(report.plan.is_empty() && report.drift.is_empty());
-    assert_eq!(
-        standings(&f, &[HarnessId::Claude]),
-        [("CLAUDE.md".to_owned(), ShimState::InSync)]
-    );
-    fs::remove_file(&old).unwrap();
-    fs::write(claude.join("OTHER.md"), "# other\n").unwrap();
-    std::os::unix::fs::symlink("OTHER.md", &old).unwrap();
-    let report = plan(&f);
-    assert!(report.plan.is_empty() && report.drift.is_empty());
-    assert!(old.is_symlink());
+fn personal_claude_files_stay_untouched_without_rows_or_takeover() {
+    for (what, listed, linked, bytes) in [
+        ("extra line", true, false, "@AGENTS.md\nmy own line\n"),
+        ("symlink", true, true, CLAUDE_SHIM),
+        ("unlisted import", false, false, CLAUDE_SHIM),
+    ] {
+        let f = fixture("\"claude\"", true);
+        let path = f.project.join("CLAUDE.md");
+        if linked {
+            fs::write(f.project.join("personal.md"), bytes).unwrap();
+            std::os::unix::fs::symlink("personal.md", &path).unwrap();
+        } else {
+            fs::write(&path, bytes).unwrap();
+        }
+        if listed {
+            record_claude_shims(&f, &["CLAUDE.md"]);
+        }
+        commit(&f.project);
+        for replace_unmanaged in [false, true] {
+            let options = PlanOptions {
+                replace_unmanaged,
+                ..PlanOptions::current()
+            };
+            let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+            assert!(touched(&f, &report).is_empty(), "{what}");
+            assert!(report.drift.is_empty(), "{what}");
+            assert!(report.instruction_shims.is_empty(), "{what}");
+            apply::execute(&f.env, &report.plan).unwrap();
+            assert_eq!(shim_bytes(&path), bytes, "{what}");
+            assert_eq!(path.is_symlink(), linked, "{what}");
+        }
+        assert!(plan(&f).plan.is_empty(), "{what}");
+    }
 }
 
-/// A root shim the plan cannot settle keeps the old link: Claude Code
-/// goes on reading the root file one way while the conflict stands.
 #[test]
-fn the_old_link_stays_while_the_root_shim_is_a_conflict() {
-    let f = fixture("\"claude\"", true);
-    fs::create_dir_all(f.project.join(".claude")).unwrap();
-    let old = f.project.join(".claude/CLAUDE.md");
-    std::os::unix::fs::symlink("../AGENTS.md", &old).unwrap();
-    fs::write(f.project.join("CLAUDE.md"), "# hand-written\n").unwrap();
-
-    let report = plan(&f);
-    assert!(report.plan.is_empty(), "{:?}", touched(&f, &report));
-    let taken = take_over(&f);
-    assert_eq!(
-        touched(&f, &taken),
-        ["CLAUDE.md", "CLAUDE.md", ".claude/CLAUDE.md"]
-    );
+#[allow(clippy::unwrap_used)]
+fn the_old_claude_link_retires_independently_of_the_root_file() {
+    for (harnesses, root_bytes) in [
+        ("\"claude\"", None),
+        ("\"claude\"", Some("# personal\n")),
+        ("\"codex\"", Some("# personal\n")),
+    ] {
+        let f = fixture(harnesses, true);
+        let old = f.project.join(".claude/CLAUDE.md");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        if let Some(bytes) = root_bytes {
+            fs::write(f.project.join("CLAUDE.md"), bytes).unwrap();
+        }
+        std::os::unix::fs::symlink("../AGENTS.md", &old).unwrap();
+        let report = apply_now(&f);
+        assert_eq!(touched(&f, &report), [".claude/CLAUDE.md"]);
+        assert_eq!(report.instruction_shims[0].state, ShimState::OldLink);
+        assert!(!old.is_symlink());
+        if let Some(bytes) = root_bytes {
+            assert_eq!(shim_bytes(&f.project.join("CLAUDE.md")), bytes);
+        } else {
+            assert!(!f.project.join("CLAUDE.md").exists());
+        }
+        let trash = kendex_core::trash::list(&f.env).unwrap();
+        assert!(
+            trash
+                .iter()
+                .any(|entry| f.env.trash_dir().join(&entry.name).is_symlink())
+        );
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        for bytes in ["# personal\n", "@AGENTS.md\n"] {
+            fs::write(&old, bytes).unwrap();
+            let again = apply_now(&f);
+            assert!(again.plan.is_empty());
+            assert!(again.drift.is_empty());
+            assert!(again.instruction_shims.is_empty());
+            assert_eq!(shim_bytes(&old), bytes);
+        }
+        fs::remove_file(&old).unwrap();
+        fs::write(f.project.join("personal.md"), "# personal\n").unwrap();
+        std::os::unix::fs::symlink("../personal.md", &old).unwrap();
+        assert!(plan(&f).plan.is_empty());
+        assert!(old.is_symlink());
+    }
 }
 
 #[allow(clippy::unwrap_used)]
@@ -684,32 +591,6 @@ fn the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own() {
     }
 }
 
-/// Claude Code leaving the list takes back the `CLAUDE.md` shim kendex
-/// wrote, which its inventory names. A file of the person's at that place
-/// stays: `every_retirement_leaves_a_file_holding_the_persons_content`.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_claude_shim_goes_with_claude_only_where_kendex_wrote_it() {
-    let f = fixture("\"claude\"", true);
-    apply_now(&f);
-    commit(&f.project);
-    fs::write(
-        f.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
-    )
-    .unwrap();
-    let report = apply_now(&f);
-    assert!(touched(&f, &report).contains(&"CLAUDE.md".to_owned()));
-    assert!(!f.project.join("CLAUDE.md").exists());
-    let row = report
-        .drift
-        .iter()
-        .find(|row| row.name == "CLAUDE.md")
-        .unwrap();
-    assert_eq!(row.state, DriftState::Orphaned);
-    assert!(plan(&f).plan.is_empty(), "the next pass plans again");
-}
-
 /// Gemini off the list: a settings file kendex named `AGENTS.md` in, which
 /// its install record names, and that still names it the way the shim's edit
 /// wrote it, loses that entry once and keeps the person's own keys, and no
@@ -886,17 +767,16 @@ enum Left {
 }
 
 /// Every retirement a tool leaving the list makes keeps a file holding the
-/// person's content: the `CLAUDE.md` shim, Gemini's context entry, a JSON
+/// person's content: Gemini's context entry, a JSON
 /// document and a TOML document a removal would otherwise empty. Each row
 /// lets kendex write the file where the row installs for the tool, gives it
 /// content of the person's, then drops the tool. The file stays holding
 /// that content, no orphaned row names it, and the next pass plans nothing.
-/// Three rows are a file of the person's in a project kendex never
-/// installed the tool for, two of them holding exactly what the shim would.
+/// A file of the person's in a project kendex never installed Gemini for
+/// stays even when it holds exactly what the shim would write.
 ///
-/// Each guard turns its own row red: the shim's bytes check, the context
-/// entry's exact-value check, the inventory check for the Claude shim and
-/// the emptied-document check for each document kind. A settled Gemini
+/// Each guard turns its own row red: the context entry's exact-value
+/// check and the emptied-document check for each document kind. A settled Gemini
 /// retirement that kept its record turns the extended-entry row red. The
 /// Gemini record's two halves are pinned apart: the install record by
 /// `the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own`,
@@ -923,24 +803,6 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
         left: Left,
     }
     let rows = [
-        Row {
-            what: "a Claude shim kendex wrote, then the person added to",
-            first: "\"claude\"",
-            then: "\"codex\"",
-            mcp: false,
-            target: "CLAUDE.md",
-            theirs: |ours| format!("{ours}my own line\n"),
-            left: Left::Bytes,
-        },
-        Row {
-            what: "a Claude shim the person wrote where Claude Code was never installed",
-            first: "\"codex\"",
-            then: "\"codex\"",
-            mcp: false,
-            target: "CLAUDE.md",
-            theirs: |_| CLAUDE_SHIM.to_owned(),
-            left: Left::Bytes,
-        },
         Row {
             what: "a Gemini context entry the person extended",
             first: "\"gemini\"",
@@ -1070,8 +932,7 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
     }
 }
 
-/// Both shims ride on the harness list: a project declaring neither owes
-/// nothing, and one declaring both owes both.
+/// Only Gemini needs a shim, including when Claude Code is also declared.
 #[test]
 fn shims_follow_the_declared_harnesses() {
     let f = fixture("\"codex\"", true);
@@ -1082,11 +943,8 @@ fn shims_follow_the_declared_harnesses() {
 
     let both = fixture("\"claude\", \"gemini\"", true);
     let report = apply_now(&both);
-    assert_eq!(
-        touched(&both, &report),
-        ["CLAUDE.md", ".gemini/settings.json"]
-    );
-    assert_eq!(shim_bytes(&both.project.join("CLAUDE.md")), CLAUDE_SHIM);
+    assert_eq!(touched(&both, &report), [".gemini/settings.json"]);
+    assert!(!both.project.join("CLAUDE.md").exists());
     assert!(plan(&both).plan.is_empty());
 }
 
@@ -1123,11 +981,7 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
             .unwrap()
     };
     let paths = read_paths();
-    for rendered in [
-        ".agents/skills/generated/SKILL.md",
-        "CLAUDE.md",
-        ".gemini/settings.json",
-    ] {
+    for rendered in [".agents/skills/generated/SKILL.md", ".gemini/settings.json"] {
         assert!(
             paths.iter().any(|path| path == rendered),
             "missing {rendered}: {paths:?}"
@@ -1185,11 +1039,7 @@ fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
             .iter()
             .any(|row| row.name == "work" && row.state == DriftState::Conflict)
     );
-    let paths: Vec<String> = serde_json::from_str(
-        &fs::read_to_string(f.project.join(".kendex-generated.json")).unwrap(),
-    )
-    .unwrap();
-    assert!(!paths.iter().any(|path| path == ".claude/agents/work.md"));
+    assert!(!f.project.join(".kendex-generated.json").exists());
     assert!(!report.generated.owned(&f.project).contains(&occupied));
     assert_eq!(
         fs::read_to_string(&occupied).unwrap(),

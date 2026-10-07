@@ -523,7 +523,6 @@ fn plan_scope_files(
         env,
         scope,
         &manifest.install.harnesses,
-        options,
         shims,
         ops,
         config_edits,

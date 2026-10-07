@@ -396,12 +396,6 @@ fn expected_rows() -> Vec<Expected> {
         ),
         (
             "shim",
-            "CLAUDE.md",
-            claude,
-            vec![("CLAUDE.md", Owns::File, None)],
-        ),
-        (
-            "shim",
             ".gemini/settings.json",
             Some(HarnessId::Gemini),
             vec![(".gemini/settings.json", Owns::Keys, keys)],

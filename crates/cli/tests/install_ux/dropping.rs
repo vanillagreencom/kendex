@@ -5,12 +5,11 @@
 use super::{World, git, read, write};
 
 /// A project installing a skill for Claude Code and Gemini CLI, with the
-/// root `AGENTS.md` both shims point at. One tool then leaves the list.
+/// root `AGENTS.md` both tools read. One tool then leaves the list.
 /// Gemini leaving with nothing of the person's in `.gemini/` takes the
 /// folder; with a setting of their own in its settings file, that setting
-/// and the file stay and only kendex's entry leaves. Claude Code leaving
-/// takes the `CLAUDE.md` shim kendex wrote, and leaves one the person
-/// wrote. A pass after that finds nothing left to do about either.
+/// and the file stay and only kendex's entry leaves. Claude Code has no
+/// generated instruction file and keeps one the person wrote. A pass after that finds nothing left to do about either.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn dropping_a_tool_leaves_nothing_of_kendexs_behind() {
@@ -34,7 +33,7 @@ fn dropping_a_tool_leaves_nothing_of_kendexs_behind() {
             theirs: Some((GEMINI, "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n")),
         },
         Row {
-            what: "Claude Code, the shim kendex wrote",
+            what: "Claude Code, no instruction shim",
             dropped: "claude",
             theirs: None,
         },
@@ -63,6 +62,9 @@ fn dropping_a_tool_leaves_nothing_of_kendexs_behind() {
         let what = row.what;
         declare(&["claude", "gemini"]);
         world.run(&["apply", "-y", "--leave"]);
+        if row.theirs.is_none() {
+            assert!(!world.at("CLAUDE.md").exists(), "{}", row.what);
+        }
         let settings = read(&world.at(GEMINI));
         assert!(settings.contains("AGENTS.md"), "{what}: {settings}");
 

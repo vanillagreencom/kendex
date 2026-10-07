@@ -1012,16 +1012,5 @@
   ".pi/kendex/hooks/skill-load-check.sh",
   ".pi/kendex/hooks/skill-load-record.sh",
   ".pi/kendex/hooks/stop-failure-row.sh",
-  ".pi/kendex/hooks/worktree-session-claim.sh",
-  "CLAUDE.md",
-  "crates/CLAUDE.md",
-  "crates/app/CLAUDE.md",
-  "crates/cli/CLAUDE.md",
-  "crates/core/CLAUDE.md",
-  "hooks/CLAUDE.md",
-  "pi-extensions/CLAUDE.md",
-  "pi-extensions/pi-agents-tmux/CLAUDE.md",
-  "skills/CLAUDE.md",
-  "tools/CLAUDE.md",
-  "ui/CLAUDE.md"
+  ".pi/kendex/hooks/worktree-session-claim.sh"
 ]

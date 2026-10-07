@@ -60,20 +60,23 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// A repository declaring the claude harness with its root `AGENTS.md`
-/// committed: `apply --yes` renders the `CLAUDE.md` shim and the
-/// inventory and writes the ignore file beside them, which is the offer's
-/// three-file set. Nothing is installed, so
-/// no record is written; the record joins the set where an install is
-/// (`the_install_record_is_committed_with_the_renders`).
+/// A project installing one native Claude agent. Its rendered file,
+/// record, inventory and ignore file form the initial commit offer.
 #[allow(clippy::unwrap_used)]
 fn project(tmp: &tempfile::TempDir) -> PathBuf {
     let home = rooted(tmp);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = home.join("offer-catalog");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(
+        catalog.join("agents/offer-file.md"),
+        "---\nname: offer-file\ndescription: fixture\n---\nRead the project.\n",
+    )
+    .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+        format!("schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.offer]\n{}\n[agents.offer-file]\nsource = \"offer\"\n", test_util::source_path(&catalog)),
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
@@ -82,6 +85,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
     git(&project, &["config", "user.name", "t"]);
     git(&project, &["config", "commit.gpgsign", "false"]);
     git(&project, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&project, &["config", "status.showUntrackedFiles", "all"]);
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "files"]);
     project
@@ -211,7 +215,7 @@ fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     assert!(output.status.success(), "{text}");
     assert!(
         text.contains(
-            "3 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
+            "4 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
         ),
         "{text}"
     );
@@ -220,7 +224,7 @@ fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     let (output, text) = apply(&home, &project, &["--leave"]);
     assert!(output.status.success(), "{text}");
     assert!(!text.contains("not committed"), "{text}");
-    assert!(git(&project, &["status", "--porcelain"]).contains("?? CLAUDE.md"));
+    assert!(git(&project, &["status", "--porcelain"]).contains("?? .claude/agents/offer-file.md"));
 }
 
 /// The commit route: the set is committed with the command's message, or
@@ -232,9 +236,9 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 3 files as "), "{text}");
+    assert!(text.contains("committed 4 files as "), "{text}");
     assert!(
-        text.contains(" · committed 3 files"),
+        text.contains(" · committed 4 files"),
         "no ledger part: {text}"
     );
     assert!(
@@ -244,7 +248,7 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     assert_eq!(head_subject(&project), "chore: kendex apply");
     let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
     assert!(
-        files.contains("CLAUDE.md") && files.contains(".kendex-generated.json"),
+        files.contains(".claude/agents/offer-file.md") && files.contains(".kendex-generated.json"),
         "{files}"
     );
     assert!(!files.contains("kendex.toml"), "{files}");
@@ -255,10 +259,10 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let home = rooted(&tmp);
     let project = self::project(&tmp);
     fs::write(project.join("AGENTS.md"), "# app\n\nmore\n").unwrap();
-    let (output, text) = apply(&home, &project, &["--commit", "--message", "docs: shim"]);
+    let (output, text) = apply(&home, &project, &["--commit", "--message", "docs: renders"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 3 files as "), "{text}");
-    assert_eq!(head_subject(&project), "docs: shim");
+    assert!(text.contains("committed 4 files as "), "{text}");
+    assert_eq!(head_subject(&project), "docs: renders");
     assert!(
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
         "the person's own change was swept into the commit"
@@ -1250,7 +1254,7 @@ fn a_flag_naming_a_choice_not_on_offer_is_refused_with_the_reason() {
     );
     assert_eq!(head_subject(&project), "files");
     assert!(
-        project.join("CLAUDE.md").exists(),
+        project.join(".claude/agents/offer-file.md").exists(),
         "the write did not stand"
     );
 
@@ -1281,10 +1285,10 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let bare = origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--push"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 3 files as "), "{text}");
+    assert!(text.contains("committed 4 files as "), "{text}");
     assert!(text.contains("pushed to origin/main"), "{text}");
     assert!(
-        text.contains(" · committed and pushed 3 files"),
+        text.contains(" · committed and pushed 4 files"),
         "no ledger part: {text}"
     );
     assert_eq!(
@@ -1306,7 +1310,7 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let before = git(&project, &["rev-parse", "HEAD"]);
     let (output, text) = apply(&home, &project, &["--push"]);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("committed 3 files as "), "{text}");
+    assert!(text.contains("committed 4 files as "), "{text}");
     assert!(text.contains("the push was refused"), "{text}");
     assert!(text.contains("git said:"), "{text}");
     assert!(
@@ -1574,7 +1578,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
     origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--pull-request"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 3 files as "), "{text}");
+    assert!(text.contains("committed 4 files as "), "{text}");
     assert!(text.contains(" on kendex/renders"), "{text}");
     assert!(text.contains("pushed to origin/kendex/renders"), "{text}");
     assert!(
@@ -1586,7 +1590,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
         "{text}"
     );
     assert!(
-        text.contains(" · committed 3 files, pull request open"),
+        text.contains(" · committed 4 files, pull request open"),
         "no ledger part: {text}"
     );
     assert!(home.join("fake-bin/calls").exists(), "gh was never asked");
@@ -1646,10 +1650,13 @@ fn a_hooks_refusal_is_quoted_whole_and_nothing_is_committed() {
     assert_eq!(head_subject(&project), "files");
     assert!(text.contains(" · not committed"), "no ledger part: {text}");
     let status = git(&project, &["status", "--porcelain"]);
-    assert!(status.contains("?? CLAUDE.md"), "still staged: {status}");
+    assert!(
+        status.contains("?? .claude/agents/offer-file.md"),
+        "still staged: {status}"
+    );
 
     // The same refusal through the other verb that closes on a ledger, in
-    // a checkout it still has the shim to write: its own failure line, the
+    // a checkout that still has the agent to write: its own failure line, the
     // scope's ledger still closed, and never counted as a failure of the
     // verb.
     let tmp = tempfile::tempdir().unwrap();
@@ -1679,7 +1686,7 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("3 files kendex wrote are not committed; a merge is in progress"),
+        text.contains("4 files kendex wrote are not committed; a merge is in progress"),
         "{text}"
     );
     fs::remove_file(project.join(".git/MERGE_HEAD")).unwrap();
@@ -1691,7 +1698,7 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("2 files kendex wrote are not committed; this checkout is on no branch"),
+        text.contains("3 files kendex wrote are not committed; this checkout is on no branch"),
         "{text}"
     );
     assert_eq!(head_subject(&project), "files");
@@ -1732,7 +1739,7 @@ fn the_setting_turns_off_the_asking_and_not_the_flags() {
     // writes nothing, so it carries the renders alone.
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 2 files as "), "{text}");
+    assert!(text.contains("committed 3 files as "), "{text}");
 }
 
 /// Two of the group together is refused before the verb writes anything.
@@ -1744,7 +1751,7 @@ fn two_answers_at_once_are_refused_before_the_write() {
     let (output, text) = apply(&home, &project, &["--commit", "--leave"]);
     assert!(!output.status.success(), "{text}");
     assert!(
-        !project.join("CLAUDE.md").exists(),
+        !project.join(".claude/agents/offer-file.md").exists(),
         "the verb wrote before refusing"
     );
 }
@@ -1782,24 +1789,36 @@ fn generated_paths_reports_changed_and_removed_whole_file_renders() {
         let project = project(&tmp);
         let (output, text) = apply(&home, &project, &["--leave"]);
         assert!(output.status.success(), "{case}: {text}");
-        let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
-        git(&project, &["add", "CLAUDE.md", ".kendex-generated.json"]);
+        let rendered = fs::read(project.join(".claude/agents/offer-file.md")).unwrap();
+        git(
+            &project,
+            &[
+                "add",
+                ".claude/agents/offer-file.md",
+                ".kendex-generated.json",
+                ".kendex-lock.json",
+            ],
+        );
         git(&project, &["commit", "-q", "-m", "renders"]);
         match case {
             "changed" => {
-                fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
-                git(&project, &["add", "CLAUDE.md"]);
+                fs::write(
+                    project.join(".claude/agents/offer-file.md"),
+                    "stale committed render\n",
+                )
+                .unwrap();
+                git(&project, &["add", ".claude/agents/offer-file.md"]);
                 git(&project, &["commit", "-q", "-m", "stale render"]);
-                fs::write(project.join("CLAUDE.md"), rendered).unwrap();
+                fs::write(project.join(".claude/agents/offer-file.md"), rendered).unwrap();
             }
-            "removed" => fs::remove_file(project.join("CLAUDE.md")).unwrap(),
+            "removed" => fs::remove_file(project.join(".claude/agents/offer-file.md")).unwrap(),
             _ => unreachable!(),
         }
         let result = kendex(&home, &project, &["generated-paths"]);
         assert!(result.status.success(), "{case}: {}", said(&result));
         assert_eq!(
             serde_json::from_slice::<Vec<String>>(&result.stdout).unwrap(),
-            ["CLAUDE.md"],
+            [".claude/agents/offer-file.md"],
             "{case}"
         );
     }
@@ -1828,13 +1847,17 @@ fn generated_paths_omits_a_file_kendex_owns_only_a_region_of() {
         assert!(output.status.success(), "{case}: {text}");
         // The whole-file render this row expects to see reported: the
         // commit is given stale bytes while the worktree keeps the
-        // rendered ones, so git calls the path changed and the shim itself
+        // rendered ones, so git calls the path changed and the agent itself
         // stays in sync.
-        let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
-        fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
-        git(&project, &["add", "CLAUDE.md"]);
+        let rendered = fs::read(project.join(".claude/agents/offer-file.md")).unwrap();
+        fs::write(
+            project.join(".claude/agents/offer-file.md"),
+            "stale committed render\n",
+        )
+        .unwrap();
+        git(&project, &["add", ".claude/agents/offer-file.md"]);
         git(&project, &["commit", "-q", "-m", "stale render"]);
-        fs::write(project.join("CLAUDE.md"), rendered).unwrap();
+        fs::write(project.join(".claude/agents/offer-file.md"), rendered).unwrap();
         // The region differs from the commit in both rows; the mixed row
         // also carries a user edit outside it, which is the case a
         // whole-file restore would throw away.
@@ -1851,7 +1874,7 @@ fn generated_paths_omits_a_file_kendex_owns_only_a_region_of() {
         assert!(result.status.success(), "{case}: {}", said(&result));
         assert_eq!(
             serde_json::from_slice::<Vec<String>>(&result.stdout).unwrap(),
-            ["CLAUDE.md"],
+            [".claude/agents/offer-file.md"],
             "{case}"
         );
     }

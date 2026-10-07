@@ -92,6 +92,6 @@ Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`; the sec
 | Global | Unsupported; reported, no style file or block | No installation row |
 | Project | Unsupported; reported, no style file or block | No installation row |
 
-A project declaring Claude Code receives its native style only. kendex writes no style block into repository `AGENTS.md`. This prevents the Claude instruction shim from loading the same style twice. The no-block case is in `crates/core/tests/output_styles.rs`.
+A project declaring Claude Code receives its native style only. kendex writes no style block into repository `AGENTS.md`. Claude Code reads that file itself, so a style block would load the same style twice. The no-block case is in `crates/core/tests/output_styles.rs`.
 
 `.github/copilot-instructions.md` remains the bot-instructions package's file.

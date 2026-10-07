@@ -437,34 +437,3 @@ fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
     let render = format!("{tree}/SKILL.md");
     assert!(written.contains(&render), "{render} not in {written:?}");
 }
-
-/// A nested instruction shim deleted while its `AGENTS.md` stays: the
-/// planner finds nested instruction files through Git, so this holds the
-/// copy to the discovery the checkout gets. The shim is read off the
-/// checkout's tracked files rather than named here.
-#[test]
-#[allow(clippy::expect_used)]
-fn a_nested_instruction_shim_deleted_is_refused() {
-    let planted = Planted::new();
-    let listed = crate::test_util::git(
-        &crate::test_util::checkout_root(),
-        &["ls-files", "-z", "--", "*/CLAUDE.md"],
-    );
-    let shim = listed
-        .split('\0')
-        .find(|path| {
-            !path.is_empty()
-                && !path.starts_with('.')
-                && planted
-                    .copy
-                    .join(path)
-                    .with_file_name("AGENTS.md")
-                    .is_file()
-        })
-        .expect("the checkout tracks a nested CLAUDE.md beside an AGENTS.md")
-        .to_owned();
-    std::fs::remove_file(planted.copy.join(&shim)).expect("the planted shim is removable");
-
-    let (written, _) = planted.named();
-    assert!(written.contains(&shim), "{shim} not in {written:?}");
-}

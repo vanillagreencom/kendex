@@ -72,4 +72,4 @@ A namespaced `<plugin>/<item>` name is the identity in the manifest, the lock an
 
 ## Instruction shims
 
-Beside every tracked `AGENTS.md`, kendex writes a `CLAUDE.md` holding `@AGENTS.md`, and for the gemini harness it names `AGENTS.md` in `context.fileName` of `.gemini/settings.json`; both are committed files, and a missing, stale or symlinked shim is drift (`crates/core/src/engine/instruction_shims.rs`).
+Claude Code reads `AGENTS.md` itself; [its adapter reference](claude.md#instruction-shim) gives the version floors and personal-import fallback. kendex retires a former `CLAUDE.md` shim only when the inventory lists it and its bytes are exactly `@AGENTS.md` followed by a newline. Other content, symlinks and unlisted imports stay untouched. For Gemini, kendex names `AGENTS.md` in `context.fileName` of `.gemini/settings.json`; a missing or stale setting is drift (`crates/core/src/engine/instruction_shims.rs`).

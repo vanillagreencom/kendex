@@ -411,7 +411,7 @@ fn the_offer_is_answered_by_its_keys() {
             "{what}: the keys were not drawn:\n{text}"
         );
         assert!(
-            text.contains("applied 3 changes"),
+            text.contains("applied 1 change"),
             "{what}: no closing ledger:\n{text}"
         );
     }

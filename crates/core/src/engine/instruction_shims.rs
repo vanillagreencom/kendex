@@ -1,33 +1,25 @@
 //! The files that make a project's `AGENTS.md` files reachable by a
 //! harness that does not read them natively: instruction shims.
 //!
-//! Claude Code reads `CLAUDE.md` alone, root and nested, and honours an
-//! `@file` import in it, so every tracked `AGENTS.md` gets a sibling
-//! `CLAUDE.md` holding one import line. Gemini reads whichever file names
-//! its `context.fileName` setting lists, so the project's Gemini settings
-//! name `AGENTS.md` beside Gemini's own default. Both are committed files
-//! the consumer's repository carries.
+//! Gemini reads whichever file names its `context.fileName` setting lists,
+//! so the project's Gemini settings name `AGENTS.md` beside its default.
+//! The install record keeps this key ([`crate::lock::Lock::shims`]).
 //!
-//! A `CLAUDE.md` shim's bytes are constant, which makes ownership a question
-//! of content: exact bytes are kendex's to rewrite, anything else at the
-//! position is the person's and a conflict (invariant 6). Gemini's shim is a
-//! key in a file of the person's, with no bytes of its own to prove it, so
-//! the install record keeps it ([`crate::lock::Lock::shims`]). The same plan
-//! that writes the root shim retires a `.claude/CLAUDE.md` link at the root
-//! `AGENTS.md`, and a project that stops installing to a harness has that
-//! harness's shims taken back (`retire`).
+//! Claude Code reads `AGENTS.md` natively. Its former whole-file shims are
+//! retired only where exact bytes and the inventory prove kendex wrote
+//! them (`retire`). The old `.claude/CLAUDE.md` link to the root instruction
+//! file is also retired. Every other Claude instruction file is the person's.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod observe;
 mod retire;
-use observe::{agents_files, claude_standing, gemini_edit, gemini_standing, old_link};
+use observe::{agents_files, gemini_edit, gemini_standing, old_link};
 
-use super::file_plan::{TAKEN_OVER, set_aside};
 use super::removal::trash;
-use super::{DriftRow, DriftState, PlanOptions};
-use crate::apply::{Description, Op, PlannedOp, Pre};
+use super::{DriftRow, DriftState};
+use crate::apply::{Description, PlannedOp};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::KeyedShim;
@@ -57,11 +49,6 @@ pub enum ShimState {
     Missing,
     /// A settings file present and parsing that does not name `AGENTS.md`.
     Stale,
-    /// A regular file holding other bytes: the person's, never rewritten
-    /// without the take-over (invariant 6).
-    Foreign,
-    /// A link at the shim's position: never a clobber target.
-    Symlinked,
     /// The retired `.claude/CLAUDE.md` link, still pointing at the root
     /// `AGENTS.md`; the plan moves it to the trash.
     OldLink,
@@ -89,8 +76,8 @@ impl ShimStanding {
     }
 
     /// The record this shim is kept under, where it is a key in a settings
-    /// document whose other keys are the person's: Gemini's. `None` for a
-    /// shim that is the whole file `write_shim` lays down. Stated per
+    /// document whose other keys are the person's: Gemini's. `None` for
+    /// the retired Claude link. Stated per
     /// harness, so a shim added for another one has to say which it is here
     /// before anything owns its position.
     pub fn keyed(&self) -> Option<KeyedShim> {
@@ -123,10 +110,7 @@ impl ShimStanding {
     pub(crate) fn kept(&self) -> bool {
         match self.state {
             ShimState::InSync | ShimState::Missing | ShimState::Stale => true,
-            ShimState::Foreign
-            | ShimState::Symlinked
-            | ShimState::OldLink
-            | ShimState::Refused(_) => false,
+            ShimState::OldLink | ShimState::Refused(_) => false,
         }
     }
 
@@ -148,21 +132,12 @@ impl ShimStanding {
         let at = crate::names::shown(&self.name);
         Some(match (&self.state, self.harness) {
             (ShimState::InSync, _) => return None,
-            (ShimState::Missing, HarnessId::Gemini) => format!(
+            (ShimState::Missing, _) => format!(
                 "{at} is not written yet — {GEMINI_KEY} names {AGENTS_FILE} so Gemini reads it"
             ),
-            (ShimState::Missing, _) => format!(
-                "{at} is not written yet — one line, `@{AGENTS_FILE}`, so Claude Code reads the {AGENTS_FILE} beside it"
-            ),
             (ShimState::Stale, _) => format!("{GEMINI_KEY} in {at} does not name {AGENTS_FILE}"),
-            (ShimState::Foreign, _) => format!(
-                "{at} is not the shim — move its content into {AGENTS_FILE} and delete it, or apply with --replace-unmanaged to move it to the trash and write the shim"
-            ),
-            (ShimState::Symlinked, _) => {
-                format!("{at} is a link, not the shim — remove it by hand, then apply again")
-            }
             (ShimState::OldLink, _) => format!(
-                "{at} still links to the root {AGENTS_FILE} — the {CLAUDE_SHIM_FILE} shim beside {AGENTS_FILE} replaces it, and apply moves the link to the trash"
+                "{at} still links to the root {AGENTS_FILE}; Claude Code reads that file itself, and apply moves the link to the trash"
             ),
             (ShimState::Refused(reason), _) => reason.clone(),
         })
@@ -185,26 +160,17 @@ impl ShimStanding {
 }
 
 /// Every shim the scope owes, as it stands on disk. Project scope only:
-/// nothing global has an `AGENTS.md`. A harness list naming neither Claude
-/// nor Gemini owes none.
+/// nothing global has an `AGENTS.md`. Only Gemini needs a shim; the old
+/// Claude link is observed independently of the harness list.
 pub fn observe(env: &Env, scope: &Scope, harnesses: &[HarnessId]) -> Result<Vec<ShimStanding>> {
     let Scope::Project { root } = scope else {
         return Ok(Vec::new());
     };
-    let claude = harnesses.contains(&HarnessId::Claude);
     let gemini = harnesses.contains(&HarnessId::Gemini);
-    if !claude && !gemini {
-        return Ok(Vec::new());
-    }
     let agents = agents_files(root)?;
     let mut standings = Vec::new();
-    if claude {
-        for agents_file in &agents {
-            standings.push(claude_standing(root, agents_file)?);
-        }
-        if let Some(old) = old_link(root, &agents)? {
-            standings.push(old);
-        }
+    if let Some(old) = old_link(root, &agents)? {
+        standings.push(old);
     }
     if gemini && agents.iter().any(|path| path == &root.join(AGENTS_FILE)) {
         standings.push(gemini_standing(env, scope, root)?);
@@ -246,13 +212,8 @@ pub(crate) fn recorded_shims(
     Ok(shims)
 }
 
-/// Plan every shim the scope owes: writes for the missing ones, the edit
-/// for Gemini's settings, the trash for the retired link, the retirement of
-/// a shim whose harness the list no longer names, and a drift row for
-/// everything that is not in sync. Foreign content is a conflict
-/// unless the take-over names it, in which case it moves to the trash
-/// bound to the bytes read here and the shim lands after it (invariants 6
-/// and 7).
+/// Plan Gemini's settings edit and the retirement of obsolete Claude
+/// shims and links. Gemini's shim retires when its harness leaves the list.
 ///
 /// `shims`, the keyed shims the record holds, loses each one this pass
 /// takes back and gains each one the plan keeps. A key already naming
@@ -267,7 +228,6 @@ pub(super) fn plan_instruction_shims(
     env: &Env,
     scope: &Scope,
     harnesses: &[HarnessId],
-    options: &PlanOptions,
     shims: &mut BTreeSet<KeyedShim>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut super::config_edits::ConfigEditPlan,
@@ -280,21 +240,11 @@ pub(super) fn plan_instruction_shims(
             .filter(|shim| shim.kept())
             .filter_map(ShimStanding::keyed),
     );
-    // The old link goes only once the root shim is planned or in sync: a
-    // root position the plan cannot settle keeps its link, so Claude Code
-    // keeps reading the root file one way or the other.
-    let root_settled = standings.iter().any(|shim| {
-        shim.harness == HarnessId::Claude
-            && shim.name == CLAUDE_SHIM_FILE
-            && (shim.state == ShimState::InSync
-                || shim.state == ShimState::Missing
-                || (shim.state == ShimState::Foreign && taken_over(options, &shim.name)))
-    });
     for shim in &standings {
         let detail = shim.problem();
         match &shim.state {
             ShimState::InSync => {}
-            ShimState::Missing if shim.harness == HarnessId::Gemini => {
+            ShimState::Missing => {
                 config_edits.push(shim.path.clone(), gemini_label(), gemini_edit());
                 drift.push(shim.row(scope, DriftState::Missing, detail.unwrap_or_default()));
             }
@@ -302,28 +252,14 @@ pub(super) fn plan_instruction_shims(
                 config_edits.push(shim.path.clone(), gemini_label(), gemini_edit());
                 drift.push(shim.row(scope, DriftState::Stale, detail.unwrap_or_default()));
             }
-            ShimState::Missing => {
-                ops.push(write_shim(&shim.path, Pre::Absent));
-                drift.push(shim.row(scope, DriftState::Missing, detail.unwrap_or_default()));
-            }
-            ShimState::Foreign if taken_over(options, &shim.name) => {
-                ops.push(set_aside(&shim.path, Pre::observed(&shim.path)?));
-                ops.push(write_shim(&shim.path, Pre::Absent));
-                drift.push(shim.row(scope, DriftState::Missing, TAKEN_OVER.to_owned()));
-            }
-            ShimState::Foreign | ShimState::Symlinked | ShimState::Refused(_) => {
+            ShimState::Refused(_) => {
                 drift.push(shim.row(scope, DriftState::Conflict, detail.unwrap_or_default()));
             }
             ShimState::OldLink => {
-                if !root_settled {
-                    continue;
-                }
                 ops.push(trash(
                     Description::around(
                         "Move the retired link ",
-                        format!(
-                            " to the trash — the {CLAUDE_SHIM_FILE} shim beside {AGENTS_FILE} replaces it"
-                        ),
+                        format!(" to the trash; Claude Code reads {AGENTS_FILE} itself"),
                     ),
                     shim.path.clone(),
                 )?);
@@ -334,34 +270,6 @@ pub(super) fn plan_instruction_shims(
     Ok((standings, drift))
 }
 
-/// Whether the take-over reaches this shim: the scope-wide flag, or the
-/// per-item choice naming it the way its row is named.
-fn taken_over(options: &PlanOptions, name: &str) -> bool {
-    options.replace_unmanaged
-        || options
-            .replace_unmanaged_names
-            .as_deref()
-            .is_some_and(|named| {
-                named
-                    .iter()
-                    .any(|(kind, wanted)| *kind == ItemKind::Skill && wanted == name)
-            })
-}
-
 fn gemini_label() -> String {
     format!("name {AGENTS_FILE} as a context file")
-}
-
-fn write_shim(path: &Path, pre: Pre) -> PlannedOp {
-    PlannedOp {
-        description: Description::around(
-            "Write the Claude Code shim ",
-            format!(" (one line, `@{AGENTS_FILE}`)"),
-        ),
-        op: Op::WriteFile {
-            path: path.to_path_buf(),
-            bytes: CLAUDE_SHIM.as_bytes().to_vec(),
-            pre,
-        },
-    }
 }

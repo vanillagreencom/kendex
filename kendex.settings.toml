@@ -385,9 +385,8 @@ WORKTREE_MKDIRS = "tmp"
 # .gitignore's bare `node_modules` pattern covers the symlink.
 WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 
-# Nothing needs one: the CLAUDE.md shims kendex writes beside each AGENTS.md
-# are tracked files, so they arrive through git, and naming one here would
-# shadow tracked content.
+# AGENTS.md instruction files are tracked and arrive through git.
+# A relative symlink here would shadow tracked content.
 WORKTREE_RELATIVE_SYMLINKS = ""
 
 # Seconds a 1Password token resolution may take.
