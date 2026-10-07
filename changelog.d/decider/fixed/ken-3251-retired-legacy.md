@@ -1,1 +1,1 @@
-- `Retired` is documented again, as the legacy spelling of `Withdrawn`: repositories whose INDEX.md still holds `Retired` rows read them as withdrawn, and may rewrite them to `Withdrawn` when the record is next touched.
+- `Retired` is documented again, as the legacy spelling of `Withdrawn`: repositories whose INDEX.md still holds `Retired` rows read them as withdrawn, and a change that touches such a record rewrites its status to `Withdrawn`.

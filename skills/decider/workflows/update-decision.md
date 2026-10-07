@@ -10,7 +10,7 @@ Change an existing decision when a newer one displaces it, a re-assessment keeps
 | Retire | The choice is withdrawn and nothing replaces it | `Withdrawn` |
 | Remove | The choice is routine and holds; its reason now lives in the code or principle doc it governs | `Removed` |
 
-A row or record still reading `Retired`, the legacy spelling of `Withdrawn`, may be rewritten to `Withdrawn` when the record is next touched.
+`Retired` is the legacy spelling of `Withdrawn`. A change that touches a record for any reason rewrites its `Retired` status to `Withdrawn`, in the decision file and the INDEX row, in that same change; a row nothing touches stays valid as written.
 
 A re-assessment that changes the choice is a new record, per `create-decision.md`, and this workflow supersedes the old one with it.
 
