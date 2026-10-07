@@ -98,14 +98,16 @@ a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci
 # deferral cut, so a PR with a pending required check is refused rather than
 # armed; the reply refusal cut, so a bad disposition arms; and the refusal's
 # issue prefix narrowed to review_replies:, so a reply check that reached no
-# verdict arms.
+# verdict arms; and the refusal's state test cut, so a PR whose state both
+# lookups failed to read arms with its replies unread.
 mutant_copy no-refusal "        'required_approval required_approving_review_count count'" '' >/dev/null
 mutant_copy no-thread-refusal "        'required_thread_resolution required_review_thread_resolution flag'" '' >/dev/null
 mutant_copy no-stale-refusal "        'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'" '' >/dev/null
 mutant_copy no-kind-check '        def fits($kind): if $kind == "count" then type == "number" and . >= 0 and . == floor else type == "boolean" end;' '        def fits($kind): true;' >/dev/null
 mutant_copy no-deferral '    if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then' '    if [ "$can_merge" != "true" ]; then' >/dev/null
-mutant_copy no-reply-refusal '    if [ "$auto" = true ] && reply_blocked "$check_result"; then' '    if false; then' >/dev/null
-mutant_copy no-unread-refusal "    jq -e 'any(.issues[]; startswith(\"review_replies\"))' >/dev/null <<<\"\$1\"" "    jq -e 'any(.issues[]; startswith(\"review_replies:\"))' >/dev/null <<<\"\$1\"" >/dev/null
+mutant_copy no-reply-refusal '    if [ "$auto" = true ] && auto_refused "$check_result"; then' '    if false; then' >/dev/null
+mutant_copy no-unread-refusal "    jq -e '.state != \"OPEN\" or any(.issues[]; startswith(\"review_replies\"))' >/dev/null <<<\"\$1\"" "    jq -e '.state != \"OPEN\" or any(.issues[]; startswith(\"review_replies:\"))' >/dev/null <<<\"\$1\"" >/dev/null
+mutant_copy no-state-refusal "    jq -e '.state != \"OPEN\" or any(.issues[]; startswith(\"review_replies\"))' >/dev/null <<<\"\$1\"" "    jq -e 'any(.issues[]; startswith(\"review_replies\"))' >/dev/null <<<\"\$1\"" >/dev/null
 
 ARMED="{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>"
 NO_APPROVAL="arm: no-merge-gate=required_approval repo=owner/repo;{approval-remedy}|calls=$PRE auth=<unset>"
@@ -139,6 +141,8 @@ must-fail: with --auto's deferral cut, the pending PR is refused and nothing arm
 must-fail: with --auto's reply refusal cut, the same PR arms|checks:ci-required replies:unreasoned post-auto approvals:1/true/true|auto-mutant:no-reply-refusal|75|-|$ARMED
 --auto refuses a reply check that reached no verdict as well|checks:ci-required replies:fail post-auto approvals:1/true/true|auto|1|-|{blocked};{permanent};✗ review_replies_unread: check-review-replies: read-failed pr=123|calls=$CHECK auth=<unset>
 must-fail: with the refusal reading review_replies: alone, the unread PR arms|checks:ci-required replies:fail post-auto approvals:1/true/true|auto-mutant:no-unread-refusal|75|-|$ARMED
+--auto refuses a PR whose state both lookups failed to read: its replies went unread|checks:ci-required state-err:401 post-auto approvals:1/true/true|auto|1|-|{blocked};{permanent};✗ gh_error: gh: Bad credentials (HTTP 401)|calls=view:state,view:state auth=<unset>
+must-fail: with the refusal's state test cut, the same PR arms|checks:ci-required state-err:401 post-auto approvals:1/true/true|auto-mutant:no-state-refusal|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=view:state,view:state,view:head,merge:squash:auto,graphql:queue auth=<unset>
 the same pending PR on a base requiring 0 approvals refuses before any mutation|checks:pending2 checks-exit:8 post-auto approvals:0/true/true|auto|1|-|$NO_APPROVAL
 the immediate merge reads no approval rule: a base requiring 0 still merges|checks:ci-required post:MERGED merge-commit:merged-oid approvals:0/true/true|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
@@ -148,7 +152,7 @@ run_table "the terminal states" "\
 the immediate merge on a merged PR|state:MERGED merged-at|immediate|0|-|ALREADY MERGED PR #123 2026-08-15T09:41:12Z|calls=view:state auth=<unset>
 no mergedAt: the bare line|state:MERGED|auto|0|-|ALREADY MERGED PR #123|calls=view:state auth=<unset>
 a closed PR is a distinct refusal, exit 1|state:CLOSED|auto|1|-|{closed}|calls=view:state auth=<unset>
-a failed state lookup blocks the merge with its real cause|state-err:401|immediate|1|-|{blocked};{permanent};✗ gh_error: gh: Bad credentials (HTTP 401);{hint-auto}|calls=view:state,view:state auth=<unset>
+a failed state lookup blocks the merge with its real cause|state-err:401|immediate|1|-|{blocked};{permanent};✗ gh_error: gh: Bad credentials (HTTP 401)|calls=view:state,view:state auth=<unset>
 a state resolved only on the retry still short-circuits --auto, the lookup retried not cached|state:MERGED merged-at state-err:once|auto|0|-|ALREADY MERGED PR #123 2026-08-15T09:41:12Z|calls=view:state,view:state auth=<unset>
 a closed PR found on the retry keeps its line|state:CLOSED state-err:once|auto|1|-|{closed}|calls=view:state,view:state auth=<unset>
 the immediate mode on a retry-resolved state|state:MERGED merged-at state-err:once|immediate|0|-|ALREADY MERGED PR #123 2026-08-15T09:41:12Z|calls=view:state,view:state auth=<unset>

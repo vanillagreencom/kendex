@@ -1,0 +1,1 @@
+- `pr-merge --auto` refuses, arming nothing, when the readiness check could not read the pull request as open, so a failed state lookup no longer arms a merge whose review replies were never checked.

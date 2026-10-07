@@ -233,7 +233,9 @@ Branch deletion:
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
-  checks, bot-token load, and merge-state mutation; UNKNOWN continues. --check reports state.
+  checks, bot-token load, and merge-state mutation; UNKNOWN continues to the
+  readiness check, which re-reads it, and any mode, --auto included, refuses
+  with nothing merged or armed when that read is not OPEN. --check reports state.
 
   Every gh pr merge invocation is exact-head guarded by --match-head-commit; a changed head is BLOCKED.
   Queue membership comes from GraphQL isInMergeQueue and mergeQueueEntry. An
@@ -642,10 +644,11 @@ run_checks() {
         '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
 }
 
-# True when the readiness result carries a reply-check issue, which no GitHub
-# rule holds an armed PR on, so --auto answers it no better than a merge.
-reply_blocked() {
-    jq -e 'any(.issues[]; startswith("review_replies"))' >/dev/null <<<"$1"
+# True when --auto answers the readiness result no better than a merge: a
+# state other than OPEN, whose checks returned before the reply check ran, or
+# a reply-check issue. No GitHub rule holds an armed PR on a reply.
+auto_refused() {
+    jq -e '.state != "OPEN" or any(.issues[]; startswith("review_replies"))' >/dev/null <<<"$1"
 }
 
 print_blocked() {
@@ -663,7 +666,7 @@ print_blocked() {
     echo "$check_result" | jq -r '.issues[]' | sed 's/^/  ✗ /' >&2
     echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
     echo "" >&2
-    reply_blocked "$check_result" || echo "Use --auto to queue for auto-merge." >&2
+    auto_refused "$check_result" || echo "Use --auto to queue for auto-merge." >&2
 }
 
 # Run gh with the same effective identity used for the merge mutation. Keep the token scoped to the
@@ -1161,8 +1164,9 @@ main() {
         exit 1
     fi
     # No GitHub rule reads what a review reply says, so GitHub would merge an
-    # armed PR past one: --auto defers every blocker but the reply check's.
-    if [ "$auto" = true ] && reply_blocked "$check_result"; then
+    # armed PR past one: --auto defers every blocker but the reply check's,
+    # and refuses a state it could not read as OPEN, whose replies went unread.
+    if [ "$auto" = true ] && auto_refused "$check_result"; then
         print_blocked "$check_result" "$pr_num"
         exit 1
     fi
