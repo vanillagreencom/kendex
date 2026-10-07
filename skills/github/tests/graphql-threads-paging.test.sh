@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# `gh_graphql_threads` is the one reviewThreads pager in this skill. pr-data
-# and pr-threads both read threads through it, so the paging and the
-# fail-closed rules are proven once, here, against a two-page stub.
+# `gh_graphql_threads` is the one reviewThreads pager in this skill, built on
+# `gh_graphql_connection`, so the paging and the fail-closed rules are proven
+# once, here, against a two-page stub. pr-data's own walks are
+# pr-data-paging.test.sh.
 #
 # Every caller decides whether a PR is clean, so a page that cannot be
 # verified must produce no output at all: a partial list read as a complete
@@ -11,7 +12,6 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 LIB="$REPO_ROOT/skills/github/scripts/lib/github-api.sh"
-PR_DATA="$REPO_ROOT/skills/github/scripts/commands/pr-data.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -143,25 +143,6 @@ rc=0; out="$(call)" || rc=$?
 grep -Fq -- "$NO_ADVANCE" "$CALL_ERR" \
   && ok "the stalled walk is reported as a stall, not as a malformed page" \
   || bad "the stalled walk is reported as a stall, not as a malformed page" "$(cat "$CALL_ERR")"
-
-echo
-echo "=== pr-data reads its threads through the same pager ==="
-
-STUB_PAGE1="$(page "$P1_NODES" true '"CURSOR2"')"
-STUB_PAGE2="$(page "$P2_NODES" false null)"
-out="$(PATH="$TMP_ROOT/bin:$PATH" GH_TOKEN=stub bash "$PR_DATA" 7 --format=raw 2>"$TMP_ROOT/pr-data.err")" || true
-eq "$(jq '.repository.pullRequest.reviewThreads.nodes | length' <<<"$out")" "3" \
-  "pr-data merges both thread pages"
-eq "$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$out")" "false" \
-  "pr-data reports a complete walk"
-
-# The must-fail control: a second page the pager cannot verify must not let
-# pr-data print a PR whose unresolved thread sits on it.
-STUB_PAGE2='{"repository":{"pullRequest":{"reviewThreads":null}}}'
-rc=0
-out="$(PATH="$TMP_ROOT/bin:$PATH" GH_TOKEN=stub bash "$PR_DATA" 7 --format=raw 2>/dev/null)" || rc=$?
-[[ "$rc" -ne 0 && -z "$out" ]] && ok "pr-data prints nothing when a later page cannot be verified" \
-  || bad "pr-data prints nothing when a later page cannot be verified" "rc=$rc out=$out"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

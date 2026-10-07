@@ -531,19 +531,71 @@ compute_sticky_verdict_from_body() {
     echo "pending"
 }
 
+# Every page of one GraphQL connection, merged into one JSON array of nodes
+# on stdout.
+#
+#   gh_graphql_connection QUERY PATH LABEL CURSOR [gh_graphql args...]
+#
+# QUERY declares `$cursor: String` and selects the connection at the jq PATH
+# (e.g. `.repository.pullRequest.files`) with `pageInfo { hasNextPage
+# endCursor }` and `nodes`. CURSOR is the cursor to start after, empty for the
+# first page. LABEL names the connection in diagnostics.
+#
+# Callers decide whether a PR is clean or a review complete, so a partial list
+# must never reach one: a failed page, a malformed response, a hasNextPage
+# without a usable cursor, a cursor that does not advance, or a walk past the
+# page bound all return 1 and print nothing.
+gh_graphql_connection() {
+    local query="$1" path="$2" label="$3" cursor="$4"
+    shift 4
+    local nodes='[]' page page_nodes has_next next_cursor page_count=0
+    while :; do
+        page_count=$((page_count + 1))
+        if [ "$page_count" -gt 1000 ]; then
+            github_error "GitHub $label pagination exceeded its safety bound"
+            return 1
+        fi
+
+        page=$(gh_graphql "$query" "$@" ${cursor:+-F cursor="$cursor"}) || return 1
+
+        if ! jq -e "$path"' as $t
+            | (($t | type) == "object")
+              and (($t.nodes | type) == "array")
+              and (($t.pageInfo.hasNextPage | type) == "boolean")
+              and (($t.pageInfo.hasNextPage | not)
+                   or ((($t.pageInfo.endCursor | type) == "string")
+                       and (($t.pageInfo.endCursor | length) > 0)))
+        ' >/dev/null 2>&1 <<<"$page"; then
+            github_error "GitHub returned malformed $label pagination data"
+            return 1
+        fi
+
+        page_nodes=$(jq -c "$path.nodes" <<<"$page") || return 1
+        # Both values reach jq on stdin: review bodies in argv can exceed
+        # ARG_MAX on macOS while the API response itself is perfectly valid.
+        nodes=$(printf '%s\n%s\n' "$nodes" "$page_nodes" | jq -sc '.[0] + .[1]') || return 1
+
+        has_next=$(jq -r "$path.pageInfo.hasNextPage" <<<"$page") || return 1
+        [ "$has_next" = "true" ] || break
+
+        next_cursor=$(jq -r "$path.pageInfo.endCursor" <<<"$page") || return 1
+        if [ "$next_cursor" = "$cursor" ]; then
+            github_error "GitHub $label pagination cursor did not advance"
+            return 1
+        fi
+        cursor="$next_cursor"
+    done
+    printf '%s\n' "$nodes"
+}
+
 # Every reviewThreads page for a PR, merged into one JSON array of thread
-# nodes on stdout.
+# nodes on stdout, with gh_graphql_connection's fail-closed rules.
 #
 #   gh_graphql_threads OWNER REPO PR NODE_SELECTION
 #
 # NODE_SELECTION is the GraphQL selection set for a single thread node, so
-# each caller asks for the fields it reads and nothing more.
-#
-# GitHub caps one reviewThreads page at 100 nodes. Every caller here decides
-# whether a PR is clean, so a partial list must never reach one: a failed
-# page, a malformed response, a hasNextPage without a usable cursor, a cursor
-# that does not advance, or a walk past the page bound all return 1 and print
-# nothing.
+# each caller asks for the fields it reads and nothing more. GitHub caps one
+# reviewThreads page at 100 nodes.
 gh_graphql_threads() {
     local owner="$1" repo="$2" pr="$3" node_selection="$4"
     local query='
@@ -557,45 +609,8 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
     }
   }
 }'
-    local nodes='[]' cursor="" page page_nodes has_next next_cursor page_count=0
-    while :; do
-        page_count=$((page_count + 1))
-        if [ "$page_count" -gt 1000 ]; then
-            github_error 'Review thread pagination exceeded its safety bound'
-            return 1
-        fi
-
-        page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" ${cursor:+-F cursor="$cursor"}) || return 1
-
-        if ! jq -e '
-            .repository.pullRequest.reviewThreads as $t
-            | (($t | type) == "object")
-              and (($t.nodes | type) == "array")
-              and (($t.pageInfo.hasNextPage | type) == "boolean")
-              and (($t.pageInfo.hasNextPage | not)
-                   or ((($t.pageInfo.endCursor | type) == "string")
-                       and (($t.pageInfo.endCursor | length) > 0)))
-        ' >/dev/null 2>&1 <<<"$page"; then
-            github_error 'GitHub returned malformed review thread pagination data'
-            return 1
-        fi
-
-        page_nodes=$(jq -c '.repository.pullRequest.reviewThreads.nodes' <<<"$page") || return 1
-        # Both values reach jq on stdin: review bodies in argv can exceed
-        # ARG_MAX on macOS while the API response itself is perfectly valid.
-        nodes=$(printf '%s\n%s\n' "$nodes" "$page_nodes" | jq -sc '.[0] + .[1]') || return 1
-
-        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page") || return 1
-        [ "$has_next" = "true" ] || break
-
-        next_cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page") || return 1
-        if [ "$next_cursor" = "$cursor" ]; then
-            github_error 'GitHub review thread pagination cursor did not advance'
-            return 1
-        fi
-        cursor="$next_cursor"
-    done
-    printf '%s\n' "$nodes"
+    gh_graphql_connection "$query" '.repository.pullRequest.reviewThreads' 'review thread' '' \
+        -F owner="$owner" -F repo="$repo" -F pr="$pr"
 }
 
 # Check if bot token is configured and valid

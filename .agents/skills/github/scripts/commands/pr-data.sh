@@ -118,7 +118,6 @@ get_pr_data() {
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
 
-    # GraphQL query for PR data.
     local query='
 query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -126,10 +125,37 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       number
       title
       headRefName
-      files(first: 100) {
+    }
+  }
+}'
+
+    local result
+    result=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr_num") || exit 1
+
+    # Files, PR-level comments, review threads and each thread's comments are
+    # every one paged to completeness: a caller reads this output as the whole
+    # PR, so a file, comment or reply on a later page must not go missing.
+    local files_query='
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      files(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes { path }
       }
-      comments(first: 50) {
+    }
+  }
+}'
+    local files
+    files=$(gh_graphql_connection "$files_query" '.repository.pullRequest.files' 'PR file' '' \
+        -F owner="$owner" -F repo="$repo" -F pr="$pr_num") || exit 1
+
+    local comments_query='
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           author { login }
@@ -141,13 +167,10 @@ query($owner: String!, $repo: String!, $pr: Int!) {
     }
   }
 }'
+    local comments
+    comments=$(gh_graphql_connection "$comments_query" '.repository.pullRequest.comments' 'PR comment' '' \
+        -F owner="$owner" -F repo="$repo" -F pr="$pr_num") || exit 1
 
-    local result
-    result=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr_num") || exit 1
-
-    # Threads are paged separately, by the one pager: a PR with more than 100
-    # of them must not read as clean because its unresolved ones sit on a
-    # later page. The merged nodes are grafted onto the shape callers walk.
     local threads
     threads=$(gh_graphql_threads "$owner" "$repo" "$pr_num" '
                           id
@@ -155,10 +178,54 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                           isOutdated
                           path
                           line
-                          comments(first: 10) { nodes { author { login } body url } }') || exit 1
-    result=$(printf '%s\n%s\n' "$result" "$threads" | jq -sc '
-        .[0].repository.pullRequest.reviewThreads = {
-            nodes: .[1],
+                          comments(first: 10) {
+                            pageInfo { hasNextPage endCursor }
+                            nodes { author { login } body url }
+                          }') || exit 1
+
+    # A thread's first comment page arrives with the thread; one that says
+    # more follow is walked on from its cursor.
+    if ! jq -e 'all(.[];
+            (.comments | type) == "object"
+            and (.comments.nodes | type) == "array"
+            and (.comments.pageInfo.hasNextPage | type) == "boolean"
+            and ((.comments.pageInfo.hasNextPage | not)
+                 or (((.comments.pageInfo.endCursor | type) == "string")
+                     and ((.comments.pageInfo.endCursor | length) > 0))))
+        ' >/dev/null 2>&1 <<<"$threads"; then
+        github_error 'GitHub returned malformed review thread comment pagination data'
+        exit 1
+    fi
+    local thread_comments_query='
+query($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { author { login } body url }
+      }
+    }
+  }
+}'
+    local pending idx thread_id start_cursor rest
+    pending=$(jq -r 'to_entries[]
+        | select(.value.comments.pageInfo.hasNextPage)
+        | "\(.key)\t\(.value.id)\t\(.value.comments.pageInfo.endCursor)"' <<<"$threads") || exit 1
+    while IFS=$'\t' read -r idx thread_id start_cursor; do
+        [ -n "$idx" ] || continue
+        rest=$(gh_graphql_connection "$thread_comments_query" '.node.comments' 'review thread comment' \
+            "$start_cursor" -F id="$thread_id") || exit 1
+        threads=$(printf '%s\n%s\n' "$threads" "$rest" | jq -sc --argjson i "$idx" \
+            '.[0][$i].comments.nodes += .[1] | .[0]') || exit 1
+    done <<<"$pending"
+    threads=$(jq -c 'map(.comments = {nodes: .comments.nodes})' <<<"$threads") || exit 1
+
+    # The merged nodes are grafted onto the shape callers walk.
+    result=$(printf '%s\n%s\n%s\n%s\n' "$result" "$files" "$comments" "$threads" | jq -sc '
+        .[0].repository.pullRequest.files = {nodes: .[1]}
+        | .[0].repository.pullRequest.comments = {nodes: .[2]}
+        | .[0].repository.pullRequest.reviewThreads = {
+            nodes: .[3],
             pageInfo: {hasNextPage: false, endCursor: null}
         }
         | .[0]') || exit 1
