@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Drives the actual consumer runner with real local git repositories. Only
-# the classifier and GitHub services are replaced; held-render rows use a
+# GitHub services are replaced; classification rows run the real classifier,
+# and the other rows replace it. Held-render rows use a
 # real kendex, an isolated HOME and a local catalog.
 set -euo pipefail
 REAL_KENDEX=""
@@ -138,6 +139,11 @@ if [ "${1:-} ${2:-}" = 'help bot-instructions-render' ]; then
 fi
 if [ "${1:-}" = bot-instructions-render ]; then
   env >@STATE@/render-env
+  if [ -f @STATE@/classifier-proof ]; then
+    mkdir -p .github
+    printf 'refreshed bot instructions\n' >.github/copilot-instructions.md
+    exit 0
+  fi
   if [ -e @STATE@/render-exit ]; then
     cat @STATE@/render-said
     exit "$(cat @STATE@/render-exit)"
@@ -153,6 +159,12 @@ case "$1" in
     : >"$TEST_STATE/refreshed"
     [ -z "${TEST_REFRESH_SAID:-}" ] || printf '%s\n' "$TEST_REFRESH_SAID"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
+    if [ -f "$TEST_STATE/classifier-proof" ]; then
+      mkdir -p .agents/skills/probe
+      printf 'a gained render\n' >.agents/skills/probe/SKILL.md
+      jq '. + [".agents/skills/probe/SKILL.md"] | sort' .kendex-generated.json >inventory-next
+      mv inventory-next .kendex-generated.json
+    fi
     if [ -n "${TEST_REFRESH_ADDS:-}" ]; then
       mkdir -p "$(dirname "$TEST_REFRESH_ADDS")"
       printf 'added by the refresh\n' >"$TEST_REFRESH_ADDS"
@@ -182,7 +194,18 @@ case "$1" in
   apply)
     [ "${TEST_APPLY_EXIT:-0}" -eq 0 ] || exit "$TEST_APPLY_EXIT"
     rm -f -- .claude/hooks/leftover.sh ;;
-  verify) [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ] ;;
+  verify)
+    if [[ " $* " == *' --json '* ]] && [ -f "$TEST_STATE/classifier-proof" ]; then
+      failed=0
+      [ "$(cat "$TEST_STATE/classifier-proof")" != verify-not-clean ] || failed=1
+      jq -cn --argjson failed "$failed" \
+        '{version:1,checked:3,failed:$failed,rows:[{state:"ok",positions:[
+          {path:"rendered.txt",owns:"file"},
+          {path:".kendex-generated.json",owns:"file"},
+          {path:".agents/skills/probe",owns:"tree"}]}]}'
+    else
+      [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ]
+    fi ;;
   help) [ "$TEST_LISTS_PRUNE" != yes ] || printf '      --prune\n' ;;
   *) exit 2 ;;
 esac
@@ -193,6 +216,11 @@ set -euo pipefail
 # A child the runner starts under env -i carries none of these settings and
 # reaches git itself.
 [ -n "${TEST_REAL_GIT:-}" ] || exec @REAL_GIT@ "$@"
+if [ -f "$TEST_STATE/classifier-proof" ] &&
+    [ "$(cat "$TEST_STATE/classifier-proof")" = paths-unread ] &&
+    [[ " $* " == *' diff --name-only --no-renames '* ]]; then
+  exit 80
+fi
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
 if [ "${1:-}" = push ]; then
@@ -235,7 +263,7 @@ exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
 file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
-file_edit "$TMP/bin" kendex 5 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 6 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -915,6 +943,98 @@ git -C "$repo" add -A
 git -C "$repo" commit -qm 'restore class rules'
 git -C "$repo" push -q origin main
 MEASURED=true; CLASS_EXIT=0; CLASS_REASON='cause=renders-match-their-sources'
+
+# A catalog refresh can gain an inventoried render and rewrite bot outputs
+# outside verify's positions. Exercise the real classifier on that same diff
+# through the runner. Only verify's document and the GitHub transport are doubles.
+cp "$repo/.agents/skills/harness-ci/scripts/change-class" "$TMP/class-double"
+cp "$repo/.kendex-generated.json" "$TMP/class-inventory"
+cp -R "$SKILL_DIR/../harness-ci/." "$repo/.agents/skills/harness-ci/"
+cp "$repo/.agents/skills/harness-ci/scripts/change-class" "$TMP/class-proof-script"
+printf '[".kendex-generated.json","rendered.txt"]\n' >"$repo/.kendex-generated.json"
+mkdir -p "$repo/.github"
+printf 'old bot instructions\n' >"$repo/.github/copilot-instructions.md"
+for row in \
+  'clean|none' \
+  'clean|original' \
+  'verify-not-clean|none' \
+  'verify-not-clean|drop-measured' \
+  'paths-unread|none' \
+  'paths-unread|drop-measured'; do
+  IFS='|' read -r proof control <<<"$row"
+  cp "$TMP/class-proof-script" "$repo/.agents/skills/harness-ci/scripts/change-class"
+  cp "$TMP/class-runner" "$runner"
+  if [ "$control" != none ]; then
+    python3 - "$repo/.agents/skills/harness-ci/scripts/change-class" "$runner" "$control" <<'PROOF_CONTROL'
+from pathlib import Path
+import sys
+if sys.argv[3] == 'original':
+    p = Path(sys.argv[1]).resolve()
+    text = p.read_text()
+    old = '; RENDER_MEASURED=measured'
+    assert text.count(old) == 3
+    changed = text.replace(old, '')
+else:
+    p = Path(sys.argv[2]).resolve()
+    text = p.read_text()
+    old = ' || [[ "$class_line" != "class: class=$class measured=true "* ]]'
+    assert text.count(old) == 1
+    changed = '# ' + old + '\n' + text.replace(old, '')
+assert changed != text
+p.write_text(changed)
+PROOF_CONTROL
+  fi
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  printf '%s\n' "$proof" >"$TMP/state/classifier-proof"
+  : >"$TMP/state/calls"
+  run_refresh "proof-$proof-$control" pass standard
+  case "$proof:$control" in
+    clean:none)
+      CLASS_REASON='cause=render-path-unowned path=.github/copilot-instructions.md'
+      published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+      if refresh_class_matches standard pushed "$CLASS_REASON" PATCH &&
+          [ "$published" != "$before" ] &&
+          grep -qxF 'Change class: `standard`.' "$TMP/state/body" &&
+          git --git-dir="$TMP/remote" show "$published:.kendex-generated.json" |
+            jq -e 'index(".agents/skills/probe/SKILL.md") != null' >/dev/null &&
+          [ "$(git --git-dir="$TMP/remote" show "$published:.github/copilot-instructions.md")" = 'refreshed bot instructions' ]; then
+        ok 'a gained render and unowned bot output publish standard with the real classifier'
+      else bad 'real classifier refresh publication' "$OUT"; fi ;;
+    clean:original)
+      if refresh_stopped_at_class "$before" &&
+          grep -qxF 'class: class=standard measured=false cause=render-path-unowned path=.github/copilot-instructions.md' <<<"$OUT"; then
+        ok 'control: the original classifier stops the same refresh before publication'
+      else bad 'original classifier control' "$OUT"; fi ;;
+    *:none)
+      if refresh_stopped_at_class "$before" &&
+          grep -q "^class: class=standard measured=false " <<<"$OUT" &&
+          ! grep -qxF 'git push' "$TMP/state/calls"; then
+        case "$proof" in
+          verify-not-clean) evidence='class: class=standard measured=false cause=verify-not-clean checked=3 failed=1' ;;
+          paths-unread) evidence='queue-only: queue_only=true cause=paths-unread' ;;
+        esac
+        if grep -qxF "$evidence" <<<"$OUT"; then ok "$proof stops publication with the real classifier";
+        else bad "$proof read failure not reached" "$OUT"; fi
+      else bad "$proof real classifier stop" "$OUT"; fi ;;
+    *:drop-measured)
+      if [ "$RC" -eq 0 ] && ! refresh_stopped_at_class "$before" &&
+          grep -qxF 'git push' "$TMP/state/calls"; then
+        ok "control: dropping measured admits $proof and turns its stop assertion red"
+      else bad "$proof measured condition control" "$OUT"; fi ;;
+  esac
+  reset_default
+done
+rm -f -- "$TMP/state/classifier-proof"
+cp "$TMP/class-double" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp "$TMP/class-inventory" "$repo/.kendex-generated.json"
+cp "$TMP/class-runner" "$runner"
+rm -f -- "$repo/.github/copilot-instructions.md"
+commit "$repo"
+git -C "$repo" push -q origin main
+CLASS_REASON='cause=renders-match-their-sources'
+
 # A remote head can change after the runner reads its lease. The real Git
 # remote must keep the competitor, with no pull request or merge call.
 for row in lease lease-control; do

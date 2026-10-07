@@ -254,14 +254,54 @@ gain_control="$(PATH="$stub_bin:$PATH" "$gain_mutant" --repo "$repo" \
 assert_eq "must-fail control: denying the gain the proof fails the refresh row" \
   change_class=standard "$gain_control"
 
+# Consumer refresh gains inventory paths beside bot outputs that verify does
+# not own. Completed ownership decisions select full checks, not a read stop.
+ownership_unmeasured=$(mutant ownership-unmeasured change-class \
+  '      RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured' \
+  '      RENDER_REFUSAL="cause=render-path-unowned path=$path"' \
+  '      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"; RENDER_MEASURED=measured' \
+  '      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"' \
+  '    RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured' \
+  '    RENDER_REFUSAL="cause=render-path-unowned path=$path"')
+gain_ownership_rows=0
+while IFS='|' read -r label verifier path cause; do
+  gain_ownership_rows=$((gain_ownership_rows + 1))
+  reset_case
+  set_verifier "$verifier"
+  gained=.agents/skills/orch/scripts/added.sh
+  write_lines "$repo" "$gained" 2
+  write_lines "$repo" "$path" 2
+  jq --arg path "$gained" '. + [$path] | sort' "$repo/.kendex-generated.json" >"$SANDBOX/gain-inventory"
+  mv "$SANDBOX/gain-inventory" "$repo/.kendex-generated.json"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  gain_err=$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)
+  assert_eq "$label" "class: class=standard measured=true cause=$cause" \
+    "$(sed -n '/^class: /p' <<<"$gain_err")"
+  assert_eq "$label reaches the inventory gain proof" \
+    'harness-note: cause=generated-ownership-gain' \
+    "$(sed -n '/^harness-note: /p' <<<"$gain_err")"
+  control_err=$(PATH="$stub_bin:$PATH" "$ownership_unmeasured" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)
+  assert_eq "control: the original classifier turns $label unmeasured" \
+    "class: class=standard measured=false cause=$cause" \
+    "$(sed -n '/^class: /p' <<<"$control_err")"
+done <<'GAIN_OWNERSHIP'
+a gained render beside unowned bot instructions|clean|.github/copilot-instructions.md|render-path-unowned path=.github/copilot-instructions.md
+a gained render beside a changed shared file|foreign-changed|.pi/settings.json|render-path-partial path=.pi/settings.json foreign=changed
+a gained render beside an unknown shared file|foreign-unknown|.pi/settings.json|render-path-partial path=.pi/settings.json foreign=unknown
+GAIN_OWNERSHIP
+require_rows change-class-gain-ownership "$gain_ownership_rows"
+
 # Refresh retires whole artifacts and shared registrations. Neither inventory
 # absence nor a surviving head tree can authorize a deletion: the base
 # record's whole positions, verify's `base_owned`, must name the path as a
 # file or hold it under a tree. A retirement they do not name, or a document
 # without them, whose every read came in, and beside which no other changed
 # path is refused, is standard by rule, so measured; a deletion the head
-# inventory still names, one verify refuses, or a refused path after a
-# retirement is the fallback.
+# inventory still names or a partially owned registry is also standard by
+# rule. A failed verify stays unmeasured.
 removed_repo=$(new_repo removed-render)
 commit_paths "$removed_repo" 'recorded renders' .codex/agents/rust.md .agents/skills/orch/app.ts
 # Hook registration removal preserves unrelated user settings in this file.
@@ -281,11 +321,11 @@ retired render the base record does not name|.codex/agents/rust.md|-|-|owned-els
 retired file under no tree the base record names|.agents/skills/orch/app.ts|-|-|owned-elsewhere|standard|true|render-retirement-unproved path=.agents/skills/orch/app.ts
 retired shared registry still holds user settings|.pi/settings.json|-|-|retired-registry|standard|true|render-retirement-unproved path=.pi/settings.json
 retired render under a kendex with no base ownership|.codex/agents/rust.md|-|-|clean|standard|true|render-retirement-unproved path=.codex/agents/rust.md
-a deletion still named in the head inventory|-|.codex/agents/rust.md|-|clean|standard|false|render-path-unowned path=.codex/agents/rust.md
-a deletion under a tree still named in the head inventory|-|.agents/skills/orch/app.ts|-|clean|standard|false|render-path-unowned path=.agents/skills/orch/app.ts
+a deletion still named in the head inventory|-|.codex/agents/rust.md|-|clean|standard|true|render-path-unowned path=.codex/agents/rust.md
+a deletion under a tree still named in the head inventory|-|.agents/skills/orch/app.ts|-|clean|standard|true|render-path-unowned path=.agents/skills/orch/app.ts
 verify refuses an unsanctioned deletion|.codex/agents/rust.md|-|-|dirty|standard|false|-
-a retirement ahead of a registry edit whose rest moved|.codex/agents/rust.md|-|.pi/settings.json|foreign-changed|standard|false|render-path-partial path=.pi/settings.json foreign=changed
-a retirement ahead of a deletion still named in the head inventory|.agents/skills/orch/app.ts|.codex/agents/rust.md|-|clean|standard|false|render-path-unowned path=.codex/agents/rust.md
+a retirement ahead of a registry edit whose rest moved|.codex/agents/rust.md|-|.pi/settings.json|foreign-changed|standard|true|render-path-partial path=.pi/settings.json foreign=changed
+a retirement ahead of a deletion still named in the head inventory|.agents/skills/orch/app.ts|.codex/agents/rust.md|-|clean|standard|true|render-path-unowned path=.codex/agents/rust.md
 REMOVALS
 
 # Every removal row run against SCRIPT, one `LABEL<TAB>WANT<TAB>GOT` line
@@ -337,7 +377,7 @@ require_rows change-class-removals "$removed_rows"
 # Must-fail controls, one per rule the rows hold, each naming the rows it
 # turns red: a retirement passed as owned, with the refusal text kept; a
 # retirement passed on any base ownership field, whatever it names; every
-# render refusal marked measured; the retirement's measured mark dropped; and
+# render refusal marked measured, including a failed verify; the retirement's measured mark dropped; and
 # a retirement answered before the paths after it are read.
 removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
   local planted rows
@@ -362,11 +402,7 @@ control_reds=$(removal_reds every-refusal-measured \
   '  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"' \
   '  answer standard "$RENDER_REFUSAL" measured')
 assert_eq "marking every render refusal measured turns the fallback rows red" \
-  'a deletion still named in the head inventory
-a deletion under a tree still named in the head inventory
-verify refuses an unsanctioned deletion
-a retirement ahead of a registry edit whose rest moved
-a retirement ahead of a deletion still named in the head inventory' "$control_reds"
+  'verify refuses an unsanctioned deletion' "$control_reds"
 control_reds=$(removal_reds retirement-unmeasured '  RENDER_MEASURED=measured' -)
 assert_eq "dropping the retirement's measured mark turns the retirement rows red" \
   "$retirement_rows" "$control_reds"
@@ -416,8 +452,8 @@ git -C "$repo" commit -q -m "a rendered agent no row places"
 unowned_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a path no passing position covers is owned by nobody" \
-  "cause=render-path-unowned path=.codex/agents/rust.md" \
-  "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
+  "class=standard measured=true cause=render-path-unowned path=.codex/agents/rust.md" \
+  "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: //p')"
 assert_eq "and the refused run still says how many positions it weighed" \
   "render-coverage: named=7" \
   "$(printf '%s\n' "$unowned_err" | grep '^render-coverage: ')"
@@ -438,8 +474,8 @@ git -C "$repo" commit -q -m "a registry file changed outside kendex's keys"
 partial_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a registry file changed outside kendex's keys is refused by name" \
-  "cause=render-path-partial path=.pi/settings.json foreign=changed" \
-  "$(printf '%s\n' "$partial_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
+  "class=standard measured=true cause=render-path-partial path=.pi/settings.json foreign=changed" \
+  "$(printf '%s\n' "$partial_err" | sed -n 's/^class: //p')"
 # The refusal carries what the run said around the path: verify's own rows,
 # and every position printed under the same top-level directory.
 assert_eq "and the refusal carries verify's own rows" "1" \
@@ -1031,7 +1067,7 @@ set_verifier no-bookkeeping
 book_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$book" \
   --event pull_request --base "$book_base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "and by name from nobody" \
-  "class: class=standard measured=false cause=render-path-unowned path=.kendex-generated.json" \
+  "class: class=standard measured=true cause=render-path-unowned path=.kendex-generated.json" \
   "$(printf '%s\n' "$book_err" | grep '^class: ')"
 
 # The four spellings that make any naming rule written outside the engine

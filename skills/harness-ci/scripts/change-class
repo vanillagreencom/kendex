@@ -113,7 +113,9 @@
 #            base_owned. Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
-#            cause=render-path-partial. That verdict
+#            cause=render-path-partial. Both are rule verdicts, marked
+#            measured=true: the reads succeeded but proved no whole owner.
+#            That verdict
 #            is that every installed file equals a fresh render of its
 #            declared source. Under `--at-record` a package that follows
 #            its source is rendered at the commit the install record names,
@@ -315,7 +317,7 @@ harness_err="$work/harness-stderr"
 # the ONE place that distinction is made. Every class but `standard` is earned
 # by a rule, so it is measured. `standard` is BOTH: a rule's verdict at the
 # handful of sites that pass `measured` (a base with no inventory, an unproved
-# render retirement, a path rule, a size rule), and this script's fallback
+# render ownership gap, a path rule, a size rule), and this script's fallback
 # everywhere something could not be read — a diff, an inventory, a render
 # proof, the branch-size measurer, the narrow-change list. A consumer cannot
 # tell those apart from the cause, and enumerating causes outside this script
@@ -934,7 +936,7 @@ render_paths_covered() {
         *) RENDER_REFUSAL="cause=unreadable-head-inventory head=$head_rev"; return 1 ;;
       esac
       render_refused_at "$path"
-      RENDER_REFUSAL="cause=render-path-unowned path=$path"
+      RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured
       return 1
     fi
     owned=false
@@ -958,10 +960,10 @@ render_paths_covered() {
     fi
     render_refused_at "$path"
     if [ -n "$partial" ]; then
-      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"
+      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"; RENDER_MEASURED=measured
       return 1
     fi
-    RENDER_REFUSAL="cause=render-path-unowned path=$path"
+    RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured
     return 1
   done <<<"$changed"
   [ -n "$retired" ] || return 0
