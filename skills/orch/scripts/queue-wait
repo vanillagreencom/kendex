@@ -271,7 +271,8 @@ not reported at all.
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check cause is delegated to
-`ci-wait <PR> 15 30 --json` (verdict "fail", reported as armed_blocked;
+`ci-wait <PR> 15 30 --json` (a complete "fail" result, reported as
+armed_blocked; an error result is no reading whatever verdict it carries;
 the probe after a green-but-unconfirmed answer runs to 120 seconds so
 ci-wait's stale window can confirm it, and a later unconfirmed answer keeps
 that pass only for the same check names and states). A probe runs only
@@ -904,7 +905,12 @@ probe_failed_check() {
   set -e
   # The child took the lane-mail exit; this wait ends on the same route.
   [ "$status" -ne 5 ] || lane_mail_nap 0
-  verdict=$(jq -r '.verdict // ""' 2>/dev/null <<<"$out" || true)
+  # Only a complete fail is terminal: an error result carries the verdict of
+  # the classes ci-wait last saw, a failure it was retrying included, and is
+  # no reading at all, as is an unreadable answer.
+  if ! verdict=$(jq -r 'if .status == "complete" then .verdict // "" else "" end' 2>/dev/null <<<"$out"); then
+    verdict=""
+  fi
   reading=$(jq -r 'if .status == "error" then ""
     elif .verdict == "pending" then "pending"
     elif .verdict == "pass" or .verdict == "none" then "settled"

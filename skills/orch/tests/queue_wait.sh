@@ -159,6 +159,13 @@ case "${1:-}" in
       _emit_fixture checkruns "$(_next checkruns)"
     fi
     ;;
+  run)
+    # ci-wait's transient-failure retry: a failed run whose log reads as a
+    # network timeout is re-run once.
+    _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+    [[ "${2:-}" == "view" ]] && { echo "network timeout"; exit 0; }
+    [[ "${2:-}" == "rerun" ]] && exit 0
+    ;;
   repo)
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
@@ -361,6 +368,7 @@ stage() {
       dequeue:am_errs_on_200) write_fixture dequeue "$n" "$am_errs_on_200" ;;
       prchecks:running) write_fixture prchecks "$n" '[{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:green) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"}]' ;;
+      prchecks:failed_run) write_fixture prchecks "$n" '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/123/job/4"}]' 1 ;;
       prchecks:green_more) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"linux","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
       checkruns:c*.*)
@@ -577,6 +585,7 @@ table '1 1 20 --json' \
   'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
   'checks seen running then green, and still no entry, is armed_blocked|open_armed,prchecks:1=running,prchecks:last=green|1 1 40 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable has_pending_checks=false' \
+  'an errored probe that carries a failed check is no reading, never check_failed|open_armed,prchecks:1=running,prchecks:2=failed_run,prchecks:3=failed_run,prchecks:last=fail502|1 1 40 --json||rc=1 verdict=armed_awaiting_checks cause=checks_unread' \
   'an errored probe keeps the readable answer before it|open_armed,prchecks:1=running,prchecks:2=green,prchecks:last=fail502|1 20 120 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
   'an enqueued entry keeps its progress reading|open_queued_head,checkruns:last=c1.1||STUB_PR_CHECKS_MODE=pending|rc=1 verdict=queued cause=still_progressing'
 
