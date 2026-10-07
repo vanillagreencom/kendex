@@ -388,7 +388,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       ol_entry_model "$entry"
       if [[ -z "$OL_ENTRY_MODEL" ]]; then
         defaults="$OL_DEFAULT_PREFERENCE,"
-        while [[ -n "$defaults" ]]; do
+        while [[ "$entry" == *::* && -n "$defaults" ]]; do
           default_entry="${defaults%%,*}" defaults="${defaults#*,}"
           [[ "${default_entry%%:*}" == "$OL_ENTRY_HARNESS" ]] || continue
           OL_ENTRY_MODEL="${default_entry#*:}" OL_ENTRY_MODEL="${OL_ENTRY_MODEL%%:*}"

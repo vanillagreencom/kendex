@@ -419,7 +419,8 @@ for row in \
 done
 # Normalizing the observed Codex model for account measurement must not erase
 # the model passed to its successor. A flags-only Codex caller covers the other
-# source of the same launch identity.
+# source of the same launch identity. Dropping either source takes the default
+# preference model instead of the caller's model asserted above.
 permission="$(launch_choice_permission_write codex)" || exit 1
 for control in observed flags; do
   NUMERICCTL="$(mutant_scripts "numeric-$control-ctl" oversee-succeed)" || exit 1
@@ -436,7 +437,7 @@ for control in observed flags; do
   CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
     run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
   assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
+    "0|$CODEX_LAUNCH_HOME gpt-6.1-sol|1" "control: dropping the $control model breaks numeric launch identity"
 done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10
@@ -535,12 +536,13 @@ assert_eq "$RC|$(keyed mark-reached)|$(keyed entry-permission-untransferable)" \
   "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=90|none" \
   "the check judgement of a Copilot caller skips the numeric entry silently and takes the claude entry"
 # Its control: a check that reports the numeric skip prints the line the
-# succession's own walk prints, on every watch pass.
+# succession's own walk prints, on every watch pass. With no caller model in
+# the check, the numeric entry takes the default preference model.
 QUIETCTL="$(mutant_scripts quietctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$QUIETCTL/lib/overseer-launch.sh" '    (( OL_WALK_SOURCE_ROWS )) \' '    false \'
 SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed"
 assert_eq "$RC|$(keyed entry-permission-untransferable)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=none" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5-5" \
   "control: a check that does not keep the numeric skip silent prints it"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
