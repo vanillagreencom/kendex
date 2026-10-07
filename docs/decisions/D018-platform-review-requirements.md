@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-30
 
-**Status**: Active
+**Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023)
 
 **Research**: KEN-2067; the design note is attached to that issue
 

@@ -28,6 +28,7 @@ jobs:
             }
             try {
               const pr = context.payload.pull_request;
+              // REVISIT(D023): Require Copilot again if render proof admits consumer product changes.
               if (pr.head.ref === 'kendex/refresh' &&
                   pr.user.login === 'vanillagreen-fleet-lanes[bot]' &&
                   pr.user.type === 'Bot') {
