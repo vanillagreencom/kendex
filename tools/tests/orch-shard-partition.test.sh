@@ -70,14 +70,21 @@
 # integration harness is compiled and listed, but its tests do not run.
 set -euo pipefail
 
-# --shell-only selects the workflow's shell partition and CI selection checks
-# without the independent Cargo-target partition or its metadata command.
-shell_only=false
-case "$#:${1-}" in
-  0:) ;;
-  1:--shell-only) shell_only=true ;;
-  *) printf 'orch-shard-partition: argument=%s\n' "$*" >&2; exit 2 ;;
-esac
+# CI separates shell checks from Cargo name checks so the latter reuse the
+# macOS rest leg's compiled harness. Local validation runs both by default.
+partition_mode() {
+  case "$#:${1-}" in
+    0:) printf 'combined' ;;
+    1:--shell-only) printf 'shell' ;;
+    1:--cargo-only) printf 'cargo' ;;
+    *) return 2 ;;
+  esac
+}
+mode="$(partition_mode "$@")" || {
+  printf 'orch-shard-partition: argument=%s\n' "$*" >&2
+  exit 2
+}
+PARTITION_SUITE=tools/tests/orch-shard-partition.test.sh
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
 # GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve ROOT to the hook's
@@ -101,6 +108,65 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 check() { # check <desc> <expected> <actual>
   if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
 }
+
+# One record per step carrying a `run: |` block: the step's `if:` text on the
+# `@@` line, its dedented body on the `>` lines. Every body line is prefixed,
+# so a body opening with `@` or `>` is not read as a boundary. Indent work is
+# substr and not a regex interval — the macOS leg's awk is not GNU's.
+BLOCK_AWK="$TMP/run-blocks.awk"
+cat > "$BLOCK_AWK" <<'AWK'
+substr($0, 1, 8)  == "      - "       { inrun = 0; cond = "" }
+substr($0, 1, 12) == "        if: "   { cond = substr($0, 13); next }
+substr($0, 1, 14) == "        run: |" { inrun = 1; printf "@@%s\n", cond; next }
+inrun == 1 {
+  if (substr($0, 1, 10) == "          ") { printf ">%s\n", substr($0, 11); next }
+  if ($0 ~ /^[ 	]*$/) { print ">"; next }
+  inrun = 0
+}
+AWK
+
+split_run_blocks() { # split_run_blocks <workflow> <dir> ; <dir>/N.sh and its `if:` text in <dir>/N.cond per block
+  local wf="$1" dir="$2" n=0 line
+  rm -rf -- "${dir:?}"
+  mkdir -p "$dir"
+  while IFS= read -r line; do
+    case "$line" in
+      '@@'*) n=$((n + 1)); : > "$dir/$n.sh"; printf '%s\n' "${line#@@}" > "$dir/$n.cond" ;;
+      *)
+        if [[ "$n" -gt 0 ]]; then printf '%s\n' "${line#>}" >> "$dir/$n.sh"; fi ;;
+    esac
+  done < <(awk -f "$BLOCK_AWK" "$wf")
+}
+
+# One record per one-line `run:` step: its job, its `if:` text, its working
+# directory and its command, parted on the unit separator, which no step text
+# holds: a tab IFS would fold an empty field away. A job opens at the
+# two-space key under `jobs:`.
+one_line_steps() { # one_line_steps <workflow> ; `job\037if\037wd\037run` per step
+  awk '
+    function flush() { if (wd != "" || run != "") printf "%s\037%s\037%s\037%s\n", job, cond, wd, run; cond = wd = run = "" }
+    substr($0, 1, 2) == "  " && substr($0, 3, 1) != " " && substr($0, 3, 1) != "#" && $0 ~ /:$/ { flush(); job = $0; sub(/^ */, "", job); sub(/:$/, "", job) }
+    substr($0, 1, 8) == "      - " { flush() }
+    substr($0, 1, 12) == "        if: " { cond = substr($0, 13) }
+    substr($0, 1, 27) == "        working-directory: " { wd = substr($0, 28) }
+    substr($0, 1, 13) == "        run: " && substr($0, 14, 1) != "|" && substr($0, 14, 1) != ">" { run = substr($0, 14) }
+    END { flush() }
+  ' "$1"
+}
+
+partition_cargo_steps() { # <workflow> ; mode, compile order and condition of direct partition checks
+  local job cond wd run compiled=false
+  one_line_steps "$1" | while IFS=$'\037' read -r job cond wd run; do
+    [[ "$job" == cargo-macos ]] || continue
+    case "$run" in
+      'cargo test '*--no-run*) compiled=true ;;
+      "bash $PARTITION_SUITE"*)
+        printf '%s:%s:%s:%s\n' "${run#"bash $PARTITION_SUITE"}" "$compiled" "$wd" "$cond" ;;
+    esac
+  done
+}
+
+if [[ "$mode" != cargo ]]; then
 
 # --- The sandbox: the real roster, none of the real work --------------------
 SANDBOX="$TMP/battery"
@@ -252,22 +318,6 @@ fi
 # The file keeps its name: the orch filters above are still the seam most
 # likely to be edited, and this section is the same invariant one level out.
 
-# One record per step carrying a `run: |` block: the step's `if:` text on the
-# `@@` line, its dedented body on the `>` lines. Every body line is prefixed,
-# so a body opening with `@` or `>` is not read as a boundary. Indent work is
-# substr and not a regex interval — the macOS leg's awk is not GNU's.
-BLOCK_AWK="$TMP/run-blocks.awk"
-cat > "$BLOCK_AWK" <<'AWK'
-substr($0, 1, 8)  == "      - "       { inrun = 0; cond = "" }
-substr($0, 1, 12) == "        if: "   { cond = substr($0, 13); next }
-substr($0, 1, 14) == "        run: |" { inrun = 1; printf "@@%s\n", cond; next }
-inrun == 1 {
-  if (substr($0, 1, 10) == "          ") { printf ">%s\n", substr($0, 11); next }
-  if ($0 ~ /^[ 	]*$/) { print ">"; next }
-  inrun = 0
-}
-AWK
-
 # The sandbox: the workflow under test at the path a step's `$wf` spells, and
 # the real trees its globs expand over.
 PART="$TMP/partition"
@@ -280,7 +330,14 @@ ln -s "$ROOT/hooks"  "$PART/hooks"
 # and printf stay the host's.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
-printf '#!/bin/sh\nexit 0\n' > "$SHIM/bash"
+cat > "$SHIM/bash" <<'SH'
+#!/bin/sh
+if [ "$1" = tools/tests/orch-shard-partition.test.sh ]; then
+  shift
+  printf 'partition-arguments: %s\n' "$*"
+fi
+exit 0
+SH
 chmod +x "$SHIM/bash"
 
 # A roster step is one that reports its suites as `=== <path>`. That marker is
@@ -289,46 +346,34 @@ chmod +x "$SHIM/bash"
 # and the node steps run no shell suite at all.
 ROSTER_MARK='=== $t'
 
-split_run_blocks() { # split_run_blocks <workflow> <dir> ; <dir>/N.sh and its `if:` text in <dir>/N.cond per block
-  local wf="$1" dir="$2" n=0 line
-  rm -rf -- "${dir:?}"
-  mkdir -p "$dir"
-  while IFS= read -r line; do
-    case "$line" in
-      '@@'*) n=$((n + 1)); : > "$dir/$n.sh"; printf '%s\n' "${line#@@}" > "$dir/$n.cond" ;;
-      *)
-        if [[ "$n" -gt 0 ]]; then printf '%s\n' "${line#>}" >> "$dir/$n.sh"; fi ;;
-    esac
-  done < <(awk -f "$BLOCK_AWK" "$wf")
-}
-
-# One record per one-line `run:` step: its job, its `if:` text, its working
-# directory and its command, parted on the unit separator, which no step text
-# holds: a tab IFS would fold an empty field away. A job opens at the
-# two-space key under `jobs:`.
-one_line_steps() { # one_line_steps <workflow> ; `job\037if\037wd\037run` per step
-  awk '
-    function flush() { if (wd != "" || run != "") printf "%s\037%s\037%s\037%s\n", job, cond, wd, run; cond = wd = run = "" }
-    substr($0, 1, 2) == "  " && substr($0, 3, 1) != " " && substr($0, 3, 1) != "#" && $0 ~ /:$/ { flush(); job = $0; sub(/^ */, "", job); sub(/:$/, "", job) }
-    substr($0, 1, 8) == "      - " { flush() }
-    substr($0, 1, 12) == "        if: " { cond = substr($0, 13) }
-    substr($0, 1, 27) == "        working-directory: " { wd = substr($0, 28) }
-    substr($0, 1, 13) == "        run: " && substr($0, 14, 1) != "|" && substr($0, 14, 1) != ">" { run = substr($0, 14) }
-    END { flush() }
-  ' "$1"
-}
-
 # A job outside the shell matrix may run a suite by path. Each job claims
 # a path once, and only a path in the suite universe counts.
-direct_claims() { # direct_claims <workflow> ; one path per job that runs it by path
+run_paths() { # <run command> ; existing paths whose invocation owns shell work
+  local word invocation_mode
+  set -f
+  # Workflow one-line commands name unquoted paths and mode switches.
+  # shellcheck disable=SC2086
+  set -- $1
+  set +f
+  while [[ "$#" -gt 0 ]]; do
+    word="$1"
+    shift
+    [[ "$word" == */* && -f "$ROOT/$word" ]] || continue
+    if [[ "$word" == "$PARTITION_SUITE" ]]; then
+      invocation_mode="$(partition_mode "$@")" || return
+      [[ "$invocation_mode" != cargo ]] || continue
+    fi
+    printf '%s\n' "$word"
+  done
+}
+
+direct_claims() { # direct_claims <workflow> ; one path per job that runs its shell work
   local job cond wd run word
   one_line_steps "$1" | while IFS=$'\037' read -r job cond wd run; do
     [[ -z "$wd" ]] || continue
-    set -f
-    for word in $run; do
+    while IFS= read -r word; do
       if grep -qxF -- "$word" "$UNIV"; then printf '%s\t%s\n' "$job" "$word"; fi
-    done
-    set +f
+    done < <(run_paths "$run")
   done | sort -u | cut -f2
 }
 
@@ -385,6 +430,17 @@ claims_file() { # claims_file <workflow> <out> ; the sorted claim list
   claims_of "$1" | grep -v "^$LINEAR_PREFIX" | sort > "$2" || true
 }
 
+shell_partition_args() { # <workflow> ; actual arguments from the shell roster invocation
+  local wf="$1" dir="$TMP/partition-mode-blocks" f
+  cp "$wf" "$PART/.github/workflows/skill-tests.yml"
+  split_run_blocks "$wf" "$dir"
+  for f in "$dir"/*.sh; do
+    grep -qF "$ROSTER_MARK" "$f" || continue
+    ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      sed -n 's/^partition-arguments: //p'
+  done
+}
+
 # The universe: the three globs the roster steps loop over, less the runner
 # the orch steps invoke by path. That runner drives the battery and is not a
 # suite, the same exclusion section 2's roster makes by name. A file here that
@@ -409,6 +465,40 @@ check "every claim names a file that exists, so no roster carries a phantom" \
   "" "$(comm -13 "$UNIV" <(sort -u "$HEAD_CLAIMS"))"
 check "exactly one run block claims the linear package by glob" \
   "1" "$(grep -lF "${LINEAR_PREFIX}*.sh" "$TMP/blocks"/*.sh | wc -l | tr -d ' ')"
+
+check "the shell roster invokes only the shell partition" \
+  "--shell-only" "$(shell_partition_args "$WORKFLOW")"
+check "a Cargo-only one-line call owns no shell suite" \
+  "" "$(direct_claims "$WORKFLOW" | grep -xF "$PARTITION_SUITE" || true)"
+
+# The actual Cargo step is a one-line producer. Replacing only its mode must
+# restore shell ownership for a full or shell-only call, including duplicates.
+for args in '' --shell-only --cargo-only; do
+  mutant="$TMP/wf-partition-direct-${args:-combined}.yml"
+  sed "s%run: bash $PARTITION_SUITE --cargo-only%run: bash $PARTITION_SUITE $args%" \
+    "$WORKFLOW" > "$mutant"
+  claims_file "$mutant" "$TMP/mode-claims"
+  expected="$PARTITION_SUITE"
+  [[ "$args" != --cargo-only ]] || expected=''
+  check "direct mode ${args:-combined} has the required shell ownership" \
+    "$expected" "$(uniq -d "$TMP/mode-claims")"
+done
+
+wf_no_shell_partition="$TMP/wf-shell-partition-dropped.yml"
+sed "s%$PARTITION_SUITE; do%; do%" "$WORKFLOW" > "$wf_no_shell_partition"
+claims_file "$wf_no_shell_partition" "$TMP/no-shell-partition-claims"
+check "must-fail: a Cargo-only call cannot cover an omitted shell suite" \
+  "$PARTITION_SUITE" "$(comm -23 "$UNIV" <(sort -u "$TMP/no-shell-partition-claims"))"
+
+for args in '' --cargo-only; do
+  mutant="$TMP/wf-partition-shell-${args:-combined}.yml"
+  sed "s/set -- --shell-only/set -- $args/" "$WORKFLOW" > "$mutant"
+  if [[ "$(shell_partition_args "$mutant")" != --shell-only ]]; then
+    ok "must-fail: shell mode ${args:-combined} violates the actual invocation contract"
+  else
+    bad "must-fail: shell mode ${args:-combined} is accepted"
+  fi
+done
 
 # --- 3b. Must-fail: the ways this partition breaks --------------------------
 # Each arm mutates a copy of the workflow, and the section above must name the
@@ -638,12 +728,10 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
         printf '%s\t%s/package.json\n' "$shard" "$wd"
         continue
       fi
-      for word in $run; do
-        if [[ "$word" == */* && -f "$ROOT/$word" ]]; then
-          printf '%s\t%s\n' "$shard" "$word"
-          break
-        fi
-      done
+      while IFS= read -r word; do
+        printf '%s\t%s\n' "$shard" "$word"
+        break
+      done < <(run_paths "$run")
     done
   } | awk -F '\t' -v mode="$mode" 'mode == "files" { print; next } { d = $2; sub(/\/[^\/]*$/, "", d) } !seen[$1 "\t" d]++'
 }
@@ -834,11 +922,25 @@ for os in ubuntu-latest macos-latest; do
     ok "must-fail: a duplicated roster repeats suites on $os" || bad "duplication control named no suite on $os"
 done
 
-if [[ "$shell_only" == true ]]; then
-  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-  [[ "$FAIL" -eq 0 ]]
-  exit
 fi
+
+if [[ "$mode" != shell ]]; then
+
+check "Cargo name checks run only after the macOS CLI rest compile" \
+  " --cargo-only:true::matrix.crate == 'kendex-cli' && matrix.leg == 'rest'" \
+  "$(partition_cargo_steps "$WORKFLOW")"
+for defect in mode order; do
+  mutant="$TMP/wf-partition-cargo-$defect.yml"
+  case "$defect" in
+    mode) sed "s%run: bash $PARTITION_SUITE --cargo-only%run: bash $PARTITION_SUITE --shell-only%" "$WORKFLOW" > "$mutant" ;;
+    order) sed 's/--no-run \$CARGO_TARGETS \$CARGO_INTEGRATION/\$CARGO_TARGETS \$CARGO_INTEGRATION/' "$WORKFLOW" > "$mutant" ;;
+  esac
+  if [[ "$(partition_cargo_steps "$mutant")" != "$(partition_cargo_steps "$WORKFLOW")" ]]; then
+    ok "must-fail: Cargo $defect breaks the compile-owner invocation"
+  else
+    bad "must-fail: Cargo $defect is accepted"
+  fi
+done
 
 # --- 5. The cargo legs' partition over the CLI's test targets --------------
 # A cargo leg is a roster of `--test` names, and the seam it cuts is inside
@@ -1113,6 +1215,19 @@ check "the $LANE_LEG leg claims $LANE_TARGET and nothing else" \
 
 INTEGRATION_CLAIMS="$TMP/integration-claims"
 integration_claims "$WORKFLOW" | sort > "$INTEGRATION_CLAIMS"
+# Named tests keep a valid but incomplete --list extractor from proving only
+# a module prefix. They also exercise both selector families and rest.
+while IFS='|' read -r name leg; do
+  if grep -qxF "$name $leg" "$INTEGRATION_CLAIMS"; then
+    ok "the named integration test $name belongs to $leg"
+  else
+    bad "the named integration test $name is missing from $leg"
+  fi
+done <<'TESTS'
+cli::list_sees_global_and_current_project_scopes|rest
+cli::verify_names_an_installation_that_cannot_act|verify-lock
+lock_record::two_branches_on_one_package_merge_in_sequence_and_main_records_after_each|verify-lock
+TESTS
 while IFS= read -r leg; do
   check "the $leg test command runs every declared target and unit selection" \
     "$(roster_of "$WORKFLOW" "$leg" | sed -n 's/^cargo-targets: //p' | target_selections)" \
@@ -1250,6 +1365,8 @@ awk '
 ' "$WORKFLOW" > "$wf_no_roster"
 check "must-fail: with the roster step deleted, no run block echoes a cargo target roster" \
   "0" "$(roster_steps_of "$wf_no_roster" "$TMP/cargo-blocks-no-roster")"
+
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

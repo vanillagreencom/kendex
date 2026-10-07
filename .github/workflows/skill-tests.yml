@@ -968,7 +968,11 @@ jobs:
           for t in tools/tests/harness-smoke.test.sh \
             tools/tests/orch-shard-partition.test.sh; do
             echo "=== $t"
-            if ! bash "$t"; then
+            set --
+            case "$t" in
+              tools/tests/orch-shard-partition.test.sh) set -- --shell-only ;;
+            esac
+            if ! bash "$t" "$@"; then
               echo "FAILED: $t"
               fail=1
               failed="$failed $t"
@@ -1821,6 +1825,11 @@ jobs:
       - name: compile
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS $CARGO_INTEGRATION
+      # Reuse rest's compiled integration harness to list this platform's
+      # test names. The shell shard checks its own partition without Cargo.
+      - name: CLI integration name partition
+        if: matrix.crate == 'kendex-cli' && matrix.leg == 'rest'
+        run: bash tools/tests/orch-shard-partition.test.sh --cargo-only
       # Measured maxima of the step this bounds, over those same runs: 534s
       # for kendex-core whole and 81s for kendex-app whole. Before its
       # name split, rest took 854-941s over five successful merge-group runs
