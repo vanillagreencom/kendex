@@ -1009,6 +1009,10 @@ setup_worktree_links() {
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
     if [[ -e "$PROJECT_ROOT/$path" ]]; then
       symlink_into_worktree "$path" "$wt" || return 1
+      # npm ci follows this directory link while clearing the old install.
+      if [[ "${path##*/}" == node_modules && -L "$wt/$path" && -d "$wt/$path" ]]; then
+        worktree_message dependencies-linked "$wt/$path" "Warning: '$path' links to the main checkout's dependencies. Do not run npm ci in '$wt/${path%node_modules}': it empties '$PROJECT_ROOT/$path' and breaks main and every other linked worktree. Run installs in main. For a private install here, npm install removes the link and installs locally, leaving main intact." >&2
+      fi
     elif warn_missing_symlink_source "$wt" "$path"; then
       [[ "$path" == node_modules ]] && root_nm_warned=1
     fi
@@ -1081,9 +1085,8 @@ setup_worktree_links() {
     exclude_from_worktree_index "$wt" "$path"
   done
 
-  # Installs run only in the main checkout: inside a linked worktree they write
-  # node_modules through into the checkout every worktree shares, and a pnpm
-  # workspace install records its deps as links into the installing tree. A root
+  # Shared dependencies come from main's install; a pnpm workspace install
+  # records its deps as links into the installing tree. A root
   # package.json with nothing linked warns, unless the root entry warned above.
   if [[ "$root_nm_warned" -eq 0 && -f "$wt/package.json" && ! -e "$wt/node_modules" ]]; then
     worktree_message dependencies-missing "$PROJECT_ROOT" "Warning: dependencies were not installed — installs run only in the main checkout. Run the install in $PROJECT_ROOT, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry." >&2

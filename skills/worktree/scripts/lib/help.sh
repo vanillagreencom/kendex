@@ -125,7 +125,13 @@ Dependencies:
   provider owes the same step, per orch schemas/lane-host.md. A configured
   node_modules entry beside a worktree package.json always warns when its
   source is missing; a root package.json with nothing linked warns wherever
-  links are set up, but not from repair-links. Limitation: linked node_modules
+  links are set up, but not from repair-links. Setup also warns when it links
+  node_modules, including an existing link. Do not run npm ci in a worktree
+  whose node_modules is linked: it empties main's node_modules before replacing
+  the link with a private install. Main and every other linked worktree lose
+  their dependencies. npm install there removes the link and installs locally,
+  leaving main intact. Prefer installing in main and keeping the link.
+  Limitation: linked node_modules
   resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
   a worktree's checks see main's copy of sibling packages.
 

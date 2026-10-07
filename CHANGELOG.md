@@ -6,6 +6,12 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+### Packages
+
+#### worktree
+
+- Worktree setup warns that npm ci on linked node_modules empties main's dependencies. Help explains that npm install creates a private install and leaves main intact.
+
 ## [1.11.0] - 2026-10-06
 
 ### Added

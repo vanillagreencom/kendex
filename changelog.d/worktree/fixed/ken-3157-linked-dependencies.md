@@ -1,0 +1,1 @@
+- Worktree setup warns that npm ci on linked node_modules empties main's dependencies. Help explains that npm install creates a private install and leaves main intact.

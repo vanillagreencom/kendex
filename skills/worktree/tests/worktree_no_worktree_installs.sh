@@ -2,8 +2,8 @@
 # No worktree command runs a package-manager install: a worktree gets its
 # dependencies through a WORKTREE_SYMLINKS entry for node_modules, and when a
 # JS worktree has nothing linked the setup warns and names the main checkout
-# as the place to run the install. The check lives in setup_worktree_links,
-# so create, fix-links and repair-links all reach it. One table, a row per
+# as the place to run the install. Setup also warns about npm ci on linked
+# node_modules. One table, a row per
 # scenario: the fixture is a word list of steps that builds a checkout with
 # its bare origin, its package files, its installed modules and its config,
 # the command runs from the checkout under a PATH whose package managers
@@ -22,6 +22,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
 source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+ORIGINAL_WORKTREE_SCRIPT="$WORKTREE_SCRIPT"
 TMP_ROOT="$(mktemp -d)" || { echo "worktree_no_worktree_installs: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "worktree_no_worktree_installs: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "worktree_no_worktree_installs: scratch=resolve-failed" >&2; exit 1; }
@@ -70,6 +71,8 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
@@ -104,6 +107,28 @@ step() {
     installed) mkdir -p "$MAIN/node_modules/dep" ;;
     ui-installed) mkdir -p "$MAIN/ui/node_modules/dep" ;;
     ui-uninstalled) rm -rf "$MAIN/ui/node_modules" ;;
+    assets-installed) mkdir -p "$MAIN/assets/data" ;;
+    private-installed) mkdir -p "$WT/node_modules/dep" ;;
+    # Suppress the warning in a disposable production copy. The positive rows
+    # require its message record; this control reaches the same link setup.
+    unfixed-linked-warning)
+      mkdir -p "$ROOT/pkg"
+      cp -R "${ORIGINAL_WORKTREE_SCRIPT%/scripts/worktree}" "$ROOT/pkg/worktree"
+      WORKTREE_SCRIPT="$ROOT/pkg/worktree/scripts/worktree"
+      local mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
+      local match='if [[ "${path##*/}" == node_modules && -L "$wt/$path" && -d "$wt/$path" ]]; then'
+      [[ -f "$mutant" && ! -L "$mutant" ]] || { echo "FIXTURE: mutation target is not a regular file" >&2; exit 2; }
+      [[ "$(grep -cF "$match" "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the linked dependency warning was not unique in $mutant" >&2
+        exit 2
+      }
+      awk -v needle="$match" '
+        $0 == "      " needle { print "      if false && " substr(needle, 4); next }
+        { print }
+      ' "$mutant" >"$mutant.changed"
+      cmp -s "$mutant" "$mutant.changed" && { echo "FIXTURE: warning mutation changed nothing" >&2; exit 2; }
+      mv "$mutant.changed" "$mutant"
+      ;;
     # The symlink entry that hands a worktree the main checkout's install.
     link:*) printf 'WORKTREE_SYMLINKS="%s"\n' "${1#link:}" >"$MAIN/.env.local" ;;
     # A worktree created before the row's command; its own output is not the row's.
@@ -125,6 +150,7 @@ build() {
   shift
   MAIN="$ROOT/repo"
   WT=""
+  WORKTREE_SCRIPT="$ORIGINAL_WORKTREE_SCRIPT"
   mkdir -p "$ROOT"
   export PM_CALL_LOG="$ROOT/pm-calls.log"
   : >"$PM_CALL_LOG"
@@ -167,13 +193,13 @@ run() {
 
 # --- the expected text ----------------------------------------------------------
 
-# The two warnings, held once: the generic fallback for a JS worktree with
-# nothing linked, and the configured-entry one naming the missing source.
+# Message records, without their human explanations.
 err_text() {
   case "$1" in
     -) printf '' ;;
     generic) printf 'worktree-dependencies-missing: <main>' ;;
     no-source:*) printf 'worktree-dependency-source-missing: <main>/%s' "${1#no-source:}" ;;
+    linked:*) printf 'worktree-dependencies-linked: <root>/.worktrees/repo/%s' "${1#linked:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -192,13 +218,19 @@ out_text() {
 ROWS='an npm checkout gets no install and a warning naming the main checkout|repo npm|create issue-npm|0|wt:issue-npm|generic|pm=- wt=base.txt,package-lock.json,package.json
 a pnpm checkout gets no install, the warning, and no stray lockfile|repo pnpm|create issue-pnpm|0|wt:issue-pnpm|generic|pm=- wt=base.txt,package.json,pnpm-lock.yaml
 fix-links warns on the unlinked JS worktree too, not only create|repo pnpm create:issue-pnpm|fix-links <wt>|0|restored|generic|pm=- wt=base.txt,package.json,pnpm-lock.yaml
-a node_modules entry linked from the main checkout satisfies the check silently|repo pkg installed link:node_modules|create issue-linked|0|wt:issue-linked|-|pm=- wt=base.txt,node_modules-><main>/node_modules,package.json
+a root dependency link warns without installing anything|repo pkg installed link:node_modules|create issue-linked|0|wt:issue-linked|linked:issue-linked/node_modules|pm=- wt=base.txt,node_modules-><main>/node_modules,package.json
+fix-links warns when the root dependency link already exists|repo pkg installed link:node_modules create:issue-linked|fix-links <wt>|0|restored|linked:issue-linked/node_modules|pm=- wt=base.txt,node_modules-><main>/node_modules,package.json
+a nested dependency link warns without installing anything|repo ui-pkg ui-installed link:ui/node_modules|create issue-nested|0|wt:issue-nested|linked:issue-nested/ui/node_modules|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
+fix-links warns when the nested dependency link already exists|repo ui-pkg ui-installed link:ui/node_modules create:issue-nested|fix-links <wt>|0|restored|linked:issue-nested/ui/node_modules|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
 a nested entry with no source warns naming the main-checkout path|repo ui-pkg link:ui/node_modules|create issue-nested|0|wt:issue-nested|no-source:ui/node_modules|pm=- wt=base.txt,ui,ui/package.json
-fix-links links the nested source once it exists, and the warning stops|repo ui-pkg link:ui/node_modules create:issue-nested ui-installed|fix-links <wt>|0|restored|-|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
+fix-links warns about the nested dependency link once its source exists|repo ui-pkg link:ui/node_modules create:issue-nested ui-installed|fix-links <wt>|0|restored|linked:issue-nested/ui/node_modules|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
 a root entry with no source warns once, with the configured-entry message and not the generic one|repo pkg link:node_modules|create issue-rootentry|0|wt:issue-rootentry|no-source:node_modules|pm=- wt=base.txt,package.json
 repair-links warns when the main-checkout source has since disappeared|repo ui-pkg ui-installed link:ui/node_modules create:issue-repair ui-uninstalled|repair-links <wt>|0|-|no-source:ui/node_modules|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
 a configured entry with no package.json beside it stays silent|repo link:ui/node_modules|create issue-nopkg|0|wt:issue-nopkg|-|pm=- wt=base.txt
 a checkout without package.json gets no warning|repo|create issue-plain|0|wt:issue-plain|-|pm=- wt=base.txt
+an unrelated directory link gets no dependency warning|repo assets-installed link:assets|create issue-assets|0|wt:issue-assets|-|pm=- wt=assets-><main>/assets,base.txt
+a private dependency directory gets no link warning|repo pkg create:issue-private private-installed|fix-links <wt>|0|restored|-|pm=- wt=base.txt,node_modules,node_modules/dep,package.json
+must-fail: suppressing the linked warning loses its required record|repo pkg installed link:node_modules unfixed-linked-warning|create issue-linked|0|wt:issue-linked|-|pm=- wt=base.txt,node_modules-><main>/node_modules,package.json
 '
 
 echo "=== no worktree command installs dependencies ==="
