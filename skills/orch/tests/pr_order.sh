@@ -4,7 +4,9 @@
 # round and parses its `pr-order=` field. A public repository's lane keeps review-first,
 # pushing only after the agent review; a private repository's lane opens the
 # pull request at once. Which repository is read is lib/gh-repo.sh's ladder,
-# held by gh-repo-resolve.test.sh; these rows assert only the visibility read.
+# held by gh-repo-resolve.test.sh; these rows assert the visibility read, and
+# that the ladder runs in the worktree pr-order is given, not the caller's
+# directory.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,12 +25,18 @@ LIVE="$SKILL_DIR/scripts/pr-order"
 
 # `gh repo view OWNER/NAME --json visibility` stand-in. STUB_VISIBILITY is
 # its answer; STUB_VIEW_FAIL makes the read fail. The call it saw is logged,
-# so a row can prove the repository GH_REPO names is the one read.
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/checkout"
+# so a row can prove the repository GH_REPO names is the one read. Like gh,
+# `repo view --json nameWithOwner` answers for the working directory:
+# acme/widget in the fixture checkout, another repository anywhere else.
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/checkout" "$TMP_ROOT/elsewhere"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" >> "$STUB_LOG"
+if [[ "$*" == "repo view --json nameWithOwner -q .nameWithOwner" ]]; then
+  if [[ "$PWD" == "$STUB_CHECKOUT" ]]; then echo acme/widget; else echo acme/elsewhere; fi
+  exit 0
+fi
 if [[ "${1:-}" == repo && "${2:-}" == view && "${4:-}" == --json && "${5:-}" == visibility ]]; then
   [[ -z "${STUB_VIEW_FAIL:-}" ]] || exit 1
   printf '%s\n' "${STUB_VISIBILITY:-}"
@@ -39,7 +47,8 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
 # run SCRIPT ENV... — run SCRIPT against the fixture checkout with ENV (each
-# an `env` argument). Sets OUT, RC and the stub's call log.
+# an `env` argument), from RUN_CWD when it is set. Sets OUT, RC and the
+# stub's call log.
 run() {
   local script="$1"
   shift
@@ -47,8 +56,9 @@ run() {
   STUB_LOG="$TMP_ROOT/gh-calls"
   : > "$STUB_LOG"
   set +e
-  OUT="$(PATH="$TMP_ROOT/bin:$PATH" env -u GH_REPO -u STUB_VISIBILITY -u STUB_VIEW_FAIL \
-    STUB_LOG="$STUB_LOG" "$@" "$script" "$TMP_ROOT/checkout" 2>"$ERR")"
+  OUT="$(cd -- "${RUN_CWD:-$PWD}" && PATH="$TMP_ROOT/bin:$PATH" \
+    env -u GH_REPO -u GITHUB_REPOSITORY -u STUB_VISIBILITY -u STUB_VIEW_FAIL \
+    STUB_LOG="$STUB_LOG" STUB_CHECKOUT="$TMP_ROOT/checkout" "$@" "$script" "$TMP_ROOT/checkout" 2>"$ERR")"
   RC=$?
   set -e
 }
@@ -79,6 +89,13 @@ run "$LIVE" GH_REPO=acme/widget STUB_VISIBILITY=PRIVATE
 assert_eq "$(field "$OUT" repo) $(cat "$TMP_ROOT/gh-calls")" \
   "acme/widget repo view acme/widget --json visibility --jq .visibility" \
   "the repository the resolver names is the one whose visibility is read" "$ERR"
+
+# ../workflows/start-worktree.md § 2.1 runs pr-order with GH_REPO unset, from the lane's
+# own directory, which need not be the worktree it names.
+RUN_CWD="$TMP_ROOT/elsewhere" run "$LIVE" STUB_VISIBILITY=PRIVATE
+assert_eq "$(field "$OUT" repo) $(tail -n 1 "$TMP_ROOT/gh-calls")" \
+  "acme/widget repo view acme/widget --json visibility --jq .visibility" \
+  "with GH_REPO unset, the worktree's repository is read from another directory" "$ERR"
 
 echo "=== an unread visibility prints no order ==="
 # label|env|cause
@@ -113,6 +130,18 @@ fi
 run "$MUTANT" GH_REPO=acme/widget STUB_VISIBILITY=PUBLIC
 assert_eq "$(field "$OUT" pr-order)" "open-first" \
   "control: a mutant opening public repositories early is what the public row refuses" "$ERR"
+
+# A mutant that resolves the repository in the caller's directory must
+# redden the other-directory row: it reads acme/elsewhere.
+sed '/^cd -- "\$worktree"$/d' "$LIVE" > "$MUTANT"
+if cmp -s "$LIVE" "$MUTANT"; then
+  fail "control: the no-cd mutant differs from the live script"
+else
+  pass "control: the no-cd mutant differs from the live script"
+fi
+RUN_CWD="$TMP_ROOT/elsewhere" run "$MUTANT" STUB_VISIBILITY=PRIVATE
+assert_eq "$(field "$OUT" repo)" "acme/elsewhere" \
+  "control: a mutant reading the caller's directory is what the other-directory row refuses" "$ERR"
 
 printf 'pass: %d fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

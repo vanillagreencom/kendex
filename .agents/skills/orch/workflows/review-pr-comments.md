@@ -400,7 +400,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
+A non-zero exit, which is reported, ends this step. With workflow state `pr_order` reading `open-first-returned`, a `git -C [WORKTREE_PATH] rev-parse HEAD` other than `[HEAD_SHA]` also ends this step, with no notice and no request: the internal review's fix round is still local on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, and [submit-pr.md](submit-pr.md) § 2 step 1 runs this step again once its push lands. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state] | @tsv'

@@ -10,7 +10,7 @@ Run every long waiter below through [Waiter launch](../references/waiter-launch.
 | `submit-pr [PR#]` | Manage an existing PR |
 | (from start-worktree) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 7) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number; `review_pending` — `true` only from [start-worktree.md](start-worktree.md) § 2.1, which opens the PR before the internal review.
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 7) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
 Resolve `ORCH_DECISION_MODE` once for every post-PR choice in this workflow:
 
@@ -74,9 +74,9 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 ## 2. Push And Submit
 
-When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed; after § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
+When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
 
-1. **Push**. On the PR [start-worktree.md](start-worktree.md) § 2.1 opened, with workflow state `pr_order` reading `open-first` and `review_pending` absent, run § 3's triage pass first, `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1` with managed context, `[PR_NUMBER]` from step 2's read, run first: its fix round commits on top of the internal review's, its push carries both, and the push below sends what remains.
+1. **Push**. With workflow state `pr_order` reading `open-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, run § 3's triage pass first, `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1` with managed context, `[PR_NUMBER]` from step 2's read, run first: its fix round commits on top of the internal review's, its push carries both, and the push below sends what remains.
 
    ```bash
    .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
@@ -87,6 +87,12 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    A `worktree-push-base-conflict` refusal pushed and rebased nothing: the branch conflicts with that base, and the guarded restack is its one rebase. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3, which unarm the PR where one exists, restack, validate the restacked head where the project sets `DEV_VALIDATE_RANGE_CMD`, and push through `worktree-push`, then continue here; a red run there hands back instead.
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
+
+   After that triage pass, once the push lands, record the pass, then run [review-pr-comments.md](review-pr-comments.md) § 7.2 on the pushed head: the triage's own § 7.2 routed no head while the internal fix round was unpushed, and a head it already re-requested gets no second request.
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-pushed
+   ```
 
 2. **Check for an existing PR**:
 
@@ -142,7 +148,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
-5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** `review_pending` is `true`: a PR whose internal review has not passed is never armed, and the pass after [review-pr.md](review-pr.md) arms it.
+5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state `pr_order` reads `open-first`: the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened has not returned, and the pass after [review-pr.md](review-pr.md) § 9 arms it, as a review-first PR is armed once its review returns.
 
    Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does. `.configured: false` arms nothing here: whose name a merge lands under is the decision [merge-pr.md](merge-pr.md) § 4 owns, and § 4-§ 5 there make the arm.
 

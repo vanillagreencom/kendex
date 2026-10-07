@@ -22,7 +22,7 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
-**Review line.** In a lane whose brief names a status file, a review that starts with workflow state `pr_order` reading `open-first` writes `Review: pending PR #[PR_NUMBER]` to that file before any reviewer starts, `[PR_NUMBER]` from `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state`. § 9 replaces the line.
+**Review line.** In a lane whose brief names a status file, a review that starts with workflow state `pr_order` reading `open-first` writes `Review: pending PR #[PR_NUMBER]` to that file before any reviewer starts, `[PR_NUMBER]` from `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state`; a read that gives no number writes no line. § 9 replaces the line.
 
 **Trivial diffs skip review by rule, not by asking.** Trivial is the shared CI classifier's class for the whole branch:
 
@@ -495,6 +495,10 @@ After delegating children, apply the § 4 bounded re-review rule to their diff.
 
 ## 9. Return
 
-In a lane whose brief names a status file, write its review line, the record of what this review passed that the overseer reads before it approves a head ([copilot-head-notices.md](../references/copilot-head-notices.md)): `Review: [VERDICT] PR #[PR_NUMBER] head [HEAD_SHA]`. `[VERDICT]` is the verdict this return hands its caller, the one [submit-pr.md](submit-pr.md) § 6.1 gate 1 reads; `[PR_NUMBER]` is § 1's `pr-view-json` read run again here, `none` where its `status` is `no_pr`; `[HEAD_SHA]` is `git -C [WORKTREE_PATH] rev-parse HEAD`.
+In a lane whose brief names a status file, write its review line, `Review: [VERDICT]`, which replaces § 1's pending line; `[VERDICT]` is the verdict this return hands its caller, the one [submit-pr.md](submit-pr.md) § 6.1 gate 1 reads. With workflow state `pr_order` reading `open-first`, record that this review returned, which lets [submit-pr.md](submit-pr.md) § 2 run its triage and arm the pull request:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
+```
 
 **Managed**: return to the parent workflow's next section. **Standalone**: session complete — the summary is in § 8.

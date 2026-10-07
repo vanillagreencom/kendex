@@ -99,8 +99,16 @@ Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order [ORDER]
 ```
 
-- `review-first` → § 3. A non-zero exit takes this row and reports its `pr-order-error:` line once: the early order is a trial the owner holds to private repositories, so a visibility the lane cannot read keeps the order every repository ran before it.
-- `open-first` → `⤵ workflows/submit-pr.md § 1-2 → § 3` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `review_pending: true`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot reviews it while § 3 runs, and its § 2 step 5 arms nothing. § 3 then reviews the pushed head; its fix round commits stay local until § 4 pushes them.
+Both rows end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
+
+- `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once: the early order is a trial the owner holds to private repositories, so a visibility the lane cannot read keeps the order every repository ran before it.
+- `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot reviews it while the review step runs; the `open-first` recorded above keeps its § 2 step 5 from arming it. Then confirm the pull request exists:
+
+  ```bash
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state
+  ```
+
+  An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on: record `pr_order` as `review-first` with the command above, report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
 
 ## 3. Review
 
@@ -108,7 +116,7 @@ Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 
 ## 4. Submit
 
-**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, and its step 5 arms the head.
+**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, and its step 5 arms the head once § 3 has returned.
 
 ## 5. Finalize
 
