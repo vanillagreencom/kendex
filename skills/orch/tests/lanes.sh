@@ -1100,6 +1100,9 @@ standard_home home
 # that claims it, or it would tie claude for the pick.
 BSDIR="$H/.back\\tclaude"
 ln -sfn "$H/.claude" "$TMP_ROOT/claude-link"
+# A second home on the same host, whose `.eclaude` is the same account as
+# this home's: a store several homes share names it by both paths.
+AWAY_HOME="$TMP_ROOT/away-home"
 
 # stage_panes SPEC — the pane file(s) for one run: `live:%1,dead:%2` lists
 # panes by server (live is this process, dead a pid no server has); `N=...;`
@@ -1138,8 +1141,8 @@ stage_panes() {
 
 # stage_claims SPEC — the claim files for one run, `name:server:pane:dir` items
 # separated by `;`: server is live or dead, dir one of the home's lane names,
-# `claude/` for a trailing slash, `link` for a symlink to claude, `bs` for the
-# backslash-named lane; `junk` writes a malformed record. Any other token is
+# `claude/` for a trailing slash, `link` for a symlink to claude, `away` for
+# eclaude reached from a second home, `bs` for the backslash-named lane; `junk` writes a malformed record. Any other token is
 # a typo and aborts the suite rather than staging the opposite world.
 stage_claims() {
   local spec="$1" items item name server pane dir pid
@@ -1162,6 +1165,7 @@ stage_claims() {
       claude | eclaude | nclaude) dir="$H/.$dir" ;;
       claude/) dir="$H/.claude/" ;;
       link) dir="$TMP_ROOT/claude-link" ;;
+      away) dir="$AWAY_HOME/.eclaude"; mkdir -p "$dir" ;;
       bs)
         dir="$BSDIR"
         mkdir -p "$BSDIR"
@@ -1223,7 +1227,17 @@ claims_table \
   "a claim written after the pane snapshot is not pruned by it|1=live:%1;2=live:%1,live:%4;*=live:%4|racer:live:%4:claude||$LIST|claude.claims=1 files=racer" \
   "a backslash-bearing config dir still counts its live claim|live:%5|backslash:live:%5:bs||$LIST|bs.claims=1" \
   "the one-lane form counts the same claims the fleet pick and the listing do|live:%1,live:%2|one:live:%1:claude||pick --lane $H/.claude --harness claude --json|rc=0 claims=1" \
-  "a malformed claim record is dropped on read|live:%1|junk||$LIST|files=none"
+  "a malformed claim record is dropped on read|live:%1|junk||$LIST|files=none" \
+  "claims on one account from two homes count under that one account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=2 claude.claims=0" \
+  "the one-lane form charges both homes' claims to the account|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=2"
+
+# Control: keyed by the home-specific path, the second home's claim lands on a
+# key no listed lane carries and the account reads half its load.
+claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
+mutate_file "$claims_scripts/lanes" 'LANE_CLAIM_ACCOUNTS+="$(lane_alias_for "$cfg")"' 'LANE_CLAIM_ACCOUNTS+="$cfg"'
+mutate_file "$claims_scripts/lanes" 'LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$(lane_claims_canon "$1")")"' 'LANE_CLAIMS_ACCOUNT_Q="$(lane_claims_canon "$1")"'
+LANES="$claims_scripts/lanes" claims_table \
+  "control: a path key counts two homes' claims on one account as two accounts|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=1 claude.claims=0"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
 if [[ "$(id -u)" -eq 0 ]]; then

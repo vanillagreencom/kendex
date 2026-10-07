@@ -15,8 +15,17 @@
 # claim on another socket, or one this process could not enumerate at all, is
 # judged by whether its server process still runs. Deleting a claim we could
 # not measure would report a busy account as free, so it is kept and counted
-# until its server is provably gone. Claims are recorded for tmux lanes only —
-# a launch with no pane handle would leave a claim nothing can prune.
+# until its server is provably gone. A server process another account owns
+# refuses `kill -0` as EPERM, which is no evidence it is gone: only the owning
+# account can tell, so that claim is kept and counted too. Claims are recorded
+# for tmux lanes only — a launch with no pane handle would leave a claim
+# nothing can prune.
+#
+# One store can serve several homes on one host, each home's claims directory a
+# link to it: every record is written group-readable whatever the writer's
+# umask, so a store whose group every fleet user shares reads across homes, and
+# `lanes` counts a claim by the account its config dir names, never by the
+# home-specific path.
 #
 # Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>\t<fleet>`.
 # The fleet is the oversee state file of the fleet the launch was judged in
@@ -148,7 +157,7 @@ lane_claims_read() {
       live_now=0
       if [[ "$f" == *.reserve ]]; then
         # A reservation is live while the launcher that wrote it runs.
-        ! kill -0 "$server" 2>/dev/null || live_now=1
+        ! lane_claims_pid_runs "$server" || live_now=1
       elif grep -qxF -- "$server $pane" <<<"$live"; then
         live_now=1
       elif [[ "$server" == "$this_server" ]]; then
@@ -173,7 +182,7 @@ lane_claims_read() {
         elif grep -qxF -- "$server $pane" <<<"$live"; then
           live_now=1
         fi
-      elif kill -0 "$server" 2>/dev/null; then
+      elif lane_claims_pid_runs "$server"; then
         # A server this process cannot enumerate, still running.
         live_now=1
       fi
@@ -192,6 +201,18 @@ lane_claims_read() {
     done
   done
   return "$rc"
+}
+
+# Whether process PID may still run. `kill -0` fails alike for a gone process
+# (ESRCH) and another account's (EPERM), and its exit status is all the shell
+# gives; `ps -p` answers existence whoever owns the process. A `ps` that cannot
+# answer (exit above 1) leaves the process unknown, and an unknown server keeps
+# its claim.
+lane_claims_pid_runs() {
+  local rc=0
+  kill -0 "$1" 2>/dev/null && return 0
+  ps -p "$1" >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 1 ]]
 }
 
 # Select context claims from the fleet-field form, emitting the normal four
@@ -220,15 +241,6 @@ lane_claims_for_fleet() { # CLAIMS FLEET LANES_JSON
     }' <<<"$1"
 }
 
-# Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.
-lane_claims_count() {
-  # Through the environment, never `awk -v`: that form expands backslash
-  # escapes, and a config dir carrying a backslash would then match no record
-  # and report a busy account as free.
-  LANE_CLAIMS_DIR_Q="$(lane_claims_canon "$2")" \
-    awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_DIR_Q"] { n++ } END { print n + 0 }' <<<"$1"
-}
-
 # Config dir claimed for one pane, empty when no live claim names it. The key
 # is `<server pid> <pane id>` — the same key liveness uses — because a window
 # NAME is unique to a session, not to a server or across servers, so two lanes
@@ -251,6 +263,9 @@ lane_claim_put() {
   # half-written record and prune a live lane over it.
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  # mktemp creates mode 600, which no default ACL widens: a store shared by
+  # several homes would refuse every other home's read as unreadable-claim.
+  chmod g+r -- "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$tmp.$suffix" || { rm -f -- "$tmp"; return 1; }
   # shellcheck disable=SC2034  # read by lib/lane-cap.sh's cap_reserve
   LANE_CLAIM_PATH="$tmp.$suffix"

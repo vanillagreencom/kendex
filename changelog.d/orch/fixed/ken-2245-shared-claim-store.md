@@ -1,0 +1,1 @@
+- A lane claim store several fleet users share on one host now works across homes: claims are written group-readable, a claim whose tmux server another account owns is kept and counted instead of deleted, and `lanes` counts claims by account name, so one account reached from two homes is charged once with every claim on it.

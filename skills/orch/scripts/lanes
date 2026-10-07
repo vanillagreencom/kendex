@@ -643,7 +643,11 @@
 # one per tmux lane it launches under a resolved lane, and a claim is live
 # while its pane is (stored under $OVERSEE_WATCH_STATE_DIR/claims, else
 # <project root>/tmp/oversee-watch/claims; a claim whose pane is gone is
-# pruned on read). Usage numbers lag a launch by minutes, so `pick` called
+# pruned on read). A claim counts against the account its config dir names,
+# the alias `list` gives it (`1claude` for `~/.1claude`), not the path: a store
+# several homes share sees one account under each home's path, and every
+# claim on it, whichever home wrote it, counts and is charged once against
+# that account. Usage numbers lag a launch by minutes, so `pick` called
 # twice in a row would hand the same account both lanes; the claim count is
 # the correction, and it orders `pick` ahead of headroom. Each claim is also
 # charged its expected burn in the projected wall the chooser and
@@ -1799,7 +1803,7 @@ usage_serve_max_age() {
 # half a record.
 write_usage_cache() {
 	local file tmp prior=null sample_claims=1
-	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$2")" || return 1
+	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(account_claims "$2")" || return 1
 	USAGE_SAMPLE_CLAIMS="$sample_claims"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
@@ -2246,7 +2250,7 @@ emit_lane() {
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
-	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$dir")"
+	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir")"
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
@@ -2299,8 +2303,23 @@ emit_lane() {
 # command substitution, and a read failure recorded there would die with the
 # subshell instead of reaching the decision.
 load_lane_claims() {
+	local cfg rest
 	LANE_CLAIMS_RC=0
 	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" "${1:-}")" || LANE_CLAIMS_RC=$?
+	LANE_CLAIM_ACCOUNTS=""
+	while IFS=$'\t' read -r cfg rest; do
+		[[ -z "$cfg" ]] || LANE_CLAIM_ACCOUNTS+="$(lane_alias_for "$cfg")"$'\n'
+	done <<<"$LANE_CLAIMS_LIVE"
+}
+
+# Live claims against DIR's account. A store several homes share names one
+# account by as many paths as there are homes (`/home/a/.eclaude`,
+# `/home/b/.eclaude`), so a claim counts by the account name `list` gives its
+# canonical config dir, and one account is charged every claim on it whichever
+# home wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
+account_claims() { # DIR
+	LANE_CLAIMS_ACCOUNT_Q="$(lane_alias_for "$(lane_claims_canon "$1")")" \
+		awk '$0 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"] { n++ } END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
 }
 
 # EXCLUDE is the config dirs, one a line, that `pick` omits before the chooser
@@ -3349,6 +3368,8 @@ LANE_CLAIMS_LIVE=""
 # Non-zero when the claim store could not be read: `list` still reports what
 # it measured, `pick` refuses rather than deciding on an unknown.
 LANE_CLAIMS_RC=0
+# The account each live claim names, one a line, in LANE_CLAIMS_LIVE's order.
+LANE_CLAIM_ACCOUNTS=""
 
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
