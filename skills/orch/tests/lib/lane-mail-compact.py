@@ -217,15 +217,14 @@ class Compaction(unittest.TestCase):
         text.write_text("done\n")
         self.run_cli(receiver, "peer", "send", "--repo", str(requester), "--re", asks[0],
                      "--file", str(text), scripts=scripts)
-        self.assertEqual(self.run_cli(requester, "wait", "--id", asks[0], "--timeout", "1").stdout, "done\n")
+        self.assertEqual(self.run_cli(requester, "wait", "--id", asks[0], "--timeout", "1",
+                                     scripts=scripts).stdout, "done\n")
+        self.assertEqual(self.run_cli(requester, "inbox", scripts=scripts).stdout, "")
         self.env["TEST_NOW"] = "1790870400"
         self.assertEqual(self.run_cli(receiver, "compact", scripts=scripts).stdout,
                          "compacted item=overseer to-lane=1 to-overseer=1\n")
         self.assertEqual(json.loads((receiver_box / "to-lane.jsonl").read_text())["id"], asks[1])
         self.assertEqual((receiver_box / "to-overseer.jsonl").read_text(), "")
-        self.assertEqual(self.run_cli(requester, "compact").stdout,
-                         "compacted item=overseer to-lane=0 to-overseer=0\n")
-        self.assertEqual(json.loads(self.run_cli(requester, "inbox").stdout)["re"], asks[0])
         self.assertEqual(self.run_cli(requester, "compact").stdout,
                          "compacted item=overseer to-lane=1 to-overseer=1\n")
         self.assertEqual(json.loads((requester_box / "to-overseer.jsonl").read_text())["id"], asks[1])
@@ -237,6 +236,11 @@ class Compaction(unittest.TestCase):
                              'if [ "$PEER_VERB" = ask ]; then')
         with self.assertRaisesRegex(AssertionError, "compacted item=overseer to-lane=0 to-overseer=0"):
             self.peer_exchange(mutant)
+        frozen = self.mutant("wait-cursor-frozen", "lane-mail",
+                             '        [ "$SEEN" -ge "$ANSWER_AT" ] || lm_cursor_write "$ANSWER_AT"',
+                             '        :')
+        with self.assertRaisesRegex(AssertionError, "done"):
+            self.peer_exchange(frozen)
 
     def race(self, scripts):
         repo, box = self.world()

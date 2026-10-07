@@ -8,8 +8,9 @@
 # lines, so a local or a `lane-host append` write in flight costs one poll and
 # never a lost or duplicated message; a terminated line that does not parse is
 # counted and not emitted, keeping `--after` and the cursor aligned with the
-# file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
-# short of an unread one, so a hook that hands mail over never consumes it.
+# file. A halt is acknowledged by a plain `inbox` read or a `wait` that
+# hands it over: `--ack` stops short of an unread one, so a hook that hands
+# mail over never consumes it.
 # A send or notice prints its receipt; oversee-report reads the notice id.
 # Silence is a send or notice that did not land. With the repeat guard, a repeat
 # of one envelope to one item inside a minute is refused before the append
@@ -47,7 +48,9 @@ Lane side, rooted at the lane's own git worktree:
               block until an answer with re=MSGID appears in to-lane.jsonl and
               print its text; exit 124 at --timeout. The whole file is
               searched, so a restarted lane still finds an answer that arrived
-              while it was gone
+              while it was gone. Before advancing the read cursor, hand
+              every preceding unread envelope to the lane on stderr;
+              stdout holds only the selected answer's text
   inbox --item ITEM [--root ROOT] [--peek | --ack N]
               print every unread to-lane.jsonl envelope, including answers,
               then advance to-lane.cursor past every complete line. A `wait`
@@ -105,7 +108,7 @@ Overseer side:
               watch hand over the answer. In the overseer mailbox MSGID must
               name an owner ask. --halt sends a directive the lane-mail-halt
               hook refuses every lane tool call on until a plain inbox read
-              acknowledges it. Prints the receipt below on stdout. No halt
+              or a wait hands it over. Prints the receipt below on stdout. No halt
               goes to `--item overseer`: no hook halts an overseer on it, and
               the watch acknowledges that mailbox with --ack
               A send to a lane first reads the lane's record in the fleet
@@ -1171,9 +1174,9 @@ lm_count() { # FILE — logical complete lines, parsing or not
 }
 
 # Filter a snapshot by logical number, not by its compacted physical offset.
-lm_after_file() { # FILE SEEN DEST
-  awk -v seen="$2" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
-    line[FNR] > seen' "$1.index" "$1" >"$3" || refuse file-unreadable "$1"
+lm_after_file() { # FILE SEEN DEST [BEFORE]
+  awk -v seen="$2" -v before="${4:-}" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
+    line[FNR] > seen && (before == "" || line[FNR] < before)' "$1.index" "$1" >"$3" || refuse file-unreadable "$1"
 }
 
 # The line a cursor reader saves: the count, and the id its first line carries,
@@ -2015,6 +2018,8 @@ case "$VERB" in
         jq -rR '(fromjson? // null) | if type == "object" then .id // "" else "" end' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/ids"
         ANSWER_AT="$(awk -v id="$ANSWER_ID" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
           $0 == id { print line[FNR]; exit }' "$WORK_DIR/lane.jsonl.index" "$WORK_DIR/ids")"
+        lm_after_file "$WORK_DIR/lane.jsonl" "$SEEN" "$WORK_DIR/unread" "$ANSWER_AT"
+        lm_inbox_objects "$WORK_DIR/unread" >&2
         [ "$SEEN" -ge "$ANSWER_AT" ] || lm_cursor_write "$ANSWER_AT"
         awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.text'
         exit 0
@@ -2077,7 +2082,7 @@ case "$VERB" in
       # no inbox then prints.
       ASKED="$ACK"
       [ "$ACK" -le "$COUNT" ] || ACK="$COUNT"
-      # A halt stands until a plain read: the count stops at the line before
+      # The count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.
       jq -r -R '(fromjson? // null) | if type == "object" and .halt == true then "halt" else "-" end' \
         <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/kinds" || refuse file-unreadable "$TO_LANE"

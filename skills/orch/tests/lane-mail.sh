@@ -118,10 +118,46 @@ assert_eq "$RC=$ERR=$SLEPT" "124=lane-mail: timeout=$MINE=1" "wait ignores an an
 lm send --item KEN-1 --root "$LANE" --re "$MINE" --file "$(text a 'Merge it.')"
 lm wait --item KEN-1 --id "$MINE" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=Merge it." "wait returns the answer that names its own ask"
+assert_eq "$(jq -r '.re' < "$TMP_ROOT/err")" "$OTHER" "wait hands over the earlier unread answer on stderr"
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'After the answer.')"
 lm inbox --item KEN-1
 assert_eq "$RC=$(jq -rs 'map(.kind + " " + .text) | join(",")' <<<"$OUT")" "0=directive After the answer." \
   "inbox does not repeat a waited answer and still hands over the next directive"
+
+# The wait's cursor crosses earlier mail only after handing it over, and
+# leaves later mail unread. Compaction keeps these positions logical.
+for row in answer:plain directive:plain halt:plain answer:compacted directive:compacted halt:compacted; do
+  new_lane "wait_${row/:/_}"
+  printf '946684800\n' >"$STUB_CLOCK"
+  clock_lm send --item KEN-1 --root "$LANE" --directive --file "$(text old 'Already read.')"
+  lm inbox --item KEN-1
+  printf '1790870400\n' >"$STUB_CLOCK"
+  clock_lm ask --item KEN-1 --file "$(text q 'Selected ask.')"
+  WAIT_SELECTED="${OUT#id=}"
+  case "${row%%:*}" in
+    answer) clock_lm send --item KEN-1 --root "$LANE" --re earlier-ask --file "$(text earlier 'Earlier mail.')" ;;
+    directive) clock_lm send --item KEN-1 --root "$LANE" --directive --file "$(text earlier 'Earlier mail.')" ;;
+    halt) clock_lm send --item KEN-1 --root "$LANE" --halt --file "$(text earlier 'Earlier mail.')" ;;
+  esac
+  WAIT_EARLIER="$(jq -rs 'last.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")"
+  clock_lm send --item KEN-1 --root "$LANE" --re "$WAIT_SELECTED" --file "$(text selected 'Selected answer.')"
+  clock_lm send --item KEN-1 --root "$LANE" --directive --file "$(text later 'Later mail.')"
+  WAIT_LATER="$(jq -rs 'last.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")"
+  if [ "${row#*:}" = compacted ]; then
+    FLEET_DIR="$TMP_ROOT/fleet" ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
+      clock_lm compact --item KEN-1 --root "$LANE"
+    assert_eq "$RC" "0" "$row: compaction completes"
+    assert_eq "$(wc -l < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl" | tr -d ' ')" "3" "$row: compaction removes the earlier read line"
+  fi
+  lm wait --item KEN-1 --id "$WAIT_SELECTED" --timeout 5 --interval 1
+  assert_eq "$RC=$OUT" "0=Selected answer." "$row: stdout holds only the selected answer"
+  assert_eq "$(jq -rs 'map(.id) | join(",")' < "$TMP_ROOT/err")" "$WAIT_EARLIER" "$row: stderr holds only the earlier unread envelope"
+  assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "3" "$row: wait advances to the answer's logical line"
+  lm wait --item KEN-1 --id "$WAIT_SELECTED" --timeout 5 --interval 1
+  assert_eq "$RC=$OUT=$ERR" "0=Selected answer.=" "$row: a restarted wait finds its answer without repeating earlier mail"
+  lm inbox --item KEN-1
+  assert_eq "$RC=$(jq -rs 'map(.id) | join(",")' <<<"$OUT")" "0=$WAIT_LATER" "$row: later mail stays unread until inbox delivers it"
+done
 
 # --timeout is a deadline, not a count of intervals: one shorter than the
 # interval must not wait the whole interval out, so the naps sum to the timeout.

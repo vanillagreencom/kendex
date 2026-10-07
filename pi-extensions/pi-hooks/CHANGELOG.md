@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Mailbox wake tests cover delivery of overseer answers to idle Pi lanes.
+
 ### 0.19.1
 
 - Codemode scripts retain structured tool output when a PostToolUse hook adds context to the displayed result.

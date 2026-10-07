@@ -162,8 +162,7 @@ interface Row {
 const rows: Row[] = [
 	{ name: "a directive, the package loaded from its manifest", entries: "manifest", mail: "directive", want: { wakes: 1, state: "directive-read", steered: true } },
 	{ name: "a directive, the carrier alone with no mailbox wake", entries: "carrier", mail: "directive", want: { wakes: 0, state: "directive-unread", steered: true } },
-	// An answer belongs to the lane-mail wait that asked for it.
-	{ name: "an answer", entries: "manifest", mail: "answer", want: { wakes: 0, state: undefined, steered: true } },
+	{ name: "an answer", entries: "manifest", mail: "answer", want: { wakes: 1, state: undefined, steered: true } },
 	// A busy lane is handed its mail by the lane-mail-deliver hook after the tool call, and woken for none.
 	{ name: "a directive landing while the session is busy", entries: "manifest", mail: "busy-directive", want: { wakes: 0, state: "directive-read", steered: true } },
 	{ name: "a directive to a subagent's session", entries: "manifest", mail: "directive", subagent: true, want: { wakes: 0, state: "directive-unread", steered: false } },
@@ -229,6 +228,10 @@ for (const row of rows) {
 				await session.waitForIdle();
 			}
 			expect(measure()).toEqual(row.want);
+			if (row.mail === "answer") {
+				const unread = laneMail(lane, "inbox", "--item", ITEM, "--peek").trim().split("\n").slice(1);
+				expect(unread.map((line) => (JSON.parse(line) as { id: string }).id)).not.toContain(id!);
+			}
 		} finally {
 			session.dispose();
 			for (const [key, value] of Object.entries(saved)) {

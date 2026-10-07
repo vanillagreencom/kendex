@@ -909,7 +909,7 @@ lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "control: pending drops an answered ask when it judges answers as closes"
 
 new_repo control_answer_unknown
-mutant answer-without-ask $'      lm_ask "$MSGID"\n      [ "$ITEM" != overseer ] || BY=text' $'      : "$MSGID"\n      [ "$ITEM" != overseer ] || BY=text'
+mutant answer-without-ask $'      lm_ask "$MSGID"\n      BY=text' $'      : "$MSGID"\n      BY=text'
 lm send --item overseer --re unknown --delivery-id new:reply --file "$(text a 'b')"
 assert_eq "$RC" "0" "control: bypassing the owner ask lookup admits an answer with no ask"
 
