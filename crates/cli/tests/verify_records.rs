@@ -740,7 +740,7 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
             vec![record(&format!(
-                "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+                "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it",
             ))],
         ),
         (
@@ -797,7 +797,7 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
             vec![record(&format!(
-                "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+                "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it",
             ))],
         ),
         (
@@ -900,7 +900,7 @@ fn narrowing_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
             vec![record(&format!(
-                "source cat: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+                "source cat: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it",
             ))],
         ),
         (
@@ -910,7 +910,7 @@ fn narrowing_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
             vec![record(&format!(
-                "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+                "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it",
             ))],
         ),
         (
@@ -1371,7 +1371,7 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
     assert_eq!(record.state, State::Failed, "{record:?}");
     assert!(
         record.detail.as_deref().unwrap_or_default().contains(&format!(
-            "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
+            "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it",
             world.catalog.display()
         )),
         "{record:?}"
@@ -1406,7 +1406,7 @@ fn a_commit_a_cold_mirror_cannot_place_is_named_as_one_to_fetch() {
     assert_eq!(record.state, State::Failed, "{record:?}");
     let detail = record.detail.as_deref().unwrap_or_default();
     let named = format!(
-        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
+        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it",
         world.catalog.display()
     );
     assert!(detail.contains(&named), "{record:?} does not say {named:?}");
@@ -1447,7 +1447,7 @@ fn a_mirror_behind_the_record_names_source_refresh_and_recovers() {
     fs::remove_dir_all(&mirror).unwrap();
     fs::rename(saved, &mirror).unwrap();
     let keyed = format!(
-        "sourceCommit {newer} cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
+        "sourceCommit {newer} cannot be placed: the mirror of file://{} does not hold it",
         world.catalog.display()
     );
     let (output, document) = verify(&world, None);

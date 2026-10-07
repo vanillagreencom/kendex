@@ -14,6 +14,8 @@
 use std::fs;
 
 use kendex_core::attest::{Document, State};
+use kendex_core::drift::report::Remedy;
+use kendex_core::model::HarnessId;
 
 use super::verify_records::{
     INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, world, write,
@@ -111,8 +113,12 @@ fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
     let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
     assert!(fetched.status.success(), "{}", said(&fetched));
 
-    let (plain, _) = verify(&world, None);
+    let (plain, plain_document) = verify(&world, None);
     assert!(!plain.status.success(), "{}", said(&plain));
+    assert_eq!(plain_document.version, 2);
+    let stale = row(&plain_document, "skill", "second", Some(HarnessId::Claude)).unwrap();
+    assert_eq!(stale.state, State::Failed);
+    assert_eq!(stale.remedy, Some(Remedy::Refresh { global: false }));
     let (held, document) = at_record(&world, None);
     assert!(held.status.success(), "{}", said(&held));
     assert_eq!(
@@ -277,6 +283,37 @@ fn at_record_refuses_a_record_older_than_the_base_record() {
             && detail.contains("which is not on its history"),
         "{detail}"
     );
+    assert_eq!(row(&document, "record", RECORD, None).unwrap().remedy, None);
+}
+
+/// Hand-edited head commits and hashes cannot be repaired by fetching an
+/// invented commit or reapplying the held record. They need scope refresh.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn head_record_failures_carry_a_scoped_refresh_remedy() {
+    let world = world();
+    for path in [
+        vec!["entries", "skill:second:claude", "sourceCommit"],
+        vec!["sources", "cat", "commit"],
+        vec!["bundles", "starter", "commit"],
+        vec!["entries", "skill:second:claude", "sourceHash"],
+        vec!["entries", "skill:second:claude", "renderedHash"],
+    ] {
+        git(&world.project, &["checkout", "-q", "--", RECORD]);
+        edit_json(&world.project.join(RECORD), |lock| {
+            let value = path.iter().fold(lock, |value, key| &mut value[*key]);
+            *value = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+        });
+        let (output, document) = verify(&world, None);
+        assert!(!output.status.success(), "{}", said(&output));
+        let record = row(&document, "record", RECORD, None).unwrap();
+        assert_eq!(record.state, State::Failed, "{path:?}");
+        assert_eq!(
+            record.remedy,
+            Some(Remedy::Refresh { global: false }),
+            "{path:?}"
+        );
+    }
 }
 
 /// A base whose record this build cannot read sets no floor it could

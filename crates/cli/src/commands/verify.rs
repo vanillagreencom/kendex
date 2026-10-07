@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use kendex_core::attest::{
-    self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
+    self, Document, Floor, Foreign, Placed, Problem, Reading, Row, Stale, Standing, State,
 };
+use kendex_core::drift::report::Remedy;
 use kendex_core::engine::{
     DeclarationStatus, DriftState, EngineReport, Installation, KeptBundle, Owns, Pin, PlanOptions,
     Position, RowRemedy, ShimStanding, planned_closure_held,
@@ -316,7 +317,6 @@ fn check_scope(
     tally: &mut Tally,
     style: &Style,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reading = output.reading();
     let path = lock_path(env, &scope);
     let records = kendex_core::ownership::read(env, &scope);
     let fallback = records.fallback;
@@ -339,23 +339,22 @@ fn check_scope(
         tally.recordless = true;
         return Ok(());
     }
-    let options = reading.plan_options();
+    let options = output.reading().plan_options();
     let audited = kendex_core::ownership::audit(env, &scope, &records, &options);
     let declared = declared_packages(env, &scope, &records, &options, &audited);
     if absent && !declared.owes_record_nothing() {
         report_record_problem(style, &scope, &path, None);
         tally.recordless = true;
     }
-    let audited = match audited {
-        Ok(audited) => audited,
+    let (lock, report) = match audited {
+        Ok(audited) => (audited.matching, audited.report),
         Err(error) => {
             scope_refusal(style, &scope, &error);
             tally.recordless = true;
             return Ok(());
         }
     };
-    let (lock, report) = (audited.matching, audited.report);
-    let stale = trailed(style, &scope, &lock, &report, reading);
+    let stale = trailed(style, &scope, &lock, &report, output.reading());
     tally.stale.extend(stale);
     let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
     let named = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
@@ -376,21 +375,24 @@ fn check_scope(
             continue;
         }
         tally.checked += 1;
-        let problem = say_row(env, style, entry, &report);
-        tally.failed += usize::from(problem.is_some());
-        let positions = report
-            .installations
-            .get(key)
-            .map(|installation| installation.positions.as_slice())
-            .unwrap_or_default();
-        tally.rows.push(placer.row(
+        let (detail, remedy) = say_row(env, style, entry, &report)
+            .map(|Problem { detail, remedy }| (detail, remedy))
+            .unzip();
+        tally.failed += usize::from(detail.is_some());
+        let mut row = placer.row(
             entry.kind.name(),
             &entry.name,
             Some(entry.harness),
-            State::of(problem.is_none()),
-            problem,
-            positions,
-        ));
+            State::of(detail.is_none()),
+            detail,
+            report
+                .installations
+                .get(key)
+                .map(|installation| installation.positions.as_slice())
+                .unwrap_or_default(),
+        );
+        row.remedy = remedy.flatten();
+        tally.rows.push(row);
     }
     for shim in &report.instruction_shims {
         if !named(&shim.name) {
@@ -602,14 +604,16 @@ fn bookkeeping_rows(
             path: standing.path.clone(),
             owns: Owns::File,
         };
-        tally.rows.push(placer.row(
+        let mut row = placer.row(
             kind,
             &name,
             None,
             State::of(problem.is_none()),
             problem,
             &[position],
-        ));
+        );
+        row.remedy = standing.remedy;
+        tally.rows.push(row);
     }
     Ok(())
 }
@@ -860,6 +864,7 @@ impl<'a> Placer<'a> {
             harness,
             state,
             detail,
+            remedy: None,
             positions: positions
                 .iter()
                 .map(|position| Placed {
@@ -1165,6 +1170,7 @@ fn say_bookkeeping(style: &Style, kind: &str, name: &str, standing: &Standing) -
     }
     let problem = standing.problems.join("; ");
     ui::stderr(&style.report_verdict(&format!("{kind} {name}"), Some(&problem)));
+    say_remedy(style, standing.remedy.as_ref());
     Some(problem)
 }
 
@@ -1180,7 +1186,7 @@ fn say_row(
     style: &Style,
     entry: &kendex_core::lock::LockEntry,
     report: &kendex_core::engine::EngineReport,
-) -> Option<String> {
+) -> Option<Problem> {
     let problem = report.drift.iter().find(|row| {
         row.name == entry.name
             && row.kind == entry.kind
@@ -1206,49 +1212,21 @@ fn say_row(
     let name = &entry.name;
     let harness = entry.harness.name();
     let bad = match problem {
-        Some(row) if row.state == DriftState::Stale => Some(
-            entry
-                .source_commit
-                .as_deref()
-                .and_then(|commit| {
-                    attest::missing_commit_problem(
-                        env,
-                        &entry.source_repo,
-                        commit,
-                        &format!("sourceCommit {commit}"),
-                    )
-                })
-                .unwrap_or_else(|| row.detail.clone()),
-        ),
-        Some(row) => Some(match row.remedy {
-            Some(remedy) => {
-                // The kind rides along: a bare name also removes a live
-                // item of another kind that shares it. A personal-setup
-                // row is out of reach of a removal at the project.
-                let global = match row.scope {
-                    Scope::Global => " and --global",
-                    _ => "",
-                };
-                let removal = format!("remove {name} with --kind {kind}{global}");
-                match remedy {
-                    RowRemedy::Remove => {
-                        format!("{} — refresh takes it, or {removal}", row.detail)
-                    }
-                    RowRemedy::RemoveEdited => format!(
-                        "{}; its files were edited, which refresh holds — {removal}",
-                        row.detail
-                    ),
-                }
-            }
-            None => row.detail.clone(),
-        }),
+        Some(row) => Some(drift_problem(env, entry, row)),
         None if unreachable_source => {
             let detail = "where this package comes from is unavailable".to_owned();
-            Some(detail)
+            Some(detail.into())
         }
         None => None,
     };
-    ui::stderr(&style.report_verdict(&format!("{kind} {name} [{harness}]"), bad.as_deref()));
+    ui::stderr(&style.report_verdict(
+        &format!("{kind} {name} [{harness}]"),
+        bad.as_ref().map(|problem| problem.detail.as_str()),
+    ));
+    say_remedy(
+        style,
+        bad.as_ref().and_then(|problem| problem.remedy.as_ref()),
+    );
     // An installation can match its declaration exactly and still do
     // nothing — switched off machine-wide, outranked by a system file, or
     // advisory on this tool. That is not drift, so it does not fail the
@@ -1267,4 +1245,75 @@ fn say_row(
         }
     }
     bad
+}
+
+fn drift_problem(
+    env: &Env,
+    entry: &kendex_core::lock::LockEntry,
+    row: &kendex_core::engine::DriftRow,
+) -> Problem {
+    match row.state {
+        DriftState::Stale => {
+            let remedy = Some(Remedy::Refresh {
+                global: matches!(row.scope, Scope::Global),
+            });
+            entry
+                .source_commit
+                .as_deref()
+                .and_then(|commit| {
+                    attest::missing_commit_problem(
+                        env,
+                        &entry.source_repo,
+                        commit,
+                        &format!("sourceCommit {commit}"),
+                        remedy.clone(),
+                    )
+                })
+                .unwrap_or_else(|| Problem {
+                    detail: row.detail.clone(),
+                    remedy,
+                })
+        }
+        DriftState::Missing
+        | DriftState::Conflict
+        | DriftState::Orphaned
+        | DriftState::Unmanaged => Problem {
+            detail: match row.remedy {
+                Some(remedy) => {
+                    // The kind rides along: a bare name also removes a live
+                    // item of another kind that shares it. A personal-setup
+                    // row is out of reach of a removal at the project.
+                    let global = match row.scope {
+                        Scope::Global => " and --global",
+                        _ => "",
+                    };
+                    let removal = format!(
+                        "remove {} with --kind {}{global}",
+                        entry.name,
+                        entry.kind.name()
+                    );
+                    match remedy {
+                        RowRemedy::Remove => {
+                            format!("{}; or {removal}", row.detail)
+                        }
+                        RowRemedy::RemoveEdited => format!(
+                            "{}; its files were edited, which refresh holds — {removal}",
+                            row.detail
+                        ),
+                    }
+                }
+                None => row.detail.clone(),
+            },
+            remedy: (row.remedy == Some(RowRemedy::Remove)).then_some(Remedy::Refresh {
+                global: matches!(row.scope, Scope::Global),
+            }),
+        },
+    }
+}
+
+fn say_remedy(style: &Style, remedy: Option<&Remedy>) {
+    if let Some(remedy) = remedy {
+        let data = serde_json::json!(remedy).to_string();
+        ui::stderr(&style.report_detail(&[Span::Prose("remedy: "), Span::Prose(&data)], "  "));
+    }
 }

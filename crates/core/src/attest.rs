@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::apply::Op;
+use crate::drift::report::Remedy;
 use crate::engine::{EngineReport, Owns, Position, StoodIn};
 use crate::env::Env;
 use crate::error::Result;
@@ -46,7 +47,7 @@ pub enum Foreign {
 /// it. A new [`State`] value is additive and keeps it, so a reader treats
 /// a state it does not know as not ok. `clean` does not imply every row is
 /// `ok`: a `warning` or `notice` row leaves the run clean.
-pub const DOCUMENT_VERSION: u32 = 1;
+pub const DOCUMENT_VERSION: u32 = 2;
 
 /// What one verify row concluded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,10 @@ pub struct Row {
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// An action for this row's scope. A base-record failure has none:
+    /// refreshing the checked scope cannot change a committed revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<Remedy>,
     pub positions: Vec<Placed>,
 }
 
@@ -261,6 +266,23 @@ pub fn floor_at(root: &Path, rev: &str) -> Floor {
 pub struct Standing {
     pub path: PathBuf,
     pub problems: Vec<String>,
+    pub remedy: Option<Remedy>,
+}
+
+/// A failed comparison and its recovery action, where one applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    pub detail: String,
+    pub remedy: Option<Remedy>,
+}
+
+impl From<String> for Problem {
+    fn from(detail: String) -> Self {
+        Self {
+            detail,
+            remedy: None,
+        }
+    }
 }
 
 /// The committed inventory held to what this pass renders, or `None`
@@ -284,6 +306,7 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
         return Ok(planned.then(|| Standing {
             path,
             problems: vec!["not written yet".to_owned()],
+            remedy: None,
         }));
     };
     let mut problems = Vec::new();
@@ -306,7 +329,11 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
     if planned && problems.is_empty() {
         problems.push("not laid out as kendex writes it".to_owned());
     }
-    Ok(Some(Standing { path, problems }))
+    Ok(Some(Standing {
+        path,
+        problems,
+        remedy: None,
+    }))
 }
 
 /// Adoption copies held byte for byte to the declared package's templates.
@@ -319,6 +346,7 @@ pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
         .map(|(path, workflow)| Standing {
             path: path.clone(),
             problems: workflow.problems.clone(),
+            remedy: None,
         })
         .collect()
 }
@@ -367,8 +395,11 @@ pub fn record(
         return Ok(None);
     };
     let mut problems = Vec::new();
+    let refresh = Some(Remedy::Refresh {
+        global: matches!(scope, Scope::Global),
+    });
     if text != crate::lock::committed_text(&path, lock)? {
-        problems.push("not laid out as kendex writes it".to_owned());
+        problems.push("not laid out as kendex writes it".to_owned().into());
     }
     let stood_in = (report
         .stood_in
@@ -383,47 +414,30 @@ pub fn record(
             .map(|(name, why)| ("set", name, why)),
     );
     for (subject, name, why) in stood_in {
-        problems.push(match why {
+        problems.push((match why {
             StoodIn::RecordedCommit => format!(
                 "{subject} {name}: the mirror cannot serve the declared revision, and the recorded commit stood in"
             ),
             StoodIn::Unserved => format!(
                 "{subject} {name}: the mirror cannot serve the declared revision, so nothing holds the record to it — fetch it with kendex source refresh"
             ),
-        });
+        }).into());
     }
     let planned = &report.record;
-    for (key, entry) in &lock.entries {
-        // The key is what every reader looks an entry up by, and the
-        // fields are what the entry says of itself; an entry the plan
-        // copies from the record by kind and name carries an edited
-        // harness through under its unchanged key, so the two are held
-        // to each other before the plan is asked.
-        if *key != crate::lock::entry_key(entry.kind, &entry.name, entry.harness) {
-            problems.push(format!("{key}: not the entry it names"));
-            continue;
-        }
-        let Some(would_record) = planned.entries.get(key) else {
-            continue;
-        };
-        if let Some(field) = differs(entry, would_record) {
-            problems.push(format!("{key}: {field} is not what this pass records"));
-        }
-        problems.extend(entry_commit_problem(env, key, entry, would_record));
-    }
+    problems.extend(entry_problems(env, lock, planned, refresh.clone()));
     for (name, recorded) in &lock.sources {
         problems.extend(source_problem(
             env,
             name,
             recorded,
             planned.sources.get(name),
+            refresh.clone(),
         ));
     }
     for name in planned.sources.keys() {
         if !lock.sources.contains_key(name) {
-            problems.push(format!(
-                "source {name}: declared, and the record does not carry it"
-            ));
+            problems
+                .push(format!("source {name}: declared, and the record does not carry it").into());
         }
     }
     for (name, recorded) in &lock.bundles {
@@ -432,6 +446,7 @@ pub fn record(
             name,
             recorded,
             planned.bundles.get(name),
+            refresh.clone(),
         ));
     }
     for pin in &report.held {
@@ -440,13 +455,12 @@ pub fn record(
             pin,
             planned.sources.get(&pin.source),
             floor,
+            refresh.clone(),
         ));
     }
     for name in planned.bundles.keys() {
         if !lock.bundles.contains_key(name) {
-            problems.push(format!(
-                "set {name}: declared, and the record does not carry it"
-            ));
+            problems.push(format!("set {name}: declared, and the record does not carry it").into());
         }
     }
     for shim in planned.shims.symmetric_difference(&lock.shims) {
@@ -455,9 +469,49 @@ pub fn record(
         } else {
             "kept, and the record does not carry it"
         };
-        problems.push(format!("shim {}: {held}", shim.spelled()));
+        problems.push(format!("shim {}: {held}", shim.spelled()).into());
     }
-    Ok(Some(Standing { path, problems }))
+    Ok(Some(Standing {
+        path,
+        remedy: problems.iter().find_map(|problem| problem.remedy.clone()),
+        problems: problems.into_iter().map(|problem| problem.detail).collect(),
+    }))
+}
+
+fn entry_problems(env: &Env, lock: &Lock, planned: &Lock, refresh: Option<Remedy>) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for (key, entry) in &lock.entries {
+        // The key is what every reader looks an entry up by, and the
+        // fields are what the entry says of itself; an entry the plan
+        // copies from the record by kind and name carries an edited
+        // harness through under its unchanged key, so the two are held
+        // to each other before the plan is asked.
+        if *key != crate::lock::entry_key(entry.kind, &entry.name, entry.harness) {
+            problems.push(format!("{key}: not the entry it names").into());
+            continue;
+        }
+        let Some(would_record) = planned.entries.get(key) else {
+            continue;
+        };
+        if let Some(field) = differs(entry, would_record) {
+            problems.push(Problem {
+                detail: format!("{key}: {field} is not what this pass records"),
+                remedy: if matches!(field, "sourceHash" | "renderedHash") {
+                    refresh.clone()
+                } else {
+                    None
+                },
+            });
+        }
+        problems.extend(entry_commit_problem(
+            env,
+            key,
+            entry,
+            would_record,
+            refresh.clone(),
+        ));
+    }
+    problems
 }
 
 /// The first field on which a recorded entry is not the one the pass
@@ -532,13 +586,14 @@ fn entry_commit_problem(
     key: &str,
     recorded: &LockEntry,
     would_record: &LockEntry,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     let (recorded_commit, resolved) = match (&recorded.source_commit, &would_record.source_commit) {
         (None, None) => return None,
         (Some(recorded), Some(resolved)) if recorded == resolved => return None,
         (Some(recorded), Some(resolved)) => (recorded, resolved),
         (None, Some(_)) | (Some(_), None) => {
-            return Some(format!("{key}: sourceCommit is not what this pass records"));
+            return Some(format!("{key}: sourceCommit is not what this pass records").into());
         }
     };
     history_problem(
@@ -548,6 +603,7 @@ fn entry_commit_problem(
         resolved,
         &format!("{key}: sourceCommit {recorded_commit}"),
         OFF_HISTORY,
+        refresh,
     )
 }
 
@@ -556,20 +612,24 @@ fn source_problem(
     name: &str,
     recorded: &SourceRev,
     declared: Option<&SourceRev>,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     let Some(declared) = declared else {
         return Some(format!(
             "source {name}: recorded, and the manifest declares no enabled repository source by that name"
-        ));
+        ).into());
     };
     if !recorded.written_for(&declared.repo, declared.rev.as_deref()) {
-        return Some(format!(
-            "source {name}: recorded for {} at {}, declared as {} at {}",
-            recorded.repo,
-            selector(recorded.rev.as_deref()),
-            declared.repo,
-            selector(declared.rev.as_deref()),
-        ));
+        return Some(
+            format!(
+                "source {name}: recorded for {} at {}, declared as {} at {}",
+                recorded.repo,
+                selector(recorded.rev.as_deref()),
+                declared.repo,
+                selector(declared.rev.as_deref()),
+            )
+            .into(),
+        );
     }
     history_problem(
         env,
@@ -578,6 +638,7 @@ fn source_problem(
         &declared.commit,
         &format!("source {name}: commit {}", recorded.commit),
         OFF_HISTORY,
+        refresh,
     )
 }
 
@@ -586,17 +647,21 @@ fn bundle_problem(
     name: &str,
     recorded: &BundleRev,
     declared: Option<&BundleRev>,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     let Some(declared) = declared else {
         return Some(format!(
             "set {name}: recorded, and the manifest declares no such set from an enabled repository source"
-        ));
+        ).into());
     };
     if recorded.source != declared.source || recorded.source_repo != declared.source_repo {
-        return Some(format!(
-            "set {name}: recorded from {} ({}), declared from {} ({})",
-            recorded.source, recorded.source_repo, declared.source, declared.source_repo
-        ));
+        return Some(
+            format!(
+                "set {name}: recorded from {} ({}), declared from {} ({})",
+                recorded.source, recorded.source_repo, declared.source, declared.source_repo
+            )
+            .into(),
+        );
     }
     history_problem(
         env,
@@ -605,6 +670,7 @@ fn bundle_problem(
         &declared.commit,
         &format!("set {name}: commit {}", recorded.commit),
         OFF_HISTORY,
+        refresh,
     )
 }
 
@@ -620,12 +686,14 @@ fn held_problem(
     pin: &crate::engine::HeldPin,
     source: Option<&SourceRev>,
     floor: &Floor,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     let subject = format!("{}: held at {}", pin.held, pin.commit);
     let Some(source) = source else {
-        return Some(format!(
-            "{subject}: its source resolved to nothing this pass could hold the commit to"
-        ));
+        return Some(
+            format!("{subject}: its source resolved to nothing this pass could hold the commit to")
+                .into(),
+        );
     };
     if let Some(problem) = history_problem(
         env,
@@ -634,6 +702,7 @@ fn held_problem(
         &source.commit,
         &subject,
         OFF_HISTORY,
+        refresh,
     ) {
         return Some(problem);
     }
@@ -642,7 +711,7 @@ fn held_problem(
         Floor::Unreadable => {
             return Some(format!(
                 "{subject}: the base revision's record cannot be read, so nothing bounds how far back it reaches"
-            ));
+            ).into());
         }
         Floor::Record(base) => pin.recorded_in(base)?,
     };
@@ -653,6 +722,7 @@ fn held_problem(
         &pin.commit,
         &format!("{subject}: the base revision's record names {base}, which"),
         "is not on its history",
+        None,
     )
 }
 
@@ -667,16 +737,21 @@ pub fn missing_commit_problem(
     repo: &str,
     commit: &str,
     subject: &str,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);
-    (!crate::remote::store::has_commit(&mirror, commit)).then(|| unplaced_commit(repo, subject))
+    (!crate::remote::store::has_commit(&mirror, commit))
+        .then(|| unplaced_commit(repo, subject, refresh))
 }
 
-fn unplaced_commit(repo: &str, subject: &str) -> String {
-    format!(
-        "{subject} cannot be placed: the mirror of {repo} does not hold it; fix=\"kendex source refresh\"; if still missing after refresh, the record names a commit the source never held"
-    )
+fn unplaced_commit(repo: &str, subject: &str, refresh: Option<Remedy>) -> Problem {
+    Problem {
+        detail: format!(
+            "{subject} cannot be placed: the mirror of {repo} does not hold it; verb=source operation=refresh; if still missing after refresh, the record names a commit the source never held"
+        ),
+        remedy: refresh,
+    }
 }
 
 fn selector(rev: Option<&str>) -> &str {
@@ -699,21 +774,22 @@ fn history_problem(
     resolved: &str,
     subject: &str,
     off_history: &str,
-) -> Option<String> {
+    refresh: Option<Remedy>,
+) -> Option<Problem> {
     if recorded == resolved {
         return None;
     }
     if !crate::remote::store::is_pin(recorded) {
-        return Some(format!("{subject} is not a commit pin"));
+        return Some(format!("{subject} is not a commit pin").into());
     }
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);
     match crate::remote::store::is_ancestor(&mirror, recorded, resolved) {
         Some(true) => None,
-        Some(false) => Some(format!("{subject} {off_history}")),
+        Some(false) => Some(format!("{subject} {off_history}").into()),
         None => Some(
-            missing_commit_problem(env, repo, recorded, subject)
-                .unwrap_or_else(|| unplaced_commit(repo, subject)),
+            missing_commit_problem(env, repo, recorded, subject, refresh.clone())
+                .unwrap_or_else(|| unplaced_commit(repo, subject, refresh)),
         ),
     }
 }
@@ -983,4 +1059,66 @@ fn foreign_of(
         true => Foreign::Unchanged,
         false => Foreign::Changed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Held, HeldPin};
+    use crate::test_util::rooted;
+
+    /// The held planner produces head pins and reads their lower bound
+    /// from the base record. Only the checked head can be refreshed.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn held_head_and_base_commits_keep_separate_remedies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let env = Env::fake(&root, crate::env::FakeOs::Linux);
+        let pin = HeldPin {
+            held: Held::Set {
+                name: "starter".into(),
+            },
+            source: "cat".into(),
+            repo: "owner/catalog".into(),
+            commit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into(),
+        };
+        let mut base = Lock::default();
+        base.bundles.insert(
+            "starter".into(),
+            BundleRev {
+                source: pin.source.clone(),
+                source_repo: pin.repo.clone(),
+                commit: "abcdefabcdefabcdefabcdefabcdefabcdefabcd".into(),
+            },
+        );
+        for (resolved, floor, refresh, expected) in [
+            (
+                "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                Floor::Open,
+                Some(Remedy::Refresh { global: false }),
+                Some(Remedy::Refresh { global: false }),
+            ),
+            (
+                "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                Floor::Open,
+                Some(Remedy::Refresh { global: true }),
+                Some(Remedy::Refresh { global: true }),
+            ),
+            (
+                pin.commit.as_str(),
+                Floor::Record(base),
+                Some(Remedy::Refresh { global: false }),
+                None,
+            ),
+        ] {
+            let source = SourceRev {
+                repo: pin.repo.clone(),
+                rev: None,
+                commit: resolved.into(),
+            };
+            let problem = held_problem(&env, &pin, Some(&source), &floor, refresh).unwrap();
+            assert_eq!(problem.remedy, expected);
+        }
+    }
 }

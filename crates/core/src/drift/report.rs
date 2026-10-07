@@ -25,7 +25,7 @@
 //! see next, because a line an agent runs and meets again next session is
 //! worse than no remedy at all.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::env::Env;
@@ -81,7 +81,7 @@ impl Class {
 /// The closed remedy vocabulary. Nothing else ever renders in a command
 /// position; identifiers are validated before rendering and a name that
 /// fails validation drops the remedy rather than escaping into it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "verb",
     rename_all = "kebab-case",
