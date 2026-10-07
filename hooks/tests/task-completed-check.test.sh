@@ -209,13 +209,14 @@ assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" 
   "changes to two crates lint each once"
 fgit -C "$REPO" checkout -q -- crates
 # c depends on b and d on c, through path dependencies; e depends on a crate
-# from a registry that shares b's name, which is not b.
-DEPS_META=$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml","dependencies":[]},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml","dependencies":[]},{"name":"c","manifest_path":"%s/crates/c/Cargo.toml","dependencies":[{"name":"b","source":null}]},{"name":"d","manifest_path":"%s/crates/d/Cargo.toml","dependencies":[{"name":"c","source":null,"kind":"dev"}]},{"name":"e","manifest_path":"%s/crates/e/Cargo.toml","dependencies":[{"name":"b","source":"registry+https://github.com/rust-lang/crates.io-index"}]}]}' "$REPO" "$REPO" "$REPO" "$REPO" "$REPO")
-mkdir -p "$REPO/crates/c" "$REPO/crates/d" "$REPO/crates/e"
+# from a registry that shares b's name, and g on a path crate outside the
+# workspace that shares it, neither of which is b.
+DEPS_META=$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml","dependencies":[]},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml","dependencies":[]},{"name":"c","manifest_path":"%s/crates/c/Cargo.toml","dependencies":[{"name":"b","source":null,"path":"%s/crates/b"}]},{"name":"d","manifest_path":"%s/crates/d/Cargo.toml","dependencies":[{"name":"c","source":null,"kind":"dev","path":"%s/crates/c"}]},{"name":"e","manifest_path":"%s/crates/e/Cargo.toml","dependencies":[{"name":"b","source":"registry+https://github.com/rust-lang/crates.io-index"}]},{"name":"g","manifest_path":"%s/crates/g/Cargo.toml","dependencies":[{"name":"b","source":null,"path":"%s/vendor/b"}]}]}' "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO" "$REPO")
+mkdir -p "$REPO/crates/c" "$REPO/crates/d" "$REPO/crates/e" "$REPO/crates/g" "$REPO/vendor/b"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$DEPS_META"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targets" \
-  "a change to b also lints every member depending on it, however indirectly, and no registry namesake"
+  "a change to b also lints every member depending on it, however indirectly, and no registry or outside path namesake"
 fgit -C "$REPO" checkout -q -- crates
 fgit -C "$REPO" mv crates/a/src/lib.rs crates/b/src/moved.rs
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
@@ -225,8 +226,8 @@ fgit -C "$REPO" reset -q --hard
 printf 'fn loose() {}\n' >"$REPO/scratch/loose.rs"
 run_hook "$REPO" FAKE_RC=0 \
   FAKE_METADATA="$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"}]}' "$REPO")"
-assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=" \
-  "a Rust file no member owns runs no clippy"
+assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=clippy --workspace --all-targets" \
+  "a Rust file no member's directory holds, which any member may include by #[path], lints the whole workspace"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA_RC=101
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: metadata=failed" \
   "a manifest cargo cannot read refuses"

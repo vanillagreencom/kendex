@@ -3,7 +3,7 @@
 # name: task-completed-check
 # event: TaskCompleted
 # matcher:
-# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them through a path dependency, however indirectly, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file no workspace member owns is not linted. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
+# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them, however indirectly, through a path dependency whose directory is that member's, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file no member's directory holds lints the whole workspace, since any member may compile it in through `#[path]` or `include!`. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
 # summary: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 # safety: Refuses on a clippy that exits nonzero and on a `cargo metadata` read that fails, both a defect in the change. A host that cannot run the check is not the committer's to fix and is never read as a pass: a git that cannot list the changed set, or a missing cargo or jq, completes the task with one `git=<subcommand>` or `missing-tools=<list>` notice saying the change was not checked. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal and notice opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
@@ -146,59 +146,77 @@ if [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
   fi
 fi
 
-# The workspace members, one `<name>\t<directory>\t<member deps>` per line,
-# read once; a dependency with no source is a path dependency, the only kind a
-# member can be. Only stdout is JSON: a read that succeeds may still warn on
-# stderr, so stderr is captured apart and replayed under the key only when the
-# read fails.
+# The workspace, read once: `M\t<name>\t<directory>` per member and
+# `D\t<name>\t<directory>` per path dependency it declares, a dependency with
+# no source being a path dependency, the only kind a member can be. Only
+# stdout is JSON: a read that succeeds may still warn on stderr, so stderr is
+# captured apart and replayed under the key only when the read fails.
 # A repository whose root holds Cargo.toml leaves MANIFEST_ARGS empty, and
 # bash 3.2 under `set -u` reads an empty array as an unbound variable.
 # Hence the guarded expansion.
-MEMBERS=$(
+WORKSPACE=$(
   {
     cause=$( { cargo metadata ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --no-deps --format-version 1 |
-      jq -r '.packages[] | [.name, (.manifest_path | sub("[/\\\\][^/\\\\]*$"; "")),
-        ([(.dependencies // [])[] | select(.source == null) | .name] | join(" "))] | @tsv' >&3; } 2>&1) || {
+      jq -r '.packages[] | .name as $n |
+        (["M", $n, (.manifest_path | sub("[/\\\\][^/\\\\]*$"; ""))] | @tsv),
+        ((.dependencies // [])[] | select(.source == null and .path != null) | ["D", $n, .path] | @tsv)' >&3; } 2>&1) || {
       printf '%s\n' "$cause"
       exit 1
     }
   } 3>&1
-) || refuse metadata failed "$MEMBERS"
+) || refuse metadata failed "$WORKSPACE"
 
-# Each changed Rust file belongs to the member whose directory is its longest
-# prefix; both sides are compared physically, since cargo and git may spell
-# the same directory through different links. A file no member owns is not
-# one clippy would lint.
+# Directories are compared physically, since cargo and git may spell the same
+# one through different links. A member is `<name>\t<directory>`; an edge is
+# `<dependent>\t<member it depends on>`, kept only where the dependency's
+# directory is a member's, so a path crate outside the workspace that shares
+# a member's name is no edge.
 REPO_REAL=$(cd "$REPO_ROOT" && pwd -P)
 TAB=$(printf '\t')
 OWNED=""
-while IFS="$TAB" read -r name dir deps; do
-  [ -n "$name" ] || continue
+while IFS="$TAB" read -r kind name dir; do
+  [ "$kind" = M ] || continue
   real=$(cd "$dir" 2>/dev/null && pwd -P) || continue
-  OWNED="$OWNED$name$TAB$real$TAB$deps
+  OWNED="$OWNED$name$TAB$real
 "
-done <<<"$MEMBERS"
+done <<<"$WORKSPACE"
+EDGES=""
+while IFS="$TAB" read -r kind name dir; do
+  [ "$kind" = D ] || continue
+  real=$(cd "$dir" 2>/dev/null && pwd -P) || continue
+  while IFS="$TAB" read -r member member_real; do
+    [ "$member_real" != "$real" ] || EDGES="$EDGES$name$TAB$member
+"
+  done <<<"$OWNED"
+done <<<"$WORKSPACE"
 
-# The selected members, space-delimited with a space at each end so a lookup
-# is one pattern match.
+# Each changed Rust file belongs to the member whose directory is its longest
+# prefix. A file no member's directory holds can still be compiled into any
+# of them through `#[path]` or `include!`, and which ones only a build knows,
+# so such a file lints the whole workspace. The selected members are
+# space-delimited with a space at each end so a lookup is one pattern match.
 SELECTED=" "
+WHOLE=""
 while IFS= read -r path; do
   abs="$REPO_REAL/$path"
   best=""
   best_len=0
-  while IFS="$TAB" read -r name real deps; do
+  while IFS="$TAB" read -r name real; do
     [ -n "$real" ] || continue
     if [ "${abs#"$real"/}" != "$abs" ] && [ "${#real}" -gt "$best_len" ]; then
       best=$name
       best_len=${#real}
     fi
   done <<<"$OWNED"
-  [ -z "$best" ] || case "$SELECTED" in
-    *" $best "*) ;;
-    *) SELECTED="$SELECTED$best " ;;
-  esac
+  if [ -z "$best" ]; then
+    WHOLE=1
+  else
+    case "$SELECTED" in
+      *" $best "*) ;;
+      *) SELECTED="$SELECTED$best " ;;
+    esac
+  fi
 done <<<"$RUST_CHANGED"
-[ "$SELECTED" != " " ] || exit 0
 
 # A change can break a member that depends on the one it touched, which `-p`
 # alone would not build, so every member depending on a selected one, however
@@ -206,25 +224,26 @@ done <<<"$RUST_CHANGED"
 GREW=1
 while [ "$GREW" = 1 ]; do
   GREW=0
-  while IFS="$TAB" read -r name real deps; do
+  while IFS="$TAB" read -r name dep; do
     [ -n "$name" ] || continue
     case "$SELECTED" in *" $name "*) continue ;; esac
-    for dep in $deps; do
-      case "$SELECTED" in
-        *" $dep "*)
-          SELECTED="$SELECTED$name "
-          GREW=1
-          break
-          ;;
-      esac
-    done
-  done <<<"$OWNED"
+    case "$SELECTED" in
+      *" $dep "*)
+        SELECTED="$SELECTED$name "
+        GREW=1
+        ;;
+    esac
+  done <<<"$EDGES"
 done
 
 PACKAGE_ARGS=()
-for name in $SELECTED; do
-  PACKAGE_ARGS+=(-p "$name")
-done
+if [ -n "$WHOLE" ]; then
+  PACKAGE_ARGS=(--workspace)
+else
+  for name in $SELECTED; do
+    PACKAGE_ARGS+=(-p "$name")
+  done
+fi
 
 # Errors refuse; warnings are advice, so clippy runs without `-D warnings` and
 # its exit status is the verdict: nonzero only for a compile error or a
