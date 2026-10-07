@@ -44,8 +44,9 @@
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host
 # in the state directory the lane resolves from its own worktree's settings,
-# never this caller's ORCH_STATE_DIR; once its sandbox is gone, from the
-# archive the fleet log's last `kept=PATH` row for the item names. A lane
+# never this caller's ORCH_STATE_DIR; once the host answers that its
+# worktree is gone, from the archive the fleet log's last `kept=PATH` row for
+# the item since its session began names. A lane
 # whose state is gone, which
 # ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
 # read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
@@ -322,9 +323,15 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
 LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
 # The archive a close of the hosted lane kept, from the fleet log's last
-# `kept=PATH` row for the item.
-LANE_KEPT="$(jq -r --arg item "$ITEM" '[.fleet_log[]? | select(.item == $item) | .text | strings
-  | capture("(^|\\s)kept=(?<p>/\\S+)") | .p] | last // empty' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
+# `kept=PATH` row for the item since its current session began, so a close of
+# an earlier run of a relaunched item is never read as this one's. The path
+# is the rest of the row, since a fleet directory may hold spaces and the
+# provider prints it unescaped as the line's last field.
+LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane")" || refuse state-unreadable "$STATE_FILE"
+LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
+  [.fleet_log[]? | select(.item == $item and ((.at // "") >= $since)) | .text | strings
+   | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE")" \
+  || refuse state-unreadable "$STATE_FILE"
 
 rounds=null rounds_unread=""
 if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \

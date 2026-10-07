@@ -1296,6 +1296,28 @@ fi
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertTrue(removed.exists())
 
+    def test_close_archives_the_state_the_lane_settings_place_outside_tmp(self):
+        # The lane's settings name a state directory outside both tmp trees;
+        # its close archives the item's state there, which oversee-cycle reads
+        # once the sandbox is gone.
+        state_dir = self.root / "lane-state"
+        scripts = self.source / ".agents/skills/orch/scripts"
+        for name in ("workflow-state", "git-context"):
+            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')
+        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        self.assertEqual(self.create().returncode, 0)
+        state_dir.mkdir()
+        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 4}')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            member = str(state_dir / "workflow-state-TEST-1.json").lstrip("/")
+            self.assertIn(member, saved.getnames())
+            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
+
     def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])

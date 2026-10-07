@@ -130,6 +130,8 @@ lane_hosted_state_dir() {
     fi
     [[ -z "$setting" ]] || LANE_HOSTED_STATE_DIR="${setting#=}"
   done
+  # An empty setting is tmp, as workflow-state reads it.
+  LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"
 }
 
 # lane_archived_state ITEM ARCHIVE SCRATCH — sets LANE_ITEM_STATE to the
@@ -156,8 +158,10 @@ lane_archived_state() {
 # directory lane_hosted_state_dir reads for ROOT, joined to its clone, read
 # through the probe above with ORCH_LANE_HOST set to HOST; STATE_DIR is the
 # local lane's alone. ARCHIVE, where given, is the `kept=` archive of a
-# hosted lane whose sandbox is gone: a hosted read that finds no state, or
-# fails, reads the state there instead. A hosted worktree
+# hosted lane's close: where the host answers that the lane's worktree is
+# gone, the state is read there instead. A read that fails keeps its
+# status, never answered from an archive an earlier run of the item may have
+# left. A hosted worktree
 # already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
 # lane until lane-close runs, has no state either, and nor has a lane whose
 # host kind declares files=none, a Claude cloud session, which keeps none this
@@ -183,19 +187,22 @@ lane_item_state() {
   lane_capability files files
   [[ "$files" != none ]] || return 0
   ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" || rc=$?
-  [[ -z "$LANE_ITEM_STATE" && -n "${8:-}" ]] || return "$rc"
+  [[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"
   lane_archived_state "$4" "$8" "$7"
 }
 
 # lane_hosted_item_state LANE_HOST_CLI ITEM ROOT SCRATCH — lane_item_state's
 # live read of a hosted lane, under the caller's ORCH_LANE_HOST, with its
-# statuses.
+# statuses; LANE_HOSTED_GONE is 1 where the host answered that the worktree
+# is gone.
+LANE_HOSTED_GONE=0
 lane_hosted_item_state() {
   local rc=0
+  LANE_HOSTED_GONE=0
   lane_hosted_clone "$1" "$2" "$3" "$4/gitfile" "$4/state.err" || rc=$?
   case "$rc" in
     0) ;;
-    1) return 0 ;;
+    1) LANE_HOSTED_GONE=1; return 0 ;;
     3) printf '%s\n' "$3/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$4/state.err"; return 2 ;;
     *) return "$rc" ;;
   esac

@@ -433,7 +433,12 @@ exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
 
 
 def archive_tmp(row, item, worktree_path):
-    """Preserve remaining lane records locally before close removes their worktree."""
+    """Preserve remaining lane records locally before close removes their worktree.
+
+    The item's workflow state goes with them wherever the lane's settings put
+    its state directory, as the clone's own workflow-state resolves it from the
+    worktree, or the clone once the worktree is gone: oversee-cycle reads a
+    closed lane's rounds from this archive."""
     data = remote(row, '''paths=()
 for base in "$1" "$2"; do
   candidate="$base/tmp"
@@ -441,8 +446,16 @@ for base in "$1" "$2"; do
     paths+=("${candidate#/}")
   fi
 done
+state="" from="$2"
+test -d "$from" || from="$1"
+states="$1/.agents/skills/orch/scripts/workflow-state"
+if test -x "$states"; then state=$(cd "$from" && "$states" --no-private-env path "$3" 2>/dev/null) || state=""; fi
+case "$state" in
+  "" | "$1/tmp/"* | "$2/tmp/"*) ;;
+  /*) if test -f "$state"; then paths+=("${state#/}"); fi ;;
+esac
 if test "${#paths[@]}" -eq 0; then exit 0; fi
-exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout
+exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return
     fleet = Path(os.environ.get("FLEET_DIR") or str(Path.home() / ".fleet")).expanduser()
@@ -642,7 +655,8 @@ remove; that refusal, and an untracked render the temporary index cannot read,
 exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
 Before worktree removal, close archives remaining clone/tmp
-and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
+and worktree/tmp directories, and the item's workflow state where the lane's
+settings place it outside them, under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
 close. An already removed worktree's tmp cannot be recovered. No remaining tmp
 means no archive and no kept line. Archives contain paths relative to / and
