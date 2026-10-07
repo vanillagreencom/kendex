@@ -45,7 +45,7 @@ Each `**Key**: value` line, metadata included, is its own paragraph, with one bl
 | `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded: the named components only |
 | `Superseded by [DECISION_ID]` | Fully replaced |
 | `Withdrawn` | No longer in effect, with no replacement; keep the short document and withdrawal reason, and its INDEX link |
-| `Retired` | The legacy spelling of `Withdrawn`: same meaning, read the same way; write `Withdrawn` in new and updated records |
+| `Retired` | The legacy spelling of `Withdrawn`: same meaning; write `Withdrawn` in new and updated records. A legacy retirement may have no document, its Link cell a backticked filename, or only a one-line one, and keeps that form when rewritten |
 | `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved, its Link cell following § INDEX.md |
 
 A re-assessment that keeps the choice stays `Active` with its text rewritten; one that changes the choice is a new record that supersedes this one (`../workflows/update-decision.md`). `list` returns every decision whose status starts with `Active`, including partial supersessions.
