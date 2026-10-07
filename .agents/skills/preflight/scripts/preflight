@@ -773,23 +773,61 @@ line_is_code() { # FILE LINE
   return 0
 }
 # The signal operands of the trap command opening on LINE whose quoted action
-# spans lines: the text after the last quote on the line Bash's parser closes
-# it on. A quoted signal leaves nothing after that quote and reads as none.
-# Fails when LINE leaves no quote open, which the single-line match already
-# read, or when the quote stays open past the window.
+# spans lines: from the quote Bash's parser closes the action with to the end
+# of the command, across backslash continuations, with quotes removed. Fails
+# when LINE leaves no quote open, which the single-line match already read,
+# when the action is held open by anything but a plain quote, or when the
+# command runs past the window.
 trap_signals() { # FILE LINE -> the operands after the action
-  local source='' line='' syntax='' lines=0
+  local source='' line='' syntax='' quote='' lines=0 operands='' closed=0
+  local command_end='[&;|#)]*'
   while IFS= read -r line; do
     lines=$((lines + 1))
-    source="$source$line"$'\n'
-    syntax="$(substitution_parse_result "$source")" || return 1
-    case "$syntax" in
-      open:*) continue ;;
-    esac
-    [ "$lines" -gt 1 ] || return 1
-    printf '%s\n' "${line##*[\"\']}"
-    return 0
+    if [ "$closed" = 0 ]; then
+      source="$source$line"$'\n'
+      # substitution_parse_result names the delimiter as open:`X' — X is
+      # the quote the lines before this one leave open.
+      quote="${syntax:6:1}"
+      syntax="$(substitution_parse_result "$source")" || return 1
+      case "$syntax" in
+        open:*) continue ;;
+      esac
+      [ "$lines" -gt 1 ] || return 1
+      line="$(after_closing_quote "$line" "$quote")" || return 1
+      closed=1
+    fi
+    operands="$operands ${line%%$command_end}"
+    if [ "${operands%\\}" = "$operands" ]; then
+      printf '%s\n' "${operands//[\"\']/}"
+      return 0
+    fi
+    operands="${operands%\\}"
   done < <(sed -n "$2,$(($2 + 200))p" <"$1")
+  return 1
+}
+# TEXT after its first unescaped QUOTE: the rest of the line once the quoted
+# word that opened on an earlier line closes.
+after_closing_quote() { # TEXT QUOTE
+  local i=0 c='' escaped=0
+  case "$2" in
+    "'")
+      [ "${1#*\'}" != "$1" ] || return 1
+      printf '%s\n' "${1#*\'}"
+      return 0 ;;
+    '"')
+      while [ "$i" -lt "${#1}" ]; do
+        c="${1:i:1}"
+        i=$((i + 1))
+        if [ "$escaped" = 1 ]; then
+          escaped=0
+        elif [ "$c" = '\' ]; then
+          escaped=1
+        elif [ "$c" = '"' ]; then
+          printf '%s\n' "${1:i}"
+          return 0
+        fi
+      done ;;
+  esac
   return 1
 }
 # A bare `VAR="$(cmd)"`: the assignment standing alone as the whole command.
