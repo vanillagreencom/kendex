@@ -758,6 +758,18 @@ for row in "${GONE_ROWS[@]}"; do
   if [[ -n "$gone_args" ]]; then gone_row "$script" "$pane" "$gone_env" "$gone_args"; else gone_row "$script" "$pane" "$gone_env"; fi
   assert_eq "$GONE_CLOSE" "$want" "$label"
 done
+# A list lane-host refuses at its per-home cap ran no provider, so it says
+# nothing about the sandbox: the close exits with lane-host's 69, which the
+# watch retries, record and window kept. SCRIPT|label|expected
+GONE_BUSY_ROWS=(
+  "$SCRIPT|a list lane-host refused at its cap is lane-host-busy, record kept|rc=69 busy=1 refused=0 status=running"
+  "$(mutant lane-close-gone-busy '      [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "item=$ITEM" step=list >&2; exit "$rc"; }' '')|control: without the busy arm a capped list refuses as mail-read-failed|rc=1 busy=0 refused=1 status=running"
+)
+for row in "${GONE_BUSY_ROWS[@]}"; do
+  IFS='|' read -r script label want <<<"$row"
+  gone_row "$script" - "LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST_STATUS=69"
+  assert_eq "rc=$RC busy=$(grep -cx 'lane-close: lane-host-busy item=KEN-1 step=list' <<<"$ERR" || true) refused=$(grep -c '^lane-close: mail-read-failed item=KEN-1 ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" "$want" "$label"
+done
 
 echo '=== an idle harness ends by signal, nothing typed into its pane ==='
 # HARNESS|DRAFT: a draft in the composer no longer stands in the way, since
