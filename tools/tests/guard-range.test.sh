@@ -428,7 +428,16 @@ printf 'export {};\n' >"$M/scripts/plugin/hooks/x.js"
 printf '{}\n' >"$M/scripts/plugin/.claude-plugin/plugin.json"
 printf '{}\n' >"$M/scripts/unused/data.json"
 printf '#!/usr/bin/env bash\ngh api repos/demo/actions/workflows\n' >"$M/scripts/api"
-printf '#!/usr/bin/env bash\nprintf "Read .agents/skills/mapped/SKILL.md"\n' >"$M/scripts/brief"
+# open-terminal prints these launch prompts; their workflow prose reads no doc.
+cat >"$M/scripts/brief" <<'SH'
+#!/usr/bin/env bash
+case "$TRACKER:$HARNESS" in
+linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s.%s'\n" "$flags" "$item" "$unattended" ;;
+linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s.%s'\n" "$flags" "$item" "$unattended" ;;
+github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s.%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
+github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s.%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
+esac
+SH
 printf 'brief="Read .agents/skills/mapped/SKILL.md"\n' >"$M/scripts/lib/brief.sh"
 printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../workflows/flow.md"\n' >"$M/scripts/readflow"
 printf 'key=1\n' >"$M/settings.example"
@@ -532,6 +541,7 @@ read_other_schema() {
 SH
 done
 printf '#!/usr/bin/env bash\nprintf "Read .agents/skills/doc-readers/workflows and schemas/review-finding-prompt.md"\n' >"$D/scripts/brief"
+printf '%s\n' 'printf "Read references/guide.md for details"' >>"$D/scripts/brief"
 printf 'brief="Read .agents/skills/doc-readers/schemas/review-finding-prompt.md"\n' >"$D/scripts/lib/brief.sh"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\n' >"$D/scripts/unused"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\nprintf "%%s\\n" "$schema_file"\n' >"$D/scripts/printed-path"
@@ -606,7 +616,7 @@ MAP_ROWS=(
   "a deleted fixture under tests runs the whole set and says so|delete|skills/mapped/tests/fixtures/x.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/fixtures/x.sh)"
   "a changed runner runs the whole set and says so|append|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
   "a deleted runner runs the whole set by file and says so|delete|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
-  "a changed SKILL.md runs the suites naming it, globbing the skill root or walking it|append|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 4/$MAPPED_N skills/mapped)"
+  "a changed SKILL.md runs its readers without the shipped workflow for launch briefs|append|skills/mapped/SKILL.md|$SKILL_READERS|$(mapped_note 4/$MAPPED_N skills/mapped)"
   "a changed workflow doc reaches its file and glob readers and its script reader but no API reader|append|skills/mapped/workflows/flow.md|catalogscan flowdir flowread readflow walker|$(mapped_note 5/$MAPPED_N skills/mapped)"
   "a changed schema doc runs the walkers and the suite naming it in a table it joins onto the skill root|append|skills/mapped/schemas/rec.md|catalogscan tablecheck walker|$(mapped_note 3/$MAPPED_N skills/mapped)"
   "a root doc no file reads runs nothing|append|skills/plain/README.md||$(mapped_note 0/3 skills/plain)"
@@ -621,7 +631,7 @@ MAP_ROWS=(
   "a changed render of a hook runs that hook's suite|append|.codex/hooks/demo.sh|demo.test.sh|$(mapped_note 1/5 hooks)"
   "a changed hooks helper runs the suite sourcing it|append|hooks/tests/lib/world.sh|via-world.test.sh|$(mapped_note 1/5 hooks)"
   "quoted find operands and an assigned workflow directory select their readers without API or brief readers|append|skills/doc-readers/workflows/flow.md|assigned-dir quoted-find|$(mapped_note 2/9 skills/doc-readers)"
-  "a quoted reference directory in an array selects its reader beside find|append|skills/doc-readers/references/guide.md|array-dir quoted-find|$(mapped_note 2/9 skills/doc-readers)"
+  "a quoted reference directory in an array selects its reader beside find without a printed for details brief|append|skills/doc-readers/references/guide.md|array-dir quoted-find|$(mapped_note 2/9 skills/doc-readers)"
   "assigned schema paths used by sed select script and lib readers without briefs or unread assignments|append|skills/doc-readers/schemas/review-finding-prompt.md|assigned-lib assigned-script quoted-find|$(mapped_note 3/9 skills/doc-readers)"
   "a changed hook no suite reaches runs the whole hooks set and says so|append|hooks/lone.sh|$HOOKS_ALL|$(note_for unmapped hooks/lone.sh)"
   "a hooks doc runs its reader alone|append|hooks/README.md|beta.test.sh|$(mapped_note 1/5 hooks)"
@@ -715,7 +725,8 @@ MAP_CONTROLS=(
   "control: with module rejection restored a module runs the whole set~append~skills/mapped/scripts/unused/data.json~s/in test-module) return 1/in module | test-module) return 1/~$MAPPED_ALL"
   "control: without the hook doc role README runs the whole hooks set~append~hooks/README.md~/^    hooks:\*.md) echo doc ;;$/d~$HOOKS_ALL"
   "control: without the script read filter a printed brief reaches its suites~append~skills/mapped/SKILL.md~/^      script | lib)$/,/^        ;;$/d~brief catalogscan rootglob skillmd walker"
-  "control: without cat as a read command the workflow script reader stands down~append~skills/mapped/workflows/flow.md~s/(cat|grep|sed|awk|head|tail|read|find|for)/(grep|sed|awk|head|tail|read|find|for)/~catalogscan flowdir flowread walker"
+  "control: with bare for recognized as a read command the shipped launch briefs reach their suite~append~skills/mapped/SKILL.md~s/(cat|grep|sed|awk|head|tail|read|find)/(cat|grep|sed|awk|head|tail|read|find|for)/~brief catalogscan rootglob skillmd walker"
+  "control: without cat as a read command the workflow script reader stands down~append~skills/mapped/workflows/flow.md~s/(cat|grep|sed|awk|head|tail|read|find)/(grep|sed|awk|head|tail|read|find)/~catalogscan flowdir flowread walker"
   'control: without quoted directory paths the find and assigned directory readers stand down~append~skills/doc-readers/workflows/flow.md~s/|\[\\"'"'"'\](.*$/"/~'
   'control: without quoted directory paths the array and find readers stand down~append~skills/doc-readers/references/guide.md~s/|\[\\"'"'"'\](.*$/"/~'
   'control: without path assignments the sed readers stand down~append~skills/doc-readers/schemas/review-finding-prompt.md~s/assignment_names\[++assignments\] = name/assignment_names[++assignments] = "NEVER"/~quoted-find'

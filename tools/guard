@@ -1314,7 +1314,7 @@ scan_load() { # DIR
         read_code=$(awk '
           {
             lines[NR] = $0
-            if ($0 ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find|for)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
+            if ($0 ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
               keep[NR] = 1
               rest = $0
               while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
