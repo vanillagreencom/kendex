@@ -1,1 +1,1 @@
-- Consumer refresh adoption requires render-based CI skips. A central workflow requests Copilot for other pull requests and warns when a request fails.
+- Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.

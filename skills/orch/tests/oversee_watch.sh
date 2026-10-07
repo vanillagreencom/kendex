@@ -14,9 +14,10 @@
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
 #       run's first-pass event and a standing line is not; an unseen `<pr> <kind>`
-#       line mid-run is the event; a head-only change is not; GH_REPO reaches
+#       line mid-run is the event; an ordinary head-only change is not; GH_REPO reaches
 #       pr-watch and its argv is empty, for every repo; an
-#       error key preempts a repo's opening pass while every other kind there
+#       error and refresh-ready keys preempt a repo's opening pass; each new
+#       refresh-ready head is news, while every other kind there
 #       still baselines silently;
 #       rc≠0 with no lines is a global failure (exit 2); attention
 #       at start does not starve a lane's question, and a new line and a
@@ -150,7 +151,7 @@ assert_eq "$(cut -f1 "$STUB_DIR/prwatch.args.all" | sort -u | paste -sd, -)" "ot
 assert_eq "$(cut -f2 "$STUB_DIR/prwatch.args.all" | sort -u)" "" \
   "every repo's pass is invoked with no flag" "$err"
 
-# 1d''. an error key preempts a repo's opening pass. Every other kind
+# 1d''. an error key preempts a repo's opening pass. Ordinary attention
 # standing at start is that repo's baseline, but a failed read baselined at
 # start is never news again, and the overseer would hear nothing until the
 # heartbeat.
@@ -164,8 +165,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "an error line at start i
 assert_contains "$out" "E_REVIEW_STATE" "the event carries the failed read" "$err"
 assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "0" "the baseline note does not stand in for the error event"
 
-# The companion: without an error key the opening pass still baselines
-# silently, so the preemption above is scoped to error and nothing else.
+# The companion: ordinary non-error attention still baselines silently.
 new_case prwatch_no_error_first_pass
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n12\taaaa0000\tdisarmed\tauto-merge off\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
@@ -173,6 +173,46 @@ err="$TMP_ROOT/e1d7"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a first pass with no error key still baselines" "$err"
 assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "the ordinary first-pass note still covers the non-error keys"
+
+# A workflow-created refresh has no lane. Its green head must wake even on
+# the opening pass, and each replacement head needs another app approval.
+for mode in opening replacement; do
+  new_case "prwatch_refresh_$mode"
+  printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
+  printf '12\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.2"
+  printf '1' > "$STUB_DIR/prwatch.rc"
+  if [[ "$mode" == replacement ]]; then
+    mkdir -p "$STATE_DIR"
+    printf '12\trefresh-ready:aaaa0000\n' > "$STATE_DIR/owner_repo__none"
+  fi
+  err="$TMP_ROOT/refresh-$mode.err"
+  out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+  assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "refresh $mode wakes without an owning lane" "$err"
+  [[ "$mode" != replacement ]] || assert_contains "$out" "bbbb0000" "the replacement refresh head is news" "$err"
+done
+
+REFRESH_SCRIPTS="$(mutant_scripts refresh-opening-mutant/orch lib/pr-watch-pass.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-opening-mutant/github"
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '$2 == "error" || $2 ~ /^refresh-ready:/' '$2 == "error"'
+new_case prwatch_refresh_opening_control
+printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/refresh-opening-control.err"
+out="$(WATCH_BIN="$REFRESH_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "control: a baselined ready refresh has no immediate event" "$err"
+
+REFRESH_SCRIPTS="$(mutant_scripts refresh-head-mutant/orch lib/pr-watch-pass.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-head-mutant/github"
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '($3 == "refresh-ready" ? ":" $2 : "")' '""'
+new_case prwatch_refresh_head_control
+printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
+printf '12\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc"
+mkdir -p "$STATE_DIR"
+printf '12\trefresh-ready\n' > "$STATE_DIR/owner_repo__none"
+err="$TMP_ROOT/refresh-head-control.err"
+out="$(WATCH_BIN="$REFRESH_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "control: an unbound key loses the replacement refresh head" "$err"
 
 # 1e'. a line that clears and later recurs is a rising edge again
 new_case prwatch_recur

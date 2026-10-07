@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pr-watch — reduce every open PR to normalized needs-attention lines, each
 # read from GitHub's own review state: unresolved review threads, the pull
-# request's reviewDecision, its auto-merge arm and its merge-queue entry. A PR
+# request's reviewDecision, its auto-merge arm, its merge-queue entry and a
+# lanes-app refresh head's CI aggregate. A PR
 # sitting steadily over an open thread TRANSITIONS NOTHING, so a watcher keyed
 # on state transitions idles for hours over a thread posted minutes after its
 # last pass; this reducer reports the standing state on every call.
@@ -31,8 +32,9 @@ print_usage() {
 Usage: pr-watch.sh [PR# ...] [--awaiting-after SECS]
 
 Reduce every open PR to normalized needs-attention lines, read from GitHub's
-review state alone: unresolved review threads, the PR's reviewDecision, its
-auto-merge arm and its merge-queue entry. One invocation answers: does any
+review state: unresolved review threads, the PR's reviewDecision, its
+auto-merge arm, its merge-queue entry and a lanes-app refresh head's CI
+aggregate. One invocation answers: does any
 open PR need attention RIGHT NOW?
 
   PR# ...            watch only these PRs (default: every open PR)
@@ -65,6 +67,12 @@ Attention kinds:
                      ready-for-review, reopen or re-review-request event.
                      Drafts are never reported. Time for a re-review trigger
                      or the fallback approval
+  refresh-ready      reviewDecision REVIEW_REQUIRED on a non-draft head
+                     whose exact branch is kendex/refresh and whose author
+                     is vanillagreen-fleet-lanes[bot] with type Bot. Its
+                     current-head CI aggregate completed successfully.
+                     Reported immediately, without a quiet period or lane.
+                     The overseer still proves the render before approval
   head-moved         the head changed while this PR was being reduced —
                      the findings (or the silence) describe the OLD head;
                      re-run. Attention, not an error: the race is
@@ -73,7 +81,7 @@ Attention kinds:
                      answered malformed data) — fail LOUD, never silently
                      skipped
 
-REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
+Ordinary REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
 armed or queued, are healthy states and emit NOTHING — silence on stdout
 means "nothing needs you", which is what makes the exit code a cheap
 loop/cron predicate.
@@ -199,6 +207,8 @@ REVIEW_STATE_JQ='if ((.errors? // []) | length) > 0 then error("graphql errors p
          + " " + ($p.reviewDecision // "NONE")
     end
   end'
+REFRESH_IDENTITY_JQ='.head.ref == "kendex/refresh"
+  and .user.login == "vanillagreen-fleet-lanes[bot]" and .user.type == "Bot"'
 
 read_review_state() { # pr, head, what — sets queued (the annotation) and decision; returns 1 after emitting an error
   local resp words queue_word
@@ -426,6 +436,70 @@ for number in $pr_numbers; do
   fi
   classify_decision "$number" "$head" reduction || continue
 
+  refresh_head=false
+  if jq -e "$REFRESH_IDENTITY_JQ" >/dev/null 2>&1 <<<"$row"; then
+    refresh_head=true
+  fi
+  if [ "$refresh_head" = "true" ] && [ "$draft" = "false" ] && [ "$decision" = REVIEW_REQUIRED ]; then
+    # The refresh workflow creates no lane. Its current-head aggregate
+    # wakes the overseer, which independently proves the render before it
+    # approves. Pending or unsuccessful CI never starts a review wait.
+    ci_pages="$(gh api "repos/$GH_REPO/commits/$head/check-runs?check_name=CI&filter=latest&per_page=100" --paginate 2>/dev/null)" || {
+      emit "$number" "$head" error "refresh CI read failed"
+      errored=1
+      continue
+    }
+    ci_green="$(jq -rs --arg head "$head" '
+      if length == 0 or any(.[]; type != "object" or (.check_runs | type) != "array")
+      then error("malformed check-run pages")
+      else [.[].check_runs[]] as $runs
+      | if any($runs[]; (.name | type) != "string"
+          or (.head_sha | type) != "string"
+          or (.status | type) != "string" or (has("conclusion") | not)
+          or ((.conclusion | type) != "null" and (.conclusion | type) != "string"))
+        then error("malformed check run")
+        else [$runs[] | select(.name == "CI")] as $ci
+        | ($ci | length) > 0 and all($ci[];
+            .head_sha == $head and .status == "completed" and .conclusion == "success")
+        end
+      end' <<<"$ci_pages" 2>/dev/null)" || {
+      emit "$number" "$head" error "refresh CI response malformed"
+      errored=1
+      continue
+    }
+    if [ "$ci_green" = "true" ]; then
+      refresh_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
+        emit "$number" "$head" error "refresh reviewability recheck failed"
+        errored=1
+        continue
+      }
+      if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
+          and ((.state == "open") or (.state == "closed"))
+          and (.draft | type) == "boolean"
+          and (.head.sha | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$"))' >/dev/null 2>&1 <<<"$refresh_row"; then
+        emit "$number" "$head" error "refresh reviewability recheck malformed"
+        errored=1
+        continue
+      fi
+      refresh_now="$(jq -r '.head.sha' <<<"$refresh_row")" || {
+        emit "$number" "$head" error "refresh head recheck failed"
+        errored=1
+        continue
+      }
+      if [ "$refresh_now" != "$head" ]; then
+        emit "$number" "$head" head-moved "the head changed during refresh CI reduction (now $(printf %.8s "$refresh_now")); re-run"
+        attention=1
+        continue
+      fi
+      read_review_state "$number" "$head" "refresh review-state recheck" || continue
+      if [ "$decision" = REVIEW_REQUIRED ] && jq -e "($REFRESH_IDENTITY_JQ) and .state == \"open\" and .draft == false" >/dev/null 2>&1 <<<"$refresh_row"; then
+        emit "$number" "$head" refresh-ready "current-head CI passed; prove the render and approve as the overseer app$queued"
+        attention=1
+      fi
+      continue
+    fi
+  fi
+
   # Disarmed: an approved, un-queued, non-draft PR with auto-merge unarmed is
   # mergeable, but nothing will merge it. Ownership and the decision are
   # re-read JUST-IN-TIME (auto-merge, queue membership and the approval all
@@ -479,7 +553,7 @@ for number in $pr_numbers; do
   # are not awaiting REVIEW — they are awaiting readiness: the silence clock
   # skips them, or a long-lived draft pins the watcher at exit 1 asking for
   # re-reviews nobody owes it.
-  if [ "$decision" = "REVIEW_REQUIRED" ] && [ "$draft" != "true" ]; then
+  if [ "$decision" = "REVIEW_REQUIRED" ] && [ "$draft" != "true" ] && [ "$refresh_head" != "true" ]; then
     # Quiet-period clock: reviewer silence counts from when this head
     # BECAME the head. GitHub exposes no head-transition timestamp, so
     # the approximation is max(head commit's committer date, PR

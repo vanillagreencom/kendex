@@ -15,8 +15,9 @@ PW_OUT=""
 PW_ERR=""
 PW_PASSES=0
 # One entry per --repo, in REPOS order: the `<pr>\t<kind>` keys the last
-# COMPLETE pass saw, and whether this run started with a baseline file for that
-# repo. Indexed arrays, never associative ones: bash 3.2 has no associative
+# complete pass saw, and whether this run started with a baseline file.
+# Refresh-ready's kind includes its head prefix because every proved
+# refresh head needs its own approval. Indexed arrays, never associative ones: bash 3.2 has no associative
 # arrays and orch's scripts run on it.
 PW_SEEN=()
 PW_HAD_STATE=()
@@ -136,7 +137,7 @@ check_pr_watch() {
     # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
     # trusted.
     [[ -n "$out" ]] || die reducer-failed "${err:-<no stderr>}" "repo=$repo" "exit=$rc"
-    keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 }' <<<"$out")"
+    keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 ($3 == "refresh-ready" ? ":" $2 : "") }' <<<"$out")"
     new_keys=""
     while IFS= read -r key; do
       [[ -n "$key" ]] || continue
@@ -152,13 +153,14 @@ check_pr_watch() {
     # and later recurs is news again. Pass 1 compares against the persisted
     # baseline; a repo this run named for the first time has none, so its
     # standing attention is that repo's baseline rather than an event.
-    # An `error` key preempts even a repo's opening pass. Every other kind
+    # An error or ready refresh preempts even a repo's opening pass. A
+    # refresh has no lane notice to trigger its approval. Every other kind
     # standing at start is that repo's baseline, but an error is the reducer
     # saying it could not answer for a PR, and the overseer has to act on it
     # before another pass runs. Baselined instead, it is written as seen and
     # never news again, so the first fleet run against a repo whose reads
     # fail would say nothing until the heartbeat.
-    if awk -F'\t' '$2 == "error" { found = 1 } END { exit !found }' <<<"$new_keys"; then
+    if awk -F'\t' '$2 == "error" || $2 ~ /^refresh-ready:/ { found = 1 } END { exit !found }' <<<"$new_keys"; then
       event=1
     elif [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
       ow_message reducer-baseline "repo=$repo" "exit=$rc" "count=$(grep -c . <<<"$new_keys")" >&2

@@ -174,6 +174,8 @@ The long pass's events, checked and reported in this order:
                              record gets no such judgement. Emitted every long
                              pass it stands
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
+                             refresh-ready wakes on the opening pass and
+                             once per new head, including without a lane
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
                              --repo, <branch> being the item's own, its key

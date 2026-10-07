@@ -39,6 +39,7 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 #   STUB_REVIEW_RAW     the whole review-state answer ("emptybytes" = broken)
 #   STUB_UNRESOLVED     count for the graphql reviewThreads read
 #   STUB_HEAD_DATE      commit.committer.date for commits/<sha>
+#   STUB_CI_RAW         paginated check-runs envelope for the requested head
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
@@ -143,7 +144,15 @@ case "$args" in
       # Row fetches: STUB_ARMED_AFTER flips auto_merge from the SECOND
       # fetch of a number (the just-in-time ownership recheck), via a
       # per-number counter.
-      if [[ "${STUB_DRAFT_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+      if [[ -n "${STUB_REFRESH_HEAD_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+        cf="$STUB_PR_CALLS_DIR/$n"
+        if [[ -f "$cf" ]]; then
+          jq --arg head "$STUB_REFRESH_HEAD_AFTER" '.head.sha = $head' <<<"$pr_row_json"
+        else
+          : > "$cf"
+          printf '%s\n' "$pr_row_json"
+        fi
+      elif [[ "${STUB_DRAFT_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
         cf="$STUB_PR_CALLS_DIR/$n"
         if [[ -f "$cf" ]]; then
           jq '.draft = true' <<<"$pr_row_json"
@@ -191,6 +200,16 @@ case "$args" in
     else
       printf '[]\n'
     fi
+    ;;
+  *commits/*/check-runs*)
+    expected="repos/acme/widgets/commits/${STUB_EXPECT_CI_HEAD:?}/check-runs?check_name=CI&filter=latest&per_page=100 --paginate"
+    [[ "$args" == "$expected" ]] || { printf 'wrong CI read: %s\n' "$args" >&2; exit 1; }
+    case "${STUB_CI_RAW:-}" in
+      fail) exit 1 ;;
+      emptybytes) exit 0 ;;
+      '') printf '{"check_runs":[]}\n' ;;
+      *) printf '%s\n' "$STUB_CI_RAW" ;;
+    esac
     ;;
   *commits/*)
     printf '%s\n' "${STUB_HEAD_DATE:-2026-01-01T00:00:00Z}"

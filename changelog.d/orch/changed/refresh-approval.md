@@ -1,1 +1,1 @@
-- The overseer approves lanes-app refresh pull requests after their render proof and CI pass, without another agent review or Copilot wait.
+- Route green lanes-app refresh heads to overseer app approval without an owning lane, repeated agent reviews or a Copilot wait. Render proof and same-head CI remain required.
