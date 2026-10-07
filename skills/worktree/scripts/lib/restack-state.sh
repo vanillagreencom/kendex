@@ -277,18 +277,19 @@ restack_hook_words() {
 # in the directive with its leading `../` dropped.
 #
 # A script a hook executes is run the same way, and a hook finds it from a root
-# it computes at run time, so outside a comment a word naming `$VAR/<path>` or
-# `${VAR}/<path>` names the repository path <path> when that path is tracked
-# executable at REV; a non-executable file a hook names that way is data it
-# reads, which markers do not stop it parsing. An executed script's own
+# it computes at run time, so on a line that is not a comment a word naming
+# `$VAR/<path>` or `${VAR}/<path>` names the repository path <path> when that
+# path is tracked executable at REV; a non-executable file a hook names that
+# way is data it reads, which markers do not stop it parsing. A trailing
+# comment is read as code: a script it names is held, which costs a step. An executed script's own
 # libraries and scripts are followed in turn. Print each tracked file at REV
 # that the hook paths among WORDS source or execute, directly or through
 # another such file.
 restack_hook_libraries() {
   local wt="$1" rev="$2" listing="" tracked="" executable="" queue="" seen="" script="" body="" directives="" executed="" target="" rc=0
   listing="$(git -C "$wt" ls-tree -r "$rev")" || return 1
-  tracked="$(cut -f 2- <<<"$listing")"
-  executable="$(awk -F '\t' 'substr($1, 1, 6) == "100755" { print $2 }' <<<"$listing")"
+  tracked="$(cut -f 2- <<<"$listing")" || return 1
+  executable="$(awk -F '\t' 'substr($1, 1, 6) == "100755" { print $2 }' <<<"$listing")" || return 1
   queue="$(grep -F -x -e "$3" <<<"$tracked")" || rc=$?
   [[ "$rc" -le 1 ]] || return 1
   while [[ -n "$queue" ]]; do
@@ -299,7 +300,7 @@ restack_hook_libraries() {
     fi
     seen="$seen$script"$'\n'
     body="$(git -C "$wt" cat-file -p "$rev:$script")" || return 1
-    directives="$(sed -n 's/^[[:space:]]*#[[:space:]]*shellcheck[[:space:]].*source=\([^[:space:]]*\).*/\1/p' <<<"$body")"
+    directives="$(sed -n 's/^[[:space:]]*#[[:space:]]*shellcheck[[:space:]].*source=\([^[:space:]]*\).*/\1/p' <<<"$body")" || return 1
     while IFS= read -r target; do
       target="${target#./}"
       [[ -n "$target" ]] || continue
