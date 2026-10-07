@@ -91,6 +91,23 @@ for (const [name, register] of registrations) {
 			expect(carried[field]).toBe(original[field]);
 		}
 	});
+
+	for (const field of ["promptSnippet", "promptGuidelines"] as const) {
+		test(`${name} carries ${field} from Pi's tool definition, which the wrapped tool lacks`, () => {
+			let definition: ToolDefinition | undefined;
+			const original = { description: "fixture", parameters: {}, execute: async () => ({ content: [] }) };
+			const piDefinition = { promptSnippet: `${name} snippet`, promptGuidelines: [`${name} guideline`] };
+			const host = {
+				createReadTool: () => original, createBashTool: () => original,
+				createEditTool: () => original, createWriteTool: () => original,
+				createGrepTool: () => original, createFindTool: () => original, createLsTool: () => original,
+				[`create${name[0]!.toUpperCase()}${name.slice(1)}ToolDefinition`]: () => piDefinition,
+			};
+			// Its own cwd, because the renderer caches built-in tools by cwd.
+			register({ registerTool: (tool: ToolDefinition) => { definition = tool; } } as ExtensionAPI, host, `${world().cwd}/${field}`);
+			expect((definition as unknown as Record<string, unknown>)[field]).toBe(piDefinition[field]);
+		});
+	}
 }
 
 test("tool_batch delegates every child to Pi's execution context", async () => {

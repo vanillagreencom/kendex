@@ -91,14 +91,21 @@ export function getBuiltInTool(agent: any, cwd: string, toolName: BuiltInToolNam
  * without it the shapes Pi's own tool accepts fail before `execute` delegates.
  * `outputSchema` lets codemode read the unchanged result's `structuredContent`;
  * on Pi below 0.99.0 the wrapped tool leaves it undefined.
+ * `promptSnippet` and `promptGuidelines` come from Pi's ToolDefinition, which
+ * the AgentTool drops: Pi lists a tool under Available tools in the system
+ * prompt only when it has a snippet, and adds its guidelines beside it.
  */
-function piToolContract(original: any) {
+function piToolContract(agent: any, cwd: string, toolName: BuiltInToolName, original: any) {
+	const factory = `create${toolName[0]!.toUpperCase()}${toolName.slice(1)}ToolDefinition`;
+	const definition = agent[factory]?.(normalizedCwd(cwd)) ?? original;
 	return {
 		description: original.description,
 		parameters: original.parameters,
 		constrainedSampling: original.constrainedSampling,
 		prepareArguments: original.prepareArguments,
 		outputSchema: original.outputSchema,
+		promptSnippet: definition.promptSnippet,
+		promptGuidelines: definition.promptGuidelines,
 	};
 }
 
@@ -202,7 +209,7 @@ export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 		renderShell: "self",
 		name: "read",
 		label: "read",
-		...piToolContract(original),
+		...piToolContract(agent, cwd, "read", original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), "read").execute(id, params, signal, onUpdate, context);
 		},
@@ -240,7 +247,7 @@ export function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
 		renderShell: "self",
 		name: "bash",
 		label: "bash",
-		...piToolContract(original),
+		...piToolContract(agent, cwd, "bash", original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), "bash").execute(id, params, signal, onUpdate, context);
 		},
@@ -316,7 +323,7 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 		renderShell: "self",
 		name: "edit",
 		label: "edit",
-		...piToolContract(original),
+		...piToolContract(agent, cwd, "edit", original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			const targetPath = params?.path ?? params?.file_path;
 			const result = await getBuiltInTool(agent, contextCwd(context, cwd), "edit").execute(id, params, signal, onUpdate, context);
@@ -359,7 +366,7 @@ export function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 		renderShell: "self",
 		name: "write",
 		label: "write",
-		...piToolContract(original),
+		...piToolContract(agent, cwd, "write", original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			const effectiveCwd = contextCwd(context, cwd);
 			const targetPath = params?.path ?? params?.file_path;
@@ -416,7 +423,7 @@ export function registerReadOnly(pi: ExtensionAPI, agent: any, cwd: string, tool
 		renderShell: "self",
 		name: toolName,
 		label: toolName,
-		...piToolContract(original),
+		...piToolContract(agent, cwd, toolName, original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), toolName).execute(id, params, signal, onUpdate, context);
 		},

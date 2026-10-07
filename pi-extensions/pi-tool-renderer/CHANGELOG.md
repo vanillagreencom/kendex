@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`.
+
 ### 2.0.10
 
 - With `pendingStatusAnimation` on, a running tool row stops blinking when the run is interrupted or the session ends, even when Pi drops the row before its result, and does not blink again when Pi redraws it.
