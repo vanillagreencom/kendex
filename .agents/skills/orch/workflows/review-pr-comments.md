@@ -318,7 +318,7 @@ Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/
 git -C "[WORKTREE_PATH]" push origin HEAD
 ```
 
-With workflow state `pr_order` reading `open-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`: [submit-pr.md](submit-pr.md) § 2 step 1 pushes next, so the base rebase and the recorded fix SHAs' reconciliation land before § 6.3's `Fixed in` replies cite them, and GitHub receives one combined head.
+With workflow state `pr_order` reading `open-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
 
 **A round ends with the description matching its head.** The PR body describes the commits actually on the PR head and names every issue § 6.2 filed this round; nothing else regenerates it after round one, so rebuild it per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body` until both hold.
 
