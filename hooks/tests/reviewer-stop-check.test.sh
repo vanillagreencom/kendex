@@ -576,6 +576,10 @@ start_rows() { # TAG
     printf 'staged\n' >"$repo/author-staged.txt"
     fgit -C "$repo" add author-staged.txt
     rm -f -- "${repo:?}/src/gone.rs"
+    # A clean tracked file whose mtime no longer matches its index entry: an
+    # ordinary git status would refresh that entry and rewrite the index, the
+    # author's staged path then reading as staged during the review.
+    touch -t 201001010000 "$repo/tools/run.sh"
     t="$(transcript_for "$repo")"
     # The start is read off the filesystem's own clock, which stamps change
     # times from a coarse clock that can trail date's by milliseconds: the
@@ -635,6 +639,13 @@ rows_control start_rows index-unread '[ "$INDEX_CHANGED" -eq 0 ] || return 0' ':
   "the reviewer staging the author's change blocks" \
   "the reviewer staging the author's change blocks, naming the reviewer's path"
 # Any first entry taken as the start reds the tool-call row.
+# The hook's own status refreshing the stale entry rewrites the index, which
+# reds the rows where the author's staged path must pass.
+rows_control start_rows status-refreshes \
+  'STATUS=$(git --no-optional-locks -C "$WORKTREE" status' \
+  'STATUS=$(git -C "$WORKTREE" status' \
+  "dirt the author left before the review passes" \
+  "a Codex session_meta dates the start, and the author's dirt passes"
 rows_control start_rows launch-record-unchecked \
   '| select(.type == "session_meta" or (.type == "user" and ([.message.content | arrays | .[] | .type?] | index("tool_result") | not)))' \
   '' \
