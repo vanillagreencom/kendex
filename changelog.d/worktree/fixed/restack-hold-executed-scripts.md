@@ -1,0 +1,1 @@
+- A paused restack now holds a conflicted script a declared harness hook executes, such as the lane-mail script the lane-mail-check hook runs, as it holds the libraries a hook sources, so the hook keeps running until the restack continues, skips or aborts.
