@@ -33,7 +33,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 Under `Trigger: needs-ui-review` this lens is the whole review. Read the consumer's design-system doc, the path `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""` prints, and the before and after screenshots the dev summary lists. Judge each changed view against that doc and the polish bar in `.agents/skills/code-quality/references/ui.md`, the diff included for token use.
 
-- A changed view with no before and after screenshot is a blocker: the change cannot be judged.
+- A changed view missing its before or its after screenshot in any theme the app has, dark and light where it has both, is a blocker: that view cannot be judged in that theme. The capture rule is `.agents/skills/dev/workflows/dev-implement.md` § 8 Record QA Signals.
 - A regression from before to after, a one-off value where the doc has a token, or copy a first-time user would misread is a blocker. A lesser polish gap is a `fix` suggestion.
 - An unset `QA_UI_DESIGN_DOC`, or one naming a missing file, is an `issue` suggestion naming the gap. Judge against the polish bar alone and infer no token the consumer did not write.
 
