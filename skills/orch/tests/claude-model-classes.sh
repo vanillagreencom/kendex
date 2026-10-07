@@ -100,8 +100,9 @@ warning-latch@hooks/register.js@await $.env.get('KENDEX_MODEL_WARNING_EMITTED') 
 warning-line@hooks/register.js@await $.ui.log(line);@await $.ui.log(`model-resolution: rebuilt`);@a kept default leaves the declared alias and asks about the native default, no launch context
 stderr-line@hooks/register.js@const stderr = line === '' ? '' : ` stderr=${line}`;@const stderr = '';@core stderr failure starts no child|core failure shows its refusal and makes no model call|managed read failure starts no child
 core-warning@hooks/register.js@${typeof warning === 'string' ? ` warning=${warning}` : ''}@@managed read failure starts no child
-warning-absent@hooks/register.js@const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);@const warning = response.warning;@a kendex without the warning field still warns once
-warning-diagnosed@hooks/register.js@const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);@const warning = response.warning ?? warningAbsent;@inherit preserves native input|unmanaged preserves native input
+warning-absent@hooks/register.js@return response?.warning ?? (Array.isArray(diagnostics) && diagnostics.length > 0 ? warningAbsent : undefined);@return response?.warning;@a kendex without the warning field still warns once
+warning-diagnosed@hooks/register.js@return response?.warning ?? (Array.isArray(diagnostics) && diagnostics.length > 0 ? warningAbsent : undefined);@return response?.warning ?? warningAbsent;@inherit preserves native input|unmanaged preserves native input
+core-warning-absent@hooks/register.js@warning = warningOf(JSON.parse(result.stdout));@warning = JSON.parse(result.stdout)?.warning;@kendex 1.11.0 refusal starts no child
 context-parse@hooks/register.js@throw new Error(`model-resolution: invalid=KENDEX_MODEL_CONTEXT cause=${error.message}`);@throw error;@unparseable launch context starts no child
 context-object@hooks/register.js@return { ...record(context, 'KENDEX_MODEL_CONTEXT') };@return { ...context };@a launch context that is no object starts no child
 truncated@hooks/register.js@if (result.isStdoutTruncated === true) throw@if (result.isStdoutTruncated === true && false) throw@truncated response starts no child

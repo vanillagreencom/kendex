@@ -58,6 +58,13 @@ const refused = {
   warning: `model-resolution: requested=inherit selected=agent-request-unreadable causes=agent-request-unreadable source=runtime detail=${refusedCause}`,
 };
 const refusedStderr = 'Error: model-resolution: refused=agent-request-unreadable requested=inherit harness=claude\n';
+// What kendex 1.11.0 writes for a `standard` request with no model list and a Haiku session default: diagnostics and no `warning`.
+const legacyRefused = {
+  protocol: 'model-resolution-v1', harness: 'claude', request: { tag: 'class', class: 'standard' },
+  resolution: { tag: 'refused', code: 'model-unavailable',
+    diagnostics: [{ code: 'model-availability-unknown', source: 'claude:mods-model-list', cause: 'model list interface is unavailable' }] },
+};
+const legacyStderr = 'Error: model-resolution: refused=model-unavailable requested=standard harness=claude\n';
 for (const row of [
   { name: 'core stderr failure', response: undefined, exitCode: 1, stderr: 'error: kendex.toml: fixture parse\nsecond line', deny: 'core-exit=1 stderr=error: kendex.toml: fixture parse' },
   { name: 'truncated response', response: spawnSelected, truncated: true, deny: 'invalid=truncated-response' },
@@ -68,6 +75,8 @@ for (const row of [
   { name: 'unknown default path', response: { ...spawnDefault, resolution: { ...spawnDefault.resolution, path: { tag: 'bogus' } } }, deny: 'invalid=default-path' },
   { name: 'managed read failure', response: refused, exitCode: 1, stderr: refusedStderr,
     deny: `core-exit=1 stderr=${refusedStderr.trim()} warning=${refused.warning}` },
+  { name: 'kendex 1.11.0 refusal', response: legacyRefused, exitCode: 1, stderr: legacyStderr,
+    deny: `core-exit=1 stderr=${legacyStderr.trim()} warning=model-resolution: warning=absent cause=` },
   { name: 'unparseable launch context', response: spawnSelected, variables: { KENDEX_MODEL_CONTEXT: '{"protocol":' }, deny: 'invalid=KENDEX_MODEL_CONTEXT cause=' },
   { name: 'a launch context that is no object', response: spawnSelected, variables: { KENDEX_MODEL_CONTEXT: '[]' }, deny: 'invalid=KENDEX_MODEL_CONTEXT' },
 ]) {

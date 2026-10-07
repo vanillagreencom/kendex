@@ -2,8 +2,14 @@
 // `kendex tier-model` owns request parsing, selector equivalence, access, fallback and the warning line; no class table lives here.
 // kendex 1.7.0 is the floor for `--runtime-context-json`; the first kendex release after 1.11.0 is the first to send the `warning` line.
 const protocol = 'model-resolution-v1';
-// kendex 1.7.0 through 1.11.0 answer a fallback with diagnostics and no `warning`; drop this when the floor passes 1.11.0.
+// kendex 1.7.0 through 1.11.0 answer a fallback or a refusal with diagnostics and no `warning`; drop this when the floor passes 1.11.0.
 const warningAbsent = 'model-resolution: warning=absent cause=kendex 1.11.0 or older sends diagnostics without the warning line; upgrade kendex to read them';
+
+// Core's warning line, or for a diagnosed answer without one the upgrade line.
+function warningOf(response) {
+  const diagnostics = response?.resolution?.diagnostics;
+  return response?.warning ?? (Array.isArray(diagnostics) && diagnostics.length > 0 ? warningAbsent : undefined);
+}
 
 function record(value, name) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -23,7 +29,7 @@ function selector(value) {
 function coreFailure(result) {
   let warning;
   try {
-    warning = JSON.parse(result.stdout)?.warning;
+    warning = warningOf(JSON.parse(result.stdout));
   } catch {
     warning = undefined;
   }
@@ -43,9 +49,7 @@ function readResponse(result) {
     throw new Error('model-resolution: invalid=warning');
   }
   const decision = record(response.resolution, 'resolution');
-  const diagnosed = Array.isArray(decision.diagnostics) && decision.diagnostics.length > 0;
-  const warning = response.warning ?? (diagnosed ? warningAbsent : undefined);
-  const decided = { model: undefined, fallback: undefined, change: response.selectorChange, warning };
+  const decided = { model: undefined, fallback: undefined, change: response.selectorChange, warning: warningOf(response) };
   switch (decision.tag) {
     case 'selected':
       decided.model = selector(record(decision.selection, 'selection').nativeSelector);
