@@ -47,6 +47,24 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
 hosted_refresh() { local f="$RUN/remote/srv/clone/.git/worktrees/lane/lane-refresh"; [[ -f "$f" ]] && printf '[%s]' "$(cat "$f")" || printf none; }
 assert_eq "refresh=$(hosted_refresh)" "refresh=[]" "a hosted launch without --lane-refresh empties the refresh record"
 
+# The overseer instruction selects the host. This exception row measures
+# the fleet's declared capability and the launch it admits, not the instruction.
+CLOUD_CAPABILITIES="$(env ORCH_LANE_HOST=claude-cloud "$SCRIPTS_DIR/lane-host" capabilities)" || exit 1
+CLOUD_LAND="$(printf '%s\n' "$CLOUD_CAPABILITIES" | tr '\t' '\n' | sed -n 's/^land=//p')"
+assert_eq "$CLOUD_LAND" handoff "only a fleet that declares handoff admits the local landing exception"
+printf '/orch merge-pr 4296\n' > "$TMP_ROOT/cloud-only-landing-brief"
+run_ot "ORCH_LANE_HOST=claude-cloud;ORCH_LANE_ALIASES=eclaude=work;cmd=true --model opus --effort high {brief}" --host local --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/cloud-only-landing-brief" KEN-3276
+assert_eq "$(observe 'rc=0 creates=1 launched=1') calls=$(host_call)" \
+  "rc=0 creates=1 launched=1 calls=nolog" \
+  "a cloud-only fleet admits the explicit local landing command" "$OUT"
+CLOUD_OWNER="$(mutant_scripts ctl-cloud-landing-capability/orch lane-host)/lane-host" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-cloud-landing-capability/orch"
+mutate_file "$CLOUD_OWNER" 'pool=cloud-credit\tland=handoff' 'pool=cloud-credit\tland=lane'
+CLOUD_CAPABILITIES="$(env ORCH_LANE_HOST=claude-cloud "$CLOUD_OWNER" capabilities)" || exit 1
+CLOUD_LAND="$(printf '%s\n' "$CLOUD_CAPABILITIES" | tr '\t' '\n' | sed -n 's/^land=//p')"
+CLOUD_CONTROL="$(FAIL=0; assert_eq "$CLOUD_LAND" handoff 'local landing exception' > "$TMP_ROOT/cloud-landing-control"; printf '%s' "$FAIL")"
+assert_eq "$CLOUD_CONTROL" 1 "control: a fleet that declares lane fails the local landing exception assertion"
+
 # A cloud session pushes its branch without making a fleet sandbox. The
 # provider models that first landing sandbox with a real origin-only branch;
 # only the relaunch authority permits it to adopt the pushed work.

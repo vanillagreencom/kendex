@@ -265,7 +265,7 @@ def create_flags(row, item, reuse_requested):
     if worktree_exists(row, item):
         return ["--reuse"]
     branch = item.lower()
-    existing = remote(row, 'git -C "$1" ls-remote --exit-code --heads origin "$2"',
+    existing = remote(row, '"$1/.agents/skills/github/scripts/git-https-auth" -C "$1" ls-remote --exit-code --heads origin "$2"',
                       row["clone"], "refs/heads/" + branch, accept=(2,))
     return ["--base", branch] if existing.returncode == 0 else []
 

@@ -1,1 +1,1 @@
-- Cloud sessions launch their landing lanes on the fleet host, keeping merge work off the control host.
+- Cloud sessions launch landing lanes on the fleet's configured runner. A fleet configured only for cloud sessions keeps local landing because it has no runner that can land the change.

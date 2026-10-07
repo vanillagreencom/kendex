@@ -18,7 +18,7 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | `park` | `verb`, `none` | read by no caller until the Daytona provider declares its line; `lane-close --park` keeps its `stop-sandbox --check` read |
 | `accounts` | `verb`, `none` | read by no caller until then; `lanes` keeps its exit-2 read of `accounts` |
 | `pool` | `plan`, `cloud-credit` | `lanes pick`, the tier of its expires-first rule |
-| `land` | `lane`, `handoff` | the overseer's `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md), which launches a landing lane for a `handoff` lane on the fleet host `lane-host resolve` prints |
+| `land` | `lane`, `handoff` | the overseer's `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md). A `handoff` lane lands on the resolved fleet host when that host declares `land=lane`. A fleet host that itself declares `land=handoff` keeps local landing because no configured runner declares `land=lane`. |
 
 | Kind | `launch` | `channel` | `files` | `status` | `stop` | `relaunch` | `park` | `accounts` | `pool` | `land` |
 |---|---|---|---|---|---|---|---|---|---|---|
