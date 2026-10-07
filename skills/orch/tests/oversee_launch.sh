@@ -86,6 +86,9 @@ case "$1" in
   list)
     [ "${FIXTURE_HOOK_STATE:-enabled}" != fail ] || { echo 'fixture inventory unread' >&2; exit 3; }
     [ "${FIXTURE_HOOK_STATE:-enabled}" != missing ] || exit 0
+    # The hook is the install of one checkout: asked from anywhere else,
+    # kendex lists none of it.
+    [ -z "${FIXTURE_HOOK_DIR:-}" ] || [ "$(pwd -P)" = "$FIXTURE_HOOK_DIR" ] || exit 0
     # kendex's current name column: event, matcher and the hook's own name.
     printf 'hook Stop:*:lane-mail-check %s project' "$3" >&2
     [ "${FIXTURE_HOOK_STATE:-enabled}" != disabled ] || printf ' switched off' >&2
@@ -1263,6 +1266,21 @@ mutate_file "$NAMECTL/oversee" 'n = $2; sub(/.*:/, "", n);' 'n = $2;'
 OVERSEE_BIN="$NAMECTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_STATE=enabled -- register
 assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing ' <<<"$OUT" || true)" '0|1' \
   "control: matching the whole name column misses the installed hook kendex lists as event:matcher:name"
+# The start row's cwd is the session's working directory, which need not be
+# the checkout whose install carries the hook: one outside it, one gone since.
+# The inventory is the checkout's, so the installed hook reads present.
+for row_cwd in "$TMP_ROOT" "$TMP_ROOT/gone"; do
+  jq -cn --arg cwd "$row_cwd" --arg account "$H/.claude" \
+    '{at:1,event:"SessionStart",harness:"claude",cwd:$cwd,account:$account}' > "$HAND_ROWS"
+  run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_DIR="$WORK_REAL" -- register
+  assert_eq "$RC|$(recorded cwd)|$(grep -c '^oversee: turn-end-hook=missing ' <<<"$OUT" || true)" "0|$row_cwd|0" \
+    "register asks the checkout's inventory, not the start row's cwd $row_cwd, and finds the installed hook"
+done
+CWDCTL="$(mutant_scripts cwdctl oversee)" || exit 1
+mutate_file "$CWDCTL/oversee" 'inventory="$(cd -- "$PROJECT_ROOT" && kendex list' 'inventory="$(cd -- "$cwd" && kendex list'
+OVERSEE_BIN="$CWDCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_DIR="$WORK_REAL" -- register
+assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing harness=claude exit=1 ' <<<"$OUT" || true)" '0|1' \
+  "control: an inventory asked from the start row's cwd reads the installed hook as missing"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

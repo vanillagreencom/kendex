@@ -456,8 +456,12 @@ if [[ "$COMMAND" == register ]]; then
     # has no structured output format, so its table, on stderr, is the one
     # interface: columns kind, name, harness, scope and optional state, a
     # hook's name reading event:matcher:name, its own name after the last colon.
+    # It is asked in the checkout this record belongs to, whose install the
+    # hook comes from: the recorded cwd is the session's working directory as
+    # its start row stated it, which can be a lane worktree, a directory
+    # outside the checkout or one gone since, none of which lists the hook.
     inventory_rc=0
-    inventory="$(cd -- "$cwd" && kendex list --harness "$harness" 2>&1)" || inventory_rc=$?
+    inventory="$(cd -- "$PROJECT_ROOT" && kendex list --harness "$harness" 2>&1)" || inventory_rc=$?
     if [[ "$inventory_rc" != 0 ]] || ! awk -v h="$harness" \
         '$1 == "hook" && $3 == h && NF == 4 { n = $2; sub(/.*:/, "", n); if (n == "lane-mail-check") found=1 }
          END { exit !found }' <<<"$inventory"; then
