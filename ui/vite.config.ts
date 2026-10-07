@@ -12,6 +12,16 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  build: {
+    // The one chunk is the whole app, and the desktop webview reads it from
+    // disk at start, so splitting it buys no network time. Most of it is
+    // react-dom and @base-ui/react, which no route or feature boundary
+    // separates; a feature chunk such as the marketplaces pages would still
+    // load at start and leave the rest over Vite's 500 kB default. The limit
+    // is the measured size (1,066.49 kB minified), so the warning marks growth
+    // past it rather than firing on every build.
+    chunkSizeWarningLimit: 1067,
+  },
   test: {
     // Every test file gets the closing window; the environment stays a
     // per-file choice, on the `// @vitest-environment jsdom` line the files

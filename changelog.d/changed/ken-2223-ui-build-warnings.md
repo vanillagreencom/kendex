@@ -1,0 +1,1 @@
+- Building the desktop app's interface from source no longer prints the ineffective-dynamic-import and chunk-size warnings.

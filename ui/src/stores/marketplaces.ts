@@ -173,7 +173,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         dropCatalogCaches(set);
         await get().load();
         if (response.data.lead) {
-          await openLead(scope, response.data.name, response.data.lead);
+          openLead(scope, response.data.name, response.data.lead);
         }
         return { name: response.data.name };
       },

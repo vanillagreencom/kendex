@@ -13,6 +13,7 @@ import type {
 } from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
+import { useNavStore } from "./nav";
 import { resetPreinstallSafety } from "./preinstall-safety";
 
 /** Every cached catalog read the store holds, declared once here so the
@@ -190,8 +191,7 @@ export const catalogBundlesErrorKey = (catalog: Catalog): string =>
 
 /** A tree or skills.sh URL was pointing at one package; land on it so
  * Install is the next click, with its safety score in view. */
-export async function openLead(scope: Scope, source: string, lead: string) {
-  const { useNavStore } = await import("./nav");
+export function openLead(scope: Scope, source: string, lead: string) {
   useNavStore.getState().goToAvailablePackage({
     catalog: subscription(scope, source),
     kind: "skill",
