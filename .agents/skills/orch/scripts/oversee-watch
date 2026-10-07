@@ -268,7 +268,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
-#   lane-long<TAB><item><TAB><launched_at epoch it was reported under>
+#   lane-long<TAB><item><TAB><launched_at epoch>|<reported age interval>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
@@ -435,9 +435,8 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 # lane-stalled goes out. Provisional: the first cloud acceptance run sets it.
 LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
-# How long after a record's launched_at, which --relaunch and handoffs keep
-# and a fresh launch renews, a running or parked lane is
-# reported once as lane-long.
+# Age threshold in seconds for lane-long on a running or parked lane.
+# Repeat schedule: oversee-watch --help, event lane-long.
 LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-14400}"
 [[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"
 # The state's records the pane never judges and the start-stall check reads,
