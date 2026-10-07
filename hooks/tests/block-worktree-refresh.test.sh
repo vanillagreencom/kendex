@@ -472,7 +472,7 @@ a --scope whose value the segment does not hold is not the global scope|2|block-
 a target the shell expands when it runs is unproven, spelled with an equals sign|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path=\0044PWD -y
 and spelled as the next word|2|block-worktree-refresh: unproven=apply|kendex apply --project-path \0044PWD
 a target a command substitution prints is cut out of the words, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path "\0044(pwd)"
-a leading ~ is the shell's to expand, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path ~/app
+the shell expands a leading ~, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path ~/app
 an expansion before --project-path= may be --, so no target is named|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --project-path=/elsewhere
 --scope project before -g keeps the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project -g
 --scope=project before --global keeps it too|2|block-worktree-refresh: refused=refresh|kendex refresh --scope=project --global
@@ -483,7 +483,10 @@ ROWS
 command_table
 
 # label|cwd source|world|status|first line|command
-DIRECTORY_ROWS=$(cat <<ROWS
+# Read by `read` rather than a command substitution: Bash 3.2 pairs the
+# quotes of a heredoc body inside `$(...)` as shell text, and the target rows
+# hold quotes that pair with nothing.
+IFS= read -r -d '' DIRECTORY_ROWS <<ROWS || :
 a cd before the verb moves the write out of the directory git is asked about|payload|main|2|block-worktree-refresh: moved=refresh|cd $WT && kendex refresh
 a named target after a cd passes: the command names the directory the write lands in|payload|main|0|-|cd $WT && kendex refresh --project-path /elsewhere
 a pushd in an earlier segment is a move too|payload|outside|2|block-worktree-refresh: moved=apply|pushd $WT; kendex apply
@@ -570,7 +573,6 @@ is_source_catalog inside a table is read as a catalog, so without kendex-local.t
 is_source_catalog after a multi-line string holding a table header is a catalog|payload|catalog-string|2|block-worktree-refresh: refused=add|kendex add orch
 a quoted is_source_catalog key is a catalog|payload|catalog-quoted|2|block-worktree-refresh: refused=add|kendex add orch
 ROWS
-)
 directory_table
 
 echo "=== block-worktree-refresh: payloads it cannot read ==="
