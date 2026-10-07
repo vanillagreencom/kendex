@@ -1,0 +1,1 @@
+- Issue reads (`issues get`, `bulk-get`, `list`, `list-relations`) list a `related` relation on both issues, including the one that did not create it, which they previously left out.

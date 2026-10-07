@@ -23,6 +23,16 @@ def issue_blocked_by_ids($relations): issue_blocked_by_relations($relations) | m
 def issue_blocked_by_open_ids($relations): issue_blocked_by_open_relations($relations) | map(.issue.identifier);
 def issue_blocked_by_rows($relations; $with_relation_id): issue_blocked_by_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
 def issue_blocked_by_open_rows($relations; $with_relation_id): issue_blocked_by_open_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
+# A related relation is one record Linear shows on both issues: the side that
+# created it reads it under relations (relatedIssue), the other side under
+# inverseRelations (issue). Both are read, first occurrence kept by relation id.
+def issue_related_row($other): {relation_id: .id, id: $other.identifier, title: $other.title, state: $other.state.name};
+def issue_related_rows($relations; $inverse):
+    reduce (
+        (($relations // [])[] | select(.type == "related") | issue_related_row(.relatedIssue)),
+        (($inverse // [])[] | select(.type == "related") | issue_related_row(.issue))
+    ) as $row ([]; if any(.[]; .relation_id == $row.relation_id) then . else . + [$row] end);
+def issue_related_ids($relations; $inverse): issue_related_rows($relations; $inverse) | map(.id);
 '
 
 # One rule decides which project a name means, for every spelling of the
@@ -85,7 +95,7 @@ format_issues_list() {
         blocks: issue_blocks_ids(.relations.nodes),
         blocked_by: issue_blocked_by_ids(.inverseRelations.nodes),
         blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes),
-        related: [(.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
+        related: issue_related_ids(.relations.nodes; .inverseRelations.nodes),
         url: (.url // "")
     }]'
 }
@@ -125,7 +135,7 @@ format_issue_single() {
         blocks: issue_blocks_ids(.issue.relations.nodes),
         blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
         blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
-        related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
+        related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
         url: (.issue.url // "")
     } + (if (.issue | has("syncedWith")) then {
         github_sync: [(.issue.syncedWith // [])[] | (.metadata // {})
@@ -191,7 +201,7 @@ format_issue_with_bundle() {
             blocks: issue_blocks_ids(.issue.relations.nodes),
             blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
             blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
-            related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
+            related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
             url: (.issue.url // ""),
             children: $children,
             pending_count: ([$children[] | select(.state_type | IN("completed", "canceled") | not)] | length)
@@ -505,12 +515,7 @@ format_relations_list() {
         blocks: issue_blocks_rows(.issue.relations.nodes; true),
         blocked_by: issue_blocked_by_rows(.issue.inverseRelations.nodes; true),
         blocked_by_open: issue_blocked_by_open_rows(.issue.inverseRelations.nodes; true),
-        related: [(.issue.relations.nodes // [])[] | select(.type == "related") | {
-            relation_id: .id,
-            id: .relatedIssue.identifier,
-            title: .relatedIssue.title,
-            state: .relatedIssue.state.name
-        }],
+        related: issue_related_rows(.issue.relations.nodes; .issue.inverseRelations.nodes),
         duplicates: [(.issue.relations.nodes // [])[] | select(.type == "duplicate") | {
             relation_id: .id,
             id: .relatedIssue.identifier,
