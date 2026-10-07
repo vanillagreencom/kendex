@@ -18,7 +18,7 @@ use crate::source::local_source_root;
 
 use super::EngineReport;
 use super::agent_carry::AgentCarry;
-use super::planned::planned_declarations;
+use super::planned::planned_closure_held;
 
 mod capture;
 
@@ -26,8 +26,9 @@ pub(crate) use capture::capture_to_local;
 use capture::source_form;
 
 /// One item that leaves with the source: its kind and name, the declaration it
-/// installs under, and whether it was derived (a bundle member or a dependency)
-/// rather than declared by name.
+/// installs under as the locked plan reads it (a package the record places
+/// carries its recorded commit), and whether it was derived (a bundle member
+/// or a dependency) rather than declared by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosureItem {
     pub kind: ItemKind,
@@ -60,8 +61,8 @@ pub struct Preview {
 pub fn preview(env: &Env, scope: &Scope, source_name: &str) -> Result<Preview> {
     let scope = scope.canonical();
     let manifest = super::ops::manifest_for_mutation(env, &scope)?;
-    let closure = closure(env, &scope, source_name, &manifest)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
+    let closure = closure_at(env, &scope, source_name, &manifest, &lock)?;
     let edited: std::collections::BTreeSet<(ItemKind, String)> =
         edited_items(env, &scope, &closure, &lock)
             .into_iter()
@@ -93,6 +94,22 @@ pub fn closure(
     manifest: &Manifest,
 ) -> Result<Closure> {
     let scope = scope.canonical();
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
+    closure_at(env, &scope, source_name, manifest, &lock)
+}
+
+/// [`closure`] against the record already read. Both expansions are held
+/// at `lock` as the removal and the re-sync after a keep plan
+/// ([`super::PlanOptions::locked`]): a set of another source that gained
+/// a member past its recorded commit does not keep that member here,
+/// because the plan that follows reads the set where the record holds it.
+fn closure_at(
+    env: &Env,
+    scope: &Scope,
+    source_name: &str,
+    manifest: &Manifest,
+    lock: &crate::lock::Lock,
+) -> Result<Closure> {
     if !manifest.sources.contains_key(source_name) {
         return Err(CoreError::UnknownSource {
             name: source_name.to_owned(),
@@ -100,7 +117,7 @@ pub fn closure(
     }
     // The expansion reads the source's bundles and dependencies; if it cannot
     // be reached, refuse and name the fix rather than compute a wrong closure.
-    match crate::source::resolve(env, &scope, source_name, manifest)? {
+    match crate::source::resolve(env, scope, source_name, manifest)? {
         crate::source::SourceState::Ready(_) => {}
         crate::source::SourceState::Pending { .. } => {
             return Err(CoreError::SourcePending {
@@ -120,9 +137,10 @@ pub fn closure(
         }
     }
 
-    let before = planned_declarations(env, &scope, manifest);
+    let options = super::PlanOptions::locked();
+    let (before, _) = planned_closure_held(env, scope, manifest, lock, &options)?;
     let without = without_source(manifest, source_name);
-    let after = planned_declarations(env, &scope, &without);
+    let (after, _) = planned_closure_held(env, scope, &without, lock, &options)?;
 
     let kept: std::collections::BTreeSet<(ItemKind, String)> = after
         .iter()
@@ -177,10 +195,10 @@ pub fn remove(
 ) -> Result<EngineReport> {
     let scope = scope.canonical();
     let manifest = super::ops::manifest_for_mutation(env, &scope)?;
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
     // Validate reachability the same way the closure does, so remove and its
     // preview never disagree about whether the source can be read.
-    let closure = closure(env, &scope, source_name, &manifest)?;
-    let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
+    let closure = closure_at(env, &scope, source_name, &manifest, &lock)?;
     if !discard_edits {
         let edited = edited_items(env, &scope, &closure, &lock);
         if !edited.is_empty() {
@@ -318,8 +336,8 @@ fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
 pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     let scope = scope.canonical();
     let manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;
-    let closure = closure(env, &scope, source_name, &manifest)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
+    let closure = closure_at(env, &scope, source_name, &manifest, &lock)?;
 
     // An edited installation cannot be recovered from source form; name every
     // one and refuse rather than lose the edit.

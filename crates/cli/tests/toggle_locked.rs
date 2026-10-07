@@ -1,8 +1,10 @@
-//! Switching one package or one source on or off, and removing a source,
-//! change what the verb names and hold every other package at the commit
-//! its lock entry records, as `kendex remove` does. A catalog that moved on
-//! since the install is not brought current by any of them, and a package
-//! one of them switches keeps what it requires where the record placed it.
+//! Switching one package or one source on or off, removing a source,
+//! unsubscribing from one with its packages removed or kept, adding or
+//! subscribing to another, and switching the package checks on change what
+//! the verb names and hold every other package at the commit its lock
+//! entry records, as `kendex remove` does. A catalog that moved on since
+//! the install is not brought current by any of them, and a package one of
+//! them switches keeps what it requires where the record placed it.
 //!
 //! The fixture is `remove_locked`'s: `verify_records`'s consumer with the
 //! catalog moved past the install by `refresh_locked`'s commit. A row that
@@ -46,7 +48,8 @@ enum Subject {
         name: &'static str,
     },
     /// A source: its record, its sets' records and the entries of every
-    /// package it declares.
+    /// package it declares, before the verb or after it: a kept package's
+    /// entry moves to the local source under the same key.
     Source(&'static str),
 }
 
@@ -96,6 +99,10 @@ const HOOK_PATHS: &[&str] = &[
 ];
 
 const SOURCE_PATHS: &[&str] = &["kendex.toml", ".kendex-lock.json"];
+
+const MARKET: Subject = Subject::Source("market");
+
+const EXTRA: Subject = Subject::Source("extra");
 
 const GUARD: Subject = Subject::Package {
     kind: "hook",
@@ -199,6 +206,95 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
+        delisted: &[],
+    },
+    Row {
+        case: "kendex marketplace unsubscribe --remove-packages",
+        prepare: None,
+        setup: None,
+        catalog: Catalog::Moved,
+        verb: Verb::Cli(&[
+            "marketplace",
+            "unsubscribe",
+            "market",
+            "--remove-packages",
+            "--leave",
+        ]),
+        subject: MARKET,
+        enabled: None,
+        requirement: None,
+        changed: &[
+            "kendex.toml",
+            ".kendex-lock.json",
+            ".kendex-generated.json",
+            ".claude/skills/data-science__eda/SKILL.md",
+            ".opencode/skills/data-science-eda/SKILL.md",
+        ],
+        delisted: &[],
+    },
+    Row {
+        case: "kendex marketplace unsubscribe --keep-packages",
+        prepare: None,
+        setup: None,
+        catalog: Catalog::Moved,
+        verb: Verb::Cli(&[
+            "marketplace",
+            "unsubscribe",
+            "market",
+            "--keep-packages",
+            "--leave",
+        ]),
+        subject: MARKET,
+        enabled: None,
+        requirement: None,
+        changed: &["kendex.toml", ".kendex-lock.json", ".kendex-local/"],
+        delisted: &[],
+    },
+    Row {
+        case: "kendex source add",
+        prepare: Some(lay_down_extra),
+        setup: None,
+        catalog: Catalog::Moved,
+        verb: Verb::Cli(&["source", "add", "extra", "../../extra", "--leave"]),
+        subject: EXTRA,
+        enabled: None,
+        requirement: None,
+        changed: &["kendex.toml"],
+        delisted: &[],
+    },
+    Row {
+        case: "kendex marketplace subscribe",
+        prepare: Some(lay_down_extra),
+        setup: None,
+        catalog: Catalog::Moved,
+        verb: Verb::Cli(&["marketplace", "subscribe", "../../extra", "--leave"]),
+        subject: EXTRA,
+        enabled: None,
+        requirement: None,
+        changed: &["kendex.toml"],
+        delisted: &[],
+    },
+    Row {
+        case: "kendex drift-hook",
+        prepare: None,
+        setup: None,
+        catalog: Catalog::Moved,
+        verb: Verb::Cli(&["drift-hook", "--scope", "project", "-y", "--leave"]),
+        subject: Subject::Package {
+            kind: "hook",
+            name: "kendex-drift",
+        },
+        enabled: Some(true),
+        requirement: None,
+        changed: &[
+            "kendex.toml",
+            ".kendex-lock.json",
+            ".kendex-generated.json",
+            ".kendex-local/",
+            ".claude/hooks/kendex-drift.sh",
+            ".claude/settings.json",
+            ".pi/kendex/",
+        ],
         delisted: &[],
     },
     Row {
@@ -348,6 +444,17 @@ fn require_a_helper(world: &World) {
     write(&helper, &format!("{before}\nHelps more now.\n"));
 }
 
+/// A folder catalog with one skill, which nothing in the project declares,
+/// beside the project: nothing in the project changes.
+fn lay_down_extra(world: &World) {
+    let root = world.home.join("extra");
+    write(&root.join("kendex.toml"), "[catalog]\n");
+    write(
+        &root.join("skills/third/SKILL.md"),
+        "---\nname: third\ndescription: a third skill\n---\n# Third\n",
+    );
+}
+
 /// A teammate brings the catalog current and commits the record there,
 /// while this machine's mirror is cloned again from the catalog as it stood
 /// at the install: the record names a commit upstream holds and this
@@ -435,18 +542,29 @@ impl Subject {
     }
 }
 
-/// The rows of a record's `table` the subject owns, or every other one.
+/// The keys of a record's `table` the subject owns.
+fn owned_keys(record: &serde_json::Value, table: &str, subject: &Subject) -> BTreeSet<String> {
+    record[table]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(key, value)| subject.owns(table, key, value))
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+/// The rows of a record's `table` under `keys`, or every other one.
 fn rows_of(
     record: &serde_json::Value,
     table: &str,
-    subject: &Subject,
+    keys: &BTreeSet<String>,
     owned: bool,
 ) -> Vec<(String, serde_json::Value)> {
     record[table]
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(key, value)| subject.owns(table, key, value) == owned)
+        .filter(|(key, _)| keys.contains(*key) == owned)
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
@@ -529,7 +647,9 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
         let world = world();
         if let Some(prepare) = row.prepare {
             prepare(&world);
-            commit(&world.project, "prepared");
+            if !changed(&world).is_empty() {
+                commit(&world.project, "prepared");
+            }
         }
         if let Some(setup) = row.setup {
             let output = kendex(&world.home, &world.project, setup);
@@ -557,7 +677,8 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
         );
         let after = record(&world);
         if let Some(enabled) = row.enabled {
-            let switched = rows_of(&after, "entries", &row.subject, true);
+            let owned = owned_keys(&after, "entries", &row.subject);
+            let switched = rows_of(&after, "entries", &owned, true);
             assert!(!switched.is_empty(), "{case}: {after}");
             for (_, entry) in switched {
                 assert_eq!(entry["enabled"], enabled, "{case}: {entry}");
@@ -591,9 +712,13 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
             }
         }
         for table in ["entries", "sources", "bundles"] {
+            let mut owned = owned_keys(&expected, table, &row.subject);
+            owned.extend(owned_keys(&after, table, &row.subject));
+            let others = rows_of(&expected, table, &owned, false);
+            assert!(!others.is_empty() || table == "bundles", "{case}: {table}");
             assert_eq!(
-                rows_of(&after, table, &row.subject, false),
-                rows_of(&expected, table, &row.subject, false),
+                rows_of(&after, table, &owned, false),
+                others,
                 "{case}: {table}"
             );
         }

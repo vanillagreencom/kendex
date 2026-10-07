@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::{ItemKind, Scope};
-use kendex_core::{apply, source_ops};
+use kendex_core::{apply, remote, source_ops};
 
 #[allow(clippy::unwrap_used)]
 fn skill(catalog: &Path, name: &str, body: &str) {
@@ -281,6 +281,107 @@ fn a_member_another_bundle_carries_survives_removal() {
     apply::execute(&env, &report.plan).unwrap();
     assert!(!scope_skill(&scope, "gh").exists(), "gh removed with cat");
     assert!(scope_skill(&scope, "shared").exists(), "shared stays");
+}
+
+/// How an unsubscribe row leaves the source.
+#[derive(Debug, Clone, Copy)]
+enum Leave {
+    /// `--remove-packages`: the closure is uninstalled.
+    Remove,
+    /// `--keep-packages`: the closure converts to local, then re-syncs.
+    Keep,
+}
+
+/// A member another marketplace's bundle gained only past its recorded
+/// commit leaves with the source like any other: the removal and the
+/// re-sync after a keep hold that bundle where the record placed it, which
+/// does not carry the member, so a closure read at the bundle's tip would
+/// leave it named nowhere and installed under the source that is gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_another_bundle_gains_past_its_record_leaves_with_the_source() {
+    for leave in [Leave::Remove, Leave::Keep] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("dev/app");
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        let cat = home.join("cat");
+        skill(&cat, "shared", "s");
+        fs::write(
+            cat.join("kendex.toml"),
+            "[bundles.core]\nskills = [\"shared\"]\n",
+        )
+        .unwrap();
+        // `other` is a git catalog, so the record places its bundle at a
+        // commit; at that commit the bundle carries `extra` alone.
+        let other = home.join("other");
+        skill(&other, "extra", "e");
+        fs::write(
+            other.join("kendex.toml"),
+            "[bundles.also]\nskills = [\"extra\"]\n",
+        )
+        .unwrap();
+        test_util::git(&other, &["init", "--quiet", "-b", "main"]);
+        test_util::git(&other, &["add", "-A"]);
+        test_util::git(&other, &["commit", "--quiet", "-m", "also carries extra"]);
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 6\n\n[sources.cat]\n{}\n[sources.other]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
+                source_path(&cat),
+                other.display()
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project { root: project };
+        remote::sync_sources(&env, &manifest_of(&env, &scope)).unwrap();
+        apply_now(&env, &scope);
+        assert!(scope_skill(&scope, "shared").exists(), "{leave:?}");
+
+        skill(&other, "shared", "s");
+        fs::write(
+            other.join("kendex.toml"),
+            "[bundles.also]\nskills = [\"extra\", \"shared\"]\n",
+        )
+        .unwrap();
+        test_util::git(&other, &["add", "-A"]);
+        test_util::git(&other, &["commit", "--quiet", "-m", "also carries shared"]);
+        assert!(remote::fetch_all(&env, &manifest_of(&env, &scope)).is_empty());
+
+        let closure = detach::closure(&env, &scope, "cat", &manifest_of(&env, &scope)).unwrap();
+        let names: Vec<&str> = closure.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["shared"], "{leave:?}");
+
+        match leave {
+            Leave::Remove => {
+                let report = detach::remove(&env, &scope, "cat", false).unwrap();
+                apply::execute(&env, &report.plan).unwrap();
+                assert!(!scope_skill(&scope, "shared").exists(), "{leave:?}");
+            }
+            Leave::Keep => {
+                let plan = detach::source(&env, &scope, "cat").unwrap();
+                apply::execute(&env, &plan).unwrap();
+                let resync = detach::resync_kept(&env, &scope).unwrap();
+                apply::execute(&env, &resync.plan).unwrap();
+                assert_eq!(manifest_of(&env, &scope).skills["shared"].source, "local");
+                assert!(scope_skill(&scope, "shared").exists(), "{leave:?}");
+            }
+        }
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
+        let shared: Vec<&str> = lock
+            .entries
+            .values()
+            .filter(|entry| entry.name == "shared")
+            .map(|entry| entry.source.as_str())
+            .collect();
+        let expected: &[&str] = match leave {
+            Leave::Remove => &[],
+            Leave::Keep => &["local"],
+        };
+        assert_eq!(shared, expected, "{leave:?}");
+        assert!(scope_skill(&scope, "extra").exists(), "{leave:?}");
+    }
 }
 
 /// A `plugin/item` name round-trips through the local source: detaching a

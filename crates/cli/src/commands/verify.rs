@@ -929,8 +929,9 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize
 /// The closure is read with the `options` and the record the audit
 /// rendered through, so under `--at-record` a package held at its recorded
 /// commit asks for what that commit required, not for a dependency its
-/// catalog added since. A failed audit or a scope with no manifest has
-/// read no declarations: [`Declared::unread`].
+/// catalog added since. A failed audit, a scope with no manifest, or a
+/// closure whose holds could not be read has read no declarations:
+/// [`Declared::unread`].
 fn declared_packages(
     env: &Env,
     scope: &Scope,
@@ -942,7 +943,10 @@ fn declared_packages(
         (Ok(audited), Some(manifest)) => (&audited.report, manifest),
         (Err(_), _) | (Ok(_), None) => return Declared::unread(),
     };
-    let (planned, status) = planned_closure_held(env, scope, manifest, &records.lock, options);
+    let Ok((planned, status)) = planned_closure_held(env, scope, manifest, &records.lock, options)
+    else {
+        return Declared::unread();
+    };
     let (left_out, wanted): (Vec<_>, Vec<_>) = planned
         .into_iter()
         .filter(|declared| {

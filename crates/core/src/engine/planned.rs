@@ -113,17 +113,22 @@ pub fn planned_closure(
 /// hold this is [`planned_closure`].
 ///
 /// The pins come from [`desired::hold::planning_manifest`], the one rule
-/// `plan_scope` holds a scope still by, so a caller that rendered a scope
-/// with `options` asks the closure the same question it rendered.
+/// `plan_scope` holds a scope still by, and a write's pin at a commit gone
+/// from its source is released as `plan_scope` releases it
+/// ([`desired::hold::release_unserved`]), so a caller that rendered a
+/// scope with `options` asks the closure the same question it rendered.
 pub fn planned_closure_held(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &crate::lock::Lock,
     options: &super::PlanOptions,
-) -> (Vec<PlannedDeclaration>, super::DeclarationStatus) {
-    let (planning, held) = desired::hold::planning_manifest(manifest, lock, options);
-    closure(env, scope, planning.as_ref(), held.as_ref())
+) -> crate::error::Result<(Vec<PlannedDeclaration>, super::DeclarationStatus)> {
+    let (mut planning, mut held) = desired::hold::planning_manifest(manifest, lock, options);
+    if let Some(pins) = held.as_mut() {
+        desired::hold::release_unserved(env, options, planning.to_mut(), pins)?;
+    }
+    Ok(closure(env, scope, planning.as_ref(), held.as_ref()))
 }
 
 /// The declarations a plan run with `options` against `lock` reads: under

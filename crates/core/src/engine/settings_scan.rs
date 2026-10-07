@@ -32,15 +32,19 @@ use crate::settings_template::TemplateSource;
 /// build cannot read refuses, the way every other read of them does.
 /// Global scope answers with nothing too: a global install seeds no
 /// settings.
+///
+/// Read held at the record, as the save that validates and seeds against
+/// these templates plans ([`super::PlanOptions::locked`]): a skill the
+/// record places answers with the template at its recorded commit, not at
+/// a catalog tip the save will not read.
 pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, TemplateSource>> {
     let scope = &scope.canonical();
     let lock = crate::lock::load(&lock_path(env, scope))?;
     let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
         return Ok(BTreeMap::new());
     };
-    let state = super::desired::desired_state(
-        env, scope, &manifest, &lock, false, None, false, false, None,
-    )?;
+    let (_, state, _) =
+        super::desired_pass(env, scope, &manifest, &lock, &super::PlanOptions::locked())?;
     Ok(state.settings_templates)
 }
 
