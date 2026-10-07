@@ -86,9 +86,12 @@ compute_merge_order() {
     local prs_json="$1"
     local overlaps_json="$2"
 
-    echo "$prs_json" | jq --argjson overlaps "$overlaps_json" '
+    # Both lists go in on stdin: as arguments they grow with the PR count
+    # past the per-argument limit.
+    printf '%s\n%s\n' "$prs_json" "$overlaps_json" | jq -s '
+        .[1] as $overlaps
         # Count overlaps per PR
-        map(. as $pr | . + {
+        | .[0] | map(. as $pr | . + {
             overlap_count: (
                 [$overlaps[] | select(.prs | contains([$pr.number]))] | length
             )
@@ -260,8 +263,8 @@ main() {
     ')
 
     # Add file overlap issues
-    issues=$(echo "$issues" | jq --argjson overlaps "$overlaps" '. + (
-        $overlaps | map({
+    issues=$(printf '%s\n%s\n' "$issues" "$overlaps" | jq -s '.[0] + (
+        .[1] | map({
             severity: "medium",
             type: "file_overlap",
             description: "File \(.file) modified by PRs \(.prs | map("#\(.)") | join(", "))",
@@ -305,17 +308,14 @@ main() {
 
     # Build final output
     local result
-    result=$(jq -n \
-        --argjson prs "$(echo "$prs_data" | jq 'map({number, branch, files: [.files[].path], mergeable})')" \
-        --argjson issues "$issues" \
-        --argjson merge_order "$merge_order" \
+    result=$(printf '%s\n%s\n%s\n' "$prs_data" "$issues" "$merge_order" | jq -s \
         --argjson can_batch_merge "$can_batch_merge" \
         --argjson summary "$summary" \
         '{
             mode: "quick",
-            prs: $prs,
-            issues: $issues,
-            merge_order: $merge_order,
+            prs: (.[0] | map({number, branch, files: [.files[].path], mergeable})),
+            issues: .[1],
+            merge_order: .[2],
             can_batch_merge: $can_batch_merge,
             summary: $summary
         }')

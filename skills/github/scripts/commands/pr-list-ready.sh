@@ -99,10 +99,12 @@ main() {
             fi
         done
 
-        # Merge updated PRs back into prs array
-        prs=$(echo "$prs" | jq --argjson updates "$updated_prs" '
-            . as $orig |
-            ($updates | map({(.number | tostring): .}) | add // {}) as $update_map |
+        # Merge updated PRs back into prs array. Both arrays go in on stdin:
+        # as one argument the refreshed array, rollups included, outgrows
+        # the per-argument limit once enough PRs read UNKNOWN.
+        prs=$(printf '%s\n%s\n' "$prs" "$updated_prs" | jq -s '
+            .[0] as $orig |
+            (.[1] | map({(.number | tostring): .}) | add // {}) as $update_map |
             $orig | map(
                 if $update_map[.number | tostring] then
                     $update_map[.number | tostring]
