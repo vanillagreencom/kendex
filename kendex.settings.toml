@@ -184,6 +184,7 @@ SECOND_OPINION_COUNT = "1"
 
 # Roster commands (identities claude / codex).
 SECOND_OPINION_CLAUDE_CMD = "claude -p --output-format json --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
+SECOND_OPINION_CLAUDE_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness claude --model claude-opus-5-5"
 
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --disable hooks --ephemeral"
 

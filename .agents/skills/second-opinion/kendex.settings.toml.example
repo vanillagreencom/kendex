@@ -53,6 +53,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # reviewer runs on this machine's login, which a lane-host provider's reading
 # of the account does not judge.
 # SECOND_OPINION_MODELS = "pi-copilot claude codex"
+# SECOND_OPINION_CLAUDE_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness claude --model claude-opus-5-5"
 # SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6.1-sol --binding-floor"
 # SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/claude-opus-5.5 --thinking high --tools read,grep,find,ls"
 # SECOND_OPINION_PI_COPILOT_MODEL = "github-copilot/claude-opus-5.5"
