@@ -388,6 +388,33 @@ fn mark_only(root: &Path) {
     fs::create_dir_all(root.join(".claude")).unwrap();
 }
 
+/// A git repository with one commit, so a worktree can branch from it.
+#[allow(clippy::unwrap_used)]
+fn commit_a_repository(root: &Path) {
+    fs::create_dir_all(root).unwrap();
+    git(root, &["init", "--quiet", "-b", "main"]);
+    write(&root.join("README.md"), "main\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "--quiet", "-m", "one"]);
+}
+
+/// A linked worktree of `main` at `at`, on a new branch.
+#[allow(clippy::unwrap_used)]
+fn add_worktree(main: &Path, at: &Path, branch: &str) -> PathBuf {
+    git(
+        main,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            branch,
+            at.to_str().unwrap(),
+        ],
+    );
+    at.to_path_buf()
+}
+
 fn installed(root: &Path) -> PathBuf {
     root.join(".claude/skills/deploy/SKILL.md")
 }
@@ -424,6 +451,67 @@ fn the_named_project_is_written_and_the_directory_typed_in_is_not() {
         "and the named project is on the projects list: {:?}",
         registered(&home)
     );
+}
+
+/// A named render in a linked git worktree lists nothing, under each verb
+/// that registers a named project, and says so in one line; the main
+/// checkout of the same repository, named the same way, is listed and
+/// says that instead.
+///
+/// The entry is what outlived the worktree: a lane removes its worktree
+/// when it ends, and the projects list kept the path. Fleet lanes read
+/// both lines from the run's output, which is why their exact form is
+/// asserted. The main checkout's row is the control: a rule that skipped
+/// every git checkout, or none, reddens one side.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_linked_worktree_named_by_a_render_is_not_listed() {
+    let (_tmp, home, catalog, elsewhere) = world();
+    let main = home.join("dev/app");
+    commit_a_repository(&main);
+    declare(&main, &catalog);
+
+    for (lane, verb) in [
+        ("apply", &["apply"][..]),
+        ("refresh", &["refresh", "--scope", "project"][..]),
+        ("updates", &["updates", "--apply"][..]),
+    ] {
+        let worktree = add_worktree(&main, &home.join("lanes").join(lane), lane);
+        declare(&worktree, &catalog);
+        let path = worktree.to_str().unwrap();
+        let mut args = verb.to_vec();
+        args.extend(["--project-path", path, "-y"]);
+
+        let said = run(&home, &elsewhere, &args);
+
+        assert!(installed(&worktree).is_file(), "{verb:?} rendered: {said}");
+        assert!(
+            registered(&home).is_empty(),
+            "{verb:?} listed the worktree: {:?}",
+            registered(&home)
+        );
+        let skipped = format!("worktree-not-listed={path}:");
+        assert_eq!(
+            said.lines()
+                .filter(|line| line.starts_with(&skipped))
+                .count(),
+            1,
+            "{verb:?} says the skip once: {said}"
+        );
+    }
+
+    let said = run(
+        &home,
+        &elsewhere,
+        &["apply", "--project-path", main.to_str().unwrap(), "-y"],
+    );
+    assert_eq!(registered(&home), std::slice::from_ref(&main), "{said}");
+    assert!(
+        said.lines()
+            .any(|line| line == format!("added {} to your projects", main.display())),
+        "the registration is named: {said}"
+    );
+    assert!(!said.contains("worktree-not-listed="), "{said}");
 }
 
 /// A path that is no kendex project root is refused before anything is
@@ -521,23 +609,8 @@ fn a_named_project_and_the_personal_scope_together_are_refused() {
 fn a_linked_worktree_with_its_own_manifest_is_a_project_a_command_can_name() {
     let (_tmp, home, catalog, elsewhere) = world();
     let main = home.join("dev/app");
-    fs::create_dir_all(&main).unwrap();
-    git(&main, &["init", "--quiet", "-b", "main"]);
-    write(&main.join("README.md"), "main\n");
-    git(&main, &["add", "-A"]);
-    git(&main, &["commit", "--quiet", "-m", "one"]);
-    let worktree = home.join("lanes/one");
-    git(
-        &main,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "-b",
-            "lane",
-            worktree.to_str().unwrap(),
-        ],
-    );
+    commit_a_repository(&main);
+    let worktree = add_worktree(&main, &home.join("lanes/one"), "lane");
     declare(&worktree, &catalog);
 
     run(
@@ -556,12 +629,15 @@ fn a_linked_worktree_with_its_own_manifest_is_a_project_a_command_can_name() {
     );
 
     // The list names it for what it is: two entries under one repository
-    // are not readable as a pair from their paths.
-    run(
-        &home,
-        &elsewhere,
-        &["project", "add", main.to_str().unwrap()],
-    );
+    // are not readable as a pair from their paths. The render listed
+    // neither, so `project add` is what puts both there.
+    for root in [&main, &worktree] {
+        run(
+            &home,
+            &elsewhere,
+            &["project", "add", root.to_str().unwrap()],
+        );
+    }
     let listed = run(&home, &elsewhere, &["project", "list"]);
     let row = |root: &Path| {
         listed
@@ -678,6 +754,21 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
 
     assert!(installed(&project).is_file(), "the meant run writes");
     assert_eq!(registered(&home), std::slice::from_ref(&project));
+
+    // A linked worktree under a temporary path is asked nothing: the rule
+    // guards the projects list, and a worktree never goes on it.
+    let lanes = tempfile::tempdir().unwrap();
+    let main = rooted(&lanes).join("main");
+    commit_a_repository(&main);
+    let worktree = add_worktree(&main, &rooted(&lanes).join("lane"), "lane");
+    declare(&worktree, &catalog);
+    let said = run(
+        &home,
+        &worktree,
+        &["apply", "--project-path", worktree.to_str().unwrap(), "-y"],
+    );
+    assert!(installed(&worktree).is_file(), "{said}");
+    assert_eq!(registered(&home), std::slice::from_ref(&project), "{said}");
 }
 
 /// `refresh` takes the name through its own path into the resolution, and

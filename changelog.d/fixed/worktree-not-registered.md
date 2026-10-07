@@ -1,0 +1,1 @@
+- `apply`, `refresh` and `updates --apply` with `--project-path` no longer add a linked git worktree to your projects, so removing the worktree leaves no stale entry in the app's Projects list or `kendex project list`; the run prints a `worktree-not-listed=PATH` line instead, and `kendex project add PATH` still lists a worktree you want to keep.

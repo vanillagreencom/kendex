@@ -257,7 +257,8 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
 ///
 /// A run with no named project registers nothing and is asked nothing:
 /// writing the project a command was typed in is what every release
-/// before `--project-path` did, and it never touched the registry.
+/// before `--project-path` did, and it never touched the registry. Nor is
+/// a linked git worktree, which [`register_target`] never lists.
 pub fn target_registrable(
     env: &Env,
     target: &crate::flags::ProjectTargetFlag,
@@ -267,11 +268,21 @@ pub fn target_registrable(
         return Ok(());
     }
     for scope in scopes {
-        if let Scope::Project { root } = scope {
+        if let Scope::Project { root } = scope
+            && !linked_worktree(root)?
+        {
             registrable(env, root, target.throwaway)?;
         }
     }
     Ok(())
+}
+
+/// Whether `root` sits in a linked git worktree: a checkout whose own git
+/// directory is not the repository's common one. A git that cannot answer
+/// is an error, not a main checkout, since the answer decides what lands
+/// on the projects list.
+fn linked_worktree(root: &std::path::Path) -> Result<bool, CoreError> {
+    Ok(kendex_core::guard::Repo::probe(root)?.is_some_and(|repo| repo.is_linked()))
 }
 
 /// The project a `--project-path` named, on the projects list now that the
@@ -291,6 +302,13 @@ pub fn target_registrable(
 /// where a Pi settle before the final confirm has already written what
 /// this then registers.
 ///
+/// A named root inside a linked git worktree is never registered, and no
+/// flag changes that: a worktree is removed when its lane ends, and an
+/// entry for it would outlive it on every projects list. The run says so
+/// in one `worktree-not-listed=<root>` line instead. A person who wants
+/// one listed names it to `project add`, the explicit door, which lists
+/// any folder it is given.
+///
 /// Called by `refresh`, `apply` and `updates --apply` after the write, and
 /// only where the destination was named: a walked-up project is the one
 /// the command was typed in, which those verbs have never registered.
@@ -299,10 +317,29 @@ pub fn register_target(
     target: &crate::flags::ProjectTargetFlag,
     scope: &Scope,
 ) -> CliResult {
-    match target.path() {
-        Some(_) => register_destination(env, scope),
-        None => Ok(()),
+    if target.path().is_none() {
+        return Ok(());
     }
+    let Scope::Project { root } = scope else {
+        return Ok(());
+    };
+    // The same two facts `register_destination` keeps apart when the
+    // registry refuses: the packages landed, and only the listing failed.
+    let linked = linked_worktree(root).map_err(|error| {
+        Lines(format!(
+            "the packages are installed in {}, and git could not say whether it is a linked worktree, which goes on no projects list: {}",
+            escaped(&root.display().to_string()),
+            escaped(&error.to_string()),
+        ))
+    })?;
+    if linked {
+        out(&format!(
+            "worktree-not-listed={}: a linked git worktree is not added to your projects",
+            root.display()
+        ));
+        return Ok(());
+    }
+    register_destination(env, scope)
 }
 
 /// Put the folder an install has just written into on the list of projects
