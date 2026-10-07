@@ -369,7 +369,7 @@ The order of this change and the ruleset change, and the check that confirms bot
 Two probe PRs against the adopting repository:
 
 1. **Skip probe**: choose the probe for the adopted shape.
-   - **Shape 4 and the CI template, with the `render` class**: open a render-only refresh PR. Its diff contains only what `kendex refresh` or `kendex apply` writes. If no refresh is pending, wait for the next consumer refresh PR. Expect `change_class=render`, `lanes=false`, skipped heavy lanes and every required context green. Do not hand-edit a path kendex renders for this probe.
+   - **Shape 4 and the CI template, with the `render` class**: open a render-only refresh PR. Its diff contains only what `kendex refresh` or `kendex apply` writes. If no refresh is pending, wait for the next consumer refresh PR. Expect `change_class=render`, skipped heavy lanes and every required context green. With the composite action or CI template, also expect `lanes=false`. Do not hand-edit a path kendex renders for this probe.
    - **Shapes 1–3, gating on `harness_only` alone**: hand-edit one file under `.agents/`. Expect `harness_only=true`, skipped heavy lanes and every required context green.
 2. **Mixed**: combine the first probe's changes with one product-file edit. The product lanes required by that diff run.
 
