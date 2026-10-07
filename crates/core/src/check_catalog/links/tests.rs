@@ -21,7 +21,7 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
     fs::write(skill.join("SKILL.md"), head).unwrap();
     fs::write(
         skill.join("DEVELOPMENT.md"),
-        "# Review\n\n## The lane\n\n## Café\n",
+        "# Review\n\n## The lane\n\n## Café\n\n## Cafe\u{301} noir\n",
     )
     .unwrap();
     fs::write(skill.join("tests/run.sh"), "true\n").unwrap();
@@ -41,7 +41,7 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
     fs::write(skill.join(file), text).unwrap();
     let source = SourceUrl {
         blob: "github.com/acme/cat/blob/".to_owned(),
-        refs: ["refs/heads/main", "refs/heads/feat/x"]
+        refs: ["refs/heads/main", "refs/heads/feat/x", "refs/heads/feat/é"]
             .into_iter()
             .filter_map(MirrorRef::from_full)
             .collect(),
@@ -224,6 +224,19 @@ fn a_source_url_target_is_read_as_github_serves_it() {
             None,
         ),
         ("SKILL.md", format!("See {dev}#caf%C3%A9"), None),
+        // A decomposed accent is a combining mark, which GitHub keeps.
+        ("SKILL.md", format!("See {dev}#cafe%CC%81-noir"), None),
+        // A ref is matched by its decoded name: `feat/é` written escaped.
+        (
+            "SKILL.md",
+            format!("See {SOURCE}/feat/%C3%A9/skills/review/DEVELOPMENT.md#the-lane"),
+            None,
+        ),
+        (
+            "SKILL.md",
+            format!("See {SOURCE}/feat/%C3%A9/skills/review/gone.md"),
+            missing("skills/review/gone.md"),
+        ),
         (
             "SKILL.md",
             format!("See {dev}#caf%C3%A8"),

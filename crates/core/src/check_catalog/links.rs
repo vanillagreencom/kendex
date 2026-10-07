@@ -12,6 +12,7 @@
 use std::path::{Component, Path};
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use unicode_normalization::char::is_combining_mark;
 
 use super::CheckFinding;
 use crate::error::Result;
@@ -78,21 +79,33 @@ impl SourceUrl {
     /// them claims it, the ref is one segment, which a commit and the
     /// usual branch and tag are, and which a shallow clone holding no
     /// other ref can still read. `None` where two local refs claim it: the
-    /// checkout cannot say which file is meant.
-    fn path<'a>(&self, ref_and_path: &'a str) -> Option<&'a str> {
+    /// checkout cannot say which file is meant. Refs are matched by their
+    /// decoded names, as git holds them; the path comes back as written,
+    /// for its own one decoding.
+    fn path(&self, ref_and_path: &str) -> Option<String> {
+        let written: Vec<&str> = ref_and_path.split('/').collect();
+        let names = written
+            .iter()
+            .map(|segment| {
+                crate::source_ref::decode_segment(ref_and_path, segment)
+                    .unwrap_or_else(|_| (*segment).to_owned())
+            })
+            .collect::<Vec<_>>()
+            .join("/");
         let claimed = self.refs.iter().any(|known| {
-            ref_and_path
+            names
                 .strip_prefix(&known.name)
                 .is_some_and(|rest| rest.starts_with('/'))
         });
-        let at = match claimed {
-            true => {
-                let split = split_tree_ref(ref_and_path, &self.refs, ref_and_path).ok()?;
-                split.reference.len() + 1
-            }
-            false => ref_and_path.find('/')? + 1,
+        let taken = match claimed {
+            true => split_tree_ref(&names, &self.refs, &names)
+                .ok()?
+                .reference
+                .split('/')
+                .count(),
+            false => 1,
         };
-        Some(&ref_and_path[at..]).filter(|path| !path.is_empty())
+        Some(written.get(taken..)?.join("/")).filter(|path| !path.is_empty())
     }
 }
 
@@ -206,8 +219,8 @@ fn broken_links(
             };
             // Decoded once, segment by segment, so an escape never moves a
             // separator; one that will not decode names no file.
-            let Some(path) = decoded(written, '/') else {
-                push(line, url, Broken::Missing(written.to_owned()));
+            let Some(path) = decoded(&written, '/') else {
+                push(line, url, Broken::Missing(written));
                 continue;
             };
             let target = sealed.root().join(&path);
@@ -348,8 +361,9 @@ fn on_github(before: &str) -> bool {
 }
 
 /// The anchors GitHub gives `text`'s headings: the heading's text
-/// lowercased, every character but a letter, a digit, a space, `-` and `_`
-/// dropped, each space a hyphen, and `-1`, `-2` on a repeat.
+/// lowercased, every character but a letter, a digit, a combining mark, a
+/// space, `-` and `_` dropped, with no normalization, each space a
+/// hyphen, and `-1`, `-2` on a repeat.
 fn heading_anchors(text: &str) -> Vec<String> {
     let mut anchors: Vec<String> = Vec::new();
     let mut heading: Option<String> = None;
@@ -363,7 +377,11 @@ fn heading_anchors(text: &str) -> Vec<String> {
                 let slug: String = words
                     .to_lowercase()
                     .chars()
-                    .filter(|ch| ch.is_alphanumeric() || matches!(ch, ' ' | '-' | '_'))
+                    .filter(|ch| {
+                        ch.is_alphanumeric()
+                            || is_combining_mark(*ch)
+                            || matches!(ch, ' ' | '-' | '_')
+                    })
                     .map(|ch| match ch {
                         ' ' => '-',
                         other => other,
