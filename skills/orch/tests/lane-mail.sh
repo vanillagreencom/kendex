@@ -863,14 +863,14 @@ else
   printf '  skip  the one-spelling rule: this filesystem is case-insensitive, so the second name is the first mailbox\n'
 fi
 
-# A write leaves no work directory behind on a host with no flock, which is
+# A command leaves no work directory behind on a host with no flock, which is
 # every stock macOS. There file-lock.sh takes a mkdir mutex, and the mutex arm
-# arms its own EXIT trap over lane-mail's; the trap the writer re-arms after
+# arms its own EXIT trap over lane-mail's; the trap the caller re-arms after
 # the lock is what still removes the work directory. The PATH below is the
 # commands lane-mail names, minus flock, so the mutex arm is the one that runs.
 FLOCKLESS_BIN="$TMP_ROOT/no-flock-bin"
 mkdir -p "$FLOCKLESS_BIN"
-for command_name in bash sh cat tail printf mkdir mv rm rmdir date jq awk sed git \
+for command_name in bash sh python3 cat tail printf mkdir mv rm rmdir date jq awk sed git \
   tr head sleep cp ln wc sort grep dirname basename touch chmod id uname getent; do
   command_path="$(command -v "$command_name" 2>/dev/null)" || continue
   ln -sfn "$command_path" "$FLOCKLESS_BIN/$command_name"
@@ -895,19 +895,98 @@ mkdir -p "$FLOCKLESS_PROBE_DIR"
 FLOCKLESS_PROBE="$(env TMPDIR="$FLOCKLESS_PROBE_DIR" PATH="$FLOCKLESS_BIN" mktemp -d)"
 assert_eq "${FLOCKLESS_PROBE#$FLOCKLESS_PROBE_DIR/}" "${FLOCKLESS_PROBE##*/}" \
   "a work directory lands under the TMPDIR this case counts"
-# What one local write on that PATH exits with, and how many work directories
+# What one command on that PATH exits with, and how many work directories
 # it leaves under a TMPDIR of its own.
-flockless_leftovers() { # NAME
+flockless_leftovers() { # NAME SCRIPT ARGS...
   local rc=0 dir="$TMP_ROOT/no-flock-tmp-$1"
+  shift
   mkdir -p "$dir"
-  (cd "$LANE" && env TMPDIR="$dir" PATH="$FLOCKLESS_BIN" \
-    "$LANE_MAIL" notice --item KEN-1 --file "$(text n 'no flock on this host')") || rc=$?
+  FLOCKLESS_OUT="$(cd "$LANE" && env TMPDIR="$dir" PATH="$FLOCKLESS_BIN" \
+    "$@" 2>"$TMP_ROOT/flockless.err")" || rc=$?
   FLOCKLESS="$rc=$(ls "$dir" | wc -l | tr -d ' ')"
 }
 new_lane flockless_cleanup
-flockless_leftovers real
+flockless_leftovers real "$LANE_MAIL" notice --item KEN-1 --file "$(text n 'no flock on this host')"
 assert_eq "$(env PATH="$FLOCKLESS_BIN" sh -c 'command -v flock >/dev/null 2>&1 && echo present || echo absent')=$FLOCKLESS" \
   "absent=0=0" "a local write where flock is absent leaves no work directory behind"
+
+# A held cursor mutex drives the real lock retry loop to failure. Its naps
+# have no bearing on cleanup, so the fixture removes only those naps.
+FLOCKLESS_SLEEP="$(command -v sleep)"
+rm -- "$FLOCKLESS_BIN/sleep"
+cat > "$FLOCKLESS_BIN/sleep" <<STUB
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = 0.1 ]; then
+  exit 0
+fi
+exec "$FLOCKLESS_SLEEP" "\$@"
+STUB
+chmod +x "$FLOCKLESS_BIN/sleep"
+
+for row in wait:success inbox:success wait:failure inbox:failure; do
+  CLEANUP_VERB="${row%%:*}"
+  CLEANUP_RESULT="${row#*:}"
+  CLEANUP_EXPECT=0
+  [ "$CLEANUP_RESULT" != failure ] || CLEANUP_EXPECT=2
+  for variant in real control; do
+    # Successful inbox cleanup already existed; only changed paths mutate.
+    [ "$row:$variant" != inbox:success:control ] || continue
+    CLEANUP_SCRIPT="$LANE_MAIL"
+    if [ "$variant" = control ]; then
+      CLEANUP_SCRIPT="$(mutant_scripts "mutants/cleanup-${row/:/-}" lane-mail)/lane-mail" || exit 1
+      if [ "$CLEANUP_RESULT" = success ]; then
+        mutate_file "$CLEANUP_SCRIPT" $'\n        trap lm_cleanup EXIT\n        lm_cursor_read' \
+          $'\n        if false; then trap lm_cleanup EXIT; fi\n        lm_cursor_read'
+      else
+        CLEANUP_INDENT='    '
+        [ "$CLEANUP_VERB" != wait ] || CLEANUP_INDENT='        '
+        CLEANUP_OLD=$'\n'"${CLEANUP_INDENT}"'orch_take_lock 9 "$CURSOR.lock" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$CURSOR.lock"; }'
+        CLEANUP_NEW=$'\n'"${CLEANUP_INDENT}"'orch_take_lock 9 "$CURSOR.lock" 30 || { if false; then trap lm_cleanup EXIT; fi; refuse lock-failed "$CURSOR.lock"; }'
+        mutate_file "$CLEANUP_SCRIPT" "$CLEANUP_OLD" "$CLEANUP_NEW"
+      fi
+    fi
+    new_lane "cleanup_${row/:/_}_$variant"
+    lm ask --item KEN-1 --file "$(text cleanup-ask 'Cleanup question')"
+    assert_eq "$RC" 0 "$row $variant: the shipped ask succeeds"
+    CLEANUP_ASK="${OUT#id=}"
+    lm send --item KEN-1 --root "$LANE" --re "$CLEANUP_ASK" --file "$(text cleanup-answer 'Cleanup answer')"
+    assert_eq "$RC" 0 "$row $variant: the shipped send answers the ask"
+    CLEANUP_MUTEX="$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock.d"
+    [ "$CLEANUP_RESULT" != failure ] || mkdir "$CLEANUP_MUTEX"
+    CLEANUP_ARGS=("$CLEANUP_VERB" --item KEN-1)
+    [ "$CLEANUP_VERB" != wait ] || CLEANUP_ARGS+=(--id "$CLEANUP_ASK" --timeout 1 --interval 1)
+    flockless_leftovers "${row/:/-}-$variant" "$CLEANUP_SCRIPT" "${CLEANUP_ARGS[@]}"
+    if [ "$variant" = real ]; then
+      assert_eq "$FLOCKLESS" "$CLEANUP_EXPECT=0" "$row: no-flock cursor locking leaves no work directory" "$TMP_ROOT/flockless.err"
+    else
+      CLEANUP_ASSERT_RC=0
+      (FAIL=0; assert_eq "$FLOCKLESS" "$CLEANUP_EXPECT=0" "$row: no-flock cursor locking leaves no work directory"; \
+        [ "$FAIL" -eq 0 ]) >"$TMP_ROOT/cleanup-control.out" || CLEANUP_ASSERT_RC=$?
+      assert_eq "$CLEANUP_ASSERT_RC" 1 "$row: removing cleanup makes the leak assertion fail"
+      assert_eq "$FLOCKLESS" "$CLEANUP_EXPECT=1" "$row: the control retains a work directory with the same command status"
+    fi
+    if [ "$CLEANUP_RESULT" = failure ]; then
+      assert_file_contains "$TMP_ROOT/flockless.err" "lane-mail: lock-failed=${CLEANUP_MUTEX%.d}" \
+        "$row $variant: refusal names the cursor lock"
+      if [ -d "$CLEANUP_MUTEX" ]; then
+        pass "$row $variant: cleanup preserves another holder's mutex"
+      else
+        fail "$row $variant: cleanup removed another holder's mutex"
+      fi
+    else
+      if [ "$CLEANUP_VERB" = wait ]; then
+        assert_eq "$FLOCKLESS_OUT" 'Cleanup answer' "$row $variant: wait returns the shipped answer"
+      else
+        assert_eq "$(jq -r '.text' <<<"$FLOCKLESS_OUT")" 'Cleanup answer' "$row: inbox returns the shipped answer"
+      fi
+      if [ -d "$CLEANUP_MUTEX" ]; then
+        fail "$row $variant: the command retained its cursor mutex"
+      else
+        pass "$row $variant: the command releases its cursor mutex"
+      fi
+    fi
+  done
+done
 
 # The remote root exists nowhere on this disk, so a case that silently fell
 # back to the local root would read an empty mailbox instead.

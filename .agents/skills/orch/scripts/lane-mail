@@ -2012,7 +2012,8 @@ case "$VERB" in
       if [ -s "$WORK_DIR/match" ]; then
         : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
         exec 9>>"$CURSOR.lock"
-        orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
+        orch_take_lock 9 "$CURSOR.lock" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$CURSOR.lock"; }
+        trap lm_cleanup EXIT
         lm_cursor_read
         ANSWER_ID="$(awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.id')"
         jq -rR '(fromjson? // null) | if type == "object" then .id // "" else "" end' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/ids"
@@ -2051,7 +2052,7 @@ case "$VERB" in
     # would be a lock on an inode the next reader no longer opens.
     : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
     exec 9>>"$CURSOR.lock"
-    orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
+    orch_take_lock 9 "$CURSOR.lock" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$CURSOR.lock"; }
     trap lm_cleanup EXIT
     lm_cursor_read
     # A mailbox read before its first line still leaves a count behind: the
