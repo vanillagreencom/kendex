@@ -1743,10 +1743,21 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
 # command its mode runs in these projects, a log whose first line names the
 # runner, the paths it read and a sentinel the bound wrote. Planted under a
 # name that sorts before or after the real runs, as each row needs.
+# Its class and docs verdict are the micro, non-docs ones the bound rows'
+# classifier stub answers, unless START_LINE names its own.
 plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE] [START_LINE]
   local dir="$1/tmp/dev-validate-$2"
   mkdir -p "$dir"
-  printf 'validate-mode=%s\ntimeout-secs=%s\nhead=\n%s\n' "$3" "$5" "${7:-}" > "$dir/start"
+  printf 'validate-mode=%s\ntimeout-secs=%s\nhead=\n' "$3" "$5" > "$dir/start"
+  case "${7:-}" in
+    class=*) ;;
+    *) printf 'class=micro\n' >> "$dir/start" ;;
+  esac
+  case "${7:-}" in
+    *docs-only=*) ;;
+    *) printf 'docs-only=false\n' >> "$dir/start" ;;
+  esac
+  printf '%s\n' "${7:-}" | tr ' ' '\n' >> "$dir/start"
   printf 'echo %s' "$3" > "$dir/cmd"
   printf 'runner=setsid\n%s\n' "${6:-echo-note: suites=all}" > "$dir/log"
   tr , '\n' <<<"$4" > "$dir/paths"
@@ -1787,6 +1798,8 @@ BOUND_ROWS=(
   "a bound-ended run under a lower bound is no evidence|docs/a.md|full|docs/a.md|10|||--|full|$OK|full|"
   "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
   "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
+  "a bound-ended run handed another class is no evidence|docs/a.md|full|docs/a.md|20||class=standard|--|full|$OK|full|"
+  "a bound-ended run handed another docs verdict is no evidence|docs/a.md|full|docs/a.md|20||docs-only=true|--|full|$OK|full|"
 )
 bound_rows() { # SCRIPT [LABEL]
   local row label paths pmode ppaths psecs plog pstart args
@@ -1829,6 +1842,10 @@ bound_control 'answered runs taken as evidence' $'    [[ -z "$(start_field "$sta
   "a run an earlier run's bound answered, which ran nothing, is no evidence"
 bound_control '--fresh unread' ' && "$fresh" == false' '' \
   'a fresh request runs its command whatever the evidence'
+bound_control 'no class rule' $'    [[ "$(start_field "$start_file" class)" == "$5" ]] || continue\n' '' \
+  'a bound-ended run handed another class is no evidence'
+bound_control 'no docs rule' $'    [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue\n' '' \
+  'a bound-ended run handed another docs verdict is no evidence'
 }
 # The range timeout, then a full request (another command, so it runs), then
 # a range request: the range request is answered by the range run, never
