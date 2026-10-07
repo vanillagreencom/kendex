@@ -119,6 +119,28 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 	]);
 });
 
+test("a kendex uninstall shows and runs kendex remove limited to the pi-extension kind", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { planUninstall, runUninstall } = await import("../extensions/manager/actions.ts");
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const log = join(rootTmp, "kendex.log");
+	writeCommand(join(bin, "kendex"), `printf '%s\\n' "$*" >> "${log}"`);
+	process.env.PATH = `${bin}:${process.env.PATH}`;
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["../packages/kpkg"] });
+	writeJson(join(userPi, ".kendex-source.json"), { kpkg: { source: "kendex" } });
+	writePackage(join(userPi, "..", "packages", "kpkg"), "kpkg");
+	const inv = await buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "kpkg")!;
+
+	const plan = planUninstall(item, inv, { cwd: project } as never)!;
+	expect([plan.method.kind, plan.command]).toEqual(["kendex", "kendex remove kpkg --kind pi-extension --global"]);
+	const removed = await runUninstall(plan, inv, live());
+	expect([removed.ok, removed.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: kendex-uninstalled=kpkg"]);
+	expect(readFileSync(log, "utf8")).toBe("remove kpkg --kind pi-extension --global\n");
+});
+
 test("npm actions report cwd preparation failures", async () => {
 	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const badCwd = join(rootTmp, "not-a-directory");

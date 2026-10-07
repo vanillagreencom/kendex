@@ -80,7 +80,7 @@ export function planUninstall(item: InventoryItem, inventory: Inventory, ctx: Ex
 		return {
 			item,
 			method: { kind: "kendex", packageName: item.packageName, scope: item.scope, cwd: ctx.cwd },
-			command: `kendex remove ${item.packageName}${scopeFlag}`,
+			command: `kendex remove ${item.packageName} --kind pi-extension${scopeFlag}`,
 			description: "Installed via kendex — runs the kendex remove command (deletes the package directory, the settings.json entry, and the source-index entry).",
 		};
 	}
@@ -163,7 +163,7 @@ async function failedUninstall(item: InventoryItem, inventory: Inventory, remova
 export async function runUninstall(plan: UninstallPlan, inventory: Inventory, signal: AbortSignal): Promise<ActionResult> {
 	if (!host.packageActions) return { ok: false, message: managerNotice("uninstall-unsupported", plan.item.id, "Package uninstall is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
-		const args = ["remove", plan.method.packageName];
+		const args = ["remove", plan.method.packageName, "--kind", "pi-extension"];
 		if (plan.method.scope === "user") args.push("--global");
 		const kendexFailure = await runPackageCommand("kendex-uninstall", "kendex", args, plan.method.cwd, signal);
 		if (kendexFailure) return { ok: false, message: kendexFailure };

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Uninstalling a package installed through kendex runs `kendex remove <name> --kind pi-extension`, so a skill, hook or other item with the same name in that scope is no longer removed with it.
+
 ### 3.0.5
 
 - Package updates and uninstalls no longer freeze the terminal. They run under a progress window where Escape cancels them, and stop after 10 minutes. Cancelling, the deadline or ending the session stops npm or kendex and every process it started, including the npm kendex runs; the failure notice says when a process could not be reached.
