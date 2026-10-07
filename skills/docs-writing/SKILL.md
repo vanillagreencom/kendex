@@ -11,17 +11,17 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "3.0.8"
+  version: "3.0.9"
 tags: [docs]
 ---
 
 # Docs Writing
 
-A repository's markdown holds what the code cannot show: the principle behind a design, the rule an agent could break without noticing, a decision with its reason, a convention that differs from a tool default, and a pointer to the canonical code. Everything else lives in the code, its comments, the tests and git history.
+A repository's internal design documentation holds what the code cannot show: the principle behind a design, the rule an agent could break without noticing, a decision with its reason, a convention that differs from a tool default, and a pointer to the canonical code. Everything else lives in the code, its comments, the tests and git history.
 
 This skill governs repository markdown and documentation HTML. It states one writing standard, one repository layout, what each file type holds, and the finished example an author reads before writing one.
 
-Two exclusions hold in every file: a list a declaration file or a checker already holds is not copied into prose, and a claim that a checker enforces something names the checker.
+Do not hand-copy code-owned inventories or defaults. A reference may define a contract not declared elsewhere, or explain semantics beside a link to its declaration. A generated reference may show declared values. A claim that a checker enforces something names the checker.
 
 ## The standard
 
@@ -45,7 +45,7 @@ Two exclusions hold in every file: a list a declaration file or a checker alread
 
 ## Layout
 
-Every repository converges on this layout. A rewrite moves what it finds onto it. A repository departs from it only under a decision record that names the need and the owner who approved the departure; a rewrite keeps what that record covers and cites it.
+This is the default repository layout. A rewrite moves what it finds onto it. A material departure needs an owner-approved decision under the decider bar. A supported naming or location variant needs no separate decision. A rewrite keeps and cites an approved departure.
 
 | Path | Reader | Holds | Required |
 |---|---|---|---|
@@ -57,22 +57,24 @@ Every repository converges on this layout. A rewrite moves what it finds onto it
 | `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
 | `<dir>/AGENTS.md`, with its `<dir>/CLAUDE.md` import line | an agent working in that folder | the folder's commands, its do and never rules, and the principle doc that governs it | where a folder has its own rules |
 | `docs/architecture/<name>.md` | an agent about to do the work the doc governs | one principle: the approach, why, the rules, one code example | where a principle exists |
-| `docs/decisions/INDEX.md` and `D###-<slug>.md` | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
+| `docs/decisions/INDEX.md` and `<DECISION_ID>-<slug>.md` (names and locations follow decider) | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
 | `docs/images/` | a reader of a README or doc | the screenshots and images those files show | when used |
 | `docs/runbook.md` | an operator | step-by-step procedures for a running system | operated systems |
-| `.github/instructions/*.instructions.md` | the Copilot review bot | review rules per path, written by kendex | yes, written by kendex |
+| `.github/copilot-instructions.md` | Copilot features that support repository instructions, including code review | repository instructions and the review pointer; bot-instructions owns the render | yes, written by kendex |
+| `.github/instructions/*.instructions.md` | Copilot features that support matching path instructions | path rules; bot-instructions owns the render and cloud-agent exclusion | yes, written by kendex |
+| `.github/instructions/code-review.md` | review agents following the generated pointer | shared review doctrine; bot-instructions owns the render, not a native Copilot instruction file | yes, written by kendex |
 
 Nothing else lives under `docs/`. A plan, a research report, a measurement or a handoff is tracker or `tmp/` content (§ Plans and research). Product content a repository ships to its users, such as a help site, legal pages or an adapter reference, stays and is named in that repository's `AGENTS.md`. A skill's reference docs stay in its `references/`.
 
 ### Reference rules
 
-- The root `AGENTS.md` lists each principle doc with its trigger, one line each: "Before writing a plugin: `docs/architecture/plugins.md`".
+- The root `AGENTS.md` gives each principle doc a task trigger, or routes to a nested `AGENTS.md` that gives the local trigger: "Before writing a plugin: `docs/architecture/plugins.md`".
 - A nested `AGENTS.md` names the principle doc for its folder. Codex reads every `AGENTS.md` on the path to the working directory, Claude Code reads the nested `CLAUDE.md` import, and Copilot reads the nested file when it opens files there.
 - The Copilot review instruction files point the review bot at the same principle docs for the matching paths; the bot-instructions skill renders them.
 - Decision records are not listed in `AGENTS.md`. Review and dev workflows find them by keyword with `decisions search`, and a code comment cites a decision ID only where that code carries out the choice.
 - A code comment holds a local reason or an external cause at its site, per the code-quality skill's SKILL.md § Comments and Prose, and nothing points to it.
 - A README links to a doc only when a person needs it, such as "Writing a plugin".
-- A doc is referenced when a "Read when" line names the task that triggers reading it. A filename in a list, a link from another doc or a mention in prose is not a route: a link proves only that the file can be found. Three files need no route and get none: a topic index, which lists other docs and is deleted because the "Read when" lines are the index; an example a tool generates, which its generator inventories; and a human page a site loads at run time, which `AGENTS.md` names as product content.
+- An architecture topic document is referenced when a "Read when" line names the task that triggers reading it. A filename in a list, a link from another doc or a mention in prose is not a task route. Delete an architecture topic index that only repeats these routes. This rule does not replace decision discovery, skill reference loading or human navigation. Keep the decider index. Generated examples use their generator inventory; human pages a site loads use the product-content declaration in `AGENTS.md`.
 
 ## Per file type
 
@@ -95,11 +97,11 @@ Another section only where the thing needs it. Never: internal vocabulary, invar
 
 ### `AGENTS.md`
 
-Read by every harness at the start of every session. What the repo is in two or three sentences; the commands not discoverable from the tooling; the conventions that differ from a tool default or a language norm; one "Read when" line per principle doc and per nested `AGENTS.md`. Codex reads only the root-to-cwd chain of `AGENTS.md` files, so everything a Codex session must know is on that chain. Never: anything derivable from the code, rationale, history. Example: [examples/root-agents.md](examples/root-agents.md).
+Read by every harness at the start of every session. What the repo is in two or three sentences; the commands not discoverable from the tooling; the conventions that differ from a tool default or a language norm; task triggers for principle docs, directly or through named nested `AGENTS.md` files. Keep only rules no linked principle doc owns; route to that doc instead of repeating its rules. Codex reads only the root-to-cwd chain of `AGENTS.md` files. Before changing a directory, read its applicable nested instructions even when the harness did not load them. Never: anything derivable from the code, rationale, history. Example: [examples/root-agents.md](examples/root-agents.md).
 
 ### `<dir>/AGENTS.md`
 
-Read by an agent working in that folder. The folder's own commands and its do and never rules, with no rationale, and the principle doc behind them. Claude Code does not read it itself: kendex writes a `<dir>/CLAUDE.md` import line beside it. Folder rules live here; a cross-folder idea with its why lives in `docs/architecture/`. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
+Read by an agent working in that folder. Keep the folder's commands and rules no linked principle doc owns, with no rationale. Give a task trigger for that doc instead of repeating its rules. An approach belongs in architecture when one reader's task needs it to prevent a harmful mistake, whatever folders the task crosses. [Claude Code supports direct AGENTS.md loading](https://code.claude.com/docs/en/memory#agents-md) from [v2.1.277](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21277), subject to its instruction settings and session limits. Kendex keeps the generated `<dir>/CLAUDE.md` import so the same source also loads in sessions without direct support. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
 
 ### `CLAUDE.md`
 
@@ -130,15 +132,15 @@ Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), 
 
 ### One home per fact
 
-A fact has exactly one home. Ask the questions in order and stop at the first yes:
+For an internal design claim, ask the questions below in order and stop at the first yes. First classify user help, operating steps, skill procedures and reference contracts by their file-type section.
 
-1. Is it one option kept over a named rejected alternative, whose reason the code cannot show and which a doc's rules cite rather than restate? A decision record: the choice, why, the rejected option and the revisit trigger, under the decider bar. Example: [examples/decision.md](examples/decision.md), one dismiss owner kept over per-component handling, cited by the design-system doc's rule.
-2. Is it the approach one reader's task runs under, or a rule followed while doing it? An architecture doc: the approach, its why and its rules, citing any decision it rests on by ID and never restating it. Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another; [examples/architecture-design-system.md](examples/architecture-design-system.md), every value a component draws comes from the token file.
+1. Is it one option kept over a named rejected alternative, whose reason the code cannot show and whose reasons and alternatives a doc's rules cite rather than repeat? A decision record: the choice, why, the rejected option and the revisit trigger, under the decider bar. Example: [examples/decision.md](examples/decision.md), one dismiss owner kept over per-component handling, cited by the design-system doc's rule.
+2. Is it the approach one reader's task runs under, or a rule followed while doing it? An architecture doc: the approach, its why and its rules, stating the current actionable rule and citing any decision it rests on by ID without repeating its reasons or alternatives. Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another; [examples/architecture-design-system.md](examples/architecture-design-system.md), every value a component draws comes from the token file.
 3. Neither. A feature's behaviour, what a page, key or button does, lives in the code, its tests and the tracker item that asked for it. Counter-example: [examples/behaviour-spec.md](examples/behaviour-spec.md), a window written up control by control, with where each line goes.
 
 ### Decision records
 
-Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's; this skill ships no second format. A principle doc cites a decision by ID and never restates it. Example: [examples/decision.md](examples/decision.md).
+Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's; this skill ships no second format. A principle doc states the current actionable rule and cites the decision ID. It does not repeat the decision's reasons or alternatives. Example: [examples/decision.md](examples/decision.md).
 
 ### `DEVELOPMENT.md`
 
@@ -146,11 +148,11 @@ Read by a maintainer, human or agent, working on the package itself. How to buil
 
 ### `SKILL.md`, `workflows/*.md`, `agents/*.md`
 
-Read by an agent on every load. The shortest unambiguous rule, and the commands. A rule another file owns is cited, never restated. Never: mechanics, rationale, history, worked examples. Rationale moves to a decision record or a comment at the code. Example: [examples/skill-entry.md](examples/skill-entry.md).
+Read by an agent when the task loads the file. `SKILL.md` gives activation, essential rules and reading routes. Workflows hold executable task steps. Agent files hold the role's rules. References hold detailed contracts and conditional instructions for a named task. Worked examples live in named supporting files. Give each supporting file an explicit reading trigger. Cite a rule another file owns. Never: implementation narration, rationale or history. Rationale belongs in an admitted principle doc, a decision under decider's bar or a comment at the code. Example: [examples/skill-entry.md](examples/skill-entry.md).
 
 ### Reference docs
 
-Read by an agent or maintainer looking up one value: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Tables and lists, one row per item; the value or the shape the contract fixes, its meaning, and its default; the semantics a reader needs to produce or consume that shape, and no more. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named reader loads it: a skill, an agent, a workflow or a maintainer task that names the file. Example: [examples/reference.md](examples/reference.md).
+Read by an agent or maintainer looking up a contract or task detail: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Use tables, lists, schemas and necessary examples. A reference owns a contract not declared elsewhere, or explains its meaning beside a link to the declaration that owns the machine shape and defaults. A generated reference may show those declared values. Include only the semantics and conditional instructions its named task needs. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named reader loads it: a skill, an agent, a workflow or a maintainer task that names the file. Example: [examples/reference.md](examples/reference.md).
 
 ### Documentation HTML
 
@@ -168,7 +170,7 @@ The `changelog-entries` lane owns the shape, and its release-version rule, the c
 
 - Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
 - A constraint without an enforcer names review, an operator step, or the gap.
-- No document has a byte, line or count limit. The doc-limits check measures the files a harness loads every turn, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
+- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures the files a harness loads every turn, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
 
 ## Plans and research
 

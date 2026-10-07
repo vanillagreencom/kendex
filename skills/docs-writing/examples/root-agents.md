@@ -10,7 +10,6 @@ A Wayland desktop shell in QML and Python: a bar, a launcher and a notification 
 
 ## Conventions
 
-- A new surface or service is a plugin, never a core module.
 - Shell state lives under `~/.local/state/lumen/`; nothing under `config/` is written at run time.
 - A user-facing string goes through `t()`; a literal string in QML fails the `strings` lint lane.
 

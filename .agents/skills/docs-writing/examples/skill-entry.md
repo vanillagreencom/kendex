@@ -40,4 +40,4 @@ tags: [review]
 >
 > We tried letting each author pick sizes in July, and reviews disagreed about whether a layout broke. The 1.2 release fixed three sizes in `sizes.conf` (see LUM-880) and ...
 
-Rationale and history in a file loaded on every turn cost context every time; the reason goes in a decision record or a comment at `sizes.conf`, and the rule stays here.
+Rationale and history stay in context once the skill loads; the reason goes in a decision record or a comment at `sizes.conf`, and the rule stays here.

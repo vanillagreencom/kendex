@@ -19,7 +19,7 @@ Below the table: a Format Reference section with one link to this schema and one
 
 File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`, `ADR-0001-runtime-choice.md`. A `DECISION_ID` is a prefix plus numeric suffix; a project keeps one scheme (`D001` by default; keep `ADR-0001` where established).
 
-An active or superseded record has a document. A retired or removed record has none, except a one-line document kept where a citation outside the repository needs the path: the title, the back-link, `**Status**:` and one `**Decision**:` line. The commit-guards md-refs lane accepts an ID whose INDEX row exists with no document.
+An active, superseded or withdrawn significant record has a short document. A withdrawn record keeps the choice and its reason, with status `Withdrawn` and the reason for withdrawal in `**Why**:`. A removed routine record has no document, except a one-line document kept where a citation outside the repository needs the path: the title, the back-link, `**Status**:` and one `**Decision**:` line. The commit-guards md-refs lane accepts an ID whose INDEX row exists with no document.
 
 | Element | Format |
 |---------|--------|
@@ -29,7 +29,7 @@ An active or superseded record has a document. A retired or removed record has n
 | Status | `**Status**: [VALUE]` — see below |
 | Research | `**Research**: [REF]`: the issue or evidence link, or `—` when none |
 | Decision | `**Decision**:` what was chosen, stated explicitly |
-| Why | `**Why**:` the reason the code cannot show |
+| Why | `**Why**:` the constraints, accepted costs and material consequences the code cannot show; for a withdrawn decision, also the reason for withdrawal |
 | Rejected | `**Rejected**:` the main alternative and why it lost |
 | Revisit when | `**Revisit when**:` the condition that re-opens the choice |
 
@@ -44,7 +44,7 @@ Each `**Key**: value` line, metadata included, is its own paragraph, with one bl
 | `Active` | In effect — the default for a new decision |
 | `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded: the named components only |
 | `Superseded by [DECISION_ID]` | Fully replaced |
-| `Retired` | Withdrawn with no replacement; the row alone keeps the ID reserved, its Link cell following § INDEX.md |
+| `Withdrawn` | No longer in effect, with no replacement; keep the short document and withdrawal reason, and its INDEX link |
 | `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names, and the row alone keeps the ID reserved, its Link cell following § INDEX.md |
 
 A re-assessment that keeps the choice stays `Active` with its text rewritten; one that changes the choice is a new record that supersedes this one (`../workflows/update-decision.md`). `list` returns every decision whose status starts with `Active`, including partial supersessions.

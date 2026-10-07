@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.6.0"
+  version: "2.6.1"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -149,6 +149,6 @@ name = "docs-architecture"
 globs = ["docs/architecture/**"]
 reviewer_only = true
 instructions = """
-A file here is a principle doc: one cross-folder idea, with the approach, why, the rules and one canonical code example, written for an agent about to do the work it governs. Raise a thread only where it contradicts the code it describes as that code stands at this head: a path, symbol, setting, rule or enforcing check the doc states that the code does not bear out. Do not raise wording, structure or length, and do not ask it to walk through code, list files or tests, or record history, dates or measurements; those do not belong here. Do not ask for a doc here to change beside a code change unless the change makes a claim in it false.
+A file here is a principle doc: one reader's task and the harmful mistake it prevents, with the approach, why, the rules and one canonical code example, whatever folders that task crosses. Raise a thread only where it contradicts the code it describes as that code stands at this head: a path, symbol, setting, rule or enforcing check the doc states that the code does not bear out. Do not raise wording, structure or length, and do not ask it to walk through code, list files or tests, or record history, dates or measurements; those do not belong here. Do not ask for a doc here to change beside a code change unless the change makes a claim in it false.
 """
 ```
