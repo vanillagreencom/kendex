@@ -287,6 +287,93 @@ fn release_check(
         .unwrap()
 }
 
+struct ReleaseUpgrade {
+    name: &'static str,
+    shipped: &'static [&'static str],
+    candidate: &'static [&'static str],
+    prior_bundles: Option<(&'static str, &'static str)>,
+    candidate_bundles: Option<(&'static str, &'static str)>,
+    expected: &'static str,
+    controls: &'static [(&'static str, &'static str, &'static str)],
+}
+
+const UPGRADE_PASSES: &str = "exit=Some(0) result=pass legs=fresh,upgrade";
+const RELEASE_UPGRADES: &[ReleaseUpgrade] = &[
+    ReleaseUpgrade {
+        name: "settles",
+        shipped: &["review", "plan"],
+        candidate: &["review", "plan", "audit"],
+        prior_bundles: None,
+        candidate_bundles: None,
+        expected: UPGRADE_PASSES,
+        controls: &[],
+    },
+    ReleaseUpgrade {
+        name: "drops",
+        shipped: &["review", "plan"],
+        candidate: &["review"],
+        prior_bundles: None,
+        candidate_bundles: None,
+        expected: "exit=Some(1) leg=upgrade remedy=keep-package",
+        controls: &[
+            (
+                "if rendered.returncode != 0:",
+                "if False and rendered.returncode != 0:",
+                UPGRADE_PASSES,
+            ),
+            (
+                "source.symlink_to(catalog, target_is_directory=True)",
+                "source.symlink_to(prior, target_is_directory=True)",
+                UPGRADE_PASSES,
+            ),
+        ],
+    },
+    ReleaseUpgrade {
+        name: "prior refused",
+        shipped: &["review", "Bad_Name"],
+        candidate: &["review"],
+        prior_bundles: None,
+        candidate_bundles: None,
+        expected: "exit=Some(0) upgrade=skip cause=prior-uninstallable result=pass legs=fresh",
+        controls: &[(
+            "if prior_check.returncode != 0:",
+            "if False and prior_check.returncode != 0:",
+            "exit=Some(1) leg=upgrade remedy=keep-package",
+        )],
+    },
+    ReleaseUpgrade {
+        name: "renamed team bundle",
+        shipped: &["review", "plan"],
+        candidate: &["review", "plan"],
+        prior_bundles: Some(("team", "extra")),
+        candidate_bundles: Some(("renamed", "extra")),
+        expected: "exit=Some(1) leg=upgrade remedy=keep-package",
+        controls: &[(
+            "install(source, bundles)",
+            "install(source)",
+            UPGRADE_PASSES,
+        )],
+    },
+    ReleaseUpgrade {
+        name: "renamed extra bundle",
+        shipped: &["review", "plan"],
+        candidate: &["review", "plan"],
+        prior_bundles: Some(("team", "extra")),
+        candidate_bundles: Some(("team", "renamed")),
+        expected: "exit=Some(1) leg=upgrade remedy=keep-package",
+        controls: &[],
+    },
+    ReleaseUpgrade {
+        name: "keeps bundles",
+        shipped: &["review", "plan"],
+        candidate: &["review", "plan"],
+        prior_bundles: Some(("team", "extra")),
+        candidate_bundles: Some(("team", "extra")),
+        expected: UPGRADE_PASSES,
+        controls: &[],
+    },
+];
+
 /// The upgrade leg installs the prior catalog with each of its packages
 /// declared, then refreshes that project to the candidate. A candidate the
 /// engine settles there passes. One dropping a declared package fails there,
@@ -304,77 +391,25 @@ fn release_check(
 fn the_release_wrapper_refreshes_an_install_of_the_prior_catalog() {
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
     let original = std::fs::read_to_string(&tool).unwrap();
-    let dropped_passes = "exit=Some(0) result=pass legs=fresh,upgrade";
-    for (name, shipped, candidate, bundles, expected, controls) in [
-        (
-            "settles",
-            &["review", "plan"][..],
-            &["review", "plan", "audit"][..],
-            (None, None),
-            "exit=Some(0) result=pass legs=fresh,upgrade",
-            &[][..],
-        ),
-        (
-            "drops",
-            &["review", "plan"][..],
-            &["review"][..],
-            (None, None),
-            "exit=Some(1) leg=upgrade remedy=keep-package",
-            &[
-                (
-                    "if rendered.returncode != 0:",
-                    "if False and rendered.returncode != 0:",
-                    dropped_passes,
-                ),
-                (
-                    "source.symlink_to(catalog, target_is_directory=True)",
-                    "source.symlink_to(prior, target_is_directory=True)",
-                    dropped_passes,
-                ),
-            ][..],
-        ),
-        (
-            "prior refused",
-            &["review", "Bad_Name"][..],
-            &["review"][..],
-            (None, None),
-            "exit=Some(0) upgrade=skip cause=prior-uninstallable result=pass legs=fresh",
-            &[(
-                "if prior_check.returncode != 0:",
-                "if False and prior_check.returncode != 0:",
-                "exit=Some(1) leg=upgrade remedy=keep-package",
-            )][..],
-        ),
-        (
-            "renamed bundle",
-            &["review", "plan"][..],
-            &["review", "plan"][..],
-            (Some("team"), Some("renamed")),
-            "exit=Some(1) leg=upgrade remedy=keep-package",
-            &[(
-                "install(source, bundles)",
-                "install(source)",
-                dropped_passes,
-            )][..],
-        ),
-        (
-            "keeps bundles",
-            &["review", "plan"][..],
-            &["review", "plan"][..],
-            (Some("team"), Some("team")),
-            dropped_passes,
-            &[][..],
-        ),
-    ] {
+    for &ReleaseUpgrade {
+        name,
+        shipped,
+        candidate,
+        prior_bundles,
+        candidate_bundles,
+        expected,
+        controls,
+    } in RELEASE_UPGRADES
+    {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let prior = catalog_of(&home, "prior", shipped);
         let catalog = catalog_of(&home, "candidate", candidate);
-        for (path, bundle) in [(&prior, bundles.0), (&catalog, bundles.1)] {
-            if let Some(bundle) = bundle {
+        for (path, bundle) in [(&prior, prior_bundles), (&catalog, candidate_bundles)] {
+            if let Some((team, extra)) = bundle {
                 std::fs::write(
                     path.join("kendex.toml"),
-                    format!("is_source_catalog = true\n[bundles.{bundle}]\nskills = [\"review\"]\n[bundles.extra]\nskills = [\"plan\"]\n"),
+                    format!("is_source_catalog = true\n[bundles.{team}]\nskills = [\"review\"]\n[bundles.{extra}]\nskills = [\"plan\"]\n"),
                 )
                 .unwrap();
             }
