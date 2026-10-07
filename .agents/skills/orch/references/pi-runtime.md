@@ -31,7 +31,7 @@ A Pi lane uses the `pi-hooks` lane mail wake and arms no mailbox monitor ([watch
 | Scope | Recovery |
 |---|---|
 | `global` | Set `PI_CODING_AGENT_DIR` to the reported `root`; resolve a home-relative host root under that host home. Run `kendex update-pi --scope global`. |
-| `project` | Run `kendex update-pi --scope project` from the project containing `root`. In a linked worktree, `update-pi` refuses project writes and has no `--project-path` option. Have the install owner replace the carrier at `root/packages/@vanillagreen/pi-hooks` from its updated declared source. A global update does not repair this project carrier. |
+| `project` | Run `kendex update-pi --scope project` from the project containing `root`. In a linked worktree with no manifest of its own, `update-pi` refuses project writes and has no `--project-path` option. Have the install owner replace the carrier at `root/packages/@vanillagreen/pi-hooks` from its updated declared source. A global update does not repair this project carrier. |
 
 Repeat the original launch after repair. A hosted `create` already owns the item, so add `--relaunch`. `tests/open-terminal-harness-gate.sh` covers local recovery fields; `tests/open-terminal-record.sh` covers hosted recovery fields.
 

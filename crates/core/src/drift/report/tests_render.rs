@@ -101,8 +101,8 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 /// flag for it, and the verbs without one are marked as running somewhere
 /// else: a reader left with the drift line and no remedy has nothing to
 /// act on. A worktree carrying its own manifest is written by every bare
-/// verb typed in it, so no command names it and only `update-pi`, which
-/// the hook runs there at global scope alone, is marked.
+/// verb typed in it, `update-pi` included, so no command names it and none
+/// is marked.
 #[test]
 #[allow(clippy::too_many_lines)]
 fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_run() {
@@ -143,11 +143,11 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex apply --plan"),
         ),
         (
-            "update-pi, which runs in a linked worktree only at global scope",
+            "update-pi, which has no --project-path form and writes where it is typed",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
             elsewhere("kendex update-pi --scope project"),
-            elsewhere("kendex update-pi --scope project"),
+            here("kendex update-pi --scope project"),
         ),
         (
             "remove, which has none either and writes where it is typed",

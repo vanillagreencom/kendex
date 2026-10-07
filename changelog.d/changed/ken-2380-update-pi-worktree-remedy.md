@@ -1,0 +1,1 @@
+- `kendex check` in a linked worktree that carries its own manifest offers `kendex update-pi --scope project` as a fix that runs there, instead of marking it as one that has to run elsewhere.

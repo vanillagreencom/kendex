@@ -114,6 +114,11 @@ git -C "$MAIN" worktree add -q "$CATALOG_QUOTED" -b catalog-quoted
 printf '"is_source_catalog" = true\n' >"$CATALOG_QUOTED/kendex.toml"
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
+# Projects a --project-path can name: the main checkout's root and a folder
+# below it, the shared base no linked worktree sees, and one outside every
+# repository.
+printf 'schema = 6\n' >"$MAIN/kendex.toml"
+mkdir -p "$MAIN/app/.claude" "$OUTSIDE/app/.claude"
 # precondition: The outside rows prove the not-a-repository branch only where the fixture
 # root itself is outside every repository; a TMPDIR inside a checkout would
 # make them pass or fail for another reason.
@@ -430,13 +435,13 @@ a substitution in a heredoc body the shell expands runs too|2|block-worktree-ref
 a quoted delimiter stops the expansion, so the same body is data|0|-|cat \0074\0074'EOF'\n\0044(kendex refresh)\nEOF
 a hash after a backtick begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi \0140# <<EOF\nkendex refresh\nEOF\n\0140
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
-the named target on refresh passes: the write lands where the command says|0|-|kendex refresh --project-path /elsewhere
+a named target that does not exist passes: kendex refuses a path it cannot read before it writes|0|-|kendex refresh --project-path /elsewhere
 the named target on apply passes, spelled with an equals sign|0|-|kendex apply --project-path=/elsewhere
 the named target on updates --apply passes|0|-|kendex updates --apply --project-path /elsewhere
-a quoted target is still a target|0|-|kendex refresh --project-path "/else where"
+a quoted blank in the target is masked from the words, so the path is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path "/else where"
 the named target does not exempt a verb that has no such flag|2|block-worktree-refresh: refused=add|kendex add orch --project-path /elsewhere
 nor does it exempt remove|2|block-worktree-refresh: refused=remove|kendex remove orch --project-path /elsewhere
-the flag alone passes, a quoted value being cut into its own segment; kendex refuses a flag with no value|0|-|kendex refresh --project-path
+the flag alone names no path, so the target is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path
 a target on an earlier command does not exempt a later write|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path /elsewhere && kendex refresh
 a target before the verb is a root option the CLI drops and exempts nothing|2|block-worktree-refresh: refused=refresh|kendex --project-path /elsewhere refresh
 a redirection target spelling --global is a file, not the scope|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --global
@@ -464,7 +469,10 @@ an expansion after --project-path leaves the target named|0|-|kendex refresh --p
 a backslash leaves the words unsure, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global ./a\\ b
 a > behind a quote may be quoted, so the word is unsure|2|block-worktree-refresh: refused=remove|kendex remove "a>b" --global
 a --scope whose value the segment does not hold is not the global scope|2|block-worktree-refresh: refused=refresh|kendex refresh --global --scope "global"
-the value spelled with an equals sign names a target whatever it holds|0|-|kendex refresh --project-path=\0044PWD -y
+a target the shell expands when it runs is unproven, spelled with an equals sign|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path=\0044PWD -y
+and spelled as the next word|2|block-worktree-refresh: unproven=apply|kendex apply --project-path \0044PWD
+a target a command substitution prints is cut out of the words, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path "\0044(pwd)"
+a leading ~ is the shell's to expand, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path ~/app
 an expansion before --project-path= may be --, so no target is named|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --project-path=/elsewhere
 --scope project before -g keeps the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project -g
 --scope=project before --global keeps it too|2|block-worktree-refresh: refused=refresh|kendex refresh --scope=project --global
@@ -505,7 +513,24 @@ a bare refresh there writes that worktree, the one project it can, and passes|pa
 a bare apply there passes|payload|own|0|-|kendex apply
 a bare updates --apply there passes|payload|own|0|-|kendex updates --apply
 refresh there naming its target passes too|payload|own|0|-|kendex refresh --project-path $OWN
-update-pi there is refused as before|payload|own|2|block-worktree-refresh: refused=update-pi|kendex update-pi
+update-pi there writes that worktree, the one project it can, and passes|payload|own|0|-|kendex update-pi
+and at the project scope spelled out|payload|own|0|-|kendex update-pi --scope project
+update-pi in a catalog worktree with its own kendex-local.toml passes|payload|catalog-local|0|-|kendex update-pi
+update-pi in a worktree with no manifest of its own is refused|payload|worktree|2|block-worktree-refresh: refused=update-pi|kendex update-pi
+a target naming the main checkout is the shared base, the refresh owner's write|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path $MAIN
+and from a worktree that owns its manifest too|payload|own|2|block-worktree-refresh: shared=apply|kendex apply --project-path $MAIN
+a project below the main checkout's root is the shared base too|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply --project-path $MAIN/app
+a relative target is resolved from the working directory|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path ../main
+an absolute target after a cd is still read from the words|payload|own|2|block-worktree-refresh: shared=refresh|cd $OWN && kendex refresh --project-path $MAIN
+a relative target after a cd resolves against a directory the words do not establish|payload|own|2|block-worktree-refresh: unproven=refresh|cd $OWN && kendex refresh --project-path .
+a target in another worktree that owns its manifest passes|payload|worktree|0|-|kendex refresh --project-path $OWN
+a relative target naming its own worktree passes|payload|own|0|-|kendex refresh --project-path .
+a target with no manifest of its own in its worktree inherits the main checkout's|payload|own|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path $OWN/marked
+a target that is no project root passes: kendex refuses it before it writes|payload|worktree|0|-|kendex refresh --project-path $OWN/sub
+a target in another repository's main checkout passes: it is not this one's shared base|payload|worktree|0|-|kendex refresh --project-path $HOST
+a target outside every repository passes|payload|worktree|0|-|kendex refresh --project-path $OUTSIDE/app
+from the main checkout an unproven target passes: the refresh owner writes the shared base|payload|main|0|-|kendex refresh --project-path "\$(pwd)"
+and so does the main checkout named|payload|main|0|-|kendex refresh --project-path $MAIN
 update-pi --scope global there passes|payload|own|0|-|kendex update-pi --scope global
 a skill named refresh on an add there is an argument, and the add passes|payload|own|0|-|kendex add orch --skill refresh
 a global add before a bare refresh does not exempt the refresh, each segment judged on its own|payload|worktree|2|block-worktree-refresh: refused=refresh|kendex add -g orch && kendex refresh
@@ -547,11 +572,8 @@ assert_contains "$ERR_FILE" '--scope global (or --global)' 'while a verb taking 
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names the command that finds the main checkout'
 run_in "$WT" 'kendex source add x owner/repo'
 assert_contains "$ERR_FILE" '--scope global (or --global)' 'a source subcommand takes either, and the refusal names both'
-run_in "$OWN" 'kendex update-pi --scope project'
-assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=update-pi' 'update-pi at the project scope is refused where the project owns its manifest'
-assert_contains "$ERR_FILE" 'kendex update-pi --scope global' 'and the refusal offers the one form update-pi runs as in a linked worktree'
-assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'never a flag update-pi does not take'
-assert_not_contains "$ERR_FILE" 'main checkout' 'nor the main checkout, whose project is a different one'
+run_in "$WT" 'kendex update-pi'
+assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'and never a flag update-pi does not take'
 run_in "$OWN/marked" 'kendex add orch'
 assert_contains "$ERR_FILE" "$OWN/marked" 'the refusal names the project kendex would write, not the worktree root'
 set +e
@@ -614,8 +636,10 @@ run_with_cli "$OWN" 'kendex refresh' "$CLI_CALLS"
 assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'a passing command never runs the installed kendex'
 run_with_cli "$WT" 'kendex verify' "$CLI_CALLS"
 assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'nor does a read'
-run_with_cli "$OWN" 'kendex update-pi' "$CLI_CALLS"
-assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor does the update-pi refusal in a worktree that owns its manifest'
+run_with_cli "$WT" 'kendex update-pi' "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor does the update-pi refusal'
+run_with_cli "$WT" "kendex refresh --project-path $MAIN" "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor the refusal of a named target, which offers no flag'
 run_with_cli "$WT" 'kendex add orch' "$CLI_CALLS"
 assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor the refusal of a verb that takes no --project-path on any kendex'
 run_with_cli "$WT" 'kendex refresh' "$CLI_CALLS"
@@ -670,17 +694,50 @@ run_payload '{"tool_input":{"command":"kendex refresh"}}' "$NOGIT_BIN"
 assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: missing-tools=git' \
   'without git the guard refuses rather than skipping, and the value names git alone'
 
-echo "=== block-worktree-refresh: without the command reader it refuses ==="
-# The hook alone, with no commit-guards install within reach of it.
-mkdir -p "$TMP_ROOT/lone/hooks"
+echo "=== block-worktree-refresh: without the command reader ==="
+# The hook alone, with no commit-guards install within reach of it: an install
+# gap the caller cannot repair from the call. What cannot write another
+# checkout is allowed with the gap reported on stderr and handed to the model
+# as context on stdout; a kendex write word typed in a linked worktree the
+# main checkout's manifest declares, or one a move or a named target could
+# send elsewhere, is refused, and the main checkout is the caller's own fix.
+# The Copilot install is the copy under .github/hooks.
+mkdir -p "$TMP_ROOT/lone/hooks" "$TMP_ROOT/lone-copilot/.github/hooks"
 cp "$HOOK" "$TMP_ROOT/lone/hooks/block-worktree-refresh.sh"
-set +e
-json_for 'kendex verify' "$WT" | "$BASH_BIN" "$TMP_ROOT/lone/hooks/block-worktree-refresh.sh" >/dev/null 2>"$ERR_FILE"
-rc=$?
-set -e
-assert_eq "rc=$rc first=$(first_line)" \
-  'rc=2 first=block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh' \
-  'without the command-position library even a read is refused, and the value names the library'
+cp "$HOOK" "$TMP_ROOT/lone-copilot/.github/hooks/block-worktree-refresh.sh"
+OUT_FILE="$TMP_ROOT/stdout"
+# label|install|world|status|first line|context shape|command
+while IFS='|' read -r label install world expected first shape command; do
+  [ -n "$label" ] || continue
+  case "$world" in
+    worktree) dir="$WT" ;;
+    own) dir="$OWN" ;;
+    main) dir="$MAIN" ;;
+    outside) dir="$OUTSIDE" ;;
+    *) printf 'library table: unknown world: %s\n' "$world" >&2; exit 1 ;;
+  esac
+  set +e
+  json_for "$command" "$dir" | PATH="$CLI_WITH:$CLI_NONE" "$BASH_BIN" "$TMP_ROOT/$install/block-worktree-refresh.sh" >"$OUT_FILE" 2>"$ERR_FILE"
+  rc=$?
+  set -e
+  case "$shape" in
+    -) got=$(cat "$OUT_FILE") ;;
+    *) got=$(jq -r "$shape | split(\"\\n\")[0]" "$OUT_FILE" 2>&1) || got="unparsed: $(cat "$OUT_FILE")" ;;
+  esac
+  want=$first
+  [ "$shape" != - ] || want=""
+  assert_eq "rc=$rc first=$(first_line) context=$got" "rc=$expected first=$first context=$want" "$label"
+done <<ROWS
+a command naming no kendex passes silently|lone/hooks|worktree|0|-|-|git status
+a kendex read in a worktree the main checkout declares passes, the gap handed over as context|lone/hooks|worktree|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex verify
+and on Copilot as its top-level additionalContext|lone-copilot/.github/hooks|worktree|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.additionalContext|kendex verify
+a kendex write word there is refused: the caller's fix is the main checkout|lone/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh
+a write in a worktree that owns its manifest passes with the gap reported|lone/hooks|own|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex update-pi
+a move there may send the write elsewhere, so it is refused|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|cd $WT && kendex add orch
+and so may a named target|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh --project-path $MAIN
+a write from the main checkout passes with the gap reported|lone/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
+and outside every repository|lone/hooks|outside|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
+ROWS
 # A global Pi install sits four directories under the home, and a harness root
 # a setting relocated sits outside it; both find the reader in the home's
 # shared tree.
