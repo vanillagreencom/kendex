@@ -26,10 +26,11 @@ function coreFailure(result) {
   }
   const decision = response?.protocol === protocol ? response.resolution : undefined;
   if (decision?.tag === 'refused') {
-    const causes = (Array.isArray(decision.diagnostics) ? decision.diagnostics : [])
-      .map(d => d?.cause).filter(c => typeof c === 'string');
+    const code = selector(decision.code);
+    if (!Array.isArray(decision.diagnostics)) return new Error(`model-resolution: refused=${code} invalid=diagnostics`);
+    const causes = decision.diagnostics.map(d => d?.cause).filter(c => typeof c === 'string');
     const cause = causes.length === 0 ? '' : ` cause=${causes.join(',')}`;
-    return new Error(`model-resolution: refused=${selector(decision.code)}${cause}`);
+    return new Error(`model-resolution: refused=${code}${cause}`);
   }
   const line = result.stderr.trim().split('\n')[0];
   return new Error(`model-resolution: core-exit=${result.exitCode}${line === '' ? '' : ` stderr=${line}`}`);
@@ -40,9 +41,8 @@ function readResponse(result) {
   if (result.exitCode !== 0) throw coreFailure(result);
   if (result.isStdoutTruncated === true) throw new Error('model-resolution: invalid=truncated-response');
   const response = record(JSON.parse(result.stdout), 'response');
-  if (response.protocol !== protocol || response.harness !== 'claude') {
-    throw new Error('model-resolution: invalid=protocol');
-  }
+  if (response.protocol !== protocol) throw new Error('model-resolution: invalid=protocol');
+  if (response.harness !== 'claude') throw new Error('model-resolution: invalid=harness');
   if (response.warning !== undefined && typeof response.warning !== 'string') {
     throw new Error('model-resolution: invalid=warning');
   }
@@ -68,16 +68,20 @@ function readResponse(result) {
   return decided;
 }
 
-async function runtimeContext($, parentModel) {
+async function launchContext($) {
   const transport = await $.env.get('KENDEX_MODEL_CONTEXT');
   // This identity binds unknown facts to this native process. It grants no model access.
-  let context = transport === undefined ? {
+  return transport === undefined ? {
     protocol, harness: 'claude', account: 'native-session', host: 'native-process',
     providers: [], currentProvider: null,
     models: { tag: 'unsupported', source: 'claude:mods-model-list' },
     default: { tag: 'native-default' }, capacity: [], rejected: [],
-  } : record(JSON.parse(transport), 'launch-context');
-  context = { ...context };
+  } : { ...record(JSON.parse(transport), 'launch-context') };
+}
+
+// A kept default runs the root step on the session's model, so core judges that model.
+async function sessionContext($) {
+  const context = await launchContext($);
   let observed;
   try {
     observed = await $.session.model();
@@ -87,11 +91,9 @@ async function runtimeContext($, parentModel) {
   } catch (error) {
     context.models = { tag: 'failed', source: 'claude:session.model', cause: String(error) };
   }
-  const nativeModel = parentModel === undefined ? observed : parentModel;
-  context.default = typeof nativeModel === 'string' && nativeModel.length > 0 ? {
-    tag: 'observed-session-or-default', selector: nativeModel,
-    provider: null, id: null, account: context.account, host: context.host,
-    source: parentModel === undefined ? 'claude:session.model' : 'claude:agent.spawn.parentModel',
+  context.default = typeof observed === 'string' && observed.length > 0 ? {
+    tag: 'observed-session-or-default', selector: observed,
+    provider: null, id: null, account: context.account, host: context.host, source: 'claude:session.model',
   } : { tag: 'native-default' };
   return context;
 }
@@ -116,7 +118,8 @@ async function warn($, line) {
 export function register(on) {
   on('agent.spawn', async ($, e, next) => {
     const cwd = e.cwd === undefined ? await $.session.cwd() : selector(e.cwd);
-    const context = await runtimeContext($, e.parentModel);
+    // A kept default leaves the child on its declared alias, which Claude resolves; the parent's model is not the child's.
+    const context = { ...await launchContext($), default: { tag: 'native-default' } };
     const decided = await resolve($, ['--agent', selector(e.subagentType)], cwd, context, next);
     await warn($, decided.warning);
     // Without a selection the spawn goes on unchanged, so Claude applies the declared child's own alias.
@@ -127,7 +130,7 @@ export function register(on) {
     if (e.agentId !== undefined) return yield* next(e);
     const request = await $.env.get('KENDEX_MODEL_REQUEST');
     if (request === undefined) return yield* next(e);
-    const context = await runtimeContext($);
+    const context = await sessionContext($);
     const receipt = await $.env.get('KENDEX_MODEL_SELECTED_SELECTOR');
     context.selectorObservation = { priorSelector: receipt ?? null, currentSelector: e.model };
     const cwd = await $.session.cwd();

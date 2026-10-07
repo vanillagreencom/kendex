@@ -662,22 +662,24 @@ jobs:
       # step says why the build is this checkout's and why Linux alone, and
       # `orch-terminal`, for the disableAllHooks rows of
       # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
-      # checkout ships, and `review-gate`, for refresh-consumer's held-render
+      # checkout ships, `orch-rest`, for claude-model-classes.sh, whose core
+      # contract rows hold the Claude plugin's fixtures to this checkout's
+      # `tier-model`, and `review-gate`, for refresh-consumer's held-render
       # rows. The macOS legs keep the binary-dependent skips. A pull request
       # restores the cache and never saves it.
       - uses: dtolnay/rust-toolchain@stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
       - uses: Swatinem/rust-cache@v2
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         with:
           key: change-class-kendex
           save-if: ${{ github.event_name != 'pull_request' }}
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         run: |
           set -euo pipefail
           cargo build -p kendex-cli --locked
@@ -792,6 +794,23 @@ jobs:
       - name: orch suites — the lane, workflow-state and round-artifact suites
         if: matrix.shard == 'orch-state'
         run: bash skills/orch/tests/run-all.sh lane workflow-state dev review '!open-terminal' '!oversee'
+
+      # claude-model-classes.sh runs the orch Claude plugin under Claude Code
+      # and fails under CI where no claude is on PATH. The pin is at or above
+      # 2.1.287, the first release with the callbacks the plugin uses, and the
+      # npm package fetches its platform binary at install, so install scripts
+      # run; the version check fails here on a launcher without one.
+      - uses: actions/setup-node@v4
+        if: matrix.shard == 'orch-rest'
+        with:
+          node-version: 22.19.0
+      - name: Claude Code for the orch plugin suite
+        if: matrix.shard == 'orch-rest'
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.292
+          "$RUNNER_TEMP/claude-code/node_modules/.bin/claude" --version
+          echo "$RUNNER_TEMP/claude-code/node_modules/.bin" >> "$GITHUB_PATH"
 
       # The negation of every selector above, so this shard needs no roster
       # of its own and no suite can fall between the five.
