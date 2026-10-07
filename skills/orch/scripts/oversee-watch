@@ -248,8 +248,6 @@ case "$WORKFLOW_STATE_DIR" in
   /*) ;;
   *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
 esac
-WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
-FLEET_STATE_DIR="${OVERSEE_WATCH_FLEET_STATE_DIR:-$WORKFLOW_STATE_DIR}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # Two state files per fleet: the first repository's baseline, which the long
 # pass writes, and the mail pass's file beside it, which only the mail pass and
@@ -368,6 +366,17 @@ lane_window_listed() { # LANE
 }
 
 parse_argv "$@"
+
+FLEET_STATE_DIR="${OVERSEE_WATCH_FLEET_STATE_DIR:-$WORKFLOW_STATE_DIR}"
+if [[ -n "$STATE_FILE" ]]; then
+  FLEET_STATE_DIR="${STATE_FILE%/*}"
+  [[ "$FLEET_STATE_DIR" != "$STATE_FILE" ]] || FLEET_STATE_DIR=.
+  case "$FLEET_STATE_DIR" in
+    /*) ;;
+    *) FLEET_STATE_DIR="$PWD/$FLEET_STATE_DIR" ;;
+  esac
+fi
+WORKFLOW_STATE_ARGS=(--state-dir "$FLEET_STATE_DIR")
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
@@ -866,10 +875,8 @@ box_wait() { # PID SEEN
 # every sleep, since the pass would refuse it too.
 REPEAT_FIRST=1
 repeat_watch() { # ARGV...
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc fleet_state_dir delay
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc delay
   local box_seen
-  fleet_state_dir="${STATE_FILE%/*}"
-  [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
   check_repo_set
   while :; do
     fleet_merge
@@ -926,7 +933,7 @@ repeat_watch() { # ARGV...
     # pass did read cuts it short too, and the next pass reads the mailbox
     # once more; its full mail pass keeps the time the mail-pass row sets.
     box_seen="$(overseer_box_size)"
-    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
+    OVERSEE_WATCH_FLEET_STATE_DIR="$FLEET_STATE_DIR" \
       OVERSEE_WATCH_REPEAT_OWNER="$$" \
       OVERSEE_WATCH_SESSION="$WATCH_SESSION" \
       "$self" "${args[@]}" &

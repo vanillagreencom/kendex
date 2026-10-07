@@ -527,7 +527,7 @@ mutate_file "$PAUSE_WATCH" '| if $i == null then . else .lanes[$i].pauses += [{f
 assert_eq "$(WATCH_BIN="$PAUSE_WATCH" wall_then wall_control cleared)" "KEN-1: KEN-2:" \
   "control: without the pause write a wall that ended leaves the lane record with no walled time" "$ERR"
 
-# The pause lands in the fleet state the repeat wrapper names, not in
+# The pause lands in the fleet state --state names, not in
 # ORCH_STATE_DIR: the harness stub keeps one state whatever --state-dir says,
 # so this case runs the real workflow-state over two directories, the fleet
 # record only in the fleet one. It prints the fleet record's pauses and the
@@ -538,16 +538,16 @@ wall_in_fleet_dir() { # NAME
   orch="$STUB_DIR/orch" fleet="$STUB_DIR/fleet"
   mkdir -p -- "$orch" "$fleet"
   printf '{"triaged":[]}\n' > "$orch/workflow-state-oversee.json"
-  printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1"},{"item":"KEN-2","window":"gh-2"}]}\n' > "$fleet/workflow-state-oversee.json"
-  set -- TZ=UTC ORCH_STATE_DIR="$orch" OVERSEE_WATCH_FLEET_STATE_DIR="$fleet" \
+  printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1","status":"running"},{"item":"KEN-2","window":"gh-2","status":"running"}]}\n' > "$fleet/workflow-state-oversee.json"
+  set -- TZ=UTC ORCH_STATE_DIR="$orch" \
     OVERSEE_WATCH_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
   screen banner_idle
   printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-  run "$@"
+  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
   screen healthy
   next_pass
   printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
-  run "$@"
+  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
   printf '%s | %s\n' "$(jq -r "$PAUSES" "$fleet/workflow-state-oversee.json")" "$(jq -c . "$orch/workflow-state-oversee.json")"
 }
 assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "$WALL_PAUSE | {\"triaged\":[]}" \
@@ -559,6 +559,12 @@ mutate_file "$DIR_WATCH" '"$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" updat
   '"$WORKFLOW_STATE" --state-dir "$WORKFLOW_STATE_DIR" update oversee'
 assert_eq "$(WATCH_BIN="$DIR_WATCH" wall_in_fleet_dir wall_fleet_dir_control)" "KEN-1: KEN-2: | {\"triaged\":[]}" \
   "control: a pause written to ORCH_STATE_DIR leaves the fleet record with no walled time" "$ERR"
+
+STATE_WATCH="$(mutant_scripts state-dir/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/state-dir/github"
+mutate_file "$STATE_WATCH" 'FLEET_STATE_DIR="${STATE_FILE%/*}"' 'FLEET_STATE_DIR="$WORKFLOW_STATE_DIR"'
+assert_eq "$(WATCH_BIN="$STATE_WATCH" wall_in_fleet_dir wall_single_pass_control)" "KEN-1: KEN-2: | {\"triaged\":[]}" \
+  "control: ignoring --state leaves a single pass with no recorded wall pause" "$ERR"
 
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash
