@@ -19,12 +19,17 @@ TMP_ROOT="$(mktemp -d)" || { echo 'cloud-git-hooks-test: scratch=mktemp-failed' 
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'cloud-git-hooks-test: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'cloud-git-hooks-test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home"
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/no-jq-bin" "$TMP_ROOT/home"
 BASH_BIN="$(command -v bash)"
+ln -s "$(command -v git)" "$TMP_ROOT/no-jq-bin/git"
 cat >"$TMP_ROOT/bin/bash" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >>"$INSTALL_LOG"
-exec "$REAL_BASH" "$@"
+status=0
+output=$("$REAL_BASH" "$@" 2>&1) || status=$?
+printf '%s\n' "$output" >>"$INSTALL_REPORT"
+printf '%s\n' "$output"
+exit "$status"
 SH
 chmod +x "$TMP_ROOT/bin/bash"
 
@@ -41,7 +46,7 @@ JSON
 }
 
 remote_rows() {
-  local remote layout consent scope selection key repo before after rc check_rc repeat_rc expected row hook run_hook foreign before_foreign after_foreign label world
+  local remote layout consent scope selection key repo before after rc check_rc repeat_rc expected row hook run_hook foreign before_foreign after_foreign label world run_path
   world=$(mktemp -d "$TMP_ROOT/rows.XXXXXX") || exit 2
   # One table covers the harness flag, committed consent, install scope and
   # installer result. A missing skill can follow an incomplete checkout.
@@ -84,12 +89,17 @@ remote_rows() {
     fi
     [ "$layout" != hooks-path ] || git -C "$repo" config core.hooksPath ''
     INSTALL_LOG="$TMP_ROOT/installer.log"
+    INSTALL_REPORT="$TMP_ROOT/installer-report.log"
     : >"$INSTALL_LOG"
+    : >"$INSTALL_REPORT"
     before=$(tar -cf - -C "$repo/.git" hooks | cksum)
     rc=0
-    row=(env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+    run_path="$TMP_ROOT/bin:$PATH"
+    [ "$layout" != no-jq ] || run_path="$TMP_ROOT/no-jq-bin"
+    row=(env -i PATH="$run_path" HOME="$TMP_ROOT/home" \
       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-      INSTALL_LOG="$INSTALL_LOG" REAL_BASH="$BASH_BIN" CLAUDE_PROJECT_DIR="$repo")
+      INSTALL_LOG="$INSTALL_LOG" INSTALL_REPORT="$INSTALL_REPORT" \
+      REAL_BASH="$BASH_BIN" CLAUDE_PROJECT_DIR="$repo")
     [ "$remote" = unset ] || row+=(CLAUDE_CODE_REMOTE="$remote")
     if [ "$selection" = foreign ]; then
       foreign="$world/foreign-$remote-$layout-$consent-$scope"
@@ -104,11 +114,18 @@ remote_rows() {
     "${row[@]}" "$BASH_BIN" "$run_hook" </dev/null >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || rc=$?
     assert_eq "$rc" 0 "$label permits session start"
     assert_eq "$(cat "$TMP_ROOT/stderr")" '' "$label keeps failures in session context"
-    expected=-
-    [ "$key" = silent ] || expected="cloud-git-hooks: $key=$repo"
+    case "$key" in
+      silent) expected=- ;;
+      missing-tools) expected='cloud-git-hooks: missing-tools=jq' ;;
+      *) expected="cloud-git-hooks: $key=$repo" ;;
+    esac
     assert_eq "$(first_line "$TMP_ROOT/stdout")" "$expected" "$label reports its result first"
     after=$(tar -cf - -C "$repo/.git" hooks | cksum)
     if [ "$key" = silent ]; then
+      assert_eq "$(cat "$INSTALL_LOG")" '' "$label runs no installer"
+      assert_eq "$after" "$before" "$label leaves git hooks untouched"
+    elif [ "$key" = missing-tools ]; then
+      assert_eq "$(cause_below "$TMP_ROOT/stdout")" present "$layout explains the arming gap below its key"
       assert_eq "$(cat "$INSTALL_LOG")" '' "$label runs no installer"
       assert_eq "$after" "$before" "$label leaves git hooks untouched"
     elif [ "$key" = armed ]; then
@@ -131,7 +148,10 @@ remote_rows() {
         "$BASH_BIN" .git/hooks/commit-msg "$TMP_ROOT/message") >"$TMP_ROOT/message-result" 2>&1 || check_rc=$?
       assert_eq "$check_rc" 1 'armed commit-msg rejects a bad message'
     else
-      assert_eq "$(cause_below "$TMP_ROOT/stdout")" present "$layout reports the installer cause below its key"
+      assert_eq "$(test -s "$INSTALL_REPORT" && echo present || echo absent)" present "$layout captures a real installer report"
+      # Compare with the real child's output. The hook's own explanation
+      # cannot stand in for the installer's cause or remedy.
+      assert_eq "$(sed '1,2d' "$TMP_ROOT/stdout")" "$(cat "$INSTALL_REPORT")" "$layout replays the captured installer report below its explanation"
       assert_eq "$after" "$before" "$layout leaves git hooks untouched"
     fi
     if [ "$selection" = foreign ]; then
@@ -144,6 +164,9 @@ false|normal|committed|project|none|silent
 true|normal|committed|project|none|armed
 true|missing|committed|project|none|gap
 true|hooks-path|committed|project|none|gap
+true|no-jq|committed|project|none|missing-tools
+true|no-jq|no-settings|project|none|silent
+false|no-jq|committed|project|none|silent
 true|normal|absent|project|none|silent
 true|normal|no-settings|project|none|silent
 true|normal|unstaged|project|none|silent
@@ -176,6 +199,16 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control armed-check "$HOOK" \
     '    bash "$PROJECT_DIR/.agents/skills/commit-guards/scripts/install-git-hooks" --check) 2>&1' \
     ':' HOOK remote_rows 'true hooks-path committed project none reports its result first'
+  skill_load_control missing-jq "$HOOK" \
+    'if ! command -v jq >/dev/null 2>&1; then' \
+    'exit 0' HOOK remote_rows \
+    'true no-jq committed project none reports its result first' \
+    'no-jq explains the arming gap below its key'
+  skill_load_control installer-report "$HOOK" \
+    '  printf '\''cloud-git-hooks: gap=%s\n'\'' "$PROJECT_DIR"' \
+    'OUTPUT=""' HOOK remote_rows \
+    'missing replays the captured installer report below its explanation' \
+    'hooks-path replays the captured installer report below its explanation'
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

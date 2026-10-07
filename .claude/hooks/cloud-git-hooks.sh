@@ -33,6 +33,11 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY G
 if ! COMMITTED_SETTINGS=$(git -C "$PROJECT_DIR" show HEAD:.claude/settings.json 2>/dev/null); then
   exit 0
 fi
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'cloud-git-hooks: missing-tools=jq\n'
+  printf 'Committed session settings could not be checked. Git checks were not armed. Install jq before committing.\n'
+  exit 0
+fi
 if ! jq -e --arg target '"$CLAUDE_PROJECT_DIR/.claude/hooks/cloud-git-hooks.sh"' '
   any(.hooks.SessionStart[]?;
     .matcher == "startup|resume" and
