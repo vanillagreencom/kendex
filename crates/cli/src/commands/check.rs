@@ -41,7 +41,15 @@ pub fn run(
             }
             (Channel::Human(_), true) | (Channel::Json, _) => None,
         };
-        let mut checked = report::check(env, &scopes, mode);
+        let mut checked = report::check_with_refusals(env, &scopes, mode, |error| {
+            if matches!(
+                error,
+                kendex_core::error::CoreError::LockCorrupt { .. }
+                    | kendex_core::error::CoreError::LegacyProjectLock { .. }
+            ) {
+                ui::component_refusal(error);
+            }
+        });
         fold_commit_hooks(env, &mut checked, &scopes);
         checked
     };

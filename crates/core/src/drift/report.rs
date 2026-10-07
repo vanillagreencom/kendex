@@ -691,6 +691,23 @@ pub fn check(env: &Env, scopes: &[Scope], mode: crate::drift::copies::CheckMode)
     check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET, mode)
 }
 
+/// [`check`] with the original lock refusals for a caller's error channel.
+/// The report's bounded text cannot carry a machine-readable refusal line.
+pub fn check_with_refusals(
+    env: &Env,
+    scopes: &[Scope],
+    mode: crate::drift::copies::CheckMode,
+    refusal: impl FnMut(&crate::error::CoreError),
+) -> CheckReport {
+    check_within_and_refusals(
+        env,
+        scopes,
+        crate::drift::hook::DEEP_PASS_BUDGET,
+        mode,
+        refusal,
+    )
+}
+
 /// [`check`] with the deep read's budget stated: what a caller that has to
 /// see the budget run out asks for. One deadline is set from it before
 /// the first scope, so the budget bounds the check as a whole and not
@@ -700,6 +717,16 @@ pub fn check_within(
     scopes: &[Scope],
     budget: std::time::Duration,
     mode: crate::drift::copies::CheckMode,
+) -> CheckReport {
+    check_within_and_refusals(env, scopes, budget, mode, |_| {})
+}
+
+fn check_within_and_refusals(
+    env: &Env,
+    scopes: &[Scope],
+    budget: std::time::Duration,
+    mode: crate::drift::copies::CheckMode,
+    mut refusal: impl FnMut(&crate::error::CoreError),
 ) -> CheckReport {
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
@@ -759,6 +786,9 @@ pub fn check_within(
             global_manifest_named: &global_manifest_named,
         };
         let outcome = check_scope(&ctx, &mut sections, &mut oldest_age);
+        if let Some(error) = outcome.lock_refusal {
+            refusal(&error);
+        }
         // A check covers at most one project scope, so one target answers
         // for every project remedy in the report.
         if !global {

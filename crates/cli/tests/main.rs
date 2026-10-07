@@ -48,6 +48,7 @@ mod installer;
 mod instruction_shims_cli;
 mod lane_refresh;
 mod lock_record;
+mod lock_version_refusal;
 mod marketplace_author;
 mod marketplace_cli;
 mod missing_remedy;

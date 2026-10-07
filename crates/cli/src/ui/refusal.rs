@@ -122,10 +122,9 @@ fn parts(headline: &str, error: &(dyn std::error::Error + 'static)) -> (String, 
     (escaped(headline), body)
 }
 
-/// Whether this error wrote the breaks it holds: core's manifest refusal,
-/// which names one finding per line; its TOML refusal, which carries the
-/// parser's caret under the source line it points at; and the CLI's own
-/// [`Lines`] and its skipped-on-conflict close, one keyed line per item.
+/// Whether this error wrote the breaks it holds. Lock refusals keep their
+/// machine line separate from the English remedy, with paths and JSON
+/// diagnostics escaped where they are composed.
 ///
 /// Both core errors escape the path they name where they compose it, and
 /// neither escapes the rest — a `Finding` escapes its own three parts, and
@@ -138,7 +137,12 @@ fn owns_its_breaks(error: &(dyn std::error::Error + 'static)) -> bool {
         || error.is::<crate::commands::ledger::SkippedOnConflict>()
         || matches!(
             error.downcast_ref::<CoreError>(),
-            Some(CoreError::ManifestInvalid { .. } | CoreError::TomlParse { .. })
+            Some(
+                CoreError::ManifestInvalid { .. }
+                    | CoreError::TomlParse { .. }
+                    | CoreError::LockCorrupt { .. }
+                    | CoreError::LegacyProjectLock { .. }
+            )
         )
 }
 
@@ -215,6 +219,32 @@ mod tests {
                 "    ",
             ]
         );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn lock_version_lines_keep_path_controls_inside_the_path() {
+        let path = std::path::PathBuf::from("scope\nforged\u{1b}[31m/.kendex-lock.json");
+        for (record, found) in [
+            (r#"{"version":5}"#, "5"),
+            (r#"{}"#, "none"),
+            (r#"{"version":10}"#, "10"),
+        ] {
+            let error = kendex_core::lock::parse_text(&path, record).unwrap_err();
+            let rendered = component_lines(&crate::ui::testing::plain(), &error);
+            let keyed: Vec<_> = rendered
+                .iter()
+                .filter(|line| line.starts_with("lock-version-refused "))
+                .collect();
+            assert_eq!(
+                keyed,
+                [&format!(
+                    "lock-version-refused found={found} expected={} path=scope\\nforged\\u{{1b}}[31m/.kendex-lock.json",
+                    kendex_core::lock::LOCK_VERSION
+                )]
+            );
+            assert!(rendered.iter().all(|line| !line.contains(['\n', '\u{1b}'])));
+        }
     }
 
     /// The whole table the door is chosen from. Nothing else may reach the

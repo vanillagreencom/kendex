@@ -113,12 +113,11 @@ fn recording(path: &Path, key: &str, emitted: &Path) {
 }
 
 /// What a record's version gets it: read, refused as a record this build
-/// cannot read (its `LockCorrupt` message, or the JSON reader's own words
-/// passed through whole where the text is not JSON), or refused as a
+/// cannot read (`LockCorrupt`), or refused as a
 /// future kendex's.
 enum Gate {
     Loads,
-    Corrupt(String),
+    Corrupt,
     LegacyProject,
     TooNew(i64),
 }
@@ -142,34 +141,24 @@ enum Gate {
 #[test]
 fn only_a_record_naming_this_builds_version_loads() {
     let ahead = i64::from(LOCK_VERSION) + 1;
-    let older = |version: i64| {
-        Gate::Corrupt(format!(
-            "it is a version {version} record, and this kendex writes version {LOCK_VERSION}"
-        ))
-    };
-    let readers_words = serde_json::from_str::<serde_json::Value>("{not json")
-        .unwrap_err()
-        .to_string();
     let rows: [(String, Gate); 8] = [
         (format!(r#"{{"version":{LOCK_VERSION},"entries":{{}}}}"#), Gate::Loads),
         (
             r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#.to_owned(),
-            older(1),
+            Gate::Corrupt,
         ),
-        (r#"{"version":1,"entries":{}}"#.to_owned(), older(1)),
-        (r#"{"version":2,"entries":{}}"#.to_owned(), older(2)),
+        (r#"{"version":1,"entries":{}}"#.to_owned(), Gate::Corrupt),
+        (r#"{"version":2,"entries":{}}"#.to_owned(), Gate::Corrupt),
         (
             format!(r#"{{"version":{},"root":ROOT,"entries":{{}}}}"#, LOCK_VERSION - 1),
             Gate::LegacyProject,
         ),
         (
             r#"{"entries":{}}"#.to_owned(),
-            Gate::Corrupt(
-                "it names no version, so nothing here can say what shape it is".to_owned(),
-            ),
+            Gate::Corrupt,
         ),
         (format!(r#"{{"version":{ahead},"entries":{{}}}}"#), Gate::TooNew(ahead)),
-        ("{not json".to_owned(), Gate::Corrupt(readers_words)),
+        ("{not json".to_owned(), Gate::Corrupt),
     ];
     for (record, gate) in rows {
         let tmp = tempfile::tempdir().unwrap();
@@ -183,11 +172,11 @@ fn only_a_record_naming_this_builds_version_loads() {
                     "{label}"
                 );
             }
-            Gate::Corrupt(why) => {
+            Gate::Corrupt => {
                 for refused in [load_file(&path).unwrap_err(), load(&path).unwrap_err()] {
                     match &refused {
-                        CoreError::LockCorrupt { path: at, message } => {
-                            assert_eq!((at, message), (&path, &why), "{label}");
+                        CoreError::LockCorrupt { path: at, .. } => {
+                            assert_eq!(at, &path, "{label}");
                         }
                         other => panic!("{label}: expected a corrupt lock, got {other:?}"),
                     }

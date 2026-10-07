@@ -170,7 +170,7 @@ fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| CoreError::LockCorrupt {
             path: path.to_path_buf(),
-            message: e.to_string(),
+            message: crate::names::shown(&e.to_string()),
         })?;
     let version = value.get("version").and_then(serde_json::Value::as_i64);
     if version.is_some_and(|version| version > i64::from(LOCK_VERSION)) {
@@ -195,17 +195,22 @@ fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
         }
         return Err(CoreError::LockCorrupt {
             path: path.to_path_buf(),
-            message: match version {
-                Some(version) => format!(
-                    "it is a version {version} record, and this kendex writes version {LOCK_VERSION}"
-                ),
-                None => "it names no version, so nothing here can say what shape it is".to_owned(),
-            },
+            message: format!(
+                "{}{}",
+                match version {
+                    Some(version) => format!(
+                        "it is a version {version} record, and this kendex writes version {LOCK_VERSION}"
+                    ),
+                    None =>
+                        "it names no version, so nothing here can say what shape it is".to_owned(),
+                },
+                crate::error::lock_version_refused(path, version)
+            ),
         });
     }
     serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
         path: path.to_path_buf(),
-        message: e.to_string(),
+        message: crate::names::shown(&e.to_string()),
     })
 }
 

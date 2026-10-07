@@ -21,6 +21,7 @@ use crate::model::HarnessId;
 pub(super) struct ScopeOutcome {
     pub(super) scan: crate::pi_ext::ShadowScan,
     pub(super) manifest: ManifestState,
+    pub(super) lock_refusal: Option<crate::error::CoreError>,
 }
 
 fn selected_record_keys(
@@ -159,6 +160,7 @@ pub(super) fn check_scope(
     ScopeOutcome {
         scan,
         manifest: manifest_state,
+        lock_refusal: lock.err(),
     }
 }
 

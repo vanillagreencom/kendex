@@ -11,6 +11,9 @@ use crate::commands::remove::Removal;
 
 /// `kendex check`'s flags.
 #[derive(clap::Args)]
+#[command(
+    after_help = "Fleet's lane lock migration reads lock-version-refused found=N expected=M path=PATH on stderr. A record with no version uses found=none."
+)]
 pub(crate) struct CheckArgs {
     #[arg(short = 'g', long)]
     global: bool,
