@@ -63,7 +63,7 @@ run() {
   fi
 }
 
-want="$(seq -s, 1 "$PR_COUNT")"
+want="$(seq 1 "$PR_COUNT" | paste -sd, -)"
 
 echo "=== 60 refreshed PRs with 4 KiB rollups ==="
 assert_eq "$(run "$TEST_DIR/../scripts/commands/pr-list-ready.sh")" "$want" \

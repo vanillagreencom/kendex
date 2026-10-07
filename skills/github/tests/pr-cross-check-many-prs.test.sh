@@ -59,9 +59,9 @@ run() {
 }
 
 # PR 1 and PR 60 overlap one neighbour each, the rest two: the ends go first.
-want="$(seq -s, 1 "$PR_COUNT")
+want="$(seq 1 "$PR_COUNT" | paste -sd, -)
 $((250 * (PR_COUNT - 1)))
-1,$PR_COUNT,$(seq -s, 2 $((PR_COUNT - 1)))"
+1,$PR_COUNT,$(seq 2 $((PR_COUNT - 1)) | paste -sd, -)"
 
 echo "=== 60 PRs with large, overlapping file lists ==="
 assert_eq "$(run "$TEST_DIR/../scripts/commands/pr-cross-check.sh")" "$want" \
