@@ -267,6 +267,20 @@ run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg d "$REPO/crates/b" '{pa
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
   "a member's build script belongs to that member"
 rm "$REPO/crates/b/build.rs"
+# p and q both root their library at shared/lib.rs, and r depends on q.
+mkdir -p "$REPO/shared"
+printf 'pub fn shared() {}\n' >"$REPO/shared/lib.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg r "$REPO" '{packages: [
+  {name: "p", manifest_path: ($r + "/crates/a/Cargo.toml"), dependencies: [],
+   targets: [{kind: ["lib"], src_path: ($r + "/shared/lib.rs")}]},
+  {name: "q", manifest_path: ($r + "/crates/b/Cargo.toml"), dependencies: [],
+   targets: [{kind: ["lib"], src_path: ($r + "/shared/lib.rs")}]},
+  {name: "r", manifest_path: ($r + "/crates/c/Cargo.toml"),
+   dependencies: [{name: "q", source: null, path: ($r + "/crates/b")}],
+   targets: [{kind: ["lib"], src_path: ($r + "/crates/c/src/lib.rs")}]}]}')"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q -p r --all-targets" \
+  "a source root two members share lints both, and the dependents of each"
+rm -r -- "${REPO:?}/shared"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA_RC=101
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: metadata=failed" \
