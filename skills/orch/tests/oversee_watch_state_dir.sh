@@ -87,6 +87,7 @@ assert_eq "$(overseer_in_fleet overseer_correct)" 'fleet=%9 default=none' \
   'a single pass records the overseer in the supplied fleet state' "$TMP_ROOT/cases/overseer_correct/err"
 assert_eq "$(overseer_in_fleet overseer_relative relative)" 'fleet=%9 default=none' \
   'a relative --state path selects the directory from the watch working directory' "$TMP_ROOT/cases/overseer_relative/err"
+mutate_file "$MUTANT" 'FLEET_STATE_DIR="$WORKFLOW_STATE_DIR"' 'FLEET_STATE_DIR="${STATE_FILE%/*}"'
 mutate_file "$MUTANT" 'WORKFLOW_STATE_ARGS=(--state-dir "$FLEET_STATE_DIR")' \
   'WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")'
 assert_eq "$(WATCH_BIN="$MUTANT" overseer_in_fleet overseer_wrong)" 'fleet=none default=%9' \
