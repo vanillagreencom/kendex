@@ -290,6 +290,11 @@ DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 # to that check.
 DEV_VALIDATE_CI_CONTEXT = "CI"
 
+# The prefix tools/guard prints each finding with. A run the bound ended whose
+# log holds no line starting with it refuted nothing, so dev-validate-run lets
+# it answer a later run over no fewer paths and --last-pass passes over it.
+DEV_VALIDATE_FINDING_PREFIX = "guard: "
+
 # The bound on either run, in whole seconds. `tools/guard --full` takes well
 # under an hour on the supported hosts; past this the run is signalled, killed
 # outright ten seconds later, and the round records a failed validation. The

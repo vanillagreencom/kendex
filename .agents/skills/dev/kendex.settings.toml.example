@@ -21,6 +21,13 @@ DEV_VALIDATE_RANGE_CMD = ""
 # validates every fix round locally.
 DEV_VALIDATE_CI_CONTEXT = ""
 
+# The prefix both commands print each finding line with, such as "guard: ".
+# A run the timeout below stopped whose output holds no such line refuted
+# nothing: a later run over no fewer files is not run past the timeout again,
+# and a restack does not count the stopped run as a failure. Empty treats
+# every stopped run as a possible failure.
+DEV_VALIDATE_FINDING_PREFIX = ""
+
 # Seconds either command may run before it is stopped. A stopped run is
 # neither a pass nor a failure; the agent then runs, one at a time, the test
 # files for each script the change touches. The same number decides how long

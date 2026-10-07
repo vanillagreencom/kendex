@@ -202,9 +202,12 @@
 # a workload switch, so a caller who changed one asks for a fresh run.
 # A finding line is the one
 # ../references/artifact-checks.md § Validation command output
-# names: a line of the log, past its runner line, that starts with the base
-# name of the command's first word, a colon and a space. A log that cannot be
-# read holds one.
+# names: a line of the log, past its runner line, that starts with the prefix
+# DEV_VALIDATE_FINDING_PREFIX names, the one the project's commands print each
+# finding with, which start records as the finding-prefix= line. The runner
+# never guesses it: a run whose start records none, the setting being empty
+# by default, and a log that cannot be read each count as holding one, so
+# such a run is never evidence and --last-pass names it red.
 #
 # Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
@@ -398,16 +401,14 @@ write_verdict() { # STARTED-AT ENDED-AT SECONDS SENTINEL-LINE
   mv "$run_dir/exit.part" "$run_dir/exit"
 }
 
-# 0 where the run's log holds a finding line of its command, --help's: a line
-# past the runner line starting with the base name of the command's first
-# word, a colon and a space. A cmd or log that cannot be read holds one.
+# 0 where the run's log holds a finding line, --help's: a line past the
+# runner line starting with the finding-prefix= its start records. A run that
+# records none, or whose log cannot be read, holds one.
 run_has_finding() { # RUN_DIR
-  local cmd prog rc=0
-  cmd="$(cat "$1/cmd" 2>/dev/null)" || return 0
-  read -r prog _ <<<"$cmd"
-  prog="${prog##*/}"
-  [[ -n "$prog" ]] || return 0
-  LC_ALL=C awk -v p="$prog: " 'NR > 1 && index($0, p) == 1 { found = 1; exit } END { exit !found }' \
+  local prefix rc=0
+  prefix="$(start_field "$1/start" finding-prefix 2>/dev/null)" || return 0
+  [[ -n "$prefix" ]] || return 0
+  LC_ALL=C awk -v p="$prefix" 'NR > 1 && index($0, p) == 1 { found = 1; exit } END { exit !found }' \
     "$1/log" 2>/dev/null || rc=$?
   (( rc != 1 ))
 }
@@ -743,6 +744,9 @@ if [[ "$mode" == start ]]; then
   fi
   [[ -n "$timeout_secs" ]] || timeout_secs=3600
   check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
+  if ! finding_prefix="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_FINDING_PREFIX "")"; then
+    die unreadable-setting setting=DEV_VALIDATE_FINDING_PREFIX
+  fi
   # An earlier run of this command that the bound ended over no more paths
   # than this one reads answers it: --help states which run counts.
   bound_ended=false
@@ -796,6 +800,7 @@ if [[ "$mode" == start ]]; then
     [[ "$validate_mode" == ci || -z "$ci_fallback" ]] || printf 'ci-fallback=%s\n' "$ci_fallback"
     [[ -z "$class_base" ]] || printf 'class-base=%s\n' "$class_base"
     [[ "$bound_ended" == false ]] || printf 'bound-run=%s\n' "$BOUND_RUN_DIR"
+    [[ -z "$finding_prefix" || "$finding_prefix" == *$'\n'* ]] || printf 'finding-prefix=%s\n' "$finding_prefix"
     printf 'head=%s\n' "$head_sha"
     [[ -z "$snapshot_tree" ]] || printf 'tree=%s\n' "$snapshot_tree"
   } > "$run_dir/start"

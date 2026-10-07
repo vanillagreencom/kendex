@@ -1744,7 +1744,8 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
 # runner, the paths it read and a sentinel the bound wrote. Planted under a
 # name that sorts before or after the real runs, as each row needs.
 # Its class and docs verdict are the micro, non-docs ones the bound rows'
-# classifier stub answers, unless START_LINE names its own.
+# classifier stub answers, unless START_LINE names its own, and it records the
+# finding prefix `echo: ` unless START_LINE is no-finding-prefix.
 plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE] [START_LINE]
   local dir="$1/tmp/dev-validate-$2"
   mkdir -p "$dir"
@@ -1757,7 +1758,12 @@ plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE] [START_LINE]
     *docs-only=*) ;;
     *) printf 'docs-only=false\n' >> "$dir/start" ;;
   esac
-  printf '%s\n' "${7:-}" | tr ' ' '\n' >> "$dir/start"
+  if [[ "${7:-}" == no-finding-prefix ]]; then
+    :
+  else
+    printf 'finding-prefix=echo: \n' >> "$dir/start"
+    printf '%s\n' "${7:-}" | tr ' ' '\n' >> "$dir/start"
+  fi
   printf 'echo %s' "$3" > "$dir/cmd"
   printf 'runner=setsid\n%s\n' "${6:-echo-note: suites=all}" > "$dir/log"
   tr , '\n' <<<"$4" > "$dir/paths"
@@ -1798,6 +1804,7 @@ BOUND_ROWS=(
   "a bound-ended run under a lower bound is no evidence|docs/a.md|full|docs/a.md|10|||--|full|$OK|full|"
   "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
   "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
+  "a bound-ended run that recorded no finding prefix is no evidence|docs/a.md|full|docs/a.md|20||no-finding-prefix|--|full|$OK|full|"
   "a bound-ended run handed another class is no evidence|docs/a.md|full|docs/a.md|20||class=standard|--|full|$OK|full|"
   "a bound-ended run handed another docs verdict is no evidence|docs/a.md|full|docs/a.md|20||docs-only=true|--|full|$OK|full|"
 )
@@ -1842,6 +1849,8 @@ bound_control 'answered runs taken as evidence' $'    [[ -z "$(start_field "$sta
   "a run an earlier run's bound answered, which ran nothing, is no evidence"
 bound_control '--fresh unread' ' && "$fresh" == false' '' \
   'a fresh request runs its command whatever the evidence'
+bound_control 'a missing finding prefix read as none' '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1' \
+  'a bound-ended run that recorded no finding prefix is no evidence'
 bound_control 'no class rule' $'    [[ "$(start_field "$start_file" class)" == "$5" ]] || continue\n' '' \
   'a bound-ended run handed another class is no evidence'
 bound_control 'no docs rule' $'    [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue\n' '' \
@@ -1895,6 +1904,25 @@ mutant mutant-last-pass-finding '  (( rc != 1 ))' '  false'
 run_script "$MUTANT" --last-pass --worktree "$proj_last_nv"
 assert_eq "${OUT%% *} rc=$RC" "run-dir=$last_nv_pass rc=0" \
   "control: a finding reader that finds nothing passes over the red run"
+# A run that recorded no finding prefix declared no way to tell a finding, so
+# --last-pass names it red.
+proj_last_np="$(make_mode_proj proj-last-np "")"
+run_script "$RUN" --worktree "$proj_last_np" --poll 1
+last_np_pass="$(run_dir_of "$OUT")"
+plant_run "$proj_last_np" 29990101T000000Z-1 full docs/a.md 20 '' no-finding-prefix
+run_script "$RUN" --last-pass --worktree "$proj_last_np"
+assert_eq "$OUT rc=$RC" "last-pass=red run-dir=$proj_last_np/tmp/dev-validate-29990101T000000Z-1 rc=1" \
+  "a later no-verdict run that recorded no finding prefix is red" "$ERR"
+mutant mutant-last-pass-prefix '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1'
+run_script "$MUTANT" --last-pass --worktree "$proj_last_np"
+assert_eq "${OUT%% *} rc=$RC" "run-dir=$last_np_pass rc=0" \
+  "control: a reader that takes a missing prefix as none passes over it"
+# A start records the prefix the project declares, and none where it declares
+# none.
+printf 'DEV_VALIDATE_FINDING_PREFIX = "echo: "\n' >> "$proj_last_np/kendex.settings.toml"
+run_script "$RUN" --worktree "$proj_last_np" --poll 1
+assert_eq "$(start_line "$(run_dir_of "$OUT")" finding-prefix)|$(start_line "$last_np_pass" finding-prefix)" "echo: |" \
+  "a start records the declared finding prefix, and none where none is declared" "$ERR"
 
 # --- A value option given twice is refused, never half-read ---------------------
 # option|the arguments that repeat it

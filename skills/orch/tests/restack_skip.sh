@@ -243,7 +243,7 @@ assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/newer-red")" "restack=re
 cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/no-verdict"
 nv_dir="$TMP_ROOT/no-verdict/tmp/dev-validate-29990101T000000Z-1"
 mkdir -p "$nv_dir"
-printf 'validate-mode=range\ntimeout-secs=3600\nhead=%s\n' "$(git -C "$TMP_ROOT/no-verdict" rev-parse HEAD)" > "$nv_dir/start"
+printf 'validate-mode=range\ntimeout-secs=3600\nhead=%s\nfinding-prefix=guard: \n' "$(git -C "$TMP_ROOT/no-verdict" rev-parse HEAD)" > "$nv_dir/start"
 printf 'tools/guard --range $DEV_VALIDATE_BASE' > "$nv_dir/cmd"
 printf 'runner=setsid\nguard-note: suites=all\n' > "$nv_dir/log"
 printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$nv_dir/exit"
@@ -255,6 +255,15 @@ mutate_file "$nv_control_dir/dev-validate-run" \
   $'    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then\n      continue\n    fi\n' ''
 assert_eq "$(ask "$nv_control_dir/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "control: with every no-verdict run read as red the restack re-tests"
+nv_control_dir="$(mutant_scripts no-verdict-prefix dev-validate-run)" || exit 1
+mutate_file "$nv_control_dir/dev-validate-run" '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1'
+sed -i.bak '/^finding-prefix=/d' "$nv_dir/start"
+assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
+  "a range run the bound ended that recorded no finding prefix re-tests"
+nv_answer="$(ask "$nv_control_dir/restack-skip" "$TMP_ROOT/no-verdict")"
+assert_eq "${nv_answer%% *}" "restack=skip" \
+  "control: with a missing prefix read as none the restack skips"
+printf 'finding-prefix=guard: \n' >> "$nv_dir/start"
 printf 'guard: suite=skills/p/tests/a.sh\n' >> "$nv_dir/log"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "a range run the bound ended whose log holds a finding line re-tests"
