@@ -130,9 +130,10 @@ checkout and every linked work tree together, and the helper written there
 names the scripts directory of whichever tree armed it — so an install from a
 work tree would gate every session in the repository with that tree's
 scripts, and block every commit in it the moment the tree is removed. In a
-linked work tree the installer writes nothing and exits 0: it reports
-armed-by-main where the main checkout's arming is in place, and otherwise
-unarmed-linked-worktree, naming the main checkout's owner as the one who arms.
+linked work tree the installer writes nothing: it reports armed-by-main and
+exits 0 where the main checkout's arming is in place, and otherwise reports
+unarmed-linked-worktree, naming the main checkout's owner as the one who arms,
+and exits 1.
 A bare repository with work trees added to it has no main checkout, and arms
 from any of them rather than from nowhere. --check and --uninstall answer from any work tree: reading is safe
 anywhere, and disarming is repository-level.
@@ -611,12 +612,12 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
 # repository would die on a helper that is not there. So a work tree never
 # writes the shared hooks: arming belongs to the main checkout's owner.
 #
-# That is a standing-down, not a failure. Nothing a lane in the work tree
-# can do arms the repository correctly, so refusing would only stop its setup
-# with no repair in its power. It writes nothing, says whether the main
-# checkout's arming is in place by the same predicate --check applies, names
-# who arms it when it is not, and exits 0. Its commits run its own scripts
-# once the main checkout has armed.
+# Nothing a lane in the work tree can do arms the repository correctly, so
+# it is not refused as a usage error. It writes nothing and says whether the
+# main checkout's arming is in place, by the same predicate --check applies.
+# In place, that is success, exit 0: its commits run its own scripts. Not in
+# place, it names who arms it and exits 1, the "not installed" verdict, since
+# kendex records an arming after any exit 0 and no hook here is armed.
 #
 # Only where there IS a main checkout. A bare clone with work trees added has
 # none, so this stand-down would leave a repository that can never be gated
@@ -637,6 +638,7 @@ if [ "$MODE" = "install" ] && [ "$LINKED_WORKTREE" -eq 1 ] && [ "$MAIN_CHECKOUT"
     warn linked-worktree "$(gg_shown "$HOOKS_DIR")" "$(gg_shown "$HOOKS_DIR") is the one hooks directory the main checkout and every linked work tree share, so a work tree does not arm it: arming from here would point every commit in the repository at this work tree, and removing the tree would block them all.
 The hooks are not armed${CHECK_EXPLANATIONS:+ ($CHECK_EXPLANATIONS)}. Ask the main checkout's owner to run install-git-hooks or kendex guard install there."
     summary unarmed-linked-worktree "$(gg_shown "$HOOKS_DIR")" "nothing written — this is a linked work tree and the hooks are not armed; the main checkout's owner arms them"
+    exit 1
   fi
   exit 0
 fi

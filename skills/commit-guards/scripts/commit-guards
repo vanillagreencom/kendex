@@ -19,7 +19,10 @@
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
-# check could not complete, else 1 if any found violations, else 0.
+# check that ran could not complete, else 1 if any found violations, else 0.
+# A check whose script the package does not ship runnable never runs: it is
+# named package-incomplete and counts toward no exit, so a 0 means every check
+# that ran is clean, and every check that did not run was named.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -100,8 +103,11 @@ Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
 
+A check whose script the package does not ship runnable is named
+package-incomplete and skipped; it counts toward no exit code.
+
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or
-any check that could not complete.
+any check that ran and could not complete.
 EOF
 }
 

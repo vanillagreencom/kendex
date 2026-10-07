@@ -200,6 +200,19 @@ esac
 assert_eq "a doc-limits sibling the tree does not carry is announced as a skip, never lost" \
   "announced" "$DOC_LIMITS_SEEN"
 
+# An installed doc-limits whose script is not executable: the commit chain
+# names it unrun, but the push keeps its fail-closed contract and refuses.
+mkdir -p "$DIRECT/.agents/skills/doc-limits/scripts"
+printf '#!/bin/sh\nexit 0\n' >"$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"
+UNRUNNABLE_RC=0
+direct origin "refs/heads/main $TIP refs/heads/main $SEED" >/dev/null || UNRUNNABLE_RC=$?
+UNRUNNABLE_SEEN=absent
+case "$DIRECT_OUT" in
+  *"pre-push: lane-missing=$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"*) UNRUNNABLE_SEEN=refused ;;
+esac
+assert_eq "an installed doc-limits that cannot run refuses the push, never a skip" "refused" "$UNRUNNABLE_SEEN"
+rm -rf -- "${DIRECT:?}/.agents/skills/doc-limits"
+
 # remote.<name>.url is not a scalar. A remote set up to push one branch to two
 # places carries two values, a fetch uses the first, and git runs this hook
 # once per URL — so no single URL is the one the tracking refs describe, under

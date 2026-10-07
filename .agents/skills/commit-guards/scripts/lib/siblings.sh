@@ -81,9 +81,12 @@ Reinstall the package at $(gg_shown "$2") with kendex refresh; if that does not 
 # The doc-limits lane, announced here and folded by the caller's own
 # aggregator. Whether the SKILL is present decides, not whether its script
 # happens to be runnable: a present skill with a missing, dangling or
-# unexecutable script is a broken install, named by gg_lane_incomplete. -L
-# catches a dangling symlink, which -e reports as absent.
-gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean, skipped or unrunnable, 1 violations, 2 could not complete
+# unexecutable script is a broken install. -L catches a dangling symlink,
+# which -e reports as absent. At commit it is named by gg_lane_incomplete and
+# blocks nothing. The pre-push lane keeps its fail-closed contract and
+# refuses, since the push is the last local judgement of the whole tree's
+# document ceilings.
+gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean, skipped or unrunnable at commit, 1 violations, 2 could not complete
   local scripts="$1" skill="" lane="" out="" status=0
   if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then
     [ "$GG_CHECK" = "pre-commit" ] && return 0
@@ -92,6 +95,8 @@ gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean, skipped or unrunnable, 1 viola
   fi
   lane="$skill/scripts/doc-limits"
   if [ ! -x "$lane" ]; then
+    [ "$GG_CHECK" = "pre-commit" ] \
+      || gg_fail lane-missing "$lane" "the doc-limits skill is installed at $skill but $lane is missing or not executable — reinstall it"
     gg_lane_incomplete "$lane" "$skill"
     return 0
   fi

@@ -361,7 +361,7 @@ run_rows \
   "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
   "a linked worktree carrying its own render is judged by it, not by the main checkout's|fx_wt_own|$ONE|commit|feat: from the worktree|rc=0 $WT_OWN;foreign: tree copy ran;$WT_OWN;${MSG_OK}feat: from the worktree|" \
   "control: a linked worktree carrying none runs the copy the main checkout armed|fx_wt_none|$ONE|commit|feat: from the worktree|rc=0 foreign: main copy ran;${MSG_OK}feat: from the worktree|" \
-  "a linked worktree over unarmed hooks writes nothing, names the main checkout's owner and exits 0|fx_wt_install||install-wt||rc=0 install-git-hooks: linked-worktree=<repo>/.git/hooks;commit-guards git hooks: unarmed-linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
+  "a linked worktree over unarmed hooks writes nothing, names the main checkout's owner and exits 1: nothing is armed|fx_wt_install||install-wt||rc=1 install-git-hooks: linked-worktree=<repo>/.git/hooks;commit-guards git hooks: unarmed-linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
   "a linked worktree over the main checkout's arming says it is in place and writes nothing|fx_wt_install_armed||install-wt||rc=0 commit-guards git hooks: armed-by-main=<repo>/.git/hooks|$FRESH" \
   "control: the main checkout arms and repairs the drift the worktree left alone|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
   "control: --check answers from the linked worktree|fx_wt_check||check-wt||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
