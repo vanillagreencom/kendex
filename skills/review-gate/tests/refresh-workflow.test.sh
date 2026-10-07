@@ -11,6 +11,9 @@ import copy,json,re,sys
 # Read the literal token-action inputs and step environments. Full YAML
 # syntax belongs to preflight; this contract uses only block mappings.
 text=open(sys.argv[1]).read()
+jobs=dict(re.findall(r'^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)',text.split('\njobs:\n',1)[1],re.M|re.S))
+assert list(jobs)==['release','refresh'],list(jobs)
+text=jobs['refresh']
 job=dict(re.findall(r'^    (if|environment): (.+)$',text,re.M))
 steps=[]
 for block in re.split(r'^      - ',text,flags=re.M)[1:]:
@@ -88,6 +91,86 @@ for mutation in ('repository','permission','exposure','branch','fallback','self'
  else: raise AssertionError('must-fail control missed '+mutation)
 PY
 then ok 'default-branch environment, token boundaries, unpinned release installation, fallback and mutation controls'; else bad 'workflow token boundary'; fi
+# A run stuck on the kendex environment gate must not hold the refresh group:
+# the release job takes no group and runs before the refresh asks for it, and
+# its own shell body force-cancels only a run waiting past the 30-minute bound.
+if python3 - "$SKILL_DIR/templates/kendex-refresh.yml" "$TMP" "$BASH" <<'PY'
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import json, os, re, subprocess, sys, textwrap
+
+template = Path(sys.argv[1]).read_text()
+cond = "github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+
+def check_shape(text):
+    jobs = dict(re.findall(r'^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)', text.split('\njobs:\n', 1)[1], re.M | re.S))
+    release, refresh = jobs['release'], jobs['refresh']
+    assert not re.search(r'^concurrency:', text, re.M), 'a workflow-level group queues the release behind a stuck run'
+    assert 'concurrency:' not in release and 'environment:' not in release
+    assert re.search(r'^    permissions:\n      actions: write\n    steps:', release, re.M)
+    assert re.search(r'^    if: ' + re.escape(cond) + '$', release, re.M)
+    assert re.search(r'^    needs: release$', refresh, re.M)
+    assert re.search(r'^    if: \$\{\{ !cancelled\(\) && ' + re.escape(cond) + r' \}\}$', refresh, re.M)
+    assert re.search(r'^    concurrency:\n      group: kendex-refresh\n      cancel-in-progress: false\n', refresh, re.M)
+    return release
+
+release = check_shape(template)
+for name, old, new in (
+    ('workflow-group', '\njobs:\n', '\nconcurrency:\n  group: kendex-refresh\n  cancel-in-progress: false\n\njobs:\n'),
+    ('cancel-in-progress', '      cancel-in-progress: false\n', '      cancel-in-progress: true\n'),
+    ('no-needs', '    needs: release\n', ''),
+    ('failed-release-blocks', '${{ !cancelled() && ', '${{ '),
+):
+    assert template.count(old) == 1, name
+    try: check_shape(template.replace(old, new))
+    except (AssertionError, KeyError): pass
+    else: raise AssertionError('must-fail control missed ' + name)
+
+body = textwrap.dedent(release.split('        run: |\n', 1)[1])
+root = Path(sys.argv[2]) / 'release-stuck'
+bin_dir = root / 'bin'
+bin_dir.mkdir(parents=True)
+shim = bin_dir / 'gh'
+shim.write_text('#!/usr/bin/env bash\nset -euo pipefail\n[ "$1" = api ] || exit 90\nshift\n'
+                'if [ "$1" = --method ]; then printf \'%s %s\\n\' "$2" "$3" >>"$WRITES"; exit 0; fi\n'
+                'printf \'%s\\n\' "$1" >>"$READS"\n[ "$2" = --jq ] || exit 91\njq -r "$3" "$RUNS"\n')
+shim.chmod(0o755)
+now = datetime.now(timezone.utc)
+def ago(minutes): return (now - timedelta(minutes=minutes)).strftime('%Y-%m-%dT%H:%M:%SZ')
+# The real list honours ?status=waiting; the fixture does not, so the
+# in-progress row proves the body's own status filter.
+(root / 'runs.json').write_text(json.dumps({'workflow_runs': [
+    {'id': 101, 'status': 'waiting', 'updated_at': ago(31)},
+    {'id': 102, 'status': 'waiting', 'updated_at': ago(10)},
+    {'id': 103, 'status': 'in_progress', 'updated_at': ago(90)},
+]}))
+
+def run(script):
+    for name in ('writes', 'reads'): (root / name).write_text('')
+    env = {'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'], 'HOME': str(root),
+           'GH_TOKEN': 'workflow-token', 'GH_REPO': 'acme/widgets',
+           'RUNS': str(root / 'runs.json'), 'WRITES': str(root / 'writes'), 'READS': str(root / 'reads')}
+    result = subprocess.run([sys.argv[3], '-c', script], cwd=root, env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    return (root / 'writes').read_text().splitlines(), result.stdout.splitlines()
+
+def cancels(*ids): return [f'POST repos/acme/widgets/actions/runs/{i}/force-cancel' for i in ids]
+writes, out = run(body)
+assert writes == cancels(101), writes
+assert out == ['refresh-released=101'], out
+assert (root / 'reads').read_text().splitlines() == ['repos/acme/widgets/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100']
+# Must-fail controls: without the release the stuck run stays; without the
+# bound or the status filter a young waiting or an in-progress run is cancelled.
+for name, old, new, expected in (
+    ('release', 'gh api --method POST', ': gh api --method POST', cancels()),
+    ('bound', ' and now - (.updated_at | fromdateiso8601) > 1800', '', cancels(101, 102)),
+    ('status', 'select(.status == "waiting" and ', 'select(', cancels(101, 103)),
+):
+    assert body.count(old) == 1, name
+    mutant, _ = run(body.replace(old, new))
+    assert mutant == expected, (name, mutant)
+PY
+then ok 'release job force-cancels only a run waiting past the bound before the grouped refresh; release, bound, status and group controls'; else bad 'stuck-waiting release'; fi
 if python3 - "$SKILL_DIR/templates/review-gate-writer.yml" "$TMP" <<'PY'
 from pathlib import Path
 import os
