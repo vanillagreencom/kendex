@@ -480,6 +480,18 @@ assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
 gone_case gone-non-ascii "" 10 café-state
 assert_eq "$(field fix "$(LC_ALL=C record KEN-4 micro)")" "fix=5" \
   "a recorded member whose name the locale cannot print is read as written"
+# stream_read LIB — lane_archived_state from LIB on the case's archive, as
+# the fix rounds it read and what it left in its scratch directory, which the
+# control host reads archives without writing bulk data to.
+stream_read() {
+  rm -rf -- "${CASE:?}/scratch" && mkdir -p "$CASE/scratch"
+  ( source "$1/lane-gitfile.sh"
+    lane_archived_state KEN-4 "$CASE/kept.tgz" "$CASE/scratch" /w/KEN-4 || exit 1
+    printf '%s left=%s' "$(jq -r .cycles <<<"$LANE_ITEM_STATE")" "$(cd "$CASE/scratch" && ls -A | tr '\n' ' ')" )
+}
+gone_case gone-stream
+assert_eq "$(stream_read "$TEST_DIR/../scripts/lib")" "5 left=state.err " \
+  "the kept= archive is read as a stream, nothing of it written to disk"
 GONE_MANIFEST=clone/elsewhere/workflow-state-KEN-4.json gone_case gone-misnamed
 assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^archive-member-missing ' "$CASE/err" || true)" \
   "fix=-|1" "an archive naming a member it does not hold is unread, the member named"
@@ -1029,17 +1041,21 @@ control m-kept-spaced oversee-cycle '(?<p>/.*[^\\s])\\s*$' '(?<p>/\\S+)'
 gone_case c-kept-spaced "$TMP_ROOT/case-c-kept-spaced/my fleet/kept.tgz"
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
   "control: a path cut at its first space names no archive"
-control m-kept-member lib/lane-gitfile.sh 'if [[ -f "$dir/lane-host-state" ]]; then' 'if false; then'
+control m-kept-member lib/lane-gitfile.sh 'if "lane-host-state" in members:' 'if False:'
 GONE_STALE=1 gone_case c-kept-member "" 10 zz-state
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=9" \
   "control: matched by name alone, the older tmp copy, first in byte order, is read"
-control m-kept-listed lib/lane-gitfile.sh '*) [[ ! -f "$dir/$member" ]] || found="$dir/$member" ;;' \
-  '*) ! tar -tzf "$2" | grep -qxF -- "$member" || found="$dir/$member" ;;'
+control m-kept-listed lib/lane-gitfile.sh 'raw.decode(tar.encoding, "surrogateescape")' 'raw.decode("ascii", "backslashreplace")'
 gone_case c-kept-listed "" 10 café-state
 assert_eq "$(field fix "$(LC_ALL=C record KEN-4 micro)")" "fix=-" \
-  "control: matched against tar -t's listing, a name the locale escapes is missed"
-control m-kept-clone lib/lane-gitfile.sh '[[ -z "$found" || "$found" == "$dir/${4#/}/"* ]] || continue' \
-  '[[ -z "$found" || "$found" != "$dir/${4#/}/"* ]] || continue'
+  "control: matched against an escaped spelling, a name the locale cannot print is missed"
+control m-kept-stream lib/lane-gitfile.sh '  [[ -f "$2" ]] || { printf '"'"'archive-missing' \
+  '  tar -xzf "$2" -C "$3" 2>/dev/null || :; [[ -f "$2" ]] || { printf '"'"'archive-missing'
+gone_case c-kept-stream
+assert_eq "$(stream_read "${RUN_BIN%/*}/lib")" "5 left=clone lane-host-state state.err w " \
+  "control: an archive unpacked to be read leaves its members on disk"
+control m-kept-clone lib/lane-gitfile.sh 'key=lambda m: (m.name.startswith(root + "/"), m.name)' \
+  'key=lambda m: (not m.name.startswith(root + "/"), m.name)'
 GONE_MANIFEST=none GONE_WT_COPY=1 gone_case c-kept-clone
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=8" \
   "control: preferring the worktree's copy reads it over the clone's"

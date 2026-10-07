@@ -142,33 +142,43 @@ lane_hosted_state_dir() {
 # the same name is read. An archive with no such member, written before close
 # recorded it, holds the two tmp trees alone, and its copy outside the
 # worktree at ROOT, the clone's, is read before the worktree's, the first in
-# byte order where several are. The archive is
-# unpacked under SCRATCH and its members read as files there, never from
-# `tar -t`, which escapes a name the locale cannot print. 0 read; 2 the
-# archive did not read, or names a member it does not hold, SCRATCH/state.err
-# saying why.
+# name order where several are. LANE_ARCHIVE_READER reads the archive as a
+# stream and writes none of it to disk, since this runs on the control host,
+# and reads member names raw, never from `tar -t`, which escapes a name the
+# locale cannot print. 0 read; 2 the archive did not read, or names a member
+# it does not hold, SCRATCH/state.err saying why.
+LANE_ARCHIVE_READER='
+import os, sys, tarfile
+path, item, root = sys.argv[1:]
+try:
+    with tarfile.open(path, "r:gz") as tar:
+        members = {m.name: m for m in tar.getmembers()}
+        if "lane-host-state" in members:
+            raw = tar.extractfile(members["lane-host-state"]).read().split(b"\n", 1)[0]
+            if not raw:
+                sys.exit(0)
+            name = raw.decode(tar.encoding, "surrogateescape")
+            found = members.get(name)
+            if found is None or not found.isfile():
+                print(f"archive-member-missing path={path} member={name}", file=sys.stderr)
+                sys.exit(2)
+        else:
+            files = sorted((m for m in members.values()
+                            if m.isfile() and os.path.basename(m.name) == f"workflow-state-{item}.json"),
+                           key=lambda m: (m.name.startswith(root + "/"), m.name))
+            if not files:
+                sys.exit(0)
+            found = files[0]
+        sys.stdout.buffer.write(tar.extractfile(found).read())
+except (tarfile.TarError, OSError, EOFError) as error:
+    print(f"archive-unread path={path} cause={type(error).__name__}", file=sys.stderr)
+    sys.exit(2)
+'
 lane_archived_state() {
-  local dir="$3/archive" member="" found=""
   LANE_ITEM_STATE=""
   [[ -f "$2" ]] || { printf 'archive-missing path=%s\n' "$2" >"$3/state.err"; return 2; }
-  mkdir -p -- "$dir" && tar -xzf "$2" -C "$dir" 2>"$3/state.err" || return 2
-  if [[ -f "$dir/lane-host-state" ]]; then
-    IFS= read -r member <"$dir/lane-host-state" || [[ -n "$member" ]] || return 0
-    [[ -n "$member" ]] || return 0
-    case "/$member/" in
-      */../*) ;;
-      *) [[ ! -f "$dir/$member" ]] || found="$dir/$member" ;;
-    esac
-    [[ -n "$found" ]] \
-      || { printf 'archive-member-missing path=%s member=%s\n' "$2" "$member" >"$3/state.err"; return 2; }
-  else
-    while IFS= read -r member; do
-      [[ -z "$found" || "$found" == "$dir/${4#/}/"* ]] || continue
-      found="$member"
-    done < <(find "$dir" -type f -name "workflow-state-$1.json" 2>"$3/state.err" | LC_ALL=C sort)
-    [[ -n "$found" ]] || return 0
-  fi
-  LANE_ITEM_STATE="$(jq -c . -- "$found" 2>"$3/state.err")" || { LANE_ITEM_STATE=""; return 2; }
+  LANE_ITEM_STATE="$(python3 -I -c "$LANE_ARCHIVE_READER" "$2" "$1" "${4#/}" 2>"$3/state.err" \
+    | jq -c . 2>>"$3/state.err")" || { LANE_ITEM_STATE=""; return 2; }
 }
 
 # lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE]
