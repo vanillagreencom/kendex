@@ -31,7 +31,14 @@ Record `[RUN_DIR]/wait.exit` and `[RUN_DIR]/wait.log` in the lane's status. Laun
 
 ## Completion
 
-Use the harness's monitor or wait mechanism to check `test -s "[RUN_DIR]/wait.exit"` every 30 seconds. A missing or empty file means the waiter has no recorded exit. Keep waiting; never read that state as a verdict or start a duplicate waiter.
+Use the completion route for the current harness:
+
+| Harness | Completion route |
+|---------|------------------|
+| Codex | Run the foreground poll and its timeout retry route from [reviewer SKILL.md § Mutation-Stability Pairing](../../reviewer/SKILL.md#mutation-stability-pairing) with `exec_command` and empty `write_stdin` polls in the same turn, under [codex-runtime.md § Standing watch](codex-runtime.md#standing-watch). Follow [§ Validation wait](codex-runtime.md#validation-wait) for `session_id` and `exit_code` handling. Keep the turn active until `wait.exit` is nonempty; Codex starts no turn when the waiter ends. |
+| Other harnesses | Use the harness's monitor or wait mechanism to check `test -s "[RUN_DIR]/wait.exit"` every 30 seconds. |
+
+A missing or empty file means the waiter has no recorded exit. Keep waiting; never read that state as a verdict or start a duplicate waiter.
 
 When the file is nonempty, read it and the log:
 

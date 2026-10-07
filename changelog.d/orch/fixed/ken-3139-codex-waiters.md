@@ -1,0 +1,1 @@
+- Codex lanes keep job-runner waiter completion inside the active turn so approval, CI and merge waits continue when the job ends.
