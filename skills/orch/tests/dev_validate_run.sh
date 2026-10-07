@@ -1739,61 +1739,63 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
   "control: a read that takes any mode names the ci run"
 
 # --- A run the bound already ended answers a later run over no fewer paths ----
-# plant_run plants a finished run directory the way the runner leaves one: its
-# command, a log whose first line names the runner, the paths it read and a
-# sentinel the bound wrote. Planted under a name that sorts before or after
-# the real runs, as each row needs.
-plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE]
+# plant_run plants a finished run directory the way the runner leaves one: the
+# command its mode runs in these projects, a log whose first line names the
+# runner, the paths it read and a sentinel the bound wrote. Planted under a
+# name that sorts before or after the real runs, as each row needs.
+plant_run() { # WORKTREE NAME MODE PATHS TIMEOUT_SECS [LOG_LINE] [START_LINE]
   local dir="$1/tmp/dev-validate-$2"
   mkdir -p "$dir"
-  printf 'validate-mode=%s\ntimeout-secs=%s\nhead=\n' "$3" "$5" > "$dir/start"
-  printf 'tools/check --all' > "$dir/cmd"
-  printf 'runner=setsid\n%s\n' "${6:-check-note: suites=all}" > "$dir/log"
+  printf 'validate-mode=%s\ntimeout-secs=%s\nhead=\n%s\n' "$3" "$5" "${7:-}" > "$dir/start"
+  printf 'echo %s' "$3" > "$dir/cmd"
+  printf 'runner=setsid\n%s\n' "${6:-echo-note: suites=all}" > "$dir/log"
   tr , '\n' <<<"$4" > "$dir/paths"
   printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$dir/exit"
 }
-# bound_row SCRIPT WORLD PATHS PLANT_MODE PLANT_PATHS PLANT_SECS PLANT_LOG ARG... —
+# bound_row SCRIPT PATHS PLANT_MODE PLANT_PATHS PLANT_SECS PLANT_LOG PLANT_START ARG... —
 # a fresh project holding one planted run, then one start in it under the
-# micro class: the mode recorded, the verdict, what the command printed, the
-# bound-run= line and the ci-fallback= line.
+# micro class: the mode recorded, the verdict, what the command printed and
+# the bound-run= line. A ci request's rules read fails, so it falls back to
+# range.
 # The count of projects made lives in a file: bound_rows runs in a subshell.
 bound_row() {
-  local script="$1" world="$2" paths="$3" proj dir n
+  local script="$1" paths="$2" proj dir n
   n=$(( $(cat "$TMP_ROOT/bound-n" 2>/dev/null || echo 0) + 1 ))
   printf '%s\n' "$n" > "$TMP_ROOT/bound-n"
   proj="$(ci_proj "proj-bound-$n" CI)"
-  plant_run "$proj" 20000101T000000Z-1 "$4" "$5" "$6" "$7"
+  plant_run "$proj" 20000101T000000Z-1 "$3" "$4" "$5" "$6" "$7"
   shift 7
-  ci_world "$world"
+  ci_world unrequired
   RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true STUB_PATHS="$paths" \
     run_script "$script" --worktree "$proj" --poll 1 "$@"
   dir="$(run_dir_of "$OUT")"
-  printf '%s|%s|%s|%s|%s\n' "$(start_line "$dir" validate-mode 2>/dev/null)" "$(verdict_of "$OUT")" \
-    "$(output_of "$OUT" 2>/dev/null)" "$(start_line "$dir" bound-run 2>/dev/null | sed 's|.*/||')" \
-    "$(start_line "$dir" ci-fallback 2>/dev/null)"
+  printf '%s|%s|%s|%s\n' "$(start_line "$dir" validate-mode 2>/dev/null)" "$(verdict_of "$OUT")" \
+    "$(output_of "$OUT" 2>/dev/null)" "$(start_line "$dir" bound-run 2>/dev/null | sed 's|.*/||')"
 }
 PLANTED=dev-validate-20000101T000000Z-1
 NV="state=done guard-exit=124 validate=no-verdict"
 OK="state=done guard-exit=0 validate=pass"
-# label|world|paths this run reads|planted mode|planted paths|planted bound|planted log line|arguments|want
+# label|paths this run reads|planted mode|planted paths|planted bound|planted log line|planted start line|arguments|want
 BOUND_ROWS=(
-  "a range request over every path a bound-ended run read takes the ci route and passes at once|rules|docs/a.md,docs/b.md|range|docs/a.md|20||--validate-mode range --base HEAD|ci|$OK||$PLANTED|"
-  "a range request short of a path that run read keeps its local run|rules|docs/b.md|range|docs/a.md|20||--validate-mode range --base HEAD|range|$OK|range||"
-  "a full request over every path a bound-ended run read ends at once with no verdict|rules|docs/a.md|range|docs/a.md|20||--|full|$NV||$PLANTED|"
-  "a full request short of a path that run read keeps its local run|rules|docs/b.md|full|docs/a.md|20||--|full|$OK|full||"
-  "a range request the ci route refuses ends at once after a range run's bound|unrequired|docs/a.md|range|docs/a.md|20||--validate-mode range --base HEAD|range|$NV||$PLANTED|context-unrequired"
-  "a range request the ci route refuses runs after only a full run's bound|unrequired|docs/a.md|full|docs/a.md|20||--validate-mode range --base HEAD|range|$OK|range|$PLANTED|context-unrequired"
-  "a bound-ended run whose log holds a finding line is no evidence|rules|docs/a.md|full|docs/a.md|20|check: suite=tests/a.sh|--|full|$OK|full||"
-  "a bound-ended run under a lower bound is no evidence|rules|docs/a.md|full|docs/a.md|10||--|full|$OK|full||"
+  "a range request over every path a bound-ended range run read ends at once with no verdict|docs/a.md,docs/b.md|range|docs/a.md|20|||--validate-mode range --base HEAD|range|$NV||$PLANTED"
+  "a range request short of a path that run read keeps its local run|docs/b.md|range|docs/a.md|20|||--validate-mode range --base HEAD|range|$OK|range|"
+  "a full request over every path a bound-ended full run read ends at once with no verdict|docs/a.md|full|docs/a.md|20|||--|full|$NV||$PLANTED"
+  "a full request short of a path that run read keeps its local run|docs/b.md|full|docs/a.md|20|||--|full|$OK|full|"
+  "a ci request that falls back to range ends at once after a range run's bound|docs/a.md|range|docs/a.md|20|||--validate-mode ci --base HEAD|range|$NV||$PLANTED"
+  "a full request after only a range run's bound, another command, keeps its local run|docs/a.md|range|docs/a.md|20|||--|full|$OK|full|"
+  "a bound-ended run whose log holds a finding line is no evidence|docs/a.md|full|docs/a.md|20|echo: suite=tests/a.sh||--|full|$OK|full|"
+  "a bound-ended run under a lower bound is no evidence|docs/a.md|full|docs/a.md|10|||--|full|$OK|full|"
+  "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
+  "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
 )
 bound_rows() { # SCRIPT [LABEL]
-  local row label world paths pmode ppaths psecs plog args
+  local row label paths pmode ppaths psecs plog pstart args
   for row in "${BOUND_ROWS[@]}"; do
-    IFS='|' read -r label world paths pmode ppaths psecs plog args _ <<<"$row"
+    IFS='|' read -r label paths pmode ppaths psecs plog pstart args _ <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     [[ "$args" != -- ]] || args=""
     # shellcheck disable=SC2086 # the row's arguments are space-separated words
-    printf '%s\t%s\n' "$label" "$(bound_row "$1" "$world" "$paths" "$pmode" "$ppaths" "$psecs" "$plog" $args)"
+    printf '%s\t%s\n' "$label" "$(bound_row "$1" "$paths" "$pmode" "$ppaths" "$psecs" "$plog" "$pstart" $args)"
   done
 }
 BOUND_GOT="$(bound_rows "$CI_SCRIPT")"
@@ -1817,15 +1819,31 @@ bound_control 'no path rule' $'    (( rc == 1 )) || continue\n' '' \
   'a range request short of a path that run read keeps its local run'
 bound_control 'no path rule' $'    (( rc == 1 )) || continue\n' '' \
   'a full request short of a path that run read keeps its local run'
+bound_control 'no command rule' ' && [[ "$ran" == "$4" ]] || continue' ' || continue' \
+  "a full request after only a range run's bound, another command, keeps its local run"
 bound_control 'no finding rule' $'    ! run_has_finding "$dir" || continue\n' '' \
   'a bound-ended run whose log holds a finding line is no evidence'
 bound_control 'no bound rule' ' && (( 10#$secs >= 10#$2 ))' '' \
   'a bound-ended run under a lower bound is no evidence'
-bound_control 'a full run taken as proof for range' ' || "$BOUND_RUN_MODE" == range ]]' ' || true ]]' \
-  'a range request the ci route refuses runs after only a full run'"'"'s bound'
-bound_control 'no ci route for a range request' '[[ -z "$BOUND_RUN_DIR" || "$validate_mode" != range ]] || validate_mode=ci' ':' \
-  'a range request over every path a bound-ended run read takes the ci route and passes at once'
+bound_control 'answered runs taken as evidence' $'    [[ -z "$(start_field "$start_file" bound-run)" ]] || continue\n' '' \
+  "a run an earlier run's bound answered, which ran nothing, is no evidence"
+bound_control '--fresh unread' ' && "$fresh" == false' '' \
+  'a fresh request runs its command whatever the evidence'
 }
+# The range timeout, then a full request (another command, so it runs), then
+# a range request: the range request is answered by the range run, never
+# blocked by the newer full record.
+proj_bound_seq="$(ci_proj proj-bound-seq CI)"
+plant_run "$proj_bound_seq" 20000101T000000Z-1 range docs/a.md 20
+plant_run "$proj_bound_seq" 20000101T000001Z-1 full docs/a.md 20 '' 'bound-run=/elsewhere'
+RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT" --worktree "$proj_bound_seq" --poll 1 --validate-mode range --base HEAD
+assert_eq "$(verdict_of "$OUT") $(start_line "$(run_dir_of "$OUT")" bound-run | sed 's|.*/||')" "$NV $PLANTED" \
+  "a range request after a range timeout and a newer full record is answered by the range run" "$ERR"
+# --fresh belongs to the start path alone.
+run_script "$RUN" --last-pass --worktree "$proj_bound_seq" --fresh
+assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: option-unused option=--fresh mode=last-pass" \
+  "--fresh outside a start is refused, never dropped" "$ERR"
 # A run the evidence ended records a zero wall time, and --record reads it as
 # no-verdict, which a receipt's no-verdict needs.
 proj_bound_rec="$(ci_proj proj-bound-rec CI)"
@@ -1852,7 +1870,7 @@ mutant mutant-last-pass-nv $'    if [[ "$verdict" == no-verdict ]] && ! run_has_
 run_script "$MUTANT" --last-pass --worktree "$proj_last_nv"
 assert_eq "$OUT rc=$RC" "last-pass=red run-dir=$proj_last_nv/tmp/dev-validate-29990101T000000Z-1 rc=1" \
   "control: a read that counts every no-verdict run as red names it"
-printf 'check: suite=tests/a.sh\n' >> "$proj_last_nv/tmp/dev-validate-29990101T000000Z-1/log"
+printf 'echo: suite=tests/a.sh\n' >> "$proj_last_nv/tmp/dev-validate-29990101T000000Z-1/log"
 run_script "$RUN" --last-pass --worktree "$proj_last_nv"
 assert_eq "$OUT rc=$RC" "last-pass=red run-dir=$proj_last_nv/tmp/dev-validate-29990101T000000Z-1 rc=1" \
   "a later no-verdict run whose log holds a finding line is red" "$ERR"

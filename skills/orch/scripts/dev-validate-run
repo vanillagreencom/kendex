@@ -44,7 +44,7 @@
 # setsid. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached] [--fresh]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
@@ -180,23 +180,24 @@
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #
-# A start reads the worktree's earlier runs before it runs anything. A full or
-# range run the bound ended, whose log holds no finding line, whose bound was
-# at least this one's and every one of whose changed paths this run reads too,
-# says this run would end at the bound as well: the project's command chooses
-# its own suites, and a run over no fewer paths chooses no fewer. The start
-# records that run as the bound-run= line of start, then:
-#   range  takes the ci route, as a ci request does, and passes at once where
-#          that route holds, recording validate-mode=ci. Where it does not, the
-#          request runs as range, with the ci-fallback= line naming why.
-#   full   or a range request that still runs, ends at once with no verdict
-#          where its mode is full or the earlier run's was range, a full run's
-#          bound being no proof for the lighter range command: the sentinel
-#          carries the earlier run's guard-exit and verdict=no-verdict, the
-#          log names that run, and the wall time is zero. The caller takes the
-#          route a no-verdict run takes, the scoped suites. A full request
-#          never takes the ci route, since an implement round's receipt takes
-#          no ci run.
+# A start reads the worktree's earlier runs before it runs anything. An
+# earlier full or range run counts as evidence when all of these hold:
+#   - its command ran and the bound ended it: no bound-run= line in its start;
+#   - it ran the exact command text this run would run, so a changed
+#     DEV_VALIDATE_CMD or DEV_VALIDATE_RANGE_CMD is new work;
+#   - its log holds no finding line;
+#   - its bound was at least this one's;
+#   - this run reads every changed path it read.
+# Such a run says this run would end at the bound as well: the project's
+# command chooses its own suites, and a run over no fewer paths chooses no
+# fewer. A full or range run, a ci request's fallback included, then starts
+# nothing: start records the newest such run as the bound-run= line, the
+# sentinel carries that run's guard-exit and verdict=no-verdict, the log names
+# it, and the wall time is zero. The caller takes the route a no-verdict run
+# takes, the scoped suites. A ci run is never one, since its route is the
+# caller's to request. --fresh ignores the evidence and runs the command: the
+# runner cannot see a setting the command reads beyond its own text, such as
+# a workload switch, so a caller who changed one asks for a fresh run.
 # A finding line is the one ../references/artifact-checks.md § Validation
 # command output names: a line of the log, past its runner line, that starts
 # with the base name of the command's first word, a colon and a space. A log
@@ -408,24 +409,25 @@ run_has_finding() { # RUN_DIR
   (( rc != 1 ))
 }
 
-# The newest earlier full or range run of the worktree that says a run over
-# PATHS_FILE under TIMEOUT_SECS would end at the bound, as --help states it,
-# in BOUND_RUN_DIR, its mode in BOUND_RUN_MODE and its sentinel's exit in
-# BOUND_RUN_EXIT; all empty where there is none.
+# The newest earlier full or range run of the worktree that says a run of CMD
+# over PATHS_FILE under TIMEOUT_SECS would end at the bound, as --help states
+# it, in BOUND_RUN_DIR and its sentinel's exit in BOUND_RUN_EXIT; both empty
+# where there is none.
 BOUND_RUN_DIR=""
-BOUND_RUN_MODE=""
 BOUND_RUN_EXIT=""
-find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE
-  local start_file dir mode secs line rc guard_exit
-  BOUND_RUN_DIR="" BOUND_RUN_MODE="" BOUND_RUN_EXIT=""
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD
+  local start_file dir secs line rc guard_exit ran
+  BOUND_RUN_DIR="" BOUND_RUN_EXIT=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
     dir="${start_file%/start}"
-    mode="$(start_field "$start_file" validate-mode)"
-    case "$mode" in
+    case "$(start_field "$start_file" validate-mode)" in
       full|range) ;;
       *) continue ;;
     esac
+    # A run this rule answered ran nothing, so it is no evidence of its own.
+    [[ -z "$(start_field "$start_file" bound-run)" ]] || continue
+    ran="$(cat "$dir/cmd" 2>/dev/null)" && [[ "$ran" == "$4" ]] || continue
     line="$(cat "$dir/exit" 2>/dev/null)" || continue
     [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
     guard_exit="${BASH_REMATCH[1]}"
@@ -436,7 +438,7 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE
     grep -Fxvq -f "$3" -- "$dir/paths" 2>/dev/null || rc=$?
     (( rc == 1 )) || continue
     ! run_has_finding "$dir" || continue
-    BOUND_RUN_DIR="$dir" BOUND_RUN_MODE="$mode" BOUND_RUN_EXIT="$guard_exit"
+    BOUND_RUN_DIR="$dir" BOUND_RUN_EXIT="$guard_exit"
   done
 }
 
@@ -521,6 +523,7 @@ budget_given=false
 validate_mode_given=false
 base_given=false
 attached=false
+fresh=false
 
 set_mode() { # FLAG NEW
   [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
@@ -547,6 +550,7 @@ while (( $# > 0 )); do
     --validate-mode) need "$1" $# "${2:-}"; once "$1" "$validate_mode_given"; validate_mode_given=true; validate_mode="$2"; shift 2 ;;
     --base)     need "$1" $# "${2:-}"; once "$1" "$base_given"; base_given=true; base="$2"; shift 2 ;;
     --attached) once "$1" "$attached"; attached=true; shift ;;
+    --fresh)    once "$1" "$fresh"; fresh=true; shift ;;
     -h|--help)  usage; exit 0 ;;
     *)          die unknown-argument "argument=$1" ;;
   esac
@@ -560,6 +564,7 @@ done
 # Every option belongs to one mode. A flag the mode cannot use is refused rather
 # than dropped, so no caller believes it set a bound this script then ignores.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
+[[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
 case "$mode" in
   start|stop|resolve|last-pass|live)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
@@ -692,26 +697,9 @@ if [[ "$mode" == start ]]; then
   # the whole branch, as the pull request CI judges it. start records that
   # base as class-base=, so submit takes such a full pass for the branch's
   # only where its command reports the whole battery.
-  # Read against an empty default, never 3600: orch-env replaces a non-numeric
-  # effective value with a numeric default of its own, so a setting of 90m would
-  # arrive here as 3600 and the refusal below could never fire. The default is
-  # applied here instead, leaving check_seconds to judge what was actually set.
-  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")"; then
-    die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
-  fi
-  [[ -n "$timeout_secs" ]] || timeout_secs=3600
-  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
   class_base=""
   [[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base="$base_sha"
   classify "$class_base"
-  # An earlier run that the bound ended over no more paths than this one reads
-  # sends a range request down the ci route and ends any other at once; --help
-  # states which run counts and what each mode does with it.
-  bound_ended=false
-  if [[ "$validate_mode" != ci && -z "$class_fallback" ]]; then
-    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths"
-    [[ -z "$BOUND_RUN_DIR" || "$validate_mode" != range ]] || validate_mode=ci
-  fi
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci ]]; then
@@ -735,15 +723,27 @@ if [[ "$mode" == start ]]; then
         || die orphaned-base-unresolved "base=$orphaned_sha"
     fi
   fi
-  if [[ -n "$BOUND_RUN_DIR" && "$validate_mode" != ci ]] \
-    && [[ "$validate_mode" == full || "$BOUND_RUN_MODE" == range ]]; then
-    bound_ended=true
-  fi
   if [[ "$validate_mode" == full ]]; then
     if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
       die unreadable-setting setting=DEV_VALIDATE_CMD
     fi
     [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
+  fi
+  # Read against an empty default, never 3600: orch-env replaces a non-numeric
+  # effective value with a numeric default of its own, so a setting of 90m would
+  # arrive here as 3600 and the refusal below could never fire. The default is
+  # applied here instead, leaving check_seconds to judge what was actually set.
+  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")"; then
+    die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
+  fi
+  [[ -n "$timeout_secs" ]] || timeout_secs=3600
+  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
+  # An earlier run of this command that the bound ended over no more paths
+  # than this one reads answers it: --help states which run counts.
+  bound_ended=false
+  if [[ "$validate_mode" != ci && "$fresh" == false && -z "$class_fallback" ]]; then
+    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd"
+    [[ -z "$BOUND_RUN_DIR" ]] || bound_ended=true
   fi
 
   # Without a timeout command the run carries no bound, which is the unbounded
@@ -790,7 +790,7 @@ if [[ "$mode" == start ]]; then
     [[ -z "$orphaned_sha" ]] || printf 'validate-base-orphaned=%s\n' "$orphaned_sha"
     [[ "$validate_mode" == ci || -z "$ci_fallback" ]] || printf 'ci-fallback=%s\n' "$ci_fallback"
     [[ -z "$class_base" ]] || printf 'class-base=%s\n' "$class_base"
-    [[ -z "$BOUND_RUN_DIR" ]] || printf 'bound-run=%s\n' "$BOUND_RUN_DIR"
+    [[ "$bound_ended" == false ]] || printf 'bound-run=%s\n' "$BOUND_RUN_DIR"
     printf 'head=%s\n' "$head_sha"
     [[ -z "$snapshot_tree" ]] || printf 'tree=%s\n' "$snapshot_tree"
   } > "$run_dir/start"
