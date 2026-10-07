@@ -18,7 +18,7 @@ kendex add vanillagreencom/kendex --skill review-gate
 
 ## How it works
 
-The pull-request watcher reads GitHub's review state. It reports open threads, objections and approvals that do not arrive within the wait period. The standard report compares GitHub configuration with the repository's settings. Consumer refresh updates one rolling branch and requests auto-merge. The [consumer refresh rules](references/adoption.md#automatic-consumer-refresh) define how it handles automatic review threads.
+The pull-request watcher reads GitHub's review state. It reports open threads, objections and approvals that do not arrive within the wait period. The standard report compares GitHub configuration with the repository's settings. Consumer refresh updates one rolling branch. The [arm contract](SKILL.md#scripts) defines when it requests auto-merge. The [consumer refresh rules](references/adoption.md#automatic-consumer-refresh) define how it handles automatic review threads.
 
 ## Setup
 

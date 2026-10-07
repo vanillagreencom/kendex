@@ -1,8 +1,8 @@
 # Copy verbatim into .github/workflows/ with scripts/adopt-refresh.sh.
 # Schedule and manual runs work in any consumer with the app-secret kendex
 # environment. Opening a pull request needs that repository's app token.
-# Every class arms auto-merge. The merge queue merges the refresh once the
-# required approval, thread resolution and checks pass.
+# Auto-merge depends on the published head becoming visible in GitHub.
+# review-gate SKILL.md defines the arm outcomes and merge requirements.
 # The instant repository_dispatch signal needs the organization's lanes app
 # and the catalog's dispatch workflow; it is organization wiring.
 name: Refresh kendex

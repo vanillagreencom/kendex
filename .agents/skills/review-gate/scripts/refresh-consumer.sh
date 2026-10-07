@@ -3,9 +3,8 @@
 # from either that checkout's preserved copy or the kendex release tree the
 # shared workflow checked out. It rebuilds the rolling branch from the
 # checkout, never executes the remote rolling branch, and pushes only after
-# the shared classifier measures the complete diff. Every class arms native
-# auto-merge on the head it published; the merge queue holds the merge until
-# the required approval, thread resolution and checks pass.
+# the shared classifier measures the complete diff. It requests auto-merge
+# after GitHub shows the published head. SKILL.md defines the arm outcomes.
 # --templates-dir names the directory holding the refresh workflow template
 # to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
@@ -71,9 +70,8 @@ fi
 # the queue already holds; only a read after GitHub refuses a write, or the
 # refusal itself, can establish the lifecycle at that write. Sets reason to
 # merged, closed, queued, armed, branch-gone or active for the pull request
-# in pr; a failed or malformed read exits. Every run arms the pull request it
-# publishes, so armed is the steady state and defers nothing: GitHub has not
-# taken the branch until the queue holds it.
+# in pr; a failed or malformed read exits. An armed pull request defers
+# nothing: GitHub has not taken the branch until the queue holds it.
 refresh_lifecycle() {
   local has_pr=false push_state
   if [ -n "$pr" ]; then has_pr=true; fi
@@ -404,7 +402,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   exit 1
 fi
 report_settings
-merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'
+merge_note='The refresh workflow waits for GitHub to show the published head before requesting auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"

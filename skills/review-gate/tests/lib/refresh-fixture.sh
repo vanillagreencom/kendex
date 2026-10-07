@@ -65,6 +65,12 @@ FIXTURES="$TMP/github"
 mkdir -p "$BIN" "$FIXTURES"
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
+cat >"$BIN/sleep" <<'SLEEP'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'sleep %s\n' "$*" >>"$TEST_STATE/calls"
+SLEEP
+chmod +x "$BIN/sleep"
 printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
 printf '{"environments":[{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
 printf '{"branch_policies":[{"name":"main","type":"branch"}]}\n' >"$FIXTURES/branch-policies.json"
@@ -146,15 +152,13 @@ reset_default() {
 }
 
 # Assert the runner's publication record, body data and arm together. The arm
-# names the rolling head the remote holds, no disable follows it, and the body
-# states that arm for every class.
+# names the rolling head the remote holds and no disable follows it.
 refresh_class_matches() { # CLASS STATE REASON METHOD
   local head
   head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
   [ "$RC" -eq 0 ] &&
     grep -qxF -- "refresh-state=$2 pr=1 class=$1" <<<"$OUT" &&
     grep -qxF -- "class: class=$1 measured=true $3" "$TMP/state/body" &&
-    grep -qxF -- 'The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.' "$TMP/state/body" &&
     grep -qF -- "api --method $4 repos/acme/test/pulls" "$TMP/state/calls" &&
     grep -qxF -- "pr merge 1 --repo acme/test --auto --squash --match-head-commit $head" "$TMP/state/calls" &&
     ! grep -qF -- '--disable-auto' "$TMP/state/calls" &&
@@ -169,6 +173,19 @@ refresh_arm_matches() { # EXIT OUTCOME READS
   old_head="$(cat "$TMP/state/old-head")" || return 1
   if [ -f "$TMP/state/head-reads" ]; then reads="$(cat "$TMP/state/head-reads")"; fi
   [ "$RC" -eq "$1" ] && [ "$reads" -eq "$3" ] || return 1
+  # Each stale read owes one pause before the next request. Matching and
+  # final stale reads owe no pause. The injected command records requests.
+  awk -v expected="$((reads > 0 ? reads - 1 : 0))" '
+    /^pr view 1 --repo acme\/test --json headRefOid --jq .headRefOid$/ {
+      if (requests && pending != 1) exit 1
+      requests++; pending = 0
+    }
+    /^sleep / {
+      if (!requests || $0 != "sleep 2" || pending) exit 1
+      pauses++; pending++
+    }
+    END { if (pending || pauses != expected) exit 1 }
+  ' "$TMP/state/calls" || return 1
   case "$2" in
     armed | queued | merged)
       grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&

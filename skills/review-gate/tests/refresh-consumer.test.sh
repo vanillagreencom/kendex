@@ -304,10 +304,12 @@ if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/create
 # GitHub's visible head can lag the push. Its merge command can also succeed
 # without arming the pull request. Keep those service outcomes independent.
 cp "$runner" "$TMP/arm-runner"
+arm_helper="${runner%/*}/lib/arm-published-head.sh"
+cp "$arm_helper" "$TMP/arm-helper"
 printf '%s\n' "$second" >"$TMP/state/old-head"
 for row in \
-  'delayed|delayed|armed|pass|0|armed|2|direct' \
-  'never|never|armed|pass|0|unseen|5|direct' \
+  'delayed|delayed|armed|pass|0|armed|2|direct no-pauses' \
+  'never|never|armed|pass|0|unseen|5|direct no-pauses' \
   'head-read|failed|armed|pass|1|read-failed|0|direct' \
   'empty-head|empty|armed|pass|1|read-failed|0|' \
   'refused|matched|refused|pass|73|refused|1|ignore-refusal' \
@@ -319,10 +321,23 @@ for row in \
   'arm-partial|matched|armed|partial|1|output|1|' \
   'arm-malformed|matched|armed|malformed|1|output|1|'; do
   IFS='|' read -r name HEAD_MODE ARM_MODE ARM_QUERY expected outcome reads control <<<"$row"
-  for mutation in none ${control:+"$control"}; do
+  for mutation in none $control; do
     reset_default
     cp "$TMP/arm-runner" "$runner"
-    if [ "$mutation" != none ]; then
+    cp "$TMP/arm-helper" "$arm_helper"
+    if [ "$mutation" = no-pauses ]; then
+      python3 - "$arm_helper" <<'PAUSE_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '    sleep 2 || return $?'
+assert s.count(old) == 1
+changed = s.replace(old, '    : # ' + old.strip())
+assert changed != s
+p.write_text(changed)
+PAUSE_CONTROL
+    elif [ "$mutation" != none ]; then
       python3 - "$runner" "$mutation" <<'ARM_CONTROL'
 from pathlib import Path
 import sys
@@ -348,6 +363,12 @@ ARM_CONTROL
     run_refresh "arm-$name-$mutation" pass render
     if [ "$mutation" = none ]; then
       if refresh_arm_matches "$expected" "$outcome" "$reads"; then ok "$name arm outcome"; else bad "$name arm outcome" "$OUT"; fi
+    elif [ "$mutation" = no-pauses ]; then
+      if [ "$RC" -eq "$expected" ] && [ "$(cat "$TMP/state/head-reads")" -eq "$reads" ] &&
+          ! grep -q '^sleep ' "$TMP/state/calls" &&
+          ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
+        ok "control: $name without pauses turns the arm assertion red"
+      else bad "$name pause control" "$OUT"; fi
     elif [ "$name" = delayed ] || [ "$name" = never ]; then
       if [ "$RC" -eq 1 ] && grep -qF 'expected head oid does not match' <<<"$OUT" &&
           ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
@@ -361,6 +382,7 @@ done
 unset HEAD_MODE ARM_MODE ARM_QUERY
 reset_default
 cp "$TMP/arm-runner" "$runner"
+cp "$TMP/arm-helper" "$arm_helper"
 commit "$repo"
 git -C "$repo" push -q origin main
 run_refresh stale pass render
@@ -847,7 +869,7 @@ done
 # condition as a comment proves that its behavior, not its spelling, matters.
 reset_default
 cp "$runner" "$TMP/class-runner"
-for mutation in measured disable note; do
+for mutation in measured disable; do
   cp "$TMP/class-runner" "$runner"
   python3 - "$runner" "$mutation" <<'CLASS_CONTROL'
 from pathlib import Path
@@ -857,7 +879,6 @@ s = p.read_text()
 mutations = {
  'measured': ('[[ "$class_line" != "class: class=$class measured=true "* ]]', '[[ " $class_line " != *\' measured=true \'* ]]'),
  'disable': ('rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?', 'if [ "$class" = render ]; then\n  rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?\nelse\n  RG_ARM_RESULT=matched; RG_ARM_SEEN="$head"\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
- 'note': ("merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'", "merge_note='Auto-merge stays disabled until review and CI gates pass, then the repository overseer arms this pull request on the merge queue, or a maintainer merges it through the queue where no overseer runs.'"),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1
@@ -871,7 +892,7 @@ CLASS_CONTROL
   MEASURED=true; CLASS_EXIT=0
   case "$mutation" in
     measured) MEASURED=false; CLASS_REASON='cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' ;;
-    disable | note) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
+    disable) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
   esac
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
@@ -882,11 +903,6 @@ CLASS_CONTROL
         ! refresh_class_matches standard pushed "$CLASS_REASON" PATCH; then
       ok 'control: a disabled standard class turns its arm assertion red'
     else bad 'standard disable control' "$OUT"; fi
-  elif [ "$mutation" = note ]; then
-    if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" &&
-        ! refresh_class_matches standard pushed "$CLASS_REASON" PATCH; then
-      ok "control: the old standard $mutation breaks the class assertion"
-    else bad "standard $mutation control" "$OUT"; fi
   else
     if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" && ! refresh_stopped_at_class "$before"; then
       ok "control: $mutation bypass breaks the class stop assertion"
