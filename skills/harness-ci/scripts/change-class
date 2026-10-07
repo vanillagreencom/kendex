@@ -114,7 +114,8 @@
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
 #            cause=render-path-partial. Both are rule verdicts, marked
-#            measured=true: the reads succeeded but proved no whole owner.
+#            measured=true: the classifier read a passing verify document
+#            but lacks whole ownership proof, including foreign=unknown.
 #            That verdict
 #            is that every installed file equals a fresh render of its
 #            declared source. Under `--at-record` a package that follows

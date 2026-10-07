@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Drives the actual consumer runner with real local git repositories. Only
-# GitHub services are replaced; classification rows run the real classifier,
-# and the other rows replace it. Held-render rows use a
+# Drives the actual consumer runner with real local git repositories.
+# Classification rows run the real classifier; the other rows replace it.
+# Held-render rows use a
 # real kendex, an isolated HOME and a local catalog.
 set -euo pipefail
 REAL_KENDEX=""
@@ -946,7 +946,7 @@ MEASURED=true; CLASS_EXIT=0; CLASS_REASON='cause=renders-match-their-sources'
 
 # A catalog refresh can gain an inventoried render and rewrite bot outputs
 # outside verify's positions. Exercise the real classifier on that same diff
-# through the runner. Only verify's document and the GitHub transport are doubles.
+# through the runner.
 cp "$repo/.agents/skills/harness-ci/scripts/change-class" "$TMP/class-double"
 cp "$repo/.kendex-generated.json" "$TMP/class-inventory"
 cp -R "$SKILL_DIR/../harness-ci/." "$repo/.agents/skills/harness-ci/"
