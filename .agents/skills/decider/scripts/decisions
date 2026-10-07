@@ -863,8 +863,9 @@ cmd_check() {
     .[] | . as $row
     | [$base[] | select(.id == $row.id)] as $held
     | select(($held | length) > 0 and ($held | map(.link) | index($row.link)) == null)
-    | {id: $row.id, link: $row.link, path: $row.path, base: ($held | map(.path) | join(",")),
-       base_links: ($held | map(.link))}
+    | {id: $row.id, link: $row.link, path: $row.path, status: $row.status,
+       base: ($held | map(.path) | join(",")),
+       base_links: ($held | map(.link)), base_statuses: ($held | map(.status))}
   ' <<<"$rows")" || return 1
   if [[ -n "$collisions" && -z "$BASE_REASON" ]]; then
     ancestor_rows="$(shared_index)" || return 1
@@ -873,6 +874,10 @@ cmd_check() {
     . as $row | [$ancestor[] | select(.id == $row.id)] as $history
     | .ancestor = (if (.base_links | length) == 1 and ($history | length) == 1
                    then $history[0] else null end)
+    | if .ancestor.status == "Removed"
+         and ((.link != .ancestor.link and .status != "Removed")
+              or (.base_links[0] != .ancestor.link and .base_statuses[0] != "Removed"))
+      then .ancestor = null else . end
   ' <<<"$collisions")" || return 1
   while IFS= read -r collision; do
     [[ -n "$collision" ]] || continue
