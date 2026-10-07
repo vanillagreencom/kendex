@@ -1144,8 +1144,9 @@ stage_panes() {
 # `claude/` for a trailing slash, `link` for a symlink to claude, `away` for
 # eclaude reached from a second home, `aliased` for a second home's `.other`
 # whose launch named it by that spelling and whose canonical target is
-# `creds-b`, `bs` for the backslash-named lane; `junk` writes a malformed record. Any other token is
-# a typo and aborts the suite rather than staging the opposite world.
+# `creds-b`, `written` for that claim written through lane_claim_write, `bs`
+# for the backslash-named lane; `junk` writes a malformed record. Any other
+# token is a typo and aborts the suite rather than staging the opposite world.
 stage_claims() {
   local spec="$1" items item name server pane dir pid named
   STORE="$RUN/store"
@@ -1172,6 +1173,15 @@ stage_claims() {
       aliased)
         dir="$AWAY_HOME/creds-b"; named="$AWAY_HOME/.other"
         mkdir -p "$dir"; ln -sfn "$dir" "$named"
+        ;;
+      written)
+        # The same claim as `aliased`, written by the claims library beside the
+        # `lanes` under test, whatever record that library writes.
+        mkdir -p "$AWAY_HOME/creds-b"; ln -sfn "$AWAY_HOME/creds-b" "$AWAY_HOME/.other"
+        ( source "$(dirname "$LANES")/lib/lane-claims.sh" \
+          && lane_claim_write "$STORE/claims" "$pid" "$pane" "$AWAY_HOME/.other" "$name" "" ) \
+          || { echo "stage_claims: lane_claim_write failed for $item" >&2; exit 1; }
+        continue
         ;;
       bs)
         dir="$BSDIR"
@@ -1246,11 +1256,13 @@ claims_table \
 # the other's `.other`, a symlink to a target named for neither.
 WORK_ALIASES="eclaude=work,other=work"
 ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
-  "a claim keys by the alias its launch named, not its canonical target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=2 claude.claims=0"
+  "a claim keys by the alias its launch named, not its canonical target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=2 claude.claims=0" \
+  "a claim lane_claim_write records through a symlinked spelling keys by that spelling's alias|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=2 claude.claims=0"
 
 # Controls: keyed by the canonical path alone, the second home's claim lands
 # on a key no listed lane carries and the account reads half its load; keyed
-# by the canonical target's name, the aliased claim misses `work` the same way.
+# by the canonical target's name, or written with no named spelling, the
+# aliased claim misses `work` the same way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" ' || $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]' ''
 LANES="$claims_scripts/lanes" claims_table \
@@ -1259,6 +1271,10 @@ claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" '"$(lane_alias_for "${named:-$cfg}")"' '"$(lane_alias_for "$cfg")"'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
+claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
+mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" > "$tmp"' '"$7" "" > "$tmp"'
+ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
+  "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
 if [[ "$(id -u)" -eq 0 ]]; then
