@@ -351,6 +351,16 @@ fn a_check_left_waiting_on_the_refresh_never_claims_all_clear() {
         verbose.verdict,
         ["1 item not checked yet — the background refresh checks again"]
     );
+    // Rich draws the section as a notice too, never in the colour of done.
+    let rich_run = screen(&rich(100), &waiting, "here", Verbosity::Verbose);
+    assert_eq!(
+        tagged(&rich_run.report),
+        [
+            "",
+            "<1;36>could not check</>  <90>1</>",
+            "  <36>•</> skill 'gh': history unread",
+        ]
+    );
     assert_eq!(
         screen(&plain(), &clean(), "here", Verbosity::Verbose).verdict,
         ["all clear — every install matches its source"]

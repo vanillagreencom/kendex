@@ -160,15 +160,13 @@ fn status(class: Class) -> Status {
 
 /// A section is as serious as its most serious row, by core's own reading
 /// of what a row makes of the check.
+/// A section whose rows all wait on the background refresh exits clean
+/// but is not done: it is drawn as the notice its rows are.
 fn section_status(section: &PageSection) -> Status {
-    outcome(
-        section
-            .items
-            .iter()
-            .map(|item| item.class.status())
-            .max()
-            .unwrap_or(CheckStatus::Clean),
-    )
+    match section.items.iter().map(|item| item.class.status()).max() {
+        Some(CheckStatus::Clean) => Status::Notice,
+        status => outcome(status.unwrap_or(CheckStatus::Clean)),
+    }
 }
 
 /// What a check's status says to its reader: clean is done, drift wants a
