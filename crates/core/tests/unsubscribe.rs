@@ -1,6 +1,7 @@
 //! Unsubscribe — remove: the closure of a source is what leaves with it
 //! (declared items and their derived dependencies), computed by re-expansion,
-//! and removing the source uninstalls exactly that.
+//! and removing the source uninstalls exactly that. A surviving bundle's
+//! member transfers from the leaving source to the source that still carries it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -248,7 +249,7 @@ fn a_member_another_bundle_carries_survives_removal() {
     )
     .unwrap();
     let other = home.join("other");
-    skill(&other, "shared", "s");
+    skill(&other, "shared", "from other");
     fs::write(
         other.join("kendex.toml"),
         "[bundles.also]\nskills = [\"shared\"]\n",
@@ -300,7 +301,8 @@ enum Gained {
     PastTheRecord,
     /// The recorded commit amended away and this mirror cloned again: the
     /// record names a commit nothing here serves, so a locked write reads
-    /// the bundle at the rewritten tip, which carries the member.
+    /// the bundle at the rewritten tip, which carries the member and takes
+    /// its installation record from the leaving source.
     RewrittenHistory,
 }
 
@@ -311,7 +313,7 @@ enum Shared {
     Uninstalled,
     /// Converted to the local source and installed from there.
     Converted,
-    /// Still installed under another source's bundle, not converted.
+    /// Transferred to the surviving bundle's source and installed from there.
     Kept,
 }
 
@@ -358,7 +360,7 @@ fn installed_then_gained(gained: Gained) -> (tempfile::TempDir, Env, Scope) {
     apply_now(&env, &scope);
     assert!(scope_skill(&scope, "shared").exists());
 
-    skill(&other, "shared", "s");
+    skill(&other, "shared", "from other");
     fs::write(
         other.join("kendex.toml"),
         "[bundles.also]\nskills = [\"extra\", \"shared\"]\n",
@@ -380,11 +382,41 @@ fn installed_then_gained(gained: Gained) -> (tempfile::TempDir, Env, Scope) {
     (tmp, env, scope)
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_kept_source(env: &Env, scope: &Scope, lock: &kendex_core::lock::Lock, case: &str) {
+    let entry = lock
+        .entries
+        .values()
+        .find(|entry| entry.name == "shared")
+        .unwrap();
+    let other = env.home.join("other");
+    assert_eq!(
+        entry.source_commit.as_deref(),
+        Some(test_util::git(&other, &["rev-parse", "HEAD"]).trim()),
+        "{case}: surviving source commit"
+    );
+    assert_eq!(
+        fs::read(scope_skill(scope, "shared").join("SKILL.md")).unwrap(),
+        fs::read(other.join("skills/shared/SKILL.md")).unwrap(),
+        "{case}: surviving source bytes"
+    );
+    let later = kendex_core::engine::audit(env, scope).unwrap();
+    assert!(
+        !later.drift.iter().any(|row| {
+            row.kind == ItemKind::Skill
+                && row.name == "shared"
+                && row.state == kendex_core::engine::DriftState::Conflict
+        }),
+        "{case}: shared has a later conflict"
+    );
+}
+
 /// A member another marketplace's bundle gained leaves with the source as
 /// the removal and the re-sync after a keep read that bundle: held where the
 /// record places it, which does not carry the member, so the member leaves;
 /// read at the tip where the record's commit is gone, which carries it, so
-/// the member stays under that bundle. A closure that reads the bundle
+/// the member transfers to that bundle's source in both leave modes.
+/// A closure that reads the bundle
 /// anywhere else leaves the member installed under the source that is gone,
 /// or uninstalls one the plan keeps.
 #[test]
@@ -411,6 +443,12 @@ fn a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle() {
         },
         Row {
             leave: Leave::Remove,
+            gained: Gained::RewrittenHistory,
+            closure: &[],
+            shared: Shared::Kept,
+        },
+        Row {
+            leave: Leave::Keep,
             gained: Gained::RewrittenHistory,
             closure: &[],
             shared: Shared::Kept,
@@ -460,12 +498,10 @@ fn a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle() {
                 assert_eq!(declared.as_deref(), Some("local"), "{case}");
             }
             Shared::Kept => {
-                assert!(
-                    recorded.len() == 1 && recorded[0] != "local",
-                    "{case}: {recorded:?}"
-                );
+                assert_eq!(recorded, ["other"], "{case}: Kept");
                 assert!(installed, "{case}");
                 assert_eq!(declared, None, "{case}");
+                assert_kept_source(&env, &scope, &lock, &case);
             }
         }
         assert!(scope_skill(&scope, "extra").exists(), "{case}");

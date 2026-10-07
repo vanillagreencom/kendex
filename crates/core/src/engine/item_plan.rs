@@ -201,8 +201,9 @@ pub(super) fn plan_item(
 }
 
 /// Invariant 4: a recorded source is never silently rebound. The one
-/// sanctioned rebind is a recorded fork — remote to local, written into
-/// the manifest by the fork operation the user confirmed. The conflict
+/// sanctioned rebind in this pass is a recorded fork — remote to local,
+/// written into the manifest by the fork operation the user confirmed.
+/// Detach transfers surviving records with [`rebind_detached`] first. The conflict
 /// row's detail where the record is not the declaration's, and `None`
 /// where the declaration may write over the record. The item pass asks it
 /// of what it writes, and `plan_pass::plan_rebound` of every other record.
@@ -217,6 +218,21 @@ pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) 
         "installed from {} but now set to come from {provenance} — remove it first",
         entry.source_repo
     ))
+}
+
+/// An explicit unsubscribe transfers an installation the surviving expansion
+/// still wants. Keep the installed hashes and positions: the ordinary planner
+/// must still detect edits and compare the replacement before recording it.
+pub(super) fn rebind_detached(
+    entry: &mut LockEntry,
+    leaving: &str,
+    source: &crate::source::ResolvedSource,
+) {
+    if entry.source == leaving && source.name != leaving {
+        entry.source = source.name.clone();
+        entry.source_repo = source.provenance.clone();
+        entry.source_commit = source.commit.clone();
+    }
 }
 
 /// What this pass records about the installation it just planned.
