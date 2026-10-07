@@ -69,11 +69,6 @@
             "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-check.sh\"",
-            "timeout": 15
           }
         ]
       },
@@ -163,16 +158,6 @@
             "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-deliver.sh\"",
             "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "Skill|skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-record.sh\"",
-            "timeout": 15
           }
         ]
       }

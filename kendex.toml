@@ -64,8 +64,6 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
-  "skill-load-check",
-  "skill-load-record",
   "reviewer-read-only",
   "reviewer-stop-check",
   "dev-stop-check",
@@ -175,6 +173,8 @@ skills = ["commit-guards"]
 # installed, with one notice carrying it, until `kendex refresh --prune`.
 [retired.hooks]
 doc-drift-check = ""
+skill-load-check = ""
+skill-load-record = ""
 
 # Skill mappings per agent — always loaded into context.
 [agent-skills]

@@ -24,8 +24,6 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.
 - `session-end-row`: Writes down that a session ended, so a fleet's overseer that exits is seen to have exited without anyone reading its screen.
 - `session-start-row`: Writes down that a session started, and on which account and model, so the fleet's overseer is judged from what its harness said rather than from its screen.
-- `skill-load-check`: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
-- `skill-load-record`: Remembers which skills each Copilot agent has loaded, so the skill-load check can let that agent's edits and Linear commands through once it has.
 - `stop-failure-row`: Writes down that a turn stopped on an error such as a usage limit, so a fleet's overseer that hits its limit is seen to be stuck without anyone reading its screen.
 - `task-completed-check`: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 - `worktree-session-claim`: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.

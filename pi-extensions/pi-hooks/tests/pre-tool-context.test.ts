@@ -14,7 +14,13 @@ import { startSession } from "./pi-session.ts";
 useIsolatedGitEnv();
 const PACKAGE = join(import.meta.dir, "..");
 const CATALOG = join(PACKAGE, "..", "..", "hooks");
-const GAP = "skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh";
+// A hook that reports a gap and allows the call, its context in the
+// PreToolUse hookSpecificOutput shape.
+const GAP = "context-notice: missing-library=planted";
+const NOTICE = `#!/usr/bin/env bash
+printf '%s\\n' '${GAP}' >&2
+printf '%s\\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"${GAP}"}}'
+`;
 const REFUSAL = "block-bare-cd: refused=bare-cd";
 let world: string;
 beforeAll(() => { world = realpathSync(mkdtempSync(join(tmpdir(), "pi-hooks-pre-context-"))); });
@@ -81,9 +87,9 @@ for (const row of [...rows, ...controls]) {
 		mkdirSync(cwd, { recursive: true });
 		mkdirSync(agentDir, { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: { enabled: true, sessionDriftCheck: false, taskCompletedCheck: false } } } } }));
-		for (const name of [...(row.gap ? ["skill-load-check"] : []), "block-bare-cd"]) {
+		for (const name of [...(row.gap ? ["context-notice"] : []), "block-bare-cd"]) {
 			const path = join(root, "kendex", "hooks", `${name}.sh`);
-			writeFileSync(path, readFileSync(join(CATALOG, `${name}.sh`), "utf8"));
+			writeFileSync(path, name === "context-notice" ? NOTICE : readFileSync(join(CATALOG, `${name}.sh`), "utf8"));
 			registerRendered(root, TOOL_CALL_LISTENER, "Bash", row.scope === "global" ? globalCommand(path) : projectCommand(`.pi/kendex/hooks/${name}.sh`));
 		}
 		const saved = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };

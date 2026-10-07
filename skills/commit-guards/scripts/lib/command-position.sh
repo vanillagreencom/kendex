@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # The text of a shell command that the shell would run, cut into segments.
-# Sourced by the catalog hooks that judge a command by what it runs rather than
-# by what it spells: block-worktree-refresh and skill-load-check. Pure Bash, no
-# external command, and sourcing it defines functions and constants only.
+# Sourced by the catalog hook that judges a command by what it runs rather than
+# by what it spells: block-worktree-refresh. Pure Bash, no external command,
+# and sourcing it defines functions and constants only.
 #
 # `command_segments TEXT` leaves SEGMENTS holding one segment per line. A
 # segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a

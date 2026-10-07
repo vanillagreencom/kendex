@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The mutation helper runs only its row callback, isolates its overrides and
 # counts, and rejects a passing callback, a wrong status, or a missing or
-# repeated FAIL row. The skill-load-check suites are its callers.
+# repeated FAIL row. The hook suites' must-fail controls are its callers.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBRARY="${ASSERT_UNDER_TEST:-$TEST_DIR/lib/assert.sh}"
@@ -31,7 +31,7 @@ assert_eq "$HOOK" "$TMP_ROOT/source.sh" 'the override does not replace the paren
 assert_eq "$(cat -- "$TMP_ROOT/invoked")" "$TMP_ROOT/selected.sh" 'only the selected callback runs once on the mutant'
 assert_eq "$(env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK")" expected 'the original source stays unchanged'
 
-# The real skill-load-check hook puts its anchors deep inside a large file.
+# A large hook can put its anchors deep inside the file.
 # Pattern characters in a comment must remain literal, and no other byte
 # may change when the helper inserts the mutation.
 HOOK="$TMP_ROOT/deep-source.sh"

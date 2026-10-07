@@ -538,24 +538,6 @@ source = "."
 harnesses = ["claude"]
 enabled = true
 
-[hooks.skill-load-check]
-source = "."
-harnesses = [
-    "claude",
-    "codex",
-    "pi",
-    "copilot",
-]
-
-[hooks.skill-load-record]
-source = "."
-harnesses = [
-    "claude",
-    "codex",
-    "pi",
-    "copilot",
-]
-
 [hooks.reviewer-read-only]
 source = "."
 harnesses = [
