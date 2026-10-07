@@ -1,0 +1,1 @@
+- `worktree push` refuses with `worktree-push-base-fetch-failed` when its fetch of origin's default branch fails, instead of judging the branch contained or merging cleanly against a stale base and pushing it unrebased.

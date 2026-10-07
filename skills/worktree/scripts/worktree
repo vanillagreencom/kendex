@@ -3695,8 +3695,18 @@ case "${1:-}" in
     fi
 
     if [[ "$AUTO_REBASE" == true ]]; then
-      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      BASE_FETCH_FAILED=false
+      BASE_FETCH_ERR="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" 2>&1 >/dev/null)" || BASE_FETCH_FAILED=true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+        # Every reading below compares the branch with origin/$DEFAULT_BRANCH,
+        # and a failed fetch leaves that ref wherever it last was: a stale base
+        # reads as contained or as merging cleanly after the base GitHub holds
+        # has moved past it.
+        if [[ "$BASE_FETCH_FAILED" == true ]]; then
+          worktree_message push-base-fetch-failed "origin/$DEFAULT_BRANCH" "Error: Could not fetch origin/$DEFAULT_BRANCH, so whether $CURRENT_BRANCH needs a rebase onto it is unknown; refusing to push. Retry once origin is reachable, or push with --no-rebase." >&2
+          [[ -z "$BASE_FETCH_ERR" ]] || sed 's/^/  /' <<<"$BASE_FETCH_ERR" >&2
+          exit 1
+        fi
         base_reading "$WT_PATH" "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
         if [[ "$BASE_READING" == contained ]]; then
           worktree_message rebase-skipped "$CURRENT_BRANCH" "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2

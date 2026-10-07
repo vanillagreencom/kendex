@@ -249,6 +249,24 @@ done
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
+    # A git that cannot reach origin for the default branch: the fetch of
+    # refs/heads/main fails as an unreachable or rate-limited remote does,
+    # leaving origin/main wherever it last was.
+    base-fetch-fails)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+saw_fetch=false
+for arg in "\$@"; do
+  [[ "\$arg" != fetch ]] || saw_fetch=true
+  if [[ "\$saw_fetch" == true && "\$arg" == +refs/heads/main:* ]]; then
+    echo 'fatal: unable to access origin: The requested URL returned error: 429' >&2
+    exit 128
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
     # A git whose trial merge cannot run: merge-tree exits 2, git's status
     # for a merge it could not attempt.
     merge-tree-fails)
@@ -371,6 +389,16 @@ step() {
       git -C "$SEED" push -q origin main
       git -C "$MAIN" fetch -q origin main
       ;;
+    # Main advances on origin from another clone, so the main checkout's
+    # origin/main still names the base the branch was cut from.
+    advance-unseen)
+      git clone -q -b main "$ROOT/origin.git" "$ROOT/other"
+      printf 'elsewhere\n' >"$ROOT/other/main-elsewhere.txt"
+      git -C "$ROOT/other" add main-elsewhere.txt
+      git -C "$ROOT/other" -c user.email=test@example.com -c user.name=Test -c commit.gpgsign=false \
+        commit -q -m 'main: advanced elsewhere'
+      git -C "$ROOT/other" push -q origin main
+      ;;
     fix) commit_wt fix.txt fix ;;
     fix2) commit_wt fix2.txt fix2 ;;
     lock-fix) commit_wt .kendex-lock.json branch-lock ;;
@@ -458,6 +486,7 @@ step() {
     race) EXTERNAL="$(external_commit)"; git_shim race ;;
     record-push) git_shim record ;;
     merge-tree-fails) git_shim merge-tree-fails ;;
+    base-fetch-fails) git_shim base-fetch-fails ;;
     index-unreadable-wt) git_shim index-unreadable-wt ;;
     index-unreadable-main) git_shim index-unreadable-main ;;
     # An outsider published the branch before this checkout ever fetched it:
@@ -678,9 +707,14 @@ EOF
     # one that seeds an unread rules answer as a queue, one that reads a trial
     # merge that could not run as clean, and one whose record answers for any
     # branch, and one whose rules read keeps an inherited GH_REPO.
-    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo)
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo | unfixed-base-fetch)
       step standalone
       case "$1" in
+        unfixed-base-fetch)
+          mutant="$ROW_SCRIPT"
+          mutant_from='if [[ "$BASE_FETCH_FAILED" == true ]]; then'
+          mutant_to='if false; then'
+          ;;
         unfixed-queue-skip)
           mutant="$ROW_SCRIPT"
           mutant_from='elif [[ "$BASE_READING" == merges-cleanly ]]; then'
@@ -925,6 +959,7 @@ err_text() {
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
     skip-queue) printf 'worktree-rebase-skipped-queue: topic' ;;
     base-conflict) printf 'worktree-push-base-conflict: topic' ;;
+    base-fetch-failed) printf 'worktree-push-base-fetch-failed: origin/main' ;;
     map:*) printf 'worktree-rebase-count: %s' "${spec#map:}" ;;
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     unmapped) printf 'worktree-push-rebase-unmapped: <end>' ;;
@@ -1051,6 +1086,10 @@ a trial merge that cannot run keeps the rebase|pair queue advance fix merge-tree
 must-fail: with a trial that could not run read as clean, that branch is pushed unrebased|pair queue advance fix merge-tree-fails unfixed-trial|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 an inherited GH_REPO does not stand for the checkout, whose strict rule keeps the rebase|pair strict-here inherited-repo advance fix|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
 must-fail: with the inherited GH_REPO kept, the queue of the other repository skips the rebase|pair strict-here inherited-repo advance fix unfixed-inherited-repo|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+a failed base fetch refuses the push rather than reading the branch against the stale base|pair fix advance-unseen base-fetch-fails|push @wt --set-upstream|1|-|base-fetch-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+must-fail: with the fetch refusal cut, the stale base reads as contained and the branch is pushed unrebased|pair fix advance-unseen base-fetch-fails unfixed-base-fetch|push @wt --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+on a merge-queue base, a failed base fetch refuses rather than reading a stale clean merge|pair queue advance fix advance-unseen base-fetch-fails|push @wt --set-upstream|1|-|base-fetch-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+must-fail: with the fetch refusal cut, that branch merges cleanly onto the stale base and is pushed where it stands|pair queue advance fix advance-unseen base-fetch-fails unfixed-base-fetch|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 '
 
 echo "=== worktree push ==="

@@ -522,7 +522,9 @@ Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
 
 Push worktree branch to remote. Auto-rebases onto origin/<default> first.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to
-origin.
+origin. The auto-rebase fetches origin/<default> first; a fetch that fails
+refuses the push ('worktree-push-base-fetch-failed', git's output below it)
+rather than reading the branch against a stale base.
 
 Merge-queue base: where GitHub's effective rules for the default branch hold
 a merge queue and no required-status-checks rule demanding an up-to-date
