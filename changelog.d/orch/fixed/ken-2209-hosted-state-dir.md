@@ -1,0 +1,1 @@
+- `oversee-cycle record` reads a hosted lane's review and fix rounds in the state directory the lane itself uses, named by its worktree's settings, instead of the overseer's own `ORCH_STATE_DIR`, and once the lane's sandbox is gone reads them from the `kept=` archive its close left in the fleet log.

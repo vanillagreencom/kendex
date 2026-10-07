@@ -161,11 +161,13 @@ pushes() {
 }
 
 RECORD_ARGS=(--pr 7)
+# CONTROL_STATE_DIR, where set, is the ORCH_STATE_DIR the overseer's own
+# machine runs under.
 record() { # ITEM TIER [ARGS...]
   local item="$1" tier="$2" rc=0 tier_args=()
   shift 2
   [[ -z "$tier" ]] || tier_args=(--tier "$tier")
-  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO -u WORKTREE_DEFAULT_BRANCH "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record ${RECORD_ARGS[@]+"${RECORD_ARGS[@]}"} ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
+  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO -u WORKTREE_DEFAULT_BRANCH ${CONTROL_STATE_DIR:+ORCH_STATE_DIR="$CONTROL_STATE_DIR"} "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record ${RECORD_ARGS[@]+"${RECORD_ARGS[@]}"} ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
@@ -411,6 +413,41 @@ mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
 echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
 printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" "the fix count comes from the hosted clone's state"
+
+# The lane resolves its state directory on its own host: the overseer's
+# ORCH_STATE_DIR names a directory on the overseer's machine, and the lane's
+# worktree settings name its own.
+assert_eq "$(field fix "$(CONTROL_STATE_DIR=/fleet/state record KEN-4 micro)")" "fix=7" \
+  "a hosted lane's state is read in its own state directory, whatever the overseer's ORCH_STATE_DIR"
+mkdir -p "$CASE/host/clone/lane-state"
+printf '{"cycles": 3}' > "$CASE/host/clone/lane-state/workflow-state-KEN-4.json"
+printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=3" \
+  "a hosted lane whose worktree settings name its state directory is read there"
+printf '[env]\nORCH_STATE_DIR = lane-state\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^oversee-cycle: rounds-unread item=KEN-4$' "$CASE/err" || true)|$(grep -c "settings-unread path=/w/KEN-4/kendex.settings.toml" "$CASE/err" || true)" \
+  "fix=-|1|1" "a worktree settings file that does not parse records no rounds and names the file"
+rm -f -- "${CASE:?}/host/w/KEN-4/kendex.settings.toml"
+
+echo "=== a gone sandbox's rounds are read from the archive its close kept ==="
+# gone_case NAME [ARCHIVE] — KEN-4 hosted on a host that holds nothing, its
+# close's kept= row in the fleet log naming ARCHIVE, by default the case's
+# kept.tgz, which holds the clone's and the worktree's tmp.
+gone_case() {
+  new_case "$1"; printf micro > "$CASE/class"; timeline 1200
+  mkdir -p "$CASE/archive/clone/tmp" "$CASE/archive/w/KEN-4/tmp"
+  printf '{"cycles": 5}' > "$CASE/archive/clone/tmp/workflow-state-KEN-4.json"
+  printf '{}' > "$CASE/archive/w/KEN-4/tmp/dev-return-KEN-4-1.json"
+  tar -czf "$CASE/kept.tgz" -C "$CASE/archive" clone w
+  edit_json "$CASE/state/workflow-state-oversee.json" \
+    "(.lanes[] | select(.item == \"KEN-4\")) |= (.host = \"box\" | .mail_root = \"/w/KEN-4\")
+     | .fleet_log += [{kind: \"lane\", item: \"KEN-4\", text: \"lane-closed KEN-4 kept=${2:-$CASE/kept.tgz}\"}]"
+}
+gone_case gone
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" "a gone sandbox's fix count comes from its kept= archive"
+gone_case gone-missing "$TMP_ROOT/absent.tgz"
+assert_eq "$(field fix "$(record KEN-4 micro)")|$(grep -c '^oversee-cycle: rounds-unread item=KEN-4$' "$CASE/err" || true)" \
+  "fix=-|1" "a kept= archive that is not there records no rounds and says so"
 
 echo "=== the repository the timeline is read from ==="
 new_case repo
@@ -777,10 +814,12 @@ Review rounds per pull request: micro 1, small 1, standard 2; seconds per round:
 # Planted defects in the record verb's target comparison, the span its verdict
 # judges and the stamps its phase reads, the rollup verb, and the
 # lane_item_state it reads rounds through, each in a private copy of that one
-# file among links to the shipped scripts, beside the same stubs.
+# file among links to the shipped scripts, beside the same stubs, the
+# lane-host fake among them.
 control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's oversee-cycle
   local dir
   dir="$(mutant_scripts "skills/$1" "$2")" || exit 1
+  ln -sf -- "$LAYOUT/orch/scripts/lane-host" "$dir/lane-host" || exit 1
   mutate_file "$dir/$2" "$3" "$4"
   RUN_BIN="$dir/oversee-cycle"
 }
@@ -898,6 +937,26 @@ new_case c-lane-root; printf micro > "$CASE/class"; timeline 1200
 edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
 assert_eq "$(field fix "$(record KEN-5 micro)")" "fix=-" \
   "control: read from the caller's checkout, another repository's lane has no rounds"
+
+control m-hosted-dir lib/lane-gitfile.sh 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$2"' \
+  'lane_hosted_state_path "$LANE_HOSTED_CLONE" "${ORCH_STATE_DIR:-tmp}" "$2"'
+new_case c-hosted-dir; printf micro > "$CASE/class"; timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
+mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
+echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
+printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
+assert_eq "$(field fix "$(CONTROL_STATE_DIR=/fleet/state record KEN-4 micro)")" "fix=-" \
+  "control: read at the overseer's ORCH_STATE_DIR, a hosted lane has no rounds"
+control m-hosted-settings lib/lane-gitfile.sh 'for file in kendex.settings.toml .kendex/settings.toml; do' 'for file in; do'
+mkdir -p "$CASE/host/clone/lane-state"
+printf '{"cycles": 3}' > "$CASE/host/clone/lane-state/workflow-state-KEN-4.json"
+printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
+  "control: without the worktree settings read, the lane's own state directory is missed"
+control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then'
+gone_case c-kept
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
+  "control: without the kept= archive, a gone sandbox has no rounds"
 
 control m-split oversee-cycle '     else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits' '     else null end) as $waits'
 new_case c-split; printf micro > "$CASE/class"

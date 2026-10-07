@@ -42,7 +42,11 @@
 # enter the per-class rollup. Exactly one of --pr and --commit is required.
 # The round counts come from
 # the lane's own workflow state, read as oversee-report reads it through
-# lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
+# lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host
+# in the state directory the lane resolves from its own worktree's settings,
+# never this caller's ORCH_STATE_DIR; once its sandbox is gone, from the
+# archive the fleet log's last `kept=PATH` row for the item names. A lane
+# whose state is gone, which
 # ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
 # read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
 # the reason on stderr. A lane whose host kind declares files=none, a Claude
@@ -317,10 +321,14 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 [[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
 LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
 LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
+# The archive a close of the hosted lane kept, from the fleet log's last
+# `kept=PATH` row for the item.
+LANE_KEPT="$(jq -r --arg item "$ITEM" '[.fleet_log[]? | select(.item == $item) | .text | strings
+  | capture("(^|\\s)kept=(?<p>/\\S+)") | .p] | last // empty' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
 
 rounds=null rounds_unread=""
 if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-  "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then
+  "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
   rounds="$(jq -c '{review: ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0)),
