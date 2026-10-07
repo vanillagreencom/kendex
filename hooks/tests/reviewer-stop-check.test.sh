@@ -538,7 +538,9 @@ echo "reviewer-stop-check: only paths the review changed block"
 # file and a deleted tracked file. The review starts at the next whole second,
 # the dated transcript's first entry, since a change time cannot be set back
 # and the hook compares whole seconds; then the reviewer acts. A row is
-# `label|transcript|act|expected|named`: transcript `dated` or `undated`; act
+# `label|transcript|act|expected|named`: transcript `dated` (Claude Code's
+# prompt first, at the start), `codex` (a `session_meta` first), `toolfirst`
+# (a completed tool call first, stamped at the start) or `undated`; act
 # `none`, `probe` (creates a file), `chmod` (a tracked file's mode, its content
 # and mtime untouched), `stage` (git add of the author's modified file) or
 # `move` (mv of the author's untracked file, which keeps its mtime); named is
@@ -549,10 +551,16 @@ a probe the reviewer created blocks over the author's dirt|dated|probe|rc=2 firs
 a mode the reviewer changed blocks though the file's mtime is old|dated|chmod|rc=2 first=reviewer-stop-check: worktree=@REPO@| M tools/run.sh
 the reviewer staging the author's change blocks|dated|stage|rc=2 first=reviewer-stop-check: worktree=@REPO@|M  src/lib.rs
 the reviewer moving the author's file blocks though its mtime is old|dated|move|rc=2 first=reviewer-stop-check: worktree=@REPO@|?? notes-moved.txt
+a Codex session_meta dates the start, and the author's dirt passes|codex|none|rc=0 first=-|-
+a completed tool call first gives no start, and the author's dirt blocks|toolfirst|none|rc=2 first=reviewer-stop-check: worktree=@REPO@|-
 with no dated first entry the author's dirt blocks|undated|none|rc=2 first=reviewer-stop-check: worktree=@REPO@|-
 "
+fs_now() { # -> the change time a write stamps now
+  touch -- "$TMP_ROOT/clock"
+  stat -c %Z -- "$TMP_ROOT/clock" 2>/dev/null || stat -f %c -- "$TMP_ROOT/clock"
+}
 start_rows() { # TAG
-  local tag="$1" row label dated act want named repo t t0 n=0 before=$((PASS + FAIL))
+  local tag="$1" row label dated act want named repo t t0 start first n=0 before=$((PASS + FAIL))
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     IFS='|' read -r label dated act want named <<<"$row"
@@ -569,10 +577,22 @@ start_rows() { # TAG
     fgit -C "$repo" add author-staged.txt
     rm -f -- "${repo:?}/src/gone.rs"
     t="$(transcript_for "$repo")"
-    t0=$(date +%s)
-    while [ "$(date +%s)" -le "$t0" ]; do :; done
-    if [ "$dated" = dated ]; then
-      { printf '{"type":"user","timestamp":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"; cat -- "$t"; } >"$t.dated"
+    # The start is read off the filesystem's own clock, which stamps change
+    # times from a coarse clock that can trail date's by milliseconds: the
+    # author's changes are at or before t0, every later change at or after
+    # the start.
+    t0=$(fs_now)
+    start=$t0
+    while [ "$start" -le "$t0" ]; do start=$(fs_now); done
+    case "$dated" in
+      dated) first='{"type":"user","timestamp":"@TS@","message":{"role":"user","content":"Review the diff."}}' ;;
+      codex) first='{"timestamp":"@TS@","type":"session_meta","payload":{"id":"019a"}}' ;;
+      toolfirst) first='{"timestamp":"@TS@","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","name":"exec"}}' ;;
+      undated) first='' ;;
+      *) printf 'start rows: no transcript named %s\n' "$dated" >&2; exit 2 ;;
+    esac
+    if [ -n "$first" ]; then
+      { printf '%s\n' "${first//@TS@/$(jq -nr --argjson t "$start" '$t | todate')}"; cat -- "$t"; } >"$t.dated"
       t="$t.dated"
     fi
     case "$act" in
@@ -599,6 +619,7 @@ start_rows st
 # time in place of the change time reds the chmod and the move.
 rows_control start_rows start-ignored '[ "$t" -ge "$START" ]' 'true' \
   "dirt the author left before the review passes" \
+  "a Codex session_meta dates the start, and the author's dirt passes" \
   "a probe the reviewer created blocks over the author's dirt, and not the author's deletion" \
   "a mode the reviewer changed blocks though the file's mtime is old, and not the author's deletion" \
   "the reviewer staging the author's change blocks, and not the author's deletion" \
@@ -613,6 +634,11 @@ rows_control start_rows start-all-old '[ "$t" -ge "$START" ]' 'false' \
 rows_control start_rows index-unread '[ "$INDEX_CHANGED" -eq 0 ] || return 0' ':' \
   "the reviewer staging the author's change blocks" \
   "the reviewer staging the author's change blocks, naming the reviewer's path"
+# Any first entry taken as the start reds the tool-call row.
+rows_control start_rows launch-record-unchecked \
+  '| select(.type == "session_meta" or (.type == "user" and ([.message.content | arrays | .[] | .type?] | index("tool_result") | not)))' \
+  '' \
+  "a completed tool call first gives no start, and the author's dirt blocks"
 rows_control start_rows mtime 'stat -c %Z "$1" 2>/dev/null || stat -f %c "$1" 2>/dev/null' \
   'stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null' \
   "a mode the reviewer changed blocks though the file's mtime is old" \
