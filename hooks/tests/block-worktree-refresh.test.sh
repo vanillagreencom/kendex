@@ -523,9 +523,14 @@ a project below the main checkout's root is the shared base too|payload|own|2|bl
 a single-quoted target spelled with an equals sign is still a target|payload|own|2|block-worktree-refresh: shared=apply|kendex apply '--project-path=$MAIN'
 and double-quoted|payload|own|2|block-worktree-refresh: shared=apply|kendex apply "--project-path=$MAIN"
 and on updates --apply|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply '--project-path=$MAIN'
-a quoted target naming the worktree's own project passes|payload|own|0|-|kendex refresh "--project-path=$OWN"
+a quoted target naming the worktree's own project passes|payload|own|0|-|kendex apply "--project-path=$OWN"
+a quoted span after refresh is cut from the words as command text, so whatever target it holds is unproven|payload|own|2|block-worktree-refresh: unproven=refresh|kendex refresh "--project-path=$OWN"
 a double-quoted target the shell expands is a target, and unproven|payload|own|2|block-worktree-refresh: unproven=apply|MAIN=$MAIN; kendex apply "--project-path=\$MAIN"
 and on updates --apply|payload|own|2|block-worktree-refresh: unproven=updates|MAIN=$MAIN; kendex updates --apply "--project-path=\$MAIN"
+an expansion that may be --project-path proves no target in a worktree that owns its manifest|payload|own|2|block-worktree-refresh: unproven=apply|FLAG=--project-path; MAIN=$MAIN; kendex apply "\$FLAG" "\$MAIN"
+and for updates --apply|payload|own|2|block-worktree-refresh: unproven=updates|kendex updates --apply \$ARGS
+and for a target cut out of the words|payload|own|2|block-worktree-refresh: unproven=refresh|kendex refresh \$(printf %s --project-path) $MAIN
+a verb with no --project-path form is not unsure of its target|payload|own|0|-|kendex add \$NAME
 a relative target is resolved from the working directory|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path ../main
 an absolute target after a cd is still read from the words|payload|own|2|block-worktree-refresh: shared=refresh|cd $OWN && kendex refresh --project-path $MAIN
 a relative target after a cd resolves against a directory the words do not establish|payload|own|2|block-worktree-refresh: unproven=refresh|cd $OWN && kendex refresh --project-path .
