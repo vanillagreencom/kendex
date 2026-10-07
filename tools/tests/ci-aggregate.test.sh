@@ -100,6 +100,20 @@ plant "$WORKFLOW" "run: tools/ci-job-set --event-parity" "run: tools/ci-job-set"
 check "must-fail: a changes job calling tools/ci-job-set without --event-parity is named" \
   "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
 
+# Only the action's accepted macOS record reaches the coverage selector.
+selection_proof_input() { # WORKFLOW — the select step's proof expression
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "changes:"); in_select = 0 }
+    in_job && /^      - / { in_select = ($0 == "      - id: select") }
+    in_select && /^          MACOS_PROOF_RECORD:/ { sub(/^          MACOS_PROOF_RECORD: */, ""); print }
+  ' "$1"
+}
+check "the select step forwards accepted macOS proof" \
+  '${{ steps.classify.outputs.macos_proof_record }}' "$(selection_proof_input "$WORKFLOW")"
+plant "$WORKFLOW" '          MACOS_PROOF_RECORD: ${{ steps.classify.outputs.macos_proof_record }}' "          MACOS_PROOF_RECORD: ''" "$TMP/empty-macos-proof.yml" changes
+check "must-fail: empty macOS proof input breaks forwarding" "''" \
+  "$(selection_proof_input "$TMP/empty-macos-proof.yml")"
+
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW KEY [JOB]
   local raw

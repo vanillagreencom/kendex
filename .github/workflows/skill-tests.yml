@@ -304,7 +304,6 @@ jobs:
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
           EVENT: ${{ env.EVENT }}
           PROOF_RECORD: ${{ steps.classify.outputs.proof_record }}
-          PATCH_ID: ${{ steps.classify.outputs.patch_id }}
           MACOS_PROOF_RECORD: ${{ steps.classify.outputs.macos_proof_record }}
         run: tools/ci-job-set --event-parity
 

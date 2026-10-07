@@ -1089,35 +1089,37 @@ macos_patch=true" "$(grep -E '^(patch_id|macos_patch)=' "$RECORD_DIR/record")"
 # member proof unzips, and the upload step uploads record_dir itself, so the
 # artifact's root is that directory and its member the file's own name; a
 # file uploaded on its own lands at the artifact root under its basename.
-# The artifact's name is the upload step's prefix before proof_tree, and
-# proof looks a record up by its own prefix before the tree.
+# Each upload names the identity its proof reader uses: tree or patch_id.
 proof_member() { # PROOF — the member its unzip reads
   sed -n 's/^.*unzip -p "\$WORK\/record\.zip" \([^ ]*\) >.*$/\1/p' "$1"
 }
-proof_prefix() { # PROOF — the artifact name before the tree
-  sed -n 's/^artifact_name="\(.*\)\$tree"$/\1/p' "$1"
+proof_prefix() { # PROOF IDENTITY — the artifact name before its identity
+  sed -n "s/^.*artifact_name=\"\(.*\)\$$2\"\$/\1/p" "$1"
 }
-upload_key() { # ACTION_YML KEY — the upload step's KEY under `with:`
-  awk -v key="$2" '
+upload_key() { # ACTION_YML KEY [UPLOAD] — the upload step's KEY under `with:`
+  awk -v key="$2" -v wanted="${3:-1}" '
     /^    - / { upload = 0 }
-    /^      uses: actions\/upload-artifact@/ { upload = 1 }
-    upload && !seen && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11); seen=1 }
+    /^      uses: actions\/upload-artifact@/ { upload = (++n == wanted) }
+    upload && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11) }
   ' "$1"
 }
-binding() { # PROOF ACTION_YML — `bound`, or what disagrees
-  local member written prefix name
+binding() { # PROOF ACTION_YML [IDENTITY] — `bound`, or what disagrees
+  local member written prefix name identity="${3:-tree}" upload=1
+  [ "$identity" != patch_id ] || upload=2
   member="$(proof_member "$1")"
-  prefix="$(proof_prefix "$1")"
+  prefix="$(proof_prefix "$1" "$identity")"
   [ -n "$member" ] && [ -n "$prefix" ] ||
     { echo "no unzip member or artifact prefix read from $1, so a reader is broken"; return 0; }
   record_answer "$CLASSIFY" pr-all >/dev/null
   written="$(ls -A "$(sed -n 's/^record_dir=//p' "$OUT")")"
-  name="$(upload_key "$2" name)"
+  name="$(upload_key "$2" name "$upload")"
   if [ "$written" != "$member" ]; then
     echo "classify writes $written, proof reads $member"
-  elif [ "$(upload_key "$2" path)" != '${{ steps.classify.outputs.record_dir }}' ]; then
-    echo "the upload step uploads $(upload_key "$2" path), not record_dir"
-  elif [ "$name" != "$prefix\${{ steps.classify.outputs.proof_tree }}" ]; then
+  elif [ "$(upload_key "$2" path "$upload")" != '${{ steps.classify.outputs.record_dir }}' ]; then
+    echo "the upload step uploads $(upload_key "$2" path "$upload"), not record_dir"
+  elif [ "$identity" = patch_id ] && [ "$name" != "$prefix\${{ steps.classify.outputs.patch_id }}" ]; then
+    echo mismatch-macos-artifact
+  elif [ "$identity" = tree ] && [ "$name" != "$prefix\${{ steps.classify.outputs.proof_tree }}" ]; then
     echo "the upload step names $name, proof looks up $prefix<tree>"
   else
     echo bound
@@ -1126,6 +1128,21 @@ binding() { # PROOF ACTION_YML — `bound`, or what disagrees
 PROOF_SCRIPT="$ROOT/.github/actions/change-class/proof"
 check "the record classify writes is the member and artifact proof reads, as the action uploads it" \
   bound "$(binding "$PROOF_SCRIPT" "$ACTION")"
+check "the macOS upload matches its proof reader identity and record directory" \
+  bound "$(binding "$PROOF_SCRIPT" "$ACTION" patch_id)"
+while IFS='@' read -r needle replacement; do
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
+    /^      uses: actions\/upload-artifact@/ { upload++ }
+    upload == 2 && $0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; n++; next }
+    { print } END { exit n != 1 }
+  ' "$ACTION" >"$TMP/macos-upload.yml" || exit 1
+  ! cmp -s "$ACTION" "$TMP/macos-upload.yml" || exit 1
+  [ "$(binding "$PROOF_SCRIPT" "$TMP/macos-upload.yml" patch_id)" != bound ] &&
+    ok "must-fail: macOS upload $needle" || bad "must-fail: macOS upload $needle"
+done <<'ROWS'
+        name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}@        name: change-class-macos-record-${{ steps.classify.outputs.patch_id }}
+        path: ${{ steps.classify.outputs.record_dir }}@        path: ${{ runner.temp }}/change-class-record/record
+ROWS
 sed 's/unzip -p "$WORK\/record.zip" record >/unzip -p "$WORK\/record.zip" change-class-record >/' \
   "$PROOF_SCRIPT" >"$TMP/proof-member"
 ! cmp -s "$PROOF_SCRIPT" "$TMP/proof-member" || { echo "the member mutant changed nothing" >&2; exit 1; }

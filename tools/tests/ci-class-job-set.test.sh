@@ -210,7 +210,7 @@ for event in pull_request merge_group; do
   other=merge_group
   [ "$event" != merge_group ] || other=pull_request
   check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
 patch_id=p1
 macos_patch=true" selection micro false skills/orch/scripts/lanes)"
 done
@@ -608,43 +608,58 @@ patch_id=p1
 macos_patch=true"
 patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]')"
 patch_expected="${patch_expected/cargo_macos=true/cargo_macos=false}"
-patch_cases() {
-  cat <<ROWS
-same-patch|p1|$patch_expected
-changed-patch|p2|$PRICE_GROUP
-missing-patch||$PRICE_GROUP
-ROWS
-}
-while IFS='|' read -r label patch expected; do
-  check "macOS patch proof: $label" "$expected" \
-    "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID="$patch" SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
-done < <(patch_cases)
+check "accepted macOS record waives covered portability" "$patch_expected" \
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
 check "no macOS record retains portability despite matching tree proof" "$PRICE_GROUP" \
-  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
 check "proof over fewer shards retains macOS shell shards" "${PRICE_GROUP/cargo_macos=true/cargo_macos=false}" \
-  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/preflight/scripts/preflight | tr ',' '\n')
+  "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false skills/preflight/scripts/preflight | tr ',' '\n')
 patch_id=p1
 macos_patch=true" selection micro false "$PRICE")"
+
+# sed can print the complete coverage field before it reports a read failure.
+# Each field must retain portability on that status, even with usable text.
+mkdir -p "$TMP/field-reader"
+REAL_SED="$(command -v sed)" || exit 1
+cat >"$TMP/field-reader/sed" <<'SH'
+#!/usr/bin/env bash
+"$REAL_SED" "$@" || exit "$?"
+[ "${2:-}" != "s/^$FAILED_FIELD=//p" ] || exit 23
+SH
+chmod +x "$TMP/field-reader/sed"
+while IFS='@' read -r field needle replacement; do
+  got="$(REAL_SED="$REAL_SED" FAILED_FIELD="$field" PATH="$TMP/field-reader:$PATH" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
+  check "failed $field read retains macOS coverage" "$PRICE_GROUP" "$got"
+  check "failed $field read reports ignored proof" "macos-coverage-read-failed" \
+    "$(sed -n 's/^ci-job-set: proof=ignored cause=//p' "$TMP/selection-err")"
+  [ "$(grep -cF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '{ i=index($0,ENVIRON["NEEDLE"]); if(i) $0=substr($0,1,i-1) ENVIRON["REPLACEMENT"] substr($0,i+length(ENVIRON["NEEDLE"])); print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+  got="$(REAL_SED="$REAL_SED" FAILED_FIELD="$field" PATH="$TMP/field-reader:$PATH" SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
+  [ "$got" = "$patch_expected" ] && ok "must-fail: unchecked $field read waives macOS" || bad "must-fail: unchecked $field read control"
+done <<'ROWS'
+change_class@! r_class="$(patch_line change_class)"@{ r_class="$(patch_line change_class)"; false; }
+docs_only@! r_docs="$(patch_line docs_only)"@{ r_docs="$(patch_line docs_only)"; false; }
+changed_path@! r_paths="$(patch_line changed_path)"@{ r_paths="$(patch_line changed_path)"; false; }
+ROWS
 
 # Reintroduce tree-only reuse in a disposable copy. The same-tree queue
 # case must then lose its integrated Linux lanes, which fails the row above.
 sed '/^\[ "\$EVENT" != merge_group \] || record=""$/d; /^  if \[ "\$EVENT" = merge_group \]; then$/,/^  fi$/d' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
 ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || { echo "tree reuse control changed nothing" >&2; exit 1; }
 chmod +x "$TMP/rule/tools/ci-job-set"
-got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
+got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
 [ "$got" != "$PRICE_GROUP" ] && ok "must-fail: tree-only reuse skips queue integration" || bad "must-fail: tree-only reuse still retains queue integration"
-# Each new guard has a disposable control: accepting a changed identity,
-# applying patch reuse to Linux, and retaining an already proven macOS queue.
-while IFS='@' read -r needle replacement patch expected; do
+# Coverage controls plant Linux reuse and retain an already proven macOS queue.
+while IFS='@' read -r needle replacement expected; do
   [ "$(grep -cF -- "$needle" "$JOB_SET")" -eq 1 ] || { echo "patch control needle is not unique" >&2; exit 1; }
   NEEDLE="$needle" REPLACEMENT="$replacement" awk '{ i=index($0,ENVIRON["NEEDLE"]); if(i) $0=substr($0,1,i-1) ENVIRON["REPLACEMENT"] substr($0,i+length(ENVIRON["NEEDLE"])); print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
-  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PATCH_ID="$patch" SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
+  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
   [ "$got" != "$expected" ] && ok "must-fail: patch rule $needle" || bad "must-fail: patch rule $needle"
 done <<ROWS
-[ "\$(patch_line patch_id)" = "\$PATCH_ID" ]@true@p2@$PRICE_GROUP
-case "\$lane" in macos | cargo_macos) ;; *) ran=false ;; esac@case "\$lane" in macos | cargo_macos | linux | cargo_linux) ;; *) ran=false ;; esac@p1@$patch_expected
-case "\$legs" in *macos-latest*) ;; *) queue="" ;; esac@:@p1@$patch_expected
+case "\$lane" in macos | cargo_macos) ;; *) ran=false ;; esac@case "\$lane" in macos | cargo_macos | linux | cargo_linux) ;; *) ran=false ;; esac@$patch_expected
+case "\$legs" in *macos-latest*) ;; *) queue="" ;; esac@:@$patch_expected
 ROWS
 
 # --- 1c. The queue's macOS legs ---------------------------------------------

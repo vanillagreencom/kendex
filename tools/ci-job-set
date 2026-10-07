@@ -38,9 +38,8 @@
 #                  on a pull request. Groups ignore this tree proof.
 #                  A record whose lines this selection refuses stands
 #                  nothing down and says why on a `proof=ignored` line.
-#   PATCH_ID       this diff's stable git patch-id, computed by the action
-#   MACOS_PROOF_RECORD  a successful pull-request run's opt-in macOS record,
-#                  with matching patch_id and macos_patch=true. Only this
+#   MACOS_PROOF_RECORD  the change-class action's accepted macOS record.
+#                  The action owns record eligibility. Only this
 #                  proof can stand macOS lanes down on a merge group.
 #                  Tree proof never stands group Linux or Windows lanes down.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
@@ -611,15 +610,20 @@ if [ -n "$record" ]; then
   fi
 fi
 
-# Only the successful-run lookup's macOS record can waive queue portability.
-# An absent, duplicate or mismatched identity leaves every macOS lane selected.
+# The action accepts the macOS record; this selector decides its coverage.
+# A failed coverage read leaves every macOS lane selected.
 patch_record="${MACOS_PROOF_RECORD:-}"
 patch_was=""
-if [ "$EVENT" = merge_group ] && [ -n "$patch_record" ] && [ -n "${PATCH_ID:-}" ]; then
+if [ "$EVENT" = merge_group ] && [ -n "$patch_record" ]; then
   patch_line() { printf '%s\n' "$patch_record" | sed -n "s/^$1=//p"; }
-  if [ "$(patch_line patch_id)" = "$PATCH_ID" ] && [ "$(patch_line macos_patch)" = true ] &&
-    [ "$(patch_line event)" = pull_request ]; then
-    patch_was="$(select_row "$(patch_line change_class)" "$(patch_line docs_only)" "$(patch_line changed_path)" pull_request)" || patch_was=""
+  if ! r_class="$(patch_line change_class)" || ! r_docs="$(patch_line docs_only)" ||
+    ! r_paths="$(patch_line changed_path)"; then
+    printf 'ci-job-set: proof=ignored cause=macos-coverage-read-failed\n' >&2
+  else
+    patch_was="$(select_row "$r_class" "$r_docs" "$r_paths" pull_request)" || {
+      printf 'ci-job-set: proof=ignored cause=macos-coverage-refused\n' >&2
+      patch_was=""
+    }
   fi
 fi
 

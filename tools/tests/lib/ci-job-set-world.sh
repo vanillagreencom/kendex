@@ -54,7 +54,7 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   : >"$out"
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
     EVENT="${SELECT_EVENT-pull_request}" PROOF_RECORD="${SELECT_PROOF:-}" \
-    PATCH_ID="${SELECT_PATCH_ID:-}" MACOS_PROOF_RECORD="${SELECT_MACOS_PROOF:-}" \
+    MACOS_PROOF_RECORD="${SELECT_MACOS_PROOF:-}" \
     GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
@@ -142,6 +142,6 @@ ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" '["orch-terminal"
 ORCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request micro false skills/orch/SKILL.md | tr ',' '\n')" selection micro false skills/orch/scripts/lanes)"
 SOURCE_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PROOF="$(record pull_request micro false .github/AGENTS.md skills/orch/scripts/lanes | tr ',' '\n')" selection micro false "$(printf '%s\n' .github/AGENTS.md skills/orch/scripts/lanes)")"
 
-PATCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_PATCH_ID=p1 SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
+PATCH_PROOF_ROW="$(SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false skills/orch/scripts/lanes | tr ',' '\n')
 patch_id=p1
 macos_patch=true" selection micro false skills/orch/scripts/lanes)"
