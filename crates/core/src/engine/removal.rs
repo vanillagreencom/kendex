@@ -255,15 +255,6 @@ enum Verdict {
 const EDITED: &str =
     "no longer wanted, but its files were edited on disk — remove it by name to confirm";
 
-/// The conflict a kept retired item's copy leaves once its files are gone.
-/// A prune takes the record with nothing left to hold.
-const RETIRED_GONE: &str = "its catalog retired it and its installed files are gone — refresh with --prune takes the record, or remove it by name";
-
-/// The conflict a kept retired item's copy leaves once its files were
-/// edited: a prune holds the edits as it holds any orphan's, so only
-/// naming it takes them.
-const RETIRED_EDITED: &str = "its catalog retired it and its installed files were edited on disk — remove it by name to take them";
-
 /// Removing by name affects every tool that still installs the item.
 /// Applying with edits discarded takes only the unwanted copy.
 const EDITED_KEPT: &str = "no longer wanted, but its files were edited on disk: apply with --discard-edits to confirm; removing it by name would also remove it from tools that still request, require or bundle it";
@@ -932,11 +923,11 @@ pub(super) fn retired_copy(env: &Env, scope: &Scope, entry: &LockEntry) -> Optio
 
 /// What [`retired_copy`] says, where it says anything.
 fn retired_copy_detail(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<String> {
-    let detail = match entry.kind {
+    let gone = match entry.kind {
         ItemKind::PiExtension => match pi_state(env, scope, entry) {
             Ok(PackageState::Current { .. }) => return None,
-            Ok(PackageState::Missing) => RETIRED_GONE,
-            Ok(PackageState::Different) => RETIRED_EDITED,
+            Ok(PackageState::Missing) => true,
+            Ok(PackageState::Different) => false,
             Err(unread) => {
                 return Some(format!(
                     "its catalog retired it and its installed package could not be compared: {unread}"
@@ -950,16 +941,35 @@ fn retired_copy_detail(env: &Env, scope: &Scope, entry: &LockEntry) -> Option<St
                     .iter()
                     .all(|candidate| !candidate.exists() && !candidate.is_symlink())
             });
-            if gone {
-                RETIRED_GONE
-            } else if edit_holds(env, scope, entry) {
-                RETIRED_EDITED
-            } else {
+            if !gone && !edit_holds(env, scope, entry) {
                 return None;
             }
+            gone
         }
     };
-    Some(detail.to_owned())
+    // The kind rides along, as on verify's left-over row: a bare name also
+    // removes a live item of another kind that shares it, and a
+    // personal-setup copy is out of reach of a removal at the project.
+    let global = match scope {
+        Scope::Global => " and --global",
+        _ => "",
+    };
+    let removal = format!(
+        "remove {} with --kind {}{global}",
+        entry.name,
+        entry.kind.name()
+    );
+    // Files gone leave a prune nothing to hold, so it takes the record;
+    // edited ones it holds as it holds any orphan's, so only the removal
+    // takes them.
+    Some(match gone {
+        true => format!(
+            "its catalog retired it and its installed files are gone — refresh with --prune takes the record, or {removal}"
+        ),
+        false => format!(
+            "its catalog retired it and its installed files were edited on disk — {removal} to take them"
+        ),
+    })
 }
 
 /// Whether this installation only ever existed for another item's sake —
