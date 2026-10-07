@@ -10,9 +10,9 @@
 #
 #   curl -fsSL https://kendex.ai/install.sh | sh -s -- --cli-only
 # POSIX shell, because the published command pipes this into `sh` and that
-# is dash on Debian and Ubuntu. No `pipefail` either: the one pipeline here
-# is the release lookup, and an empty result is checked for by name a few
-# lines below, which says more than an abrupt exit would.
+# is dash on Debian and Ubuntu. No `pipefail` either: each pipeline here
+# only rewrites text it was handed, and the release lookup checks its own
+# answer by name, which says more than an abrupt exit would.
 set -eu
 
 # Each installer-owned message starts with install.sh: KEY=VALUE. Values
@@ -75,8 +75,15 @@ esac
 if [ "$git_channel" -eq 1 ]; then
   version="rolling-main"
 elif [ "$version" = latest ]; then
-  version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+  # github.com redirects this page to the latest release's tag page. The API
+  # would answer the same, but refuses anonymous callers on a shared IP whose
+  # hourly quota is spent.
+  latest="https://github.com/$repo/releases/latest"
+  landed="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$latest")" || landed=""
+  case "$landed" in
+    */releases/tag/?*) version="${landed##*/releases/tag/}" ;;
+    *) message release-unavailable "$latest" "The latest release could not be resolved." >&2; exit 1 ;;
+  esac
 else
   # The release workflow tags a main build main-build-N-A-SHA, with no v.
   case "$version" in
@@ -84,7 +91,6 @@ else
     *) version="v${version#v}" ;;
   esac
 fi
-[ -n "$version" ] || { message release-unavailable latest "The latest release could not be resolved." >&2; exit 1; }
 plain="${version#v}"
 # A main build names its AppImage after the version it built, which its tag
 # does not carry, so the build's own feed names every download; its command

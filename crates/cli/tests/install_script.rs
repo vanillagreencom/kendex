@@ -111,7 +111,7 @@ fn run_script(
     write_exe(&fake.join("sudo"), sudo);
     write_exe(&fake.join("install"), &install_stub(home));
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
-    // and the release lookup gets a tag.
+    // and the latest release redirect lands on a tag.
     let miss = fail.map_or(String::new(), |(url, code)| {
         // A failed transfer can leave a file; a later chmod must not supply the failure verdict.
         format!("case \"$url\" in *{url}*) [ -z \"$out\" ] || : > \"$out\"; exit {code} ;; esac\n")
@@ -122,6 +122,7 @@ fn run_script(
             "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) url=\"$1\"; shift ;; esac; done\n\
              echo \"$url\" >> \"{log}\"\n{miss}\
              case \"$url\" in\n\
+               */releases/latest) echo 'https://github.com/vanillagreencom/kendex/releases/tag/v9.9.9' ;;\n\
                */feed.json)\n\
                  printf '%s\\n' '{{' \
                    '  \"version\": \"5.0.1+main.42.0123456789abcdef0123456789abcdef01234567\",' \
@@ -136,7 +137,7 @@ fn run_script(
                    '    \"x86_64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage\",' \
                    '    \"aarch64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex_5.0.1_aarch64.AppImage\"' \
                    '  }}' '}}' > \"$out\" ;;\n\
-               *) if [ -n \"$out\" ]; then printf '#!/bin/sh\\necho v9\\n' > \"$out\"; else echo '\"tag_name\": \"v9.9.9\"'; fi ;;\n\
+               *) [ -z \"$out\" ] || printf '#!/bin/sh\\necho v9\\n' > \"$out\" ;;\n\
              esac\n",
             log = home.join("urls.txt").display()
         ),

@@ -68,8 +68,8 @@ fn write_stub(dir: &Path, name: &str, script: &str) {
     set_mode(&path, 0o755);
 }
 
-/// Stand in for the network, down to the details that matter. The release
-/// lookup answers with a tag; a raw file URL is served out of this working
+/// Stand in for the network, down to the details that matter. The latest
+/// release redirect lands on a tag; a raw file URL is served out of this working
 /// tree, and a missing path fails the way the worst `curl -f` ever did —
 /// empty file created, exit 22 — so neither a mistyped asset nor a leftover
 /// husk can pass unnoticed. Anything else is a release download and gets a
@@ -85,7 +85,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$url" in
-  *api.github.com*) echo '{"tag_name": "v9.9.9"}' ;;
+  */releases/latest) echo 'https://github.com/vanillagreencom/kendex/releases/tag/v9.9.9' ;;
   *raw.githubusercontent.com/*)
     path="${url#*raw.githubusercontent.com/}"
     path="${path#*/}"; path="${path#*/}"; path="${path#*/}"
@@ -110,21 +110,25 @@ case "$1" in
 esac
 "#;
 
-/// A network that cannot answer the release lookup. That lookup is the one
-/// pipeline in the installer, and the reason the script does not lean on
-/// `pipefail` to notice a failure inside it.
-const CURL_WITHOUT_RELEASES: &str = r#"#!/bin/sh
+/// A network where api.github.com refuses, as it does an anonymous caller
+/// on a shared IP whose quota is spent, and the latest release redirect lands
+/// on `__REDIRECT__`. Only a release download for v9.9.9 answers, so an
+/// install that succeeds took its version from the redirect.
+const CURL_REDIRECTING: &str = r#"#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
+    -w) shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 case "$url" in
   *api.github.com*) exit 22 ;;
-  *) : > "$out" ;;
+  */releases/latest) echo '__REDIRECT__' ;;
+  */releases/download/v9.9.9/*) printf '#!/bin/sh\necho stub\n' > "$out" ;;
+  *) exit 22 ;;
 esac
 "#;
 
@@ -213,22 +217,36 @@ fn installer_output(
     (tmp, output)
 }
 
-/// `set -o pipefail` is not in the shell the published command runs, so the
-/// release lookup cannot lean on it. A lookup that answers with nothing has
-/// to stop the install and say so, rather than carrying an empty version
-/// into every download URL.
+/// The latest release comes from the github.com redirect, never
+/// api.github.com. A redirect that names no tag, as github.com answers a
+/// repository with no release, has to stop the install and name the URL it
+/// tried, rather than carry an empty version into every download URL.
 #[test]
-fn a_release_lookup_that_answers_with_nothing_stops_the_install() {
-    let (tmp, output) = installer_output(&repo_root(), CURL_WITHOUT_RELEASES, DATA_DIR, |_| {});
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    assert_eq!(
-        installer_message::value(&output.stderr, "release-unavailable"),
-        Some("latest")
-    );
-    assert!(
-        !tmp.path().join(".local/bin/kendex").exists(),
-        "a version it could not resolve still installed something"
-    );
+fn the_latest_release_resolves_from_the_releases_redirect() {
+    let tried = "https://github.com/vanillagreencom/kendex/releases/latest";
+    for (redirect, installs) in [
+        (
+            "https://github.com/vanillagreencom/kendex/releases/tag/v9.9.9",
+            true,
+        ),
+        ("https://github.com/vanillagreencom/kendex/releases", false),
+    ] {
+        let curl = CURL_REDIRECTING.replace("__REDIRECT__", redirect);
+        let (tmp, output) = installer_output(&repo_root(), &curl, DATA_DIR, |_| {});
+        let unavailable = installer_message::value(&output.stderr, "release-unavailable");
+        if installs {
+            assert!(output.status.success(), "{redirect}: {output:?}");
+            assert_eq!(unavailable, None, "{redirect}");
+        } else {
+            assert_eq!(output.status.code(), Some(1), "{redirect}: {output:?}");
+            assert_eq!(unavailable, Some(tried), "{redirect}");
+        }
+        assert_eq!(
+            tmp.path().join(".local/bin/kendex").exists(),
+            installs,
+            "{redirect}: {output:?}"
+        );
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]

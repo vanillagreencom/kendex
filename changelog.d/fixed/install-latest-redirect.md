@@ -1,0 +1,1 @@
+- `install.sh` finds the latest release through the github.com releases redirect instead of the GitHub API, so a host whose anonymous API quota is spent still installs.
