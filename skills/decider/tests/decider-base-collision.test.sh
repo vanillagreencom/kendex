@@ -503,7 +503,7 @@ check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and
 check-renamed-record~if [[ "$inherited" == true~if [[ "$inherited" == false~a rename rule that rejects inherited records
 check-collision~and any($ancestor[]; .id == $row.id and .link == $row.base_links[0])~and true~a rename rule that accepts independently allocated IDs
 check-rename-old-present~&& ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~&& true~a rename rule that accepts a retained old document
-check-rename-new-absent~&& -f "$path"~&& true~a rename rule that accepts a missing new document
+check-rename-new-absent~-n "$old_link" && -f "$path"~-n "$old_link" && true~a rename rule that accepts a missing new document
 check-removed-id-reused~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$old_link" >/dev/null~&& true~a rename rule that accepts a removed ID
 check-rename-no-history~ancestor_rows="$(shared_index)" || return 1~ancestor_rows="$(shared_index)" || ancestor_rows='[]'~an unread shared history that becomes an empty INDEX
 check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
