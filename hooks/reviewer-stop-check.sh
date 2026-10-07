@@ -3,9 +3,9 @@
 # name: reviewer-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for: there a refusal once the agent id is read is recorded under that marker wherever the hook finds and can write a git common dir, so the same subagent's next stop passes as Claude Code's continued stop does at the flag. It names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, built without jq so a missing jq still holds the subagent, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a reviewer subagent's stop once when it leaves no readable review artifact or leaves files behind in the worktree it reviewed. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not. The review contract is the artifact, not its mention: a transcript naming no artifact path, or naming one that does not exist or does not parse as JSON, blocks. `git status --porcelain --untracked-files=all` there listing a path the reviewer's run created or changed blocks, naming each path; a path is the reviewer's when its modification time, or for a deleted path its nearest existing directory's, is not before the review started, the `timestamp` of the subagent transcript's first entry, so a path the author left dirty before the review does not block. Where that start cannot be read, Copilot among them, every dirty path counts. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for: there a refusal once the agent id is read is recorded under that marker wherever the hook finds and can write a git common dir, so the same subagent's next stop passes as Claude Code's continued stop does at the flag. It names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, built without jq so a missing jq still holds the subagent, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
-# safety: Reads the payload, the transcript or on Copilot the subagent's reply, and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the transcript or on Copilot the subagent's reply, the review artifact, git status and the dirty paths' modification times; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude, codex, copilot, opencode, cursor]
 # ---
@@ -36,6 +36,7 @@ AGENT_TYPE=""
 TRANSCRIPT_FIELD=""
 TRANSCRIPT=""
 ARTIFACT_SOURCE="transcript"
+ARTIFACT=""
 STATUS=""
 
 # Every line this hook writes, and the only place its text lives. The first
@@ -69,6 +70,9 @@ message() { # KEY VALUE [DETAIL]
       transcript=unread)
         echo "the transcript $TRANSCRIPT could not be read; refusing"
         ;;
+      artifact=unreadable)
+        echo "the review artifact $ARTIFACT the $ARTIFACT_SOURCE names does not exist or does not parse as JSON, so the review it reports cannot be read. Write the review as JSON to that path, delete every probe you created, and finish."
+        ;;
       artifact=missing)
         echo "the $ARTIFACT_SOURCE names no review artifact path (<worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json), so the reviewed worktree cannot be checked for files you left behind. Write the artifact to that path, name it on the File: line of your reply, delete every probe you created, and finish."
         ;;
@@ -76,7 +80,7 @@ message() { # KEY VALUE [DETAIL]
         echo "the marker $2 could not be recorded, so a second stop could not be told from the first"
         ;;
       worktree=*)
-        echo "the reviewed worktree $2 is not clean:"
+        echo "the reviewed worktree $2 holds paths changed since the review started (every dirty path, where the start could not be read):"
         printf '%s\n' "$STATUS"
         echo "Delete every file you created (a control belongs under a mktemp -d of your own) and report any change that was there before you; then finish."
         ;;
@@ -161,15 +165,17 @@ record_and_block() { # KEY VALUE [DETAIL]
   refuse "$@"
 }
 
-# Every external command this hook runs. jq reads the payload and git answers
-# for the worktree; cat hands the payload over, grep finds the artifact paths in
-# the transcript, tail takes the newest, and mkdir records the marker. An
+# Every external command this hook runs. jq reads the payload, the artifact
+# and the review's start and git answers for the worktree; cat hands the
+# payload over, grep finds the artifact paths in the transcript, tail takes the
+# newest, stat reads a dirty path's modification time, and mkdir records the
+# marker. An
 # unchecked absence is not a stall but a pass: a missing tail aborts the
 # artifact assignment on a status the harness runs past. So the whole set is
 # checked before anything is judged, and the value names every one of them the
 # PATH is missing, in the order checked.
 MISSING=""
-for dependency in jq git cat grep tail mkdir; do
+for dependency in jq git cat grep tail stat mkdir; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
@@ -283,8 +289,51 @@ if ! TOPLEVEL=$(git -C "$WORKTREE" rev-parse --show-toplevel 2>&1); then
   git_failed 'rev-parse --show-toplevel' "$TOPLEVEL"
 fi
 MARKER_REPO=$WORKTREE
+# The mention is the reviewer's word; the file is the review. Slurping parses
+# the whole file, so an empty one or one with trailing garbage is refused too.
+if ! ARTIFACT_ERR=$(jq -s 'if length == 0 then error("no JSON value") else empty end' "$ARTIFACT" 2>&1); then
+  record_and_block artifact unreadable "$ARTIFACT_ERR"
+fi
 STATUS=$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>&1) ||
   git_failed status "$STATUS"
+
+# When the review started: the `timestamp` Claude Code and Codex write on the
+# first entry of the subagent's own transcript. A path dirty before then is the
+# author's and nothing the reviewer does clears it. Copilot names only the
+# lead's transcript, and a first entry without a UTC timestamp gives no start;
+# either way every dirty path counts, the guard as strict as before.
+START=""
+if [ "$INSTALL" != copilot ]; then
+  START=$(jq -nr 'input | .timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601 | floor' "$TRANSCRIPT" 2>/dev/null) ||
+    START=""
+fi
+# The modification time of PATH, or of its nearest existing ancestor for a
+# deleted one, whose directory entry the deletion changed. GNU stat, then BSD.
+mtime() { # PATH
+  local p="$1"
+  while [ ! -e "$p" ] && [ ! -L "$p" ]; do p=${p%/*}; done
+  stat -c %Y "$p" 2>/dev/null || stat -f %m "$p" 2>/dev/null
+}
+if [ -n "$START" ]; then
+  OWN=""
+  while IFS= read -r line; do
+    # Porcelain paths are relative to the top level; a rename's is the new
+    # name. A quoted path, or one whose time stat cannot read, stays the
+    # reviewer's: an unknown time is never an old one.
+    path=${line:3}
+    case "${line:0:2}" in *R* | *C*) path=${path##* -> } ;; esac
+    case "$path" in
+      \"*) ;;
+      *)
+        if changed=$(mtime "$TOPLEVEL/$path") && [ "$changed" -lt "$START" ]; then
+          continue
+        fi
+        ;;
+    esac
+    OWN="$OWN$line"$'\n'
+  done <<<"$STATUS"
+  STATUS=${OWN%$'\n'}
+fi
 if [ -z "$STATUS" ]; then
   exit 0
 fi

@@ -2,12 +2,14 @@
 # Tests for the reviewer-stop-check hook.
 #
 # The hook blocks a reviewer subagent's stop once when the worktree its
-# transcript names through the artifact path is not clean, or when the
-# transcript names no artifact path at all. Pinned here: which payload field
+# transcript names through the artifact path holds paths the review left
+# behind, when that artifact is absent or not JSON, or when the transcript
+# names no artifact path at all. Pinned here: which payload field
 # names the subagent's transcript, what names the worktree (the newest
 # <dir>/tmp/review-*.json mention, in a Write call or a File: line), what
 # counts as dirty (a modified tracked file, an untracked file, one inside an
-# untracked directory), the once-per-agent marker under the
+# untracked directory), that a path dirty before the transcript's first
+# timestamp is the author's, the once-per-agent marker under the
 # reviewed repository's git common dir, that a sibling worktree's dirt is
 # not this worktree's, and the fail-closed edges — an unreadable payload,
 # a transcript that cannot be read, a git that cannot answer, an agent_id not
@@ -68,9 +70,13 @@ new_repo() {
 }
 
 # A transcript naming REPO's artifact the way the harness records a Write
-# call and the return message: JSON lines, the path inside a JSON string.
+# call and the return message: JSON lines, the path inside a JSON string. The
+# artifact is written as the Write call would have. Its first entry carries no
+# timestamp, so the review's start is unknown and every dirty path counts.
 transcript_for() { # REPO [AGENT] -> path
   local repo="$1" agent="${2:-reviewer-test}" t="$TMP_ROOT/transcript.$$.$RANDOM.jsonl"
+  mkdir -p "$repo/tmp"
+  printf '{}\n' >"$repo/tmp/review-$agent-20260903-101010.json"
   {
     printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s/tmp/review-%s-20260903-101010.json","content":"{}"}}]}}\n' "$repo" "$agent"
     printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Verdict: pass\\nFile: %s/tmp/review-%s-20260903-101010.json\\n"}]}}\n' "$repo" "$agent"
@@ -148,11 +154,7 @@ REPO="$(new_repo clean)"
 T="$(transcript_for "$REPO")"
 run_hook "$T"
 assert_eq "$rc" 0 "a clean tree exits 0"
-assert_eq "$err" "" "a clean tree prints nothing"
-mkdir -p "$REPO/tmp"
-printf '{}' >"$REPO/tmp/review-reviewer-test-20260903-101010.json"
-run_hook "$T"
-assert_eq "$rc" 0 "the artifact itself, under the ignored tmp/, is not dirt"
+assert_eq "$err" "" "a clean tree, whose ignored tmp/ holds the artifact, prints nothing"
 
 echo "reviewer-stop-check: agents that are not reviewers pass"
 REPO="$(new_repo other)"
@@ -214,6 +216,8 @@ T="$TMP_ROOT/transcript.two.jsonl"
   printf '{"text":"File: %s/tmp/review-reviewer-test-20260903-101010.json"}\n' "$REPO_A"
   printf '{"text":"File: %s/tmp/review-reviewer-test-20260903-101011.json"}\n' "$REPO_B"
 } >"$T"
+mkdir -p "$REPO_B/tmp"
+printf '{}\n' >"$REPO_B/tmp/review-reviewer-test-20260903-101011.json"
 run_hook "$T" reviewer-test c1
 assert_eq "$rc" 0 "the newest mention is the reviewed worktree, and it is clean"
 printf 'probe\n' >"$REPO_B/probe.txt"
@@ -367,6 +371,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}
 # A Codex rollout line naming the dirty worktree's artifact, as a Codex
 # reviewer's final message carries it.
 FIELD_ROLLOUT="$TMP_ROOT/rollout.field-child.jsonl"
+printf '{}\n' >"$FIELD_DIRTY/tmp/review-reviewer-test-20261002-101010.json"
 jq -n -c --arg text "Verdict: pass
 File: $FIELD_DIRTY/tmp/review-reviewer-test-20261002-101010.json" \
   '{type:"response_item",payload:{type:"message",role:"assistant",
@@ -442,22 +447,21 @@ field_rows() {
 
 field_rows f
 
-# Must-fail controls: the field selection planted in a copy, the rows run
-# against it. Reading transcript_path alone reds every row that carries the
-# key; a swapped branch reds all of them.
-field_control() { # NAME OLD NEW FAILED-ROW...
-  local name="$1" old="$2" new="$3" mutant="$TMP_ROOT/field-$1.sh" log status row
-  shift 3
-  assert_eq "$(grep -c -F -- "$old" "$HOOK")" "1" "control $name finds the selection"
+# Must-fail controls: a rule's line planted in a copy, ROWS (a function taking
+# the agent-id tag) run against it, and exactly the named rows turn red.
+rows_control() { # ROWS NAME OLD NEW FAILED-ROW...
+  local rows="$1" name="$2" old="$3" new="$4" mutant="$TMP_ROOT/control-$2.sh" log status row
+  shift 4
+  assert_eq "$(grep -c -F -- "$old" "$HOOK")" "1" "control $name finds the rule"
   OLD="$old" NEW="$new" perl -pe 's/\Q$ENV{OLD}\E/$ENV{NEW}/' -- "$HOOK" >"$mutant"
   assert_eq "$(grep -c -F -- "$old" "$mutant")" "0" "control $name planted its defect"
-  log="$TMP_ROOT/field-$name.log"
+  log="$TMP_ROOT/control-$name.log"
   set +e
   (
     PASS=0
     FAIL=0
     HOOK="$mutant"
-    field_rows "$name"
+    "$rows" "$name"
     [ "$FAIL" -eq 0 ]
   ) >"$log" 2>&1
   status=$?
@@ -468,19 +472,116 @@ field_control() { # NAME OLD NEW FAILED-ROW...
     assert_eq "$(grep -c -F -x -- "  FAIL  $row" "$log" || true)" "1" "control $name: '$row' fails"
   done
 }
+# Reading transcript_path alone reds every row that carries the key; a
+# swapped branch reds all of them.
 SELECTION='if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end'
-field_control transcript-path-only "$SELECTION" '"transcript_path"' \
+rows_control field_rows transcript-path-only "$SELECTION" '"transcript_path"' \
   "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
   "a null agent_transcript_path refuses rather than reading the parent's transcript_path"
-field_control swapped "$SELECTION" \
+rows_control field_rows swapped "$SELECTION" \
   'if has("agent_transcript_path") then "transcript_path" else "agent_transcript_path" end' \
   "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
   "a null agent_transcript_path refuses rather than reading the parent's transcript_path" \
   "a payload without agent_transcript_path reads transcript_path"
+
+echo "reviewer-stop-check: the artifact, not its mention"
+# A row is `label|artifact|expected`: the transcript names the artifact path in
+# every row, over a clean worktree; the artifact file is what varies.
+ARTIFACT_ROWS="\
+a readable artifact passes|json|rc=0 first=-
+a mentioned artifact that does not exist blocks|absent|rc=2 first=reviewer-stop-check: artifact=unreadable
+an empty artifact blocks|empty|rc=2 first=reviewer-stop-check: artifact=unreadable
+an artifact that is not JSON blocks|garbage|rc=2 first=reviewer-stop-check: artifact=unreadable
+"
+artifact_rows() { # TAG
+  local tag="$1" row label kind want repo t file n=0 before=$((PASS + FAIL))
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    IFS='|' read -r label kind want <<<"$row"
+    n=$((n + 1))
+    repo="$(new_repo "artifact-$tag$n")"
+    t="$(transcript_for "$repo")"
+    file="$repo/tmp/review-reviewer-test-20260903-101010.json"
+    case "$kind" in
+      json) ;;
+      absent) rm -f -- "${file:?}" ;;
+      empty) : >"$file" ;;
+      garbage) printf '{"verdict":"pass"} trailing\n' >"$file" ;;
+      *) printf 'artifact rows: no kind named %s\n' "$kind" >&2; exit 2 ;;
+    esac
+    run_hook "$t" reviewer-test "$tag$n"
+    assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+  done <<<"$ARTIFACT_ROWS"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "artifact rows: no row was asserted" >&2; exit 2; }
+}
+artifact_rows art
+# The block is recorded like any other: the same subagent's next stop passes.
+REPO="$(new_repo artifact-once)"
+T="$(transcript_for "$REPO")"
+: >"$REPO/tmp/review-reviewer-test-20260903-101010.json"
+run_hook "$T" reviewer-test once1
+assert_eq "$rc" 2 "an unreadable artifact blocks the first stop"
+run_hook "$T" reviewer-test once1
+assert_eq "$rc" 0 "a second stop of a subagent held on its artifact passes"
+rows_control artifact_rows artifact-unchecked \
+  'jq -s '\''if length == 0 then error("no JSON value") else empty end'\'' "$ARTIFACT" 2>&1' 'true' \
+  "a mentioned artifact that does not exist blocks" \
+  "an empty artifact blocks" \
+  "an artifact that is not JSON blocks"
+
+echo "reviewer-stop-check: only paths the review changed block"
+# The subagent transcript's first entry dates the review's start, 2020-06-01.
+# The author's dirt is dated 2020-01-01: a modified tracked file, an untracked
+# file and a deleted tracked file, whose directory carries the deletion's date.
+# A row is `label|transcript|probe|expected`: transcript `dated` or `undated`,
+# probe `yes` adds a file the reviewer created now.
+START_ROWS="\
+dirt the author left before the review passes|dated|no|rc=0 first=-
+a probe the reviewer created blocks over the author's dirt|dated|yes|rc=2 first=reviewer-stop-check: worktree=@REPO@
+with no dated first entry the author's dirt blocks|undated|no|rc=2 first=reviewer-stop-check: worktree=@REPO@
+"
+start_rows() { # TAG
+  local tag="$1" row label dated probe want repo t n=0 before=$((PASS + FAIL))
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    IFS='|' read -r label dated probe want <<<"$row"
+    n=$((n + 1))
+    repo="$(new_repo "start-$tag$n")"
+    printf 'pub fn gone() {}\n' >"$repo/src/gone.rs"
+    fgit -C "$repo" add src/gone.rs
+    fgit -C "$repo" commit -q -m gone
+    printf 'pub fn b() {}\n' >>"$repo/src/lib.rs"
+    printf 'notes\n' >"$repo/author-notes.txt"
+    rm -f -- "${repo:?}/src/gone.rs"
+    touch -t 202001010000 "$repo/src/lib.rs" "$repo/author-notes.txt" "$repo/src" "$repo"
+    t="$(transcript_for "$repo")"
+    if [ "$dated" = dated ]; then
+      { printf '{"type":"user","timestamp":"2020-06-01T00:00:00.000Z"}\n'; cat -- "$t"; } >"$t.dated"
+      t="$t.dated"
+    fi
+    [ "$probe" = no ] || printf 'probe\n' >"$repo/probe.sh"
+    run_hook "$t" reviewer-test "$tag$n"
+    assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
+    if [ "$probe" = yes ]; then
+      assert_contains "$err" "?? probe.sh" "$label, naming the probe"
+      assert_not_contains "$err" "author-notes.txt" "$label, and not the author's file"
+    fi
+  done <<<"$START_ROWS"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "start rows: no row was asserted" >&2; exit 2; }
+}
+start_rows st
+# Every dirty path counted as the reviewer's reds the rows that rely on the
+# author's dirt passing; none of them counted reds the probe's.
+rows_control start_rows start-ignored '[ "$changed" -lt "$START" ]' 'false' \
+  "dirt the author left before the review passes" \
+  "a probe the reviewer created blocks over the author's dirt, and not the author's file"
+rows_control start_rows start-all-old '[ "$changed" -lt "$START" ]' 'true' \
+  "a probe the reviewer created blocks over the author's dirt" \
+  "a probe the reviewer created blocks over the author's dirt, naming the probe"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not
@@ -514,7 +615,7 @@ tools_table() { # TOOLS
     "with none of them the value is the whole list, in check order"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
-tools_table "jq git cat grep tail mkdir"
+tools_table "jq git cat grep tail stat mkdir"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

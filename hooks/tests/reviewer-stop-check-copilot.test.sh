@@ -45,7 +45,7 @@ fgit() {
 # Every command the hook runs but jq, for the row that runs it without one.
 NO_JQ="$TMP_ROOT/no-jq"
 mkdir -p "$NO_JQ"
-for tool in git cat grep tail mkdir; do
+for tool in git cat grep tail stat mkdir; do
   ln -s -- "$(command -v "$tool")" "$NO_JQ/$tool"
 done
 
@@ -62,6 +62,9 @@ new_repo() { # NAME -> path
   printf 'pub fn a() {}\n' >"$repo/src/lib.rs"
   printf 'tmp/\n' >"$repo/.gitignore"
   cp "$HOOK" "$repo/.github/hooks/reviewer-stop-check.sh"
+  # The artifact reply_for names, under the ignored tmp/.
+  mkdir -p "$repo/tmp"
+  printf '{}\n' >"$repo/tmp/review-reviewer-test-20261002-101010.json"
   fgit -C "$repo" add -A
   fgit -C "$repo" commit -q -m init
   printf '%s' "$repo"
