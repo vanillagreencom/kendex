@@ -247,6 +247,12 @@ read_api() { # ENDPOINT FILTER [--paginate]
     fi
     error="$(cat "$SCRATCH/err")" || return 1
     retryable=0
+    # gh api --jq filters HTTP response data, not local CLI errors.
+    # --include adds HTTP status and headers to the data stdout stream,
+    # but has no headers when a connection gets no HTTP answer.
+    # CLI exit codes do not identify HTTP status, so stderr supplies the
+    # required HTTP and connection failure classification while keeping
+    # READ_OUT as the filtered data callers consume.
     # gh's HTTP status takes precedence over its connection diagnostics.
     # Local jq, authentication and usage errors cannot recover by waiting.
     if [[ "$error" =~ HTTP[[:space:]]+([0-9][0-9][0-9]) ]]; then
