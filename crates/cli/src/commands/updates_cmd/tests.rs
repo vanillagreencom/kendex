@@ -111,7 +111,13 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             forked: true,
         }]
     );
-    assert_eq!(snapshot.unreadable, ["skill tidy: unreadable source"]);
+    let [warning] = snapshot.unreadable.as_slice() else {
+        panic!("the listing must record its supplied warning");
+    };
+    assert_eq!(warning.kind, ItemKind::Skill);
+    assert_eq!(warning.name, "tidy");
+    assert_eq!(warning.repo, "owner/catalog");
+    assert_eq!(warning.refs_state, None);
     Ok(())
 }
 
