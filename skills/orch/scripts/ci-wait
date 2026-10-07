@@ -179,8 +179,9 @@ failures (max 1 retry).
                  required context with no check yet is pending as
                  "<context> (missing)"; passed_checks, which completes the
                  wait, holds the required checks that passed or were
-                 skipped (GitHub counts a skipped required check as
-                 satisfied), and rollup_key, which the stale window holds,
+                 skipped (GitHub counts a skipped check as satisfied; with
+                 the set unreadable, every check that passed or was
+                 skipped), and rollup_key, which the stale window holds,
                  keys the required checks alone. The required set is the github
                  skill's own read (lib/ci-run-correlation.sh
                  required_contexts); where it cannot be read, every check
@@ -690,15 +691,15 @@ superseding_run_state() {
 }
 
 classify_checks() {
-  jq -c --argjson req "$REQUIRED_CONTEXTS" "$CI_RUN_JQ_DEFS"'
+  jq -c --argjson req "$REQUIRED_CONTEXTS" --argjson ro "$REQUIRED_ONLY" "$CI_RUN_JQ_DEFS"'
     map(.name) as $names
     | {
       pending: ([.[] | select((bucket == "pending") and required_only($req))]
                 + [$req[] | . as $ctx | select(($names | index($ctx)) == null)
                    | {name: (. + " (missing)"), state: "EXPECTED", bucket: "pending"}]),
       failed: [.[] | select(red and required_only($req))],
-      passed: [.[] | select(((bucket == "pass") and required_only($req))
-                            or (($req | length) > 0 and (bucket == "skipping") and required_only($req)))]
+      passed: [.[] | select(((bucket == "pass") or ($ro and (bucket == "skipping")))
+                            and required_only($req))]
     }
   '
 }

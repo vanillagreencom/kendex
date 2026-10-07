@@ -388,6 +388,7 @@ stage() {
       prchecks:optional_red) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"FAILURE","bucket":"fail"}]' 1 ;;
       prchecks:optional_running) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:none) write_fixture prchecks "$n" '[]' ;;
+      prchecks:all_skipped) write_fixture prchecks "$n" '[{"name":"build","state":"SKIPPED","bucket":"skipping"}]' ;;
       prchecks:optional_done) write_fixture prchecks "$n" '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"SUCCESS","bucket":"pass"}]' ;;
       prchecks:required_skipped) write_fixture prchecks "$n" '[{"name":"build","state":"SKIPPED","bucket":"skipping"},{"name":"lint","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:both_red) write_fixture prchecks "$n" '[{"name":"lint","state":"FAILURE","bucket":"fail","workflow":"aaa-wf","link":"https://github.com/owner/repo/actions/runs/111/job/1"},{"name":"build","state":"FAILURE","bucket":"fail","workflow":"zzz-wf","link":"https://github.com/owner/repo/actions/runs/222/job/2"}]' 1 ;;
@@ -614,6 +615,7 @@ table '1 1 20 --json' \
   'a transient retry re-runs the required failure, never the optional one|open_armed,prchecks:1=both_red,prchecks:2=both_red,prchecks:last=fail502|1 1 40 --json|STUB_REQUIRED=build|reruns=222' \
   'an optional check settling inside the confirmation window does not restart it|open_armed,prchecks:1=optional_running,prchecks:2=optional_running,prchecks:3=optional_running,prchecks:4=optional_running,prchecks:5=optional_running,prchecks:6=optional_running,prchecks:last=optional_done|1 20 300 --json|STUB_REQUIRED=build|rc=1 verdict=armed_blocked cause=not_mergeable' \
   'a skipped required check is satisfied, whatever optional checks still run|open_armed,prchecks:last=required_skipped|1 20 300 --json|STUB_REQUIRED=build|rc=1 verdict=armed_blocked cause=not_mergeable' \
+  'an all-skipped rollup with the required set unreadable is satisfied|open_armed,prchecks:last=all_skipped|1 20 300 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
   'a probe fits inside the budget with a poll after it, which reads the merge|state:1=open,state:last=merged,queue:last=armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=0 verdict=merged polls=2' \
   'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
