@@ -71,6 +71,10 @@ case "${1:-}" in
     fi
     ;;
   api)
+    # A probe that charges the virtual clock, to prove the waiter counts it.
+    if [[ "${2:-}" == repos/*/actions/workflows && -n "${STUB_PROBE_COST:-}" ]]; then
+      sleep "$STUB_PROBE_COST"
+    fi
     # superseded-failure correlation queries the head's Actions
     # runs. Record the query when asked so tests can prove head-sha scoping.
     if [[ "${2:-}" == repos/*/actions/runs* ]]; then
@@ -193,6 +197,11 @@ case "${1:-}" in
         exit 8
       fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "empty" ]]; then
+        # A first read that charges the virtual clock before its answer.
+        if [[ -n "${STUB_FIRST_CHECKS_COST:-}" && ! -f "${STUB_PR_CHECKS_COUNT_FILE:?}.charged" ]]; then
+          : > "$STUB_PR_CHECKS_COUNT_FILE.charged"
+          sleep "$STUB_FIRST_CHECKS_COST"
+        fi
         echo '[]'
         exit 0
       fi
@@ -497,7 +506,10 @@ echo "=== the no-checks grace is the default the settings template declares ==="
 # The budget outlasts any of them, so the no-checks error's dispatch-grace key
 # line names the grace it resolved and elapsed_seconds the seconds it waited,
 # at an interval that divides the grace and at the production one that does
-# not.
+# not. The grace runs from the first empty answer, not the first request, and
+# the probe's seconds count against it: a 100-second first read and a
+# 50-second probe end a 600-second grace at 700, where a clock read only at
+# sleeps ends it at 650 and one that skips the probe at 750.
 GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO_ROOT/skills/orch/kendex.settings.toml.example")
 [[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
 table '1 30 3600 --json' \
@@ -506,7 +518,8 @@ table '1 30 3600 --json' \
   "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
   "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
   'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
-  'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true'
+  'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
+  "a slow first read and probe leave the grace whole from the first empty answer||1 400 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=100,STUB_PROBE_COST=50|rc=1 status=error elapsed_seconds=$((100 + GRACE_DECLARED))"
 
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the

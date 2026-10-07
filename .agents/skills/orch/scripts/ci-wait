@@ -745,6 +745,9 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # Under --required-only an empty rollup still names what GitHub waits
     # on: every required context, pending as missing.
     last_check_classes=$(classify_checks <<<'[]')
+    # The clock last moved at the previous sleep; the checks read since then
+    # took time, and the streak starts when its empty answer arrived.
+    update_elapsed
     [ "$no_checks_count" -eq 1 ] && no_checks_since="$elapsed"
     # One-time probe: a repo with no active workflows AND no required checks
     # on the PR's base branch has no CI to wait for — report that as its own
@@ -809,6 +812,8 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     fi
     # The grace is measured in seconds, not polls: a count of polls ends the
     # window up to one interval early, since the first poll is at its start.
+    # Read the clock again: the probe above spends seconds of the window.
+    update_elapsed
     no_checks_left=$((NO_CHECKS_GRACE - (elapsed - no_checks_since)))
     if [ "$no_checks_left" -le 0 ]; then
       emit_error no-checks
