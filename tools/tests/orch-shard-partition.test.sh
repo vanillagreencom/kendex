@@ -947,9 +947,9 @@ done
 # one package rather than across the workspace, so the crate guard in that job
 # cannot see it. The universe comes from `cargo metadata`, the one reader of a
 # crate's target list; the claims come from RUNNING the workflow's own roster
-# step once per leg, so what a leg claims is what that step's case arm prints
-# rather than a second reading of it here, and each claim is recorded WITH the
-# leg that printed it.
+# step once per leg. Claims use its GITHUB_ENV exports, the inputs GitHub
+# gives the consumer step. Diagnostic lines remain independent declarations
+# for the checks that compare intended selections with executed selections.
 #
 # The legs are the combinations GitHub expands — the matrix `leg:` list minus
 # the `exclude:` entries naming this crate — so a leg the matrix prunes is
@@ -1014,14 +1014,19 @@ cargo_legs_of() { # cargo_legs_of <workflow> ; the CARGO_CRATE legs it expands
     tr ',' '\n' | sort -u)
 }
 
-roster_of() { # roster_of <workflow> <leg> ; that leg's echoed roster lines
-  local dir="$TMP/cargo-blocks" f
+roster_of() { # <workflow> <leg> [declarations] ; exports, or diagnostic declarations
+  local dir="$TMP/cargo-blocks" f env_file log_file
   split_run_blocks "$1" "$dir"
   for f in "$dir"/*.sh; do
     grep -qF "$CARGO_TARGET_MARK" "$f" || continue
-    # The step writes its roster to GITHUB_ENV for the steps after it and
-    # echoes it for the log; the echo is what is read here.
-    LEG="$2" GITHUB_ENV="$TMP/github-env" "$BASH" "$f" 2>/dev/null
+    env_file="$(mktemp "$TMP/github-env.XXXXXX")" || return
+    log_file="$env_file.log"
+    LEG="$2" GITHUB_ENV="$env_file" "$BASH" "$f" > "$log_file" 2>/dev/null || return
+    if [[ "${3-}" == declarations ]]; then
+      cat "$log_file"
+    else
+      cat "$env_file"
+    fi
   done
 }
 
@@ -1030,7 +1035,7 @@ leg_claims() { # leg_claims <workflow> ; "<--test name> <leg>" per claim, per le
   while IFS= read -r leg; do
     [[ -n "$leg" ]] || continue
     roster_of "$wf" "$leg" |
-      sed -n 's/^cargo-targets: //p' |
+      sed -n -e 's/^CARGO_TARGETS=//p' -e 's/^CARGO_INTEGRATION=//p' |
       awk -v leg="$leg" \
         '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1), leg }'
   done < <(cargo_legs_of "$wf")
@@ -1039,7 +1044,7 @@ leg_claims() { # leg_claims <workflow> ; "<--test name> <leg>" per claim, per le
 # What a leg selects BESIDE its `--test` names: `--lib` and `--bins` are the
 # crate's library and binary unit tests, which no target claim can show.
 unit_flags_of() { # unit_flags_of <workflow> <leg> ; that leg's other selections
-  roster_of "$1" "$2" | sed -n 's/^cargo-targets: //p' |
+  roster_of "$1" "$2" | sed -n 's/^CARGO_TARGETS=//p' |
     awk '{ out = ""
            for (i = 1; i <= NF; i++) {
              if ($i == "--test") { i++; continue }
@@ -1059,7 +1064,7 @@ doc_legs() { # doc_legs <workflow> ; the legs whose roster carries `--doc`
     # A here-string and not a pipe: `grep -q` stops at the first match, and a
     # shell writer it SIGPIPEs returns 141 under pipefail, which in condition
     # position reads as a leg that asked for no doc tests.
-    if grep -qx 'cargo-doc: --doc' <<< "$(roster_of "$wf" "$leg")"; then
+    if grep -qx 'CARGO_DOC=--doc' <<< "$(roster_of "$wf" "$leg")"; then
       printf '%s\n' "$leg"
     fi
   done < <(cargo_legs_of "$wf")
@@ -1135,10 +1140,10 @@ integration_claims() { # <workflow> ; "<integration test name> <leg>" per claim
     while IFS= read -r leg; do
       [[ -n "$leg" ]] || continue
       roster="$(roster_of "$wf" "$leg")" || return
-      output="$(CARGO_TARGETS="$(sed -n 's/^cargo-main-targets: //p' <<< "$roster")" \
-      CARGO_DOC="$(sed -n 's/^cargo-doc: //p' <<< "$roster")" \
-      CARGO_FILTERS="$(sed -n 's/^cargo-filters: //p' <<< "$roster")" \
-      CARGO_INTEGRATION="$(sed -n 's/^cargo-integration: //p' <<< "$roster")" \
+      output="$(CARGO_TARGETS="$(sed -n 's/^CARGO_TARGETS=//p' <<< "$roster")" \
+      CARGO_DOC="$(sed -n 's/^CARGO_DOC=//p' <<< "$roster")" \
+      CARGO_FILTERS="$(sed -n 's/^CARGO_FILTERS=//p' <<< "$roster")" \
+      CARGO_INTEGRATION="$(sed -n 's/^CARGO_INTEGRATION=//p' <<< "$roster")" \
       INTEGRATION_EXE="$INTEGRATION_EXE" PATH="$CARGO_SHIM:$PATH" "$BASH" "$block")" || return
       printf '%s\n' "$output" > "$TMP/cargo-executed-$leg"
       sed -n 's/: test$//p' <<< "$output" | awk -v leg="$leg" '{ print $0, leg }'
@@ -1230,10 +1235,10 @@ lock_record::two_branches_on_one_package_merge_in_sequence_and_main_records_afte
 TESTS
 while IFS= read -r leg; do
   check "the $leg test command runs every declared target and unit selection" \
-    "$(roster_of "$WORKFLOW" "$leg" | sed -n 's/^cargo-targets: //p' | target_selections)" \
+    "$(roster_of "$WORKFLOW" "$leg" declarations | sed -n 's/^cargo-targets: //p' | target_selections)" \
     "$(sed -n 's/^cargo-executed: //p' "$TMP/cargo-executed-$leg" | target_selections)"
   check "the $leg test command runs its declared doc tests" \
-    "$(roster_of "$WORKFLOW" "$leg" | sed -n 's/^cargo-doc: //p')" \
+    "$(roster_of "$WORKFLOW" "$leg" declarations | sed -n 's/^cargo-doc: //p')" \
     "$(sed -n 's/^cargo-executed-doc: //p' "$TMP/cargo-executed-$leg")"
 done < <(cargo_legs_of "$WORKFLOW")
 cut -d' ' -f1 "$INTEGRATION_CLAIMS" | sort > "$TMP/integration-claimed"
@@ -1318,15 +1323,21 @@ check "must-fail: that merge retains every target and only the integration overl
 # Omission and overlap controls remove one side of the same name seam.
 # A third control drops forwarding in the actual test command: declarations
 # alone must not claim protection for arguments the harness never receives.
-for defect in selector skip forwarding unit-filter; do
+for defect in selector skip forwarding export unit-filter; do
   mutant="$TMP/wf-cargo-filter-$defect.yml"
   case "$defect" in
     selector) sed "s/filters='verify_ lock_record::'/filters='lock_record::'/" "$WORKFLOW" > "$mutant" ;;
     skip) sed 's/--skip verify_ //' "$WORKFLOW" > "$mutant" ;;
     forwarding) sed 's/ -- \$CARGO_FILTERS//' "$WORKFLOW" > "$mutant" ;;
+    export) sed 's/echo "CARGO_FILTERS=\$filters"/echo "CARGO_FILTERS="/' "$WORKFLOW" > "$mutant" ;;
     unit-filter) sed 's/\$CARGO_TARGETS ||/\$CARGO_TARGETS -- \$CARGO_FILTERS ||/' "$WORKFLOW" > "$mutant" ;;
   esac
   cmp -s "$WORKFLOW" "$mutant" && { bad "must-fail: the $defect mutation changed nothing"; continue; }
+  if [[ "$defect" == export ]]; then
+    check "the export control preserves the roster declarations" \
+      "$(roster_of "$WORKFLOW" "$UNIT_LEG" declarations)" \
+      "$(roster_of "$mutant" "$UNIT_LEG" declarations)"
+  fi
   if [[ "$defect" == unit-filter ]]; then
     if integration_claims "$mutant" > "$TMP/integration-$defect"; then
       bad "must-fail: integration filters on unit tests are accepted"
