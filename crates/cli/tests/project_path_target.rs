@@ -500,6 +500,22 @@ fn a_linked_worktree_named_by_a_render_is_not_listed() {
         );
     }
 
+    // A repository of its own nested in a linked worktree, as a submodule
+    // or a clone made there is: git calls it a main checkout, and it goes
+    // when the worktree around it goes.
+    let nested = home.join("lanes/apply/vendor/lib");
+    commit_a_repository(&nested);
+    declare(&nested, &catalog);
+    let path = nested.to_str().unwrap();
+    let said = run(&home, &elsewhere, &["apply", "--project-path", path, "-y"]);
+    assert!(installed(&nested).is_file(), "{said}");
+    assert!(registered(&home).is_empty(), "{said}");
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with(&format!("worktree-not-listed={path}:"))),
+        "{said}"
+    );
+
     let said = run(
         &home,
         &elsewhere,

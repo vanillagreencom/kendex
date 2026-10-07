@@ -165,6 +165,31 @@ impl Repo {
         self.git_dir != self.common_dir
     }
 
+    /// Whether `dir` lies inside a linked work tree: its own repository's,
+    /// or one enclosing it. A submodule or a clone nested in a linked work
+    /// tree probes as the main checkout of its own repository, and it goes
+    /// when the enclosing work tree is removed all the same.
+    ///
+    /// Asked one repository at a time, outward from the top level of each
+    /// to the directory above it, until a linked one answers or no
+    /// repository encloses the last. A git that cannot answer at any level
+    /// is the error [`Repo::probe`] returns, never a `false`.
+    pub fn enclosed_by_linked(dir: &Path) -> Result<bool> {
+        let mut at = dir.to_path_buf();
+        loop {
+            let Some(repo) = Repo::probe(&at)? else {
+                return Ok(false);
+            };
+            if repo.is_linked() {
+                return Ok(true);
+            }
+            let Some(above) = repo.worktree.parent() else {
+                return Ok(false);
+            };
+            at = above.to_path_buf();
+        }
+    }
+
     /// The main work tree of this repository.
     ///
     /// `git worktree list` names it first, and that is why it is asked for

@@ -260,7 +260,8 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
 /// before `--project-path` did, and it never touched the registry. Nor is
 /// a linked git worktree, which [`register_target`] never lists.
 ///
-/// Whether a root is a linked worktree is settled here, once, and the
+/// Whether a root lies inside a linked worktree, its own repository's or
+/// one enclosing that repository, is settled here, once, and the
 /// [`Registering`] returned is what [`register_target`] spends after the
 /// write. A git that cannot answer refuses the run here, before anything
 /// is written, rather than reading as a main checkout and listing a
@@ -278,9 +279,9 @@ pub fn target_registrable(
         let Scope::Project { root } = scope else {
             continue;
         };
-        match kendex_core::guard::Repo::probe(root)? {
-            Some(repo) if repo.is_linked() => worktrees.push(root.clone()),
-            _ => registrable(env, root, target.throwaway)?,
+        match kendex_core::guard::Repo::enclosed_by_linked(root)? {
+            true => worktrees.push(root.clone()),
+            false => registrable(env, root, target.throwaway)?,
         }
     }
     Ok(Registering::Named { worktrees })
@@ -313,8 +314,8 @@ pub enum Registering {
 /// where a Pi settle before the final confirm has already written what
 /// this then registers.
 ///
-/// A named root inside a linked git worktree is never registered, and no
-/// flag changes that: a worktree is removed when its lane ends, and an
+/// A named root inside a linked git worktree, a repository nested in one
+/// included, is never registered, and no flag changes that: a worktree is removed when its lane ends, and an
 /// entry for it would outlive it on every projects list. The run says so
 /// in one `worktree-not-listed=<root>` line instead. A person who wants
 /// one listed names it to `project add`, the explicit door, which lists
