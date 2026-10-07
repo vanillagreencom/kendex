@@ -61,8 +61,8 @@ PR_COPILOT_REQUESTS = "on"
 
 # Seconds to keep waiting for the build to start before treating its
 # absence as a failure. Raise it where a build needs approval before it
-# begins.
-CI_WAIT_NO_CHECKS_GRACE = "180"
+# begins. A value that is not a whole number of seconds waits the default.
+CI_WAIT_NO_CHECKS_GRACE = "600"
 
 # How many times a lane may try to fix a failing build before a person
 # takes over.

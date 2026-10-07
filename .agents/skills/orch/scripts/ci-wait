@@ -259,7 +259,8 @@ Environment:
                 from the pull_request_review event, so check registration
                 can lag. Within the grace window the result stays verdict
                 "pending"; past it, the explicit "no checks registered"
-                diagnostic fires.
+                diagnostic fires. Empty, or a value that is not a whole
+                number of seconds, waits the default.
 
 Repository: resolved through lib/gh-repo.sh, shared with approval-wait and
 queue-wait — GH_REPO first, then the working directory (`gh repo view`, then

@@ -1,0 +1,1 @@
+- The `CI_WAIT_NO_CHECKS_GRACE` default the orch settings template declares is now `600`, the grace `ci-wait` waits when the key is unset, instead of `180`, so saving the template's defaults no longer shortens the no-checks grace; `ci-wait --help` and the template now state that an empty or non-numeric value waits the default.

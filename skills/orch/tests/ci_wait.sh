@@ -490,6 +490,19 @@ table "$JSON" \
   'a settled failing check is a complete fail|||STUB_PR_CHECKS_MODE=failure|rc=1 status=complete verdict=fail check.build=FAILURE' \
   'an auth failure with --json is a parseable error object naming its cause|||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true'
 
+echo "=== the no-checks grace is the default the settings template declares ==="
+# The Customize view shows the template's value as the default, so the grace
+# ci-wait resolves for an unset, empty or non-numeric key is that value; an
+# explicit whole number is taken as given. The budget outlasts any of them, so
+# the no-checks error's dispatch-grace key line names the grace it resolved.
+GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO_ROOT/skills/orch/kendex.settings.toml.example")
+[[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
+table '1 30 3600 --json' \
+  "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=90=true'
+
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
 # leading words are text-only, so a JSON default flip fails these rows.
