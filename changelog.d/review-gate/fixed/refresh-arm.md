@@ -1,0 +1,1 @@
+- Consumer refresh waits for GitHub to show the pushed commit, reports an unseen head as unarmed, and verifies that auto-merge is enabled or the pull request is queued or merged.

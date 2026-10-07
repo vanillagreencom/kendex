@@ -10,11 +10,14 @@
 # to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
+# refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
 # whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured|engine.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Load from the trusted runner before refresh replaces its installed files.
+source "$SCRIPT_DIR/lib/arm-published-head.sh"
 templates=""
 if [ "$#" -eq 2 ] && [ "$1" = --templates-dir ] && [ -n "$2" ]; then
   if ! templates="$(cd -- "$2" && pwd -P)"; then
@@ -448,5 +451,23 @@ if [ -z "$pr" ]; then
 else
   gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" >/dev/null
 fi
-gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
+arm_status=0
+rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?
+if [ "$arm_status" -ne 0 ]; then
+  printf 'refresh-error=arm pr=%s pushed=%s head=%s value=%s\n' "$pr" "$head" "$RG_ARM_SEEN" "$arm_status" >&2
+  exit "$arm_status"
+fi
+if [ "$RG_ARM_RESULT" = unmatched ]; then
+  printf 'refresh-state=unarmed pr=%s pushed=%s head=%s\n' "$pr" "$head" "$RG_ARM_SEEN"
+  printf '::warning title=refresh unarmed::pull request %s left unarmed: GitHub showed %s, pushed %s\n' "$pr" "$RG_ARM_SEEN" "$head"
+  exit 0
+fi
+# gh can succeed on a merge-queue repository without enabling auto-merge.
+refresh_lifecycle
+case "$reason" in
+  armed | queued | merged) ;;
+  *)
+    printf 'refresh-error=arm-state pr=%s pushed=%s value=%s\n' "$pr" "$head" "$reason" >&2
+    exit 1 ;;
+esac
 printf 'refresh-state=%s pr=%s class=%s\n' "$state" "$pr" "$class"

@@ -44,6 +44,14 @@ for arg in "$@"; do
     query=*) query="${arg#query=}" ;;
   esac
 done
+shown_head() {
+  local reads=0
+  if [ -f "$TEST_STATE/head-reads" ]; then reads="$(cat "$TEST_STATE/head-reads")"; fi
+  case "${TEST_HEAD_MODE:-matched}:$reads" in
+    delayed:0 | never:*) cat "$TEST_STATE/old-head" ;;
+    *) "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" rev-parse refs/heads/kendex/refresh ;;
+  esac
+}
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
@@ -54,7 +62,14 @@ case "$*" in
   'api graphql '*)
     # A read before any refusal is the run-start read, which precedes the
     # refresh.
-    if [ -f "$TEST_STATE/push-refused" ]; then
+    if [ -f "$TEST_STATE/arm-attempted" ]; then
+      case "${TEST_ARM_QUERY:-pass}" in
+        fail) exit 87 ;;
+        malformed) printf 'not-json\n'; exit 0 ;;
+        partial) printf '{"errors":[{"message":"permission denied"}]}\n'; exit 0 ;;
+      esac
+      state="$TEST_STATE/arm-state.json"
+    elif [ -f "$TEST_STATE/push-refused" ]; then
       [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
       state="$TEST_STATE/push-state.json"
     else
@@ -71,9 +86,37 @@ case "$*" in
     done
     cat "$state" ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
+  'pr view 1 --repo acme/test --json headRefOid --jq .headRefOid')
+    [ "${TEST_HEAD_MODE:-matched}" != failed ] || exit 87
+    [ "${TEST_HEAD_MODE:-matched}" != empty ] || exit 0
+    head="$(shown_head)"
+    reads=0
+    if [ -f "$TEST_STATE/head-reads" ]; then reads="$(cat "$TEST_STATE/head-reads")"; fi
+    printf '%s\n' "$((reads + 1))" >"$TEST_STATE/head-reads"
+    printf '%s\n' "$head" >"$TEST_STATE/shown-head"
+    printf '%s\n' "$head" ;;
   'pr merge '*)
     case " $* " in
-      *' --auto '*) : >"$TEST_STATE/armed" ;;
+      *' --auto '*)
+        head="$(shown_head)"
+        if [ -f "$TEST_STATE/shown-head" ]; then head="$(cat "$TEST_STATE/shown-head")"; fi
+        case " $* " in
+          *" --match-head-commit $head "*) ;;
+          *) printf 'GraphQL: expected head oid does not match the current head oid (enablePullRequestAutoMerge)\n' >&2; exit 1 ;;
+        esac
+        : >"$TEST_STATE/arm-attempted"
+        arm_state=OPEN queued=false armed=false
+        case "${TEST_ARM_MODE:-armed}" in
+          refused) printf 'GraphQL: arm refused\n' >&2; exit 73 ;;
+          armed) : >"$TEST_STATE/armed"; armed=true ;;
+          queued) : >"$TEST_STATE/queued"; queued=true ;;
+          merged) : >"$TEST_STATE/merged"; arm_state=MERGED ;;
+          unarmed) ;;
+          closed) arm_state=CLOSED ;;
+          *) exit 2 ;;
+        esac
+        jq -cn --arg state "$arm_state" --arg head "$head" --argjson queued "$queued" --argjson armed "$armed" \
+          '{data:{repository:{ref:{target:{oid:$head}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-07T03:00:00Z"} else null end)}}}}' >"$TEST_STATE/arm-state.json" ;;
       *' --disable-auto '*) rm -f -- "$TEST_STATE/armed" ;;
       *) exit 2 ;;
     esac ;;
@@ -258,6 +301,69 @@ reset_default
 run_refresh stale pass render
 second="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'repeat keeps one pull request and its commit'; else bad 'repeat keeps one pull request and its commit' "$OUT"; fi
+# GitHub's visible head can lag the push. Its merge command can also succeed
+# without arming the pull request. Keep those service outcomes independent.
+cp "$runner" "$TMP/arm-runner"
+printf '%s\n' "$second" >"$TMP/state/old-head"
+for row in \
+  'delayed|delayed|armed|pass|0|armed|2|direct' \
+  'never|never|armed|pass|0|unseen|5|direct' \
+  'head-read|failed|armed|pass|1|read-failed|0|direct' \
+  'empty-head|empty|armed|pass|1|read-failed|0|' \
+  'refused|matched|refused|pass|73|refused|1|ignore-refusal' \
+  'exit-zero-unarmed|matched|unarmed|pass|1|active|1|direct' \
+  'queued|matched|queued|pass|0|queued|1|' \
+  'merged|matched|merged|pass|0|merged|1|' \
+  'closed|matched|closed|pass|1|closed|1|' \
+  'arm-query|matched|armed|fail|1|query|1|' \
+  'arm-partial|matched|armed|partial|1|output|1|' \
+  'arm-malformed|matched|armed|malformed|1|output|1|'; do
+  IFS='|' read -r name HEAD_MODE ARM_MODE ARM_QUERY expected outcome reads control <<<"$row"
+  for mutation in none ${control:+"$control"}; do
+    reset_default
+    cp "$TMP/arm-runner" "$runner"
+    if [ "$mutation" != none ]; then
+      python3 - "$runner" "$mutation" <<'ARM_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+if sys.argv[2] == 'direct':
+    start = s.index('arm_status=0\n')
+    end = s.index("printf 'refresh-state=%s pr=%s class=%s")
+    old = s[start:end]
+    new = 'gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"\n'
+else:
+    old = '  exit "$arm_status"'
+    new = '  exit 0 # ' + old.strip()
+assert s.count(old) == 1
+changed = s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+ARM_CONTROL
+    fi
+    commit "$repo"
+    git -C "$repo" push -q origin main
+    : >"$TMP/state/calls"
+    run_refresh "arm-$name-$mutation" pass render
+    if [ "$mutation" = none ]; then
+      if refresh_arm_matches "$expected" "$outcome" "$reads"; then ok "$name arm outcome"; else bad "$name arm outcome" "$OUT"; fi
+    elif [ "$name" = delayed ] || [ "$name" = never ]; then
+      if [ "$RC" -eq 1 ] && grep -qF 'expected head oid does not match' <<<"$OUT" &&
+          ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
+        ok "control: the old direct arm fails $name with the expected-head refusal"
+      else bad "$name direct arm control" "$OUT"; fi
+    elif ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
+      ok "control: $name $mutation turns the arm assertion red"
+    else bad "$name $mutation arm control" "$OUT"; fi
+  done
+done
+unset HEAD_MODE ARM_MODE ARM_QUERY
+reset_default
+cp "$TMP/arm-runner" "$runner"
+commit "$repo"
+git -C "$repo" push -q origin main
+run_refresh stale pass render
 cp "$TMP/state/body" "$TMP/clean-body"
 # Each line refresh prints for a retired item reaches the body as printed,
 # the migration with it; a removal preview naming the retirement does not.
@@ -750,7 +856,7 @@ p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 mutations = {
  'measured': ('[[ "$class_line" != "class: class=$class measured=true "* ]]', '[[ " $class_line " != *\' measured=true \'* ]]'),
- 'disable': ('gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"', 'if [ "$class" = render ]; then\n  gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"\nelse\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
+ 'disable': ('rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?', 'if [ "$class" = render ]; then\n  rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?\nelse\n  RG_ARM_RESULT=matched; RG_ARM_SEEN="$head"\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
  'note': ("merge_note='The refresh workflow arms auto-merge. The merge queue merges this pull request once the required approval, thread resolution and checks pass.'", "merge_note='Auto-merge stays disabled until review and CI gates pass, then the repository overseer arms this pull request on the merge queue, or a maintainer merges it through the queue where no overseer runs.'"),
 }
 old, new = mutations[sys.argv[2]]
@@ -770,7 +876,13 @@ CLASS_CONTROL
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
   run_refresh "control-$mutation" pass standard
-  if [ "$mutation" = disable ] || [ "$mutation" = note ]; then
+  if [ "$mutation" = disable ]; then
+    if [ "$RC" -eq 1 ] && grep -qF 'refresh-error=arm-state pr=1 ' <<<"$OUT" &&
+        grep -qxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" &&
+        ! refresh_class_matches standard pushed "$CLASS_REASON" PATCH; then
+      ok 'control: a disabled standard class turns its arm assertion red'
+    else bad 'standard disable control' "$OUT"; fi
+  elif [ "$mutation" = note ]; then
     if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" &&
         ! refresh_class_matches standard pushed "$CLASS_REASON" PATCH; then
       ok "control: the old standard $mutation breaks the class assertion"
