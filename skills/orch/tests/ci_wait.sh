@@ -341,6 +341,7 @@ needle() { printf '%s' "${1//+/ }"; }
 #   mail                        the count on a `ci-wait: mail=` stdout line
 #   mail_unreadable             the path on a `ci-wait: mail-unreadable=` line
 #   stderr_first~<text>         whether stderr's first line is <text>
+#   rollup.<name>               whether the JSON rollup_key names that check
 observe() {
   local got="" token name value n
   for token in $1; do
@@ -351,6 +352,10 @@ observe() {
       check.*)
         n="$(needle "${name#check.}")"
         value="$(jq -r --arg n "$n" '[.passed_checks[]?, .pending_checks[]?, .failed_checks[]? | select(.name == $n)] | if length == 0 then "absent" else .[0].state end' <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)"
+        ;;
+      rollup.*)
+        n="$(needle "${name#rollup.}")"
+        value="$(jq -r --arg n "$n" '.rollup_key | fromjson | any(.[]; .name == $n)' <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)"
         ;;
       count.*)
         n="$(needle "${name#count.}")"
@@ -478,6 +483,7 @@ table "$JSON" \
   'a check registering late and settled restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:green2|rc=0 status=complete verdict=pass passed=2 elapsed_seconds=120' \
   'a poll in no class breaks the streak the greens either side of it would share|||STUB_PR_CHECKS_SEQUENCE=green:skipped:green|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=150' \
   'a check registering late as skipped is a different rollup and restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:mixed|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=120' \
+  'the rollup key names a skipped check its classes drop|||STUB_PR_CHECKS_SEQUENCE=mixed|rc=0 verdict=pass check.docs=absent rollup.docs=true rollup.build=true' \
   "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
   "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \

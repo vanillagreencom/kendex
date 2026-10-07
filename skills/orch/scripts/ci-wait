@@ -225,7 +225,12 @@ JSON output (always when --json):
     "error": <string>,            # only when status == "error"
     "pending_checks": [ {name,state} ... ],
     "failed_checks":  [ {name,state} ... ],
-    "passed_checks":  [ {name,state} ... ]
+    "passed_checks":  [ {name,state} ... ],
+    "rollup_key": <string>        # only once a rollup was read: the last
+                                  # scoped rollup's canonical name/state
+                                  # set, skipped checks included — the
+                                  # identity the stale window holds, so a
+                                  # caller compares rollups across runs
   }
 
 Environment:
@@ -344,6 +349,8 @@ EMPTY_CLASSES='{"pending":[],"failed":[],"passed":[]}'
 # Last classification seen by the poll loop, so timeout/error results can
 # report the checks that were still outstanding.
 last_check_classes="$EMPTY_CLASSES"
+# The last scoped rollup's canonical key, "" until one is read.
+rollup_key=""
 
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
@@ -366,6 +373,7 @@ emit_result() {
       --arg repo "$REPO" \
       --argjson elapsed "$elapsed" \
       --arg error "$error_msg" \
+      --arg rollup "$rollup_key" \
       --argjson classes "$(jq -c 'map_values(map({name, state: (.state // .bucket // "UNKNOWN")}))' <<<"$classes")" \
       '{
         status: $s,
@@ -375,7 +383,8 @@ emit_result() {
         pending_checks: $classes.pending,
         failed_checks: $classes.failed,
         passed_checks: $classes.passed
-      } + (if $error == "" then {} else {error: $error} end)'
+      } + (if $error == "" then {} else {error: $error} end)
+        + (if $rollup == "" then {} else {rollup_key: $rollup} end)'
     return 0
   fi
   case "$status" in
@@ -779,6 +788,9 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Drop checks belonging to superseded workflow runs before classifying, so a
   # prior canceled run can't be reported as a current failure.
   checks_json=$(echo "$checks_json" | scope_current_run)
+  # Keyed on the scoped rollup, not the classified checks, which drop skipped
+  # entries: a check registering late as SKIPPED is a different rollup.
+  rollup_key=$(jq -cS '[.[] | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
   # gh output. The waiter counts EVERY red check, required or not: it reports
@@ -867,7 +879,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # The clock the streak is stamped and measured against is the one this
     # rollup was read at, not the one before the request that fetched it.
     update_elapsed
-    settled_key=$(jq -cS '[.[] | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
+    settled_key="$rollup_key"
     if [ "$settled_key" != "$stale_key" ]; then
       stale_key="$settled_key"
       stale_since="$elapsed"

@@ -369,6 +369,7 @@ stage() {
       prchecks:running) write_fixture prchecks "$n" '[{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
       prchecks:green) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"}]' ;;
       prchecks:failed_run) write_fixture prchecks "$n" '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/123/job/4"}]' 1 ;;
+      prchecks:green_skipped) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"lint","state":"SKIPPED","bucket":"skipping"}]' ;;
       prchecks:green_more) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"},{"name":"linux","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
       checkruns:c*.*)
@@ -581,6 +582,7 @@ table '1 1 20 --json' \
   'a rollup already green that no probe could confirm in the budget still awaits|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
   'a rollup green before any probe is confirmed by a wider probe, then armed_blocked|open_armed|1 20 300 --json|STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
   'a changed green rollup after a confirmed pass is unconfirmed again and awaits|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:4=green,prchecks:5=green,prchecks:6=green,prchecks:7=green,prchecks:8=green,prchecks:9=green,prchecks:10=green,prchecks:last=green_more|1 20 300 --json||rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'a skipped check registering after a confirmed pass is a changed rollup and awaits|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:4=green,prchecks:5=green,prchecks:6=green,prchecks:7=green,prchecks:8=green,prchecks:9=green,prchecks:10=green,prchecks:last=green_skipped|1 20 300 --json||rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
   'a probe fits inside the budget with a poll after it, which reads the merge|state:1=open,state:last=merged,queue:last=armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=0 verdict=merged polls=2' \
   'a probe never carries the wait past max_wait|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=pass|rc=1 elapsed_seconds=20' \
   'checks turning green between probes are confirmed by a wider probe, then armed_blocked|open_armed,prchecks:1=running,prchecks:2=running,prchecks:3=running,prchecks:last=green|1 20 300 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \

@@ -275,7 +275,7 @@ the failed-required-check cause is delegated to
 armed_blocked; an error result is no reading whatever verdict it carries;
 the probe after a green-but-unconfirmed answer runs to 120 seconds so
 ci-wait's stale window can confirm it, and a later unconfirmed answer keeps
-that pass only for the same check names and states). A probe runs only
+that pass only for the same ci-wait rollup_key). A probe runs only
 where its budget and one more poll interval fit before max_wait, so the
 deadline verdict always rests on a queue read taken after the last probe
 rather than reimplemented — ci-wait owns superseded-run correlation and
@@ -875,10 +875,11 @@ probe_checks=""
 probe_pending_names=""
 probe_pass_key=""
 probe_confirm=false
-# The rollup a ci-wait answer names, as the names and states it reports: the
-# identity a confirmed pass is held to. Nonzero when the answer is unreadable.
+# The rollup a ci-wait answer read, as ci-wait keys it for its own stale
+# window (skipped checks included): the identity a confirmed pass is held
+# to. "" when the answer read no rollup; nonzero when it is unreadable.
 probe_rollup_key() {
-  jq -cS '[.passed_checks[]? | {name, state}] | sort_by(.name, .state)' 2>/dev/null <<<"$1"
+  jq -r '.rollup_key // ""' 2>/dev/null <<<"$1"
 }
 # Returns 0 only on ci-wait's fail verdict. A probe reads the rollup after this
 # poll read the queue, so it runs only where its whole run — its budget plus
@@ -922,13 +923,14 @@ probe_failed_check() {
   fi
   # Green but unconfirmed is ci-wait declining to confirm a rollup it saw
   # settled from its first poll. The same rollup a probe already confirmed
-  # (the same names and states) read by a probe too short to confirm it
+  # (ci-wait's rollup_key, skipped checks included) read by a probe too
+  # short to confirm it
   # again keeps that pass; a changed rollup is unconfirmed again and is read
   # pending, with the next probe wide enough to confirm it.
   if [ "$reading" = "pending" ] && jq -e '(.pending_checks | length) == 0
        and (.failed_checks | length) == 0 and (.passed_checks | length) > 0' \
        >/dev/null 2>&1 <<<"$out"; then
-    if [ "$probe_checks" = "settled" ] && [ "$key" = "$probe_pass_key" ]; then
+    if [ "$probe_checks" = "settled" ] && [ -n "$key" ] && [ "$key" = "$probe_pass_key" ]; then
       reading=""
     else
       probe_confirm=true
