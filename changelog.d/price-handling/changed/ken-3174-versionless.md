@@ -1,0 +1,1 @@
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
