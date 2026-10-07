@@ -1,0 +1,1 @@
+- The `mktemp-trap` lane reads an EXIT trap whose quoted action spans several lines, so a script with such a trap is no longer reported as leaving its scratch behind.
