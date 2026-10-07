@@ -2309,9 +2309,9 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   # timeout's, so the bound is the smallest that leaves the shipped one-second
   # margin between them.
   BUSY_HOME="$TMP_ROOT/busy-home"
-  mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots"
-  : > "$BUSY_HOME/.cache/orch/lane-host-slots/slot.$$"
-  BUSY_ENV="$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;HOME=$BUSY_HOME;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=30;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=3"
+  mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots/short"
+  : > "$BUSY_HOME/.cache/orch/lane-host-slots/short/slot.$$"
+  BUSY_ENV="$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;HOME=$BUSY_HOME;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=30;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=3"
   table \
     "a read lane-host refuses at its per-home cap answers 1 under lane-host-busy before the bound ends it|$BUSY_ENV|host-accounts --no-cache|rc=1 lines=0 key=lane-host-busy,step=accounts,item=-"
   # Control: with the slot wait left longer than the bound, the bound cuts the

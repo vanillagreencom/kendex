@@ -76,7 +76,9 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_OWNER_TIME_ZONE` | Report time zone | `America/Los_Angeles` |
 | Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: `oversee-watch --help` | |
 | `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
-| `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](schemas/lane-host.md#host-kinds); `ORCH_LANE_HOST_MAX_CALLS` and `ORCH_LANE_HOST_BUSY_WAIT_SECS` cap a provider: [Host protocol](schemas/lane-host.md) | `local` |
+| `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](schemas/lane-host.md#host-kinds) | `local` |
+| `ORCH_LANE_HOST_MAX_CALLS` / `ORCH_LANE_HOST_BUSY_WAIT_SECS` | Per-home long-call cap and seconds to wait at that cap; [Host protocol](schemas/lane-host.md#provider-protocol) places the verbs | `4` / `30` |
+| `ORCH_LANE_HOST_SHORT_MAX_CALLS` / `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | Independent per-home short-call cap and wait; mailbox reads can run while long calls wait on sandbox preparation | `4` / `30` |
 | `ORCH_OVERSEER_HOST` | Runtime of the overseer's own session: `tmux`, the included provider; another is refused as `runtime-unsupported`. [Protocol](schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `QA_UI_PATHS` | Space-separated path globs whose modification adds the `needs-ui-review` QA signal | empty |

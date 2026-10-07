@@ -1036,7 +1036,7 @@ assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' 
 LINELESS_MUTANT="$TMP_ROOT/lineless-mutant/scripts"
 mkdir -p "$LINELESS_MUTANT"
 cp -R "$REPO/scripts/." "$LINELESS_MUTANT/"
-mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && -z "$HOST_SELECTION_FILE" ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
+mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-88", harness: "claude", status: "running"}]' >/dev/null
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 STUB_HARNESS_TEXT='Working (esc to interrupt)' -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
 assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OUT" || true)" "handed=0" \
@@ -1051,12 +1051,12 @@ assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OU
 # first, so create is the call refused.
 BUSY_HOME="$TMP_ROOT/busy-home"
 BUSY_SLOTS="$BUSY_HOME/.cache/orch/lane-host-slots"
-mkdir -p "$BUSY_SLOTS"
+mkdir -p "$BUSY_SLOTS/short"
 BUSY_SLOT="$BUSY_SLOTS/slot.$$"
 BUSY_HOST="$TMP_ROOT/busy-provider"
 cat > "$BUSY_HOST" <<EOF
 #!/usr/bin/env bash
-[ "\$1" != "\${BUSY_PLANT_ON:-create}" ] || : > "$BUSY_SLOT"
+[ "\$1" != "\${BUSY_PLANT_ON:-create}" ] || : > "\${BUSY_PLANT_SLOT:-$BUSY_SLOT}"
 exec "$HOST_STUB" "\$@"
 EOF
 chmod +x "$BUSY_HOST"
@@ -1065,7 +1065,7 @@ chmod +x "$BUSY_HOST"
 busy_hand_off() {
   local item="$1"
   shift
-  HOME="$BUSY_HOME" HOST_STUB="$BUSY_HOST" hand_off "$item" ORCH_LANE_HOST_MAX_CALLS=1 ORCH_LANE_HOST_BUSY_WAIT_SECS=0 "$@"
+  HOME="$BUSY_HOME" HOST_STUB="$BUSY_HOST" hand_off "$item" ORCH_LANE_HOST_MAX_CALLS=1 ORCH_LANE_HOST_BUSY_WAIT_SECS=0 ORCH_LANE_HOST_SHORT_MAX_CALLS=1 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0 "$@"
 }
 # A background job exists to wait for its host: a wait refused at the cap is
 # asked again, the record stays preparing and the window open, and the launch
@@ -1087,14 +1087,16 @@ while IFS='|' read -r step item env; do
   [[ -n "$step" ]] || continue
   busy_hand_off "$item" ${env:+"$env"} -- STATE_DIR=
   unset BUSY_PLANT_ON
-  rm -f -- "${BUSY_SLOT:?}"
-  assert_eq "rc=$RC busy=$(grep -cE "^open-terminal: lane-host-busy item=$item step=$step( |\$)" <<<"$ERR" || true) other=$(grep -cE '^open-terminal: (host-create-failed|host-prepare-failed|host-gitfile-unread) ' <<<"$ERR" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$ERR")" \
-    "rc=1 busy=1 other=0 summary=launched=0 skipped=0 failed=1" \
+  rm -f -- "${BUSY_SLOT:?}" "$BUSY_SLOTS/short/slot.$$"
+  expected_rc=0 expected_failed=0
+  [[ "$step" != create ]] || { expected_rc=1; expected_failed=1; }
+  assert_eq "rc=$RC busy=$(grep -cE "^open-terminal: lane-host-busy item=$item step=$step( |\$)" <<<"$ERR" || true) other=$(grep -cE '^open-terminal: (host-create-failed|host-prepare-failed|host-gitfile-unread) ' <<<"$ERR" || true) failed=$(grep -o 'failed=[0-9]*' <<<"$ERR$OUT")" \
+    "rc=$expected_rc busy=1 other=0 failed=failed=$expected_failed" \
     "a foreground $step lane-host refused at its cap is lane-host-busy and launches nothing"
 done <<ROWS
 create|CC-92|BUSY_PLANT_ON=capabilities
 wait|CC-93|
-marker|CC-94|LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example${TAB}path=/srv/lane${TAB}remote-prefix=exec bash -lc
+marker|CC-94|BUSY_PLANT_SLOT=$BUSY_SLOTS/short/slot.$$
 ROWS
 
 # The job outlives a kill of the caller's process group, which is what a

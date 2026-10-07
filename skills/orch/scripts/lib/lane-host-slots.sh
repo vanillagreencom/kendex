@@ -8,7 +8,7 @@
 # orch caller reaches a provider through, so it takes a slot here before it runs
 # the provider and gives it back when it exits; no caller takes one itself.
 #
-# One slot directory per home, never per repository: every overseer and every
+# One directory per pool per home, never per repository: every overseer and every
 # checkout the user runs on the machine shares the machine, so they share the
 # count. $HOME alone names it, because XDG_RUNTIME_DIR is set in a login
 # session and absent in a systemd unit or a cron job of the same user, and two
@@ -37,8 +37,8 @@ lane_host_slot_message() { # KEY FIELD=VALUE...
   printf ' %s' "$@"
   printf '\n'
   case "$key" in
-    lane-host-busy) printf '%s\n' 'Every provider slot on this home stayed taken for ORCH_LANE_HOST_BUSY_WAIT_SECS, so the call did not run. Nothing was read or written; run it again.' ;;
-    setting-invalid) printf '%s\n' 'ORCH_LANE_HOST_MAX_CALLS takes a whole number of at least 1 and ORCH_LANE_HOST_BUSY_WAIT_SECS a whole number of seconds, neither with a leading zero.' ;;
+    lane-host-busy) printf '%s\n' 'Every provider slot in this pool stayed taken for its wait, so the call did not run. Nothing was read or written; run it again.' ;;
+    setting-invalid) printf '%s\n' 'A pool cap takes a whole number of at least 1 and its wait a whole number of seconds, neither with a leading zero.' ;;
     slot-failed) printf '%s\n' 'The slot directory or its lock could not be written, so the call is not admitted rather than run unbounded.' ;;
   esac
 }
@@ -86,14 +86,26 @@ lane_host_slot_try() { # DIR CAP
 # setting or slot failure returns 2. The caller releases with
 # lane_host_slot_release, from its EXIT trap.
 lane_host_slot_take() { # VERB ARGS...
-  local verb="$1" item=- prev="" arg cap wait_s dir deadline rc
+  local verb="$1" item=- prev="" arg cap wait_s dir deadline rc pool cap_name wait_name
+  case "$verb" in
+    cat|put|append|touch|status|list|accounts) pool=short ;;
+    create|wait|start|close|stop|stop-sandbox) pool=long ;;
+    capabilities) return 0 ;;
+    *) return 2 ;;
+  esac
+  cap_name=ORCH_LANE_HOST_MAX_CALLS wait_name=ORCH_LANE_HOST_BUSY_WAIT_SECS
   cap="${ORCH_LANE_HOST_MAX_CALLS:-4}"
   wait_s="${ORCH_LANE_HOST_BUSY_WAIT_SECS:-30}"
+  if [ "$pool" = short ]; then
+    cap_name=ORCH_LANE_HOST_SHORT_MAX_CALLS wait_name=ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS
+    cap="${ORCH_LANE_HOST_SHORT_MAX_CALLS:-4}"
+    wait_s="${ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS:-30}"
+  fi
   case "$cap" in
-    '' | *[!0-9]* | 0*) lane_host_slot_message setting-invalid name=ORCH_LANE_HOST_MAX_CALLS "value=$cap" >&2; return 2 ;;
+    '' | *[!0-9]* | 0*) lane_host_slot_message setting-invalid "name=$cap_name" "value=$cap" >&2; return 2 ;;
   esac
   case "$wait_s" in
-    '' | *[!0-9]* | 0?*) lane_host_slot_message setting-invalid name=ORCH_LANE_HOST_BUSY_WAIT_SECS "value=$wait_s" >&2; return 2 ;;
+    '' | *[!0-9]* | 0?*) lane_host_slot_message setting-invalid "name=$wait_name" "value=$wait_s" >&2; return 2 ;;
   esac
   shift
   for arg in "$@"; do
@@ -101,6 +113,7 @@ lane_host_slot_take() { # VERB ARGS...
     prev="$arg"
   done
   dir="$HOME/.cache/orch/lane-host-slots"
+  [ "$pool" != short ] || dir="$dir/short"
   mkdir -p -- "$dir" || { lane_host_slot_message slot-failed "path=$dir" >&2; return 2; }
   deadline=$((SECONDS + wait_s))
   while :; do

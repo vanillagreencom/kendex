@@ -2621,17 +2621,17 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# could not ask. A cached read keeps the unbounded call: its cost is one per
 	# TTL window, whether a listing or a pick makes it.
 	#
-	# lane-host waits ORCH_LANE_HOST_BUSY_WAIT_SECS for a provider slot before it
+	# lane-host waits ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS for an accounts slot before it
 	# refuses as lane-host-busy, and a bound that ends first cuts that wait off
 	# as the verb failing, with no busy line. So a bounded call waits for a slot
 	# for less than its bound. A value lane-host would refuse is passed on as it
 	# stands, for lane-host to name.
-	busy_wait="${ORCH_LANE_HOST_BUSY_WAIT_SECS:-30}"
+	busy_wait="${ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS:-30}"
 	if [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && -n "$ACCOUNTS_TIMEOUT_CMD" ]]; then
 		if [[ "$busy_wait" =~ ^(0|[1-9][0-9]*)$ && "$busy_wait" -ge "$ACCOUNTS_TIMEOUT_S" ]]; then
 			busy_wait=$((ACCOUNTS_TIMEOUT_S - 1))
 		fi
-		bound=(env "ORCH_LANE_HOST_BUSY_WAIT_SECS=$busy_wait" "$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
+		bound=(env "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=$busy_wait" "$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
 	elif [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && "$USE_CACHE" != true ]]; then
 		message host-accounts-unbounded "$host" "$ACCOUNTS_TIMEOUT_S" >&2
 		return 1

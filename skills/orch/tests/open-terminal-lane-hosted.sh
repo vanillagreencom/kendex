@@ -661,4 +661,70 @@ assert_eq "$(brief_resend KEN-152)" "rc=1 enters=2 brief=0 redelivered=0 refused
   "control: a hosted lane expecting its harness under the ssh pane has its nudge refused and never gets the brief"
 OPEN_TERMINAL="$BRIEF_OT_SHIPPED"
 
+# An accepted create is durable even when the next dispatcher call is busy.
+# This provider logs create once, then refuses repeated create as item-owned.
+# Its one busy call models the dispatcher's 69 without a provider effect.
+PENDING_PROVIDER="$TMP_ROOT/pending-provider"
+cat > "$PENDING_PROVIDER" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == create ]]; then
+  [[ ! -f "$PENDING_CREATED" ]] || exit 75
+  : > "$PENDING_CREATED"
+  "$PENDING_STUB" "$@"
+  exit "$PENDING_CREATE_EXIT"
+elif [[ "$1" == "$PENDING_BUSY_VERB" && ! -f "$PENDING_BUSY" ]]; then
+  : > "$PENDING_BUSY"
+  exit 69
+fi
+exec "$PENDING_STUB" "$@"
+STUB
+chmod +x "$PENDING_PROVIDER"
+pending_launch_case() { # NAME STEP CREATE_EXIT [fleet]
+  local name="$1" step="$2" code="$3" line state env_list record_path pending_query prepare_query
+  local fleet_args=()
+  state="$TMP_ROOT/pending-$name"
+  mkdir -p "$state"
+  record_path="$state/workflow-state-KEN-3241.json"
+  prepare_query='.host_launch.status + ":" + .host_launch.step'
+  pending_query='has("host_launch")'
+  if [[ "${4:-}" == fleet ]]; then
+    fleet_args=(--state-dir "$state")
+    record_path="$state/workflow-state-oversee.json"
+    prepare_query='.lanes[0].status + ":" + .lanes[0].prepare.step'
+    pending_query='any(.lanes[]; .status == "preparing")'
+  fi
+  line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc'
+  [[ "$step" != wait && "$code" != 75 ]] || line+=$'\tstate=preparing'
+  env_list="ORCH_STATE_DIR=$state;ORCH_LANE_ALIASES=eclaude=work;PENDING_STUB=$HOST_STUB;PENDING_CREATED=$state/created;PENDING_BUSY=$state/busy;PENDING_CREATE_EXIT=$code;PENDING_BUSY_VERB=$([[ "$step" == wait ]] && echo wait || echo cat);LANE_HOST_STUB_CREATE_LINE=$line;LANE_HOST_STUB_LOG=$state/calls;$CHOICE_CMD"
+  [[ "${4:-}" != fleet ]] || env_list+=" $COMPACTION_OFF_ALL"
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3241
+  assert_eq "rc=$RC record=$(jq -r "$prepare_query" "$record_path") preparing=$(grep -c 'preparing=1' <<<"$OUT" || true) failed=$(grep -c 'failed=0' <<<"$OUT" || true)" \
+    "rc=0 record=preparing:$step preparing=1 failed=1" "busy $step after create $code keeps the pending launch"
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3241
+  [[ "$name" != control ]] || return 0
+  assert_eq "rc=$RC creates=$(grep -c '^create ' "$state/calls") waits=$(grep -c '^wait ' "$state/calls" || true) pending=$(jq "$pending_query" "$record_path") launched=$(typed "clear; ssh 'lane.example'")" \
+    "rc=0 creates=1 waits=$([[ "$step" == wait || "$code" == 75 ]] && echo 1 || echo 0) pending=false launched=1" "the next $step launch reuses the accepted sandbox from create $code"
+}
+while IFS='|' read -r step code; do
+  pending_launch_case "$step-$code" "$step" "$code"
+done <<'ROWS'
+wait|0
+wait|75
+marker|0
+marker|75
+ROWS
+pending_launch_case fleet-marker marker 0 fleet
+# Remove only the saved-line read in a disposable script. The second create
+# is then refused 75, and the retry cannot reach wait or launch the sandbox.
+PENDING_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-pending-resume/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-pending-resume/orch"
+mutate_file "$OPEN_TERMINAL" '    host_launch_resume || { failed=$((failed + 1)); continue; }' '    host_line=""'
+pending_launch_case control wait 0
+control_launched="$(typed "clear; ssh 'lane.example'")"
+assert_eq "creates=$(grep -c '^create ' "$TMP_ROOT/pending-control/calls") waits=$(grep -c '^wait ' "$TMP_ROOT/pending-control/calls" || true) pending=$(jq 'has("host_launch")' "$TMP_ROOT/pending-control/workflow-state-KEN-3241.json") launched=${control_launched:-0}" \
+  "creates=1 waits=0 pending=true launched=0" "control: ignoring the saved line skips the owned sandbox before wait"
+OPEN_TERMINAL="$PENDING_OT_SHIPPED"
+
 lane_suite_end

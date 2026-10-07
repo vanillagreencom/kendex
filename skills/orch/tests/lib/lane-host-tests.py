@@ -27,7 +27,7 @@ class LaneHostTests(unittest.TestCase):
         self.script.parent.mkdir()
         shutil.copy2(PACKAGE / "scripts/lane-host", self.script)
         shutil.copy2(PACKAGE / "scripts/lane-host-ssh", self.script.parent / "lane-host-ssh")
-        (self.script.parent / "lib").symlink_to(PACKAGE / "scripts/lib")
+        shutil.copytree(PACKAGE / "scripts/lib", self.script.parent / "lib")
         self.stub = self.root / "provider with space"
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
@@ -57,22 +57,22 @@ class LaneHostTests(unittest.TestCase):
                 proc.wait()
         self.addCleanup(release)
         self.admitted(2)
-        refused = self.run_host("touch", "--item", "TEST-3", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
+        refused = self.run_host("wait", "--item", "TEST-3", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
         self.assertEqual((refused.returncode, refused.stderr.splitlines()[:1]),
-                         (69, [b"lane-host: lane-host-busy count=2 cap=2 verb=touch item=TEST-3"]))
-        self.assertNotIn("touch --item TEST-3", (self.root / "calls").read_text())
+                         (69, [b"lane-host: lane-host-busy count=2 cap=2 verb=wait item=TEST-3"]))
+        self.assertNotIn("wait --item TEST-3", (self.root / "calls").read_text())
         # The kind's line takes no slot, so a full cap still answers it; a
         # dispatcher that took one first is busy.
         declared = self.run_host("capabilities", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
         self.assertEqual((declared.returncode, declared.stdout.startswith(b"kind=ssh\t")), (0, True), declared.stderr)
         original = self.script.read_text()
-        rule = "slot cap never stands between a caller and the kind's line.\n"
+        rule = "if [[ \"$verb\" == capabilities ]]; then\n"
         self.assertEqual(original.count(rule), 1)
-        self.script.write_text(original.replace(rule, rule + 'lane_host_slot_take "$@" || exit $?\n'))
+        self.script.write_text(original.replace(rule, rule + '  lane_host_slot_take wait || exit $?\n'))
         busy = self.run_host("capabilities", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
         self.assertEqual(busy.returncode, 69, busy.stderr)
         self.script.write_text(original)
-        waiting = self.start_host("touch", "--item", "TEST-4", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="20")
+        waiting = self.start_host("wait", "--item", "TEST-4", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="20")
         time.sleep(0.5)
         self.assertIsNone(waiting.poll())
         gates[0].touch()
@@ -83,7 +83,7 @@ class LaneHostTests(unittest.TestCase):
         self.admitted(3)
         os.kill(held[1].pid, 9)
         held[1].wait()
-        admitted = self.run_host("touch", "--item", "TEST-5", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
+        admitted = self.run_host("wait", "--item", "TEST-5", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
         self.assertEqual(admitted.returncode, 0, admitted.stderr)
     def test_slot_failures_refused(self):
         slots = self.root / "home/.cache/orch/lane-host-slots"
@@ -100,7 +100,7 @@ class LaneHostTests(unittest.TestCase):
                 if home.exists():
                     shutil.rmtree(home)
                 home.mkdir()
-                command = [str(self.script), "status", "--item", "TEST-1", "--harness", "claude"]
+                command = [str(self.script), "wait", "--item", "TEST-1"]
                 if defect == "directory":
                     (home / ".cache").touch()
                 elif defect in ("lock", "write"):
@@ -122,9 +122,91 @@ class LaneHostTests(unittest.TestCase):
         mutant = original.replace(rule, rule.replace("status=1", "status=$status"))
         self.assertNotEqual(mutant, original)
         self.script.write_text(mutant)
-        result = self.run_host("status", "--item", "TEST-1", ORCH_LANE_HOST=str(self.stub), ORCH_LANE_HOST_MAX_CALLS="0")
+        result = self.run_host("wait", "--item", "TEST-1", ORCH_LANE_HOST=str(self.stub), ORCH_LANE_HOST_MAX_CALLS="0")
         with self.assertRaises(AssertionError):
             self.assertEqual(result.returncode, 1)
+    def test_pool_placement_and_independence(self):
+        # This provider acknowledges admission before it waits on a release
+        # file. The parent deadline bounds every held call and short read.
+        self.stub.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+: > "$ACK_DIR/$1.$$"
+while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
+''')
+        ack = self.root / "ack"
+        ack.mkdir()
+        release = self.root / "release"
+        env = {"ORCH_LANE_HOST": str(self.stub), "ORCH_LANE_HOST_MAX_CALLS": "2",
+               "ORCH_LANE_HOST_BUSY_WAIT_SECS": "0", "ORCH_LANE_HOST_SHORT_MAX_CALLS": "2",
+               "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS": "1", "ACK_DIR": str(ack), "RELEASE": str(release)}
+        held = []
+        def finish():
+            release.touch()
+            for proc in held:
+                proc.wait(timeout=20)
+        self.addCleanup(finish)
+        def start(verb):
+            before = set(ack.iterdir())
+            proc = self.start_host(verb, "--item", "TEST-1", **env, HOLD_VERB=verb)
+            held.append(proc)
+            deadline = time.monotonic() + 20
+            while set(ack.iterdir()) == before:
+                self.assertIsNone(proc.poll(), f"{verb} refused before provider admission")
+                if time.monotonic() >= deadline:
+                    self.fail(f"{verb} did not acknowledge admission")
+                time.sleep(0.05)
+            return proc
+        rows = {"create": "long", "wait": "long", "start": "long", "close": "long",
+                "stop": "long", "stop-sandbox": "long", "cat": "short", "put": "short",
+                "append": "short", "touch": "short", "status": "short", "list": "short", "accounts": "short"}
+        # Discover the real dispatcher's admitted verbs, including a future
+        # verb with no row. Resolve is local and capabilities is slot-free.
+        declared = re.search(r'^  (capabilities\|[^)]+)\) ;;', self.script.read_text(), re.M)
+        self.assertIsNotNone(declared)
+        self.assertEqual(set(declared.group(1).split("|")) - {"capabilities"}, set(rows))
+        slots = self.root / "home/.cache/orch/lane-host-slots"
+        for verb, pool in rows.items():
+            with self.subTest(verb=verb, pool=pool):
+                release.unlink(missing_ok=True)
+                proc = start(verb)
+                directory = slots / "short" if pool == "short" else slots
+                self.assertTrue((directory / f"slot.{proc.pid}").is_file())
+                release.touch()
+                self.assertEqual(proc.wait(timeout=20), 0)
+        release.unlink()
+        start("create")
+        start("create")
+        for verb in ("cat", "touch", "list"):
+            result = subprocess.run([str(self.script), verb, "--item", "TEST-1"], cwd=self.root,
+                                    env={**self.env, **env}, capture_output=True, timeout=1)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        # Same held creates against the single-pool control reject the cat.
+        lib = self.script.parent / "lib/lane-host-slots.sh"
+        original = lib.read_text()
+        rule = '  [ "$pool" != short ] || dir="$dir/short"\n'
+        self.assertEqual(original.count(rule), 1)
+        lib.write_text(original.replace(rule, '  [ "$pool" != short ] || dir="$dir"\n'))
+        self.assertEqual(self.run_host("cat", **env).returncode, 69)
+        lib.write_text(original)
+        start("cat")
+        start("cat")
+        self.assertEqual(self.run_host("create", **env).returncode, 69)
+        self.assertEqual(self.run_host("cat", **env).returncode, 69)
+        # The cap's own control admits an extra long call while both pools
+        # stay full, so independence alone cannot hide an unbounded long pool.
+        rule = 'if [ "$count" -lt "$cap" ]; then'
+        self.assertEqual(original.count(rule), 1)
+        lib.write_text(original.replace(rule, 'if [ "$count" -le "$cap" ]; then'))
+        self.assertEqual(self.run_host("create", **env).returncode, 0)
+        lib.write_text(original)
+        # Free only long slots: the short cap remains full, but create runs.
+        release.touch()
+        for proc in held:
+            proc.wait(timeout=20)
+        release.unlink()
+        start("cat")
+        start("cat")
+        self.assertEqual(self.run_host("create", **env).returncode, 0)
     def test_explicit_selection_and_settings(self):
         (self.root / "kendex.settings.toml").write_text(f'[env]\nORCH_LANE_HOST = "{self.stub}"\n')
         for env, expected in (({}, str(self.stub)), ({"ORCH_LANE_HOST": "local"}, "local")):
@@ -139,6 +221,15 @@ class LaneHostTests(unittest.TestCase):
                 refused = self.run_host("create", **env)
                 self.assertEqual(refused.returncode, 2)
                 self.assertIn(b"host-local verb=create", refused.stderr)
+        self.assertFalse((self.root / "calls").exists())
+    def test_short_pool_settings(self):
+        for name, values in (("ORCH_LANE_HOST_SHORT_MAX_CALLS", ("0", "04", "x")),
+                             ("ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS", ("-1", "05", "x"))):
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    result = self.run_host("cat", ORCH_LANE_HOST=str(self.stub), **{name: value})
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f"setting-invalid name={name} value={value}".encode(), result.stderr)
         self.assertFalse((self.root / "calls").exists())
     def test_provider_protocol_and_failures(self):
         env = {"ORCH_LANE_HOST": str(self.stub)}

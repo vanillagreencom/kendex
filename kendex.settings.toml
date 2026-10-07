@@ -98,9 +98,14 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # session. The refusal counts the ssh lines typed in its attempts field.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
-# Provider processes lane-host runs at once, per home: every overseer and
+# Long provider processes lane-host runs at once, per home: every overseer and
 # checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
+
+# Short provider calls have their own per-home cap, so a held create cannot
+# stop mailbox reads. Verb placement is in orch's schemas/lane-host.md.
+ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
+ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
 # The kendex owner program uses the Copilot pool before the native Codex harness.
 ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:high"

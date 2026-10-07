@@ -1317,8 +1317,8 @@ assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= failed=0 after=0" \
 # cap of 1, so every call the pass makes through lane-host is refused.
 busy_watch() { # ERR — the pass over KEN-70 hosted and KEN-71 local
   BUSY_RC=0
-  BUSY_OUT="$(run_watch HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_MAX_CALLS=1 \
-    ORCH_LANE_HOST_BUSY_WAIT_SECS=0 LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$BUSY_REMOTE" \
+  BUSY_OUT="$(run_watch HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_SHORT_MAX_CALLS=1 \
+    ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0 LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$BUSY_REMOTE" \
     -- --max-loops 1 --item KEN-70 --hosted KEN-70=/srv/lane/KEN-70 --item KEN-71 2>"$1")" || BUSY_RC=$?
 }
 new_case mail_lane_host_busy
@@ -1331,21 +1331,14 @@ printf '{"id":"busy-1","kind":"notice","at":"t","text":"Held lane."}\n' \
 mail_reset KEN-71
 say KEN-71 notice 'Later lane.' >/dev/null
 : > "$STUB_DIR/host.log"
-(cd "$CASE_REPO_ROOT" && HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_MAX_CALLS=1 \
-  LANE_HOST_STUB_LOG="$STUB_DIR/hold.log" LANE_HOST_STUB_WAIT_GATE="$STUB_DIR/gate" \
-  "$REPO_ROOT/skills/orch/scripts/lane-host" wait --item HOLD-1 >/dev/null 2>&1) &
-HOLDER=$!
-for _ in $(seq 1 200); do
-  ! grep -q 'wait --item HOLD-1' "$STUB_DIR/hold.log" 2>/dev/null || break
-  sleep 0.05
-done
+mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots/short"
+: > "$BUSY_HOME/.cache/orch/lane-host-slots/short/slot.$$"
 busy_watch "$STUB_DIR/busy-a"
 busy_first="$(grep -c '^oversee-watch: lane-host-busy item=KEN-70$' "$STUB_DIR/busy-a" || :)"
 busy_other="$(grep -cE 'handoff-read-failed|mail-read-failed|host-unreachable' "$STUB_DIR/busy-a" || :)"
 busy_later="$(grep -c '^EVENT lane-notice KEN-71 ' <<<"$BUSY_OUT" || :)"
 busy_watch "$STUB_DIR/busy-b"
-touch "$STUB_DIR/gate"
-wait "$HOLDER"
+rm -f -- "$BUSY_HOME/.cache/orch/lane-host-slots/short/slot.$$"
 assert_eq "busy=$busy_first other=$busy_other later=$busy_later" "busy=1 other=0 later=1" \
   "a lane-host call refused at the cap reports lane-host-busy, never a failed read, and the pass reads the next lane" \
   "$STUB_DIR/busy-a"

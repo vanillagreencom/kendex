@@ -16,8 +16,9 @@ case "${1:-}" in
       'create preserves ownership exit 75; other provider failures report host-create-failed.' \
       'A local selection refuses provider verbs with exit 2, and claude-cloud refuses them as host-kind-verb with exit 2.' \
       'An unavailable provider or slot failure exits 1. No local fallback runs.' \
-      'At most ORCH_LANE_HOST_MAX_CALLS (default 4) provider calls of every verb but capabilities run' \
-      'at once per home; a call waits up to ORCH_LANE_HOST_BUSY_WAIT_SECS (default 30) for a slot,' \
+      'Long calls use ORCH_LANE_HOST_MAX_CALLS and ORCH_LANE_HOST_BUSY_WAIT_SECS.' \
+      'Short calls use ORCH_LANE_HOST_SHORT_MAX_CALLS and ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS.' \
+      'Each pool defaults to 4 calls and a 30 second wait per home (schemas/lane-host.md),' \
       'then exits 69 with lane-host-busy.'
     exit 0 ;;
 esac

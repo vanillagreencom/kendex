@@ -2676,6 +2676,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # substitution here is checked explicitly.
 launch_finish() {
   local context_session
+  LANE_MARKER_REASON=marker-failed
   if [[ -n "$HOST_SELECTION_FILE" ]]; then
     # Reset before every attempt: a previous resume must not label a fresh run.
     if ! printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then
@@ -2857,6 +2858,41 @@ launch_finish() {
       return 1
     fi
   fi
+}
+
+# An accepted sandbox survives a dispatcher refusal. Fleet launches keep the
+# pending provider line in their lane record; launch-only calls use the item's
+# state, so they do not create a fleet. A retry reads this before create.
+host_launch_pending() { # STEP
+  local pending
+  pending="$(jq -cn --arg line "$host_line" --arg host "$LANE_HOST" --arg step "$1" --arg since "$launched_at" \
+    '{status: "preparing", host: $host, line: $line, step: $step, since: $since}')" || return 1
+  if [[ "$FLEET" == true ]]; then
+    LAUNCH_PREPARE="$pending"
+    lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" preparing
+  else
+    "$WORKFLOW_STATE" exists "$wt_id" || "$WORKFLOW_STATE" init "$wt_id" >/dev/null || return 1
+    "$WORKFLOW_STATE" set "$wt_id" host_launch "$pending" >/dev/null
+  fi
+}
+
+host_launch_resume() {
+  local key="$wt_id" query='.host_launch' pending
+  host_pending_step="" host_line=""
+  if [[ "$FLEET" == true ]]; then
+    key=oversee
+    query='[.lanes[]? | objects | select(.item == "'"$wt_id"'" and .status == "preparing") | .prepare] | first'
+  fi
+  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists "$key" || return 0
+  pending="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get "$key" "$query")" || return 1
+  [[ "$(jq -r '.host // empty' <<<"$pending")" == "$LANE_HOST" ]] || return 0
+  host_line="$(jq -r '.line // empty' <<<"$pending")" || return 1
+  host_pending_step="$(jq -r '.step // empty' <<<"$pending")" || return 1
+}
+
+host_launch_ready() {
+  [[ "$FLEET" != true ]] || return 0
+  "$WORKFLOW_STATE" update "$wt_id" 'del(.host_launch)' >/dev/null
 }
 
 # The two causes of a bundled clone a launcher can read and the launch line
@@ -3460,7 +3496,13 @@ for raw in "${ITEMS[@]}"; do
   fi
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
-  if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?
+  host_pending_step=""
+  if [[ "$LANE_HOST" != local ]]; then
+    host_launch_resume || { failed=$((failed + 1)); continue; }
+    if [[ -z "$host_line" ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?; fi
+    # A provider may return an accepted preparation's line with ownership 75.
+    # An ownership refusal without that line still belongs to another launch.
+    [[ "$create_rc" -ne 75 || $'\t'"$host_line"$'\t' != *$'\tstate=preparing\t'* ]] || create_rc=0
   elif [[ "$keep_tree" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
   if [[ "$create_rc" -eq "$WORKTREE_REUSE_UNREBASED_EXIT" && "$LANE_HOST" == local ]]; then
@@ -3555,22 +3597,31 @@ for raw in "${ITEMS[@]}"; do
   # A host still preparing the item it accepted answers through `wait`. Under a
   # fleet a background job waits and the watch reports what it recorded;
   # without one there is no record to report through, so the launch waits here.
-  if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" ]]; then
+  if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else
     wait_rc=0
-    [[ "$host_state" != preparing ]] || host_transport wait --item "$wt_id" || wait_rc=$?
+    [[ "$LANE_HOST" == local || "$FLEET" == true ]] || host_launch_pending "${host_pending_step:-wait}" \
+      || { failed=$((failed + 1)); continue; }
+    [[ "$host_state" != preparing || "$host_pending_step" == marker ]] || host_transport wait --item "$wt_id" || wait_rc=$?
     if [[ "$wait_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
       ot_message lane-host-busy "item=$item" step=wait >&2
-      failed=$((failed + 1))
+      host_launch_pending wait || { failed=$((failed + 1)); continue; }
+      preparing=$((preparing + 1))
       continue
     elif [[ "$wait_rc" -ne 0 ]]; then
       ot_message host-prepare-failed "item=$item" >&2
       failed=$((failed + 1))
       continue
     fi
+    [[ "$LANE_HOST" == local || "$FLEET" == true ]] || host_launch_pending marker || { failed=$((failed + 1)); continue; }
     if ! launch_finish; then
+      if [[ "$LANE_HOST" != local && "$LANE_MARKER_REASON" == lane-host-busy ]]; then
+        host_launch_pending marker || { failed=$((failed + 1)); continue; }
+        preparing=$((preparing + 1))
+        continue
+      fi
       # Only a hosted relaunch whose open_tmux failed after its window opened
       # ends through launch_stop. Any other failure keeps its record as it
       # read: a window that never opened started nothing, and one that opened
@@ -3579,6 +3630,7 @@ for raw in "${ITEMS[@]}"; do
       failed=$((failed + 1))
       continue
     fi
+    [[ "$LANE_HOST" == local ]] || host_launch_ready || { failed=$((failed + 1)); continue; }
     launched=$((launched + 1))
   fi
   # Recorded here, after the window exists: a lane picked for an item that
