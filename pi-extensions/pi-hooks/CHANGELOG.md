@@ -5,6 +5,7 @@
 ### Unreleased
 
 - Mailbox wake tests cover delivery of overseer answers to idle Pi lanes.
+- Maintainer documentation delegates mailbox decisions to the lane-mail hook.
 
 ### 0.19.1
 

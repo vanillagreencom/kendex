@@ -45,8 +45,7 @@ function standing(dir: string): boolean {
  * monitor: an orch lane's own mail, or, for a lead session that is no lane,
  * its checkout's overseer mailbox where the hook names it.
  *
- * Which mailbox this session reads, and what in it is unread and not an
- * answer, are the lane-mail-check hook's to judge, run through
+ * The lane-mail-check hook judges the mailbox through
  * the `lane-mail-deliver` registration kendex renders for Pi, the judge that
  * hands a working lane its mail after each tool call. The wake runs that same
  * judge while the session is idle, with the lead's session fields, and starts

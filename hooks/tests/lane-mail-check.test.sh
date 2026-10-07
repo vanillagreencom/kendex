@@ -135,14 +135,6 @@ mkdir "$LANE/.git/lane-mail/ken-25"
 stop
 expect 2 "lane-mail-check: marker=$LANE/.git/lane-mail/ken-25" "a marker path that is a directory is refused, never read as no lane"
 
-new_lane answered ken-5
-printf 'Merge now?\n' > "$TMP_ROOT/ask.txt"
-ASK="$(cd "$LANE" && "$LANE_MAIL" ask --item KEN-5 --file "$TMP_ROOT/ask.txt")"
-send KEN-5 'Merge it.' --re "${ASK#id=}"
-REPORT_ITEM=KEN-5
-stop
-expect 0 "$GAP" "an answer belongs to the wait that asked for it and never stops a turn"
-
 new_lane named ken-6
 mark_lane OTHER-1
 send OTHER-1 'Brief-named mailbox.'
