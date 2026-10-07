@@ -3,7 +3,7 @@
 # name: dev-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a subagent's stop while a validation run it started is still going, naming the `dev-validate-run --wait --run-dir <run dir>` command to run next, because a subagent whose turn has ended is not woken when the run ends and its round is left with a verdict on disk and no commit. The worktrees are those the subagent's transcript names as `dev-validate-run ... --worktree <absolute path>` in a command it ran, the path bare or in single or double quotes, the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's) and its `transcript_path` where it does not; the run is the one orch's `dev-validate-run --live --worktree` reports there, the run a start would refuse as run-live, so a run that has its verdict, or whose child is gone, passes. A stop whose transcript names no such worktree, a worktree since removed, or no run still going passes silently. On `stop_hook_active` true, the harness's continued stop, a live run holds again only where the transcript shows a `dev-validate-run --wait --run-dir <that run dir>` call after this hook's last hold for that run, so each further hold costs the subagent one bounded wait and the stops cannot spin; otherwise the stop passes with an `abandoned=<run dir>` notice. A `dev-validate-run` that cannot say whether a run is going, as one from an orch install older than `--live` cannot, holds the stop at exit 2 with its own words, and on a continued stop is reported at exit 0 instead. The `dev-validate-run` read comes from this hook's own install; a missing reader, a transcript that cannot be read and a missing tool are reported under their own key at exit 0, since the subagent can do nothing about them. Not run on copilot: its subagentStop names the lead's transcript, not the subagent's, so the worktree a subagent validated in cannot be read. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a subagent's stop while a validation run it started is still going, naming the `dev-validate-run --wait --run-dir <run dir>` command to run next, because a subagent whose turn has ended is not woken when the run ends and its round is left with a verdict on disk and no commit. The worktrees are those the subagent's transcript names as `dev-validate-run ... --worktree <absolute path>` in a command it ran, the path bare or in single or double quotes, the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's) and its `transcript_path` where it does not; the run is the one orch's `dev-validate-run --live --worktree` reports there, the run a start would refuse as run-live, so a run that has its verdict, or whose child is gone, passes. A stop whose transcript names no such worktree, a worktree since removed, or no run still going passes silently. On `stop_hook_active` true, the harness's continued stop, a live run passes with an `abandoned=<run dir>` notice only where the transcript holds this hook's last hold for that run and no `dev-validate-run --wait --run-dir <that run dir>` call after it, the run dir read in the same quoting forms as the worktree; every other live run is held as on a first stop. The harness records each hold in the transcript, so each further hold costs the subagent one bounded wait and the stops cannot spin. A `dev-validate-run` that cannot say whether a run is going, as one from an orch install older than `--live` cannot, holds the stop at exit 2 with its own words, and on a continued stop is reported at exit 0 instead. The `dev-validate-run` read comes from this hook's own install; a missing reader, a transcript that cannot be read and a missing tool are reported under their own key at exit 0, since the subagent can do nothing about them. Not run on copilot: its subagentStop names the lead's transcript, not the subagent's, so the worktree a subagent validated in cannot be read. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a coding agent from finishing while the validation run it started is still going, and hands it the command that waits for the verdict.
 # safety: Reads the payload and the subagent's transcript, runs `git rev-parse` in the session's directory, and runs orch's `dev-validate-run --live`, which reads the worktree's run directories and the process table; it writes nothing. jq is required to read the payload. Exit 2 is one of three holds: a run still going, naming the run and the `--wait` command that ends the block; a `dev-validate-run` that cannot answer, naming the worktree and that reader's own words; and a payload that cannot be read or is not JSON, naming neither. Every line opens with `dev-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line.
 # timeout: 30
@@ -47,7 +47,7 @@ message() { # KEY VALUE [DETAIL]
         echo "then finish the round from the verdict it prints."
         ;;
       abandoned)
-        echo "the validation run you started in $WORKTREE is still going, and this stop was already held for it with no $READER --wait --run-dir $2 call since, so it passes: the run's verdict reaches nobody and the round is left uncommitted until it is recovered."
+        echo "the validation run you started in $WORKTREE is still going, and this stop was already held for it with no --wait call on it since, so it passes: the run's verdict reaches nobody and the round is left uncommitted until it is recovered."
         ;;
       unread)
         printf 'dev-validate-run could not say whether a validation run is still going in %s. If you started one there, wait for it with %s --wait --run-dir <the run-dir its state=started line printed>' "$2" "$READER"
@@ -97,24 +97,54 @@ if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
   notice transcript unreadable
 fi
 
+# The one reader of a path in the transcript: every absolute path it gives
+# after PREFIX, an extended regular expression ending in the space or `=` the
+# value follows, as `<line> <path>` in transcript order, or exit 1 for none.
+# The value is read bare or after an opening quote, a double one escaped once
+# in a Claude Code transcript's JSON and twice in a Codex rollout's arguments
+# string; a relative path or one holding a quote, a space or a backslash is
+# not read, and the dev workflows pass the absolute worktree path, under which
+# dev-validate-run makes its run directories.
+transcript_paths() { # PREFIX
+  local found rc=0
+  found=$(grep -noE -- "$1(\\\\*\"|')?/[^\"'[:space:]\\\\]+" "$TRANSCRIPT" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || {
+    printf '%s\n' "$found"
+    return "$rc"
+  }
+  # The value is the slash-led tail no quote, space or backslash breaks, since
+  # PREFIX holds no slash after its last space.
+  printf '%s\n' "$found" | awk '{ line = $0; sub(/:.*/, "", line)
+    match($0, /\/[^"'\''[:space:]\\]+$/); print line, substr($0, RSTART) }'
+}
+
+# The last transcript line giving PATH after PREFIX, 0 for none, or
+# transcript_paths' failure and its words.
+last_line() { # PREFIX PATH
+  local found rc=0
+  found=$(transcript_paths "$1") || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$found" | awk -v path="$2" '$2 == path { at = $1 } END { print at + 0 }' ;;
+    1) echo 0 ;;
+    *)
+      printf '%s\n' "$found"
+      return "$rc"
+      ;;
+  esac
+}
+
 # Every worktree a command the subagent ran handed dev-validate-run, newest
 # first and each once. The command, not its output: a Claude Code call that
 # outlasts its timeout records only the path of the file its output goes to,
-# never the run directory the start printed. The path is read bare or after an
-# opening quote, a double one escaped once in a Claude Code transcript's JSON
-# and twice in a Codex rollout's arguments string; a relative path or one
-# holding a quote, a space or a backslash is not read, and the dev workflows
-# pass the absolute worktree path.
-set +e
-MENTIONS=$(grep -oE "dev-validate-run[^\"\\\\]* --worktree (\\\\*\"|')?/[^\"'[:space:]\\\\]+" -- "$TRANSCRIPT" 2>&1)
-GREP_RC=$?
-set -e
-case "$GREP_RC" in
+# never the run directory the start printed.
+rc=0
+MENTIONS=$(transcript_paths 'dev-validate-run[^"\\]* --worktree ') || rc=$?
+case "$rc" in
   0) ;;
   1) exit 0 ;;
   *) notice transcript unread "$MENTIONS" ;;
 esac
-WORKTREES=$(printf '%s\n' "$MENTIONS" | awk '{ sub(/.* --worktree [^\/]*/, ""); seen[NR] = $0 }
+WORKTREES=$(printf '%s\n' "$MENTIONS" | awk '{ seen[NR] = $2 }
   END { for (i = NR; i > 0; i--) if (!done[seen[i]]++) print seen[i] }')
 
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -177,31 +207,17 @@ while IFS= read -r WORKTREE; do
   RUN_DIR=${LIVE#run-dir=}
   RUN_DIR=${RUN_DIR% pid=*}
   [ "$ACTIVE" = true ] || refuse running "$RUN_DIR"
-  # A continued stop holds again only after a --wait call on this run since
-  # this hook's last hold for it, whose own text names that command on the
-  # same line: each further hold costs the subagent one bounded wait, so the
-  # stops cannot spin, and a subagent that stops without waiting is let go.
-  # The harness records the hold in the subagent's transcript, Claude Code as
-  # a user message, Codex as a hook prompt; a hold another hook made counts as
-  # none of this hook's.
-  set +e
-  SINCE=$(awk -v hold="dev-stop-check: running=$RUN_DIR" \
-    -v wait="dev-validate-run --wait --run-dir $RUN_DIR" '
-    # LINE holds NEEDLE with the path ending there, not running on into a longer one.
-    function names(line, needle,   at) {
-      while ((at = index(line, needle)) > 0) {
-        if (substr(line, at + length(needle), 1) !~ /[[:alnum:]._\/-]/) return 1
-        line = substr(line, at + 1)
-      }
-      return 0
-    }
-    names($0, hold) { held = NR; next }
-    names($0, wait) { waited = NR }
-    END { print (waited > held ? "waited" : "held") }' 2>&1 <"$TRANSCRIPT")
-  AWK_RC=$?
-  set -e
-  [ "$AWK_RC" -eq 0 ] || notice transcript unread "$SINCE"
-  [ "$SINCE" != waited ] || refuse running "$RUN_DIR"
+  # A continued stop lets the run go only where this hook already held it and
+  # no --wait call on it came after, so a subagent that stops without waiting
+  # is let go and each further hold costs it one bounded wait. The harness
+  # records the hold in the subagent's transcript, Claude Code as a user
+  # message, Codex as a hook prompt, on one line with the --wait command it
+  # names, which a wait on that line therefore does not follow; a hold another
+  # hook made counts as none of this hook's.
+  HELD=$(last_line 'dev-stop-check: running=' "$RUN_DIR") || notice transcript unread "$HELD"
+  WAITED=$(last_line 'dev-validate-run[^"\\]* --wait --run-dir ' "$RUN_DIR") ||
+    notice transcript unread "$WAITED"
+  { [ "$HELD" -gt 0 ] && [ "$WAITED" -le "$HELD" ]; } || refuse running "$RUN_DIR"
   notice abandoned "$RUN_DIR"
 done <<EOF
 $WORKTREES

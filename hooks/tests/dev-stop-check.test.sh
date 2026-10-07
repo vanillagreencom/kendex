@@ -5,7 +5,8 @@
 # going: the worktree comes from a `dev-validate-run ... --worktree` command in
 # the subagent's own transcript, and whether a run there is still going comes
 # from orch's `dev-validate-run --live`, run from the hook's own install. A
-# continued stop holds again only after a `--wait` call since the last hold.
+# continued stop lets a live run go only where the hook held that run and no
+# `--wait` call on it came after.
 # Each row installs the hook beside the orch scripts in one of the layouts a
 # project or global install takes, hands it a SubagentStop payload, and pins
 # the exit status, the keyed first line and, for a refusal naming a run, the
@@ -17,7 +18,7 @@
 # way Claude Code records a Bash call that outlasted its timeout (the call,
 # then a result naming only the background output file), the way a Codex
 # rollout records an exec_command call (the arguments as one JSON string), and
-# the way Claude Code records a stop this hook held (its stderr as a user
+# the way each harness records a stop this hook held (its stderr as a user
 # message).
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
@@ -83,12 +84,18 @@ claude_call() { # WORKTREE-ARGUMENT — a Bash call that outlasted its timeout
 codex_call() { # WORKTREE WORKTREE-ARGUMENT — an exec_command call in a rollout
   printf '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\".agents/skills/orch/scripts/dev-validate-run --validate-mode range --base abc123 --worktree %s\\",\\"workdir\\":\\"%s\\"}"}}\n' "${2:-$1}" "$1"
 }
-claude_wait() { # RUN-DIR — the --wait call a hold names
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":".agents/skills/orch/scripts/dev-validate-run --wait --run-dir %s","timeout":600000}}]}}\n' "$1"
+claude_wait() { # RUN-DIR [RUN-DIR-ARGUMENT] — the --wait call a hold names
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":".agents/skills/orch/scripts/dev-validate-run --wait --run-dir %s","timeout":600000}}]}}\n' "${2:-$1}"
   printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"state=running elapsed-secs=540 cap-secs=3660 run-dir=%s"}]}}\n' "$1"
+}
+codex_wait() { # RUN-DIR-ARGUMENT
+  printf '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\".agents/skills/orch/scripts/dev-validate-run --wait --run-dir %s\\"}"}}\n' "$1"
 }
 claude_hold() { # RUN-DIR — a stop this hook held, its text naming the --wait call
   printf '{"type":"user","message":{"role":"user","content":"Stop hook feedback:\\n[bash .claude/hooks/dev-stop-check.sh]: dev-stop-check: running=%s\\nthe validation run you started is still going.\\n%s/.claude/skills/orch/scripts/dev-validate-run --wait --run-dir %s\\nthen finish the round from the verdict it prints.\\n"},"isMeta":true}\n' "$1" "$TMP_ROOT" "$1"
+}
+codex_hold() { # RUN-DIR
+  printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"dev-stop-check: running=%s\\nthe validation run you started is still going.\\n%s/.codex/skills/orch/scripts/dev-validate-run --wait --run-dir %s\\nthen finish the round from the verdict it prints.\\n"}]}}\n' "$1" "$TMP_ROOT" "$1"
 }
 transcript() { # NAME CONTENT
   printf '%s' "$2" >"$TMP_ROOT/transcript.$1.jsonl"
@@ -100,7 +107,16 @@ transcript live-codex "$(codex_call "$WT_LIVE")"
 transcript live-claude-double "$(claude_call '\"'"$WT_LIVE"'\"')"
 transcript live-claude-single "$(claude_call "'$WT_LIVE'")"
 transcript live-codex-double "$(codex_call "$WT_LIVE" '\\\"'"$WT_LIVE"'\\\"')"
+transcript held "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE")"
 transcript held-waited "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE")"
+transcript held-waited-single "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE" "'$RUN_LIVE'")"
+transcript held-waited-double "$(claude_call "$WT_LIVE"; claude_hold "$RUN_LIVE"; claude_wait "$RUN_LIVE" '\"'"$RUN_LIVE"'\"')"
+transcript codex-held-waited-single "$(codex_call "$WT_LIVE"; codex_hold "$RUN_LIVE"; codex_wait "'$RUN_LIVE'")"
+transcript codex-held-waited-double "$(codex_call "$WT_LIVE"; codex_hold "$RUN_LIVE"; codex_wait '\\\"'"$RUN_LIVE"'\\\"')"
+# A rerun: the first run was held and waited for, and the second, started
+# after a fix, has never been held.
+transcript rerun "$(claude_call "$WT_LIVE"; claude_hold "$WT_LIVE/tmp/dev-validate-first"
+  claude_wait "$WT_LIVE/tmp/dev-validate-first"; claude_call "$WT_LIVE")"
 transcript waited-held "$(claude_call "$WT_LIVE"; claude_wait "$RUN_LIVE"; claude_hold "$RUN_LIVE")"
 transcript done "$(claude_call "$WT_DONE")"
 transcript gone "$(claude_call "$WT_GONE")"
@@ -262,8 +278,13 @@ a double-quoted worktree in a Codex exec_command call is read|orch|-|agent:live-
 a live run is found past a newer worktree whose run has finished|orch|-|agent:live-then-done|2|dev-stop-check: running=$RUN_LIVE|wait
 a payload without agent_transcript_path reads transcript_path|orch|-|bare:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 the parent's transcript is not the subagent's|orch|-|parent:live-claude|0|-|-
-a continued stop with no wait since the hold lets the live run go|orch|-|active:live-claude|0|dev-stop-check: abandoned=$RUN_LIVE|-
+a continued stop with no wait since the hold lets the live run go|orch|-|active:held|0|dev-stop-check: abandoned=$RUN_LIVE|-
+a continued stop on a run this hook never held is held|orch|-|active:rerun|2|dev-stop-check: running=$RUN_LIVE|wait
 a continued stop after a wait since the hold is held again|orch|-|active:held-waited|2|dev-stop-check: running=$RUN_LIVE|wait
+a single-quoted run dir in a Claude Code wait is read|orch|-|active:held-waited-single|2|dev-stop-check: running=$RUN_LIVE|wait
+a double-quoted run dir in a Claude Code wait is read|orch|-|active:held-waited-double|2|dev-stop-check: running=$RUN_LIVE|wait
+a single-quoted run dir in a Codex wait is read|orch|-|active:codex-held-waited-single|2|dev-stop-check: running=$RUN_LIVE|wait
+a double-quoted run dir in a Codex wait is read|orch|-|active:codex-held-waited-double|2|dev-stop-check: running=$RUN_LIVE|wait
 a wait before the last hold does not hold again|orch|-|active:waited-held|0|dev-stop-check: abandoned=$RUN_LIVE|-
 a continued stop with no run going passes|orch|-|active:done|0|-|-
 a run with its verdict passes|orch|-|agent:done|0|-|-
@@ -295,15 +316,23 @@ skill_load_control continued-stop "$HOOK" 'ACTIVE=${REST#*"$TAB"}' 'ACTIVE=false
   'a continued stop with no wait since the hold lets the live run go'
 skill_load_control hold-again "$HOOK" '[ "$ACTIVE" = true ] || refuse running "$RUN_DIR"' \
   'notice abandoned "$RUN_DIR"' HOOK stop_rows 'a continued stop after a wait since the hold is held again'
-skill_load_control wait-since-hold "$HOOK" '[ "$AWK_RC" -eq 0 ] || notice transcript unread "$SINCE"' \
-  'SINCE=waited' HOOK stop_rows 'a wait before the last hold does not hold again'
+skill_load_control never-held "$HOOK" 'notice transcript unread "$WAITED"' \
+  '[ "$HELD" -gt 0 ] || notice abandoned "$RUN_DIR"' HOOK stop_rows \
+  'a continued stop on a run this hook never held is held'
+skill_load_control wait-since-hold "$HOOK" 'notice transcript unread "$WAITED"' \
+  'WAITED=$((HELD + 1))' HOOK stop_rows 'a wait before the last hold does not hold again'
 skill_load_control unread-continued "$HOOK" 'notice() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || refuse "$@"' \
   HOOK stop_rows 'a reader that cannot answer on a continued stop is reported, not held'
-skill_load_control quoted-worktree "$HOOK" 'GREP_RC=$?' \
-  'MENTIONS=$(grep -oE '"'"'dev-validate-run[^"\\]* --worktree /[^"[:space:]\\]+'"'"' -- "$TRANSCRIPT")' \
+# The one transcript reader takes no quote before a path.
+skill_load_control quoted-path "$HOOK" '"$TRANSCRIPT" 2>&1) || rc=$?' \
+  'rc=0; found=$(grep -noE -- "$1/[^\"'"'"'[:space:]\\\\]+" "$TRANSCRIPT" 2>&1) || rc=$?' \
   HOOK stop_rows 'a double-quoted worktree in a Claude Code call is read' \
   'a single-quoted worktree in a Claude Code call is read' \
-  'a double-quoted worktree in a Codex exec_command call is read'
+  'a double-quoted worktree in a Codex exec_command call is read' \
+  'a single-quoted run dir in a Claude Code wait is read' \
+  'a double-quoted run dir in a Claude Code wait is read' \
+  'a single-quoted run dir in a Codex wait is read' \
+  'a double-quoted run dir in a Codex wait is read'
 skill_load_control shared-tree "$HOOK" 'for candidate in "$AT/skills/$SCRIPT" "$AT/.agents/skills/$SCRIPT"; do' \
   '[ "$candidate" != "$AT/.agents/skills/$SCRIPT" ] || continue' HOOK stop_rows \
   'a reader in the shared tree beside the hook is found'
@@ -320,8 +349,9 @@ skill_load_control removed "$HOOK" 'while IFS= read -r WORKTREE; do' \
 skill_load_control subagent-transcript "$HOOK" 'refuse payload invalid-json' \
   'FIELDS=$(printf '"'"'%s'"'"' "$INPUT" | jq -r '"'"'["transcript_path", .transcript_path, "false"] | @tsv'"'"')' \
   HOOK stop_rows 'the parent'"'"'s transcript is not the subagent'"'"'s'
-skill_load_control escaped-arguments "$HOOK" 'GREP_RC=$?' \
-  'MENTIONS=$(grep -oE '"'"'dev-validate-run[^"]* --worktree /[^"[:space:]]+'"'"' -- "$TRANSCRIPT")' \
+# The one transcript reader runs a path on past a backslash.
+skill_load_control escaped-arguments "$HOOK" '"$TRANSCRIPT" 2>&1) || rc=$?' \
+  'rc=0; found=$(grep -noE -- "$1(\\\\*\"|'"'"')?/[^\"'"'"'[:space:]]+" "$TRANSCRIPT" 2>&1) || rc=$?' \
   HOOK stop_rows 'a live run named by a Codex exec_command call is refused'
 skill_load_control unread "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || exit 0' \
   HOOK stop_rows 'a reader that cannot answer is refused with its words'
