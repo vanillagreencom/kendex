@@ -459,6 +459,11 @@ if test -x "$states"; then
   fi
   names=(lane-host-state)
   if test -f "$state"; then
+    # workflow-state joins a relative setting such as ../lane-state as given,
+    # and tar cuts a member name at its last .. component: a logical cd
+    # resolves the dots, symlinks kept, so the record names the member tar
+    # writes.
+    state="$(cd -- "${state%/*}" && pwd)/${state##*/}"
     member="${state#/}"
     case "$state" in
       "$1/tmp/"* | "$2/tmp/"*) ;;

@@ -1321,6 +1321,31 @@ fi
             self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
 
+    def test_close_records_a_dotted_state_directory_as_tar_names_it(self):
+        # A relative setting such as ../lane-state resolves to a path holding
+        # .. components; the record names the member tar writes for it. The
+        # kept= path is absolute though FLEET_DIR is relative, since tempfile
+        # makes the archive's directory absolute, which oversee-cycle's read
+        # of the kept= row relies on.
+        scripts = self.source / ".agents/skills/orch/scripts"
+        for name in ("workflow-state", "git-context"):
+            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
+        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        self.assertEqual(self.create().returncode, 0)
+        state_dir = Path(self.row["clone"]).parent / "lane-state"
+        state_dir.mkdir()
+        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 6}')
+        closed = self.call("close", "--item", "TEST-1", FLEET_DIR="fleet-relative")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        self.assertTrue(archive.is_absolute(), archive)
+        with tarfile.open(archive) as saved:
+            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
+            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 6}')
+
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
         # A clone whose workflow-state fails leaves the item's state unplaced:
         # close stops before the worktree goes, rather than archive without it.
