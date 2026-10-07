@@ -276,26 +276,33 @@ restack_hook_words() {
 # its ancestors and .agents/skills, so it resolves to every tracked path ending
 # in the directive with its leading `../` dropped.
 #
-# A script a hook executes is run the same way, and a hook finds it from a root
-# it computes at run time, so on a line that is not a comment a word naming
-# `$VAR/<path>` or `${VAR}/<path>` names the repository path <path> when that
-# path is tracked executable at REV; a non-executable file a hook names that
-# way is data it reads, which markers do not stop it parsing. A trailing
-# comment is read as code: a script it names is held, which costs a step. An executed script's own
-# libraries and scripts are followed in turn. Print each tracked file at REV
-# that the hook paths among WORDS source or execute, directly or through
-# another such file.
+# A script a hook executes, as a command or through an interpreter, fails it
+# the same way, and the hook finds that script from a root it computes at run
+# time. A script is a tracked executable or a tracked file named for an
+# interpreter (.sh, .bash, .py, .js, .mjs, .cjs, .awk); any other file a hook
+# names is data it reads. On a line that is not a comment, each `$VAR/<rest>`
+# or `${VAR}/<rest>` word names <rest> at the repository root and against the
+# naming file's directory, and a script at either is held. A root that names
+# neither, a skills tree the hook finds by searching, resolves as a climbing
+# directive does: to every script ending in <rest> with its leading `../`
+# dropped, and for a one-segment <rest> to the tracked executables among them
+# only, since a bare name like `main.py` names scripts in many trees. A
+# trailing comment is read as code; a script it names is held, which costs a
+# step. A held script's own libraries and scripts are followed in turn. Print
+# each tracked file at REV that the hook paths among WORDS source or execute,
+# directly or through another such file.
 restack_hook_libraries() {
-  local wt="$1" rev="$2" listing="" tracked="" executable="" queue="" seen="" script="" body="" directives="" executed="" target="" rc=0
+  local wt="$1" rev="$2" listing="" tracked="" queue="" seen=$'\n' script="" body="" directives="" named="" dir="" scripts="" target="" rc=0
   listing="$(git -C "$wt" ls-tree -r "$rev")" || return 1
   tracked="$(cut -f 2- <<<"$listing")" || return 1
-  executable="$(awk -F '\t' 'substr($1, 1, 6) == "100755" { print $2 }' <<<"$listing")" || return 1
+  scripts="$(awk -F '\t' 'substr($1, 1, 6) == "100755" { print "x\t" $2; next }
+    $2 ~ /[.](sh|bash|py|js|mjs|cjs|awk)$/ { print "-\t" $2 }' <<<"$listing")" || return 1
   queue="$(grep -F -x -e "$3" <<<"$tracked")" || rc=$?
   [[ "$rc" -le 1 ]] || return 1
   while [[ -n "$queue" ]]; do
     script="${queue%%$'\n'*}"
     if [[ "$queue" == *$'\n'* ]]; then queue="${queue#*$'\n'}"; else queue=""; fi
-    if [[ -z "$script" ]] || grep -F -x -q -e "$script" <<<"$seen"; then
+    if [[ -z "$script" || "$seen" == *$'\n'"$script"$'\n'* ]]; then
       continue
     fi
     seen="$seen$script"$'\n'
@@ -315,19 +322,54 @@ restack_hook_libraries() {
       printf '%s\n' "$target"
       queue="$queue"$'\n'"$target"
     done <<<"$directives"
-    executed="$(awk '/^[[:space:]]*#/ { next }
+    named="$(awk '/^[[:space:]]*#/ { next }
       { while (match($0, /[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?\/[A-Za-z0-9._\/-]+/)) {
           word = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
           sub(/^[^\/]*\//, "", word); print word } }' <<<"$body")" || return 1
-    [[ -n "$executed" ]] || continue
-    rc=0
-    executed="$(grep -F -x -e "$executed" <<<"$executable")" || rc=$?
-    [[ "$rc" -le 1 ]] || return 1
+    [[ -n "$named" ]] || continue
+    dir=""
+    [[ "$script" != */* ]] || dir="${script%/*}"
+    named="$(printf '%s\n\n%s\n' "$named" "$scripts" | awk -v dir="$dir" '
+      function norm(p,   n, i, k, part, out) {
+        n = split(p, part, "/"); k = 0
+        for (i = 1; i <= n; i++) {
+          if (part[i] == "" || part[i] == ".") continue
+          if (part[i] != "..") { out[++k] = part[i]; continue }
+          if (k == 0) return ""
+          k--
+        }
+        p = out[1]
+        for (i = 2; i <= k; i++) p = p "/" out[i]
+        return p
+      }
+      !listed && $0 == "" { listed = 1; next }
+      !listed { if (!($0 in word)) { word[$0]; words[++n] = $0 }; next }
+      { path = substr($0, 3); base = path; sub(/.*\//, "", base)
+        run[path]; named[base] = named[base] SUBSEP path
+        if (substr($0, 1, 1) == "x") exe[path] }
+      END {
+        for (i = 1; i <= n; i++) {
+          w = words[i]; hit = 0
+          if (w in run) { print w; hit = 1 }
+          r = norm(dir == "" ? w : dir "/" w)
+          if (r != "" && r != w && r in run) { print r; hit = 1 }
+          if (hit) continue
+          t = w
+          while (substr(t, 1, 3) == "../") t = substr(t, 4)
+          multi = index(t, "/") > 0
+          base = t; sub(/.*\//, "", base)
+          c = split(named[base], cand, SUBSEP)
+          for (j = 2; j <= c; j++) {
+            p = cand[j]
+            if (length(p) > length(t) && substr(p, length(p) - length(t)) == "/" t && (multi || p in exe)) print p
+          }
+        }
+      }')" || return 1
     while IFS= read -r target; do
       [[ -n "$target" ]] || continue
       printf '%s\n' "$target"
       queue="$queue"$'\n'"$target"
-    done <<<"$executed"
+    done <<<"$named"
   done
 }
 

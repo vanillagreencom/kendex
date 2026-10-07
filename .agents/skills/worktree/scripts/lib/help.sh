@@ -185,9 +185,12 @@ declaration's command names and the libraries and scripts those hooks source
 or execute, directly or through another such file, at the pre-restack head,
 the paused HEAD and the commit being replayed. A sourced library is read from
 the '# shellcheck source=' directive above each 'source' or '.' line. An
-executed script is a '$VAR/<path>' or '${VAR}/<path>' word on a line that is
-not a comment, where <path> is tracked executable; a non-executable path
-named that way is data the hook reads and is not held. A directive resolves against the sourcing file's
+executed script is a tracked executable, or a file named for an interpreter
+(.sh, .bash, .py, .js, .mjs, .cjs, .awk), that a '$VAR/<rest>' or
+'${VAR}/<rest>' word on a line that is not a comment names at the repository
+root or against the naming file's directory; where neither holds one, every
+such script ending in <rest> (only executables for a one-segment <rest>).
+Any other file a hook names is data it reads and is not held. A directive resolves against the sourcing file's
 directory; one that climbs out of it ('../skills/<skill>/...') matches every
 tracked path ending in the rest of it, since the hook finds that library by
 searching. When any read that discovery makes fails, the lookup of the
