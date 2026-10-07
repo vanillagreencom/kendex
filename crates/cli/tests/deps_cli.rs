@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 #[allow(clippy::expect_used)]
-fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+pub(super) fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
@@ -25,7 +25,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 }
 
 #[allow(clippy::unwrap_used)]
-fn skill(home: &Path, name: &str, dependencies: &str) {
+pub(super) fn skill(home: &Path, name: &str, dependencies: &str) {
     let dir = home.join("catalog/skills").join(name);
     fs::create_dir_all(&dir).unwrap();
     fs::write(
@@ -36,7 +36,7 @@ fn skill(home: &Path, name: &str, dependencies: &str) {
 }
 
 #[allow(clippy::unwrap_used)]
-fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
+pub(super) fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -62,7 +62,7 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
 
 /// A project with `dev` installed, which requires `github`.
 #[allow(clippy::unwrap_used)]
-fn project(tmp: &tempfile::TempDir) -> std::path::PathBuf {
+pub(super) fn project(tmp: &tempfile::TempDir) -> std::path::PathBuf {
     let home = tmp.path();
     fs::create_dir_all(home.join(".claude/skills")).unwrap();
     let project = home.join("dev/app");

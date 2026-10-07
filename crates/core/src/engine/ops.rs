@@ -155,6 +155,7 @@ fn removal(
     disown: bool,
 ) -> Result<EngineReport> {
     let mut manifest = manifest_for_mutation(env, scope)?;
+    let held = manifest.clone();
     let lock = crate::lock::load(&lock_path(env, scope))?;
     let bundles: Vec<String> = names
         .iter()
@@ -231,7 +232,13 @@ fn removal(
         report.notes.extend(unreadable_origins(
             env, scope, &manifest, &lock, names, &options,
         ));
-        ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
+        // A name nothing here declares leaves the manifest as it was read,
+        // and the CLI counts a manifest save as something removed: saving
+        // it anyway would report a removal, and where the scope has no
+        // kendex.toml, create one.
+        if manifest != held {
+            ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
+        }
     }
     Ok(report)
 }

@@ -1096,9 +1096,20 @@ fn derive(
             // verdict's to say (`removal::settle_lacking`).
             Offer::Retired(migration) => {
                 state.retire(dep_kind, &dep, source, migration, false);
-                let declared = match manifest.declared(kind).contains_key(parent) {
-                    true => parent.to_owned(),
-                    false => format!("what brings {parent} in"),
+                // Named as data, not a command line (engine.md rule 18):
+                // the remove verb drops a declaration nothing installed.
+                let fix = match manifest.declared(kind).contains_key(parent) {
+                    true => {
+                        let place = match scope {
+                            Scope::Global => ", global scope",
+                            Scope::Project { .. } => "",
+                        };
+                        format!(
+                            "drop {parent} with the remove verb, kind {}{place}",
+                            kind.name()
+                        )
+                    }
+                    false => format!("drop what brings {parent} in from kendex.toml"),
                 };
                 wanted.answered.push(warn(
                     kind,
@@ -1106,7 +1117,7 @@ fn derive(
                     format!("{parent} requires {dep}, which the catalog '{source}' retired"),
                     match migration.is_empty() {
                         true => format!(
-                            "drop {declared} from kendex.toml, or wait for the catalog '{source}' to drop {dep} from what {parent} requires"
+                            "{fix}, or wait for the catalog '{source}' to drop {dep} from what {parent} requires"
                         ),
                         false => migration.to_owned(),
                     },

@@ -136,12 +136,19 @@ fn remove_scope(
     Ok(Some(applied))
 }
 
-/// Whether the plan takes anything off disk; one that does not is not run.
+/// Whether the plan takes anything off disk or out of kendex.toml; one
+/// that does not is not run. A declaration refresh never installed has no
+/// file to take, so the manifest save that drops it is the removal; the
+/// planner adds that save only where the manifest changes
+/// (`ops::removal`), so a name nothing declares still takes nothing.
 fn takes_anything(report: &EngineReport) -> bool {
     report.plan.ops.iter().any(|op| {
         matches!(
             op.op,
-            Op::Trash { .. } | Op::PiRemove { .. } | Op::WriteLock { .. }
+            Op::Trash { .. }
+                | Op::PiRemove { .. }
+                | Op::WriteLock { .. }
+                | Op::WriteManifest { .. }
         )
     })
 }

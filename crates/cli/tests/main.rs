@@ -67,6 +67,7 @@ mod refresh_locked;
 mod refresh_retired;
 mod release_workflow;
 mod remote_e2e;
+mod remove_declared;
 mod remove_locked;
 mod safety_print;
 mod skipped_on_conflict;

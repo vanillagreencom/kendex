@@ -1,0 +1,1 @@
+- `kendex remove` drops a declaration that has nothing installed, such as a hook a refresh withheld, from kendex.toml. Before, it printed "Nothing removed" and kept the declaration. A name that nothing declares still writes nothing.
