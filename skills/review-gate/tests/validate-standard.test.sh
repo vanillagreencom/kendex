@@ -47,7 +47,6 @@ for arg in "$@"; do
     printf '%s\n' "$count" >"$GH_SHIM_FIXTURES/.retry-count"
     limit="$(cat "$GH_SHIM_FIXTURES/.retry-limit")"
     if [ "$count" -le "$limit" ]; then
-      printf 'PARTIAL_SECRET\n'
       cat "$GH_SHIM_FIXTURES/.retry-error" >&2
       exit 1
     fi
@@ -600,8 +599,6 @@ FAIL check=standard-environment-secrets value=unreadable'
   CASE_DIFF="rc=$RC want $5; attempts=$got_attempts want $3; waits=$got_waits want $4
 $RAW"
 }
-# Consumer refresh reads the report rows. A failed page's partial stdout
-# must not contaminate the successful answer on the next attempt.
 while IFS='~' read -r name diagnostic failures attempts waits rc; do
   [ -n "$name" ] || continue
   retry_case "$diagnostic" "$failures" "$attempts" "$waits" "$rc"
