@@ -489,9 +489,9 @@ exec "$(command -v git)" "\$@"
 CASE
 chmod +x "$SLOW_GIT_BIN/git"
 
-# The EXIT trap is the whole cleanup: bash runs it on a TERM it was not told to
-# catch as well. The KILL row is the control that the leftover count can see a
-# copy the trap never removed.
+# The script's TERM handler exits 143, after the copy in flight ends, and that
+# exit runs the cleanup trap. The KILL row is the control that the leftover
+# count can see a copy the trap never removed.
 observe_stop() { # observe_stop SIGNAL
   stop_tmp="$TMP/stop-$1"
   mkdir -p "$stop_tmp"
