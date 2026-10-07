@@ -182,6 +182,10 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "checks" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      # A staged rollup sequence, one fixture per call, wins over the mode.
+      if [[ -f "$STUB_SEQ_DIR/prchecks-last.json" ]]; then
+        _emit_fixture prchecks "$(_next prchecks)"
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "failure" ]]; then
         echo '[{"name":"build","state":"FAILURE"}]'
         exit 1
@@ -355,6 +359,8 @@ stage() {
       dequeue:dq_ok) write_fixture dequeue "$n" "$dq_ok" ;;
       dequeue:dq_err) write_fixture dequeue "$n" "$dq_err" 1 ;;
       dequeue:am_errs_on_200) write_fixture dequeue "$n" "$am_errs_on_200" ;;
+      prchecks:running) write_fixture prchecks "$n" '[{"name":"macos","state":"IN_PROGRESS","bucket":"pending"}]' 8 ;;
+      prchecks:green) write_fixture prchecks "$n" '[{"name":"macos","state":"SUCCESS","bucket":"pass"}]' ;;
       checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
       checkruns:c*.*)
         [[ "$name" =~ ^c([0-9]+)\.([0-9]+)$ ]] || { echo "stage: unknown fixture $item" >&2; exit 1; }
@@ -415,6 +421,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   checkrun_warned   the progress read's consecutive-failure warning
 #   mail              the count on a `queue-wait: mail=` stdout line
 #   stderr_line       stderr's first line, spaces encoded as +
+#   pending_names     the result's pending_checks, comma-joined
 observe() {
   local got="" token name value
   for token in $1; do
@@ -427,6 +434,7 @@ observe() {
       text_verdict) value="$(sed -n '1s/^queue-wait: result status=[^ ]* verdict=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       text_repo) value="$(sed -n '1s/^queue-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       stderr_line) value="$(sed -n '1p' "$ERR")"; value="${value// /+}" ;;
+      pending_names) value="$(json '.pending_checks | join(",")')" ;;
       mail) value="$(sed -n '1s/^queue-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       help_record) value="${OUT%%$'\n'*}"; value="${value// /+}" ;;
       mutations)
@@ -560,8 +568,10 @@ echo "=== an armed PR GitHub has not enqueued reads the PR's own check rollup ==
 # no entry, is armed_blocked. progress_unobservable stays the enqueued-entry
 # reading (the progress table above).
 table '1 1 3 --json' \
-  'pending required checks await, never progress_unobservable|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending progress_head_polls=0' \
-  'every check green and still no entry is armed_blocked|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_blocked cause=not_mergeable' \
+  'pending required checks await, never progress_unobservable|open_armed||STUB_PR_CHECKS_MODE=pending|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending pending_names=macos progress_head_polls=0' \
+  'a rollup already green that ci-wait has not confirmed still awaits|open_armed||STUB_PR_CHECKS_MODE=pass|rc=1 status=timeout verdict=armed_awaiting_checks cause=checks_pending' \
+  'checks seen running then green, and still no entry, is armed_blocked|open_armed,prchecks:1=running,prchecks:last=green|1 1 1 --json||rc=1 status=timeout verdict=armed_blocked cause=not_mergeable has_pending_checks=false' \
+  'an errored probe keeps the readable answer before it|open_armed,prchecks:1=running,prchecks:2=green,prchecks:last=fail502|1 20 60 --json||rc=1 verdict=armed_blocked cause=not_mergeable' \
   'an enqueued entry keeps its progress reading|open_queued_head,checkruns:last=c1.1||STUB_PR_CHECKS_MODE=pending|rc=1 verdict=queued cause=still_progressing'
 
 echo "=== text mode names the armed verdicts on stdout ==="

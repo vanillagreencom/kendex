@@ -36,7 +36,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
 
-`queue-wait` names three states on an armed head. `queued` has a merge-queue entry, and progress is read from the entry's merge-group head; `cause: progress_unobservable` means that head could not be read. `armed_awaiting_checks` is armed, not enqueued, with no failed check in the PR's own check rollup: `merge-pr.md` § 5 step 1 waits again on the same head, spending no recovery cycle, until `QUEUE_WAIT_ARMED_MINUTES` (default 90) of wall clock hands it back. `armed_blocked` is armed and never to be enqueued, a failed check or every check green with no entry: it takes the recovery cycle, which `CI_FIX_MAX_CYCLES` bounds.
+`queue-wait` names three states on an armed head. `queued` has a merge-queue entry, and progress is read from the entry's merge-group head; `cause: progress_unobservable` means that head could not be read, and `cause: exit_unconfirmed` is a PR out of the queue whose ejection or disarm fell short of its confirmation count. `armed_awaiting_checks` is armed, not enqueued, with no failed check in the PR's own check rollup: `merge-pr.md` § 5 step 1 waits again on the same head, spending no recovery cycle, until `QUEUE_WAIT_ARMED_MINUTES` (default 90) of wall clock hands it back. `armed_blocked` is armed and never to be enqueued: a failed check takes the recovery cycle, which `CI_FIX_MAX_CYCLES` bounds; every check passed with no entry returns to a fresh readiness check instead, since ci-fix has no failure to work.
 
 A wait is a running waiter, never a session sitting at its prompt.
 

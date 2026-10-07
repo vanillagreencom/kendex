@@ -195,15 +195,19 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               queue, and the arming is gone.
   armed_blocked  armed, never enqueued, and GitHub will not enqueue it:
               cause check_failed when the probe below reads a failed check
-              (at that poll), not_mergeable when at the deadline every
-              reported check passed and still no queue entry exists.
+              (at that poll), not_mergeable when at the deadline ci-wait's
+              last readable answer was pass (or none) and still no queue
+              entry exists. The arm stays in place either way.
   dequeued    the late-findings guard saw an unresolved review thread while
               the PR was queued or armed and pulled the arming (cause
               late_findings). A failed pull instead reports cause
               late_findings_dequeue_failed with the PR still queued.
   closed      the PR was closed without merging.
   queued      poll bound reached with the PR in the merge queue (an entry
-              exists), progress read from the entry's merge-group head.
+              exists), progress read from the entry's merge-group head —
+              or out of it and unarmed at the last poll, an ejection or
+              disarm short of its confirmation count (cause
+              exit_unconfirmed, unconfirmed_verdict naming which).
               Reported as status "timeout": the merge stays armed and fires
               on its own, so this is NOT a failure of the merge — and never
               a success either. Carries cause still_progressing, stalled or
@@ -213,9 +217,11 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               re-arm a still_progressing merge.
   armed_awaiting_checks  poll bound reached with the PR armed, not
               enqueued, and no check failed, read from the PR's own check
-              rollup through the probe below: cause checks_pending when a
-              check is still running, checks_unread when no probe read the
-              rollup (--no-check-probe, or every probe errored). Status
+              rollup through the probe below: cause checks_pending on
+              ci-wait's pending verdict (a check running, not registered,
+              or green but unconfirmed; pending_checks names them),
+              checks_unread when no probe read the rollup (--no-check-probe,
+              or every probe errored). Status
               "timeout"; wait again on the same head — nothing failed.
   not_queued  no poll ever observed the PR queued or armed, and the arming
               grace expired. The merge was never armed; nothing will fire.
@@ -267,9 +273,10 @@ Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check cause is delegated to
 `ci-wait <PR> 15 30 --json` (verdict "fail", reported as armed_blocked)
 rather than reimplemented — ci-wait owns superseded-run correlation and
-check-state semantics. Its last readable answer (a check pending, every
-check passed, or neither) also names the armed_awaiting_checks or
-armed_blocked verdict an armed-not-enqueued wait reaches its deadline on. The
+check-state semantics. Its last readable verdict (pending, or pass/none;
+an error is no reading and keeps the one before it) also names the
+armed_awaiting_checks or armed_blocked verdict an armed-not-enqueued wait
+reaches its deadline on. The
 probe runs ONLY on the armed-but-not-enqueued shape (a merge-queue repo
 gets ejection detection from membership for free), at most once every
 QUEUE_WAIT_PROBE_INTERVAL seconds so a queue poll never inherits a full CI
@@ -336,13 +343,17 @@ JSON output (always when --json):
                                    # late_findings |
                                    # late_findings_dequeue_failed |
                                    # still_progressing | stalled |
-                                   # progress_unobservable (queued) |
+                                   # progress_unobservable |
+                                   # exit_unconfirmed (queued) |
                                    # checks_pending | checks_unread
                                    # (armed_awaiting_checks)
     "unconfirmed_verdict": <string>, # only at a timeout: the candidate the
                                    # last poll held, which never reached
                                    # QUEUE_WAIT_CONFIRM_POLLS and so routes
                                    # nothing
+    "pending_checks": [<string>],  # only on armed_awaiting_checks with
+                                   # cause checks_pending: the checks the
+                                   # last probe read as pending
     "unresolved_count": <int>,     # only once the guard has read threads
     "last_poll_age_seconds": <int>, # only once a poll has completed
     "transient_api_errors": <int>, # only when > 0
@@ -515,6 +526,8 @@ last_auto_merge="false"
 last_cause=""
 last_pr_node_id=""
 last_unresolved_count=""
+# The probe's pending check names, set only on the result that reports them.
+pending_names=""
 # The cross-poll memory that makes this script necessary.
 #   was_queued     - ANY poll observed the PR queued OR armed; the routing
 #                    table's WAS_QUEUED.
@@ -594,7 +607,11 @@ emit_result() {
   [ "$status" = "timeout" ] && unconfirmed="${candidate_verdict:-}"
   # The still-queued verdict carries its progress cause; every other verdict
   # keeps its own cause untouched.
-  if [ "$verdict" = "queued" ]; then
+  # Out of the queue and unarmed at the deadline is an ejection or disarm
+  # short of its confirmation count, never a progress reading.
+  if [ "$verdict" = "queued" ] && [ "$in_queue_now" = false ]; then
+    last_cause="exit_unconfirmed"
+  elif [ "$verdict" = "queued" ]; then
     case "$progressing" in
       true)  last_cause="still_progressing" ;;
       false) last_cause="stalled" ;;
@@ -622,6 +639,7 @@ emit_result() {
       --arg cause "$last_cause" \
       --arg unconfirmed "$unconfirmed" \
       --arg unresolved "$last_unresolved_count" \
+      --arg pending_names "$pending_names" \
       --argjson transient "$transient_api_errors" \
       --arg poll_age "$poll_age" \
       --arg error "$error_msg" \
@@ -644,6 +662,7 @@ emit_result() {
         last_running_count: (if $running == "" then null else ($running|tonumber) end)
       } + (if $cause == "" then {} else {cause: $cause} end)
         + (if $unconfirmed == "" then {} else {unconfirmed_verdict: $unconfirmed} end)
+        + (if $pending_names == "" then {} else {pending_checks: ($pending_names|fromjson)} end)
         + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $poll_age == "" then {} else {last_poll_age_seconds: ($poll_age|tonumber)} end)
@@ -681,7 +700,9 @@ emit_result() {
         false) progress_note="STALLED: no queue-entry or check-run movement in the last ${PROGRESS_WINDOW_POLLS} polls and no check-run running" ;;
         *)     progress_note="progress unobservable: no merge-group head commit exposed or its check-runs unreadable" ;;
       esac
-      if [ "${polls:-0}" -le 1 ]; then
+      if [ "$last_cause" = "exit_unconfirmed" ]; then
+        echo "Merge queue: unconfirmed exit after ${elapsed}s — PR #$PR_NUM was out of the queue and unarmed at the last poll, ${unconfirmed:-an exit} short of its confirmation count. Wait again: that wait reads the arm afresh."
+      elif [ "${polls:-0}" -le 1 ]; then
         echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear (${progress_note})"
       else
         echo "Merge queue: still queued after ${elapsed}s (${polls} polls${poll_age:+, last polled ${poll_age}s ago}) — the merge stays armed and fires when checks and protection clear (${progress_note})"
@@ -691,7 +712,7 @@ emit_result() {
       echo "Merge queue: armed, awaiting checks after ${elapsed}s — PR #$PR_NUM is armed and not yet enqueued (cause: $last_cause); no check has failed, and GitHub enqueues it when its required checks pass. Wait again on the same head."
       ;;
     armed_blocked)
-      echo "Merge queue: armed but blocked after ${elapsed}s — PR #$PR_NUM is armed and GitHub will not enqueue it (cause: $last_cause). Fix CI and re-arm."
+      echo "Merge queue: armed but blocked after ${elapsed}s — PR #$PR_NUM stays armed and GitHub will not enqueue it (cause: $last_cause). Resolve that blocker; the arm needs no re-arming."
       ;;
     not_queued)
       echo "Merge queue: not queued after ${elapsed}s — no poll ever saw PR #$PR_NUM queued or armed; the merge is not armed and will not fire"
@@ -829,14 +850,17 @@ transient_retry() {
 
 # Delegate the PR's own check rollup to ci-wait instead of reimplementing
 # check-state analysis. Only verdict "fail" ends the wait; every readable
-# answer also records what the armed-not-enqueued deadline verdict reads:
-# probe_checks is "pending" while a check is still running, "settled" when
-# every reported check passed (or the repo has none), and "" when the last
-# probe was an error or reported no check at all — unread, never "settled".
+# answer also records what the armed-not-enqueued deadline verdict reads,
+# in ci-wait's own terms: probe_checks is "pending" on its pending verdict (a
+# check running, not yet registered, or green but unconfirmed) with
+# probe_pending_names the checks it named, "settled" on pass or none, and ""
+# until a probe answered readably. An error or unparseable answer is no
+# reading and leaves the last readable one standing.
 last_probe_at=0
 probe_checks=""
+probe_pending_names=""
 probe_failed_check() {
-  local out verdict status
+  local out verdict status reading
   set +e
   out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 30 --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
   status=$?
@@ -844,10 +868,14 @@ probe_failed_check() {
   # The child took the lane-mail exit; this wait ends on the same route.
   [ "$status" -ne 5 ] || lane_mail_nap 0
   verdict=$(jq -r '.verdict // ""' 2>/dev/null <<<"$out" || true)
-  probe_checks=$(jq -r 'if .status == "error" then ""
-    elif (.pending_checks | length) > 0 then "pending"
-    elif .verdict == "none" or ((.failed_checks | length) == 0 and (.passed_checks | length) > 0) then "settled"
+  reading=$(jq -r 'if .status == "error" then ""
+    elif .verdict == "pending" then "pending"
+    elif .verdict == "pass" or .verdict == "none" then "settled"
     else "" end' 2>/dev/null <<<"$out" || true)
+  if [ -n "$reading" ]; then
+    probe_checks="$reading"
+    probe_pending_names=$(jq -c '[.pending_checks[]?.name]' 2>/dev/null <<<"$out" || printf '[]')
+  fi
   [[ "$verdict" == "fail" ]]
 }
 
@@ -1279,7 +1307,7 @@ fi
 # will not enqueue; no reading is still a wait, never a failure.
 if [[ "$in_queue_now" == false && "$last_auto_merge" == "true" ]]; then
   case "$probe_checks" in
-    pending) last_cause="checks_pending"; emit_result "timeout" "armed_awaiting_checks" ;;
+    pending) last_cause="checks_pending"; pending_names="$probe_pending_names"; emit_result "timeout" "armed_awaiting_checks" ;;
     settled) last_cause="not_mergeable"; emit_result "timeout" "armed_blocked" ;;
     *) last_cause="checks_unread"; emit_result "timeout" "armed_awaiting_checks" ;;
   esac

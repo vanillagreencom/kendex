@@ -129,6 +129,8 @@ assert_eq "$(jq -r .status <<<"$out")" "timeout" \
   "that exit is a timeout" "$err"
 assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "ejected" \
   "the standing reading is reported beside the verdict, never dropped" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "exit_unconfirmed" \
+  "a PR out of the queue is never a progress reading" "$err"
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "4" \
   "an unreachable count does not spin the poll loop past the budget" "$err"
 
