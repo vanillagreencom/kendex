@@ -2,19 +2,25 @@
 # Tests for the task-completed-check hook.
 #
 # The hook gates task completion on `cargo clippy` whenever the working tree
-# carries a changed Rust file. Two halves are pinned here: what counts as
-# changed — worktree, index, and untracked non-ignored paths, so a task whose
-# only work is an untracked file reaches the gate — and the verdict, which is
-# clippy's exit status alone, so a run that dies without printing a
-# diagnostic blocks rather than passes.
+# carries a changed Rust file. Pinned here: what counts as changed — worktree,
+# index, and untracked non-ignored paths, so a task whose only work is an
+# untracked file reaches the gate; which crates are linted — the workspace
+# members owning a changed file, never the whole workspace; and the verdict,
+# which is clippy's exit status alone, so a run that dies without printing a
+# diagnostic blocks rather than passes, while warnings complete the task with
+# a notice. A host that cannot run the check — no cargo, no jq, a git that
+# cannot list the changed set — completes the task with a notice, never a
+# silent pass.
 #
 # Fixtures are throwaway git repositories built under a HOME of their own;
-# clippy is a fake `cargo` on PATH replaying a scripted exit code and output.
+# cargo is a fake on PATH: `cargo metadata` prints $FAKE_METADATA, else one
+# member `f` at the repository root, and `cargo clippy` replays a scripted exit
+# code and output.
 #
-# Every refusal opens with `task-completed-check: <key>=<value>`, and that line
-# is the contract: the status clippy left, or the git subcommand that could not
-# answer, is the value. The diagnostics under it are git's and cargo's own
-# words, pinned as themselves.
+# Every refusal and notice opens with `task-completed-check: <key>=<value>`, and
+# that line is the contract: the status clippy left, the warning count, the
+# missing tools, or the git subcommand that could not answer, is the value. The
+# diagnostics under it are git's and cargo's own words, pinned as themselves.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) can be run against these same
@@ -34,10 +40,24 @@ BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
 ARGS_LOG="$TMP_ROOT/cargo.args"
 
-# Fake cargo: records its argv, prints $FAKE_OUT, exits $FAKE_RC.
+# Fake cargo: records its argv; `metadata` prints $FAKE_METADATA (or one member
+# `f` at the repository root) and exits $FAKE_METADATA_RC; anything else prints
+# $FAKE_OUT and exits $FAKE_RC.
 cat >"$BIN_DIR/cargo" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_ARGS_LOG"
+if [ "$1" = metadata ]; then
+  if [ "${FAKE_METADATA_RC:-0}" -ne 0 ]; then
+    echo "error: failed to parse manifest" >&2
+    exit "$FAKE_METADATA_RC"
+  fi
+  if [ -n "${FAKE_METADATA:-}" ]; then
+    printf '%s\n' "$FAKE_METADATA"
+  else
+    printf '{"packages":[{"name":"f","manifest_path":"%s/Cargo.toml"}]}\n' "$(git rev-parse --show-toplevel)"
+  fi
+  exit 0
+fi
 if [ -n "${FAKE_OUT:-}" ]; then
   printf '%s\n' "$FAKE_OUT"
 fi
@@ -171,21 +191,65 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=
 run_hook "$REPO" FAKE_RC=0 FAKE_OUT="error: this line is not a verdict"
 assert_eq "$rc" 0 "a successful run is not blocked by the word error in its output"
 
-echo "task-completed-check: the repository probe has no passing failure"
+echo "task-completed-check: only the crates that own a change are linted"
+REPO="$(new_repo members)"
+mkdir -p "$REPO/crates/a/src" "$REPO/crates/b/src" "$REPO/scratch"
+printf 'pub fn a() {}\n' >"$REPO/crates/a/src/lib.rs"
+printf 'pub fn b() {}\n' >"$REPO/crates/b/src/lib.rs"
+fgit -C "$REPO" add -A
+fgit -C "$REPO" commit -q -m members
+MEMBERS_META=$(printf '{"packages":[{"name":"f","manifest_path":"%s/Cargo.toml"},{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"},{"name":"b","manifest_path":"%s/crates/b/Cargo.toml"}]}' "$REPO" "$REPO" "$REPO")
+printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b --all-targets" \
+  "a change to crate b lints b alone: not the workspace, not the root member above it"
+printf 'pub fn a() { }\n' >"$REPO/crates/a/src/lib.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p a -p b --all-targets" \
+  "changes to two crates lint each once"
+fgit -C "$REPO" checkout -q -- crates
+printf 'fn loose() {}\n' >"$REPO/scratch/loose.rs"
+run_hook "$REPO" FAKE_RC=0 \
+  FAKE_METADATA="$(printf '{"packages":[{"name":"a","manifest_path":"%s/crates/a/Cargo.toml"}]}' "$REPO")"
+assert_eq "rc=$rc clippy=$(sed -n '/^clippy/p' "$ARGS_LOG")" "rc=0 clippy=" \
+  "a Rust file no member owns runs no clippy"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA_RC=101
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: metadata=failed" \
+  "a manifest cargo cannot read refuses"
+assert_contains "$err" "failed to parse manifest" "carries cargo's own failure"
+
+echo "task-completed-check: warnings are advice, errors refuse"
+REPO="$(new_repo warnings)"
+printf 'pub fn added() { let x = 1; }\n' >"$REPO/src/added.rs"
+run_hook "$REPO" FAKE_RC=0 \
+  FAKE_OUT="$(printf 'warning: unused variable: `x`\n --> src/added.rs:1:22\nwarning: `f` (bin "f") generated 1 warning')"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: warnings=1" \
+  "a lint warning completes the task under a notice counting it"
+assert_contains "$err" "unused variable" "shows the warning itself"
+assert_eq "$(sed -n '/^clippy.*-D warnings/p' "$ARGS_LOG")" "" "warnings are not denied"
+run_hook "$REPO" FAKE_RC=101 \
+  FAKE_OUT="$(printf 'error[E0425]: cannot find value `y`\nwarning: unused variable: `x`')"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=101" \
+  "a compile error refuses even beside a warning"
+run_hook "$REPO" FAKE_RC=0 FAKE_OUT=""
+assert_eq "rc=$rc err=$err" "rc=0 err=" "a clean clippy says nothing"
+
+echo "task-completed-check: a failed repository probe is unchecked, not passed"
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
 printf 'pub fn added() {}\n' >"$NOREPO/added.rs"
 run_hook "$NOREPO" FAKE_RC=0
-assert_eq "$rc" 2 "a directory that is not a repository blocks"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: git=rev-parse" \
+  "a directory that is not a repository completes under the unchecked notice"
 assert_eq "$(cat "$ARGS_LOG")" "" "a failed probe never invokes cargo"
 # The same 128 from inside a checkout git cannot read. Nothing in the status
-# or the message separates the two, so neither may stand the gate down.
+# or the message separates the two, so neither may read as a clean pass.
 REPO="$(new_repo badconfig)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
 printf 'this is not a config line\n' >"$REPO/.git/config"
 run_hook "$REPO" FAKE_RC=0
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: git=rev-parse" \
-  "an unreadable .git/config blocks, naming the probe that could not answer"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: git=rev-parse" \
+  "an unreadable .git/config completes unchecked, naming the probe that could not answer"
 
 echo "task-completed-check: a changed set larger than the pipe buffer"
 REPO="$(new_repo bigset)"
@@ -228,8 +292,8 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: git=ls-files" \
-  "an unreadable changed set blocks rather than passing, naming the probe"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: git=ls-files" \
+  "an unreadable changed set completes unchecked rather than passing silently, naming the probe"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
 
 echo "task-completed-check: no git on PATH"
@@ -246,14 +310,15 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "a git that will not run blocks too"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: git=rev-parse" \
+  "a git that will not run completes unchecked too"
 
 echo "task-completed-check: no cargo on PATH"
 REPO="$(new_repo nocargo)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
 NOCARGO_BIN="$TMP_ROOT/nocargo"
 mkdir -p "$NOCARGO_BIN"
-for tool in bash cat git grep sed sort head tail tr dirname; do
+for tool in bash cat git grep jq sed sort head tail tr dirname wc; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOCARGO_BIN/$tool"
 done
@@ -262,8 +327,21 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=127" \
-  "a missing cargo blocks rather than passing, and the status says which failure it was"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=task-completed-check: missing-tools=cargo" \
+  "a missing cargo completes unchecked under a notice naming it"
+
+echo "task-completed-check: no jq on PATH"
+rm "$NOCARGO_BIN/jq"
+ln -sf "$BIN_DIR/cargo" "$NOCARGO_BIN/cargo"
+: >"$ARGS_LOG"
+set +e
+( cd "$REPO" && env -i HOME="$TMP_ROOT" PATH="$NOCARGO_BIN" FAKE_ARGS_LOG="$ARGS_LOG" \
+  "$NOCARGO_BIN/bash" "$HOOK" <<<'{}' ) >/dev/null 2>"$TMP_ROOT/stderr"
+rc=$?
+set -e
+assert_eq "rc=$rc first=$(first_line) cargo=$(cat "$ARGS_LOG")" \
+  "rc=0 first=task-completed-check: missing-tools=jq cargo=" \
+  "a missing jq completes unchecked under a notice naming it, before cargo runs"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
