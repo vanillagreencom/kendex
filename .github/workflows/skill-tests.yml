@@ -121,6 +121,9 @@ name: Skill Tests
 permissions:
   contents: read
 
+env:
+  APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+
 # A push to a pull request's branch cancels the run its previous head started,
 # which could only report on a head the pull request no longer has. A merge
 # group or a push to main keys its group to its own run and cancels nothing:
@@ -691,7 +694,7 @@ jobs:
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
       - name: kendex from this checkout
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         run: |
@@ -788,7 +791,7 @@ jobs:
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
           else
-            command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+            command -v tmux >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y tmux; }
           fi
 
       # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
@@ -1703,7 +1706,7 @@ jobs:
           set -u
           pkgs=(libdbus-1-dev)
           [ "$CRATE" != kendex-app ] || pkgs+=(libwebkit2gtk-4.1-dev libgtk-3-dev)
-          sudo apt-get update && sudo apt-get install -y "${pkgs[@]}"
+          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y "${pkgs[@]}"
       # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
       # hook declared in kendex.toml firing under Pi — and skips without bun.
       - uses: oven-sh/setup-bun@v2
@@ -1949,7 +1952,7 @@ jobs:
           key: lint
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: System dependencies for the keychain store and the app shell
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       - name: cargo clippy
         timeout-minutes: 20
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
