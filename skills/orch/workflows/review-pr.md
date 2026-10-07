@@ -376,9 +376,9 @@ Drop a signal when the triggering code is trivial or test-only; never drop one f
 
 **Skip if** the recorded `qa_decision.signals` is empty → § 7, which finds no QA artifacts, converges, and routes on: the exit is decided in one place even when QA never ran.
 
-Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`, `needs-ui-review` → `reviewer-quality`, whose UI lens judges the dev summary's before and after screenshots against the design-system doc `QA_UI_DESIGN_DOC` names; a project may override the mapping in its instructions. For each, delegate and wait.
+Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`, `needs-ui-review` → `reviewer-quality`, whose UI lens judges the screenshots the dev summary lists against the design-system doc `QA_UI_DESIGN_DOC` names; a project may override the mapping in its instructions. For each, delegate and wait.
 
-A `needs-ui-review` delegation's Dev summary carries a Screenshots list. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
+A `needs-ui-review` delegation's Dev summary carries a Screenshots list, each changed view's set as `.agents/skills/code-quality/references/ui.md` § Screenshots defines it. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
 
 Fill `Worktree:` by the rule at the top of this workflow.
 

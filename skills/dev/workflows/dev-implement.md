@@ -231,7 +231,7 @@ Based on the FINAL validated code, decide which extra QA passes the change needs
 | New module, public API | `needs-review` |
 | Changed view, layout, styling or UI copy | `needs-ui-review` |
 
-A round that raises `needs-ui-review`, or changes a file a `QA_UI_PATHS` glob matches (`.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""`), builds each changed view to the polish bar in [code-quality references/ui.md](../../code-quality/references/ui.md) and the design-system doc `QA_UI_DESIGN_DOC` names (`.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`), and captures a before and an after screenshot of it: the before from the base revision, the after from HEAD, in dark and in light where the app has both. Save them under the worktree's `tmp/ui-shots/` and list them in § 9.1's Screenshots section. The `needs-ui-review` QA pass judges these files, and a changed view missing any one of them is a blocker.
+A round that raises `needs-ui-review`, or changes a file a `QA_UI_PATHS` glob matches (`.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""`), builds each changed view to the polish bar in [code-quality references/ui.md](../../code-quality/references/ui.md) and the design-system doc `QA_UI_DESIGN_DOC` names (`.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`), and captures its screenshot set by [code-quality references/ui.md § Screenshots](../../code-quality/references/ui.md#screenshots), listed in § 9.1's Screenshots section. The `needs-ui-review` QA pass judges each view from that set.
 
 Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected.
 
@@ -264,7 +264,7 @@ Always required. Linear posts it to the issue you implemented: write `tmp/comple
 [Agent-specific: frame time, latency, etc.]
 
 ### Screenshots
-- `tmp/ui-shots/[FILE]` - [View], [before|after], [dark|light]
+- `tmp/ui-shots/[FILE]` - [View], [before|after], [THEME]
 
 ### Discovered Work
 - [Type]: Description (estimate: N)
@@ -344,7 +344,7 @@ Summary: [ISSUE_ID] ✓
    Files: N | Commits: N | QA: [LABELS]
 
    ### Screenshots
-   - `tmp/ui-shots/[FILE]` - [SUB_ISSUE], [View], [before|after], [dark|light]
+   - `tmp/ui-shots/[FILE]` - [SUB_ISSUE], [View], [before|after], [THEME]
 
    ### Proposed Rules
    - [Rule the validation list is missing]

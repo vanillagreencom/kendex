@@ -90,7 +90,7 @@ Reflection is complete in § 2.1. Make no repository edit here.
 
 Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
-Write `tmp/fix-summary-[ISSUE_ID].md` with up to two sections. When a fix changed a view the [dev-implement.md § 8](./dev-implement.md#8-record-qa-signals) screenshot rule covers, recapture its after shots from HEAD under `tmp/ui-shots/` and list each such view's before shot, the implement round's, and its new after shots under a `### Screenshots` heading, one line each as [dev-implement.md § 9.1](./dev-implement.md#91-completion-comment) shows. If the validation list misses a rule, add a `### Proposed Rules` heading with the proposal as one bullet. Append `--summary-file tmp/fix-summary-[ISSUE_ID].md` to the command below. Omit the file and flag when neither section applies.
+Write `tmp/fix-summary-[ISSUE_ID].md` with up to two sections. When a fix changed a view the [dev-implement.md § 8](./dev-implement.md#8-record-qa-signals) screenshot rule covers, list that view's screenshot set under a `### Screenshots` heading by [code-quality references/ui.md § Screenshots](../../code-quality/references/ui.md#screenshots), which says what a later round recaptures and what it carries. If the validation list misses a rule, add a `### Proposed Rules` heading with the proposal as one bullet. Append `--summary-file tmp/fix-summary-[ISSUE_ID].md` to the command below. Omit the file and flag when neither section applies.
 
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 

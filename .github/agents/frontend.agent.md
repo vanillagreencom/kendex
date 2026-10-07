@@ -18,7 +18,7 @@ Declarative view layers and their UI messages: TypeScript/React web, mobile and 
 - Build each changed view to the polish bar in `.agents/skills/code-quality/references/ui.md`.
 - Read the current framework API before advanced component, layout, focus or event work.
 - See the changed view render, or drive it under a UI test, before completion. A typecheck alone does not verify layout, input or redraw behavior.
-- Read the consumer's design-system doc, and capture and list before and after screenshots of each changed view, by the rule in `.agents/skills/dev/workflows/dev-implement.md` § 8 Record QA Signals.
+- Read the consumer's design-system doc. When `.agents/skills/dev/workflows/dev-implement.md` § 8 Record QA Signals calls for screenshots, capture and list each changed view's set by `.agents/skills/code-quality/references/ui.md` § Screenshots.
 - Follow `code-quality` and `dev` for implementation and round completion. `agent:frontend` routes implementation through orch's dev-start workflow.
 
 ## Output
