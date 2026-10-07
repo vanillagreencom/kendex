@@ -1,1 +1,0 @@
-- `pr-list-ready` and `pr-cross-check` hand their PR lists to jq on stdin, so a repository with many open pull requests no longer fails them with "Argument list too long".

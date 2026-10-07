@@ -1,1 +1,0 @@
-- `oversee register` reads a Claude, Codex or Pi overseer's turn-end hook from its checkout's inventory, so an installed hook no longer reads missing when the session's start directory lies outside the checkout or is gone.

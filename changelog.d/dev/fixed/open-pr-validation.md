@@ -1,1 +1,0 @@
-- Fix rounds use pull request CI when it covers the change. A failure in the round's own files permits one correction and one rerun.

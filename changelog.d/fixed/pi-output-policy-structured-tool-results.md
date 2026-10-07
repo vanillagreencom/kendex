@@ -1,1 +1,0 @@
-- pi-output-policy: Codemode scripts retain structured tool output when the display is shortened or details are capped.

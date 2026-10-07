@@ -1,1 +1,0 @@
-- `kendex remove --keep-declaration` leaves kendex.toml untouched in a project whose kendex.toml still names an agent by a retired name. Before, the run renamed that setting and dropped the removed item's declaration while printing "kendex.toml unchanged".

@@ -1,1 +1,0 @@
-- A docs rewrite may remove a routine decision record whose reason moves to the code or principle doc it governs, and repoints every surviving citation at that home, searching for the ID and the record's file name.

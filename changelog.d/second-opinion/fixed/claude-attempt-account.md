@@ -1,1 +1,0 @@
-- Claude review attempts record the selected account name so fleet checks can identify which account ran.

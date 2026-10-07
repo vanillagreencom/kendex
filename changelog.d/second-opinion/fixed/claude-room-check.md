@@ -1,1 +1,0 @@
-- The fleet settings example checks Claude account capacity before review. A review uses another Claude account with capacity or tries the next reviewer.

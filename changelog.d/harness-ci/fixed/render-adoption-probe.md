@@ -1,1 +1,0 @@
-- Use a render-only refresh PR to verify CI skips for render-tracking consumers; keep the hand-edit probe for harness-only wiring.

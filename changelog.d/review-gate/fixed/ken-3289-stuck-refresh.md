@@ -1,1 +1,0 @@
-- A consumer refresh run stuck waiting on the `kendex` environment gate no longer stops every later refresh: the next run force-cancels one that has waited past 30 minutes, re-reading each run just before the cancel and skipping one no longer waiting. The new release job takes the `actions: write` permission.

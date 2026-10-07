@@ -1,1 +1,0 @@
-- Two Windows rules in the bash reference: native launchers start bash by absolute path, never bare `bash`, and suites on MINGW/MSYS export `MSYS=winsymlinks:nativestrict` and check `[ -L ]` after `ln -s`.

@@ -1,1 +1,0 @@
-- A `needs-ui-review` QA signal, raised by the dev round or by a changed file matching the new `QA_UI_PATHS` setting, routes to `reviewer-quality`, which judges the before and after screenshots against the design-system doc the new `QA_UI_DESIGN_DOC` setting names.

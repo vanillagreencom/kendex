@@ -1,1 +1,0 @@
-- An `APPROVED` Copilot review now runs the review-body findings check before the lane sends `copilot-approved-on-rerequest` or ends on an approved head, so a `Previously missed` or `Suppressed comments` finding is answered before the CI wait instead of failing the merge gate after it.

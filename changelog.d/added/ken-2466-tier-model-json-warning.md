@@ -1,1 +1,0 @@
-- `kendex tier-model --json` carries a `warning` field with the model-resolution line the plain output prints, so a caller logs that line and does not rebuild it.

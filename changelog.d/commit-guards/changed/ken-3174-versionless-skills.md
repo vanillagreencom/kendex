@@ -1,1 +1,0 @@
-- A package `SKILL.md` with no version key owes no version raise; a version key with no non-empty `metadata.version` is a collection error. `install-git-hooks --check` compares script checksums.

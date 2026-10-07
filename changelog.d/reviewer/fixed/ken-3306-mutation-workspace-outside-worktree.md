@@ -1,1 +1,0 @@
-- `mutation-stability` makes its workspace in `/tmp` when `TMPDIR` points inside the copied worktree or its common Git directory, so a run killed before its cleanup no longer leaves a full tree copy in the lane's `tmp/` and its park archive.

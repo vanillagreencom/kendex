@@ -1,1 +1,0 @@
-- The `screenshots` step captures the simulator it installed and launched the app on, rather than whichever simulator `simctl` picks among the booted ones. An installed `.github/workflows/mac-run.yml` keeps its old capture line: change `xcrun simctl io booted screenshot` to `xcrun simctl io "$simulator" screenshot`, or delete the workflow and reinstall.

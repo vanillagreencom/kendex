@@ -1,1 +1,0 @@
-- The base branch's required-context read moved from `pr-merge` into `lib/ci-run-correlation.sh` and takes an optional `owner/name`, so orch's `ci-wait --required-only` judges checks against the same required set the merge gate does.

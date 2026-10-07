@@ -1,1 +1,0 @@
-- `kendex remove` records a removal that has nothing installed to take: a declaration a refresh withheld leaves kendex.toml, a dependency already taken off disk with `--keep-declaration` is written to `[suppressed]`, and an optional extra chosen by hand is taken back. Before, it printed "Nothing removed" and the next refresh installed the item.

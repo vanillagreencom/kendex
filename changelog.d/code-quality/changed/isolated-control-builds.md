@@ -1,1 +1,0 @@
-- Require disposable control copies and compiled artifacts outside the worktree, with Cargo target settings limited to control commands and cleanup after each control.

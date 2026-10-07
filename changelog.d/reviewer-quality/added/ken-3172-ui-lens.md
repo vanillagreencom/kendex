@@ -1,1 +1,0 @@
-- A UI lens: under a `needs-ui-review` QA trigger, reviewer-quality judges the changed views' screenshot set, as code-quality's UI reference defines it, and their copy against code-quality's polish bar and the consumer's design-system doc. A missing screenshot is a blocker, and a missing doc is reported as a gap.

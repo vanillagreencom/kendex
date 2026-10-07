@@ -1,1 +1,0 @@
-- A UI reference, `references/ui.md`: the polish bar a changed view is built to and judged against, in any UI stack, and the before and after screenshot set, in every theme the app has, that a UI review judges it from.

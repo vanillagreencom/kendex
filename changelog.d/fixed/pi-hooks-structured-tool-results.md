@@ -1,1 +1,0 @@
-- pi-hooks: Codemode scripts retain structured tool output when PostToolUse hooks add context.

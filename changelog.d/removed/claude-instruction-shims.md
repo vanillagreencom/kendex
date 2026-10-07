@@ -1,1 +1,0 @@
-- Remove generated CLAUDE.md imports now that Claude Code reads AGENTS.md itself. Before Claude Code v2.1.277, add a CLAUDE.md that imports AGENTS.md.

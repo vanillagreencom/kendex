@@ -1,1 +1,0 @@
-- Verification names scoped refresh actions for stale packages and missing recorded commits. JSON keeps version 1 with optional action metadata. Base revision failures carry no refresh action.

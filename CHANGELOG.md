@@ -6,6 +6,217 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-07
+
+### Added
+
+- `kendex tier-model --json` carries a `warning` field with the model-resolution line the plain output prints, so a caller logs that line and does not rebuild it.
+
+### Changed
+
+- Merge groups reuse passing macOS tests for an unchanged pull request patch. Ubuntu tests still check the integrated tree. macOS tests run again after merge to detect failures from combined changes.
+- Building the desktop app's interface from source no longer prints the ineffective-dynamic-import and chunk-size warnings.
+
+### Removed
+
+- Remove generated CLAUDE.md imports now that Claude Code reads AGENTS.md itself. Before Claude Code v2.1.277, add a CLAUDE.md that imports AGENTS.md.
+
+### Fixed
+
+- Catalog checks expose bundle names for upgrade checks that detect removed or renamed bundles.
+- Session checks clear outdated source errors after a fetch and refresh saved package results when another lane updates the shared mirror.
+- Edited hook removal advice names the discard-edits option and preserves copies still requested or required on other coding tools.
+- `install.sh` finds the latest release through the github.com releases redirect instead of the GitHub API, so a host whose anonymous API quota is spent still installs.
+- `kendex marketplace unsubscribe` with `--remove-packages` or `--keep-packages`, `kendex source add`, `kendex marketplace subscribe`, `kendex drift-hook`, and in the app Unsubscribe, a save in the editor and switching on package checks no longer move other sources' packages to the newest catalog commit. Those packages stay at the commit `.kendex-lock.json` records, and the package-check confirmation no longer counts those catalog changes as waiting work. The app's Customize tab shows each skill's settings and defaults at that same commit, the one its save writes against.
+- `kendex verify` fails a declared bundle its catalog neither offers nor retires, naming the bundle and the bundles the catalog offers; a retired bundle still passes with its notice.
+- Apply, Replace, installs and fork changes keep other catalog packages at recorded revisions. Add applies explicit source revision or repository edits to that source's installed packages.
+- Unsubscribing a marketplace transfers packages a surviving bundle carries to that bundle's source, so later audits avoid a source conflict in both remove and keep modes.
+- Consumer refresh gives a first mirror clone a longer timeout and one retry after a stalled or failed transfer.
+- pi-hooks: Codemode scripts retain structured tool output when PostToolUse hooks add context.
+- pi-output-policy: Codemode scripts retain structured tool output when the display is shortened or details are capped.
+- `kendex remove --keep-declaration` leaves kendex.toml untouched in a project whose kendex.toml still names an agent by a retired name. Before, the run renamed that setting and dropped the removed item's declaration while printing "kendex.toml unchanged".
+- `kendex remove` records a removal that has nothing installed to take: a declaration a refresh withheld leaves kendex.toml, a dependency already taken off disk with `--keep-declaration` is written to `[suppressed]`, and an optional extra chosen by hand is taken back. Before, it printed "Nothing removed" and the next refresh installed the item.
+- Pi package updates report unresolved sources and unreadable manifests as not evaluated, update other packages, and exit with an error.
+- Verification names scoped refresh actions for stale packages and missing recorded commits. JSON keeps version 1 with optional action metadata. Base revision failures carry no refresh action.
+
+### Packages
+
+#### bot-instructions
+
+- Stop stamping a package version into the generated-file marker, so two changes to the package no longer conflict on every marker line; a refresh rewrites only that line.
+- Define architecture guidance by the reader's task and the harmful mistake it prevents.
+
+#### code-quality
+
+- A UI reference, `references/ui.md`: the polish bar a changed view is built to and judged against, in any UI stack, and the before and after screenshot set, in every theme the app has, that a UI review judges it from.
+- Two Windows rules in the bash reference: native launchers start bash by absolute path, never bare `bash`, and suites on MINGW/MSYS export `MSYS=winsymlinks:nativestrict` and check `[ -L ]` after `ln -s`.
+- § Tests states four Windows-safe test rules: byte-compared text fixtures are pinned `text eol=lf`, binary fixtures marked `binary` and deliberate CRLF fixtures marked `-text`, a liveness test uses only a process it started and still holds, deleting a held file accepts only success or the platform's held-file error and reaps owned processes before removing their scratch root, and a roster runs every member and, when any fails, exits non-zero naming each failed member.
+- Require disposable control copies and compiled artifacts outside the worktree, with Cargo target settings limited to control commands and cleanup after each control.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### commit-guards
+
+- A package `SKILL.md` with no version key owes no version raise; a version key with no non-empty `metadata.version` is a collection error. `install-git-hooks --check` compares script checksums.
+- md-refs accepts a decision ID whose INDEX row exists with no document, so a removed or retired record keeps its citations working; an ID with neither still fails.
+- Point check readers directly to the existing settings reference.
+- changelog-entries accepts `- **Breaking**:` beside `- **Breaking:**` as a Breaking entry, so a major release written the Pi package records' way passes.
+- Reserved decision IDs pass only in their own index row. References elsewhere must link to the rule's current home or name a tracked decision record.
+
+#### decider
+
+- A routine decision record may be removed once its reason lives in the code or principle doc it governs; its INDEX row keeps the ID reserved under the `Removed` status, its Link cell rewritten to the bare filename once the document is deleted, so no dead link remains. Before a retirement or a removal deletes the document, every citation of the ID or of the document's file name, a sibling record's link included, is repointed or removed.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Keep significant withdrawn decisions with their reasons and record accepted costs and consequences.
+- Decision checks accept an inherited record renamed on either or both branches when each renamed side removes its old file and the index points to its new file.
+- Keep withdrawn decision links in the index template while reserving pointer-only entries for removed records.
+- `Retired` is documented again, as the legacy spelling of `Withdrawn`: repositories whose INDEX.md still holds `Retired` rows read them as withdrawn, and a change that touches such a record rewrites its status to `Withdrawn`.
+- Clarify that a reserved decision ID resolves only in its own index row. Other citations need a tracked decision document or a link to the rule's current home.
+- The decision checker rejects empty Revisit When cells and placeholder values. Each rejected row identifies its decision ID and line in the index.
+
+#### deep-research
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### dep-radar
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### dev-stop-check
+
+- New hook `dev-stop-check` (Claude Code and Codex, `SubagentStop`): a subagent that ends its turn while a `dev-validate-run` it started in its worktree is still going is held and handed the `dev-validate-run --wait --run-dir` command to run next, so its round is no longer left with a verdict on disk and nothing committed. It is held again after each `--wait` that finds the run still going; a subagent that stops again without waiting passes with an `abandoned=` notice naming the run. A stop with no run still going passes unchanged.
+
+#### dev
+
+- A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, builds the view to code-quality's polish bar and the design-system doc `QA_UI_DESIGN_DOC` names, and lists each changed view's screenshot set, as code-quality's UI reference defines it, in its completion, bundle or fix summary.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- The implement round's validation route now covers a `dev-validate-run` start that ends with no verdict because an earlier run already hit the bound over the same paths: it takes the same scoped-suite route as a run the bound cut off. The new optional `DEV_VALIDATE_FINDING_PREFIX` setting names the prefix the validation commands print findings with; with it empty, every run the timeout stopped counts as a possible failure.
+- Fix rounds use pull request CI when it covers the change. A failure in the round's own files permits one correction and one rerun.
+
+#### doc-limits
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### docs-writing
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- A docs rewrite may remove a routine decision record whose reason moves to the code or principle doc it governs, and repoints every surviving citation at that home, searching for the ID and the record's file name.
+- A docs rewrite selects each architecture doc by the reader's task and the harmful mistake it prevents, sorts every fact into one home (a decision record, an architecture doc, or the code, its tests and the tracker), turns a behaviour no test holds into a test item, keeps a human architecture page as product content, and rewrites an `AGENTS.md` or `SKILL.md` body only where the owner names it.
+- Clarify document ownership, task routes, reference contracts and supported harness instruction loading.
+- Align rewrite steps and examples with document ownership, nested reading routes and supported layouts.
+- Preserve withdrawn decisions and historical citations during documentation rewrites.
+
+#### frontend
+
+- The frontend agent builds each changed view to code-quality's polish bar and captures its screenshot set by code-quality's UI reference when the dev workflow calls for it.
+
+#### github
+
+- The base branch's required-context read moved from `pr-merge` into `lib/ci-run-correlation.sh` and takes an optional `owner/name`, so orch's `ci-wait --required-only` judges checks against the same required set the merge gate does.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- `pr-merge --auto` refuses, arming nothing, when the readiness check could not read the pull request as open, so a failed state lookup no longer arms a merge whose review replies were never checked.
+- `pr-list-ready` and `pr-cross-check` hand their PR lists to jq on stdin, so a repository with many open pull requests no longer fails them with "Argument list too long".
+
+#### harness-ci
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Classify unowned and partially owned render paths as measured standard changes so consumers run full checks.
+- Use a render-only refresh PR to verify CI skips for render-tracking consumers; keep the hand-edit probe for harness-only wiring.
+
+#### iced-rs
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- The bundled `iced_wgpu` renderer source and the examples are now the published Iced 0.14.0 release, taken from its tag, in place of a copy that carried unreleased wgpu APIs and three examples 0.14.0 does not ship; `SKILL.md` names the tag commit and the directory mapping.
+
+#### linear
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Completion validation accepts Completion Summary and Bundle Complete headings in any letter case.
+- Issue reads (`issues get`, `bulk-get`, `list`, `list-relations`) list a `related` relation on both issues, including the one that did not create it, which they previously left out.
+- A `--max` list no longer holds every page in the shell: the pager spools each page to a temporary file and merges them in one `jq` read, so a large backlog stays bounded by `jq`. `SKILL.md` routes a text search through `issues list --search`, never a `--max` list filtered locally.
+
+#### orch
+
+- `scripts/claude-model-classes`: a Claude Code plugin, loaded with `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`, that resolves each declared subagent model and a root `KENDEX_MODEL_REQUEST` through `kendex tier-model`. Without a working kendex 1.7.0 or later it denies every subagent spawn. On kendex 1.11.0 or older it prints one line asking for a kendex upgrade in place of core's warning.
+- `dev-validate-run --live --worktree PATH` prints the run still going in that worktree, `run-dir=… pid=N`, or `live=none` at exit 1, by the same judgment a start refuses on as run-live, and starts nothing.
+- A `needs-ui-review` QA signal, raised by the dev round or by a changed file matching the new `QA_UI_PATHS` setting, routes to `reviewer-quality`, which judges the before and after screenshots against the design-system doc the new `QA_UI_DESIGN_DOC` setting names.
+- On a repository GitHub reports private, a standard or small lane now pushes and opens its pull request right after the implement round's validated commit, and the one agent review runs on the open pull request beside Copilot's; its fix round and the fixes for Copilot's threads go out in one push, and the pull request is armed only once that review returned, as a review-first pull request is; a lane whose early open fails reports it and reviews first. A public or internal repository, or one whose visibility cannot be read, keeps review before push. The new `pr-order` script prints the order from `gh repo view --json visibility`, and from that review's start until the push carrying its fix round lands, the lane status file's `Review:` line reads pending, so the overseer approves nothing and requests no Copilot review on a head that push replaces; the lane then writes the verdict and routes the pushed head to Copilot once.
+- `tests/run-all.sh` stops a suite still running `RUN_ALL_SUITE_SECS` (default 900) after its own start, or at `RUN_ALL_DEADLINE_EPOCH`, a Unix time for the whole run, where that is set, and starts no suite past that deadline. A stopped suite gets TERM and then KILL through every process under it and reports red under a `run-all.sh: suite-timeout` or `run-all.sh: run-deadline` line with the last row it printed, and a suite the deadline left unstarted reports red as well. A CI job that sets the deadline inside its own ceiling therefore logs a hung suite's name instead of being cancelled with none.
+- small.md defines a subsystem once, and the oversee launch read sends an item spanning several back to filing unless its body names why it cannot land in parts.
+- `item-tier` reads a change to a `SKILL.md` `metadata.version` line as an instruction-file edit, and `restack-skip` re-tests a restack that conflicts in a `SKILL.md` or a render, since catalog skills no longer raise a version line on every change.
+- Lane close finishes for a terminal item when a failed mailbox read leaves its name only on an available host row.
+- `item-tier` accepts a stated zero in `**Expected delta**` (`0 lines`, `0 test lines`), and a malformed line now warns once on stderr, naming the line and the accepted forms, instead of being dropped silently; `--help` lists the accepted forms.
+- **Breaking:** `queue-wait` now names an armed PR that GitHub has not yet enqueued, judged only on the checks the base branch requires. While a required check is pending or has not registered, the verdict is `armed_awaiting_checks` with the pending check names, and merge-pr waits again on the same head under a `QUEUE_WAIT_ARMED_MINUTES` wall-clock budget (default 90) without spending a ci-fix recovery cycle. `armed_blocked` covers a failed required check (cause `check_failed`, which takes the recovery cycle) and every required check passed with still no queue entry (cause `not_mergeable`, which returns to a fresh readiness check). `progress_unobservable` now means only that a queue entry exists and its head could not be read, and a PR out of the queue with an unconfirmed exit reads `queued` with cause `exit_unconfirmed`. Migration: a caller routing `queue-wait --json` verdicts adds routes for `armed_awaiting_checks` and `armed_blocked`, reads a failed check on an armed PR under `armed_blocked` cause `check_failed` instead of `disarmed`, and routes `queued` cause `exit_unconfirmed` to one more wait. `ci-wait` gains `--required-only` and reports `rollup_key` in `--json`, both additive.
+- Single-pass fleet watches keep lane pauses, lane closure, and overseer records in the directory of the supplied state file.
+- `oversee register` reads a Claude, Codex or Pi overseer's turn-end hook from its checkout's inventory, so an installed hook no longer reads missing when the session's start directory lies outside the checkout or is gone.
+- `lane-close` now closes a hosted record whose sandbox the provider already removed, such as after `lane-host-daytona close --item ITEM --force`. Before, the mailbox read failed with `item-unknown` and every close refused as `mail-read-failed`. On a full close of a terminal item whose provider `list` names no sandbox for it, the close prints `host-absent`, skips the provider stop and close, and records the lane `done`.
+- An `APPROVED` Copilot review now runs the review-body findings check before the lane sends `copilot-approved-on-rerequest` or ends on an approved head, so a `Previously missed` or `Suppressed comments` finding is answered before the CI wait instead of failing the merge gate after it.
+- Codex lanes and overseers start without the shared background server warning or a hook trust review screen.
+- `dev-validate-run` no longer spends another hour on a run that an earlier run already showed would hit `DEV_VALIDATE_TIMEOUT_SECS`. The earlier run counts when it ran the same command text with the same change class, docs verdict and range base, hit the bound with no line in its log starting with the finding prefix the project declares in `DEV_VALIDATE_FINDING_PREFIX`, had a bound at least as high and read no path the new run doesn't. The new full or range start then records it as `bound-run=`, runs nothing, and ends with no verdict for the scoped-suite route. `--fresh` forces a fresh run, for example after changing a setting the command reads. `--last-pass` skips over such a no-verdict run with no finding line instead of naming it red, so `restack-skip` still skips a restack whose only conflicts are version lines. A run recorded without a declared prefix counts as possibly red.
+- Long-running lane warnings repeat at each age interval, including after relaunch. Warnings keep the lane's original launch time and suppress duplicates within the same interval.
+- Numeric overseer preferences use the target harness's default model when no caller model exists. Warnings name the conversion, and help links to the shared model selection rules.
+- Keep Claude callback test suites out of consumer skill installations so consumer test commands do not load kendex-only tests.
+- Keep hosted mailbox reads available during sandbox preparation and resume launches after a busy provider call.
+- Fix round records carry the pull request state so CI receipts work for every open pull request review source.
+
+#### preflight
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### price-handling
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+
+#### project-management
+
+- An item whose work changes more than one subsystem is filed as one item per subsystem, each landing and reviewed alone; one that cannot land in parts says why.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Use decider admission and approval rules and its current schema after research.
+- Complete research without a decision record when admission or approval rules do not permit one.
+
+#### review-gate
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Consumer refresh calls the shared release workflow. Refresh scripts and checks run from that release checkout, so a stale consumer copy cannot block a released fix.
+- A consumer refresh run stuck waiting on the `kendex` environment gate no longer stops every later refresh: the next run force-cancels one that has waited past 30 minutes, re-reading each run just before the cancel and skipping one no longer waiting. The new release job takes the `actions: write` permission.
+- Publish refresh pull requests when new generated files accompany unowned bot instructions. Failed reads still stop publication.
+- Consumer refresh waits for the pushed commit before auto-merge and confirms its merge state. Pull request text explains when refresh leaves auto-merge unarmed.
+
+#### reviewer-quality
+
+- A UI lens: under a `needs-ui-review` QA trigger, reviewer-quality judges the changed views' screenshot set, as code-quality's UI reference defines it, and their copy against code-quality's polish bar and the consumer's design-system doc. A missing screenshot is a blocker, and a missing doc is reported as a gap.
+
+#### reviewer-test
+
+- reviewer-test mutation-validates only the tests the diff, or a re-review's fix diff, adds or changes.
+
+#### reviewer
+
+- The Mutation-Stability Pairing runs only on tests the diff, or a re-review's fix diff, adds or changes, and mutation-stability's summary line reports the call's elapsed seconds.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- `mutation-stability` makes its workspace in `/tmp` when `TMPDIR` points inside the copied worktree or its common Git directory, so a run killed before its cleanup no longer leaves a full tree copy in the lane's `tmp/` and its park archive.
+
+#### second-opinion
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Claude review attempts record the selected account name so fleet checks can identify which account ran.
+- The fleet settings example checks Claude account capacity before review. A review uses another Claude account with capacity or tries the next reviewer.
+- An entry whose `SECOND_OPINION_<NAME>_CMD` starts with `env VAR=value` is judged available on its program word, not on `env`, so a missing CLI is skipped for the next entry instead of failing with exit 127.
+
+#### slack
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- The relay reads `SLACK_BOT_TOKEN`, `SLACK_OWNERS` and every other setting the private env file carries: `slack setup`, `slack listen` and the installed unit no longer refuse `setting-missing` while the key sits in `.env.local`.
+
+#### worktree
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- Worktree setup warns that npm ci on linked node_modules empties main's dependencies. Help explains that npm install creates a private install and leaves main intact.
+
+#### xcode-run
+
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- The `screenshots` step captures the simulator it installed and launched the app on, rather than whichever simulator `simctl` picks among the booted ones. An installed `.github/workflows/mac-run.yml` keeps its old capture line: change `xcrun simctl io booted screenshot` to `xcrun simctl io "$simulator" screenshot`, or delete the workflow and reinstall.
+
 ## [1.11.0] - 2026-10-06
 
 ### Added
@@ -1729,7 +1940,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.0
 [1.11.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.11.0
 [1.10.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.1
 [1.10.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.0

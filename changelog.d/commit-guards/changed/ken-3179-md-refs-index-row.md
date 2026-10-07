@@ -1,1 +1,0 @@
-- md-refs accepts a decision ID whose INDEX row exists with no document, so a removed or retired record keeps its citations working; an ID with neither still fails.

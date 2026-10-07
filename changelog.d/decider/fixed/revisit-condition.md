@@ -1,1 +1,0 @@
-- The decision checker rejects empty Revisit When cells and placeholder values. Each rejected row identifies its decision ID and line in the index.

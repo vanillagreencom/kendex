@@ -1,1 +1,0 @@
-- `kendex verify` fails a declared bundle its catalog neither offers nor retires, naming the bundle and the bundles the catalog offers; a retired bundle still passes with its notice.
