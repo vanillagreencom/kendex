@@ -22,8 +22,11 @@
 #                    measured branch line counts never select a tier.
 #
 # --body reads Expected delta through lib/branch-growth.sh and floors the
-# launch estimate with a valid production count. A malformed header is
-# ignored. With no Location paths, estimate or valid delta, launch is standard.
+# launch estimate with a valid production count. The accepted forms are
+# `**Expected delta**: N lines` and `**Expected delta**: N lines, M test lines`,
+# with `1 line` and `1 test line` singular and `0` a stated zero. A malformed
+# header warns once on stderr, naming the line and these forms, and counts as
+# no delta. With no Location paths, estimate or valid delta, launch is standard.
 # At least one of --production, --body, --floor and --base is required.
 # --repo (default .) is the checkout the classifier reads.
 #
@@ -98,7 +101,11 @@ estimate="$production"
 delta=""
 if [ -n "$body" ]; then
   body_text="$(cat -- "$body")" || die body-unreadable "cannot read --body '$body'"
-  expected_delta_read "$body_text" || EXPECTED_DELTA_PRODUCTION=""
+  if ! expected_delta_read "$body_text"; then
+    printf 'item-tier-warning: cause=invalid-delta line=[%s] accepted=[N lines] [N lines, M test lines] (1 line, 1 test line singular; 0 a stated zero); read as no delta\n' \
+      "$EXPECTED_DELTA_LINE" >&2
+    EXPECTED_DELTA_PRODUCTION=""
+  fi
   delta="$EXPECTED_DELTA_PRODUCTION"
   if [ -n "$delta" ] && { [ -z "$production" ] || [ "$delta" -gt "$production" ]; }; then
     production="$delta"

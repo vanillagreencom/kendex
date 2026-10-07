@@ -121,7 +121,7 @@ The managed lifecycle relies on committed branch diffs, so `dev-start.md`, `revi
 
 ## Remaining branch measurements
 
-`item-tier` reads the launch estimate and Expected delta to select a tier. Its branch-range mode reads changed paths only. The shared `expected_delta_read` parser remains for that estimate. Invalid or absent delta text does not refuse a tier.
+`item-tier` reads the launch estimate and Expected delta to select a tier. Its branch-range mode reads changed paths only. The shared `expected_delta_read` parser remains for that estimate. A stated zero counts as zero. Invalid delta text warns once on stderr and does not refuse a tier; absent text is silent.
 
 `branch_size_classified` remains in `scripts/lib/branch-growth.sh`. Harness CI reads its production, test and render counts and test paths to select CI checks and the review skip for a trivial change. `dev-validate-run` and submit reuse read that classifier for validation coverage. Review-gate consumer refresh also reads it to report the class and select checks. These uses do not gate an orch workflow on an issue allowance.
 

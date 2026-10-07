@@ -1,0 +1,1 @@
+- `item-tier` accepts a stated zero in `**Expected delta**` (`0 lines`, `0 test lines`), and a malformed line now warns once on stderr, naming the line and the accepted forms, instead of being dropped silently; `--help` lists the accepted forms.

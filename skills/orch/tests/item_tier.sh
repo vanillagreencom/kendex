@@ -102,6 +102,9 @@ done
 printf '**Expected delta**: %s lines, 1 test line\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/body"
 printf 'No sizing headers\n' > "$TMP_ROOT/empty-body"
 printf '**Expected delta**: junk\n' > "$TMP_ROOT/bad-body"
+printf '**Expected delta**: 4 lines, 0 test lines\n' > "$TMP_ROOT/zero-test-body"
+printf '**Expected delta**: 0 lines\n' > "$TMP_ROOT/zero-body"
+printf '**Expected delta**: %s lines\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/bare-body"
 while IFS='|' read -r args want raw; do
   assert_eq "$(TIER_RAW="${raw:-false}" run_tier - $args)" "$want" "body input: $args"
 done <<ROWS
@@ -112,12 +115,51 @@ done <<ROWS
 --production 1 --body $TMP_ROOT/empty-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/bad-body|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/missing|rc=2
+--body $TMP_ROOT/zero-test-body|tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=0 rc=0|true
+--body $TMP_ROOT/zero-body|tier=micro brief=micro cause=estimate-within-micro production=0 estimate=- delta=0 paths=0 rc=0|true
+--body $TMP_ROOT/bare-body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=- delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
 ROWS
 TIER_RAW=true
 assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/body" --path src/a --path src/b)" \
   "tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=1 delta=$((SMALL_MAX + 1)) paths=2 rc=0" \
   "launch output retains the unfloored estimate, production delta and every path"
 unset TIER_RAW
+
+# A malformed header warns once on stderr, naming the line and the accepted
+# forms, and the tier proceeds as with no delta.
+printf '**Expected delta**: about 4 lines\n' > "$TMP_ROOT/about-body"
+warn_stderr() { # TIER_BIN
+  env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "$1" --repo "$TMP_ROOT" \
+    --production 1 --body "$TMP_ROOT/about-body" 2>&1 >/dev/null
+}
+assert_eq "$(warn_stderr "$TIER" | grep -c '^item-tier-warning: cause=invalid-delta line=\[about 4 lines\] accepted=\[N lines\] \[N lines, M test lines\]')" \
+  "1" "a malformed Expected delta warns once naming the line and the accepted forms"
+assert_eq "$(TIER_RAW=true run_tier - --production 1 --body "$TMP_ROOT/about-body")" \
+  "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=0 rc=0" \
+  "a malformed Expected delta proceeds with no delta"
+# Must-fail control: a copy that drops the warning line stays silent.
+cp -R "$LAYOUT" "$TMP_ROOT/no-delta-warning"
+awk '/item-tier-warning: cause=invalid-delta/ {hits++; print "    :"; getline; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$TIER" > "$TMP_ROOT/no-delta-warning/orch/scripts/item-tier"
+if [[ "$(warn_stderr "$TMP_ROOT/no-delta-warning/orch/scripts/item-tier")" == *item-tier-warning* ]]; then
+  fail "delta warning control still warns"
+else
+  pass "delta warning regression turns red without the warning"
+fi
+# Must-fail control: the grammar before a stated zero refuses the zero form.
+cp -R "$LAYOUT" "$TMP_ROOT/no-zero"
+sed -e 's/(0 lines|1 line|/(1 line|/' -e 's/(0 test lines|1 test line|/(1 test line|/' \
+  "$ORCH_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-zero/orch/scripts/lib/branch-growth.sh"
+if cmp -s "$ORCH_DIR/scripts/lib/branch-growth.sh" "$TMP_ROOT/no-zero/orch/scripts/lib/branch-growth.sh"; then
+  echo 'FAIL: zero grammar control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-zero/orch/scripts/item-tier"
+if [[ "$(TIER_RAW=true run_tier - --body "$TMP_ROOT/zero-test-body")" == *"delta=4 "* ]]; then
+  fail "zero grammar control still reads the zero form"
+else
+  pass "zero form regression turns red without the stated zero"
+fi
+unset TIER_BIN
 
 # The floor control retains the assignment but stops applying the header.
 cp -R "$LAYOUT" "$TMP_ROOT/no-delta-floor"
