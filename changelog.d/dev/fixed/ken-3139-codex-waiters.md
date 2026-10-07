@@ -1,1 +1,0 @@
-- Codex dev agents use the in-turn completion route for long commands run through the job runner.

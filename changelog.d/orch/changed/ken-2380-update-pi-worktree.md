@@ -1,1 +1,0 @@
-- The Pi carrier recovery text says `update-pi` is refused only in a linked worktree with no manifest of its own.

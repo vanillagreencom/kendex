@@ -11,11 +11,13 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 ### Added
 
 - `kendex tier-model --json` carries a `warning` field with the model-resolution line the plain output prints, so a caller logs that line and does not rebuild it.
+- Lock version refusals print a keyed version pair and path so callers can detect old or unversioned records without parsing English.
 
 ### Changed
 
 - Merge groups reuse passing macOS tests for an unchanged pull request patch. Ubuntu tests still check the integrated tree. macOS tests run again after merge to detect failures from combined changes.
 - Building the desktop app's interface from source no longer prints the ineffective-dynamic-import and chunk-size warnings.
+- `kendex check` in a linked worktree that carries its own manifest offers `kendex update-pi --scope project` as a fix that runs there. In a worktree whose project is the main checkout's, every fix that writes it, `--project-path` forms included, is marked as the main checkout's refresh owner's to run there, and the next step says so; `kendex apply --plan` and `kendex updates` still run where you are.
 
 ### Removed
 
@@ -40,6 +42,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Verification names scoped refresh actions for stale packages and missing recorded commits. JSON keeps version 1 with optional action metadata. Base revision failures carry no refresh action.
 
 ### Packages
+
+#### block-worktree-refresh
+
+- `kendex update-pi` passes in a linked worktree whose project holds its own manifest, as every other writing verb does. A `--project-path` on `refresh`, `apply` or `updates --apply` is judged by the project it names: the main checkout of the same repository (`shared=`), a project with no manifest of its own (`refused=`) and a path the command does not spell plainly (`unproven=`) are refused. Without the commit-guards command reader, a command naming no kendex passes, a plain `kendex` command of its own run outside a linked worktree passes with a `missing-library=` report handed to the agent as context, and every other kendex command is refused, naming the main checkout or the plain spelling as the fix.
 
 #### bot-instructions
 
@@ -81,16 +87,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
 
-#### dev-stop-check
-
-- New hook `dev-stop-check` (Claude Code and Codex, `SubagentStop`): a subagent that ends its turn while a `dev-validate-run` it started in its worktree is still going is held and handed the `dev-validate-run --wait --run-dir` command to run next, so its round is no longer left with a verdict on disk and nothing committed. It is held again after each `--wait` that finds the run still going; a subagent that stops again without waiting passes with an `abandoned=` notice naming the run. A stop with no run still going passes unchanged.
-
 #### dev
 
 - A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, builds the view to code-quality's polish bar and the design-system doc `QA_UI_DESIGN_DOC` names, and lists each changed view's screenshot set, as code-quality's UI reference defines it, in its completion, bundle or fix summary.
 - `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
 - The implement round's validation route now covers a `dev-validate-run` start that ends with no verdict because an earlier run already hit the bound over the same paths: it takes the same scoped-suite route as a run the bound cut off. The new optional `DEV_VALIDATE_FINDING_PREFIX` setting names the prefix the validation commands print findings with; with it empty, every run the timeout stopped counts as a possible failure.
 - Fix rounds use pull request CI when it covers the change. A failure in the round's own files permits one correction and one rerun.
+- Codex dev agents use the in-turn completion route for long commands run through the job runner.
+
+#### dev-stop-check
+
+- New hook `dev-stop-check` (Claude Code and Codex, `SubagentStop`): a subagent that ends its turn while a `dev-validate-run` it started in its worktree is still going is held and handed the `dev-validate-run --wait --run-dir` command to run next, so its round is no longer left with a verdict on disk and nothing committed. It is held again after each `--wait` that finds the run still going; a subagent that stops again without waiting passes with an `abandoned=` notice naming the run. A stop with no run still going passes unchanged.
 
 #### doc-limits
 
@@ -157,6 +164,9 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Keep Claude callback test suites out of consumer skill installations so consumer test commands do not load kendex-only tests.
 - Keep hosted mailbox reads available during sandbox preparation and resume launches after a busy provider call.
 - Fix round records carry the pull request state so CI receipts work for every open pull request review source.
+- The Pi carrier recovery text says `update-pi` is refused only in a linked worktree with no manifest of its own.
+- `oversee-cycle record` reads a hosted lane's review and fix rounds in the state directory the lane itself uses, named by its worktree's settings, instead of the overseer's own `ORCH_STATE_DIR`. Once the host answers that the lane's worktree is gone, it reads them from the `kept=` archive its close left in the fleet log during the lane's current session. `lane-host-ssh close` now archives the item's workflow state wherever those settings place it, names that file in the archive's `lane-host-state` member, and stops as `state-unresolved` when the state directory cannot be resolved.
+- Codex lanes keep job-runner waiter completion inside the active turn so approval, CI and merge waits continue when the job ends.
 
 #### preflight
 
@@ -180,6 +190,13 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A consumer refresh run stuck waiting on the `kendex` environment gate no longer stops every later refresh: the next run force-cancels one that has waited past 30 minutes, re-reading each run just before the cancel and skipping one no longer waiting. The new release job takes the `actions: write` permission.
 - Publish refresh pull requests when new generated files accompany unowned bot instructions. Failed reads still stop publication.
 - Consumer refresh waits for the pushed commit before auto-merge and confirms its merge state. Pull request text explains when refresh leaves auto-merge unarmed.
+- Review-gate standard checks retry temporary GitHub server and connection errors before reporting a failed read.
+
+#### reviewer
+
+- The Mutation-Stability Pairing runs only on tests the diff, or a re-review's fix diff, adds or changes, and mutation-stability's summary line reports the call's elapsed seconds.
+- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
+- `mutation-stability` makes its workspace in `/tmp` when `TMPDIR` points inside the copied worktree or its common Git directory, so a run killed before its cleanup no longer leaves a full tree copy in the lane's `tmp/` and its park archive.
 
 #### reviewer-quality
 
@@ -188,12 +205,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 #### reviewer-test
 
 - reviewer-test mutation-validates only the tests the diff, or a re-review's fix diff, adds or changes.
-
-#### reviewer
-
-- The Mutation-Stability Pairing runs only on tests the diff, or a re-review's fix diff, adds or changes, and mutation-stability's summary line reports the call's elapsed seconds.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- `mutation-stability` makes its workspace in `/tmp` when `TMPDIR` points inside the copied worktree or its common Git directory, so a run killed before its cleanup no longer leaves a full tree copy in the lane's `tmp/` and its park archive.
 
 #### second-opinion
 
@@ -206,6 +217,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
 - The relay reads `SLACK_BOT_TOKEN`, `SLACK_OWNERS` and every other setting the private env file carries: `slack setup`, `slack listen` and the installed unit no longer refuse `setting-missing` while the key sits in `.env.local`.
+- `slack listen --status` reads a status record an older relay wrote without the connection fields, printing its state with `connection=unknown` instead of raising `KeyError`.
 
 #### worktree
 

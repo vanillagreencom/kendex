@@ -1,1 +1,0 @@
-- Lock version refusals print a keyed version pair and path so callers can detect old or unversioned records without parsing English.
