@@ -63,7 +63,9 @@ Actions:
                        history refuses the rename (error=rename-unverified).
                        It also refuses an INDEX row, here or on the
                        base, that it could not parse
-                       (error=index-row-invalid). How a base that could not
+                       (error=index-row-invalid), and a working INDEX row
+                       with an empty Revisit When cell or a placeholder
+                       (error=revisit-missing). How a base that could not
                        be read is judged: DECISIONS_BASE_REF. Exits 0 with
                        no finding; a notice= line may still print on stderr
 
@@ -311,6 +313,7 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in records
       | select(length >= 8)
       | map(sub("^\\s+"; "") | sub("\\s+$"; ""))
       | { id: .[1], research: .[2], decision: .[3], rationale: .[4],
+          revisit: .[5],
           status: .[6], link: (.[7] | cell_path), line: $line }
       | .path = (if .link == "" then "" else $prefix + .link end)
     ]' <<<"$text")" || return 1
@@ -782,7 +785,7 @@ cmd_get() {
     emit_error id-ambiguous "id=$id $fields" "More than one INDEX row carries this ID. Renumber all but one (workflows/create-decision.md § Renumber a record)."
     exit 1
   fi
-  match=$(jq 'first | del(.line, .link)' <<<"$matches")
+  match=$(jq 'first | del(.line, .link, .revisit)' <<<"$matches")
 
   local path date="unknown" parsed
   path=$(printf '%s' "$match" | jq -r '.path')
@@ -826,6 +829,19 @@ cmd_check() {
   local rows dups dup ids id f files fields file_count found=0
   ROW_INVALID_KIND=error
   rows="$(parse_index)" || found=1
+
+  # INDEX authors use placeholders before they choose a revisit condition.
+  local invalid_revisits revisit_row
+  invalid_revisits="$(jq -c '.[] | select(.revisit | ascii_downcase |
+    . == "" or . == "not specified" or . == "none" or . == "\u2014")' <<<"$rows")" || return 1
+  while IFS= read -r revisit_row; do
+    [[ -n "$revisit_row" ]] || continue
+    fields="$(jq -r --arg path "$INDEX_FILE" '
+      "id=\(.id) path=\($path) line=\(.line) value=\(.revisit | tojson)"
+    ' <<<"$revisit_row")" || return 1
+    emit_error revisit-missing "$fields" "The Revisit When cell must name a condition that reopens the choice."
+    found=1
+  done <<<"$invalid_revisits"
 
   dups="$(jq -c 'group_by(.id) | map(select(length > 1)) | .[]' <<<"$rows")"
   while IFS= read -r dup; do

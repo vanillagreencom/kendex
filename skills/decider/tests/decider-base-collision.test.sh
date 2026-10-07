@@ -393,6 +393,16 @@ build_dup_files() { # one D035 row, two D035 documents, no remote; local main is
   commit_all "$1/work" base
 }
 
+build_revisit() { # DIR CELL: the working INDEX's Revisit When cell
+  new_repo "$1/work" main
+  {
+    printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |'
+    printf '%s\n' '|------|----|----------|----------|-----------|--------------|--------|------|'
+    printf '| 2026-01-10 | D034 | PROJ-1 | Decision D034 | Reason | %s | Active | [Full](D034-first.md) |\n' "$2"
+  } >"$1/work/docs/decisions/INDEX.md"
+  commit_all "$1/work" base
+}
+
 run_row() { # SCRIPT FIXTURE[:SIDE:STATUS] ENV ACTION [ARG]: ENV is VAR=VALUE words or empty
   local script="$1" fixture="$2" row_env="$3" action="$4" arg="${5:-}" world build_rc
   local fixture_side fixture_status
@@ -518,6 +528,15 @@ check-configured-unresolved~collision~DECISIONS_BASE_REF=origin/mian~check~~1~~e
 check-fetch-failed~unreachable_collision~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
 check-malformed-row~malformed_row~~check~~1~~error=index-row-invalid path=docs/decisions/INDEX.md line=4 cells=7
 check-malformed-base-row~malformed_base_row~~check~~1~~error=index-row-invalid path=origin/main:docs/decisions/INDEX.md line=4 cells=7
+check-revisit-empty~revisit:~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value=""
+check-revisit-whitespace~revisit:   ~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value=""
+check-revisit-unspecified~revisit:not specified~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="not specified"
+check-revisit-case~revisit:  Not Specified  ~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="Not Specified"
+check-revisit-none~revisit:none~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="none"
+check-revisit-none-case~revisit:  NONE  ~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="NONE"
+check-revisit-dash~revisit:—~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="—"
+check-revisit-condition~revisit:  The API supports revoking a token  ~~check~~0~~
+check-revisit-token-in-condition~revisit:When none of the clients need the API~~check~~0~~
 check-fetch-failed-index-absent~first_index_offline~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
 check-not-a-repository~no_repo~~check~~0~~notice=base-unverified ref=none reason=not-a-repository
@@ -608,11 +627,13 @@ check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a b
 check-fetch-failed~    fetch-failed) refuse=1; text=~    fetch-failed) text=~a stale base copy that check passes
 check-malformed-row~  ROW_INVALID_KIND=error~  ROW_INVALID_KIND=notice~a skipped working-tree row that check passes
 check-malformed-base-row~|| BASE_ROWS_SKIPPED=1~|| BASE_ROWS_SKIPPED=0~a skipped base row that check passes
+check-revisit-empty~.[] | select(.revisit | ascii_downcase |~.[] | select(false) | select(.revisit | ascii_downcase |~a removed Revisit condition guard
 check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
 check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
 check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob
 get-ambiguous~  if [[ "$count" -gt 1 ]]; then~  if [[ "$count" -gt 99 ]]; then~a get that answers with the first of several rows
-get-unique~del(.line, .link)~del(.line)~a get that leaks the parser's link field
+get-unique~del(.line, .link, .revisit)~del(.line, .revisit)~a get that leaks the parser's link field
+get-unique~del(.line, .link, .revisit)~del(.line, .link)~a get that leaks the parser's Revisit field
 CONTROLS
 if [[ "$control_seq" -eq 0 ]]; then
   fail "the control table planted no defect"
