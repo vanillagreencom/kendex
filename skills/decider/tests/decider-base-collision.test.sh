@@ -2,7 +2,8 @@
 # Decision IDs judged against the base branch: next-id skips a number the base
 # holds, a removed record's row included, check refuses an ID two records
 # share and passes a row whose document is gone and whose Link cell became the
-# backticked filename, and get refuses an ID on more than one INDEX row. Every row builds its own repositories, so a fetch one run
+# backticked filename, passes a rename inherited from the shared history, and
+# get refuses an ID on more than one INDEX row. Every row builds its own repositories, so a fetch one run
 # makes never answers for the next.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -15,8 +16,10 @@ source "$TEST_DIR/lib/mutate-script.sh"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "decider-base-collision: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "decider-base-collision: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "decider-base-collision: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -158,6 +161,50 @@ build_stale_main() { # the fetch fails and only the lane's stale main resolves
 build_collision() { # the lane and the base each record their own D035
   build_ahead "$1"
   write_index "$1/work" D034:D034-first.md D035:D035-lane.md
+}
+
+build_rename() { # the lane renames D035 inherited from main; INDEX points at the new file
+  build_ahead "$1"
+  git -C "$1/work" pull -q --ff-only origin main
+  mv "$1/work/docs/decisions/D035-main.md" "$1/work/docs/decisions/D035-renamed.md"
+  write_index "$1/work" D034:D034-first.md D035:D035-renamed.md
+}
+
+build_rename_committed() { # a committed rename also keeps the inherited ID
+  build_rename "$1"
+  commit_all "$1/work" rename
+}
+
+build_rename_edited() { # changed row text does not change a renamed decision's ID
+  local text
+  build_rename "$1"
+  write_index "$1/work" D034:D034-first.md "D035:D035-renamed.md:Superseded by D036"
+  text="$(<"$1/work/docs/decisions/INDEX.md")"
+  text="${text//PROJ-1/PROJ-2}"
+  text="${text//Decision D035/Reworded decision}"
+  text="${text//Reason/New reason}"
+  printf '%s\n' "$text" >"$1/work/docs/decisions/INDEX.md"
+  printf '# D035: Reworded decision\n' >"$1/work/docs/decisions/D035-renamed.md"
+}
+
+build_rename_old_present() { # retaining the old document is a copy, not a rename
+  build_rename "$1"
+  printf '# D035: Decision\n' >"$1/work/docs/decisions/D035-main.md"
+}
+
+build_rename_new_absent() { # an INDEX edit without a replacement document is not a rename
+  build_rename "$1"
+  rm "$1/work/docs/decisions/D035-renamed.md"
+}
+
+build_rename_no_history() { # a shallow committed rename cannot establish its shared history
+  build_rename_committed "$1"
+  git -C "$1/work" rev-parse HEAD >"$1/work/.git/shallow"
+}
+
+build_removed_id_reused() { # a removed decision's ID cannot be used for a new document
+  build_removed "$1"
+  write_index "$1/work" D034:D034-first.md D035:D035-renamed.md
 }
 
 build_edited() { # the lane changes the status of the base's own D035
@@ -373,6 +420,13 @@ next-id-empty-index-base-scheme~empty_base_scheme~~next-id~~0~ADR-0036~
 next-id-configured-prefix-base-width~prefix_base_width~DECISION_ID_PREFIX=ADR-~next-id~~0~ADR-0036~
 next-id-index-absent~index_absent~~next-id~~0~D002~notice=base-unverified ref=origin/main reason=index-absent
 check-collision~collision~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
+check-renamed-record~rename~~check~~0~~
+check-committed-rename~rename_committed~~check~~0~~
+check-renamed-edited-record~rename_edited~~check~~0~~
+check-rename-old-present~rename_old_present~~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-main.md,docs/decisions/D035-renamed.md;error=id-collision id=D035 path=docs/decisions/D035-renamed.md base=origin/main:docs/decisions/D035-main.md
+check-rename-new-absent~rename_new_absent~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-renamed.md base=origin/main:docs/decisions/D035-main.md
+check-rename-no-history~rename_no_history~~check~~1~~error=rename-unverified ref=origin/main reason=ancestor-unresolved
+check-removed-id-reused~removed_id_reused~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-renamed.md base=origin/main:docs/decisions/D035-main.md
 check-edited-record~edited~~check~~0~~
 check-removed-record~removing~~check~~0~~
 next-id-past-removed~removed~~next-id~~0~D036~
@@ -446,6 +500,12 @@ next-id-empty-index-base-scheme~    elif [[ "${#base_ids[@]}" -gt 0 ]]; then~   
 next-id-configured-prefix-base-width~    for id in ${base_ids[@]+"${base_ids[@]}"} ${ids[@]+"${ids[@]}"}; do~    for id in ${ids[@]+"${ids[@]}"}; do~a configured prefix whose width ignores the base
 next-id-index-absent~    BASE_REASON=index-absent~    BASE_REASON=""~a base without INDEX.md reported as read
 check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
+check-renamed-record~if [[ "$inherited" == true~if [[ "$inherited" == false~a rename rule that rejects inherited records
+check-collision~and any($ancestor[]; .id == $row.id and .link == $row.base_links[0])~and true~a rename rule that accepts independently allocated IDs
+check-rename-old-present~&& ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~&& true~a rename rule that accepts a retained old document
+check-rename-new-absent~&& -f "$path"~&& true~a rename rule that accepts a missing new document
+check-removed-id-reused~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$old_link" >/dev/null~&& true~a rename rule that accepts a removed ID
+check-rename-no-history~ancestor_rows="$(shared_index)" || return 1~ancestor_rows="$(shared_index)" || ancestor_rows='[]'~an unread shared history that becomes an empty INDEX
 check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
 check-removed-record~    if [[ "$file_count" -gt 1 ]]; then~    if [[ "$file_count" -ne 1 ]]; then~a check that demands a document for every row
 check-removed-record~          status: .[6], link: (.[7] | cell_path), line: $line }~          status: .[6], link: .[7], line: $line }~an identity read from the Link cell as written
