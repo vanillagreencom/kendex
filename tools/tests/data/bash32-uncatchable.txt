@@ -5,3 +5,4 @@ v="${arr[${x%]}]^}"
 map\file -t values
 "declare" -A cache
 declare>/dev/null -A cache
+value="${a:-${b:-${c}}{\}}"

@@ -117,8 +117,10 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 # `[ $# -lt 4 ] || v="$4"` — or put it in a variable: `"${4:-$empty}"`.
 # Matched from a `"` with no other `"` before the `${`, so a line carrying a
 # closed string ahead of an unquoted expansion is an accepted over-flag.
+# The word may hold expansions nested one level, `"${x:-${y}{\}}"`; deeper
+# is a declared limit below.
 # The report names each hit again under its own key, with the 3.2 reading.
-BRACE_DEFAULT='"[^"]*\$\{[^}"]*[-=?+][^}]*\\\}'
+BRACE_DEFAULT='"[^"]*\$\{[^}"]*[-=?+]([^}]|\$\{[^}]*\})*\\\}'
 PATTERN="$PATTERN|$BRACE_DEFAULT"
 # --- pattern set: end --------------------------------------------------
 #
@@ -135,7 +137,8 @@ PATTERN="$PATTERN|$BRACE_DEFAULT"
 #     code bash expands, and skipping `#` lines let `${name^^}` through this
 #     gate in silence. The fix is to respell the line.
 #   - a subscript nested more than one level, or one whose inner expansion
-#     carries a literal `]`. Balancing brackets is beyond a regular
+#     carries a literal `]`, and an escaped-brace default whose word nests an
+#     expansion more than one level. Balancing brackets is beyond a regular
 #     expression, so the depth is bounded and declared.
 #   - a construct assembled at runtime — eval, a command in a variable, a
 #     heredoc piped to bash — and a declaration split over a backslash
