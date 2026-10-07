@@ -708,7 +708,9 @@ lanes_control ctl-pi-roots lanes '		pool_roots="$(lane_dirs pi all)"' '		pool_ro
 PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=1 pi_run room cli=10/100 pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=3 key=no-candidate fix=none" \
   "control: a guard counting every override entry reads a Copilot CLI home as a Pi root and refuses as no candidate"
-lanes_control ctl-pi-roots-all lanes '[[ "${2:-}" != all ]] && lane_excluded "$d" || printf' 'lane_excluded "$d" || printf'
+# The Pi branch's own line, at its three-tab depth: the other harnesses' filter
+# takes `all` too.
+lanes_control ctl-pi-roots-all lanes $'\t\t\t[[ "${2:-}" != all ]] && lane_excluded "$d" || printf' $'\t\t\tlane_excluded "$d" || printf'
 PI_STUB=ORCH_LANE_EXCLUDE=pi1 pi_run - 10/100 pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=copilot-pool-unstated fix=local" \
   "control: roots counted after the exclusion read an excluded stated root as no override"
