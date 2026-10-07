@@ -823,9 +823,10 @@ pub struct PlanOptions {
     /// declared at another repository or revision than that account was
     /// written for. The Pi settle resolves outside the plan, so a Pi
     /// package the record cannot place installs and records its own entry
-    /// at the source's tip while its source's entry is kept. Only
-    /// [`PlanOptions::locked`] sets this: `verify --at-record` weighs the
-    /// record against where each source resolves now, and reads that off
+    /// at the source's tip while its source's entry is kept.
+    /// [`PlanOptions::locked`] and [`PlanOptions::for_additions`] set this:
+    /// `verify --at-record` weighs the record against where each source
+    /// resolves now, and reads that off
     /// the record this pass would write. A write also reads fresh a
     /// declaration held at a commit this machine cannot read, where
     /// `verify --at-record` keeps it held: skipped, the write would de-list
@@ -833,9 +834,10 @@ pub struct PlanOptions {
     /// follower of a source declared at another revision than the record's
     /// account of it was written for, where any other hold keeps it: held
     /// at its recorded commit, the write would keep the source's entry and
-    /// no write would ever apply the edit, while a single-package update or
-    /// an add holds those followers, keeps that entry, and leaves the edit
-    /// pending, and `verify --at-record` holds them too but reads the
+    /// no write would ever apply the edit. An add applies that source edit
+    /// too, while a single-package update holds unrelated followers, keeps
+    /// that entry, and leaves the edit pending. `verify --at-record` holds
+    /// them too but reads the
     /// source at the revision declared now ([`PlanOptions::never_applied`]).
     /// A source declared at another repository has no follower any hold
     /// can place, since the record installed none from that repository:
@@ -905,9 +907,11 @@ pub enum Reach {
     /// declaration that required it and the sets that carry it, since a
     /// dependency cannot move while what it reads its bytes through holds.
     Carriers,
-    /// An add: the declarations it writes and nothing else. A package that
-    /// required the item before the add is not what the person named, and
-    /// stays at the commit its record names.
+    /// An add: only the declarations it writes are exempt from holding.
+    /// A package that required the item before the add is not what the
+    /// person named, and
+    /// stays at the commit its record names unless its source declaration
+    /// changed or the source no longer serves that commit.
     Declared,
 }
 
@@ -997,8 +1001,10 @@ impl PlanOptions {
     }
 
     /// The plan an add makes: the items and the sets it declares come
-    /// current, and nothing else moves ([`Reach::Declared`]). Unread
-    /// source records retain the installed revision.
+    /// current ([`Reach::Declared`]). Other packages keep their recorded
+    /// revisions unless their source declaration changed or their recorded
+    /// commit is no longer served ([`PlanOptions::keep_source_records`]).
+    /// Unread source records retain the installed revision.
     pub fn for_additions(declarations: impl IntoIterator<Item = Held>) -> Self {
         PlanOptions {
             update_only: Some(Targets {

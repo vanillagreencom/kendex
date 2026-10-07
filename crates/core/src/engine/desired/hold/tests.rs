@@ -139,7 +139,7 @@ fn a_redeclared_source_unpins_only_under_a_write_that_keeps_the_record() {
             "add, rev edited",
             || PlanOptions::for_additions([]),
             None,
-            true,
+            false,
         ),
     ];
     for (case, plan, recorded, holds) in rows {

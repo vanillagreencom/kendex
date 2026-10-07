@@ -195,9 +195,8 @@ pub fn add_seeded(
         }
     }
 
-    // What this request declares comes current; every other follower in
-    // the scope holds at the commit its record names, so an add moves
-    // nothing the person did not name.
+    // What this request declares comes current without releasing its old
+    // carriers. Explicit source edits still apply to their followers.
     let options = PlanOptions {
         arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,

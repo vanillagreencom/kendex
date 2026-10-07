@@ -225,9 +225,10 @@ fn planning_manifest<'a>(
 /// nothing and be skipped, and the write that skipped it would de-list what
 /// it renders. A commit this machine has merely not fetched yet, the lock a
 /// teammate committed against a newer catalog, is fetched and stays held;
-/// read fresh against a stale mirror it would undo their update. Any other
-/// hold keeps every pin, so `verify --at-record` still reports what the
-/// record names.
+/// read fresh against a stale mirror it would undo their update. Adds also
+/// keep the record and release unserved pins. A hold that does not keep
+/// source records keeps every pin, so `verify --at-record` still reports
+/// what the record names.
 fn release_unserved(
     env: &Env,
     options: &super::super::PlanOptions,
@@ -501,9 +502,10 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// has since replaced, and a write that held at one would keep the record's
 /// source entry with it, so no such write would ever apply the edit. After
 /// a revision edit any other hold, `verify --at-record`'s reading included,
-/// keeps the record as it stands; a single-package update or an add writes
-/// the source's entry unchanged too (`record_readings`), so the edit stays
-/// pending for the next write that keeps the record, while
+/// keeps the record as it stands; a single-package update writes the
+/// source's entry unchanged too (`record_readings`), so an unrelated edit
+/// stays pending for the next write that keeps the record. An add keeps
+/// the record and applies the source edit, while
 /// `verify --at-record` reads the source at the revision declared now.
 /// After a repository edit the record installed nothing from the
 /// repository declared now, so [`held_at`] and [`held_commit`] place no
