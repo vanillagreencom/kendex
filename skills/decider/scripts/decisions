@@ -57,8 +57,9 @@ Actions:
                        document than the base branch's INDEX.md does. The
                        base is read at its fetched tip, not at the merge
                        base. A renamed record inherited from the shared
-                       history passes when the old file is gone and the
-                       INDEX points at the new file. Unavailable shared
+                       history passes when either side renames it, the old
+                       file is gone on that side, and its INDEX points at
+                       the new file. Unavailable shared
                        history refuses the rename (error=rename-unverified).
                        It also refuses an INDEX row, here or on the
                        base, that it could not parse
@@ -852,33 +853,43 @@ cmd_check() {
   done <<<"$ids"
 
   # Independently allocated IDs can have identical row text. A filename change
-  # is a rename only when the branch inherited the base's record and replaces
-  # its existing document; a removed record's number stays reserved.
+  # is a rename only when both sides inherited one record and each renamed
+  # side replaces its original document; a removed number stays reserved.
   read_base_index
   report_base check || found=1
   [[ "$BASE_ROWS_SKIPPED" -eq 0 ]] || found=1
-  local collisions collision ancestor_rows='[]' inherited old_link path
+  local collisions collision ancestor_rows='[]' old_link old_path path link base_link base_old_path
   collisions="$(jq -c --argjson base "$BASE_ROWS" '
     .[] | . as $row
     | [$base[] | select(.id == $row.id)] as $held
     | select(($held | length) > 0 and ($held | map(.link) | index($row.link)) == null)
-    | {id: $row.id, path: $row.path, base: ($held | map(.path) | join(",")),
+    | {id: $row.id, link: $row.link, path: $row.path, base: ($held | map(.path) | join(",")),
        base_links: ($held | map(.link))}
   ' <<<"$rows")" || return 1
   if [[ -n "$collisions" && -z "$BASE_REASON" ]]; then
     ancestor_rows="$(shared_index)" || return 1
   fi
+  collisions="$(jq -c --argjson ancestor "$ancestor_rows" '
+    . as $row | [$ancestor[] | select(.id == $row.id)] as $history
+    | .ancestor = (if (.base_links | length) == 1 and ($history | length) == 1
+                   then $history[0] else null end)
+  ' <<<"$collisions")" || return 1
   while IFS= read -r collision; do
     [[ -n "$collision" ]] || continue
-    inherited="$(jq -r --argjson ancestor "$ancestor_rows" '
-      . as $row | (.base_links | length) == 1
-      and any($ancestor[]; .id == $row.id and .link == $row.base_links[0])
-    ' <<<"$collision")" || return 1
-    old_link="$(jq -r '.base_links[0]' <<<"$collision")" || return 1
+    old_link="$(jq -r '.ancestor.link // ""' <<<"$collision")" || return 1
+    old_path="$(jq -r '.ancestor.path // ""' <<<"$collision")" || return 1
     path="$(jq -r '.path' <<<"$collision")" || return 1
-    if [[ "$inherited" == true && -n "$old_link" && -f "$path"
-          && ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" ]] \
-       && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$old_link" >/dev/null; then
+    link="$(jq -r '.link' <<<"$collision")" || return 1
+    base_link="$(jq -r '.base_links[0]' <<<"$collision")" || return 1
+    base_old_path=""
+    if [[ -n "$old_link" ]]; then
+      base_old_path="$(git -C "$DECISIONS_DIR" ls-tree -r --name-only --full-tree "$BASE_REF" -- "${BASE_PATH%INDEX.md}$old_link")" || return 1
+    fi
+    if [[ -n "$old_link" && -f "$path"
+          && ( "$link" == "$old_link" || ( ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" ) )
+          && ( "$base_link" == "$old_link" || -z "$base_old_path" ) ]] \
+       && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$old_path" >/dev/null \
+       && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null; then
       continue
     fi
     fields="$(jq -r '"id=\(.id) path=\(.path) base=\(.base)"' <<<"$collision")"

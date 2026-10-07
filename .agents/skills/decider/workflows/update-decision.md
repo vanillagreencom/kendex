@@ -23,7 +23,7 @@ Set the Status column of that decision's row to the same value. For a revisit, r
 
 ## 3. Citations
 
-For a rename, change the existing row's Link cell and every citation of the old filename to the new filename in the same change. Keep the ID. Run `decisions check`: it accepts a rename of a record inherited from the base branch, with the old file gone and the new file present. An ID allocated independently on each branch remains a collision, even when both rows have the same text.
+For a rename, change the existing row's Link cell and every citation of the old filename to the new filename in the same change. Keep the ID. Run `decisions check`: it accepts a rename on either or both branches when they inherited the same record, with each renamed side's old file gone and new file present. Independently allocated IDs under different filenames remain collisions, even when both rows have the same text. Equal resolved filenames retain the same-record treatment.
 
 Skip for a revisit. For a supersession, repoint `REVISIT([DECISION_ID])` comments at the new ID; for a partial supersession, only those covering the superseded components. For a retirement or a removal, find every citation of the ID and of the document's file name by a literal search for both, in code, docs and `AGENTS.md`; a sibling record's `[ID](ID-descriptor.md)` link is one. A removal's citations point at the reason's new home: the comment at the code or the principle doc's section. A retirement's historical citations keep pointing at its retained document. Remove active-policy citations and `REVISIT` markers; keep a comment at the site only where the code still needs the reason.
 
