@@ -492,8 +492,8 @@ refuse_unanswered_ask() {
 # harness to stop and nothing to close, yet a provider may refuse every item
 # verb for it rather than answer the protocol's empty match, so the record
 # closes alone. The list is read rather than the provider's words, and a row
-# naming the item in any case, a list that fails, or any other close keeps the
-# mail-read-failed refusal.
+# naming the item outside an available row, a list that fails, or any other
+# close keeps the mail-read-failed refusal.
 HOST_ABSENT=false
 close_absent_record() { # MAIL_STATUS
   local listing rc=0 tracker_rc=0
@@ -504,6 +504,7 @@ close_absent_record() { # MAIL_STATUS
       listing="$(ORCH_LANE_HOST="$host" "$LANE_HOST" list)" || rc=$?
       [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "item=$ITEM" step=list >&2; exit "$rc"; }
       if [[ "$rc" -eq 0 ]] && ! awk -F'\t' -v item="/$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')" '
+          $2 == "available" { next }
           { name = tolower($1) }
           length(name) >= length(item) && substr(name, length(name) - length(item) + 1) == item { found = 1 }
           END { exit !found }' <<<"$listing"; then

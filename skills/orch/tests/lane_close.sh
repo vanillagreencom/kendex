@@ -754,6 +754,8 @@ gone_row() { # SCRIPT PANE ENV [ARGS...]
 NO_ROW='acme/repo/KEN-9\trunning\t1h\tsandbox-9\n'
 # label|script|pane|env|args|expected
 GONE_ROWS=(
+  "an available host naming the item holds no sandbox and closes the record alone|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\tavailable\t1h\thost-1\n||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
+  "control: the unchanged suffix match treats an available host as the item still present|$(mutant lane-close-gone-available '          $2 == "available" { next }' '')|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\tavailable\t1h\thost-1\n||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"
   "a windowless record on a canceled item whose provider lists no sandbox closes done, no stop or close|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=canceled LANE_CLOSE_HOST_LIST=$NO_ROW||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
   "an idle record on a terminal item whose provider lists no sandbox closes done and kills its window|$SCRIPT|python|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=1 status=done"
   "a provider still listing the item, in another case, keeps the refusal|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\trunning\t1h\tsandbox-1\n||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"

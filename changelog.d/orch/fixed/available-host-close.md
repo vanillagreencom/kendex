@@ -1,0 +1,1 @@
+- Lane close finishes for a terminal item when a failed mailbox read leaves its name only on an available host row.
