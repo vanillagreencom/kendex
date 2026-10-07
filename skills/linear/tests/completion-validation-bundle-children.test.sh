@@ -74,7 +74,9 @@ bundle_parent() {
 }
 
 comments_with_summary() {
-  emit '{"data":{"issue":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
+  local response
+  response="$(jq -cn --arg heading "${1:-Completion Summary}" '{data:{issue:{comments:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"c1",body:("## " + $heading + "\n\nShipped."),createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",user:{name:"Test"}}]}}}}')" || return 1
+  emit "$response"
 }
 
 comments_empty() {
@@ -97,6 +99,8 @@ elif [[ "$query" == *"ListComments"* ]]; then
   # complete` at completion time, after validation.
   case "$vid" in
   CC-922 | CC-930 | CC-940) comments_empty ;;
+  CC-950) comments_with_summary 'Completion summary' ;;
+  CC-951) comments_with_summary 'bUNDLE cOMPLETE' ;;
   *) comments_with_summary ;;
   esac
 elif [[ "$query" == *"GetIssue"* ]]; then
@@ -116,6 +120,7 @@ elif [[ "$query" == *"GetIssue"* ]]; then
   CC-940) single_issue CC-940 Todo unstarted "" ;;
   CC-941) single_issue CC-941 Done completed CC-940 ;;
   CC-942) single_issue CC-942 'In Progress' started CC-940 ;;
+  CC-950 | CC-951) single_issue "$vid" 'In Review' started "" ;;
   *) emit '{"errors":[{"message":"unknown issue"}]}' ;;
   esac
 else
@@ -211,3 +216,9 @@ assert_ne "F: --container with mismatched --include-children-of exits nonzero" "
 outS="$(run_validate CC-901 2>/dev/null)"
 check "S: single-issue validate has exactly one result" "$outS" \
   '(.results | length) == 1 and .results[0].id == "CC-901"'
+
+for summary_issue in CC-950 CC-951; do
+  out="$(run_validate "$summary_issue" 2>/dev/null)"
+  check "summary case: $summary_issue passes" "$out" \
+    '.all_ok == true and (.results | length) == 1 and .results[0].has_summary == true'
+done

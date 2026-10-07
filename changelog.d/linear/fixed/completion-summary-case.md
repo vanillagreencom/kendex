@@ -1,0 +1,1 @@
+- Completion validation accepts Completion Summary and Bundle Complete headings in any letter case.

@@ -232,7 +232,7 @@ Validate-Completion:
   child fails state_ok). Canceled children are excluded from the expansion —
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or
-  "Bundle Complete".
+  "Bundle Complete", without regard to letter case.
   --container marks the positional target as a CONTAINER parent — a bundle
   whose children are each worked as their own PR unit, with the container
   closing LAST. The container's own state passes for any live state (canceled
@@ -3333,7 +3333,7 @@ validate_completion() {
         # A failed read is not "no summary": the check fails closed on it.
         comments=$("$BASH" "$SCRIPT_DIR/comments.sh" list "$issue_id") || return 1
         local has_summary
-        has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
+        has_summary=$(echo "$comments" | jq 'any(.[]; .body | test("Completion Summary|Bundle Complete"; "i"))')
 
         local result
         result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
