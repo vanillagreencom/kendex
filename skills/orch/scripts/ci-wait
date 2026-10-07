@@ -537,6 +537,10 @@ max_retries=1
 no_checks_count=0
 # Elapsed second of the first poll in the current no-checks streak.
 no_checks_since=0
+# Set by the sleep that ends the grace within the budget: the poll after it
+# runs even where that sleep lands on the deadline, so a grace equal to the
+# budget ends in the no-checks verdict rather than a pending timeout.
+no_checks_due=false
 # Grace window for check registration, in seconds. Approval-gated repos start
 # CI only after a review approval lands (pull_request_review dispatch), so
 # checks can take minutes to register after the approval gate clears. Within
@@ -724,7 +728,8 @@ poll_sleep() {
 }
 
 update_elapsed
-while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
+  no_checks_due=false
   settled_this_poll=false  # only the settled-check window below sets it true
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
@@ -826,7 +831,8 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       fi
       exit 1
     fi
-    if [ "$no_checks_left" -lt "$POLL_INTERVAL" ]; then
+    if [ "$no_checks_left" -le "$POLL_INTERVAL" ]; then
+      [ $((elapsed + no_checks_left)) -le "$MAX_WAIT" ] && no_checks_due=true
       poll_sleep "$no_checks_left"
     else
       poll_sleep "$POLL_INTERVAL"

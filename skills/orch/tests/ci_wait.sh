@@ -514,6 +514,8 @@ GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO
 [[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
 table '1 30 3600 --json' \
   "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "a grace ending on the budget's deadline is the no-checks error, not a timeout||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "a grace ending past the budget's deadline stays a pending timeout||1 180 $((GRACE_DECLARED - 10)) --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \
   "an unset grace at the production interval waits the declared default||1 180 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
   "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
   "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
