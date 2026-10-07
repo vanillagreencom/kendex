@@ -163,11 +163,16 @@ build_collision() { # the lane and the base each record their own D035
   write_index "$1/work" D034:D034-first.md D035:D035-lane.md
 }
 
-build_rename() { # the lane renames D035 inherited from main; INDEX points at the new file
+build_rename() { # DIR [remove]: the lane renames D035; main can remove its inherited document
   build_ahead "$1"
   git -C "$1/work" pull -q --ff-only origin main
   mv "$1/work/docs/decisions/D035-main.md" "$1/work/docs/decisions/D035-renamed.md"
   write_index "$1/work" D034:D034-first.md D035:D035-renamed.md
+  if [[ "${2:-}" == remove ]]; then
+    write_index "$1/up" D034:D034-first.md D035:D035-main.md:Removed:unlinked
+    rm "$1/up/docs/decisions/D035-main.md"
+    commit_all "$1/up" "main removes D035's document"
+  fi
 }
 
 build_rename_committed() { # a committed rename also keeps the inherited ID
@@ -175,12 +180,17 @@ build_rename_committed() { # a committed rename also keeps the inherited ID
   commit_all "$1/work" rename
 }
 
-build_base_rename() { # main renames D035 after the lane inherited its original filename
+build_base_rename() { # DIR [remove]: main renames D035; the lane can remove its inherited document
   build_ahead "$1"
   git -C "$1/work" pull -q --ff-only origin main
   mv "$1/up/docs/decisions/D035-main.md" "$1/up/docs/decisions/D035-base-renamed.md"
   write_index "$1/up" D034:D034-first.md D035:D035-base-renamed.md
   commit_all "$1/up" "main renames D035"
+  if [[ "${2:-}" == remove ]]; then
+    write_index "$1/work" D034:D034-first.md D035:D035-main.md:Removed:unlinked
+    rm "$1/work/docs/decisions/D035-main.md"
+    commit_all "$1/work" "lane removes D035's document"
+  fi
 }
 
 build_both_rename() { # both sides rename the same inherited D035 to different filenames
@@ -480,6 +490,8 @@ check-collision~collision~~check~~1~~error=id-collision id=D035 path=docs/decisi
 check-renamed-record~rename~~check~~0~~
 check-committed-rename~rename_committed~~check~~0~~
 check-base-renamed-record~base_rename~~check~~0~~
+check-branch-rename-base-removed~rename:remove~~check~~0~~
+check-base-rename-branch-removed~base_rename:remove~~check~~0~~
 check-both-renamed-record~both_rename~~check~~0~~
 check-base-rename-old-present~base_rename_old_present~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-main.md base=origin/main:docs/decisions/D035-base-renamed.md
 check-base-rename-new-absent~base_rename_new_absent~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-main.md base=origin/main:docs/decisions/D035-base-renamed.md
@@ -569,14 +581,16 @@ next-id-empty-index-base-scheme~    elif [[ "${#base_ids[@]}" -gt 0 ]]; then~   
 next-id-configured-prefix-base-width~    for id in ${base_ids[@]+"${base_ids[@]}"} ${ids[@]+"${ids[@]}"}; do~    for id in ${ids[@]+"${ids[@]}"}; do~a configured prefix whose width ignores the base
 next-id-index-absent~    BASE_REASON=index-absent~    BASE_REASON=""~a base without INDEX.md reported as read
 check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
-check-renamed-record~if [[ -n "$old_link" && -f "$path"~if [[ -z "$old_link" && -f "$path"~a rename rule that rejects inherited records
+check-renamed-record~if [[ -n "$old_link"\n~if [[ -z "$old_link"\n~a rename rule that rejects inherited records
+check-base-rename-branch-removed~if [[ -n "$old_link"\n~if [[ -n "$old_link" && -f "$path"\n~an unchanged branch required to retain its removed document
+check-branch-rename-base-removed~[[ "$base_link" == "$old_link" ]]~[[ "$base_link" == "$old_link" ]] && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null~an unchanged base required to retain its removed document
 check-base-renamed-record~then $history[0] else null end~then (if $history[0].link == $row.base_links[0] then $history[0] else null end) else null end~an identity rule that rejects base-side renames
 check-both-renamed-record~then $history[0] else null end~then (if $history[0].link == $row.base_links[0] or $history[0].link == $row.link then $history[0] else null end) else null end~an identity rule that rejects both-side renames
 check-collision~then $history[0] else null end~then $history[0] else {link: .base_links[0], path: .base} end~a rename rule that accepts independently allocated IDs
-check-rename-old-present~( ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" )~true~a rename rule that accepts a retained old document
-check-both-rename-old-present~( ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" )~true~a both-side rename that retains the ancestor's file
-check-base-rename-old-present~&& ( "$base_link" == "$old_link" || -z "$base_old_path" )~&& true~a rename rule that accepts a retained old base document
-check-rename-new-absent~-n "$old_link" && -f "$path"~-n "$old_link" && true~a rename rule that accepts a missing new document
+check-rename-old-present~! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~true~a rename rule that accepts a retained old document
+check-both-rename-old-present~! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~true~a both-side rename that retains the ancestor's file
+check-base-rename-old-present~[[ -z "$base_old_path" ]]~true~a rename rule that accepts a retained old base document
+check-rename-new-absent~-f "$path" && ! -e~true && ! -e~a rename rule that accepts a missing new document
 check-base-rename-new-absent~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null~&& true~a rename rule that accepts a missing new base document
 check-removed-id-revived~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$old_path" >/dev/null~&& true~a rename rule that accepts a removed ancestor ID
 check-removed-retained-active~.link != .ancestor.link and .status != "Removed"~.link != .ancestor.link and false~a retained Removed pointer that permits active branch ID reuse

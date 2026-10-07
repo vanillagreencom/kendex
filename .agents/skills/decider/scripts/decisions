@@ -890,11 +890,11 @@ cmd_check() {
     if [[ -n "$old_link" ]]; then
       base_old_path="$(git -C "$DECISIONS_DIR" ls-tree -r --name-only --full-tree "$BASE_REF" -- "${BASE_PATH%INDEX.md}$old_link")" || return 1
     fi
-    if [[ -n "$old_link" && -f "$path"
-          && ( "$link" == "$old_link" || ( ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" ) )
-          && ( "$base_link" == "$old_link" || -z "$base_old_path" ) ]] \
+    if [[ -n "$old_link"
+          && ( "$link" == "$old_link" || ( -f "$path" && ! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link" ) ) ]] \
        && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$old_path" >/dev/null \
-       && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null; then
+       && { [[ "$base_link" == "$old_link" ]] || { [[ -z "$base_old_path" ]] \
+            && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null; }; }; then
       continue
     fi
     fields="$(jq -r '"id=\(.id) path=\(.path) base=\(.base)"' <<<"$collision")"
