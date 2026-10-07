@@ -5,7 +5,8 @@
 # The render rows in the table below stand a `kendex` on PATH that records its
 # calls and answers with the document the row names. The customized-consumer
 # rows further down stand no double at all: they install and refresh a real
-# consumer with whatever `kendex` is on PATH. That program is the judgement
+# consumer with a real `kendex`: in kendex's own source tree the one that tree
+# builds, and elsewhere the one on PATH. That program is the judgement
 # the script delegates to, not a copy of it: what these rows pin is that the
 # script calls it with `--json` and the base harness-only resolved, answers to
 # its verdict, to the counts its document reports AND to the positions its
@@ -1624,7 +1625,37 @@ assert_eq "a measurement that lists no test path scores a render-root fixture as
 # carry one says so in HARNESS_CI_REQUIRE_KENDEX, and there the missing binary
 # is a failure rather than a skip: this repository's own CI is always that
 # runner, and a skip taken there would prove the section on no machine at all.
-if ! command -v kendex >/dev/null 2>&1; then
+#
+# In kendex's own source tree the rows judge the kendex that tree builds, not
+# whichever install is on PATH: a branch that changes what kendex renders
+# answers to its own render, and an older install would refuse rows the
+# branch passes. So there the suite builds kendex-cli from the tree, as the
+# `rest` shard does ahead of it (where the build is a no-op), and runs that
+# binary in place of the one on PATH. The build is taken only where a kendex
+# is on PATH, so a runner that carries none keeps its skip rather than paying
+# a cold build. A build that fails is a failure, never a fallback to the
+# install: that install is the judge this section must not stand.
+kendex_tree="$(cd "$TEST_DIR/../../.." && pwd)"
+checkout_kendex=""
+if command -v kendex >/dev/null 2>&1 && [ -f "$kendex_tree/crates/cli/Cargo.toml" ]; then
+  if checkout_kendex="$(cd "$kendex_tree" && cargo build -p kendex-cli --locked \
+    --message-format=json-render-diagnostics 2>"$SANDBOX/kendex-build" | jq -r \
+    'select(.reason == "compiler-artifact" and .target.name == "kendex" and .executable != null) | .executable')" \
+    && [ -x "$checkout_kendex" ]; then
+    mkdir -p "$SANDBOX/checkout-bin"
+    ln -s "$checkout_kendex" "$SANDBOX/checkout-bin/kendex"
+    PATH="$SANDBOX/checkout-bin:$PATH"
+  else
+    printf '  FAIL: the render rows judge the kendex %s builds, and cargo build -p kendex-cli did not make one\n' \
+      "$kendex_tree" >&2
+    sed 's/^/    /' "$SANDBOX/kendex-build" >&2
+    FAIL=$((FAIL + 1))
+    checkout_kendex=unbuilt
+  fi
+fi
+if [ "$checkout_kendex" = unbuilt ]; then
+  :
+elif ! command -v kendex >/dev/null 2>&1; then
   if [ -n "${HARNESS_CI_REQUIRE_KENDEX:-}" ]; then
     printf '  FAIL: HARNESS_CI_REQUIRE_KENDEX is set and no kendex is on PATH\n' >&2
     FAIL=$((FAIL + 1))
@@ -1632,6 +1663,10 @@ if ! command -v kendex >/dev/null 2>&1; then
     printf '  SKIP: the customized-consumer render rows need a kendex binary on PATH\n'
   fi
 else
+  if [ -n "$checkout_kendex" ]; then
+    assert_eq "in kendex's source tree the render rows run the kendex it builds" \
+      "$SANDBOX/checkout-bin/kendex" "$(command -v kendex)"
+  fi
   render_home="$SANDBOX/render-home"
   catalog="$render_home/catalog"
   consumer="$render_home/dev/app"

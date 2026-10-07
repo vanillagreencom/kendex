@@ -26,6 +26,8 @@ tools/guard --full                          # the local full battery: Rust and U
 
 `tools/guard --full` runs the Rust and UI checks with tests, documentation builds and cross-target compilation, the suites a touched skill's or `hooks/`' changed files map to, the suites of every tool and Pi-package tree the branch touched, and the decider skill's `decisions check`, which CI does not run. The documentation build and the cross-target compilation are skipped when the branch touched no crate; `GUARD_FULL_CROSS_DOC=ci` in `.env.local` or the environment leaves them to CI. The Bash 3.2 parse needs docker or podman on a host whose own `bash` is not 3.2, and refuses without one.
 
+The harness-ci change-class suite runs its render rows only where a `kendex` is on PATH, and skips them where none is. It does not run that install. It builds `kendex-cli` from this checkout as a debug build in `target/` and runs that binary, so a branch that changes what kendex renders needs no self-install for these rows. The build needs the Rust toolchain, and `libdbus-1-dev` on Linux. A failed build fails the suite.
+
 `tools/harness-smoke` asks each harness on the machine, through its own listing or startup surface, whether a package kendex installed into a scratch project loaded, and what reaches a lane sent a directive: one row per harness per kind, `unanswerable` with its reason where a harness or this machine has no surface. Which rows a harness gets follows each hook's answer for that harness in `kendex index --json` on this checkout. It writes nothing to the repository.
 
 ## Debug
