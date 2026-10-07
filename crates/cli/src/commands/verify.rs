@@ -6,8 +6,8 @@ use kendex_core::attest::{
     self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
 };
 use kendex_core::engine::{
-    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Pin, PlanOptions, Position,
-    RowRemedy, ShimStanding, planned_closure_held,
+    DeclarationStatus, DriftState, EngineReport, Installation, KeptBundle, Owns, Pin, PlanOptions,
+    Position, RowRemedy, ShimStanding, planned_closure_held,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
@@ -147,6 +147,8 @@ struct Tally {
     outputs_failed: usize,
     /// Unsupported hook deliveries with no recorded installation.
     deliveries_failed: usize,
+    /// Declared sets their catalog no longer offers.
+    bundles_failed: usize,
     /// Declared tracked outputs the project ignores, without `--strict`:
     /// counted on the closing line apart from every failure.
     warned: usize,
@@ -162,6 +164,7 @@ impl Tally {
             + self.bookkeeping_failed
             + self.outputs_failed
             + self.deliveries_failed
+            + self.bundles_failed
     }
 
     fn clean(&self) -> bool {
@@ -171,6 +174,7 @@ impl Tally {
             || self.bookkeeping_failed > 0
             || self.outputs_failed > 0
             || self.deliveries_failed > 0
+            || self.bundles_failed > 0
             || self.recordless
             || !self.gaps.is_empty())
     }
@@ -364,7 +368,7 @@ fn check_scope(
             .cloned(),
     );
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
-    retired_bundle_notices(style, &scope, &report, &named);
+    kept_bundle_rows(&report, &placer, &named, tally, style);
     failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
     pinned_hook_rows(&report, &placer, &named, tally, style);
     for (key, entry) in &lock.entries {
@@ -415,25 +419,45 @@ fn check_scope(
     Ok(())
 }
 
-/// One notice for each declared set its catalog retired, which a plain
-/// refresh keeps: its members pass as they are recorded, so without it a
-/// verify-only run never learns the set is retired or how to move off it.
-/// It fails nothing, `--strict` included.
-fn retired_bundle_notices(
-    style: &Style,
-    scope: &Scope,
+/// The declared sets whose members a refresh keeps as recorded. Those
+/// members pass as recorded, so without these rows a verify-only run never
+/// learns what became of the set. One its catalog no longer offers fails,
+/// as a declared item gone from its catalog does, naming the sets the
+/// catalog offers. One its catalog retired is a notice and fails nothing,
+/// `--strict` included.
+fn kept_bundle_rows(
     report: &EngineReport,
+    placer: &Placer,
     named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
 ) {
-    for (name, notice) in &report.retired_bundles {
+    for (name, kept) in &report.kept_bundles {
         if !named(name) {
             continue;
         }
-        ui::stderr(&style.report_row(
-            Status::Notice,
-            &[Span::Prose(&format!("{}: {notice}", scope_label(scope)))],
-            "",
-        ));
+        match kept {
+            KeptBundle::NotOffered { detail } => {
+                ui::stderr(&style.report_verdict(&format!("bundle {name}"), Some(detail)));
+                tally.bundles_failed += 1;
+                tally.rows.push(placer.row(
+                    "bundle",
+                    name,
+                    None,
+                    State::Failed,
+                    Some(detail.clone()),
+                    &[],
+                ));
+            }
+            KeptBundle::Retired { notice } => ui::stderr(&style.report_row(
+                Status::Notice,
+                &[Span::Prose(&format!(
+                    "{}: {notice}",
+                    scope_label(placer.scope)
+                ))],
+                "",
+            )),
+        }
     }
 }
 

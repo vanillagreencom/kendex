@@ -411,13 +411,15 @@ pub struct DesiredState {
     pub tracked_outputs: BTreeMap<String, Vec<String>>,
 }
 
-/// Why a declared set's installed members stay as recorded.
+/// Why a declared set's installed members stay as recorded, each with
+/// what `EngineReport::kept_bundles` carries to verify.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum KeptBundle {
-    /// Its catalog no longer offers it, which fails the refresh.
-    NotOffered,
+pub enum KeptBundle {
+    /// Its catalog no longer offers it, which fails the refresh and
+    /// verify: the refusal, naming the sets the catalog does offer.
+    NotOffered { detail: String },
     /// Its catalog retired it, short of a prune: the one notice keyed by
-    /// the set, which `EngineReport::retired_bundles` carries to verify.
+    /// the set.
     Retired { notice: String },
 }
 
@@ -591,15 +593,11 @@ impl DesiredState {
         false
     }
 
-    /// The notice each declared set its catalog retired gets, by name,
-    /// short of a prune.
-    pub(super) fn retired_bundles(&self) -> BTreeMap<String, String> {
+    /// Each declared set whose members this pass keeps, and why, by name.
+    pub(super) fn kept_bundles_by_name(&self) -> BTreeMap<String, KeptBundle> {
         self.kept_bundles
             .iter()
-            .filter_map(|(bundle, kept)| match kept {
-                KeptBundle::Retired { notice } => Some((bundle.name.clone(), notice.clone())),
-                KeptBundle::NotOffered => None,
-            })
+            .map(|(bundle, kept)| (bundle.name.clone(), kept.clone()))
             .collect()
     }
 
@@ -1131,22 +1129,23 @@ fn not_offered_note(
     source: &str,
 ) -> String {
     let offered = list_items(sealed, config, kind);
-    not_offered(name, source, kind.name(), offered)
+    format!("{name}: {}", not_offered(source, kind.name(), offered))
 }
 
-/// The note for a declaration of a `noun` its catalog does not carry,
-/// keyed by `key`. It names what the source does offer of that noun, so a
-/// declaration left on a name the catalog renamed reads its remedy in the
-/// line that refuses it. `kendex refresh` fails on its "not found in
-/// source" (`refresh_failures` in the CLI's `engine_common.rs`).
-pub(super) fn not_offered(key: &str, source: &str, noun: &str, mut offered: Vec<String>) -> String {
+/// Why a declaration of a `noun` its catalog does not carry is refused,
+/// for a note keyed by the declaration. It names what the source does
+/// offer of that noun, so a declaration left on a name the catalog renamed
+/// reads its remedy in the line that refuses it. `kendex refresh` fails on
+/// its "not found in source" (`refresh_failures` in the CLI's
+/// `engine_common.rs`).
+pub(super) fn not_offered(source: &str, noun: &str, mut offered: Vec<String>) -> String {
     offered.sort();
     offered.dedup();
     if offered.is_empty() {
-        return format!("{key}: not found in source '{source}', which offers no {noun}");
+        return format!("not found in source '{source}', which offers no {noun}");
     }
     format!(
-        "{key}: not found in source '{source}' — its {noun}s are {}; declare one of those",
+        "not found in source '{source}' — its {noun}s are {}; declare one of those",
         offered.join(", ")
     )
 }

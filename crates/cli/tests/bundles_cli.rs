@@ -152,10 +152,10 @@ fn a_bundle_the_catalog_lacks_is_refused() {
     assert!(!project.join("kendex.toml").exists());
 }
 
-/// The catalog renames the set a consumer declared: refresh fails and its
-/// members stay installed. Retiring it instead lets a plain refresh pass
-/// with one notice keyed by the set and its members kept, and a prune drops
-/// the declaration and takes them.
+/// The catalog renames the set a consumer declared: refresh fails, its
+/// members stay installed, and verify fails the set. Retiring it instead
+/// lets a plain refresh and verify pass with one notice keyed by the set
+/// and its members kept, and a prune drops the declaration and takes them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_bundle_gone_from_its_catalog_fails_refresh_unless_retired() {
@@ -207,6 +207,21 @@ fn a_declared_bundle_gone_from_its_catalog_fails_refresh_unless_retired() {
         assert!(member.exists(), "{} is gone: {said}", member.display());
     }
     assert!(declared(), "{said}");
+    let verify = || kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+    let verified = verify();
+    let said = printed(&verified);
+    assert!(!verified.status.success(), "{said}");
+    let document: kendex_core::attest::Document = serde_json::from_slice(&verified.stdout).unwrap();
+    let failed: Vec<(&str, &str, Option<&str>)> = document
+        .rows
+        .iter()
+        .filter(|row| row.state == kendex_core::attest::State::Failed)
+        .map(|row| (row.kind.as_str(), row.name.as_str(), row.detail.as_deref()))
+        .collect();
+    assert!(
+        matches!(failed[..], [("bundle", "starter", Some(detail))] if detail.contains("begin")),
+        "{said}"
+    );
 
     write(
         &catalog,
@@ -224,6 +239,8 @@ fn a_declared_bundle_gone_from_its_catalog_fails_refresh_unless_retired() {
     for member in &members {
         assert!(member.exists(), "{} is gone: {said}", member.display());
     }
+    let verified = verify();
+    assert!(verified.status.success(), "{}", printed(&verified));
 
     let pruned = refresh(&["--prune"]);
     let said = printed(&pruned);

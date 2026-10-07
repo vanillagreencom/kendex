@@ -77,7 +77,7 @@ pub(crate) use unmanaged::{InPlaceSkillFinding, in_place_skill_findings};
 mod written;
 
 pub(crate) use desired::IN_PLACE_DISABLED;
-pub use desired::{CatalogSource, Owns, Position};
+pub use desired::{CatalogSource, KeptBundle, Owns, Position};
 pub(crate) use desired_agent::contributes_to_agent;
 pub use desired_agent::{AgentModelRequest, agent_model_request};
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
@@ -331,7 +331,7 @@ fn report(
         held,
     } = planned;
     state.warnings.extend(state.agent_names.warnings());
-    let retired_bundles = state.retired_bundles();
+    let kept_bundles = state.kept_bundles_by_name();
     let report = EngineReport {
         declaration_status: DeclarationStatus::of(&state),
         // Ahead of the moves out of `state` below, and read before `drift`
@@ -348,7 +348,7 @@ fn report(
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
         tracked_outputs: state.tracked_outputs,
-        retired_bundles,
+        kept_bundles,
         retired,
         withheld: state.withheld,
         set_changes,

@@ -223,12 +223,13 @@ fn installable(
     // from every consumer that declared it, and say so only in passing.
     let Some(bundle) = offered else {
         state.mark_incomplete();
-        let kept = bundle_ref(name, &decl.source);
-        state.kept_bundles.insert(kept, KeptBundle::NotOffered);
         let offered = crate::source::bundles::names(config);
-        let key = format!("bundle {name}");
-        let note = super::desired::not_offered(&key, &decl.source, "bundle", offered);
-        state.notes.push(note);
+        let detail = super::desired::not_offered(&decl.source, "bundle", offered);
+        state.notes.push(format!("bundle {name}: {detail}"));
+        let kept = bundle_ref(name, &decl.source);
+        state
+            .kept_bundles
+            .insert(kept, KeptBundle::NotOffered { detail });
         return Vec::new();
     };
     let mut installable = Vec::new();

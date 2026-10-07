@@ -404,10 +404,11 @@ pub struct EngineReport {
     /// Each hook the plan writes nowhere on a tool because a hook it runs
     /// with will not run there, and why (`DesiredState::withheld`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), super::desired::Withholding>,
-    /// Declared sets their catalog retired, kept short of a prune, by name,
-    /// each with the one notice keyed by the set that `notes` also holds;
-    /// verify shows it, where it shows no note.
-    pub retired_bundles: BTreeMap<String, String>,
+    /// Declared sets whose installed members this pass keeps as recorded,
+    /// by name: one its catalog no longer offers, which verify fails, and
+    /// one its catalog retired, short of a prune, whose notice verify
+    /// shows. `notes` holds the same line for each; verify shows no note.
+    pub kept_bundles: BTreeMap<String, super::desired::KeptBundle>,
     /// Why each package this pass was asked to install is wanted, by
     /// kind and name, on any tool: asked for by name, carried by a set,
     /// or required by another package. A package every tool refused is
@@ -521,7 +522,7 @@ impl EngineReport {
             tracked_outputs: BTreeMap::new(),
             retired: BTreeMap::new(),
             withheld: BTreeMap::new(),
-            retired_bundles: BTreeMap::new(),
+            kept_bundles: BTreeMap::new(),
             asked: Asked::Declared,
         }
     }
