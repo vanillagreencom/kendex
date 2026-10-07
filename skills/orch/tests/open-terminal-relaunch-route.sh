@@ -426,7 +426,7 @@ control stopped 'UNTAKEN_PANE" ]] || launch_stop || true' 'UNTAKEN_PANE" ]] || t
 run_ot claude - claude
 assert_eq "closed=$(closed) status=$(status)" "closed=0 status=running" \
   "control: without the stop the window stays open and the record stays running behind the dead pane"
-control fields 'if .status == "running" then . else del(' 'if .status != "never" then . else del('
+control fields 'if .status == "running" or .prepare.step == "selection" then . else del(' 'if .status != "never" or .prepare.step == "selection" then . else del('
 run_ot codex - claude
 run_ot - "$HARNESS_SCREEN" codex
 switched="$(said 'harness-switched')"
