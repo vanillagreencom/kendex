@@ -213,7 +213,10 @@ fn broken_links(
             let target = sealed.root().join(&path);
             if !sealed.is_file(&target) && !sealed.is_dir(&target) {
                 push(line, url, Broken::Missing(path));
-            } else if let Some(anchor) = anchor.filter(|_| is_markdown(Path::new(&path))) {
+            } else if let Some(anchor) = anchor
+                // A directory has no headings, and GitHub shows it as a tree.
+                .filter(|_| sealed.is_file(&target) && is_markdown(Path::new(&path)))
+            {
                 let headings = heading_anchors(&sealed.read_to_string(&target)?);
                 if !decoded(&anchor, '/').is_some_and(|anchor| headings.contains(&anchor)) {
                     push(line, url, Broken::NoHeading { path, anchor });

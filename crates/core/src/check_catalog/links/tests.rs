@@ -27,6 +27,7 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
     fs::write(skill.join("tests/run.sh"), "true\n").unwrap();
     fs::write(skill.join("references/guide.md"), "# Guide\n").unwrap();
     fs::write(skill.join("references/Quick start.md"), "# Quick\n").unwrap();
+    fs::create_dir_all(skill.join("references/notes.md")).unwrap();
     let text = match file {
         "SKILL.md" => format!("{head}{link}\n"),
         _ => format!("{link}\n"),
@@ -166,6 +167,13 @@ fn a_source_url_is_judged_as_the_file_it_names() {
         (
             "SKILL.md",
             format!("See {SOURCE}/0123abcd/skills/review/tests/run.sh"),
+            None,
+        ),
+        // A directory spelled like a markdown file is there, and has no
+        // headings to judge an anchor against.
+        (
+            "SKILL.md",
+            format!("See {SOURCE}/main/skills/review/references/notes.md#intro"),
             None,
         ),
         // Escapes in the path and the anchor are decoded once.
