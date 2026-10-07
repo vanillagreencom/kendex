@@ -1,0 +1,1 @@
+- § Tests states four Windows-safe test rules: byte-compared checked-out text is pinned `text eol=lf`, a liveness test uses only a process it started or reaped, a teardown asserts the observed result of deleting a held file and reaps owned processes before removing their scratch root, and a roster runs every member before it exits non-zero naming each failure.
